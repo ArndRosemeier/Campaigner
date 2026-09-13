@@ -5,7 +5,7 @@ import { getCampaign } from '@/db/campaignRepo';
 import { getRun } from '@/db/runRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { listPersonas } from '@/db/personaRepo';
-import { isRunWithdrawn, runEngine, waitForRunStatus } from '@/llm/runEngine';
+import { isRunWithdrawn, runEngine, runNotCompletedReason, waitForRunStatus } from '@/llm/runEngine';
 import { createJobQueue, type JobContext } from '@/lib/jobQueue';
 
 export interface EncounterMapJob {
@@ -152,13 +152,17 @@ async function processJob(
     // report: the owner's own stop is never handed back to him as a failure
     // (docs/05; docs/17 row 117), so the job is WITHDRAWN, not failed.
     ctx.withdraw();
-    throw new Error(run.errorMessage || `run ended ${run.status}`);
+    throw new Error(runNotCompletedReason(run));
   }
   if (run.status !== 'completed') {
     // A run that died ON ITS OWN: loud, retryable, and the errorMessage the
     // engine wrote is what the owner reads (AGENTS rules 1-2). Reachable only
-    // for 'failed' — the other terminal statuses are answered above.
-    throw new Error(run.errorMessage || `run ended ${run.status}`);
+    // for 'failed' — the other terminal statuses are answered above. Both
+    // throws say why the run did not finish through the engine's ONE sentence
+    // seam (`runNotCompletedReason`, docs/18 §2); the withdrawn one above is
+    // never REPORTED (the `withdraw()` already decided the job's outcome) and
+    // is composed only because this body must stop.
+    throw new Error(runNotCompletedReason(run));
   }
   return 'done';
 }

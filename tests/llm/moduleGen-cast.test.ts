@@ -70,6 +70,7 @@ vi.mock('@/llm/runEngine', async (importOriginal) => {
   const actual = await importOriginal<typeof runEngineModule>();
   return {
     isRunWithdrawn: actual.isRunWithdrawn,
+    runNotCompletedReason: actual.runNotCompletedReason,
     runEngine: { on: () => () => undefined, startRun: startRunMock },
     waitForRunStatus: waitForRunStatusMock,
   };

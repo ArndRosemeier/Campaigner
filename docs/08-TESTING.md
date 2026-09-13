@@ -1497,6 +1497,61 @@ the injected `width`, reached by the same `toEqual` assertion. (5)
 message; the reasoning (adapter indirection + the consequence it names) lives in
 docs/18 §2.2/§4 and ledger 126, and no pin covers that decision either way.
 
+### The one way to say why a run did not finish (docs/17 row 128, docs/18 §2.2/§4/§5)
+
+"This run did not finish, and here is why" was composed FOUR times in THREE
+shapes: `run.errorMessage || \`run ended ${run.status}\`` twice in ONE function
+(`encounter-map-queue.ts:155` and `:161` at base `d3b8b65`, byte-identical to
+each other), the same fact folded into `entity-batch.ts:544-552`'s
+`failed.push({ name, message })` (`` `run ended ${outcome.status}` `` when
+`errorMessage === ''`), and a DIFFERENT composition in
+`encounterRegen.ts:92-96` (`awaitCompletedRun`): `` `${label} ended
+${run.status}${run.errorMessage === '' ? '' : `: ${run.errorMessage}`}` `` — a
+leg label plus the engine's message as a colon-SUFFIXED detail, where the other
+three use the message AS the sentence. So the engine's own authored sentence was
+a whole sentence in two places and a detail in a third, and the fallback was
+written three ways. The seam is
+`runEngine.runNotCompletedReason(run, label = 'run')` (in `src/llm/runEngine.ts`,
+beside `isRunWithdrawn` — the file that owns a run's state vocabulary): the
+engine's `errorMessage` when it wrote one, `` `${label} ended ${run.status}` ``
+otherwise. The three plain sites fold; **`awaitCompletedRun` is the one
+documented boundary** (docs/18 §5) and keeps its own leg-labelled sentence,
+because the label names WHICH LEG of a chained operation died — a fact the
+engine's sentence cannot carry (both legs brief under the same step name) — and
+the engine already toasts its own sentence on that path. The withdrawal
+PREDICATE is untouched everywhere (`isRunWithdrawn`, ledger 117): this slice
+folds the SENTENCE and never the verdict.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The seam's own rule table**: an engine-written `errorMessage` IS the sentence (verbatim, no label, no status); an empty one yields the caller's label with `run` as the default; a `'cancelled'` row still HAS a sentence (the seam is not the predicate) | `tests/llm/runNotCompletedReason.test.ts` (3 pins, over real `createPersonaRun` rows — never a cast stub) | ✅ REVERT-PROVEN: making the seam ignore `errorMessage` → RED 1 of 7; defaulting the label to `'the run'` → RED 2 of 7 |
+| **The map queue's reason, verbatim at the owner's toast**: the job's own failure carries `Could not generate a map for "<name>"` plus the engine's sentence, compared for EQUALITY against the run row's own `errorMessage` (with a non-empty assertion FIRST, so it cannot pass by both sides being empty) | `tests/features/encounter-map-queue.test.ts` (`the contrast: a run that FAILED on its own …`, extended) | ✅ REVERT-PROVEN: the seam always-fallback injection → RED this pin; reverting the fold itself → GREEN (byte-identical, below) |
+| **The map queue's FALLBACK branch**, which no engine path can reach any more (`fail` always composes a message): a hand-written terminal row with `errorMessage: ''` still makes the job fail loudly with `run ended failed` | `tests/features/encounter-map-queue.test.ts` (`a terminal run that carries NO sentence of its own still says why`) — a real job, a real row, `updateRun` as the terminal write | ✅ REVERT-PROVEN: defaulting the label → RED this pin |
+| **A batch entity's reason, verbatim** — the engine's sentence alone, and `run ended failed` when the engine wrote nothing | `tests/features/entity-batch-fixed-cast.test.ts` (2 new pins; the engine is faked there but `runNotCompletedReason` is imported from `importOriginal`, so the fold is judged REAL) | ✅ REVERT-PROVEN: defaulting the label → RED the fallback pin; the seam always-fallback → RED the verbatim pin; dropping the export from that file's mock factory → RED both (the pins that reach the line) |
+| **The silence still holds at both touched sites** (ledger 117's cure, never re-broken by a reason sentence): a `'cancelled'` row produces NO failure entry and NO toast — at the queue (3 pre-existing pins) and at the batch (1 new pin + the pre-existing integration pin) | `tests/features/encounter-map-queue.test.ts` (856/880/900), `tests/features/entity-batch-fixed-cast.test.ts` (new), `tests/features/stop-orchestration.test.ts:298` | ✅ REVERT-PROVEN **by neutralising the PREDICATE, not the sentence**: disabling the batch's `isRunWithdrawn` arm → RED 2 (the new batch pin + `stop-orchestration`); disabling the queue's → RED 3, including the row-117 silence pin |
+| **`awaitCompletedRun`'s boundary, BOTH branches**: `Repopulate ended failed: <the engine's own sentence>` (the label, the status, then the message as a detail) and `Repopulate ended cancelled` (a stopped leg is still REPORTED here — the documented non-silence) | `tests/llm/encounterRepopulate.test.ts` (2 new pins; the first compares against the run row's REAL `errorMessage` so nothing is asserted about a guessed string) | ✅ REVERT-PROVEN: dropping the `: <message>` suffix → RED the failed-leg pin + the scan's boundary pin |
+| **The fallback formula is composed in exactly TWO files** — the seam and that one boundary — and the folded files compose NO reason of their own; the queue has exactly 2 seam calls and the batch exactly 1 (a COUNT, so reopening ONE copy is visible) | `tests/llm/runNotCompletedReason.test.ts` (`scan: …`, 4 pins, labelled as scans, with a >200-file non-vacuity check and an allowlist-rot check) | ✅ REVERT-PROVEN: reverting EITHER fold REDs 2 scan pins while every behavioural pin stays green (below) |
+| **REGRESSION GUARD — every pre-existing pin passes UNCHANGED**: `tests/features/encounter-map-queue.test.ts` 17 (incl. all three row-117 silence pins), `tests/features/stop-orchestration.test.ts`, `tests/llm/encounterRepopulate.test.ts` 13, `tests/features/entity-batch-fixed-cast.test.ts` 2, `tests/features/change-artifact-instruction.test.ts`, `tests/llm/moduleGen-cast.test.ts` | those six files, one suite at a time at `CAMPAIGNER_TEST_WORKERS=2` | ✅ byte-unchanged and green — **and NOT ONE of them asserted the fold's shape**, which is why the scan exists (below) |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n`, `git diff --stat` checked BEFORE the run, then
+restored from a byte-exact baseline copy and verified with `git hash-object` —
+all seven baseline hashes matched before and after; one suite at a time at
+`CAMPAIGNER_TEST_WORKERS=2`):
+
+| injection | line it hits | result |
+|---|---|---|
+| the queue's died-on-its-own throw reverted to `run.errorMessage \|\| \`run ended ${run.status}\`` | `encounter-map-queue.ts:165` | **GREEN: 18/18 queue pins** — a byte-identical fold is invisible to behaviour — and **RED 2 scan pins** (the route count `1 ≠ 2` and the fallback-holders equality) |
+| the batch's reason reverted to the hand-rolled ternary | `entity-batch.ts:554` (the composition line; the block is `:552-556`) | **GREEN: 3/3 batch pins** (incl. both new sentence pins) and **RED 2 scan pins** |
+| the seam's rule changed to ALWAYS return the fallback | `runEngine.ts:427` | **RED 4** — the rule table, the queue's verbatim pin, the batch's verbatim pin, the scan's value pin |
+| the seam made to adopt the boundary's shape (`${label} ended ${status}: ${message}`) | `runEngine.ts:427` | **RED 4**, the same four — so a future "unification" onto the label-suffix shape cannot land silently |
+| the default label `'run'` → `'the run'` | `runEngine.ts:426` | **RED 4** — both sites' fallback pins + 2 rule-table pins |
+| `runNotCompletedReason` REMOVED from the batch's partial mock factory | `entity-batch-fixed-cast.test.ts:38` | **RED 2** — exactly the two pins that reach the reason line (the withdrawal pin stays green: the predicate answers first) |
+| the same export REMOVED from the other two partial factories | `moduleGen-cast.test.ts:73`, `change-artifact-instruction.test.ts:39` | **GREEN 25/25** — those two files only ever fake `'completed'` runs, so their entries are a latent-trap guard, NOT coverage. Named here rather than dressed as a pin |
+| the batch's `isRunWithdrawn` arm neutralised (`status === 'cancelled' && errorMessage !== ''`) | `entity-batch.ts:505` | **RED 2** — the new withdrawal pin + `stop-orchestration.test.ts`'s pre-existing integration pin |
+| the queue's `isRunWithdrawn(run)` arm neutralised the same way | `encounter-map-queue.ts:149` | **RED 3** — including ledger 117's own silence pin (`a run the OWNER cancelled under a watching job is not a queue failure`) |
+| the boundary's `: <message>` suffix dropped | `encounterRegen.ts:124` | **RED 2** — the failed-leg pin + the scan's boundary pin |
+| **the withdrawn arm's LABEL changed to a bogus one** (`runNotCompletedReason(run, 'bogus-withdrawn-label')`) | `encounter-map-queue.ts:155` | **GREEN 25/25** — the line the pins do not reach, and cannot: the withdrawn throw exists to STOP the body, its sentence is never reported (the silence is the `ctx.withdraw()` + the predicate), so no behavioural pin can see it. The fold there is held by the scan's COUNT alone |
 
 ### Remaining gaps
 

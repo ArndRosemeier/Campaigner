@@ -88,6 +88,35 @@ async function loadRegenContext(artifactId: Id): Promise<RegenContext & { comple
   return { campaign, cartographer, smith, complex: encounterDataIsComplex(artifact.data) };
 }
 
+/**
+ * The manual regen's own "this leg did not finish" sentence, and the ONE
+ * caller that does not adopt `runNotCompletedReason` (docs/18 §2/§5, docs/17
+ * row 128) — deliberately, twice over:
+ *
+ * 1. The LABEL is a fact the engine cannot carry. Every one of these callers
+ *    names a LEG of a chained operation ("Regenerate everything (content)"
+ *    vs "(battlemap)"), and the engine's own sentence names a STEP inside one
+ *    leg — both legs brief under the same step name — so adopting the seam
+ *    would delete the only place the owner can read WHICH leg died after one
+ *    click on "Regenerate everything". Losing information is not a wording
+ *    change.
+ * 2. The engine already surfaces its own sentence on this path (the run's
+ *    failure toasts it, `runEngine.fail`), so the message here rides as a
+ *    colon-suffixed DETAIL behind the leg, exactly as the other three sites
+ *    ride it AS the sentence. Two sentences for one fact, one per reader: the
+ *    run's own row says why the run died, this says which leg of the
+ *    operation the owner asked for died (the ledger-120 shape).
+ *
+ * The fallback branch is byte-identical to the seam's own fallback under this
+ * label — same formula, same label — so the seam still owns what "ended
+ * <status>" MEANS; only the composition with a non-empty message differs,
+ * and the scan pin in `tests/llm/runNotCompletedReason.test.ts` records this
+ * file as the one boundary that composes it. Do NOT "fix"
+ * this by adopting the seam without an owner decision, and do NOT fold the
+ * withdrawal predicate under it either: reporting a cancelled run as a
+ * failure is this path's own contract (a caller is waiting for an answer),
+ * while a queue job's withdrawal is moot work (docs/17 row 117).
+ */
 async function awaitCompletedRun(runId: Id, label: string): Promise<void> {
   const run = await waitForRunStatus(runId);
   if (run.status !== 'completed') {

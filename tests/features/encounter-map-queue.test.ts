@@ -7,7 +7,7 @@ import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createPersona as savePersona } from '@/db/personaRepo';
-import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
+import { deleteRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { createModule, defaultSettings, type Id } from '@/domain';
 import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
@@ -970,6 +970,43 @@ describe('module encounter map queue', () => {
     const failedRun = runs.find((run) => run.targetArtifactId === encounterId);
     expect(failedRun?.status).toBe('failed');
     expect(failedRun?.errorMessage).toContain('provider exploded');
+    // …and the queue's own verdict says WHY with that very sentence, verbatim:
+    // the engine wrote it, so it IS the reason (docs/18 §2,
+    // `runNotCompletedReason`) — never a reworded fragment behind the queue's
+    // own words. The non-empty half is asserted first so this can never pass
+    // by both sides being empty (AGENTS rule 1).
+    expect(failedRun?.errorMessage).not.toBe('');
+    const failureCall = toastErrorMock.mock.calls.find(
+      ([title]) => title === 'Could not generate a map for "Provider died in queue"',
+    );
+    expect(failureCall).toBeDefined();
+    expect((failureCall?.[1] as Error).message).toBe(failedRun?.errorMessage);
+  }, 30000);
+
+  it('a terminal run that carries NO sentence of its own still says why: `run ended <status>` (the seam’s fallback at this site)', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Queue silent death', 'No sentence');
+    const runId = await watchRunningRun(campaignId, encounterId, 'No sentence', 'Queue silent death');
+
+    // The row is made terminal by hand, with no message. This is the branch the
+    // engine's own failure path cannot reach any more (`fail` always composes a
+    // sentence), so without this write the fallback would be pinned NOWHERE at
+    // this site — it would survive only as an unpinned template.
+    await updateRun(runId, { status: 'failed', errorMessage: '' });
+
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().failed.map((job) => job.artifactId)).toEqual([
+        encounterId,
+      ]);
+    }, { timeout: 15000 });
+    // The queue's own loud verdict, carrying the seam's fallback sentence.
+    const failureCall = toastErrorMock.mock.calls.find(
+      ([title]) => title === 'Could not generate a map for "No sentence"',
+    );
+    expect(failureCall).toBeDefined();
+    expect((failureCall?.[1] as Error).message).toBe('run ended failed');
+    // It is a FALLBACK, not a verdict: the job is still loud and still
+    // retryable, which is what an owner-visible failure owes.
+    expect(useEncounterMapQueue.getState().failed).toHaveLength(1);
   }, 30000);
 
   it('a job whose run COMPLETED normally is unchanged: it maps, it never toasts, it never lands retryable', async () => {

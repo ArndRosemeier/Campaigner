@@ -395,6 +395,38 @@ export function isRunWithdrawn(run: PersonaRun | undefined): boolean {
   return run === undefined || run.status === 'cancelled';
 }
 
+/**
+ * THE one way to say WHY a run did not finish (docs/18 §2; docs/17 row 128).
+ *
+ * The engine's own `errorMessage` is an AUTHORED, self-contained sentence — the
+ * step that refused, what it refused, and what to do next — so it IS the
+ * reason: returned verbatim, never reworded into a fragment and never demoted
+ * to a colon-suffixed detail behind somebody else's words. Only when the
+ * engine wrote nothing does the caller's own vocabulary name the fact:
+ * `<label> ended <status>`, where the label is the context the caller has and
+ * the engine does not (`'run'` when it has none).
+ *
+ * What it is NOT: this composes a SENTENCE, never a verdict. Whether a run's
+ * end is a failure to report at all is still `isRunWithdrawn` (above), read by
+ * whoever holds the row — a caller that already returned on that predicate
+ * (the encounter-map queue) never reaches this with a withdrawn row, and a
+ * caller that reaches it with one did so on purpose (docs/17 row 117). Do not
+ * fold the two: the predicate answers "is there anything to say", this answers
+ * "what do we say".
+ *
+ * Callers: `features/modules/encounter-map-queue.ts` (a run that died on its
+ * own, twice — the withdrawn arm and the died-on-its-own arm, which is why the
+ * sentence lives here) and `features/modules/entity-batch.ts` (one batch
+ * entity whose run did not complete). `features/campaign/encounterRegen.ts`'s
+ * `awaitCompletedRun` deliberately does NOT adopt it, and that boundary is
+ * named rather than accidental (docs/18 §5): its label names WHICH leg of a
+ * chained operation died, a fact the engine's sentence cannot carry, so the
+ * message rides there as a colon-suffixed detail.
+ */
+export function runNotCompletedReason(run: PersonaRun, label = 'run'): string {
+  return run.errorMessage !== '' ? run.errorMessage : `${label} ended ${run.status}`;
+}
+
 export interface WaitForRunOptions {
   /**
    * Also return when the run PAUSES for the user (`awaiting_user` /

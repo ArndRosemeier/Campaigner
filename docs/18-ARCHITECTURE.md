@@ -132,6 +132,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Model escalation / refusals | `modelFallback.walkModelChain` — UNCONDITIONAL escalation (owner 2026-09-07: "ANY ERROR, ANY AT ALL should lead to the fallback"): every error advances to the next chain entry, the chain is the bound, exhaustion throws the combined `chainError`; only `MissingApiKeyError` and user aborts stop the walk. `failureKind`/`fallbackReasonFor`/`FILTER_PATTERN` classify for the Details view and notice wording — annotation only, never a gate | ad-hoc retry loops; silent model swaps; gating escalation on the failure class again |
 | Classify a failed run for the owner | `failureKind.failureKindOf(error)` (`llm/failureKind.ts` — structural over the typed error classes) + the `domain/run` `FAILURE_KIND_LABELS`/`FAILURE_KIND_GUIDANCE` maps; every fail site writes the kind next to the verbatim `errorMessage` (docs/05, ledger 35) | prose-matching the raw message; replacing or truncating the message with the kind |
 | Wait for a run | `runEngine.waitForRunStatus` (one primitive; `includePaused` for chain steps) | private poll loops; `TERMINAL_RUN_STATUSES` is the only terminal-status list |
+| **Say WHY a run did not finish — THE one way** (ledger 128) | `runEngine.runNotCompletedReason(run, label = 'run')` (`src/llm/runEngine.ts`, beside `isRunWithdrawn` — the file that owns a run's state vocabulary): the engine's own authored `errorMessage` IS the sentence and is returned VERBATIM; only when the engine wrote nothing does the caller's own vocabulary name the fact — `` `${label} ended ${run.status}` ``, `'run'` when the caller has no label. Callers: `features/modules/encounter-map-queue.ts` (both of its "this body must stop" throws: the withdrawn arm and the run that died on its own) and `features/modules/entity-batch.ts` (one batch entity whose run did not complete). `features/campaign/encounterRegen.ts`'s `awaitCompletedRun` is the ONE documented boundary (§5) | re-deriving `run.errorMessage !== '' ? run.errorMessage : \`run ended ${run.status}\`` at a call site (it stood TWICE in one queue function and once in the entity batch, i.e. three spellings of one fallback); re-wording the engine's message into a fragment, or demoting it to a colon-suffixed detail, at a site that has no label of its own; reading this seam as a VERDICT — whether a run's end is reportable at all is `isRunWithdrawn`'s question, and the two must never be folded (ledger 117) |
 | Cancel all in-flight runs | `runEngine.cancelAllActive()` — the engine's controller registry is the authoritative in-flight set (rows → resumable 'cancelled'; paused runs are not stoppable work) | querying `db.runs` for 'running' rows; ad-hoc cancel sweeps |
 | Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), classic encounter `brief→layout→schematic→stylize→pick→finalize` (pick ALWAYS pauses; NO verify step — D14, the user is the judge and Regenerate candidates is the correction) and vision encounter `brief→vision-map→finalize` (docs/11 D19: complex-only, no pick pause — the single map is selected by contract, locate+verify is the gate; the shape re-resolves after the brief stamps its `mapPath` marker) | a bespoke pipeline for a shape that fits an existing plan |
 | Image generation | `imageGen.generateImages` — UNCONDITIONAL model-chain escalation on ANY error (typed OpenRouter error envelopes classify structurally); `cappedToOne`/`fallback`/`filteredCount` surface as user-visible step notices; a single-entry chain's failure names the missing fallback config | raw image API calls elsewhere |
@@ -1659,6 +1660,31 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   (`expect(mock.mock.calls[0]?.[0]).toBe(raw)`). Any pin that asserts a Blob
   argument by value anywhere in this suite has the same hole.
 
+- **Adding an export to `llm/runEngine.ts` obliges the three PARTIAL mock
+  factories that fake it — and only the one whose pins reach the new line
+  NEEDS it** (ledger 128, MEASURED). `tests/features/entity-batch-fixed-cast.test.ts`,
+  `tests/features/change-artifact-instruction.test.ts` and
+  `tests/llm/moduleGen-cast.test.ts` all `vi.mock('@/llm/runEngine', …)` with a
+  factory that lists the members the code under test reads (`isRunWithdrawn`,
+  `runEngine`, `waitForRunStatus`) — deliberately, so the predicate stays REAL.
+  Vitest's mock proxy throws only when a MISSING export is ACCESSED, so a new
+  member is invisible until a pin drives the line that calls it. MEASURED by
+  injection: dropping `runNotCompletedReason` from the entity-batch factory REDs
+  the two pins that reach the batch's reason line (the withdrawal pin stays
+  green — the predicate answers first); dropping it from the OTHER two factories
+  left 25/25 GREEN, because every run those files fake is `'completed'`. Those
+  two entries are therefore a latent-trap guard, not coverage — say which one a
+  pin is when you add it.
+- **The `runNotCompletedReason` scan is a CALL-COUNT and it is comment-BLIND**
+  (ledger 128, MEASURED while writing it). It counts the literal
+  `runNotCompletedReason(` per file, so a doc comment that mentions the helper
+  WITH a call parenthesis — `` `runNotCompletedReason(run, label)` `` — reads as
+  a second call site and REDs the route pin. The seam's own comments (and the
+  boundary comment in `features/campaign/encounterRegen.ts`) therefore name it
+  WITHOUT one; that is a constraint of the instrument, not a style rule, and the
+  same blindness means a copy that composes the sentence through an intermediate
+  variable is invisible to it (the pin's header says so).
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them
@@ -1726,6 +1752,28 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   117): a queue job's withdrawal is moot work, while a manual regen that
   evaporates has a caller to answer to. Listed so nobody "discovers" it as a
   leftover of row 117; changing it is a surface decision, not a refactor.
+- **`awaitCompletedRun` also keeps its own "why this leg did not finish"
+  SENTENCE — the one caller that does not adopt `runNotCompletedReason`**
+  (ledger 128; the bullet above names the function at the base-SHA line `:93`,
+  which ledger 128's boundary comment moved to `:121`). Two facts decide it,
+  and both are about the LABEL rather than about taste: (1) the label names
+  WHICH LEG of a chained operation died ("Regenerate everything (content)" vs
+  "(battlemap)" vs "Prose redesign"), and the engine's own sentence cannot
+  carry that — both legs brief under the SAME step name — so adopting the seam
+  would delete the only place the owner can read which leg evaporated after one
+  click; (2) the engine already surfaces its own sentence on this path (the
+  run's failure toasts it), so the message rides here as a colon-suffixed
+  DETAIL behind the leg, exactly as the three folded sites ride it AS the
+  sentence. The FALLBACK branch is byte-identical to the seam's own fallback
+  under this label, so "ended <status>" still means one thing app-wide; only
+  the non-empty composition differs. Pinned as a boundary rather than left
+  implicit: `tests/llm/encounterRepopulate.test.ts` pins BOTH branches
+  (`Repopulate ended failed: <engine sentence>` and `Repopulate ended
+  cancelled`) and the scan in `tests/llm/runNotCompletedReason.test.ts` records
+  this file as the only other composer of the fallback formula and REDS if the
+  site is folded without moving the docs and those pins with it. Do NOT adopt
+  the seam here without an owner decision — and do NOT read this as licence to
+  fold `isRunWithdrawn` in either (the bullet above stands unchanged).
 - **Fresh-encounter finalize embeds `imageIds` at birth** via `createArtifact`
   instead of the attach seam — single-row create, no desync window. Listed
   so nobody "fixes" it without reading why.

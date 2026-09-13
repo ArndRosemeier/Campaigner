@@ -8,7 +8,7 @@ import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { isRunWithdrawn, runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
+import { isRunWithdrawn, runEngine, runNotCompletedReason, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 import { errorMessage } from '@/lib/errors';
 import {
   buildEntityBrief,
@@ -544,15 +544,14 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         } else {
           // Loud per-entity reason (AGENTS rule 2): the run's own
           // errorMessage when the engine recorded one, the terminal status
-          // otherwise; a completed run without an artifact is its own
-          // anomaly and says so.
+          // otherwise — the engine's ONE sentence seam for why a run did not
+          // finish (docs/18 §2, `runNotCompletedReason`). A completed run
+          // without an artifact is its own anomaly and says so.
           failed.push({
             name: target.name,
             message:
               outcome.status !== 'completed'
-                ? outcome.errorMessage !== ''
-                  ? outcome.errorMessage
-                  : `run ended ${outcome.status}`
+                ? runNotCompletedReason(outcome)
                 : 'the run completed without producing an artifact',
           });
         }

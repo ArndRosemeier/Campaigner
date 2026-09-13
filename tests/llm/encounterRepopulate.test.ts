@@ -7,7 +7,7 @@ import { createArtifact, getAnyArtifact, getArtifact, updateArtifact } from '@/d
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
-import { getRun } from '@/db/runRepo';
+import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import {
   createPersona,
@@ -732,4 +732,75 @@ describe('an instruction is appended to the brief, and absent without one', () =
 
     expect(promptFor()).toContain(`\n\nAdditional instruction: ${instruction}\n\n`);
   });
+});
+
+/**
+ * The manual regen's OWN reason sentence — the one caller that deliberately
+ * does NOT adopt the engine's sentence seam (docs/18 §2/§5, docs/17 row 128).
+ *
+ * It is a boundary, not an oversight, so it is pinned as one: the LABEL names
+ * which LEG of a chained operation died (both legs brief under the same engine
+ * step name), and the engine's own sentence rides behind it as a colon-suffixed
+ * detail — so the composition hides nothing the engine said, while adopting the
+ * seam would drop the leg. If a later slice adopts the seam here, these two
+ * pins move WITH the docs and the scan's boundary note.
+ */
+describe('the manual regen keeps its own leg-labelled reason (the seam BOUNDARY)', () => {
+  it('a leg that FAILED names the leg, then the engine’s sentence as a colon-suffixed detail', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedSingleTarget(campaign.id, goblinChunkId);
+    chatMock.mockRejectedValue(new Error('provider exploded'));
+
+    const thrown: unknown = await repopulateEncounter(target.id, { redesignProse: false }).catch(
+      (error: unknown) => error,
+    );
+
+    const runRow = (await listRunsByCampaign(campaign.id)).find(
+      (run) => run.targetArtifactId === target.id,
+    );
+    expect(runRow?.status).toBe('failed');
+    // Non-vacuity first: an empty message would make the assertion below pass
+    // for the fallback's reason instead (AGENTS rule 1).
+    expect(runRow?.errorMessage).not.toBe('');
+    expect(runRow?.errorMessage).toContain('provider exploded');
+    // The BOUNDARY's exact shape: `<label> ended <status>: <the engine's own
+    // sentence>`. Not the seam's shape — the message is NOT the whole sentence
+    // here — and not the fallback either.
+    expect((thrown as Error).message).toBe(`Repopulate ended failed: ${runRow?.errorMessage}`);
+  });
+
+  it('a leg the OWNER stopped is still REPORTED by this caller — `Repopulate ended cancelled`, the documented non-silence', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedSingleTarget(campaign.id, goblinChunkId);
+
+    // Park the Smith's draft reply so the run stays live while the owner's Stop
+    // lands (the Runs tab's own gesture). The reply is never released: nothing
+    // but the regen's own caller may speak in this pin.
+    chatMock.mockImplementation(
+      () =>
+        new Promise(() => {
+          /* parked forever */
+        }),
+    );
+    const pending = repopulateEncounter(target.id, { redesignProse: false });
+    let runId: Id | undefined;
+    await waitForRun(async () => {
+      runId = (await listRunsByCampaign(campaign.id)).find(
+        (run) => run.targetArtifactId === target.id,
+      )?.id;
+      expect(runId).toBeDefined();
+    });
+    if (runId === undefined) throw new Error('the regen run never appeared');
+    await runEngine.cancel(runId);
+
+    const thrown: unknown = await pending.catch((error: unknown) => error);
+
+    // The contrast with the queue (docs/17 row 117): a queue job's withdrawal
+    // is moot work and settles SILENTLY, while a manual regen has a caller to
+    // answer to — so this sentence is deliberately still composed and still
+    // thrown. The predicate exemption is the owner's decision and stands.
+    expect((thrown as Error).message).toBe('Repopulate ended cancelled');
+  }, 30000);
 });

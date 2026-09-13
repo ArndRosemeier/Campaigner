@@ -28,17 +28,23 @@ const { startRunMock, waitForRunStatusMock } = vi.hoisted(() => ({
 // The engine is faked (this file pins brief STRINGS), but the withdrawal
 // predicate is the REAL one: `runEntityBatch` reads it to tell an owner stop
 // from a failure (docs/17 row 117), and a mock that re-implemented that rule
-// would judge the fold against a fake.
+// would judge the fold against a fake. The reason seam is REAL for the same
+// reason (docs/18 §2, `runNotCompletedReason`): the per-entity failure pins
+// below judge the sentence the site actually emits.
 vi.mock('@/llm/runEngine', async (importOriginal) => {
   const actual = await importOriginal<typeof runEngineModule>();
   return {
     isRunWithdrawn: actual.isRunWithdrawn,
+    runNotCompletedReason: actual.runNotCompletedReason,
     runEngine: { on: () => () => undefined, startRun: startRunMock },
     waitForRunStatus: waitForRunStatusMock,
   };
 });
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
 
 const HALVAR_STATS: StatBlock = {
   system: 'dnd5e',
@@ -115,6 +121,16 @@ function completedWith(artifactId: string): PersonaRun {
   return { status: 'completed', resultArtifactId: artifactId, errorMessage: '' } as unknown as PersonaRun;
 }
 
+/** A run that died on its own, with the sentence the engine composed. */
+function failedWith(errorMessage: string): PersonaRun {
+  return { status: 'failed', resultArtifactId: null, errorMessage } as unknown as PersonaRun;
+}
+
+/** A withdrawn run — the owner's own Stop (docs/17 row 117). */
+function cancelled(): PersonaRun {
+  return { status: 'cancelled', resultArtifactId: null, errorMessage: '' } as unknown as PersonaRun;
+}
+
 function briefs(): string[] {
   return startRunMock.mock.calls.map((call) => {
     const input = call[0] as { brief?: unknown };
@@ -127,6 +143,7 @@ beforeEach(async () => {
   useProgressStore.getState().reset();
   startRunMock.mockReset();
   waitForRunStatusMock.mockReset();
+  toastErrorMock.mockReset();
 });
 
 describe('encounter batch briefs pin the landed fixed cast', () => {
@@ -197,5 +214,75 @@ describe('NPC batch briefs carry the structured level', () => {
     const [brief] = briefs();
     expect(brief).toContain('Party of 4 adventurers at level 1.');
     expect(brief).not.toContain('Fixed cast');
+  });
+});
+
+/**
+ * A batch entity whose run did not complete, and the ONE sentence seam that
+ * says why (docs/18 §2, `runNotCompletedReason`; docs/17 row 128). The engine
+ * is faked above but the seam is REAL — these pins judge the sentence the SITE
+ * emits, so a reworded copy there would have to be re-implemented to survive
+ * them.
+ */
+describe('a batch entity whose run did not complete says WHY through the engine’s one seam', () => {
+  it('reports the engine’s own sentence verbatim — never a reworded fragment', async () => {
+    const { campaign, module } = await seedWorld();
+    const sentence =
+      'Step "draft" rejected: the model reply could not be parsed. The run failed without saving partial results — run it again.';
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(failedWith(sentence));
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    // Byte-identical to what the engine wrote: no status, no label, no
+    // wrapper — the message IS the sentence.
+    expect(result.failed).toEqual([{ name: 'Kael', message: sentence }]);
+    expect(result.generated).toEqual([]);
+    // The failure list IS this seam's loud surface (it is what the caller
+    // throws at the owner — pinned in `tests/features/change-artifact.test.ts`,
+    // "a batch failure is thrown with the specialist reason, never returned as
+    // a quiet status"), and exactly one entity is reported: never swallowed,
+    // never duplicated.
+    expect(result.failed).toHaveLength(1);
+  });
+
+  it('falls back to `run ended <status>` when the engine wrote nothing', async () => {
+    const { campaign, module } = await seedWorld();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(failedWith(''));
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    expect(result.failed).toEqual([{ name: 'Kael', message: 'run ended failed' }]);
+  });
+
+  it('a run the OWNER stopped is still WITHDRAWN here: no failure entry and no red toast (row 117’s silence holds)', async () => {
+    const { campaign, module } = await seedWorld();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(cancelled());
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    // The predicate answers BEFORE the reason seam is ever reached, which is
+    // the whole separation the seam documents: a sentence exists for this row
+    // (`run ended cancelled`) and the owner still never hears it.
+    expect(result.failed).toEqual([]);
+    expect(result.generated).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 });
