@@ -1874,7 +1874,7 @@ with an authored, detailed row is not a target at all).
 **REVERT-PROVEN lines** (each injection applied to the exact executing line,
 printed back with `grep -n` and `git diff --stat` checked BEFORE the run, then
 restored from a byte-exact OUT-OF-TREE copy and re-verified with `git hash-object`
-— `entity-batch.ts` `3f38aa0d4b7a588ffc85fd77c4e80d41f9c99380`,
+— `entity-batch.ts` `c194c69a6e93b55662f711c19cc1c190b52eda67`,
 `post-generation.ts` `d560f465ba178ac380d78a31ccfb09c0626e458d`,
 `wikilinks.ts` `5bafcc7f0f3f430a0deba2a9c7839e6809f00b02`, all re-hashed after
 every restore; one suite group at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw
@@ -1888,6 +1888,30 @@ output kept):
 | **I4 the context anchor moved to the DISPLAY text** (a name-string search over what a reader sees) | `wikilinks.ts:300` | **RED 3**: the new aliased end-to-end pin AND the two pre-existing `surroundingParagraphs` pins (*"matches on token names only, never on display text"*) — the anchor rule was already pinned in the unit seam; the new pin measures it end to end |
 | **I5 a DEAD, unreferenced `describesEntity` re-added** to `lib/wikilinks.ts` (zero callers in `src/`) | `wikilinks.ts:307` | **RED 1, and it is ONLY the scan: 72/72 behavioural pins GREEN** — the measured proof that the scan is load-bearing, and that a dead condition is invisible to behaviour |
 | **I6 the empty-context fallback dropped** (`prose: { body: context }` — an empty body where no module text mentions her) | `entity-batch.ts:623` | **GREEN, 63/63** — names the ONE line no pin reaches. It is unreachable for a real batch target (every target is a wiki-link of the module text — the fact pinned above), which is exactly why row 133's *"the text NEVER mentions her"* pin was DELETED rather than replaced: nothing can reach that state |
+
+**Verified again at LANDING, by the dispatcher — because this slice's author never
+reported.** Two writers worked this slice and both died with an EMPTY report (no
+message, no BLOCKED): the second died AFTER committing, which is the only reason
+the slice exists at all (the first left an uncommitted draft, recoverable only
+because its worktree was still on disk). The author's own gate and injections
+above are its record; the landing was then proved independently. The gate was
+re-run on the committed tree — exit 0, **301 files / 3452 tests**, identical to
+the author's own numbers — plus two dispatcher injections (baseline copy kept
+OUT of tree; `entity-batch.ts` `c194c69a…` re-hashed after each restore):
+
+| injection | line it hits | result |
+|---|---|---|
+| `if (true) return;` inserted before the cast arm's `runEngine.startRun({` (the pre-rule behaviour) | `entity-batch.ts:658` | **RED 5**: the owner-ruling pin, the material/context pin, the row-135 INVERSION, the aliased-link pin, the re-target seal |
+| `contextParagraphs` emptied (the module's text stops reaching the brief) | `entity-batch.ts:584` (its ONLY occurrence) | **RED 2**: the material/context pin and the failure-funnel pin |
+
+**One inaccurate record, measured and corrected here.** This section first named
+`entity-batch.ts` `3f38aa0d…` as the restored hash; the landed file (and the tree
+at every point after the author's final edit) hashes `c194c69a…`, so the recorded
+value was STALE — taken before the author's last edit to that file. `post-generation.ts`
+(`d560f465…`) and `wikilinks.ts` (`5bafcc7f…`) were correct. A hash in a
+REVERT-PROVEN line is what a later reader uses to prove a file is unchanged:
+a stale one silently defeats that check, which is why it is corrected rather than
+left.
 
 **The test-count arithmetic, measured.** The DELETED floor block held **7** pins,
 not the 6 row 133 recorded (`tests/lib/wikilinks.test.ts`, 46 → 39). The

@@ -246,6 +246,17 @@ once found by the owner instead of the agent.
   status for uncommitted work. Verify against `origin/main`; never assume
   the work landed OR that it is lost. If the branch is empty, re-dispatch
   from a clean tree.
+- **A writer that cannot finish must COMMIT, not merely stop.** Uncommitted
+  work dies with the session. Real incident (one slice, back-to-back): two
+  writers failed with EMPTY reports — no message, no BLOCKED — the first
+  leaving an uncommitted draft that survived only because its worktree was
+  still on disk, the second preserved only because it had committed its
+  work-in-progress on its branch before dying. Every brief therefore
+  requires: if you cannot finish, commit the coherent partial state on your
+  branch and report BLOCKED. A branch commit survives a silent death; an
+  uncommitted tree may not. The dispatcher, for its part, verifies a
+  recovered branch as if it were a fresh landing — a dead writer's commit
+  has never been gated by a live report.
 - Prune stale worktree metadata whenever worktrees go missing (temp-dir
   cleanup orphans them: `git worktree prune`).
 
