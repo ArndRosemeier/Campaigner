@@ -102,7 +102,7 @@ function sanitizeLine(line: string): string {
   return line.replaceAll(/<[^>]*>/g, '');
 }
 
-export function parseMarkdown(markdown: string): MdBlock[] {
+export function parseMarkdown(markdown: string, options: MdRenderOptions = {}): MdBlock[] {
   const blocks: MdBlock[] = [];
   const lines = markdown.split('\n');
   let paragraph: string[] = [];
@@ -111,7 +111,7 @@ export function parseMarkdown(markdown: string): MdBlock[] {
   function flushParagraph(): void {
     const text = sanitizeLine(paragraph.join(' ')).trim();
     paragraph = [];
-    if (text !== '') blocks.push({ kind: 'paragraph', runs: parseInline(text) });
+    if (text !== '') blocks.push({ kind: 'paragraph', runs: parseInline(text, options) });
   }
 
   function flushList(): void {
@@ -119,7 +119,7 @@ export function parseMarkdown(markdown: string): MdBlock[] {
       blocks.push({
         kind: 'list',
         ordered: list.ordered,
-        items: list.items.map((item) => parseInline(sanitizeLine(item).trim())),
+        items: list.items.map((item) => parseInline(sanitizeLine(item).trim(), options)),
       });
     }
     list = null;
@@ -148,7 +148,11 @@ export function parseMarkdown(markdown: string): MdBlock[] {
       flushParagraph();
       flushList();
       const level = (heading[1] ?? '').length as 1 | 2 | 3;
-      blocks.push({ kind: 'heading', level, runs: parseInline(sanitizeLine(heading[2] ?? '')) });
+      blocks.push({
+        kind: 'heading',
+        level,
+        runs: parseInline(sanitizeLine(heading[2] ?? ''), options),
+      });
       continue;
     }
 
@@ -167,7 +171,7 @@ export function parseMarkdown(markdown: string): MdBlock[] {
     if (quote !== null) {
       flushParagraph();
       flushList();
-      blocks.push({ kind: 'quote', runs: parseInline(sanitizeLine(quote[1] ?? '')) });
+      blocks.push({ kind: 'quote', runs: parseInline(sanitizeLine(quote[1] ?? ''), options) });
       continue;
     }
 
@@ -186,9 +190,12 @@ export function parseMarkdown(markdown: string): MdBlock[] {
   return blocks;
 }
 
-/** Renders parsed blocks as pdfmake content; blockquotes become read-aloud boxes. */
-export function mdToPdfmakeContent(markdown: string): Content[] {
-  return parseMarkdown(markdown).map((block): Content => {
+/** Renders parsed blocks as pdfmake content; blockquotes become read-aloud boxes.
+ * `options.destinationFor` is the ONE hook through which a wiki-link's name
+ * becomes an INTERNAL LINK to where it prints (docs/19 §7, docs/17 row 151);
+ * without it every run is what it always was. */
+export function mdToPdfmakeContent(markdown: string, options: MdRenderOptions = {}): Content[] {
+  return parseMarkdown(markdown, options).map((block): Content => {
     switch (block.kind) {
       case 'heading': {
         const style = block.level === 1 ? 'h1' : block.level === 2 ? 'h2' : 'h3';

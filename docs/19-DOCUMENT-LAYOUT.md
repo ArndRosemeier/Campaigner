@@ -19,7 +19,7 @@ the pins exist at HEAD, `spec only` means nothing implements it yet):**
 | §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
 | §9 "no silent fitting" (a promotion, continuation or omission is visible and diagnosable) | **BUILT** — docs/17 row 148 |
 | §6 The planner's toolkit (real content through the chat's retrieval seam) | spec only |
-| §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | spec only — the own-page pointer of §5 is the only navigation this slice adds |
+| §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | **BUILT** except the page numbers — docs/17 row 151 (bullets 1, 3 and 4; the `chapters` TOC still prints without page numbers, see §7) |
 | §8 One press, every export plans | **BUILT** — docs/17 row 139 |
 | §10.4 Print refinement / duplex spread pairing | OPEN, deferred (§11 step 6) |
 | §10.5 Geometry and detail type sizes are starting points | the BUILT values are listed in docs/17 row 148; they are tuned, not frozen |
@@ -198,10 +198,19 @@ toolkit is an improvement rather than a blocker for §3–§5.
 - Every artifact section states where it is referenced from.
 - The audience split stays: one plan, and a full / GM / player document from it.
 
-**Spec only** except the first bullet, which exists for wiki-links and has since
-row 105; the own-page pointer sentence of §5 is the only navigation this slice
-adds. A TOC with PAGE NUMBERS is not built (the `chapters` TOC prints without
-them), and an artifact section does not yet state where it is referenced from.
+**BUILT (docs/17 row 151), except the second bullet.** Every `[[wiki-link]]` of
+the module's own text — the premise, every part, every artifact body — is an
+internal link to where that row prints, through ONE hook
+(`mdToPdfmake.MdRenderOptions.destinationFor`) fed by the reader's own resolver,
+so the PDF and the app's chips cannot name different rows. Every artifact
+section states where it is referred to from: one line, `Referenced from: <place>
+· <place>`, appended to the section's own main column, each place an internal
+link to where it prints — and a row the document's own text never names states
+nothing, because there is nothing to state. The audience split is unchanged, and
+every link is checked to name a destination the same document actually carries
+(pdfmake throws on a dangling one). **A TOC with PAGE NUMBERS is still NOT
+built** — the `chapters` TOC prints without them, exactly as this paragraph said
+before, and the builder is definition-only, so nothing in it knows a page.
 
 ## 8. The export flow
 
@@ -234,7 +243,14 @@ answers are HIS, and where an answer differs from the proposal below it is his
 call, not a spec default.** No question in this section is still open.
 
 1. **Does the sidebar repeat?** — **ONCE, with a link back.** (His answer matches
-   the proposal. The link back is the §5 pointer sentence.)
+   the proposal. The link back is the §5 pointer sentence.) **BUILT, docs/17 row
+   151 — with one recorded deviation:** §5's pointer sentence says the detail
+   *follows on the next page*, which is false for a back-reference, so the link
+   back is a new sentence through the SAME marker seam ("The details of “X” print
+   earlier in this document.") rather than a sentence that lies about where the
+   content is. The rule fires at the one place a repeated companion is emitted (a
+   plan may name one row twice), and it is per DOCUMENT: nothing about it is
+   stored.
 2. **May the plan omit?** — **NO: the document is COMPLETE.** Nothing the plan
    places is dropped for space; the audience split remains the only thing that
    removes material from a document. Proposal: complete.
@@ -262,5 +278,7 @@ call, not a spec default.** No question in this section is still open.
    step-down ladder, continuation markers.~~ **DONE** (docs/17 row 148 — it
    landed with 3, because a placement rule with no paginator has nowhere to put
    its answer).
-5. **Navigation:** back-references from artifact sections, links everywhere.
+5. ~~**Navigation:** back-references from artifact sections, links everywhere.~~
+   **DONE** (docs/17 row 151 — except §7's TOC-with-page-numbers bullet, which is
+   explicitly still not built).
 6. **Print refinement** (OPEN, §10).

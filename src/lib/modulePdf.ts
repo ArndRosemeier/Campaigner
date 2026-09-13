@@ -814,13 +814,19 @@ export interface ReferenceSite {
  * docs/19 §7, DERIVED: the places in the document's own text whose wiki-links
  * name this row, in document order.
  *
- * THE one rule, and deliberately the SAME one that decides placement (docs/19
- * §4: locality is computed from the first reference): `extractWikiLinks` over
- * the place's text, resolved by the reader's own resolver
- * (`lib/wikilinks.resolveWikiLink`) against the reader's own pool, module tier
- * included. A second "is this row mentioned" rule would let a row be placed
- * beside a sentence that its own back-reference list does not name — the two
- * halves of §4/§7 disagreeing about what a reference IS.
+ * THE one rule, and deliberately the SAME one the document already asks "does
+ * anything refer to this row?" with — `moduleMentionOrder`, which is what the
+ * owner's §10.3 omission decision and the document's scope are computed from:
+ * `extractWikiLinks` over the place's text, resolved by the reader's own
+ * resolver (`lib/wikilinks.resolveWikiLink`) against the reader's own pool,
+ * module tier included. Stated precisely, because the two are easy to confuse:
+ * the PLACEMENT TIER is §4/§5's arithmetic (`detailPlacement`, kind + image +
+ * measured height) and does not read references at all — §4's "after the text
+ * that first refers to it" is realized by the plan's own section ORDER. What
+ * this shares with placement is the ORDER the document is built in, not a
+ * formula: a second "is this row mentioned" rule here would let a row be
+ * dropped as unreferenced while its own back-reference line named the sentence
+ * that refers to it.
  *
  * The places are only the MODULE'S OWN TEXT (premise, parts), never another
  * artifact section: §7 asks where the artifact is referred to FROM, and the
@@ -1977,7 +1983,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     // ---- Premise ---------------------------------------------------------
     blocks.push(chapterBlock('Premise', 'node-premise', module.title));
     blocks.push({
-      main: premiseContent(module, problems),
+      main: premiseContent(module, problems, state),
       detail: [],
       placement: { kind: 'beside' },
       name: null,
@@ -2028,7 +2034,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
         ),
       );
       blocks.push({
-        main: partTextContent(part, total, problems),
+        main: partTextContent(part, total, problems, state),
         detail: [],
         placement: { kind: 'beside' },
         name: null,

@@ -572,6 +572,124 @@ export function pdfLayoutOmissionPlan(
 }
 
 /**
+ * A FOURTH fixture, for the owner's sidebar answer to docs/19 §10 question 1
+ * (*"ONCE, with a link back"*, docs/17 row 151). It is the ONE shape that can
+ * reach the rule and it is NOT one the other fixtures produce: a plan that
+ * names the SAME row twice, so the second section is a reference to a companion
+ * that already printed.
+ *
+ * The plan validator permits it (`documentPlanIssues` checks anchors, not
+ * duplicates) and the renderer has always had to cope — two sections cannot
+ * share one destination id (`destinations` keeps the FIRST). What was never
+ * decided until now is what the second one PRINTS: the companion again, or a
+ * link back to where it printed.
+ *
+ * Deliberately tiny and built by nobody else, so adding it cannot move the
+ * other fixtures' content sets: one `npc` with a real stat block (so the
+ * companion has mechanics to find or lose), named ONCE in the premise, placed
+ * by TWO plan sections.
+ */
+export async function pdfLayoutRepeatFixture(): Promise<{
+  module: Module;
+  artifacts: AnyArtifact[];
+  images: { dataUrls: Record<Id, string>; failures: [] };
+}> {
+  const campaign = await createCampaign({ name: 'Repeat Campaign', system: 'dnd5e' });
+  const module = await saveModule({
+    ...buildModule({
+      campaignId: campaign.id,
+      title: 'The Bell',
+      concept: 'A bell nobody should ring twice.',
+      levelMin: 1,
+      levelMax: 1,
+      tone: '',
+      sizeDial: 'sketch',
+    }),
+    spine: moduleSpineSchema.parse({
+      premise: 'The rope is tied to [[The Bell Ambush]].',
+      themes: [],
+      partPlan: [
+        { title: 'The Rope', levelBand: '1', synopsis: 'Pull it.', levelUpTrigger: '' },
+      ],
+    }),
+  });
+  // An ENCOUNTER, deliberately: §4 sends that kind to its own page whatever its
+  // size, so the two referencing sections land on two SEPARATE pages and a pin
+  // can tell which one carries the companion and which one the link back. With
+  // a kind that flows, both would share one page's sidebar and the two halves
+  // would be indistinguishable in the definition.
+  const ambush = await createArtifact({
+    campaignId: campaign.id,
+    kind: 'encounter',
+    name: 'The Bell Ambush',
+    body: 'They ring it twice.',
+    data: {
+      difficulty: 'deadly',
+      levelHint: '3',
+      monsters: [
+        {
+          name: 'Bellringer',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'inline', statBlock: layoutStatBlock() },
+        },
+      ],
+      terrain: 'wet planks by the bell rope',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    },
+  });
+  return { module, artifacts: [ambush], images: { dataUrls: {}, failures: [] } };
+}
+
+/**
+ * The plan for that fixture: the SAME row in two sections, in plan order. The
+ * first is where the companion prints; the second is the later reference the
+ * owner's answer rules on. Section indices are the destinations the document
+ * uses (`node-plan-1` and `node-plan-2`), which is what the pin links against.
+ */
+export function pdfLayoutRepeatPlan(
+  fixture: Awaited<ReturnType<typeof pdfLayoutRepeatFixture>>,
+): ModuleDocumentPlan {
+  const row = fixture.artifacts[0];
+  if (row === undefined) throw new Error('the repeat fixture must build its row');
+  return moduleDocumentPlanSchema.parse({
+    sections: [
+      {
+        title: 'At the Rope',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'part', planIndex: -1 },
+        images: [],
+      },
+      {
+        title: 'The Bell Ambush, first',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'encounter', artifactId: row.id },
+        images: [],
+      },
+      {
+        title: 'The Bell Ambush, again',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'encounter', artifactId: row.id },
+        images: [],
+      },
+    ],
+    plannedByModel: 'vendor/planner-1',
+    plannedAt: 1_700_000_000_000,
+  });
+}
+
+/**
  * Every TEXT RUN of a pdfmake definition, in document order — the document
  * READ as text, through the same walk `tests/lib/roster-reference-parity`
  * uses (a run's `text` may be a string or a nested array of runs; every other
@@ -608,4 +726,50 @@ export function contentStrings(definition: unknown): string[] {
 /** The document's runs joined, with the ORDER kept (for adjacency pins). */
 export function documentText(definition: unknown): string {
   return contentRuns(definition).join('\n');
+}
+
+/**
+ * Every INTERNAL LINK a definition carries, in document order: the run's own
+ * text and the destination it jumps to. A run whose `text` is nested (the
+ * linked kicker of docs/19 §10.1) contributes its innermost linked run.
+ *
+ * The pdfmake contract is that a `linkToDestination` names a node `id` in the
+ * SAME document — pdfmake throws at render time otherwise, which a
+ * definition-level suite cannot observe, so `nodeAnchors` beside this is how
+ * the suite checks it instead.
+ */
+export function linkedRuns(
+  node: unknown,
+  out: { text: string; destination: string }[] = [],
+): { text: string; destination: string }[] {
+  if (typeof node !== 'object' || node === null) return out;
+  if (Array.isArray(node)) {
+    for (const child of node) linkedRuns(child, out);
+    return out;
+  }
+  const record = node as Record<string, unknown>;
+  if (typeof record.linkToDestination === 'string' && typeof record.text === 'string') {
+    out.push({ text: record.text, destination: record.linkToDestination });
+  }
+  for (const value of Object.values(record)) linkedRuns(value, out);
+  return out;
+}
+
+/** Every destination `id` a definition carries → the text that node prints. */
+export function nodeAnchors(
+  node: unknown,
+  out: Map<string, string> = new Map<string, string>(),
+): Map<string, string> {
+  if (typeof node !== 'object' || node === null) return out;
+  if (Array.isArray(node)) {
+    for (const child of node) nodeAnchors(child, out);
+    return out;
+  }
+  const record = node as Record<string, unknown>;
+  if (typeof record.id === 'string') {
+    const text = record.text;
+    out.set(record.id, typeof text === 'string' ? text : contentRuns(text).join(''));
+  }
+  for (const value of Object.values(record)) nodeAnchors(value, out);
+  return out;
 }

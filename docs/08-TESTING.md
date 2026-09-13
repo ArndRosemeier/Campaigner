@@ -623,7 +623,7 @@ without any existing pin noticing.
 | Surface | Covered by | State |
 | --- | --- | --- |
 | **Nothing is lost.** Every TEXT RUN the pre-layout renderer produced is still produced, in all three fixture documents | `pdfLayout.test` — a multiset differential of runs, BEFORE vs AFTER, non-vacuous on both sides (>50 runs each). The BEFORE column is `pdfLayoutBaseline.json`, captured by the SAME extractor at the base commit in a second worktree at `origin/main`, so it is a measurement of the renderer that shipped, not a hand-written list | ✅ |
-| **Only the layout's own signposts are NEW** — the added runs are EXACTLY the two own-page pointer sentences, and nothing else in the document is rewritten | `pdfLayout.test` (`adds exactly the page model's own pointers, and nothing else` — an `toEqual` on the added-run list, so an extra run is a failure even though nothing was lost) | ✅ |
+| **Only the layout's own signposts are NEW** — at this landing the added runs were EXACTLY the own-page pointer sentences, and nothing else in the document was rewritten. **Row 151 extended this same `toEqual` with the navigation's own lines and renamed it** (`adds exactly the page model's own pointers and the navigation's own lines, and nothing else`); the equality itself was never weakened | `pdfLayout.test` (`adds exactly the page model's own pointers and the navigation's own lines, and nothing else` — an `toEqual` on the added-run list, so an extra run is a failure even though nothing was lost) | ✅ |
 | A report of both sides' counts (runs and distinct strings) is asserted, so a silent shrink is visible as a number and not only as a red | `pdfLayout.test` (`reports the content counts on both sides`) — 217/156 → 220/159, 163/128 → 165/130, 53/48 → 53/48 | ✅ |
 | **§3 geometry**: a companion page is `{columns: [{width: 294.8, stack}, {width: 170.1, stack, style: 'detail', fontSize: 9.5}], columnGap: 17, pageBreak: 'before'}`, and `pageMargins` is 56.7 on all four sides | `pdfLayout.test` (2) — read off the built definition, and the three widths are asserted to sum to the content width | ✅ |
 | **The sidebar carries the MECHANICS and the main column the TEXT** — a faction's `Goals`/`Methods` fields are in the sidebar of the page that names it and are asserted ABSENT from that page's main column, so the two columns cannot be one column rendered twice | `pdfLayout.test` (`prints the artifact's mechanics in the sidebar and its text in the main column`) | ✅ |
@@ -683,6 +683,99 @@ right-hand sidebar with the artifact's mechanics at a smaller size beside the ma
 text, and that an encounter or a map-bearing location sits on its own full-width
 page immediately after the page whose sidebar points at it, with no column
 spilling onto the following page.
+
+### §7 navigation — links everywhere, back-references, one companion with a link back (docs/17 row 151, docs/19 §7/§10)
+
+**The slice this section documents was recovered from a writer killed mid-run by
+the OOM killer**, and its draft did not compile (three half-finished edits; row
+151 names each one). Everything below is measured on the repaired tree.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **§7 bullet 1**: every `[[wiki-link]]` of the module's own text (premise, parts, artifact bodies) is an internal link to where that row prints — pinned on the DESTINATION (`node-<location.id>`), not on “a link exists”, because a link that jumps elsewhere is exactly the defect the bullet forbids; the target node is separately pinned to print the row's own name | `pdfLayout.test` (`links the document's own wiki-links to where that row PRINTS, by the row's own destination`) | ✅ |
+| **A name the document does not print stays a plain bold run** — `[[Marek]]` is LINKED in the procedural document (he prints) and has NO link in the planned document (the plan gives him no section and he is not an NPC). An absence and a presence on ONE name, so neither half can pass vacuously; pdfmake throws on a dangling `linkToDestination` | `pdfLayout.test` (`leaves a name this document does NOT print as plain bold text (never a dangling link)`) | ✅ |
+| **No document emits a link to a destination it does not carry** — every `linkToDestination` in FIVE definitions names an `id` the same definition carries, including BOTH player documents (§7's fourth bullet: the audience split stays) and the small module. This is the pdfmake contract a definition-level suite cannot observe as a throw | `pdfLayout.test` (`never emits a link to a destination the same document does not carry, in any audience`) | ✅ |
+| **§7 bullet 3**: an artifact section states where it is referred to from — the line decodes to `[{Premise → node-premise}, {The Dockyards → node-part-0}]` in READING order, and is asserted to sit on the ROW'S OWN page | `pdfLayout.test` (`states where an artifact is referred to from, as internal links to those places`) | ✅ |
+| **A row the text never names states NOTHING** (no empty `Referenced from:`, which would be a claim the text does not support) — the omission fixture's owned orphan, beside its sibling that does state one | `pdfLayout.test` (`states NOTHING for a row the document's own text never names`) | ✅ |
+| **§10.1 — the owner's “ONCE, with a link back”**, pinned in BOTH directions on a FOURTH fixture (one encounter named by TWO plan sections; an encounter because §4 sends that kind to its own page, so the two references land on two SEPARATE pages and a pin can tell them apart): the first section's page carries the mechanics and NOT the pointer, the later one the pointer and NOT the mechanics, the pointer's only link is the FIRST section's anchor, and over the whole document each half appears EXACTLY once | `pdfLayout.test` (`prints the companion at the FIRST reference and the link back at the later one`) | ✅ |
+| The differential's added-runs equality, updated deliberately and exactly (see the table below for the numbers) | `pdfLayout.test` (the `toEqual` named above) | ✅ |
+| The pre-existing deterministic-byte pins still hold, with their “and states the number” half moved: planned definition 6973 → 8095 characters, rendered PDF 51183 → 59215 bytes. The load-bearing halves (`second === first`, `firstDiff: -1`) are UNCHANGED | `modulePdfPlan.test` (2) | ✅ |
+| **§7's second bullet (a TOC with PAGE NUMBERS) is NOT built** — the `chapters` TOC prints without them, exactly as docs/19 §7 says; the builder is definition-only and knows no page | nothing — stated so it is not mistaken for done | ❌ not built |
+| The whole PDF neighbourhood, re-run after every step | 14 files / 179 tests: `pdfLayout`, `modulePdf`, `modulePdfPlan`, `pdfExport`, `provenance-export`, `wiki-raw-export`, `roster-reference-parity`, `fileSlug`, `text-blocks`, `mdToPdfmake`, `wiki-token-grammar`, `cover-storage`, `module-pdf-export`, `entity-intent-brief` | ✅ |
+
+**THE DIFFERENTIAL'S NUMBERS, before → after** (same extractor both sides; the
+BEFORE column is the pre-layout renderer's baseline in `pdfLayoutBaseline.json`):
+
+| document | runs (pre-layout) | runs (row 148) | runs (row 151) | strings (row 151) |
+| --- | --- | --- | --- | --- |
+| large-procedural | 217 | 220 | **244** | 159 → **161** |
+| large-planned | 163 | 165 | **183** | 130 → **132** |
+| small-procedural | 53 | 53 | **57** | 48 → **49** |
+
+**The ADDED runs are one back-reference line per artifact section that is referred
+to from somewhere** — `Referenced from: ` + one LINKED run per place + a ` · `
+separator (large-procedural has 8 such lines, four of which name two places) — and
+the only two new STRINGS are `Referenced from: ` and ` · `, because every place
+LABEL already printed as a heading. **The list's ORDER is the DIFF's, not the
+document's, and the recovered draft got exactly that wrong:** `missingRuns`
+consumes the BEFORE multiset greedily as it walks the after document, so an added
+run whose text the pre-layout document also printed elsewhere is credited to
+whichever occurrence the walk reaches first (`A Word on the Tide` is a heading in
+both documents, so both of its added instances land at the END of
+`large-planned`'s list). The assertion keeps the measured order and says so.
+
+**ASSERTIONS CHANGED: 5, all counted, none weakened** (no `toEqual` became a
+`toContain`, nothing deleted):
+
+| # | file | assertion | before → after |
+| --- | --- | --- | --- |
+| 1 | `pdfLayout.test` | the added-runs `toEqual` | list extended with the navigation's runs, order corrected to the measured one |
+| 2 | `pdfLayout.test` | that pin's NAME | `adds exactly the page model's own pointers, and nothing else` → `adds exactly the page model's own pointers and the navigation's own lines, and nothing else` |
+| 3 | `pdfLayout.test` | the counts `toEqual` | 220/159, 165/130, 53/48 → 244/161, 183/132, 57/49 (the BEFORE column is unchanged: 217/156, 163/128, 53/48) |
+| 4 | `modulePdfPlan.test` | planned definition characters | 6973 → 8095 |
+| 5 | `modulePdfPlan.test` | rendered PDF bytes | 51183 → 59215 |
+
+**NEW PINS, BY NAME** (6, all in `pdfLayout.test.ts`, which went 19 → 25):
+`links the document's own wiki-links to where that row PRINTS, by the row's own
+destination`; `leaves a name this document does NOT print as plain bold text
+(never a dangling link)`; `never emits a link to a destination the same document
+does not carry, in any audience`; `states where an artifact is referred to from,
+as internal links to those places`; `states NOTHING for a row the document's own
+text never names`; `prints the companion at the FIRST reference and the link back
+at the later one`.
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back, `git diff --stat` taken before the run, restored from an OUT-OF-TREE copy
+— never `git checkout --` — and re-hashed with `git hash-object`, identical
+before and after every one: `modulePdf.ts`
+`7f8dbee2187ae774d96d3852d55d37086b7092f9`, `pdfPageModel.ts`
+`35f6661c19bf3711e5505dfe5c1cb2e9fdef18f2`):
+
+| injection | what it does | RED / GREEN |
+| --- | --- | --- |
+| **I1** `earlierDetailMarker` drops the destination — the pointer prints as plain text, no link | the link back is gone while the sentence stays | **1 / 24** — exactly the §10.1 pin: `expected [] to deeply equal [{text: ‘THE DETAILS OF “THE BELL AMBUSH” PRINT EARLIER IN THIS DOCUMENT.’, destination: ‘node-plan-1’}]` |
+| **I2** `companionOnce` links EVERY reference back instead of printing the companion | the non-vacuity direction the rule exists for | **7 / 18** — the §10.1 pin, AND the content-preservation differential (the mechanics print NOWHERE: `loses not one text run of the pre-layout renderer` reds with 136 missing runs), the added-runs equality, the counts report, the sidebar-mechanics pin, the own-page pin and the verbatim pin |
+| **I3** `referencedFromContent` returns nothing — §7's back-reference line is never emitted | the whole bullet-3 rule is dropped | **4 / 21** — the added-runs equality, the counts report, the back-reference pin and the states-nothing pin |
+| **I4** `artifactProse` drops ONE artifact's body while the page model is untouched | a body goes missing with the layout intact | **3 / 22** — the loss differential (`expected [ ‘The tower watches the ford.’, …(1) ] to deeply equal []`), the counts report and the verbatim pin. **The added-runs equality stayed GREEN** — which is exactly why the loss side exists: a differential that only counted ADDITIONS would have called a dropped body a clean document |
+
+**WHAT THE PINS CANNOT PROVE.** jsdom asserts pdfmake DEFINITIONS, never a
+rendered page. Three specific gaps: **(a)** the pdfmake link contract is checked
+STRUCTURALLY — the suite proves every `linkToDestination` names an `id` the same
+definition carries (the documented condition), and cannot observe what pdfmake
+does when it holds, nor that a viewer follows it. **(b)** The pointer's VISUAL
+consequence is unverified: when two referencing sections of a FLOWING kind land on
+one page's sidebar, the companion and the pointer print in the same sidebar stack
+(measured while building the fixture — it is why the §10.1 fixture uses an
+encounter, which §4 sends to its own page), and whether that read is confusing is
+a judgement this suite cannot make. **(c)** The double reference itself is the
+FIXTURE's, not the planner's: `documentPlanIssues` permits a duplicate section and
+whether a real plan makes one is a property of the model. **The one thing only the
+owner can check in a real PDF:** follow one `[[wiki-link]]` in the premise and see
+that it jumps to where that row prints; read the `Referenced from:` line at the
+bottom of a row's own section and check the places it names are where that row is
+actually talked about; and if a plan ever names one row twice, confirm the second
+section shows the kicker sentence “THE DETAILS OF ‘X’ PRINT EARLIER IN THIS
+DOCUMENT.” as a LINK, with the stat block printed ONCE, at the first of the two.
 
 ### The document plan (docs/17 row 109, docs/07 §M3-D)
 

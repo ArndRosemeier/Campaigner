@@ -794,8 +794,10 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // the sections in page nodes (a `columns` per page, a `stack` for a page
     // with no companion), moves each artifact's mechanics into a sidebar column
     // and adds the own-page pointers — so the definition is bigger and the
-    // BYTE-IDENTITY above is what this pin is actually about.
-    expect(first.length).toBe(6973);
+    // BYTE-IDENTITY above is what this pin is actually about. UPDATED AGAIN by
+    // docs/17 row 151 (6973 → 8095): §7's `Referenced from:` line, and the
+    // internal link on every wiki-link of the module's own text.
+    expect(first.length).toBe(8095);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
@@ -822,8 +824,10 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // UPDATED by docs/17 row 148 (51271 → 51183): the pagination changes how
     // much of the page each item occupies, so the compressed bytes move a
     // little; `firstDiff: -1` — no differing byte at all — is unchanged, and is
-    // what this pin exists for.
-    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 51183 });
+    // what this pin exists for. UPDATED AGAIN by docs/17 row 151 (51183 →
+    // 59215): §7's back-reference lines and the wiki-link annotations are real
+    // content, so the rendered book grows.
+    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 59215 });
     expect(first.problems).toEqual(second.problems);
   });
 

@@ -13,6 +13,7 @@ import {
   PAGE_MARGIN,
   SIDEBAR_COLUMN_WIDTH,
   detailPlacement,
+  earlierDetailNote,
   paginateDocument,
   type PageBlock,
 } from '@/lib/pdfPageModel';
@@ -20,10 +21,14 @@ import { clearDatabase } from '../db/helpers';
 import {
   contentRuns,
   contentStrings,
+  linkedRuns,
+  nodeAnchors,
   pdfLayoutLargeFixture,
   pdfLayoutLargePlan,
   pdfLayoutOmissionFixture,
   pdfLayoutOmissionPlan,
+  pdfLayoutRepeatFixture,
+  pdfLayoutRepeatPlan,
   pdfLayoutSmallFixture,
 } from './pdfLayoutFixtures';
 
@@ -53,6 +58,9 @@ import {
  * 4. **NOTHING MATERIALIZED** — the layout is render-time: no stored byte and no
  *    citation moves, so a module rendered before the change renders under the
  *    new layout on its next export with no migration.
+ * 5. **§7 NAVIGATION and the owner's §10.1 sidebar answer** (docs/17 row 151) —
+ *    the links, the back-references, and "a companion prints once, later
+ *    references link back", each pinned in BOTH directions.
  */
 
 interface Baseline {
@@ -178,7 +186,8 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
     }
     // The ONLY runs the document gains over the pre-layout renderer, by name
     // and in order, because the navigation slice (docs/17 row 151) ADDS runs
-    // and this assertion is an EQUALITY on purpose — an extra run still fails:
+    // and this assertion is an EQUALITY on purpose — an extra run still fails,
+    // and so does a missing one:
     //
     // 1. the §5 own-page pointer, one per own-page artifact, unchanged since
     //    row 148;
@@ -188,15 +197,23 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
     //    is ALSO a heading in the document (the premise/part titles) shows up
     //    here once per section that names it, because the diff is a MULTISET
     //    difference, not a set of new strings;
-    // 3. `Referenced from: ` itself is genuinely new (hence the `strings` delta
-    //    of +2/+2/+1 below: `Referenced from: ` and the ` · ` separator);
+    // 3. the two genuinely new STRINGS are `Referenced from: ` and the ` · `
+    //    separator (hence the `strings` delta of +2/+2/+1 in the counts test —
+    //    every place LABEL already printed as a heading, and the three
+    //    own-page pointers in `large-procedural` are row 148's).
     //
     // and nothing else — in particular not one content run is rewritten, which
-    // is what makes "the same set of content strings" a real claim. The order
-    // is document order: the premise/part sites of each artifact section
-    // (Old Tower: premise + both parts; The Turning/Marek/The Tide
-    // Wardens/GM cheat sheet: the premise only; Pier Ambush/The Drowned Crown:
-    // the premise + the part that names them).
+    // is what makes "the same set of content strings" a real claim.
+    //
+    // THE ORDER IS THE DIFF'S OWN, not the document's order, and the tail of
+    // `large-planned` shows why: `missingRuns` consumes the BEFORE multiset
+    // greedily while it WALKS the after document, so an added run whose text
+    // the pre-layout document also printed ELSEWHERE is credited to whichever
+    // occurrence the walk reaches first. `A Word on the Tide` is a section
+    // heading in BOTH documents, so the walk spends the heading's copy on the
+    // first back-reference label that carries it and both added instances then
+    // land at the END. Read the list as an exact multiset of additions, in the
+    // order the extractor produced them.
     expect(added).toEqual({
       'large-procedural': [
         '“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
@@ -241,12 +258,12 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
         'Referenced from: ',
         'Before the Gate',
         ' · ',
-        'A Word on the Tide',
         'Referenced from: ',
         'Before the Gate',
         'Referenced from: ',
         'Before the Gate',
         ' · ',
+        'A Word on the Tide',
         'A Word on the Tide',
       ],
       'small-procedural': [
@@ -643,5 +660,236 @@ describe('the owner’s answers to docs/19 §10, pinned in both directions', () 
     expect(json(definition)).toContain('The Unnamed Ferryman');
     expect(json(definition)).toContain('He rows the crossing without ever asking for coin.');
     expect(problems).toEqual([]);
+  });
+});
+
+// --- 7. §7: navigation --------------------------------------------------------
+
+/**
+ * The back-reference LINES of a definition, decoded: for every node whose
+ * `text` is the run array `Referenced from: <link> · <link>…`, the places it
+ * names and where each one links. Nothing here re-derives the rule — it reads
+ * the definition the way pdfmake would.
+ */
+function backReferenceLines(node: unknown, out: { label: string; destination: string }[][] = []): {
+  label: string;
+  destination: string;
+}[][] {
+  if (typeof node !== 'object' || node === null) return out;
+  if (Array.isArray(node)) {
+    for (const child of node) backReferenceLines(child, out);
+    return out;
+  }
+  const record = node as Json;
+  const text = record.text;
+  if (Array.isArray(text) && (text[0] as Json | undefined)?.text === 'Referenced from: ') {
+    out.push(
+      text
+        .filter((run): run is Json => typeof run === 'object' && run !== null)
+        .filter((run) => typeof run.linkToDestination === 'string')
+        .map((run) => ({ label: String(run.text), destination: String(run.linkToDestination) })),
+    );
+  }
+  for (const value of Object.values(record)) backReferenceLines(value, out);
+  return out;
+}
+
+describe('§7 navigation: links everywhere, back-references, and one companion once', () => {
+  beforeEach(clearDatabase);
+
+  it('links the document’s own wiki-links to where that row PRINTS, by the row’s own destination', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const definition = buildModuleDefinition({
+      module: large.module,
+      artifacts: large.artifacts,
+      images: large.images,
+      ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+    });
+    const location = large.artifacts.find((artifact) => artifact.kind === 'location');
+    if (location === undefined) throw new Error('the fixture must build a location');
+    // The premise says `[[Old Tower]]`. In the PROCEDURAL document a row prints
+    // at `node-<id>`, so the link's destination is the row's own node — the pin
+    // is on the destination, not on "some link exists", because a link that
+    // jumps somewhere else is exactly the defect this bullet forbids.
+    expect(linkedRuns(definition)).toContainEqual({
+      text: 'Old Tower',
+      destination: `node-${location.id}`,
+    });
+    // …and that node really is where the row prints, under its own name.
+    expect(nodeAnchors(definition).get(`node-${location.id}`)).toBe('Old Tower');
+  });
+
+  it('leaves a name this document does NOT print as plain bold text (never a dangling link)', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const planned = buildModuleDefinition({
+      module: { ...large.module, documentPlan: pdfLayoutLargePlan(large) },
+      artifacts: large.artifacts,
+      images: large.images,
+      ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+    });
+    const procedural = buildModuleDefinition({
+      module: large.module,
+      artifacts: large.artifacts,
+      images: large.images,
+      ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+    });
+    const marek = large.artifacts.find((artifact) => artifact.name === 'Marek');
+    if (marek === undefined) throw new Error('the fixture must build Marek');
+    // The premise names `[[Marek]]` in BOTH documents. The plan gives Marek no
+    // section and he is not an NPC, so the planned document prints him NOWHERE
+    // — there is nothing to jump to, and pdfmake throws on a link that names no
+    // node. Both directions are pinned: absent there, present in the outline.
+    expect(contentRuns(planned)).toContain('Marek');
+    expect(linkedRuns(planned).some((link) => link.text === 'Marek')).toBe(false);
+    expect(linkedRuns(procedural)).toContainEqual({
+      text: 'Marek',
+      destination: `node-${marek.id}`,
+    });
+  });
+
+  it('never emits a link to a destination the same document does not carry, in any audience', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const small = await pdfLayoutSmallFixture();
+    const player = { audience: 'player' as const };
+    const built: Record<string, ReturnType<typeof buildModuleDefinition>> = {
+      procedural: buildModuleDefinition({
+        module: large.module,
+        artifacts: large.artifacts,
+        images: large.images,
+        ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+      }),
+      planned: buildModuleDefinition({
+        module: { ...large.module, documentPlan: pdfLayoutLargePlan(large) },
+        artifacts: large.artifacts,
+        images: large.images,
+        ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+      }),
+      // §7's last bullet: the audience split stays — one plan, a player
+      // document from it — and its navigation is internally consistent too.
+      'procedural-player': buildModuleDefinition({
+        module: large.module,
+        artifacts: large.artifacts,
+        images: large.images,
+        ...player,
+        ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+      }),
+      'planned-player': buildModuleDefinition({
+        module: { ...large.module, documentPlan: pdfLayoutLargePlan(large) },
+        artifacts: large.artifacts,
+        images: large.images,
+        ...player,
+        ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+      }),
+      small: buildModuleDefinition({
+        module: small.module,
+        artifacts: small.artifacts,
+        images: small.images,
+      }),
+    };
+    for (const [name, definition] of Object.entries(built)) {
+      const anchors = nodeAnchors(definition);
+      const links = linkedRuns(definition);
+      // Non-vacuity: each of these documents really emits links.
+      expect(links.length).toBeGreaterThan(0);
+      for (const link of links) {
+        if (anchors.has(link.destination)) continue;
+        throw new Error(`${name}: “${link.text}” links to ${link.destination}, which the document does not carry`);
+      }
+    }
+  });
+
+  it('states where an artifact is referred to from, as internal links to those places', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const definition = buildModuleDefinition({
+      module: large.module,
+      artifacts: large.artifacts,
+      images: large.images,
+      ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+    });
+    const location = large.artifacts.find((artifact) => artifact.kind === 'location');
+    if (location === undefined) throw new Error('the fixture must build a location');
+    // `[[Old Tower]]` is named in the premise and in part 1, and in that order —
+    // so the row's section states exactly those two places, each one a link to
+    // where it prints (`node-premise`, `node-part-0`). The ORDER is the
+    // document's own reading order, which is the only order a reader can use.
+    expect(backReferenceLines(definition)).toContainEqual([
+      { label: 'Premise', destination: 'node-premise' },
+      { label: 'The Dockyards', destination: 'node-part-0' },
+    ]);
+    // …and the line belongs to the row's own section, not to some other page.
+    const section = pageOf(definition, '"text":"Old Tower","style":"artifact"');
+    expect(json(section.main)).toContain('"text":"Referenced from: "');
+  });
+
+  it('states NOTHING for a row the document’s own text never names', async () => {
+    const fixture = await pdfLayoutOmissionFixture();
+    const { definition } = buildModulePdfDocument({
+      module: fixture.module,
+      artifacts: fixture.artifacts,
+      images: fixture.images,
+    });
+    // The procedural outline prints this owned row (no plan records an
+    // omission), but nothing refers to it — so it prints no back-reference
+    // line: an empty `Referenced from:` would be a claim the text does not
+    // support. Its sibling, named by the premise, does state one.
+    const silent = pageOf(definition, '"text":"The Unnamed Ferryman","style":"artifact"');
+    expect(json(silent.main)).not.toContain('Referenced from:');
+    expect(json(pageContaining(definition, '"text":"The Ford","style":"artifact"'))).toContain(
+      'Referenced from: ',
+    );
+  });
+});
+
+// --- 8. §10.1: one companion, with a link back --------------------------------
+
+describe('§10.1 the sidebar answer — a companion prints ONCE, later references link BACK', () => {
+  beforeEach(clearDatabase);
+
+  /** The repeat fixture's document: one row, named by TWO plan sections. */
+  async function repeated(): Promise<{
+    definition: ReturnType<typeof buildModuleDefinition>;
+    name: string;
+  }> {
+    const fixture = await pdfLayoutRepeatFixture();
+    const row = fixture.artifacts[0];
+    if (row === undefined) throw new Error('the fixture must build its row');
+    return {
+      definition: buildModuleDefinition({
+        module: { ...fixture.module, documentPlan: pdfLayoutRepeatPlan(fixture) },
+        artifacts: fixture.artifacts,
+        images: fixture.images,
+      }),
+      name: row.name,
+    };
+  }
+
+  it('prints the companion at the FIRST reference and the link back at the later one', async () => {
+    const { definition, name } = await repeated();
+    const runs = contentRuns(definition);
+    const pointer = earlierDetailNote(name).toUpperCase();
+    // §4 sends an encounter to its own page, so the two referencing sections
+    // are two pages and each one can be read on its own — which is the whole
+    // point of the fixture. The FIRST carries the mechanics and no pointer…
+    const first = pageOf(definition, '"text":"The Bell Ambush, first","style":"chapter"');
+    expect(json(first.main)).toContain('wet planks by the bell rope');
+    expect(json(first.main)).not.toContain(pointer);
+    // …and the LATER one carries the pointer and NOT the mechanics.
+    const later = pageOf(definition, '"text":"The Bell Ambush, again","style":"chapter"');
+    expect(json(later.main)).toContain(pointer);
+    expect(json(later.main)).not.toContain('wet planks by the bell rope');
+    // The link goes BACK to where the companion printed: the FIRST section's
+    // own anchor, never the later section's.
+    expect(linkedRuns(definition).filter((link) => link.text === pointer)).toEqual([
+      { text: pointer, destination: 'node-plan-1' },
+    ]);
+    expect(nodeAnchors(definition).get('node-plan-1')).toBe('The Bell Ambush, first');
+    expect(nodeAnchors(definition).has('node-plan-2')).toBe(true);
+    // NON-VACUITY, both directions, over the whole document as well: each half
+    // appears EXACTLY once. Printing the companion twice (no rule) reds the
+    // first count; making every reference link back reds the second.
+    expect(runs.filter((run) => run === 'wet planks by the bell rope')).toEqual([
+      'wet planks by the bell rope',
+    ]);
+    expect(runs.filter((run) => run === pointer)).toEqual([pointer]);
   });
 });
