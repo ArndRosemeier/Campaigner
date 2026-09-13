@@ -305,3 +305,58 @@ export function surroundingParagraphs(
   return joined.length > cap ? `${joined.slice(0, cap)}…` : joined;
 }
 
+/**
+ * How much text — in NON-WHITESPACE characters, counted after the entity's own
+ * name is taken out — must remain before a passage counts as a DESCRIPTION of
+ * the entity rather than a mention of it.
+ *
+ * The rule is deliberately this coarse, and that is the decision: the question
+ * is "does the text actually say something about them?", never "is this good
+ * prose" — a scorer would over-reject short, true statements and could not be
+ * pinned at a boundary. 40 characters is roughly one clause that is about
+ * something other than the name itself (the module text about a named npc,
+ * minus the name, has to say SOMETHING), which keeps every real sentence on the
+ * "this is the description" side while catching the two shapes that carry no
+ * description at all: a paragraph that is only the name (a bullet, an index
+ * line, a stat line's label) and a paragraph that never named them.
+ */
+export const ENTITY_DESCRIPTION_FLOOR = 40;
+
+/**
+ * Does this passage DESCRIBE the entity, or merely name it? THE ONE seam for
+ * that question (AGENTS rule 4), read by `features/modules/entity-batch` twice:
+ * over the module's own paragraphs about a cast entity (whose prose IS the
+ * module's, by design — docs/11 §The module-side cast) and over the row's own
+ * body (so a row that already carries a description is never written over).
+ *
+ * The entity's name is removed case-insensitively, everywhere it occurs, and
+ * what is LEFT decides (see `ENTITY_DESCRIPTION_FLOOR`). Consequences of that
+ * shape, stated rather than discovered later:
+ *
+ * - the name's own letters do not count twice — `[[Zombie]]` alone leaves the
+ *   four bracket characters and stays a mention, while "[[Zombie]] blocks the
+ *   stair with its own body." is a description;
+ * - a PLURAL or POSSESSIVE keeps its own letters (`Zombie`s leaves `s`), so a
+ *   list of names can only cross the floor on the words around them;
+ * - padding with whitespace cannot promote a mention: only non-whitespace is
+ *   counted;
+ * - an ALIAS is not removed. The caller selected this passage because it names
+ *   the entity by THAT name (the resolution `surroundingParagraphs` performs),
+ *   so a spelling the passage does not use cannot be what is left over.
+ */
+export function describesEntity(text: string, name: string): boolean {
+  const entity = name.trim();
+  const withoutName =
+    entity === ''
+      ? text
+      : text.replace(new RegExp(escapeRegExp(entity), 'gi'), '');
+  return withoutName.replaceAll(/\s+/g, '').length >= ENTITY_DESCRIPTION_FLOOR;
+}
+
+/** One literal as a regular expression: the entity's name may carry regex
+ * metacharacters (brackets, dots, parentheses), and a name that silently
+ * matched MORE than itself would strip text the rule never decided on. */
+function escapeRegExp(literal: string): string {
+  return literal.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+

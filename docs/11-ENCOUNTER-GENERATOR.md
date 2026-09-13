@@ -77,7 +77,9 @@ chunk, read-only, addressed by identity); an encounter roster **cites** it and
 materializes **nothing** (`db/creatureRepo.resolveCreatureCitation`, resolved by
 chunk id with a content-hash fallback, throwing on an empty ref); an `npc` that
 **carries** `data.creatureRef` is a **CAST CREATURE** — an authored row with
-derived stats, created only by `db/creatureRepo.castCreatureAsNpc` (idempotent
+derived stats (the numbers are NEVER authored: they are read off the library
+citation; only the PROSE may be written by a run — her own persona targeting the
+row, docs/17 row 133), created only by `db/creatureRepo.castCreatureAsNpc` (idempotent
 per campaign/module/name/identity, never overwriting, refusing a rival or an
 authored npc of that name, stamping the module tag), held by the **module
 generator** and the bestiary spawn dialog and by **no encounter path at all**
@@ -135,13 +137,31 @@ The request travels in three hops, and each hop has exactly one owner.
    artifact, the batch reads the slot off the module row
    (`domain/module.bestiarySlotForEntity`), resolves the name to a library
    citation, and casts through `db/creatureRepo.castCreatureAsNpc` — the ONE cast
-   function, unchanged. It does **not** start a persona run for that entity: the
-   creature's numbers are the library's, and the prose is the module's own
-   paragraphs about the entity (`surroundingParagraphs` over
-   `moduleDocumentText`), which is what the generator wrote about her. The
-   result is ONE `npc` row carrying her name, that prose and a `creatureRef`, with
-   **no authored stat block** — the pair `npcDataSchema` refuses by name — and a
-   second run REUSES the row through the cast's own idempotency.
+   function, unchanged. The creature's numbers are the library's, and the prose is
+   the module's own paragraphs about the entity (`surroundingParagraphs` over
+   `moduleDocumentText`), which is what the generator wrote about her — so while
+   those paragraphs DESCRIBE her, no persona run is started for that entity at
+   all. The result is ONE `npc` row carrying her name, that prose and a
+   `creatureRef`, with **no authored stat block** — the pair `npcDataSchema`
+   refuses by name — and a second run REUSES the row through the cast's own
+   idempotency. **A MENTION IS NOT A DESCRIPTION** (docs/17 row 133, the owner's
+   report: *"those named zombies only get an image on their details, nothing
+   more. No text, no stat block, nothing"*): when the module's own paragraphs do
+   NOT describe the entity — the text lists her, or the spine declared a name no
+   scene ever wrote — the batch runs the entity's OWN persona **targeting the row
+   it just cast**, and the cited row's REFILL below is what writes: the stat-block
+   step is skipped with its reason before any model call, the citation survives
+   byte-identical, `statBlock` stays null, and the DESCRIPTION is authored. The
+   cast is kept in every case (the citation is the identity, the numbers stay the
+   library's, the portrait cache still supplies the image); the numbers are never
+   authored. The question "does this text describe her?" is ONE seam —
+   `lib/wikilinks.describesEntity`, floor `ENTITY_DESCRIPTION_FLOOR` (40
+   non-whitespace characters left once the entity's own name is taken out of the
+   passage) — asked TWICE: over the module's paragraphs, and over the row's own
+   body, so a row that already carries a description is never written over (a
+   retry after a failed description run still finds a thin row and runs again).
+   Trash mobs cited only inside an encounter are untouched by all of this: the
+   encounter side still holds no cast seam and no persona of its own.
 
 **Failures are LOUD and NAMED, never a guess and never a silent drop of the
 prose.** `entity-batch.libraryCitationForEntity` refuses, in the owner's terms:
@@ -158,10 +178,25 @@ convention the panel and the module automation already toast — so the entity i
 reported exactly like any other per-entity generation failure, and NOTHING is
 written: no statless twin, no half-cast row.
 
+**A description run that does not complete is loud too, and the cast still
+stands.** When the batch authors the description above and that run dies (the
+provider failed, the contract failed, the page ate it), the entity is reported in
+`failed[]` with the run's own class — while its artifact exists: the cast landed,
+the citation stands, the portrait is on it, and only the PROSE is missing. It is
+the ONE case an entity appears in both `cast` and `failed`, and it is a
+failure the owner has to hear (docs/17 row 131's funnel reports it in the console
+and in the toast); re-running that entity runs this same arm again, because the
+row still carries no description. A run the owner STOPPED is not a failure at
+either arm — it is withdrawn and silent (docs/17 row 117).
+
 ### A cited row's REFILL — the Aunt Agatha rule (docs/17 row 112)
 
 One rule for every path that writes a cast creature npc in place (the artifact
-editor's "Generate/Regenerate with AI", the persona panel's targeted run), and
+editor's "Generate/Regenerate with AI", the persona panel's targeted run, and —
+since docs/17 row 133 — the entity batch's DESCRIPTION arm, which runs the
+entity's own persona against the row it just cast when the module's paragraphs
+only name her: this rule is what makes that write safe, and it is why the batch
+extends THIS path rather than opening a second one), and
 it has two halves that must never be separated. (The D3/D4 labels in this doc's
 decisions table are the room-geometry and group-veil decisions; this rule is
 recorded here, beside the cast it constrains, rather than as another D number.)

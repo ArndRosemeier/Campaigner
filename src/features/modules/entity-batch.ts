@@ -17,7 +17,7 @@ import {
   type StubKind,
 } from '@/features/modules/persona-request';
 import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
-import { surroundingParagraphs } from '@/lib/wikilinks';
+import { surroundingParagraphs, describesEntity } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { recordEntityBatchFailure } from '@/features/modules/entity-batch-report';
 import { toastError } from '@/lib/toast';
@@ -249,6 +249,38 @@ function castSlotFor(module: Module, name: string): EntityBestiarySlot | null {
   return bestiarySlotForEntity(module.entityKinds, name);
 }
 
+/**
+ * The ONE mapping from a settled run that did NOT complete to this batch's
+ * per-entity failure record (docs/17 rows 128/131). TWO arms of the batch wait
+ * on a run — the entity's own creation run, and the DESCRIPTION run a cast row
+ * gets — and both must say the same thing about the same facts: which entity,
+ * which run, the run's terminal status, its own `failureKind` and
+ * `errorMessage`, and the RAW engine row behind the sentence.
+ *
+ * The ONE thing the two cannot share is the sentence for the anomaly a
+ * COMPLETED run with nothing to show is, because "producing an artifact" and
+ * "writing the description of a row that already exists" are different
+ * achievements — so the caller hands in its own words (`completedWithout`) and
+ * everything else is decided here, once.
+ */
+function runFailureRecord(
+  name: string,
+  runId: Id,
+  outcome: PersonaRun,
+  completedWithout: string,
+): EntityBatchFailure {
+  return {
+    name,
+    kind: outcome.failureKind === 'cancelled' ? 'interrupted' : 'run-not-completed',
+    message: outcome.status !== 'completed' ? runNotCompletedReason(outcome) : completedWithout,
+    runId,
+    status: outcome.status,
+    ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
+    errorMessage: outcome.errorMessage,
+    raw: outcome,
+  };
+}
+
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
 export const KIND_PLURALS: Record<StubKind, string> = {
   npc: 'npcs',
@@ -381,9 +413,14 @@ export interface EntityBatchResult {
    * (docs/17 row 107) — the artifact exists, module-owned, with the library
    * creature's stats behind its `creatureRef`. Kept OUT of `generated` on
    * purpose: `generated` counts artifacts a persona RUN produced, and a cast
-   * runs no model call at all (its stats are the library's, its prose is the
-   * module's own text about the entity). A caller reporting counts can tell
-   * the two apart without reading statuses.
+   * artifact is the CAST's — its stats are the library's and its identity is
+   * the citation, whatever the run below writes into it. Since docs/17 row 133
+   * a cast entity whose module paragraphs do not DESCRIBE her (see
+   * `describesEntity`) is also detailed by her own persona, TARGETING the cast
+   * row — a real run whose prose lands on a row it did not create, which is why
+   * the classification stays `cast` rather than moving to `generated`: the
+   * caller-facing fact is that this name was cast from the library, and a
+   * caller can tell the two apart without reading statuses.
    */
   cast: string[];
   /** The produced artifacts, name-matched — callers that need the artifact
@@ -393,7 +430,11 @@ export interface EntityBatchResult {
   produced: EntityBatchProduced[];
   /** Entities that produced no artifact, with the reason and the raw evidence
    * — reported through the ONE seam (`features/modules/entity-batch-report`),
-   * loud in the console and in a toast (AGENTS rule 2). */
+   * loud in the console and in a toast (AGENTS rule 2). A CAST entity whose
+   * description run failed is the one case that appears BOTH here and in `cast`
+   * (docs/17 row 133): its artifact exists — the cast landed, the citation
+   * stands, the portrait is on it — and what did not arrive is the authored
+   * prose, which is exactly the failure the owner has to hear about. */
   failed: EntityBatchFailure[];
 }
 
@@ -453,6 +494,21 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       progress: completed / total,
     });
   };
+  /**
+   * THE ONE WITHDRAWAL (docs/17 row 117): the first run that comes back
+   * cancelled IS the owner's Stop — the engine's ONE withdrawal predicate
+   * (`isRunWithdrawn`, read by both arms that wait on a run below) — so nothing
+   * is reported for it and the pool starts no further unit: a stopped
+   * orchestration must not launch the next target. Before this fold the pool
+   * recorded a cancelled run as a per-entity failure, which is how a stop
+   * turned into "3 of 5 npcs failed to generate" toasts about nothing.
+   */
+  const withdrawPool = (): void => {
+    if (!withdrawn) {
+      withdrawn = true;
+      updateDetail();
+    }
+  };
   // Live step labels for the dock detail ("Kael — drafting…"), per run.
   const runNames = new Map<Id, string>();
   const unsubscribeRun = runEngine.on((event) => {
@@ -507,40 +563,6 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       // the Runs tab, and the owner has to be able to find it).
       let runId: Id | undefined;
       try {
-        // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
-        // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY
-        // creature's and it must be born through the ONE cast function — never
-        // by running a persona that would author a stat block beside the
-        // citation (`npcDataSchema` refuses that pair by name) and never by
-        // writing `creatureRef` here. A persona run is therefore NOT started
-        // for this entity at all: the creature's numbers come from the library,
-        // and the PROSE is the module's own text about the entity — the
-        // paragraphs around its wiki-link, which is what the generator wrote
-        // about her. `castCreatureAsNpc` reuses an existing cast of the same
-        // creature under the same name (so a second run mints no twin) and its
-        // prose is never rewritten by a later cast.
-        const slot = castSlotFor(module, target.name);
-        if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
-          const citation = await libraryCitationForEntity(target.name, slot);
-          // The prose the cast row carries: the module's own paragraphs about
-          // this entity — what the generator wrote about her, at the mention
-          // site. An entity the text never actually mentions (it was declared
-          // in the spine's entity list but never written into a scene) still
-          // gets a NON-EMPTY body naming her rather than an empty one, which is
-          // a state and not a placeholder (AGENTS rule 1).
-          const context = surroundingParagraphs(moduleText, target.name).trim();
-          const castOutcome = await castCreatureAsNpc({
-            campaignId: campaign.id,
-            moduleId: module.id,
-            citation,
-            name: target.name,
-            prose: { body: context === '' ? target.name : context },
-          });
-          producedIds.push(castOutcome.artifactId);
-          cast.push(target.name);
-          produced.push({ name: target.name, artifactId: castOutcome.artifactId });
-          return;
-        }
         // The brief stands alone per entity: module text around the wiki-link
         // plus the spine premise — no dependency on sibling entities.
         // Encounter and NPC drafts additionally carry the structured level
@@ -553,6 +575,11 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // ENCOUNTER MUST STAGE (docs/11 assertion rule, docs/17 row 89): the
         // prose is the truth about this fight, fixed in what it states. Every
         // other stub kind keeps the pre-rule brief bytes.
+        //
+        // Built for BOTH arms below (docs/17 row 133): a cast entity whose
+        // module paragraphs are not a description is detailed by its OWN persona
+        // through this same brief — one request to the model for one entity,
+        // whichever destination it writes into.
         const contextParagraphs = surroundingParagraphs(moduleText, target.name);
         const brief = buildEntityBrief(
           target.name,
@@ -565,6 +592,102 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           kind === 'encounter',
           instruction,
         );
+        // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
+        // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY
+        // creature's and it must be born through the ONE cast function — never
+        // by running a persona that would author a stat block beside the
+        // citation (`npcDataSchema` refuses that pair by name) and never by
+        // writing `creatureRef` here. The creature's numbers come from the
+        // library, and the PROSE is the module's own text about the entity —
+        // the paragraphs around its wiki-link, which is what the generator wrote
+        // about her. `castCreatureAsNpc` reuses an existing cast of the same
+        // creature under the same name (so a second run mints no twin) and its
+        // prose is never rewritten by a later cast.
+        const slot = castSlotFor(module, target.name);
+        if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
+          const citation = await libraryCitationForEntity(target.name, slot);
+          // The prose the cast row is BORN with: the module's own paragraphs
+          // about this entity — what the generator wrote about her, at the
+          // mention site. An entity the text never actually mentions (it was
+          // declared in the spine's entity list but never written into a scene)
+          // still gets a NON-EMPTY body naming her rather than an empty one,
+          // which is a state and not a placeholder (AGENTS rule 1).
+          const context = contextParagraphs.trim();
+          const castOutcome = await castCreatureAsNpc({
+            campaignId: campaign.id,
+            moduleId: module.id,
+            citation,
+            name: target.name,
+            prose: { body: context === '' ? target.name : context },
+          });
+          producedIds.push(castOutcome.artifactId);
+          cast.push(target.name);
+          produced.push({ name: target.name, artifactId: castOutcome.artifactId });
+          // THE DESCRIPTION A TEXT-NAMED ROW MUST HAVE (docs/17 row 133). A
+          // cast row's prose is the module's own paragraphs BY DESIGN — but the
+          // mention is all the module has when it merely NAMES her (a bullet, an
+          // index line, a list of the risen), and there the row used to be born
+          // with a name for a body: a portrait and nothing else, which is the
+          // owner's defect verbatim (*"those named zombies only get an image on
+          // their details, nothing more"*). So when neither the module's
+          // paragraphs nor the row itself DESCRIBES the entity
+          // (`describesEntity`, the ONE threshold seam), the entity's own persona
+          // is run AGAINST THE ROW it was just cast into — the cited row's
+          // existing refill, which is the only sanctioned way to write a cast
+          // row's prose: its statblock step is skipped with its reason before the
+          // model call (docs/11 §A cited row's REFILL), the citation survives
+          // byte-identical, and `statBlock` stays null. The numbers stay the
+          // library's; the citation stays the identity; only the prose is
+          // authored.
+          if (describesEntity(context, target.name)) return;
+          const castRow = await artifactRepo.getArtifact(castOutcome.artifactId);
+          if (castRow === undefined) {
+            throw new Error(
+              `the cast npc «${target.name}» is gone right after it was cast — there is nothing to write a description into`,
+            );
+          }
+          // A row that already CARRIES a description is never written over: the
+          // cast's own promise is that a second cast writes nothing to it, and a
+          // re-run (the popover, a retry after a failed run) must not clobber
+          // prose a model or the owner has since written in (AGENTS rule 1). A
+          // born-thin row is what this arm is for.
+          if (describesEntity(castRow.body, target.name)) return;
+          runId = await runEngine.startRun({
+            campaign,
+            persona,
+            autonomy: 'auto' as const,
+            brief,
+            pinnedChunkIds: [],
+            // A REFILL of the row that exists: no placement — the run fills the
+            // cast row in place, exactly like the persona panel's targeted run.
+            targetArtifactId: castOutcome.artifactId,
+          });
+          runNames.set(runId, target.name);
+          const outcome = await waitForRunStatus(runId);
+          if (isRunWithdrawn(outcome)) {
+            // The owner's Stop, not a failure — the ONE withdrawal rule, shared
+            // with the creation arm below (`withdrawPool`).
+            withdrawPool();
+            return;
+          }
+          if (outcome.status !== 'completed' || outcome.resultArtifactId === null) {
+            // LOUD (AGENTS rule 2): the row exists and its citation stands, but
+            // the description it was supposed to get did not arrive — reported
+            // through the batch's ONE funnel like every other failed run, so the
+            // owner hears "this one has no text" instead of finding a bare row
+            // later. Re-running the entity retries it (the same arm runs again
+            // while the row carries no description).
+            recordFailure(
+              runFailureRecord(
+                target.name,
+                runId,
+                outcome,
+                'the run completed without writing the description',
+              ),
+            );
+          }
+          return;
+        }
         const runInput: StartRunInput = {
           campaign,
           persona,
@@ -592,16 +715,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         runNames.set(runId, target.name);
         const outcome = await waitForRunStatus(runId);
         if (isRunWithdrawn(outcome)) {
-          // WITHDRAWN, not failed — the engine's ONE withdrawal predicate
-          // (docs/17 row 117), the same fact the map queue and the chain runner
-          // read, mirroring jobQueue's silent 'cancelled' JobOutcome: the user
-          // stopped this generation, so there is no failure to report and no
-          // artifact to expect. Stop the pool too — every later target would
-          // just start a run that is already doomed.
-          if (!withdrawn) {
-            withdrawn = true;
-            updateDetail();
-          }
+          // WITHDRAWN, not failed — the ONE withdrawal rule (`withdrawPool`),
+          // which stops the pool too: every later target would just start a run
+          // that is already doomed.
+          withdrawPool();
           return;
         }
         if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
@@ -654,19 +771,14 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           // deliberately NOT the `status: 'cancelled'` the withdrawal predicate
           // above keeps silent — so without this branch a reload mid-batch
           // would be reported to the owner as "N of M npcs failed to generate".
-          recordFailure({
-            name: target.name,
-            kind: outcome.failureKind === 'cancelled' ? 'interrupted' : 'run-not-completed',
-            message:
-              outcome.status !== 'completed'
-                ? runNotCompletedReason(outcome)
-                : 'the run completed without producing an artifact',
-            runId,
-            status: outcome.status,
-            ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
-            errorMessage: outcome.errorMessage,
-            raw: outcome,
-          });
+          recordFailure(
+            runFailureRecord(
+              target.name,
+              runId,
+              outcome,
+              'the run completed without producing an artifact',
+            ),
+          );
         }
       } catch (error) {
         // Setup failure for this entity (e.g. key missing): recorded as a

@@ -69,9 +69,14 @@ import { zodIssuesOf } from '@/lib/zodErrorSummary';
  * WHAT IT DELIBERATELY DOES NOT DO: it never decides what counts as a
  * success or a failure — `runEntityBatch` already did, and this function
  * reports its `failed` array verbatim. A CAST entity (a name the module
- * recorded a bestiary slot for) is a SUCCESS in that array's terms and never
- * reaches this seam at all; a WITHDRAWN run (the owner's own Stop) is
- * likewise absent from it.
+ * recorded a bestiary slot for) is a SUCCESS in that array's terms and does not
+ * reach this seam while its cast holds; it reaches it in ONE case only (docs/17
+ * row 133): the cast landed, the row exists, and the DESCRIPTION run that row
+ * needed — because the module's own paragraphs only name her — did not
+ * complete. That is a real failure to hear about (the owner's row would
+ * otherwise stay a portrait with no text), and it is the batch that decides it,
+ * not this seam. A WITHDRAWN run (the owner's own Stop) is likewise absent from
+ * the array.
  */
 
 /** The stable, greppable prefix of every batch-failure console entry. Grep

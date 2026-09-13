@@ -99,7 +99,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
 | Cite a library creature from an encounter roster (no artifact, nothing created) | The roster's `source` (`rulebook` / `npc-ref` / `inline` / `none`) + `db/creatureRepo.resolveCreatureCitation` — a citation names the BESTIARY (chunk id, else the content hash recorded at citation birth) and materializes nothing | the retired `mobArtifacts.getOrCreateMobArtifact` (docs/17 row 106)ing it away from the first module | scan-then-`createArtifact` in separate txs (splits token identity); moving a placed mob artifact to another module |
 | Cast a library creature as this campaign's OWN npc (the Aunt Agatha path) | `db/creatureRepo.castCreatureAsNpc` — ONE function, idempotent per (campaign, module, name, IDENTITY): it creates the row on first cast, REUSES it on the second (writing nothing), refuses a same-named rival that draws from a different creature, refuses to cast over an authored npc, and refuses a creature the library cannot supply. Only the MODULE generator and the bestiary spawn dialog hold it | `createArtifact` plus a hand-written `creatureRef` at a call site; any cast attempt from the encounter side (structurally impossible — the roster schema cannot express one) |
-| Ask the MODULE GENERATOR for a cast (the Aunt Agatha path, docs/17 row 107) | The entity record's optional `bestiary` slot (`domain/module.ts` — `{ creature, book? }`, the creature's name as the library spells it, `book` only when two books share it) + the spine clause `llm/promptStyles.spineEntityKindsClause` (rendered ONLY when `db/creatureRepo.listLibraryCreatures` is non-empty, so an empty library composes the pre-change prompt byte for byte) + `features/modules/entity-batch.libraryCitationForEntity` resolving the NAME to a citation at finalize and casting through `castCreatureAsNpc`, which is also where a persona run is NOT started (the stats are the library's, the prose is the module's own paragraphs about the entity). A name the library cannot supply, or one two books both carry, FAILS the entity loudly by name into the batch's existing `failed[]` | writing `creatureRef` by hand at a call site; a second creature lookup or a second cast function; guessing between two candidates; dropping the prose into a statless twin; making the clause unconditional (an unconditional clause changes the prompt for every workspace that has no bestiary) |
+| Ask the MODULE GENERATOR for a cast (the Aunt Agatha path, docs/17 row 107) | The entity record's optional `bestiary` slot (`domain/module.ts` — `{ creature, book? }`, the creature's name as the library spells it, `book` only when two books share it) + the spine clause `llm/promptStyles.spineEntityKindsClause` (rendered ONLY when `db/creatureRepo.listLibraryCreatures` is non-empty, so an empty library composes the pre-change prompt byte for byte) + `features/modules/entity-batch.libraryCitationForEntity` resolving the NAME to a citation at finalize and casting through `castCreatureAsNpc`. A persona run is started for that entity ONLY when the text does not describe her (see the row below — the stats are never the run's, they stay the library's). A name the library cannot supply, or one two books both carry, FAILS the entity loudly by name into the batch's existing `failed[]` | writing `creatureRef` by hand at a call site; a second creature lookup or a second cast function; guessing between two candidates; dropping the prose into a statless twin; making the clause unconditional (an unconditional clause changes the prompt for every workspace that has no bestiary) |
+| **Decide whether a cast entity has a DESCRIPTION at all** (docs/17 row 133, docs/11 §Module-side cast) | `lib/wikilinks.describesEntity(text, name)` + its floor `ENTITY_DESCRIPTION_FLOOR` (40 non-whitespace characters left after every case-insensitive occurrence of the entity's own name is taken out of the passage) — the ONE question *"does this text say something about them, or only NAME them?"*, asked from `features/modules/entity-batch.ts` exactly TWICE: over the module's own paragraphs (`:642` — when they describe her they ARE her description, no run is spent, and invented prose never replaces the module's) and over the row's own body (`:654` — a row that already carries a description is never written over, which is what makes a retry after a failed description run safe and keeps `castCreatureAsNpc`'s "a second cast writes nothing" promise). When both answers are "only names her", the entity's own persona runs TARGETING the cast row (`targetArtifactId`, no placement) so the ratified cited-row REFILL does the write: statblock step `'skipped'` with its reason before the model call, citation byte-identical, `statBlock` null. The rule is deliberately coarse (a mention test, not a prose-quality scorer) and the floor is a VALUE ON PURPOSE — the boundary is pinned at 39 vs 40 | a length check, a word count or a name-strip spelled out at the call site (pinned by a source scan: the floor and the stripping live in `lib/wikilinks.ts` ALONE); asking the row's body BEFORE the module's paragraphs (that order would spend a run on a module that already describes her); authoring a stat block for a cast row, or minting an ordinary npc beside the cast; writing the description through anything but the cited-row refill; re-running over a row that already carries a description |
 | Ground an UNCITED roster entry's on-demand creature (inline/none) | The roster entry ITSELF — its name + `notes` are the identity (`domain/creature.contentCreatureKey`) and the portrait prompt's whole grounding (`MobPortraitJob.grounding`); no row exists | `mobArtifacts.materializeInventedCreatureArtifact` (retired, docs/17 row 106)mmary marker; `moduleId` = encounter's when module-owned else campaign-level; roster entry NOT rewritten so seeds stay identical) + the run-engine Smith finalize's inline-statblock path (`materializeMonsterNpc` — `moduleId` = the run's `placementModuleId` when placed, campaign level otherwise, matching the encounter/generate create sites; reuse prefers a same-named row the USING module already owns and never re-scopes the row it links — a scope change is only ever `moveScope`) + `features/campaign/mob-portrait-queue.enqueueInventedCreaturePortraits` (chunk-less local-only jobs — invented covers never read/populate/overwrite the global cache). Superseded: docs/fix-02 put this path at campaign scope, which made a module-placed encounter's inline mobs survive `deleteModule` | a new kind or a `monsterChunkId` marker on a chunk-less row; rewriting the entry to npc-ref (changes seed identity); materializing at campaign level regardless of placement |
 | Global mob portrait per cited chunk (canonical only, all campaigns) | `db/mobPortraitCache` (firewall `cacheKeyForMonsterSource`, read-through `fillCoverFromCache` (now called by NO production path: the portrait BATCH stopped passing it while enumerating — ledger 83: a cover-less canonical citation is a normal job whose worker clones the populated slot, so a visible hole is reported as WORK, never as `alreadyImaged`), render `cloneCachedPortraitToArtifact` — first-time clone skips imaged artifacts, the `force` flavor force-clones delete-after-replace for regen — plus artifact-to-artifact `cloneArtifactCover` for the content-regen carry-forward; all three ride the ONE `attachClonedCover` core, never a second mechanism — first-publish `storeCanonicalPortraitIfAbsent` — put-if-absent ONLY) + `features/campaign/mob-portrait-cache-queue.ensureCanonicalMobPortrait` (cross-campaign single-flight; Dexie v18 `mobPortraits` table `id, &chunkId`; docs/11 D5 amendment). Regen republishes through `replaceCanonicalPortrait` (the ONLY unconditional slot writer) via `regenerateCanonicalMobPortrait` (the ONLY always-fresh generation) — never `storeCanonicalPortraitIfAbsent` for a regen (it would keep the old bytes) | generating per campaign; attaching the shared global row as a cover; a flavored citation writing the cache; republishing the slot anywhere but `replaceCanonicalPortrait` |
 | Count a mob-portrait batch before acting (the encounter editor's confirm) | `features/campaign/mob-portrait-queue.planMobPortraitBatch` — the read-only half of `enumerateBatchKinds`, the SAME enumeration the additive batch (`enqueueMobPortraits` / `enqueueInventedCreaturePortraits`) and both regen paths walk: it resolves what EXISTS (`findMobArtifactByChunk`, `mobArtifacts.findInventedCreatureArtifact`) and creates, clones and enqueues NOTHING; a dangling stamped `mobArtifactId` throws loud in both modes | a second enumeration that drifts from the batch (the confirm would promise work the queue will not do); counting by creating or cloning |
@@ -757,7 +758,12 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   stat-block writers touch), `changeArtifact` REFUSES a cast row (an instruction
   can rename it, and the name is the cast's identity — a rename would let the
   generator cast a second row for the same creature), and a refill of one is
-  legal and rewrites only its prose. Portraits ARE presentation
+  legal and rewrites only its prose. AMENDED (docs/17 row 133): the batch's
+  description arm is the SECOND caller that refills a cast row in place — it
+  targets the row it just cast when the module's text only NAMES the entity — so
+  "a refill of one is legal" is now load-bearing for the ordinary generate path,
+  and that path must keep going through this one refill (statblock step-off
+  included) rather than writing prose beside it. Portraits ARE presentation
   (`features/campaign/mob-portrait-queue`, `db/creatureRepo.setCreatureCover`):
   one canonical blob per identity in the global `mobPortraits` table plus one
   per-campaign presentation row in `creatureImages`, and every surface asks
@@ -1289,11 +1295,17 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   named sentence instead of writing, and whose statblock-step force-off keeps
   that refusal unreachable from the pipeline it just ran. Hunted and verified
   at every other `creatureRef`+stat-block site: `canvasChat`'s two renderers
-  are read-only (one narrows to `statBlock === null`), the entity/roster
-  batches cannot reach a cited row (`entity-batch` starts a run only when
-  `target.artifactId === undefined`; `change-artifact` refuses cast rows), and
-  the cast writer writes both fields in one literal. The rule for a future
-  writer: never add a second creator/merger of these two fields, and never
+  are read-only (one narrows to `statBlock === null`), `change-artifact` refuses
+  cast rows, and the cast writer writes both fields in one literal. AMENDED
+  (docs/17 row 133): the emitted `entity-batch` run is no longer always
+  `target.artifactId === undefined` — the cast branch now starts its DESCRIPTION
+  run AT the row it just cast (`entity-batch.ts:658-665`), so this refusal is
+  reachable from the ordinary generate path in exactly one way: if that run ever
+  asks for a stat block. The step-off (above, and §2's description row) is what
+  keeps it unreachable, and it is PINNED by measurement rather than assumed —
+  disabling `isCastCreatureNpc` in `runStatblock` reds the description pins with
+  the refusal sentence in the run row (ledger 133, injection I6). The rule for a
+  future writer: never add a second creator/merger of these two fields, and never
   "resolve" the pair by preferring one side — a silent preference is how a
   derived number starts disagreeing with the library it cites.
 - **A zod issue dump is not a user-facing message, and a UNION makes it
@@ -1882,6 +1894,37 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   tag, which is how `tests/features/creature-row-resolution.test.tsx` raced it.
   Assert the tag INSIDE the wait — the cure there (`:482`) and the pattern
   `entity-panel.test.tsx:765-771` already uses — never after a weaker one.
+
+- **A cast creature npc's DERIVED STATS ARE RENDERED NOWHERE the owner looks
+  (MEASURED, docs/17 row 133 — his *"no text, no stat block, nothing"* is two
+  defects, and this is the second one).** The design is that a cast row's numbers
+  come from the library creature at READ time: `db/creatureRepo.resolveDerivedNpcStats`
+  (`:176`) exists for exactly that. MEASURED at this landing: it has **zero callers
+  in `src/`** — its only matches are its own definition and
+  `tests/db/creatureRepo.test.ts:135,141`; the encounter roster derives through
+  `domain/encounterResolve` (`:214`) instead, and `NpcForm`
+  (`features/campaign/components/kind-forms.tsx:129-168`) renders `StatBlockCard`
+  only when `data.statBlock !== null`, otherwise an "Add stat block" button. So an
+  `ArtifactEditor` render of a cast row shows a portrait, a body and NO AC, NO hit
+  points and no attack line in the DOM at all (measured, raw dump kept in the
+  landing's scratch; the probe file was deleted, not committed). That is NOT this
+  slice's behaviour change — it predates it and it is a UI gap, not a data gap
+  (the numbers ARE derivable) — but do not "discover" it as a regression of the
+  description arm, and do not conclude from an "Add stat block" button that a cast
+  row has no numbers: it must never have an AUTHORED block, and its derived ones
+  are simply not drawn yet.
+
+- **A cast row's description may be written by a persona run, and that is the ONE
+  case a name appears in BOTH `cast` and `failed`** (docs/17 row 133). When the
+  module's text only names the entity, the batch runs her own persona against the
+  row it just cast and lets the cited-row refill write the prose; if that run does
+  not complete, the artifact EXISTS (cast landed, citation intact, portrait on it)
+  and the prose does not — so the batch reports it in `failed[]` while the name
+  stays in `cast` (the artifact is the cast's; the run only wrote into it, it did
+  not create it). Do not "fix" the overlap by moving the name to `generated` (it
+  would lie about where the row came from) or by silencing the failure (the owner
+  would find a bare row later, AGENTS rule 2). A withdrawn run is silent at both
+  arms.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
