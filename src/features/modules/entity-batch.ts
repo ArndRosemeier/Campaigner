@@ -17,7 +17,7 @@ import {
   type StubKind,
 } from '@/features/modules/persona-request';
 import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
-import { surroundingParagraphs, describesEntity } from '@/lib/wikilinks';
+import { surroundingParagraphs } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { recordEntityBatchFailure } from '@/features/modules/entity-batch-report';
 import { toastError } from '@/lib/toast';
@@ -414,13 +414,14 @@ export interface EntityBatchResult {
    * creature's stats behind its `creatureRef`. Kept OUT of `generated` on
    * purpose: `generated` counts artifacts a persona RUN produced, and a cast
    * artifact is the CAST's — its stats are the library's and its identity is
-   * the citation, whatever the run below writes into it. Since docs/17 row 133
-   * a cast entity whose module paragraphs do not DESCRIBE her (see
-   * `describesEntity`) is also detailed by her own persona, TARGETING the cast
-   * row — a real run whose prose lands on a row it did not create, which is why
-   * the classification stays `cast` rather than moving to `generated`: the
-   * caller-facing fact is that this name was cast from the library, and a
-   * caller can tell the two apart without reading statuses.
+   * the citation, whatever the run below writes into it. Since docs/17 row 133 —
+   * and for the ENTITY case the owner-ratified reversal in row 135 — every cast
+   * entity is ALSO detailed by her own persona, TARGETING the cast row, with the
+   * module's own paragraphs riding the brief as CONTEXT rather than standing in
+   * for a description: a real run whose prose lands on a row it did not create,
+   * which is why the classification stays `cast` rather than moving to
+   * `generated`: the caller-facing fact is that this name was cast from the
+   * library, and a caller can tell the two apart without reading statuses.
    */
   cast: string[];
   /** The produced artifacts, name-matched — callers that need the artifact
@@ -576,10 +577,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // prose is the truth about this fight, fixed in what it states. Every
         // other stub kind keeps the pre-rule brief bytes.
         //
-        // Built for BOTH arms below (docs/17 row 133): a cast entity whose
-        // module paragraphs are not a description is detailed by its OWN persona
-        // through this same brief — one request to the model for one entity,
-        // whichever destination it writes into.
+        // Built for BOTH arms below (docs/17 rows 133/135): EVERY cast entity is
+        // detailed by its OWN persona through this same brief, and the module's
+        // own paragraphs ride it as CONTEXT — one request to the model for one
+        // entity, whichever destination it writes into.
         const contextParagraphs = surroundingParagraphs(moduleText, target.name);
         const brief = buildEntityBrief(
           target.name,
@@ -598,20 +599,23 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // by running a persona that would author a stat block beside the
         // citation (`npcDataSchema` refuses that pair by name) and never by
         // writing `creatureRef` here. The creature's numbers come from the
-        // library, and the PROSE is the module's own text about the entity —
-        // the paragraphs around its wiki-link, which is what the generator wrote
-        // about her. `castCreatureAsNpc` reuses an existing cast of the same
-        // creature under the same name (so a second run mints no twin) and its
-        // prose is never rewritten by a later cast.
+        // library, and the row is BORN with the module's own text about the
+        // entity — the paragraphs around its wiki-link. `castCreatureAsNpc`
+        // reuses an existing cast of the same creature under the same name (so a
+        // second run mints no twin) and its prose is never rewritten by a later
+        // cast.
         const slot = castSlotFor(module, target.name);
         if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
           const citation = await libraryCitationForEntity(target.name, slot);
           // The prose the cast row is BORN with: the module's own paragraphs
-          // about this entity — what the generator wrote about her, at the
-          // mention site. An entity the text never actually mentions (it was
-          // declared in the spine's entity list but never written into a scene)
-          // still gets a NON-EMPTY body naming her rather than an empty one,
-          // which is a state and not a placeholder (AGENTS rule 1).
+          // about this entity, at the mention site. A batch target is always a
+          // wiki-link of the module text (`post-generation.batchTargets`), so
+          // the empty case cannot arise from a real target; the name stands in
+          // only to keep a hand-supplied target's body NON-EMPTY rather than
+          // empty (AGENTS rule 1), and the description run below replaces both
+          // anyway. MEASURED, not assumed: this fallback is the one line at this
+          // arm no pin reaches (docs/08 §REVERT-PROVEN, injection I6), precisely
+          // because no real target can be in that state.
           const context = contextParagraphs.trim();
           const castOutcome = await castCreatureAsNpc({
             campaignId: campaign.id,
@@ -623,35 +627,34 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           producedIds.push(castOutcome.artifactId);
           cast.push(target.name);
           produced.push({ name: target.name, artifactId: castOutcome.artifactId });
-          // THE DESCRIPTION A TEXT-NAMED ROW MUST HAVE (docs/17 row 133). A
-          // cast row's prose is the module's own paragraphs BY DESIGN — but the
-          // mention is all the module has when it merely NAMES her (a bullet, an
-          // index line, a list of the risen), and there the row used to be born
-          // with a name for a body: a portrait and nothing else, which is the
-          // owner's defect verbatim (*"those named zombies only get an image on
-          // their details, nothing more"*). So when neither the module's
-          // paragraphs nor the row itself DESCRIBES the entity
-          // (`describesEntity`, the ONE threshold seam), the entity's own persona
-          // is run AGAINST THE ROW it was just cast into — the cited row's
-          // existing refill, which is the only sanctioned way to write a cast
-          // row's prose: its statblock step is skipped with its reason before the
-          // model call (docs/11 §A cited row's REFILL), the citation survives
-          // byte-identical, and `statBlock` stays null. The numbers stay the
-          // library's; the citation stays the identity; only the prose is
-          // authored.
-          if (describesEntity(context, target.name)) return;
+          // THE DESCRIPTION A TEXT-NAMED ROW MUST HAVE (docs/17 rows 133/135).
+          // An NPC is named BECAUSE it is a wiki-link in the module text — that
+          // link IS the name (the owner's ruling, verbatim in docs/17 row 135) —
+          // so there is no "does the text describe her?" question to ask and no
+          // case where the mention stands in for a description: the module's
+          // mention is the material the description is written FROM, and it has
+          // ALREADY been handed to the model through `brief` above. The entity's
+          // own persona therefore runs AGAINST THE ROW it was just cast into —
+          // the cited row's existing refill, which is the only sanctioned way to
+          // write a cast row's prose: its statblock step is skipped with its
+          // reason before the model call (docs/11 §A cited row's REFILL), the
+          // citation survives byte-identical, and `statBlock` stays null. The
+          // numbers stay the library's; the citation stays the identity; only the
+          // prose is authored.
+          //
+          // Nothing here needs to guard against clobbering: this row was created
+          // by the cast immediately above (a name with any authored entity is
+          // never a batch target — `post-generation.batchTargets` filters on the
+          // panel's own `hasDetailedEntity` verdict, which is exactly what a row
+          // carrying a description is), and the reused-row case is unreachable
+          // for the same reason. A target carrying `artifactId` (the change
+          // seam) never enters this arm at all.
           const castRow = await artifactRepo.getArtifact(castOutcome.artifactId);
           if (castRow === undefined) {
             throw new Error(
               `the cast npc «${target.name}» is gone right after it was cast — there is nothing to write a description into`,
             );
           }
-          // A row that already CARRIES a description is never written over: the
-          // cast's own promise is that a second cast writes nothing to it, and a
-          // re-run (the popover, a retry after a failed run) must not clobber
-          // prose a model or the owner has since written in (AGENTS rule 1). A
-          // born-thin row is what this arm is for.
-          if (describesEntity(castRow.body, target.name)) return;
           runId = await runEngine.startRun({
             campaign,
             persona,
@@ -675,8 +678,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             // the description it was supposed to get did not arrive — reported
             // through the batch's ONE funnel like every other failed run, so the
             // owner hears "this one has no text" instead of finding a bare row
-            // later. Re-running the entity retries it (the same arm runs again
-            // while the row carries no description).
+            // later. The row now EXISTS, so this name is a detailed entity and
+            // no longer a batch target (`hasDetailedEntity`): a retry means
+            // dropping the row and generating the entity again, not re-running
+            // this same target.
             recordFailure(
               runFailureRecord(
                 target.name,

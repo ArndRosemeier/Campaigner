@@ -12,6 +12,7 @@ import { createRulebook } from '@/db/rulebookRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
+import { batchTargets } from '@/features/modules/post-generation';
 import type * as runEngineModule from '@/llm/runEngine';
 import { runSpine, spineReplySchema } from '@/llm/moduleGen';
 import { sha256Hex } from '@/lib/hash';
@@ -493,6 +494,16 @@ describe('finalize: the cast path', () => {
 
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
+    // The engine is FAKED here (this file pins the cast prompts), so the
+    // description run must be given a completed refill to land on: the row it
+    // just cast is the destination the engine answers with.
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+    });
 
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('module row is missing');
@@ -505,24 +516,41 @@ describe('finalize: the cast path', () => {
 
     expect(result.failed).toEqual([]);
     expect(result.cast).toEqual([AGATHA]);
-    // A cast is NOT a generated artifact: no persona run produced it, and the
-    // batch itself reached no transport at all (the two calls above are the
-    // spine pass's own).
+    // A cast is NOT a generated artifact: the run below writes PROSE into a row
+    // it did not create.
     expect(result.generated).toEqual([]);
-    expect(startRunMock).not.toHaveBeenCalled();
+    // THE DESCRIPTION RUN IS ALWAYS SPENT (docs/17 rows 133/135): the module's
+    // mention is the material the description is written FROM, never the
+    // description itself, so there is no case where it stands in for one. With
+    // the engine faked (it writes nothing) the row keeps the prose the CAST was
+    // born with; what the real refill writes into it, and the statblock
+    // step-off that precedes it, are pinned against the REAL engine in
+    // `tests/features/entity-batch-cast-description.test.ts`.
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    const runInput = startRunMock.mock.calls[0]?.[0] as {
+      targetArtifactId?: string;
+      placementModuleId?: string;
+    };
+    expect(runInput.targetArtifactId).toBeDefined();
+    expect(runInput.placementModuleId).toBeUndefined();
+    // …and the faked engine reaches no transport at all: the two calls above are
+    // the spine pass's own.
     expect(chatMock).toHaveBeenCalledTimes(2);
 
     const npcs = (await listArtifactsByCampaign(campaign.id)).filter((row) => row.name === AGATHA);
     expect(npcs).toHaveLength(1);
     const npc = npcs[0];
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    // The run was aimed AT the row the cast made — a refill, never a twin.
+    expect(runInput.targetArtifactId).toBe(npc.id);
     // Her stats are the LIBRARY creature's, cited by identity — and she carries
     // no stat block of her own (the schema refuses that pair by name).
     const ref = npcCreatureRef(npc);
     expect(ref?.chunkId).toBe(zombieChunkId);
     expect(ref?.creatureName).toBe(ZOMBIE);
     expect(npc.data.statBlock).toBeNull();
-    // Her OWN name and the module's prose about her.
+    // Her OWN name and the prose the cast born her with (the faked engine wrote
+    // nothing over it).
     expect(npc.name).toBe(AGATHA);
     expect(npc.body).toContain('the flour still on her hands');
     expect(npc.body).toContain('They buried Aunt Agatha in the spring');
@@ -534,6 +562,15 @@ describe('finalize: the cast path', () => {
     await runSpineWith(moduleId, campaign);
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
+    // Each batch's description run answers with a completed refill of the row it
+    // just cast (the engine is faked in this file).
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+    });
 
     const first = await getModule(moduleId);
     if (first === undefined) throw new Error('module row is missing');
@@ -562,7 +599,19 @@ describe('finalize: the cast path', () => {
     );
     expect(rows).toHaveLength(1);
     expect(secondResult.produced[0]?.artifactId).toBe(firstResult.produced[0]?.artifactId);
-    expect(startRunMock).not.toHaveBeenCalled();
+    // ONE row, refilled twice: each of the two targets above was HAND-SUPPLIED
+    // (this file drives the batch directly), and each spent its own description
+    // run against the SAME row.
+    expect(startRunMock).toHaveBeenCalledTimes(2);
+    expect(
+      startRunMock.mock.calls.map((call) => (call[0] as { targetArtifactId?: string }).targetArtifactId),
+    ).toEqual([rows[0]?.id, rows[0]?.id]);
+    // THE PRODUCTION SEAL, and the reason the second target cannot arise from a
+    // real surface: after the first batch the row CARRIES a detailed entity, so
+    // the name is no longer a batch target at all (docs/17 rows 133/135 —
+    // `post-generation.batchTargets` filters on `hasDetailedEntity`, which is
+    // what replaced row 133's no-clobber guard on the row's own body).
+    expect(batchTargets(second, rows, 'npc')).toEqual([]);
   });
 
   it('an unresolvable creature name fails LOUDLY, naming the entity and the creature, and finalizes nothing', async () => {
@@ -1113,21 +1162,38 @@ describe('a cast row the module text only NAMES is given an authored description
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
-  it('the module’s OWN prose decides: a row cast while the mention was thin is not given a second, invented description', async () => {
+  /**
+   * THE OWNER-RULED INVERSION (docs/17 row 135, reversing part of row 133).
+   * This pin used to be titled "the module's OWN prose decides … is not given a
+   * second, invented description" and asserted `startRunMock` was NEVER called.
+   * The owner ruled that away — *"An NPC is named if its a wikilink in the
+   * module text. Because that link IS the name."* / *"Author a description
+   * anyway."* — so the run IS spent, and what the module's paragraphs decide is
+   * only what the description is written FROM.
+   */
+  it('a row an EARLIER cast made is the row this run refills — the module’s own prose does not stand in for the description', async () => {
     const chunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
     await runSpineWith(moduleId, campaign);
-    // The text DESCRIBES her…
+    // The text DESCRIBES her — under row 133 that alone meant "no run".
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
-    // …and the row for her was cast EARLIER, while that text only named her (or
-    // by the bestiary's "spawn into module"): its prose is its birth prose.
+    // …and the row for her was cast EARLIER (the bestiary's "spawn into module",
+    // or a previous batch): its prose is its birth prose.
     const earlier = await castCreatureAsNpc({
       campaignId: campaign.id,
       moduleId,
       citation: { chunkId, creatureName: ZOMBIE },
       name: AGATHA,
       prose: { body: 'The risen stand in the lane.' },
+    });
+    // A completed refill of THAT row: the shape the real engine answers with for
+    // a targeted run (this file's engine is faked).
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'completed',
+      resultArtifactId: earlier.artifactId,
+      errorMessage: '',
     });
 
     const module = await getModule(moduleId);
@@ -1139,16 +1205,31 @@ describe('a cast row the module text only NAMES is given an authored description
       targets: [{ name: AGATHA }],
     });
 
-    // THE DESIGN, in one line (docs/11): when the module's own paragraphs
-    // DESCRIBE the entity, they are her description and NO run is spent — the
-    // module text is not replaced by invented prose, and the row the earlier
-    // cast made is left exactly as it was.
-    expect(startRunMock).not.toHaveBeenCalled();
+    // THE INVERSION, in one line: the description run happens anyway, and it is
+    // aimed at the row the EARLIER cast made — never a twin, never a new
+    // artifact, and never the module's paragraph standing in for a description.
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    const input = startRunMock.mock.calls[0]?.[0] as {
+      targetArtifactId?: string;
+      placementModuleId?: string;
+      brief?: string;
+    };
+    expect(input.targetArtifactId).toBe(earlier.artifactId);
+    expect(input.placementModuleId).toBeUndefined();
+    // …written FROM the module's own paragraphs: they ride the brief as context.
+    expect(input.brief).toContain('The mill wheel turns though the race is dry');
     expect(result.failed).toEqual([]);
     expect(result.cast).toEqual([AGATHA]);
     expect(result.produced[0]?.artifactId).toBe(earlier.artifactId);
+    // The engine is faked in this file, so it writes nothing over the row — the
+    // real refill's bytes (and the statblock step-off) are pinned against the
+    // real engine in `tests/features/entity-batch-cast-description.test.ts`.
     const after = await getArtifact(earlier.artifactId);
     expect(after?.body).toBe('The risen stand in the lane.');
+    // AND THE PRODUCTION SEAL on this arm: the target above was HAND-SUPPLIED.
+    // The row makes her a detailed entity, so no real surface would hand her to
+    // the batch — `batchTargets` is empty (docs/17 rows 133/135).
+    expect(batchTargets(module, await listArtifactsByCampaign(campaign.id), 'npc')).toEqual([]);
   });
 
   it('a description run the PAGE ate is its own class: `interrupted`, never "the generator refused"', async () => {

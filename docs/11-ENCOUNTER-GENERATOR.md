@@ -137,29 +137,47 @@ The request travels in three hops, and each hop has exactly one owner.
    artifact, the batch reads the slot off the module row
    (`domain/module.bestiarySlotForEntity`), resolves the name to a library
    citation, and casts through `db/creatureRepo.castCreatureAsNpc` — the ONE cast
-   function, unchanged. The creature's numbers are the library's, and the prose is
-   the module's own paragraphs about the entity (`surroundingParagraphs` over
-   `moduleDocumentText`), which is what the generator wrote about her — so while
-   those paragraphs DESCRIBE her, no persona run is started for that entity at
-   all. The result is ONE `npc` row carrying her name, that prose and a
-   `creatureRef`, with **no authored stat block** — the pair `npcDataSchema`
-   refuses by name — and a second run REUSES the row through the cast's own
-   idempotency. **A MENTION IS NOT A DESCRIPTION** (docs/17 row 133, the owner's
-   report: *"those named zombies only get an image on their details, nothing
-   more. No text, no stat block, nothing"*): when the module's own paragraphs do
-   NOT describe the entity — the text lists her, or the spine declared a name no
-   scene ever wrote — the batch runs the entity's OWN persona **targeting the row
-   it just cast**, and the cited row's REFILL below is what writes: the stat-block
-   step is skipped with its reason before any model call, the citation survives
+   function, unchanged. The creature's numbers are the library's, and the row is
+   BORN with the module's own paragraphs about the entity
+   (`surroundingParagraphs` over `moduleDocumentText`), which is what the
+   generator wrote about her. The result is ONE `npc` row carrying her name, that
+   prose and a `creatureRef`, with **no authored stat block** — the pair
+   `npcDataSchema` refuses by name — and a second run REUSES the row through the
+   cast's own idempotency. **A MENTION IS NOT A DESCRIPTION — IT IS THE MATERIAL
+   THE DESCRIPTION IS WRITTEN FROM** (docs/17 rows 133/135, the owner's report:
+   *"those named zombies only get an image on their details, nothing more. No
+   text, no stat block, nothing"*). Every NPC the module's text produced is
+   therefore detailed by the entity's OWN persona, **targeting the row it just
+   cast**, and the cited row's REFILL below is what writes: the stat-block step is
+   skipped with its reason before any model call, the citation survives
    byte-identical, `statBlock` stays null, and the DESCRIPTION is authored. The
    cast is kept in every case (the citation is the identity, the numbers stay the
    library's, the portrait cache still supplies the image); the numbers are never
-   authored. The question "does this text describe her?" is ONE seam —
-   `lib/wikilinks.describesEntity`, floor `ENTITY_DESCRIPTION_FLOOR` (40
-   non-whitespace characters left once the entity's own name is taken out of the
-   passage) — asked TWICE: over the module's paragraphs, and over the row's own
-   body, so a row that already carries a description is never written over (a
-   retry after a failed description run still finds a thin row and runs again).
+   authored. **The module's own paragraphs ride the brief as CONTEXT**, never as
+   a substitute for a description: the run's brief is the SAME brief the ordinary
+   npc arm builds (`buildEntityBrief`), and its context is anchored on the
+   wiki-LINK rather than on the name string — `surroundingParagraphs` normalizes
+   every wiki token to its TARGET name before matching, so an aliased
+   `[[Aunt Agatha|Müllerin]]`, whose name never appears in the rendered prose, is
+   still found and its raw token still reaches the model.
+
+   **THE OWNER'S RULING, verbatim (docs/17 row 135, which reverses part of row
+   133):** *"An NPC is named if its a wikilink in the module text. Because that
+   link IS the name."* — and, asked what should happen where the module's own
+   paragraphs already describe the entity: *"Author a description anyway."* Row
+   133 had put a text measurement between the two — a seam
+   `lib/wikilinks.describesEntity` with a floor of 40 non-whitespace characters,
+   asked over the module's paragraphs and over the row's own body — and both the
+   seam and the floor are DELETED. **Why deleting them is safe, and not a
+   judgement call:** a batch target is BY CONSTRUCTION a wiki-link of the module
+   text (`post-generation.namesOfKind` = `extractWikiLinks(moduleDocumentText)`,
+   filtered by the recorded kind), so "is this entity named?" is not a question
+   the batch can be asked, and the floor's "the text never mentions the entity"
+   case was unreachable. What replaces row 133's no-clobber guard is the TARGET
+   SET: `batchTargets` filters on `hasDetailedEntity`, so a name that already has
+   an authored, detailed row of its own — exactly what a description makes it —
+   is not a target at all.
+
    Trash mobs cited only inside an encounter are untouched by all of this: the
    encounter side still holds no cast seam and no persona of its own.
 
@@ -185,17 +203,19 @@ provider failed, the contract failed, the page ate it), the entity is reported i
 the citation stands, the portrait is on it, and only the PROSE is missing. It is
 the ONE case an entity appears in both `cast` and `failed`, and it is a
 failure the owner has to hear (docs/17 row 131's funnel reports it in the console
-and in the toast); re-running that entity runs this same arm again, because the
-row still carries no description. A run the owner STOPPED is not a failure at
+and in the toast). The row now EXISTS, so that name is a detailed entity and no
+longer a batch target: a retry means dropping the row and generating the entity
+again, not re-running the same target — the batch cannot re-target it by
+construction (docs/17 row 135). A run the owner STOPPED is not a failure at
 either arm — it is withdrawn and silent (docs/17 row 117).
 
 ### A cited row's REFILL — the Aunt Agatha rule (docs/17 row 112)
 
 One rule for every path that writes a cast creature npc in place (the artifact
 editor's "Generate/Regenerate with AI", the persona panel's targeted run, and —
-since docs/17 row 133 — the entity batch's DESCRIPTION arm, which runs the
-entity's own persona against the row it just cast when the module's paragraphs
-only name her: this rule is what makes that write safe, and it is why the batch
+since docs/17 rows 133/135 — the entity batch's DESCRIPTION arm, which runs the
+entity's own persona against the row it just cast, with the module's paragraphs
+riding the brief as context: this rule is what makes that write safe, and it is why the batch
 extends THIS path rather than opening a second one), and
 it has two halves that must never be separated. (The D3/D4 labels in this doc's
 decisions table are the room-geometry and group-veil decisions; this rule is

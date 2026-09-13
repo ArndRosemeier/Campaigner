@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { anyArtifactSchema, type AnyArtifact, type Artifact } from '@/domain';
 import {
   countOccurrences,
-  describesEntity,
-  ENTITY_DESCRIPTION_FLOOR,
   extractWikiLinks,
   resolveWikiLink,
   rewriteWikiLinkTargets,
@@ -362,79 +360,6 @@ describe('surroundingParagraphs', () => {
     expect(surroundingParagraphs('[[Alice]] was here and the tale goes far beyond.', 'alice', 10)).toBe(
       '[[Alice]] …',
     );
-  });
-});
-
-/**
- * THE THRESHOLD SEAM (docs/17 row 133, docs/11 §The module-side cast): "does
- * this text describe the entity, or merely name it?". It decides whether a
- * module's own paragraphs ARE a cast row's description or whether the batch has
- * to author one, so its rule is pinned as a VALUE at both boundaries — the
- * floor itself, and one character either side of it.
- */
-describe('describesEntity: the description floor', () => {
-  it('the floor is the decided number, not whatever the code happens to use', () => {
-    expect(ENTITY_DESCRIPTION_FLOOR).toBe(40);
-  });
-
-  it('a passage at the floor describes; one character below it does not', () => {
-    // The name is taken out first, so the passage below leaves EXACTLY
-    // `ENTITY_DESCRIPTION_FLOOR` non-whitespace characters ("x"·39 + "y").
-    const atFloor = `Zombie ${'x'.repeat(ENTITY_DESCRIPTION_FLOOR - 1)}y`;
-    expect(atFloor.replace('Zombie', '').replaceAll(/\s+/g, '').length).toBe(
-      ENTITY_DESCRIPTION_FLOOR,
-    );
-    expect(describesEntity(atFloor, 'Zombie')).toBe(true);
-    expect(describesEntity(`Zombie ${'x'.repeat(ENTITY_DESCRIPTION_FLOOR - 2)}y`, 'Zombie')).toBe(
-      false,
-    );
-  });
-
-  it('a passage that only NAMES the entity is not a description', () => {
-    expect(describesEntity('', 'Zombie')).toBe(false);
-    expect(describesEntity('Zombie', 'Zombie')).toBe(false);
-    expect(describesEntity('[[Zombie]]', 'Zombie')).toBe(false);
-    expect(describesEntity('**The risen:** [[Zombie]]', 'Zombie')).toBe(false);
-    expect(describesEntity('  Zombie\n\nZombie  ', 'Zombie')).toBe(false);
-    // A plural keeps its own letters — one `s` is not a description either.
-    expect(describesEntity('[[Zombie]]s', 'Zombie')).toBe(false);
-  });
-
-  it('padding with whitespace can never promote a mention', () => {
-    const padded = `Zombie${'\n \t'.repeat(200)}`;
-    expect(padded.length).toBeGreaterThan(ENTITY_DESCRIPTION_FLOOR);
-    expect(describesEntity(padded, 'Zombie')).toBe(false);
-  });
-
-  it('the name is removed case-insensitively, everywhere it occurs', () => {
-    expect(
-      describesEntity(`zOMbie ${'x'.repeat(ENTITY_DESCRIPTION_FLOOR)}`, 'Zombie'),
-    ).toBe(true);
-    expect(describesEntity(`Zombie ${'x'.repeat(20)} zombie`, 'Zombie')).toBe(false);
-  });
-
-  it('a name carrying regex metacharacters is stripped literally, never as a pattern', () => {
-    // `A.` must not be read as "A followed by any character": the literal name
-    // does not occur in this passage at all, so NOTHING may be taken out of it
-    // — an unescaped pattern would eat the `Ax` and push it below the floor.
-    expect(describesEntity(`Ax${'y'.repeat(ENTITY_DESCRIPTION_FLOOR - 2)}`, 'A.')).toBe(true);
-    // …and where it does occur literally, it is taken out as those two chars.
-    expect(describesEntity(`A.${'y'.repeat(ENTITY_DESCRIPTION_FLOOR - 2)}`, 'A.')).toBe(false);
-  });
-
-  it('a real sentence about the entity stays a description', () => {
-    // The owner's own module text (the Aunt Agatha fixture): the module's own
-    // paragraphs ARE the row's prose, by design.
-    expect(
-      describesEntity(
-        'The mill wheel turns though the race is dry. [[Aunt Agatha]] stands at the gate with ' +
-          'the flour still on her hands, and she does not blink.',
-        'Aunt Agatha',
-      ),
-    ).toBe(true);
-    expect(
-      describesEntity('The [[Zombie]] shambles out of the flooded undercroft at dusk.', 'Zombie'),
-    ).toBe(true);
   });
 });
 

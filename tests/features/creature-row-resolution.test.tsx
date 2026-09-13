@@ -551,6 +551,17 @@ describe('the generation the verdict unlocks', () => {
    * returns the name in `cast`, never in `failed`, so the reporting seam
    * (`features/modules/entity-batch-report`, docs/17 row 131) is never even
    * reached.
+   *
+   * REWRITTEN (docs/17 row 135): this pin used to read "The cast ran no model
+   * call at all" and asserted `chatMock` was never called — true only while the
+   * module's own paragraph counted as her description. The owner ruled that a
+   * mention is material rather than a description, so the cast row is now
+   * ALWAYS detailed by the entity's own persona. The pin's own field is
+   * unchanged (a cast is not a failure); what moved is WHERE the barrier sits:
+   * it now waits for the authored description to land on the row instead of
+   * stopping at the row's birth, because the old barrier returned before the
+   * description run and the `not.toHaveBeenCalled` assertion passed on a race
+   * rather than on the code.
    */
   it('a designed CAST is a SUCCESS: no failure is reported at all, so no count sentence can include it', async () => {
     const user = userEvent.setup();
@@ -568,24 +579,29 @@ describe('the generation the verdict unlocks', () => {
     renderPanel(module, [], campaign);
     await user.click(screen.getByTestId('batch-npc'));
 
+    // The barrier covers the FIELD this pin asserts: the run's OWN write. The
+    // row is born with the module's paragraph and the description replaces it,
+    // so "the body is the model's draft" is the observable end of the batch.
     const landed = await waitFor(async () => {
       const rows = (await listArtifactsByCampaign(campaign.id)).filter(
         (artifact) => artifact.name === 'Zombie',
       );
       expect(rows).toHaveLength(1);
+      expect(rows[0]?.body).toBe(NPC_DRAFT.body);
       return rows;
     });
-    // CAST, not generated: the row cites the library creature (docs/11 D4).
     const npc = landed[0];
     if (npc?.kind !== 'npc') throw new Error('no npc of that name landed');
+    // CAST, not generated: the row cites the library creature (docs/11 D4).
     expect(npc.data.creatureRef).toBeDefined();
-    // The cast ran no model call at all — that is what makes it a different
-    // path rather than a quieter failure.
-    expect(chatMock).not.toHaveBeenCalled();
-    // Nothing is reported: no transient toast, and no PERSISTENT one either
-    // (the seam raises `toastErrorPersistent`, absent from this file's mock —
-    // so a reported failure would surface here as the panel's own
-    // 'Batch generation failed' toast instead of passing silently).
+    // ALSO a description run, and exactly ONE transport call: the statblock
+    // step is skipped with its reason before any model call (the cited row's
+    // refill), so a second call here would mean the refused pair was built.
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    // And it is a SUCCESS: nothing is reported — no transient toast, and no
+    // PERSISTENT one either (the seam raises `toastErrorPersistent`, absent from
+    // this file's mock — so a reported failure would surface here as the panel's
+    // own 'Batch generation failed' toast instead of passing silently).
     expect(toastErrorMock.mock.calls).toEqual([]);
     await flushAsyncUpdates();
   }, 30_000);

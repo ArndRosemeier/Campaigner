@@ -14,13 +14,20 @@ import {
   defaultSettings,
   ENTITY_KINDS,
   libraryCreatureKey,
+  moduleDocumentText,
   modulePartSchema,
   moduleSpineSchema,
   type Module,
+  type ModuleEntityKind,
 } from '@/domain';
-import { orderedKinds, runModulePostGeneration } from '@/features/modules/post-generation';
+import {
+  batchTargets,
+  orderedKinds,
+  runModulePostGeneration,
+} from '@/features/modules/post-generation';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
+import { extractWikiLinks, stripWikiLinks } from '@/lib/wikilinks';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -679,6 +686,103 @@ describe('an event is not an encounter (08 §M4-B, superseded: only a fight is a
     ).not.toContain(eventId);
     expect(enqueueEncounterMaps).not.toHaveBeenCalled();
   }, 30_000);
+});
+
+/**
+ * THE FACT THE DESCRIPTION RULE RESTS ON (docs/17 row 135). Row 133 asked "does
+ * this text describe the entity, or only name it?" and spent no run when the
+ * answer was "it describes her". The owner ruled that question away — *"An NPC
+ * is named if its a wikilink in the module text. Because that link IS the
+ * name."* — and the deletion of the rule is safe for exactly ONE reason, pinned
+ * here: a batch target is BY CONSTRUCTION a wiki-link of the module text
+ * (`namesOfKind` = `extractWikiLinks(moduleDocumentText(module))`, filtered by
+ * the recorded kind), so the batch can never be handed a name the text does not
+ * contain, and "is this entity named?" is not a question that can arise. The
+ * floor's "the text never mentions the entity" case was unreachable, not
+ * handled.
+ *
+ * These are pure-function pins: `batchTargets` needs no database.
+ */
+describe('batchTargets — a target IS a wiki-link of the module text', () => {
+  /** The module text's wiki-links, and a spine record that names MORE than the
+   * text ever wrote. */
+  function moduleWith(
+    wikiLinks: string,
+    recorded: { name: string; kind: ModuleEntityKind['kind'] }[],
+  ): Module {
+    return moduleOverrides(
+      createModule({
+        campaignId: '5a4f0c9e-2222-4222-8222-000000000002',
+        title: 'Ember Crypt',
+        concept: 'A drowned crypt beneath the harbor.',
+        levelMin: 1,
+        levelMax: 4,
+        sizeDial: 'sketch',
+      }),
+      {
+        entityNamesNormalized: true,
+        entityKinds: recorded.map((entry) => ({ ...entry, absorbed: [] })),
+        spine: moduleSpineSchema.parse({
+          premise: wikiLinks,
+          themes: [],
+          partPlan: [
+            {
+              title: 'The Tide Gate',
+              levelBand: '1–4',
+              synopsis: '',
+              levelUpTrigger: '',
+            },
+          ],
+        }),
+        parts: [],
+      },
+    );
+  }
+
+  it('a name the spine recorded but the text NEVER wrote is not work — it cannot be a target', () => {
+    const module = moduleWith('The [[Zombie]] shambles out of the flooded undercroft.', [
+      { name: 'Zombie', kind: 'npc' },
+      // The spine declared her; no scene ever wrote her into the text.
+      { name: 'Aunt Agatha', kind: 'npc' },
+    ]);
+    // The text really does not name her: this is the state the deleted floor
+    // tried to answer, and it is not a state a batch target can be in.
+    expect(moduleDocumentText(module)).not.toContain('Aunt Agatha');
+    expect(batchTargets(module, [], 'npc')).toEqual(['Zombie']);
+  });
+
+  it('the target set IS the text’s wiki-links: a recorded name absent from the text contributes nothing, and vice versa', () => {
+    const module = moduleWith('The [[Ghost]] waits where the [[Zombie]] fell.', [
+      { name: 'Ghost', kind: 'npc' },
+      { name: 'Zombie', kind: 'npc' },
+      { name: 'Kael', kind: 'npc' },
+    ]);
+    const links = extractWikiLinks(moduleDocumentText(module)).map((link) => link.name);
+    expect(links).toEqual(['Ghost', 'Zombie']);
+    // Every target is one of those links, and no link is missing from the set
+    // (nothing carries a detailed entity here).
+    expect(batchTargets(module, [], 'npc')).toEqual(links);
+    expect(batchTargets(module, [], 'npc')).not.toContain('Kael');
+  });
+
+  it('an ALIASED link contributes its TARGET name, never the epithet the text renders', () => {
+    const module = moduleWith('Die [[Aunt Agatha|Müllerin]] steht am Tor.', [
+      { name: 'Aunt Agatha', kind: 'npc' },
+    ]);
+    // The rendered prose says the epithet only — the batch is handed the LINK's
+    // name, which is what the cast and the artifact name are keyed on.
+    expect(stripWikiLinks(moduleDocumentText(module))).not.toContain('Aunt Agatha');
+    expect(batchTargets(module, [], 'npc')).toEqual(['Aunt Agatha']);
+  });
+
+  it('a name whose kind the text’s record does not carry is not a target of that kind', () => {
+    const module = moduleWith('The [[Zombie]] guards [[Ember Crypt]].', [
+      { name: 'Zombie', kind: 'npc' },
+      { name: 'Ember Crypt', kind: 'location' },
+    ]);
+    expect(batchTargets(module, [], 'npc')).toEqual(['Zombie']);
+    expect(batchTargets(module, [], 'location')).toEqual(['Ember Crypt']);
+  });
 });
 
 describe('orderedKinds (the fixed-cast order pin)', () => {

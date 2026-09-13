@@ -538,8 +538,9 @@ test) · ❌ gap.
 | The slot is ADDITIVE: a record without it parses with no key, and the model's `"bestiary": null` reads the same | `moduleGen-cast.test` | ✅ |
 | The emitted strict contract carries `bestiary` as a REQUIRED nullable property whose `book` is nullable too (asserted off the shipped schema, not transcribed) | `moduleGen-cast.test` | ✅ |
 | The request SURVIVES the name-normalization substitute (carried onto the canonical record by name and by every absorbed variant); two source records asking for different creatures REFUSE loudly | `moduleGen-cast.test` | ✅ |
-| Finalize casts through `castCreatureAsNpc`: ONE `npc` artifact with the entity's name, the module's own prose about it and the creature's `creatureRef` — `statBlock` null, no persona run started while the module's paragraphs DESCRIBE the entity, and no transport reached | `moduleGen-cast.test` | ✅ |
-| A cast entity the module's text only NAMES gets an AUTHORED description through the cited row's refill: the entity's own persona run TARGETS the cast row (statblock step `'skipped'` before any model call, citation byte-identical, `statBlock` null, prose authored), the module's own prose is checked FIRST, a row that already carries a description is never written over, and a failed description run is reported while the cast stands (docs/17 row 133) | `entity-batch-cast-description.test` (6, real engine + faked transport), `moduleGen-cast.test` (+4), `wikilinks.test` (+6) | ✅ |
+| Finalize casts through `castCreatureAsNpc`: ONE `npc` artifact with the entity's name, the module's own prose about it and the creature's `creatureRef` — `statBlock` null and no authored stat block, with the description run (always spent since docs/17 row 135) aimed AT that row and reaching no transport in this file (its engine is faked) | `moduleGen-cast.test` | ✅ |
+| EVERY NPC the module's text produced gets an AUTHORED description through the cited row's refill: the entity's own persona run TARGETS the cast row (statblock step `'skipped'` before any model call, citation byte-identical, `statBlock` null, prose authored), the module's own paragraph rides the brief as CONTEXT — asserted on the transport payload — and a failed description run is reported while the cast stands (docs/17 rows 133/135) | `entity-batch-cast-description.test` (7, real engine + faked transport), `moduleGen-cast.test` (3 rewritten, +0), `module-post-generation.test` (+4, the `batchTargets` fact) | ✅ |
+| A batch target IS a wiki-link of the module text (`namesOfKind` = `extractWikiLinks(moduleDocumentText)`): a recorded name the text never wrote is not work, an aliased `[[Name\|alias]]` contributes the TARGET name, and a name with an authored detailed row is not a target — the fact that makes the deleted floor's "never mentioned" case unreachable (docs/17 row 135) | `module-post-generation.test` (4, pure), `entity-batch-cast-description.test` (the end-to-end seal) | ✅ |
 | A SECOND run over the same module REUSES that row (same artifactId, one row) instead of minting a twin | `moduleGen-cast.test` | ✅ |
 | An unresolvable creature name FAILS LOUDLY naming the entity and the creature, in the batch's existing `failed[]`, and finalizes NOTHING (no statless twin) | `moduleGen-cast.test` | ✅ |
 | An ambiguous name is refused by name with both candidates listed; naming the book in the slot resolves it to that book's chunk; a book that holds no such creature is refused listing what the library has | `moduleGen-cast.test` | ✅ |
@@ -1837,50 +1838,82 @@ prints nothing beyond — indistinguishable, in a `tail`, from a `:479` failure
 whose context line happened to be last. Hence `AGENTS.md` §Workflow: write the
 gate's raw output to a file and keep it; never pipe it through `tail`/`head`.
 
-### A cast entity the text only NAMES is given an AUTHORED description (docs/17 row 133, docs/18 §2/§4)
+### EVERY NPC the module's text produced gets an AUTHORED description (docs/17 rows 133/135, docs/18 §2)
 
 The owner's report is that an NPC the module's TEXT names (*"even if its just a
-zombie"*) gets a portrait and nothing else. The fix keeps the cast — the
-citation is the identity, the numbers stay the library's, the portrait cache
-still supplies the image — and authors the PROSE through the cited row's
-existing refill when the module's own paragraphs do not describe her. *"Does
-this text describe her?"* is ONE seam (`lib/wikilinks.describesEntity`, floor
-`ENTITY_DESCRIPTION_FLOOR`), asked from the batch exactly twice.
+zombie"*) gets a portrait and nothing else; his ruling on the fix reverses part
+of row 133, verbatim: *"An NPC is named if its a wikilink in the module text.
+Because that link IS the name."* / *"Author a description anyway."* Row 133 had
+made the description conditional on a text measurement — the seam
+`lib/wikilinks.describesEntity` and its floor `ENTITY_DESCRIPTION_FLOOR = 40`,
+asked over the module's paragraphs and over the row's own body. Both the seam and
+the floor are DELETED, and both early returns are gone: the cast keeps everything
+(the citation is the identity, the numbers stay the library's, the portrait cache
+still supplies the image), the module's mention rides the brief as CONTEXT, and
+the PROSE is always authored through the cited row's existing refill. **The fact
+that makes the deletion safe:** `batchTargets` is
+`namesOfKind(module, kind).filter(… !hasDetailedEntity(…))` and `namesOfKind` is
+`extractWikiLinks(moduleDocumentText(module))` — every target is BY CONSTRUCTION
+a wiki-link of the module text, so the floor's "the text never mentions her" case
+was UNREACHABLE, and the no-clobber guard is replaced by the target set (a name
+with an authored, detailed row is not a target at all).
 
 | fact pinned | where |
 |---|---|
-| **The seam's floor is a VALUE and both sides of it are pinned**: 40 is exactly the floor (a sanity check on the count itself, not a remembered number); a passage at the floor describes and ONE character below it does not; a passage that is only the entity's name (`''`, `'Zombie'`, `'[[Zombie]]'`, `'**The risen:** [[Zombie]]'`, whitespace-padded, plural `'[[Zombie]]s'`) NEVER describes her — the unit is the whole paragraphs `surroundingParagraphs` returns, and whitespace can never promote a mention | `tests/lib/wikilinks.test.ts` (`describesEntity: the description floor`, 6 pins, NEW) |
-| **The stripping is literal and case-insensitive**: `Ax`+38 more characters with the entity named `A.` is TRUE — an unescaped pattern would have eaten `Ax` and landed one character short (a regex-metacharacter pin) | `tests/lib/wikilinks.test.ts` (2 pins) |
-| **The THIN side, end to end through the REAL engine** (only `@/llm/openrouter`'s chat, `@/search` and `@/lib/toast` are faked): a bullet that only names her (`**The risen:** [[Aunt Agatha]] and [[Zombie]].`) → the entity stays in `cast`, `generated` is empty, `failed` is empty, the row's `body` is the AUTHORED text with appearance/personality written, the citation's `chunkId`/`creatureName`/`contentHash` all intact, `statBlock` null, the module's name unchanged with the model's invented epithet landing as an ALIAS, **exactly ONE transport call** (the statblock step is `'skipped'` with a reason naming the library creature before any model call), and no toast | `tests/features/entity-batch-cast-description.test.ts` (`runs the entity's own persona AGAINST the row…`, NEW) |
-| **The NEVER-mentioned case is the same case**: an entity the spine declared but no scene wrote has an empty context, and it is the mention's absence — not an empty string's length — that makes it thin | `tests/features/entity-batch-cast-description.test.ts` (NEW) |
-| **The DESCRIBED side spends nothing**: real prose about her → the transport is NEVER called, `db.runs` stays EMPTY (no run row at all, not merely no artifact), and the body is byte-identical to `surroundingParagraphs(moduleDocumentText(module), AGATHA).trim()` | `tests/features/entity-batch-cast-description.test.ts` (NEW) + `tests/llm/moduleGen-cast.test.ts` (4 pins, incl. the reused-row case: a row cast while the mention was thin is NOT given a second, invented description — the module's own prose decides FIRST) |
-| **The no-clobber guard**: a row that ALREADY carries a description (cast by an earlier pass) gets no run and its body is untouched — the retry-after-failure path stays alive because a thin row still runs again | `tests/features/entity-batch-cast-description.test.ts` (NEW) |
-| **The run is aimed AT the cast row**: `targetArtifactId` is the cast row's id, `placementModuleId` is absent (a refill, not a placement), autonomy `'auto'`, and the brief is the entity's own (`Detail the entity "Aunt Agatha" …`, the exact-name instruction, the wiki-link) | `tests/llm/moduleGen-cast.test.ts` (NEW) |
-| **A failed description is LOUD and the cast stands**: a failing transport → one `failed[]` record (`kind` `run-not-completed`, the run id, the terminal status, `errorMessage`, the raw run row), the console record parsed out of the batch's ONE funnel (name/kind/batchKind), and the row keeps its citation with the thin `body` — the case a name appears in BOTH `cast` and `failed`; the completion-without-a-result anomaly carries its OWN sentence (`the run completed without writing the description`, never the artifact sentence), and the run's class mapping (`failureKind: 'cancelled'` → `interrupted`, status `failed`) is pinned BESIDE it | `tests/features/entity-batch-cast-description.test.ts` + `tests/llm/moduleGen-cast.test.ts` (2 pins, NEW) |
-| **A withdrawn run is silent at this arm too** (the owner's Stop, not a failure): no `failed` entry, no toast, the cast still listed | `tests/llm/moduleGen-cast.test.ts` (NEW) |
-| **The ROUTING** — the floor and the name-stripping live in `lib/wikilinks.ts` ALONE, the batch asks `describesEntity(` exactly TWICE and re-states no part of the rule (no floor literal, no hand-rolled whitespace strip) | `tests/features/entity-batch-cast-description.test.ts` (`the description decision is ONE seam (source scan)`, NEW, labelled as a scan) |
+| **A batch target IS a wiki-link of the module text** — a name the spine RECORDED but the text never wrote is not work and cannot be a target; the target set is exactly the text's links of the recorded kind; an ALIASED `[[Name\|alias]]` contributes the TARGET name, never the epithet the text renders | `tests/features/module-post-generation.test.ts` (`batchTargets — a target IS a wiki-link of the module text`, 4 pins, NEW, pure) |
+| **The DESCRIBED side is now the same case as the thin side** (the owner-ruled inversion): real prose about her → exactly ONE run, and the row's `body` IS the authored text, not the module's paragraph — while the module's own sentence is asserted to have reached the run on the TRANSPORT PAYLOAD ("the brief carries it as CONTEXT") | `tests/features/entity-batch-cast-description.test.ts` (2 pins, NEW) |
+| **A row that carries a description can never be re-targeted**: after the description lands, `batchTargets` is empty for that name, and the batch fed exactly that set spends nothing and rewrites nothing — the guarantee that replaced row 133's no-clobber guard, pinned end to end | `tests/features/entity-batch-cast-description.test.ts` (NEW) |
+| **The ALIASED link**, through the REAL engine: `[[Aunt Agatha\|Müllerin]]` — the name nowhere in the rendered prose (asserted with `stripWikiLinks`) — still produces an authored description, and the raw token reaches the run | `tests/features/entity-batch-cast-description.test.ts` (NEW) |
+| **The THIN+eval side, end to end through the REAL engine** (only `@/llm/openrouter`'s chat, `@/search` and `@/lib/toast` are faked): a bullet that only names her → the entity stays in `cast`, `generated` is empty, `failed` is empty, the row's `body` is the AUTHORED text with appearance/personality written, the citation's `chunkId`/`creatureName`/`contentHash` all intact, `statBlock` null, the module's name unchanged with the model's invented epithet landing as an ALIAS, **exactly ONE transport call** (the statblock step is `'skipped'` with a reason naming the library creature before any model call), and no toast | `tests/features/entity-batch-cast-description.test.ts` |
+| **A failed description is LOUD and the cast stands**: a failing transport → one `failed[]` record (`kind` `run-not-completed`, the run id, the terminal status, `errorMessage`, the raw run row), the console record parsed out of the batch's ONE funnel, the row keeps its citation and its thin `body` — the case a name appears in BOTH `cast` and `failed`; the completion-without-a-result anomaly carries its OWN sentence, and the run's class mapping (`failureKind: 'cancelled'` → `interrupted`, status `failed`) is pinned BESIDE it | `tests/features/entity-batch-cast-description.test.ts` + `tests/llm/moduleGen-cast.test.ts` |
+| **A withdrawn run is silent at this arm too** (the owner's Stop, not a failure): no `failed` entry, no toast, the cast still listed | `tests/llm/moduleGen-cast.test.ts` |
+| **The run is aimed AT the cast row**: `targetArtifactId` is the cast row's id, `placementModuleId` absent, and the brief carries the module's paragraph as CONTEXT — including the reused-row case (an EARLIER cast's row is refilled, never twinned) | `tests/llm/moduleGen-cast.test.ts` (3 pins, REWRITTEN — their premise was the deleted floor) |
+| **The INVERSION at the panel**: a designed cast is still a SUCCESS (nothing reported), its barrier now waits for the AUTHORED body and asserts exactly ONE transport call — it previously stopped at the row's birth and passed on a race | `tests/features/creature-row-resolution.test.tsx` (REWRITTEN) |
+| **The DELETED seam stays deleted** — `describesEntity` / `ENTITY_DESCRIPTION_FLOOR` appear nowhere under `src/` or `tests/` (one exclusion, by exact path: the scan file itself, whose header names what it buries), and the cast branch holds no `return` between its guard and the authoring `startRun` (comments stripped, with slice-sanity assertions) — **labelled as a scan: it cannot see a DEAD CONDITION**, which is why the behaviour is pinned through the real engine above | `tests/features/entity-batch-cast-description.test.ts` (`the deleted description seam stays deleted (source scan)`) |
 
 **REVERT-PROVEN lines** (each injection applied to the exact executing line,
 printed back with `grep -n` and `git diff --stat` checked BEFORE the run, then
-restored from a byte-exact baseline copy and verified with `git hash-object` —
-`entity-batch.ts` `746072a4eb3da6e12dd85a413a5343329ce542df` and
-`wikilinks.ts` `280ff0ee0f70c322ea187f3624e3cdc9cd342e41`, both matched after
-every restore; `runEngine.ts` `54cf1408006c5a7b3896e44fcc2aea555e2cb92e` before
-and after; one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept):
+restored from a byte-exact OUT-OF-TREE copy and re-verified with `git hash-object`
+— `entity-batch.ts` `3f38aa0d4b7a588ffc85fd77c4e80d41f9c99380`,
+`post-generation.ts` `d560f465ba178ac380d78a31ccfb09c0626e458d`,
+`wikilinks.ts` `5bafcc7f0f3f430a0deba2a9c7839e6809f00b02`, all re-hashed after
+every restore; one suite group at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw
+output kept):
 
 | injection | line it hits | result |
 |---|---|---|
-| the whole authoring arm deleted (the pre-fix behaviour: cast and return) | `entity-batch.ts:632-689` | **RED 6** — both thin end-to-end pins, the "aims the run AT THE CAST ROW" pin, the "its OWN sentence" pin, the failure-funnel pin and the scan — and **GREEN on the described side, the withdrawal pin and every PRE-EXISTING cast pin** (the withdrawal pin is green because no run exists to be stopped: a withdrawal pin cannot see an arm that never runs) |
-| the module-paragraph ask deleted (always author) | `entity-batch.ts:642` | **RED 2** (the scan and "the module's OWN prose decides": a run IS spent and the module's prose WOULD be replaced); the created-row pins stayed GREEN because a created row's body IS the module paragraph — the row-body ask shadows it, which is why the reused-row pin was added |
-| the row-body ask deleted (always author a thin module) | `entity-batch.ts:654` | **RED 2** (the no-clobber pin and the scan) |
-| the name no longer taken out of the passage (the floor applied to the raw text) | `wikilinks.ts:347-353` | **RED 7 across three files** (2 seam pins + 5 batch pins); the "never mentions her at all" case stayed GREEN, correctly — its context is empty either way |
-| **the same rule RE-INLINED at the call site** (equivalent spelling, no seam call) | `entity-batch.ts:642` | **RED 1, only the scan** — **all 85 behavioural pins GREEN** |
-| the engine's cited-row statblock step-off disabled | `runEngine.ts:3169` | **RED 2** with the refusal in the raw output: the description run asks for a block, the block lands in the run row, `runEngine.mergeRefillData` refuses the pair by name and the run fails |
-| the vanished-row guard's sentence reworded | `entity-batch.ts:644-648` | **GREEN, 86/86** — names the ONE line no pin reaches (the cast row disappearing between its own write and the read is not a state a fixture can produce; it is a loud guard, not a covered branch) |
+| **I1 the authoring run removed** — the pre-rule behaviour, `return` immediately after the cast | `entity-batch.ts:627` | **RED 14 across 3 files**: both thin end-to-end pins, the material/context pin, the INVERSION pin, the aliased pin, the re-target seal, the failure-funnel pin, the scan, and 6 `moduleGen-cast`/`creature-row-resolution` pins — with the **withdrawal pin GREEN** (no run exists to be stopped: a withdrawal pin cannot see an arm that never runs) |
+| **I2 the `hasDetailedEntity` filter deleted** from the target set (the data-loss guard) | `post-generation.ts:142` | **RED 4**, every one of them a pin asserting the target-set seal (the end-to-end seal here and in `moduleGen-cast`). The 4 PURE `batchTargets` pins stayed GREEN: they pin the wiki-link derivation, not the filter — which is why the filter is pinned end to end and not only in the pure seam |
+| **I3 `namesOfKind` reads the RECORDED names instead of the text's links** (a hand-picked list) | `post-generation.ts:111-113` | **RED 2**, exactly the two pins that hold the load-bearing fact; the aliased and kind pins stayed GREEN (they do not discriminate) |
+| **I4 the context anchor moved to the DISPLAY text** (a name-string search over what a reader sees) | `wikilinks.ts:300` | **RED 3**: the new aliased end-to-end pin AND the two pre-existing `surroundingParagraphs` pins (*"matches on token names only, never on display text"*) — the anchor rule was already pinned in the unit seam; the new pin measures it end to end |
+| **I5 a DEAD, unreferenced `describesEntity` re-added** to `lib/wikilinks.ts` (zero callers in `src/`) | `wikilinks.ts:307` | **RED 1, and it is ONLY the scan: 72/72 behavioural pins GREEN** — the measured proof that the scan is load-bearing, and that a dead condition is invisible to behaviour |
+| **I6 the empty-context fallback dropped** (`prose: { body: context }` — an empty body where no module text mentions her) | `entity-batch.ts:623` | **GREEN, 63/63** — names the ONE line no pin reaches. It is unreachable for a real batch target (every target is a wiki-link of the module text — the fact pinned above), which is exactly why row 133's *"the text NEVER mentions her"* pin was DELETED rather than replaced: nothing can reach that state |
 
-A behavioural replay of this rule costs nothing when the fold is byte-identical:
-injection 5 shows the shape scan is the ONLY thing standing between the codebase
-and a re-inlined rule.
+**The test-count arithmetic, measured.** The DELETED floor block held **7** pins,
+not the 6 row 133 recorded (`tests/lib/wikilinks.test.ts`, 46 → 39). The
+rewritten `entity-batch-cast-description.test.ts` goes 6 → 7 (three old pins
+removed: the described side, the no-clobber guard, the never-mentioned case; four
+added: the inversion, the transport-context pin, the aliased link, the
+re-target seal). `module-post-generation.test.ts` goes 18 → 22 (the 4 new
+`batchTargets` pins). `moduleGen-cast.test.ts` (27) and
+`creature-row-resolution.test.tsx` (7) are unchanged in COUNT — three and one of
+their pins respectively were REWRITTEN, not added. Net **3454 → 3452 (−2)** over
+**301 files (unchanged)**: −7 +1 +4.
+
+**Their premises were the deleted floor, so they could not stay as they were —
+named, with the measurement.** (1) *"an entity the module's prose already
+describes spends nothing and keeps the module's paragraph"* → INVERTED, as the
+owner directed: one run, authored prose. (2) `moduleGen-cast`'s *"the module's OWN
+prose decides: … is not given a second, invented description"* → retitled and
+rewritten to the run being spent against the earlier cast's row. (3) The same
+file's *"ONE npc artifact carries the entity's prose …"* and *"a SECOND run reuses
+that row"* asserted `startRunMock` was never called → now assert the run, its
+`targetArtifactId` and the empty target set. (4)
+`creature-row-resolution`'s *"a designed CAST is a SUCCESS"* asserted `chatMock`
+was NEVER called — a claim that had been passing on a RACE (its barrier stopped
+at the row's birth, before the description run reached the transport) and that
+row 133's ledger had cited as measured proof the floor was low enough. It now
+waits for the authored body and asserts exactly ONE call.
 
 ### A cited npc's borrowed numbers (docs/17 row 134, docs/11 §A cited row's REFILL, docs/18 §2/§4)
 
