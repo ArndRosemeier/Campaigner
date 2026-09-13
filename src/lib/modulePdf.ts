@@ -32,6 +32,7 @@ import { getBattleByModule } from '@/db/battleRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { mdToPdfmakeContent } from '@/lib/mdToPdfmake';
+import { blockText, textBlocks } from '@/lib/textBlocks';
 import {
   NO_PDF_IMAGES,
   PDF_COVER_MAX_LONG_EDGE,
@@ -167,14 +168,48 @@ function kicker(text: string): Content {
   return { text: text.toUpperCase(), style: 'kicker' };
 }
 
+/**
+ * One labeled section — `Label: body` — with the body's OWN STRUCTURE honoured
+ * (docs/17 row 146, docs/18 §2.3). `lib/textBlocks.textBlocks` is the ONE rule
+ * for where a body's paragraphs are: each block becomes its own run, so a BLANK
+ * line reads as a paragraph break, while a SINGLE newline stays a line break
+ * INSIDE its run (pdfmake prints `\n` as a line break) — the two behaviours are
+ * deliberately different and pinned apart. Before this, the whole body was one
+ * run: the model's paragraphs arrived as the owner's *"big text blobs without
+ * any paragraph"*.
+ *
+ * A single-block body is BYTE-IDENTICAL to what it printed before — ONE node,
+ * the label run followed by the body run — so every existing definition and
+ * every existing assertion is unchanged; only a body with several blocks (the
+ * defect) gains the following paragraph runs, in source order.
+ */
 function labeledSection(label: string, body: string): Content | null {
-  if (body.trim() === '') return null;
+  const blocks = textBlocks(body);
+  if (blocks.length === 0) return null;
+  const paragraphs = blocks.map(blockText);
+  const first = paragraphs[0] ?? '';
+  if (paragraphs.length === 1) {
+    return {
+      text: [
+        { text: `${label}: `, bold: true, style: 'label' },
+        { text: first },
+      ],
+      margin: [0, 0, 0, 3],
+    };
+  }
   return {
-    text: [
-      { text: `${label}: `, bold: true, style: 'label' },
-      { text: body },
-    ],
-    margin: [0, 0, 0, 3],
+    stack: paragraphs.map(
+      (paragraph, index): Content => ({
+        text:
+          index === 0
+            ? [
+                { text: `${label}: `, bold: true, style: 'label' },
+                { text: paragraph },
+              ]
+            : { text: paragraph },
+        margin: [0, 0, 0, 3],
+      }),
+    ),
   };
 }
 

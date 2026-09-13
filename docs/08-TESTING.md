@@ -463,6 +463,7 @@ test) · ❌ gap.
 | Editor: tag editor chips | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: surviving kind forms (pc/npc/location/faction/note/encounter/plotarc) | `editor-autosave`, `encounter-form`, `m2kinds`, `ui-smoke` | 🟡 forms beyond npc/encounter |
 | Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
+| **Structured text renders as PARAGRAPHS in the app AND the PDF**: a blank line is a paragraph break and a single newline a line break, both consumers drawing the ONE rule's own blocks, on a stored row no migration touched (docs/17 row 146) | `text-blocks.test` (12 pins, NEW) | ✅ |
 | Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: images, cover/lightbox, encounter generator handoff | `images-ui.test` | ✅ |
 | Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
@@ -2718,6 +2719,58 @@ pool (the prop is required, so the choice is explicit — but `[]` is type-corre
 and that an `npc-ref` row's numbers match the books, because the app deliberately
 shows them where the books print `see <name>` (docs/11 states the one-arm
 difference, and it is NOT covered by a differential pin).
+
+**C — ONE plain-text→blocks renderer for the app and the PDF.** The owner reads
+*"big text blobs without any paragraph… walls of text, no formatting at all,
+describing monsters."* Two renderers collapsed the model's structure, each in its
+own way: `StatBlockCard` printed a field inside a `<span>` (HTML turns every
+newline into a space) and the PDF put a whole body in ONE run (pdfmake prints a
+blank line as an empty line). ONE rule now decides where the blocks ARE —
+`lib/textBlocks.textBlocks`, with `blockText(block)` as the run form — and each
+renderer only decides how to DRAW a block:
+`components/text-blocks.TextBlocks` (`whitespace-pre-line`, one element per block,
+block-level after the first) and `lib/modulePdf.labeledSection` (one run per
+block). Because `labeledSection` feeds `statBoxContent` — the box BOTH exporters
+share — a roster mob's sections and every prose field of the module book gain the
+paragraphs at once. **A single-block body is byte-identical to what it printed
+before** (one node: the label run, then the body run), which is why no existing
+definition or assertion moved.
+
+| fact pinned | where |
+|---|---|
+| **The rule, and its two behaviours are DISTINCT**: a blank line (however many, whitespace-only lines included) separates blocks; a single newline stays INSIDE one block as a line break; `\r\n` is normalised; whitespace-only text carries no block; trailing spaces are dropped and indentation kept | `lib/text-blocks.test.tsx` (5 rule pins, NEW) |
+| **The app draws the rule's own blocks**: one element per block (`text-block`), the second and later ones block-level, `whitespace-pre-line` carrying the line breaks — asserted as `toEqual(textBlocks(fixture).map(blockText))`, so the consumer can only follow the rule | `lib/text-blocks.test.tsx` (`the reader renders one element per block, the second one block-level`) |
+| **The PDF draws the rule's own blocks**: one run per block in document order, the whole body NEVER in one run, the single newline INSIDE its run (`"text":"…\n…"`) | `lib/text-blocks.test.tsx` (`the PDF prints one run per block…`) |
+| **Nothing is lost and the order holds**: every section's LABEL run survives (`Grasping Antennae: `, `Mandible: `, `Reactive Snap: `, `Skitter Away: `, `Perception: `) and their relative order is asserted (`extras` in the labeled column before the named sections, then traits → actions → reactions → legendary) | `lib/text-blocks.test.tsx` (`every section still prints, in the same order, after the block change`) |
+| **A row generated BEFORE the change heals**: a stored npc row with a `\n\n` inside its trait text (the bytes a pre-change generator wrote — asserted byte-exact) is READ through `getArtifact` and renders as paragraphs in the app and as two runs in the PDF, and the row's JSON is IDENTICAL before and after the render — no write, no content hash, no citation, no migration | `lib/text-blocks.test.tsx` (`a row generated BEFORE the change renders with paragraphs after it`) |
+| **EXACTLY ONE implementation** (AGENTS rule 4, made mechanical): `export function textBlocks` exists in exactly one file; the files that reach the rule are exactly the REGISTERED four (the rule, the presenter, `modulePdf`, `stat-block`) — a new consumer must edit the pin deliberately; neither consumer splits text on a blank line or holds a paragraph regex; the presenter holds no `.split(` at all | `lib/text-blocks.test.tsx` (`EXACTLY ONE text→blocks implementation`, 3 source pins, comments stripped) |
+| **REGRESSION GUARD — the PDF definition pins did not move**: 15 files / 199 tests in the PDF and stat-block neighbourhood, including every `modulePdf`/`modulePdfPlan`/`pdfExport` definition dump, green with the single-block body byte-identical | that run, kept in the landing's raw output |
+
+**REVERT-PROVEN** (each injection printed with `git diff --stat` (or `diff -u` for
+the NEW seam file) BEFORE its run, every file restored from an OUT-OF-TREE copy
+and re-hashed with `git hash-object`, identical before and after —
+`modulePdf.ts` `505e76fc10f5d42d3fca4c479c6d0ca2d9b54ae7`, `textBlocks.ts`
+`92433baa8a704dc27ae2c6591d368c954b0d483b`, `stat-block.tsx`
+`f64ccff5791bde4e468928ea22ccc2ee229429f2`):
+
+| injection | what it does | RED | GREEN (unchanged) |
+|---|---|---|---|
+| **C-I1** `modulePdf.labeledSection`'s body becomes one block again (`[{ lines: [body] }]`) | the PDF consumer stops using the rule — the wall of text returns | **5** — the PDF run pin, the section-order pin, the stored-row pin and BOTH source pins (the rule is no longer reached by `modulePdf`) | **44**, including every `modulePdf.test` definition pin — MEASURED proof that those pins never looked at paragraph structure (they assert single-paragraph content) |
+| **C-I2** `StatBlockCard`'s named entry goes back to `{item.text}` | the app consumer stops using the rule | **2** — the reader render pin and the stored-row pin | **18**, including `stat-block-abilities.test` and the whole reader-roster file (which asserts the trait's NAME, not its paragraph structure) |
+| **C-I3** the RULE itself promotes a single newline to a paragraph break (`if (line.trim() !== '') blocks.push({lines: [line.trimEnd()]})`) | the exact wrong rule this seam exists to prevent | **4** — 3 rule pins (block count, `\r\n` normalisation, trailing space) and the stored-row pin | **36**, including BOTH consumer pins — which is the design, and it is honest: the consumers' pins are AGREEMENT pins (`toEqual(rule's answer)`), so they follow the rule and cannot judge it; the rule's own behaviour is held by the rule pins alone |
+
+**What these pins still CANNOT prove**: that pdfmake LAYS a `\n` out as a line
+break in a real PDF page (jsdom asserts the definition's runs, never a rendered
+page — the box is pinned as DATA, so a pdfmake behaviour change would need a real
+render to notice); that a future component will not re-implement the block
+splitter (the source pin is a GUARD over the four registered files, not a proof —
+a consumer that splits text and never names the seam is caught only by the
+`.split(`/regex checks inside those files); and that `lib/pdfExport`'s OWN
+`statBlockSection`/`labelValue` rows (the single-artifact export's stat block for
+a pc/npc) split paragraphs — they do not go through this rule yet, recorded as
+known debt in docs/18 §5 rather than folded here (folding them re-pins every
+GM-notes definition dump in the same landing, which is more expensive than the
+defect on the path the owner reads).
 
 ### Remaining gaps
 

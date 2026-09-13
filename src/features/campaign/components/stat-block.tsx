@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { Input } from '@/components/ui/input';
+import { TextBlocks } from '@/components/text-blocks';
 import {
   abilityModifier,
   abilityScoreFromModifier,
@@ -88,7 +89,19 @@ function NumberField({
   );
 }
 
-/** Classic stat-block card display (05-UI §Artifact editor). */
+/**
+ * Classic stat-block card display (05-UI §Artifact editor) — THE card every
+ * surface renders (the artifact editor, the session-mode cards, the module
+ * reader's entity panel through `MonsterStatblocksPanel`, the battle table).
+ *
+ * The prose fields it prints (`saves`/`skills`/`senses`/`languages`, every
+ * trait/action/reaction/legendary body and every `extras` value) render through
+ * `components/text-blocks.TextBlocks` — the ONE plain-text→blocks renderer
+ * (docs/17 row 146, docs/18 §2.3): a blank line becomes a paragraph break and a
+ * single newline a line break, so the model's own structure survives instead of
+ * collapsing into the owner's *"walls of text"*. This component splits NOTHING
+ * itself; `tests/lib/text-blocks.test.tsx` fails on a second rule here.
+ */
 export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name: string }) {
   const headlineParts = [statBlock.size, statBlock.creatureType].filter((part) => part !== '');
 
@@ -134,16 +147,21 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
 
       <dl className="py-1.5 text-xs">
         {[
-          ['Saving Throws', statBlock.saves],
-          ['Skills', statBlock.skills],
-          ['Senses', statBlock.senses],
-          ['Languages', statBlock.languages],
+          { label: 'Saving Throws', value: statBlock.saves },
+          { label: 'Skills', value: statBlock.skills },
+          { label: 'Senses', value: statBlock.senses },
+          { label: 'Languages', value: statBlock.languages },
         ]
-          .filter(([, value]) => value !== '')
-          .map(([label, value]) => (
-            <div key={label} className="flex gap-1">
-              <dt className="shrink-0 font-semibold">{label}</dt>
-              <dd>{value}</dd>
+          .filter((row) => row.value !== '')
+          .map((row) => (
+            <div key={row.label} className="flex gap-1">
+              <dt className="shrink-0 font-semibold">{row.label}</dt>
+              {/* The shared block rule, not a rule of this component's own: a
+                  field the model wrote in paragraphs renders AS paragraphs
+                  (docs/17 row 146, docs/18 §2.3). */}
+              <dd>
+                <TextBlocks text={row.value} />
+              </dd>
             </div>
           ))}
       </dl>
@@ -157,7 +175,8 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
             <ul className="mt-1 space-y-1 text-xs">
               {items.map((item, index) => (
                 <li key={index}>
-                  <span className="font-semibold italic">{item.name}.</span> {item.text}
+                  <span className="font-semibold italic">{item.name}.</span>{' '}
+                  <TextBlocks text={item.text} />
                 </li>
               ))}
             </ul>
@@ -170,7 +189,9 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
           {Object.entries(statBlock.extras).map(([key, value]) => (
             <div key={key} className="flex gap-1">
               <dt className="shrink-0 font-semibold">{key}</dt>
-              <dd>{value}</dd>
+              <dd>
+                <TextBlocks text={value} />
+              </dd>
             </div>
           ))}
         </dl>

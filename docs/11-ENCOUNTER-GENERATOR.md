@@ -113,6 +113,10 @@ in-app surface uses, `features/campaign/components/monster-source.MonsterStatblo
   the book he prints cannot label one entry differently;
 - EVERY roster entry is listed, `none` included (the panel used to drop a
   name-only mob entirely, which is part of the "mobs are not detailed" report);
+- the TEXT of every stat-block field is drawn by the ONE plain-text→blocks rule
+  (`lib/textBlocks.textBlocks` → `components/text-blocks.TextBlocks`), so a trait
+  or reaction the model wrote in paragraphs reads as paragraphs in the panel too
+  instead of collapsing into a blob (docs/17 row 146, docs/18 §2.3);
 - a citation nothing can supply prints the NAMED `missing ref (<creature>)` line
   with NO box under it, never an empty row or a placeholder (AGENTS rule 1);
 - **one deliberate difference from the PRINT rule, stated rather than hidden**:
