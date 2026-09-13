@@ -42,6 +42,7 @@ import {
 } from '@/features/modules/board/boardNodes';
 import { RewritePartDialog } from '@/features/modules/board/rewriteDialog';
 import { useStagedRewritesStore } from '@/features/modules/board/stagedRewrites';
+import { toastModuleBusy } from '@/features/modules/module-busy';
 import {
   BOARD_NODE_WIDTH,
   resolveBoardNodePositions,
@@ -193,10 +194,7 @@ export function BoardPage(): JSX.Element {
         useStagedRewritesStore.getState().drop(nodeKey);
         if (error instanceof ModuleBusyError) {
           // ONE generation per module — surface busy LOUDLY, never queue.
-          toastError(
-            'A generation is already running for this module — wait for it or stop it first',
-            error,
-          );
+          toastModuleBusy(error);
         }
         // Other failures are owned by the engine (failModule toasts; the part
         // card renders part.status/errorMessage).

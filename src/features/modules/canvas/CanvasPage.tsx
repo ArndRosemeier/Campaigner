@@ -128,6 +128,10 @@ import type {
 } from '@/features/modules/canvas/chatStore';
 import type { LastReplacement } from '@/features/modules/canvas/lastReplacement';
 import { clearModuleVersions } from '@/db/moduleVersionRepo';
+import {
+  MODULE_GENERATING_REASON,
+  toastModuleBusy,
+} from '@/features/modules/module-busy';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
@@ -852,10 +856,7 @@ export function CanvasPage(): JSX.Element {
           // and the overlay drop is the whole surface.
         } else if (error instanceof ModuleBusyError) {
           // ONE generation per module — surface busy LOUDLY, never queue.
-          toastError(
-            'A generation is already running for this module — wait for it or stop it first',
-            error,
-          );
+          toastModuleBusy(error);
         } else {
           toastError('Canvas refine failed — nothing was applied', error);
         }
@@ -1152,10 +1153,7 @@ export function CanvasPage(): JSX.Element {
         // A stop is not an error: the overlay of the editor path has no
         // equivalent here, and nothing was written.
       } else if (error instanceof ModuleBusyError) {
-        toastError(
-          'A generation is already running for this module — wait for it or stop it first',
-          error,
-        );
+        toastModuleBusy(error);
       } else {
         toastError('Canvas refine failed — nothing was applied', error);
       }
@@ -1242,7 +1240,7 @@ export function CanvasPage(): JSX.Element {
           // app-level Stop all (the canvas abort registry aborts this same
           // controller). A cancel is not an error and needs no surface.
         } else if (error instanceof ModuleBusyError) {
-          toastError('A generation is already running for this module — wait for it or stop it first', error);
+          toastModuleBusy(error);
         } else {
           toastError('Chat failed', error);
         }
@@ -1280,7 +1278,7 @@ export function CanvasPage(): JSX.Element {
           // app-level Stop all (the canvas abort registry aborts this same
           // controller). A cancel is not an error and needs no surface.
         } else if (error instanceof ModuleBusyError) {
-          toastError('A generation is already running for this module — wait for it or stop it first', error);
+          toastModuleBusy(error);
         } else {
           toastError('Chat failed', error);
         }
@@ -2175,10 +2173,10 @@ export function CanvasPage(): JSX.Element {
  * by every control it blocks (the header's AI actions and view toggle, the two
  * derived repair controls, the proposal bar and the chat sidebar). ONE copy per
  * condition: the same state must never be explained two different ways on one
- * screen (docs/18 §2.3 — the device is shared, so the copy is too).
+ * screen (docs/18 §2.3 — the device is shared, so the copy is too). The
+ * generating sentence is the SHARED one (`module-busy.ts`), because the same
+ * state is also explained on the board and at the spine checkpoint.
  */
-const MODULE_GENERATING_REASON =
-  'The module is generating right now — wait for it (or press Stop).';
 const REFINE_RUNNING_REASON = 'A refine is running.';
 const PENDING_PROPOSAL_REASON = 'Accept or discard the pending proposal first.';
 /**

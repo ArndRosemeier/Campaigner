@@ -9,6 +9,7 @@ import { BlockedControl } from '@/components/blocked-control';
 import type { AnyArtifact, Id } from '@/domain';
 import { CANVAS_PREMISE_NODE_KEY, planIndexFromCanvasNodeKey } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
+import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
 import { cn } from '@/lib/utils';
 import { BOARD_LOD_FULL_ABOVE, useBoardStore, type PartCardSlice, type PriorCardSlice } from './boardStore';
 import { useStagedRewritesStore, type StagedRewrite } from '@/features/modules/board/stagedRewrites';
@@ -103,19 +104,18 @@ const BODY_TEXT_CLASS = 'prose-module text-sm leading-relaxed';
  * WHY a card's rewrite affordance cannot act while the module is generating
  * (docs/18 §2.3, docs/05 §Why a control cannot act): `busy` IS
  * `moduleStatus === 'generating'`, the flag its gate reads, so the sentence can
- * never disagree with the state it explains — and it is the SAME sentence the
- * canvas uses for the same state, so one state is never explained two ways in
- * this app. The way out is real and reachable on this very screen: the board
- * header shows the live "generating" badge and the board's own **Stop**
- * (`board-stop` → `stopModuleGeneration`, the one module-forge stop behaviour —
- * docs/17 row 110).
+ * never disagree with the state it explains — and it is the SHARED sentence
+ * (`module-busy.ts`) the canvas and the spine checkpoint use for the same
+ * state, so one state is never explained two ways in this app. The way out is
+ * real and reachable on this very screen: the board header shows the live
+ * "generating" badge and the board's own **Stop** (`board-stop` →
+ * `stopModuleGeneration`, the one module-forge stop behaviour — docs/17 row
+ * 110).
  *
  * Needed at all because the card is NOT covered by that badge: the rewrite
  * affordance renders only for a part whose status is already `ready`, so a
  * card can read "ready" while this module-wide flag holds its one button.
  */
-const MODULE_GENERATING_REASON =
-  'The module is generating right now — wait for it (or press Stop).';
 
 /**
  * Edge anchors for the derived continuity edges. Invisible (the board is

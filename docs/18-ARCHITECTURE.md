@@ -238,6 +238,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Bench image models + chat vision against each other (experiment lab, OUTSIDE the creation path) | `features/lab/` — `LabPage` shell + `experiments/registry.ts` (id/title/description/run config/results renderer; the next bench appends one entry, the shell stays untouched) + `experiments/labeledDungeon.ts` (8 hardcoded irregular rooms, the generation prompt + `{label,x,y}` 0–1000 vision contract now SHARED from `llm/visionDungeon.ts` — the lab aliases the production builder/parser, imports FROM the shared module, never the reverse — plus pure `normToPercent`) + `labClients.ts` (the app's `generateImages` pipeline + the configured chat model with a vision message — NO model pickers; session-only data URLs, no Dexie); `/lab` route linked from Settings → Experiments only, never the main nav | a model picker in the lab; persisting bench results; any creation-path import of lab code (lab imports FROM seams, never the reverse) |
 | **Hold a cross-tab generation lease (and opt out of the freeze heuristics)** (docs/17 row 110) | `lib/generationLocks.withGenerationLock(moduleGenLockName(id), work)` around every generation pass (`moduleGen`'s spine/parts passes, `post-generation`'s sweep): `navigator.locks.request(name, { ifAvailable: true }, …)` and the callback's promise IS the hold, so the lock is released when the pass settles (throw, abort or success). With no Web Locks API the work runs DIRECTLY (`webLocksAvailable()` false), and an unavailable lock (another tab) still runs the work | making a pass depend on the lock, or blocking on it (`ifAvailable: true` so a second tab never queues behind a lease — that would be a new failure mode, not a fix); assuming the API exists when reading liveness (a missing `navigator.locks` means the cross-tab half of `isModuleGenClaimed` answers `false` — the page-local registry is then the only signal, stated in §4); an in-repo lock registry standing in for the real API |
 | **Tell the owner, from a BACKGROUNDED tab, that a long generation finished or failed** (docs/17 row 110) | `lib/backgroundTitle`: `setBackgroundActivity(id, { label, state })` / `clearBackgroundActivity(id)` / `clearFinishedBackgroundActivities()`, applied through `applyBackgroundTitle()` — `document.title` is written ONLY while `document.hidden` (`Working: <label> — Campaigner`, `✓ Finished: …`, `⚠ Failed: …`, failed outranks finished outranks running, same-rank extras as `(+N more)`), and the app's own title is restored while the page is visible. Runs register from `runEngine` (label = persona name), generation passes from `moduleGen` (label = module title) | writing the title while the page is visible (it is a STRIP surface, not the document the owner is reading); a verdict a stop never reached (a user stop CLEARS the entry rather than inventing "finished"); using the title as a progress meter (the module never guesses "part 2 of 5" — the label is the caller's); leaving a `✓`/`⚠` on screen for the next trip away (`clearFinishedBackgroundActivities` runs on the way back in) |
+| **Say "this module already has a generation running"** (docs/17 row 120) | `features/modules/module-busy.ts` — THE one seam for the condition's COPY, and it is deliberately TWO sentences. `MODULE_BUSY_TOAST_TITLE` + `toastModuleBusy(error)` = the toast for a refused ACTION, the ONE call for all seven catch sites (ChatSidebar ×2, CanvasPage ×4, BoardPage ×1). `MODULE_GENERATING_REASON` = the reason a blocked CONTROL states through `BlockedControl`, the ONE constant for all three readers (CanvasPage's `busyReason`/`saveBlockedReason`, `spine-checkpoint`, `boardNodes`). One condition, TWO audiences — a disabled control has no action to have been refused, and a refusal toast states nothing about a control — so the sentences are never collapsed into one (AGENTS rule 4: what is shared is the FACT, not the sentence). Inherently cross-surface (canvas, board, checkpoint), which is exactly why it is a module and not a private constant per file | a per-file `MODULE_GENERATING_REASON` copy (the audit found THREE, plus a fourth inline in `entity-panel.tsx` — a known remaining carve-out, §5: fold it when that file is touched); ONE merged sentence for both audiences; a literal toast title in a catch block; letting `ModuleBusyError.message` (which carries the module id) reach the owner as the toast's description — the toast seam drops it BY ERROR NAME and logs the raw error instead. The GATE is not here and must not move: `llm/canvasBusy` (the in-page claim registry) and `lib/generationLocks` (the cross-tab advisory lease) stay two authorities for two jobs |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
@@ -1442,8 +1443,58 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   verdict for a signal-less call instead of reading an `AbortError`'s type as a
   user stop (`isCancel`'s own doc, `moduleGen.ts:209-217`: the signal is the
   source of truth, not the error's type).
+- **One condition, two audiences: a toast about a refused ACTION and a reason on
+  a blocked CONTROL are not the same sentence** (ledger 120). "This module
+  already has a generation running" reaches the owner through two surfaces that
+  ask two DIFFERENT questions — a catch block whose action the module's single
+  generation slot refused, and a disabled control that was never pressed and
+  only needs its state explained — and the audit found the first written out
+  seven times as a literal and the second three times as a private constant
+  (plus a fourth copy inline in `entity-panel.tsx`, §5). MEASURED that they are
+  genuinely two audiences and not one string used twice: mutating
+  `MODULE_BUSY_TOAST_TITLE` leaves EVERY blocked-control pin GREEN (35 tests
+  across `blocked-reasons`, `spine-checkpoint`, `generate-everything`,
+  `blocked-control`) and REDs the toast pin, while mutating
+  `MODULE_GENERATING_REASON` does the exact inverse (`blocked-reasons` +
+  `spine-checkpoint` RED, every toast pin GREEN). So fold the FACT into one
+  module (`features/modules/module-busy.ts`) and keep the two SENTENCES
+  distinct — collapsing them would answer the control's question with the
+  refusal's words, which is the "two different questions merged" half of
+  rule 4, not centralization. Three riders, all measured rather than assumed:
+  1. **A behavioural pin verifies the SENTENCE, never the ROUTE.** Reverting a
+     folded call site to the inline literal leaves its own toast pin GREEN
+     because the arguments are byte-identical (`module-board-rewrite` stays
+     green at `BoardPage.tsx:197`), and re-duplicating a same-valued constant
+     leaves the rendering pin green too (`spine-checkpoint.test.tsx`). The
+     routing is therefore held by a SOURCE SCAN in
+     `tests/features/module-busy.test.ts`, which says in its own doc comment
+     that it is a scan.
+  2. **A value-based scan is blind to a REWORDED copy** (it searches for the
+     exact sentence), so the two sentences are pinned separately as constants
+     with independent copies in the test — the scan is a backstop for
+     RE-DUPLICATION, not for rewording.
+  3. **The raw error's `.message` must not be the detail line.** `toastError`'s
+     description is `error.message` by default, so an internal id
+     (`Module <id> is already generating`) rode into the owner's toast as a
+     uuid; the toast seam now drops the description for that error BY NAME
+     (`lib/toast.ts` cannot import the class — `llm/moduleGen` already imports
+     it — so the name is the contract, and it is pinned against the REAL class
+     rather than left implicit) and logs the raw error to the console instead.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **A FOURTH copy of the blocked-control sentence lives outside the
+  module-busy seam** (ledger 120): `features/modules/entity-panel.tsx`'s
+  `generateAllBlockedReason` returns `'The module is generating right now — wait
+  for it (or press Stop).'` inline instead of importing
+  `MODULE_GENERATING_REASON` from `features/modules/module-busy`. It was left
+  BYTE-IDENTICAL because that file belonged to a concurrent slice, and the scan
+  in `tests/features/module-busy.test.ts` records it as a documented carve-out
+  (`KNOWN_REMAINING_COPY`) through a SUBSET assertion — so folding it later
+  cannot turn that pin red. Folding it is a one-line import and a deleted
+  literal: do it when `entity-panel.tsx` is next touched. The same module also
+  holds the follow-up that would make the toast seam's name-based branch
+  unnecessary: rewording `ModuleBusyError`'s own message
+  (`src/llm/moduleGen.ts:123`) into a sentence for the owner.
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them
   and do not add a further one): `db/seed.ts` + `db/personaRepo.ts` →

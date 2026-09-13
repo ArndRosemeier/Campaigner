@@ -39,6 +39,7 @@ import {
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
 import { clearModuleChat } from '@/features/modules/canvas/clearChat';
+import { toastModuleBusy } from '@/features/modules/module-busy';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
@@ -165,7 +166,7 @@ export function ChatSidebar({
         await onPreviewSend(text);
       } catch (error) {
         if (error instanceof ModuleBusyError) {
-          toastError('A generation is already running for this module — wait for it or stop it first', error);
+          toastModuleBusy(error);
         } else {
           toastError('Chat failed', error);
         }
@@ -248,7 +249,7 @@ export function ChatSidebar({
         // app-level Stop all (the canvas abort registry aborts this same
         // controller). A cancel is not an error and needs no surface.
       } else if (error instanceof ModuleBusyError) {
-        toastError('A generation is already running for this module — wait for it or stop it first', error);
+        toastModuleBusy(error);
       } else {
         toastError('Chat failed', error);
       }

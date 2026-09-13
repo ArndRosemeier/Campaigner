@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { Campaign, Id, ModuleEntityKind, ModuleSpine, PartPlan } from '@/domain';
 import { approveSpineAndRun, discardSpine, retrySpine } from '@/llm/moduleGen';
+import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -27,9 +28,9 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * prop is public, `busy: true` is a state the component is written to support
  * (and the only state in which those four gates mean anything), and a reason
  * that is absent is a reason that will be absent the day a caller does pass it.
+ * The sentence itself is the SHARED one (`module-busy.ts`), the same state the
+ * canvas and the board explain with it.
  */
-const MODULE_GENERATING_REASON =
-  'The module is generating right now — wait for it (or press Stop).';
 
 /**
  * Spine approval checkpoint (08-MODULE-DESIGNER M4-B, ALWAYS on): the
