@@ -39,7 +39,10 @@ import { clearDatabase } from '../db/helpers';
  * render the SAME domain rule, and these pins hold them to it:
  *
  * - DIFFERENTIAL — the two real documents, built over the same entry, print the
- *   identical reference string;
+ *   identical reference string, EXTRACTED from each document on its own and
+ *   compared (`rosterRowRuns`/`printedReference` below) so an exporter that
+ *   decorates its own line reds this file (docs/17 row 146 — the containment
+ *   pins alone could not see that);
  * - EXACTLY ONE (AGENTS rule 4, made mechanical) — a source scan proves there is
  *   no second implementation of the rule and that the dead constant is gone.
  */
@@ -68,6 +71,58 @@ function referenceRuns(node: unknown, out: string[] = []): string[] {
     if (key !== 'text') referenceRuns(value, out);
   }
   return out;
+}
+
+/**
+ * The roster ROW a document prints for ONE creature, read back from that
+ * document ALONE: the text array whose runs start with the creature's own
+ * `Name ×count` label. `null` means the document prints no such row, and every
+ * caller below treats that as a FAILURE — an extraction that silently answered
+ * `''` would make the cross-book equality pass on nothing (the vacuity this
+ * differential exists to prevent).
+ */
+function rosterRowRuns(node: unknown, label: string): string[] | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = rosterRowRuns(child, label);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof node !== 'object' || node === null) return null;
+  const record = node as Record<string, unknown>;
+  const text: unknown = record.text;
+  if (Array.isArray(text)) {
+    const runs = referenceRuns(text);
+    if (runs.join('').startsWith(label)) return runs;
+  }
+  for (const value of Object.values(record)) {
+    const found = rosterRowRuns(value, label);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * The REFERENCE one book printed for a roster row: the row's own text after the
+ * creature's `Name ×count` label, with the row's trailing notes element removed
+ * when the book appends them to the same line (the single-artifact GM export
+ * prints `: <notes>` inside the row, the module book prints the notes as a
+ * separate node) — so the two books are compared on the REFERENCE, which is
+ * what the formatter owns, and not on each renderer's notes convention.
+ */
+function printedReference(
+  document: unknown,
+  label: string,
+  notes: string,
+): string | null {
+  const runs = rosterRowRuns(document, label);
+  if (runs === null) return null;
+  const rest = runs.join('').slice(label.length);
+  const notesSuffix = notes === '' ? '' : `: ${notes}`;
+  return notesSuffix !== '' && rest.endsWith(notesSuffix)
+    ? rest.slice(0, rest.length - notesSuffix.length)
+    : rest;
 }
 
 function citedStatBlock(): StatBlock {
@@ -210,13 +265,24 @@ beforeEach(clearDatabase);
 
 describe('both exporters print the SAME reference (one formatter)', () => {
   it('a cited mob’s reference is byte-identical in the module book and the GM export', async () => {
-    const { artifact, module, artifacts } = await seedEncounter();
+    const { artifact, module, artifacts, monsters } = await seedEncounter();
     const roster = await resolveExportRoster(artifact);
+    const cited = monsters[0];
+    const nameOnly = monsters[1];
+    if (cited === undefined || nameOnly === undefined) {
+      throw new Error('the seed must build both roster rows');
+    }
+    const citedLabel = `${cited.name} ×${String(cited.count)}`;
+    const nameOnlyLabel = `${nameOnly.name} ×${String(nameOnly.count)}`;
 
-    const moduleRuns = textOf(
-      buildModuleDefinition({ module, artifacts, rosterResolution: { [artifact.id]: roster } }),
-    );
-    const exportRuns = textOf(buildGmNotesDefinition(artifact, null, roster));
+    const moduleDefinition = buildModuleDefinition({
+      module,
+      artifacts,
+      rosterResolution: { [artifact.id]: roster },
+    });
+    const exportDefinition = buildGmNotesDefinition(artifact, null, roster);
+    const moduleRuns = textOf(moduleDefinition);
+    const exportRuns = textOf(exportDefinition);
 
     // The cited row's reference, in both books, character for character.
     expect(moduleRuns).toContain(' — Bestiary p.132');
@@ -234,6 +300,47 @@ describe('both exporters print the SAME reference (one formatter)', () => {
       expect(text).not.toContain('see Bestiary');
       expect(text).not.toContain('(see Bestiary)');
     }
+
+    // THE CROSS-BOOK EQUALITY THIS TEST'S NAME PROMISES (docs/17 row 146): the
+    // reference is EXTRACTED from each document on its own — never read from
+    // the shared formatter, which would compare the rule with itself — and the
+    // two extractions are compared. One-sided containment (`toContain`, one
+    // per book) could not see a decoration added to a SINGLE exporter:
+    // appending `' [mob]'` to the reference in `lib/pdfExport.ts` left every
+    // assertion above green, measured.
+    const moduleCitedReference = printedReference(moduleDefinition, citedLabel, cited.notes);
+    const exportCitedReference = printedReference(exportDefinition, citedLabel, cited.notes);
+    const moduleNameOnlyReference = printedReference(
+      moduleDefinition,
+      nameOnlyLabel,
+      nameOnly.notes,
+    );
+    const exportNameOnlyReference = printedReference(
+      exportDefinition,
+      nameOnlyLabel,
+      nameOnly.notes,
+    );
+
+    // NON-VACUITY, both sides: each book must have printed the row AND a
+    // reference ON it (the separator the formatter's `printed` carries), so an
+    // empty or absent extraction cannot make the equality below pass.
+    for (const reference of [
+      moduleCitedReference,
+      exportCitedReference,
+      moduleNameOnlyReference,
+      exportNameOnlyReference,
+    ]) {
+      expect(reference).not.toBeNull();
+      expect(reference?.startsWith(' — ')).toBe(true);
+      expect((reference ?? '').length).toBeGreaterThan(' — '.length);
+    }
+
+    expect(moduleCitedReference).toBe(exportCitedReference);
+    expect(moduleNameOnlyReference).toBe(exportNameOnlyReference);
+    // Anchored to the words the seed's chunk actually carries, so a formatter
+    // that answered the SAME wrong string in both books still fails here.
+    expect(moduleCitedReference).toBe(' — Bestiary p.132');
+    expect(moduleNameOnlyReference).toBe(statement);
   });
 
   it('both exporters print the cited chunk’s NUMBERS, with the source on the box', async () => {

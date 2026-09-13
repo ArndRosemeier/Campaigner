@@ -587,6 +587,7 @@ test) · ❌ gap.
 | Data renders: location/event `locationType`/`inhabitants`/`pointsOfInterest`/`hooks`; difficulty kickers; two-column stat boxes with PF2e bonuses | `modulePdf.test` (C4) | ✅ |
 | Roster references: `npc-ref` cross-reference (with its page destination), `inline` stat box with NO origin line, a `rulebook` citation printing its REAL resolved origin (the dead `(see Bestiary)` constant is gone) plus **the cited chunk's own numbers**, and a name-only entry's named `isMissingRefOrigin` reason | `modulePdf.test` (C5), `domain/encounterReference.test`, `lib/roster-reference-parity.test`, `pdfExport.test` (docs/17 row 144, §A cited mob's reference and numbers) | ✅ |
 | A cited mob's numbers reach BOTH books through ONE formatter and ONE box — differential over the two real documents, and a source scan for a second implementation | `lib/roster-reference-parity.test` | ✅ |
+| The differential is a real EQUALITY, not two one-sided containments: the reference is EXTRACTED from each rendered book on its own and compared, with a non-vacuity guard on both sides — a decoration added to ONE exporter reds the file (MEASURED, docs/17 row 146) | `lib/roster-reference-parity.test` (`a cited mob's reference is byte-identical…`, tightened) | ✅ |
 | GM vs player from ONE builder: the player document drops gm-only rows, notes, plot arcs, faction methods, encounter tactics/treasure/terrain, PC notes, the part plan and the treasure ledger — while maps stay in both | `modulePdf.test` — the same fixture rendered twice and diffed by what it must NOT contain | ✅ |
 | The export surface: ONE control (canvas header + campaign tree module group), GM/player as an ARGUMENT to the ONE renderer, destination acquired before the build, the blob written, problems reported, picker cancel silent | `module-pdf-export.test` | ✅ |
 | Exports do not leak the internal token (row 105's rule) and `writerModel` provenance never reaches a document | `wiki-raw-export.test`, `provenance-export.test`, `modulePdf.test` | ✅ |
@@ -2632,6 +2633,50 @@ shape" for every rejection class the auto-autonomy branch sees, including the
 scaffolding-echo rejection — naming the real class needs a rejection class
 recorded at EIGHT `finishStep(..., 'rejected')` sites and a persisted-shape
 change, so it is reported rather than half-built (docs/17 row 145).
+
+### The reader's encounter mobs, and ONE rule for structured text (docs/17 row 146, docs/11 §What a roster row PRINTS, docs/18 §2.3)
+
+The owner's answer, verbatim: *"Keep the jump, and list the encounter's mobs below
+its row in the reader's entity panel."* — and what he reads when he gets there:
+*"big text blobs without any paragraph… walls of text, no formatting at all,
+describing monsters."* Three commits, in this order: **(A)** a differential pin
+that was one-sided-blind, **(B)** the reader half of row 144, **(C)** ONE
+text→blocks renderer for the app and the PDF.
+
+**A — tightening a pin that could not see a one-sided change.** The pin at
+`lib/roster-reference-parity.test.ts` was NAMED *"a cited mob's reference is
+byte-identical in the module book and the GM export"* while asserting
+`toContain(' — Bestiary p.132')` **separately per book**: a decoration added to
+ONE exporter satisfied both. MEASURED — appending `' [mob]'` to the reference in
+`lib/pdfExport.ts` left 4 files / 55 tests green, the file under the pin among
+them. The pin now EXTRACTS the roster row from each rendered document on its own
+(`rosterRowRuns` → `printedReference`, the row's own text after its
+`Name ×count` label, the GM export's trailing `: <notes>` element removed) and
+compares the two extractions with `toBe`, keeping every containment assertion
+that pins the reference's own SHAPE.
+
+| fact pinned | where |
+|---|---|
+| **The two books print the SAME reference, as an EQUALITY over two independent extractions** — the cited row and the name-only row, each read out of its own rendered document and compared with `toBe`; a one-sided decoration fails | `lib/roster-reference-parity.test` (`a cited mob's reference is byte-identical in the module book and the GM export`, extended) |
+| **Non-vacuity, both sides** — each book must have PRINTED the row and a reference ON it (found by name, starting with the formatter's own ` — ` separator and longer than it), so an empty or absent extraction cannot make the equality pass; the extracted strings are additionally anchored to the words the seed's chunk carries, so a formatter answering the same wrong string in both books still fails | the same pin |
+| **The shape pins are KEPT**: the per-book `toContain(' — Bestiary p.132')`, the no-citation statement, the formatted line `Cave Fisher ×1 — Bestiary p.132`, and the "no dead `(see Bestiary)` constant" assertions are untouched | the same pin |
+| **No behaviour changed**: the tightening is test-only — `git diff --stat` for commit A names one test file and the docs | the commit itself |
+
+**REVERT-PROVEN** (injection made on the working tree, `git diff --stat` printed
+before the run, the file restored from an OUT-OF-TREE copy and re-hashed with
+`git hash-object` — `3ba9af22c38d226c1221a3bb562569f4d037bb5e` before and after):
+
+| injection | what it does | RED | GREEN (unchanged) |
+|---|---|---|---|
+| **A-I1** `lib/pdfExport.ts` — the single-artifact export's reference becomes `rosterReferenceFor(monster, resolved).printed + ' [mob]'` | decorates ONE exporter's line | **BEFORE the tightening: 0** (4 files / 55 tests green — the blindness this commit exists for). **AFTER: 1** — `roster-reference-parity.test` › *a cited mob's reference is byte-identical in the module book and the GM export*, `expected ' — Bestiary p.132' to be ' — Bestiary p.132 [mob]'` | 54 tests in the same run, including every containment pin above and the whole of `pdfExport.test`/`modulePdf.test`/`encounterReference.test` — which is exactly why the containment assertions were not enough |
+
+**What this pin still CANNOT prove**: that the two books agree on anything OTHER
+than the reference — the extraction reads the row's own printed text, so a
+renderer could still decorate the notes, the box or the page and pass; and the
+extraction is written against the two renderers' current row SHAPE (a text array
+whose runs start with the row label), so a structural rewrite of a roster row has
+to update it — it would then fail LOUDLY (the row is not found → `null` → the
+non-vacuity guard reds) rather than silently compare nothing.
 
 ### Remaining gaps
 
