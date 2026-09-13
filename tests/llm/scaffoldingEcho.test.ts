@@ -487,12 +487,30 @@ describe('SCAN — every boundary that persists generated text runs the ONE scan
       'src/llm/moduleGen.ts', // the spine save and every part's markdown
       'src/llm/modulePlan.ts', // the document plan's section titles
       'src/llm/canvasRefine.ts', // a selection/part rewrite's replacement
+      // ONE applier serves BOTH chat routes since docs/17 row 150: the
+      // preview's copy — whose own entry this list used to carry — is
+      // deleted, so its scan IS this one. The second half of this test holds
+      // the two surface wrappers to that applier, so the preview route
+      // cannot lose the aggregate by losing its entry here.
       'src/features/modules/canvas/chatApply.ts', // a chat command's replacement
-      'src/features/modules/canvas/snapshotChat.ts', // the same, snapshot route
     ];
     for (const file of boundaries) {
       const text = await readFile(join(process.cwd(), file), 'utf8');
       expect(text, file).toContain('generatedTextIssuesForFields(');
+    }
+    // THE ROUTING PIN that replaces the deleted `snapshotChat.ts` entry: each
+    // chat surface hands ITS document to the one applier, so neither route
+    // can reach a text write without passing the aggregate above.
+    const routes: [string, string][] = [
+      ['src/features/modules/canvas/chatController.ts', 'editorChatHandle('],
+      ['src/features/modules/canvas/snapshotChat.ts', 'stringChatHandle('],
+    ];
+    for (const [file, handle] of routes) {
+      const text = await readFile(join(process.cwd(), file), 'utf8');
+      expect(text, file).toContain(handle);
+      expect(text, `${file} must not apply text itself`).not.toContain(
+        'generatedTextIssuesForFields(',
+      );
     }
   });
 });

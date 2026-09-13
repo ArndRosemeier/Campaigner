@@ -3126,14 +3126,30 @@ restored from an OUT-OF-TREE copy and `git hash-object` identical after).**
 | **C — `writerModel` dropped** from the turn's split-save call | `src/features/modules/canvas/chatTurn.ts` | **RED 2 / GREEN 8** — BOTH authorship pins, with `part 0 origin: expected 'human' to be 'model'`: the machine-write signature's absence stamps model text as the reader's, silently |
 | **D — the durable snapshot taken TWICE** in `saveWholeModuleDocument` | `src/features/modules/canvas/saveDoc.ts` | **RED 2 / GREEN 8** — both count pins with `expected 2 to be 1` (the editor surface AND the preview surface) |
 
-**REGRESSION GUARD.** No pre-existing assertion was changed, weakened or deleted by this
-landing. ONE pre-existing assertion was EDITED, deliberately and in the tightening
-direction: `tests/llm/canvasChat.test.ts`'s no-planned-parts pin went from
-`.rejects.toThrow(/no parts to chat about/)` (prefix) to
-`.rejects.toThrow(/^no parts to chat about — generate the module first$/)` (full,
-anchored). The eight affected suites (both turn controllers, the applier units, the
-preview units, the llm chat suite, `entity-classify-new`) run **146 tests green**, before
-and after the fold; `canvas-preview-default.test.tsx`'s 8 snapshot units (including the
+**REGRESSION GUARD.** No pre-existing assertion was WEAKENED, and none was deleted
+without a replacement. TWO were changed deliberately, both named with before/after:
+
+1. **Tightened** — `tests/llm/canvasChat.test.ts`, the no-planned-parts pin:
+   before `.rejects.toThrow(/no parts to chat about/)` (a PREFIX, so a reworded tail
+   could not fail it), after
+   `.rejects.toThrow(/^no parts to chat about — generate the module first$/)` (full,
+   anchored).
+2. **Moved with the boundary** — `tests/llm/scaffoldingEcho.test.ts`'s source scan
+   ("the boundaries that persist reader-visible text all call the aggregate") listed
+   `src/features/modules/canvas/snapshotChat.ts` as "the same, snapshot route". That
+   file no longer IS a boundary — it is a wrapper with no apply logic, so the entry
+   became a dead requirement (the full-suite gate caught it: RED 1, `scaffoldingEcho`
+   `expected 'import type { Id } …' to contain 'generatedTextIssuesForFields('`). The
+   entry is REMOVED and replaced, in the same test, by a ROUTING pin: each chat
+   surface must hand ITS document to the one applier (`chatController.ts` →
+   `editorChatHandle(`, `snapshotChat.ts` → `stringChatHandle(`) **and must not call
+   the aggregate itself**. The guarantee is unchanged — every route still reaches the
+   aggregate through `chatApply.ts` — and it is now asserted in the direction the fold
+   created, instead of against a file that no longer holds the code.
+
+The eight affected suites (both turn controllers, the applier units, the preview
+units, the llm chat suite, `entity-classify-new`) run **146 tests green**, before and
+after the fold; `canvas-preview-default.test.tsx`'s 8 snapshot units (including the
 split-parity pin) and `canvas-chat.test.tsx`'s 5 raw-view units are untouched.
 
 **WHAT THE PINS CANNOT PROVE.** The fuzz has a FIXED seed and a bounded (300) case
