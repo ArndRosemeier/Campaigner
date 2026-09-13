@@ -263,7 +263,7 @@ describe('exportSingleArtifact save-picker flow', () => {
     await exportSingleArtifact(artifact);
 
     expect(savePicker).toHaveBeenCalledTimes(1);
-    expect(seenNames[0]).toMatch(/^grix-the-bold-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(seenNames[0]).toBe(`grix-the-bold-${new Date(Date.now()).toISOString().slice(0, 10)}.json`);
     expect(revisionsSpy).toHaveBeenCalledWith(artifact.id);
     expect(written).toHaveLength(1);
     const blob = written[0];
@@ -294,6 +294,37 @@ describe('exportSingleArtifact save-picker flow', () => {
     expect(write).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  /**
+   * The FALLBACK half of the one slug seam (docs/17 row 130): `fileSlug` was
+   * hand-rolled four times and the only thing that ever differed was the word
+   * for a name that reduces to nothing. This path said `'artifact'` — pinned
+   * here BYTE-EXACT, through the real flow, because the regex pin above cannot
+   * see the fallback at all (it only ever matches a sluggable name).
+   */
+  it('a name with nothing sluggable still emits a real filename stem', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const artifact = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: '???',
+    });
+
+    const seenNames: string[] = [];
+    savePicker.mockImplementation((options) => {
+      seenNames.push(options.suggestedName);
+      return Promise.resolve({
+        cancelled: false,
+        write: () => Promise.resolve(),
+      });
+    });
+
+    await exportSingleArtifact(artifact);
+
+    const today = new Date(Date.now()).toISOString().slice(0, 10);
+    expect(seenNames[0]).toBe(`artifact-${today}.json`);
     await flushAsyncUpdates();
   });
 

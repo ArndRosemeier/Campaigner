@@ -1600,6 +1600,56 @@ itself calls `encounterNeedsMap`, and any comment in the panel naming that guard
 WITH a call parenthesis (the needle set is comment-blind — this seam's comments
 name it without one).
 
+### The one way to build a filename stem (docs/17 row 130, docs/18 §2.3/§4)
+
+"Turn this title into a URL-safe filename stem" was hand-rolled FOUR times —
+`lib/exportImport.ts`'s `sanitize`, `lib/pdfExport.ts`'s `pdfFileName`,
+`features/campaign/components/export-single-artifact.ts`'s `artifactSlug` and
+`features/modules/module-pdf-button.tsx`'s `modulePdfFileName` — the first three
+character-identical apart from their names and the fourth differing only in its
+fallback (`'module'` where the others said `'artifact'`). They now all call
+`lib/fileSlug.fileSlug(name, fallback)`, and every caller passes its fallback
+EXPLICITLY so every emitted filename is byte-identical. The SUFFIX stays with
+the caller and the two PDF naming ROLES are deliberately NOT merged
+(`gm-notes`/`handout` is a TEMPLATE name; `gm`/`player` is an avatar-audience
+word). The grep that bounded the work: the `[^a-z0-9]+` → `-` idiom plus the
+`^-+|-+$` trim exists at exactly those four sites and nowhere else in `src/`
+(`domain/creatureName` maps the same class to a SPACE, `llm/strictSchema` uses a
+different alphabet for a schema name, `lib/backup.backupFileName` has no slug).
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The seam's own rule**: case folding, every punctuation RUN collapsing to ONE dash, leading/trailing dashes trimmed, the ASCII alphabet (a letter outside it can VANISH — `Æther` → `ther`), and the fallback when the input reduces to nothing (default `artifact`) | `tests/lib/fileSlug.test.ts` (2 pins) | ✅ REVERT-PROVEN: deleting `.toLowerCase()` from the seam → RED 3 of this file's value pins plus 5 more in `pdfExport`/`module-pdf-export` |
+| **Every caller's emitted filename**: the artifact PDF pair (`grimm-gm-notes.pdf` / `grimm-handout.pdf`), the pre-built export name under a frozen clock (`the-drowned-vault-2026-03-04.json`, `ash-gate-part-2-…zip`, `artifact-2026-03-04.json`), the single-artifact save name (byte-exact, not the old regex) and its FALLBACK (`artifact-<date>.json` — never pinned before), the zip entry (`artifacts/npc/grimm-<id8>.json` and `artifacts/note/artifact-<id8>.json`), and the module PDF pair (`the-drowned-vault-gm.pdf` / `-player.pdf`, pre-existing pins, unchanged) | `tests/lib/fileSlug.test.ts` (2 pins), `tests/lib/exportImport.test.ts` (+1 test, 2 pins tightened from `toContain`/prefix), `tests/features/export-dialog-save-picker.test.tsx` (+1 test, 1 pin tightened from a regex), `tests/features/module-pdf-export.test.tsx` (2 pre-existing pins) | ✅ REVERT-PROVEN: changing ONE caller's fallback (`'artifact'` → `'module'`) → RED exactly the new fallback pin (1 of 8) with the slug suite GREEN — the fallback VALUE is behavioural coverage, not a scan |
+| **The ROUTING** — both halves of the idiom live in exactly the seam, every caller's stem comes from it with its own fallback spelled out, no caller names the slug alphabet, and the two PDF suffix roles stay distinct | `tests/lib/fileSlug.test.ts` (`scan: …`, 5 pins, labelled as scans, with a >200-file non-vacuity check and the seam's signature pinned as a value) | ✅ REVERT-PROVEN: reverting all four folds at once → RED 5 scan pins while **66 behavioural pins stay GREEN** (below) |
+| **REGRESSION GUARD — every pre-existing pin passes UNCHANGED**: `tests/lib/pdfExport.test.ts` 9 (incl. `grimm-gm-notes.pdf`), `tests/features/module-pdf-export.test.tsx` 6 (incl. `the-drowned-vault-gm.pdf`), `tests/lib/exportImport.test.ts`, `tests/features/export-dialog-save-picker.test.tsx`, `tests/features/export-dialog.test.tsx` | those files, one suite at a time at `CAMPAIGNER_TEST_WORKERS=2` | ✅ green — and NONE of them asserted the fold's shape, which is why the scan exists |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n`, `git diff --stat` checked BEFORE the run, then
+restored from a byte-exact baseline copy and verified with `git hash-object` —
+`fileSlug.ts` `edf64838294ca612ac1edec39a3664badb6cba1c`,
+`exportImport.ts` `5207e0f487d19c9347c3daeb228205cce0b2a56f`,
+`pdfExport.ts` `610e7dd435e5dea0593cff1d6dba1d9696f00a85`,
+`export-single-artifact.ts` `4b6a341dce32b6256891a4ad944f569697bbcaa3`,
+`module-pdf-button.tsx` `3f3aa46ccec80d718ee71079066f91d1fe25a760` — all five
+matched after restore; one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`):
+
+| injection | line it hits | result |
+|---|---|---|
+| **all four folds reverted at once** to their hand-rolled copies | the four call sites | **GREEN: 66 behavioural pins** (5 + 38 + 8 + 9 + 6) — a byte-identical fold is invisible to behaviour — and **RED 5/10 scan pins** (both idiom-holder equalities `[5] vs ['lib/fileSlug.ts']`, and every caller's count `+0 ≠ 3/1/1/1`) |
+| the seam's rule changed (`.toLowerCase()` deleted) | `fileSlug.ts:25` | **RED 8 across three files** (`fileSlug` 3, `pdfExport` 3, `module-pdf-export` 2) with every SCAN pin **GREEN** |
+| ONE caller's fallback changed (`'artifact'` → `'module'`) | `export-single-artifact.ts:22` | **RED 1/8** — exactly the new fallback pin — slug suite **GREEN 10/10** |
+| **an equivalent spelling** (`split(/[^a-z0-9]+/).filter(Boolean).join('-') \|\| 'artifact'`) REPLACING the call | `export-single-artifact.ts:22` | **RED 1/10 on the seam-call COUNT alone**; BOTH idiom needles **GREEN (blind)**, behaviour **GREEN 8/8** |
+| the same copy ADDED beside a surviving seam call (count unchanged) | `export-single-artifact.ts:21` | **RED 1/10 on the ALPHABET needle** (`must not name the slug alphabet itself`), behaviour **GREEN 8/8** — the needle added in this commit for exactly this shape |
+
+**The scan's own limits, MEASURED (docs/18 §4).** The idiom needles quote a
+SPELLING, so an equivalent spelling evades them (injection 4a: only the
+per-caller count red). Adding the copy beside a surviving call evades the count
+too, which is what the alphabet needle is for (4b). Still invisible: a spelling
+that names a DIFFERENT class for the same alphabet (`[^A-Za-z0-9]`, `\W`), and a
+hand-rolled slug in a NEW caller — the needle list is per-caller, so a fifth
+caller inherits nothing.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

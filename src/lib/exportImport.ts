@@ -32,6 +32,7 @@ import {
 } from '@/domain';
 import { listRevisions } from '@/db/artifactRepo';
 import { bytesFromBase64 } from '@/lib/base64';
+import { fileSlug } from '@/lib/fileSlug';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
 import { db } from '@/db/db';
 
@@ -303,10 +304,11 @@ export async function buildCampaignExport(
 }
 
 export function exportFileName(exported: CampaignExport): string {
-  // The same slug rule as zip entries (sanitize); a symbol-only campaign
-  // name falls back to 'artifact' — still a valid file stem.
+  // The one slug seam (lib/fileSlug); a symbol-only campaign name falls back
+  // to 'artifact' — still a valid file stem, and the word the three other
+  // artifact-shaped callers use.
   const base = exported.campaign?.name ?? 'artifacts';
-  return `${sanitize(base)}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`;
+  return `${fileSlug(base, 'artifact')}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`;
 }
 
 /**
@@ -317,7 +319,7 @@ export function exportFileName(exported: CampaignExport): string {
  * practice). The single source for every export save name.
  */
 export function exportSuggestedName(campaignName: string, format: 'json' | 'zip'): string {
-  return `${sanitize(campaignName)}-${new Date(Date.now()).toISOString().slice(0, 10)}.${format}`;
+  return `${fileSlug(campaignName, 'artifact')}-${new Date(Date.now()).toISOString().slice(0, 10)}.${format}`;
 }
 
 /** Multi-file zip bundle: one JSON per artifact + a manifest + image files. */
@@ -335,7 +337,7 @@ export function buildZip(exported: CampaignExport): Uint8Array {
     'campaigner-export.json': strToU8(JSON.stringify(withImageRefs, null, 2)),
   };
   for (const artifact of exported.artifacts) {
-    files[`artifacts/${artifact.kind}/${sanitize(artifact.name)}-${artifact.id.slice(0, 8)}.json`] =
+    files[`artifacts/${artifact.kind}/${fileSlug(artifact.name, 'artifact')}-${artifact.id.slice(0, 8)}.json`] =
       strToU8(JSON.stringify(artifact, null, 2));
   }
   for (const image of exported.images ?? []) {
@@ -344,15 +346,6 @@ export function buildZip(exported: CampaignExport): Uint8Array {
       bytesFromBase64(image.dataBase64);
   }
   return zipSync(files, { level: 6 });
-}
-
-function sanitize(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '') || 'artifact'
-  );
 }
 
 // --- Import -----------------------------------------------------------------

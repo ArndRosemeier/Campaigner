@@ -102,6 +102,21 @@ describe('export/import', () => {
     ]);
   });
 
+  /**
+   * The FALLBACK half of the slug seam (docs/17 row 130): the four hand-rolled
+   * copies differed only in the word they used when a name reduces to nothing,
+   * and the zip entry is the one place it is easy to lose silently — an empty
+   * stem would produce `artifacts/note/-<id8>.json`.
+   */
+  it('a zip entry for a name with nothing sluggable still carries the `artifact` stem', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const nameless = await createArtifact({ campaignId: campaign.id, kind: 'note', name: '???' });
+
+    const files = Object.keys(unzipSync(buildZip(await buildCampaignExport(campaign.id))));
+
+    expect(files).toContain(`artifacts/note/artifact-${nameless.id.slice(0, 8)}.json`);
+  });
+
   it('exports only the selection when artifact ids are given', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const keep = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Keep' });
@@ -110,17 +125,23 @@ describe('export/import', () => {
     const exported = await buildCampaignExport(campaign.id, [keep.id]);
     expect(exported.artifacts).toHaveLength(1);
     expect(exported.artifacts[0]?.name).toBe('Keep');
-    expect(exportFileName(exported)).toContain('emberfall');
+    // BYTE-EXACT: the slug half of the name is the seam's (docs/17 row 130),
+    // and `toContain('emberfall')` could not see it change.
+    expect(exportFileName(exported)).toBe(
+      `emberfall-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`,
+    );
   });
 
   it('builds a zip bundle containing a manifest and per-artifact files', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Grimm' });
+    const grimm = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Grimm' });
     const exported = await buildCampaignExport(campaign.id);
     const zip = buildZip(exported);
     const files = Object.keys(unzipSync(zip));
     expect(files).toContain('campaigner-export.json');
-    expect(files.some((name) => name.startsWith('artifacts/npc/'))).toBe(true);
+    // BYTE-EXACT entry name, not a prefix: the slug half is the seam's
+    // (docs/17 row 130) and a `startsWith` check could not see it change.
+    expect(files).toContain(`artifacts/npc/grimm-${grimm.id.slice(0, 8)}.json`);
 
     const manifest = JSON.parse(
       strFromU8(unzipSync(zip)['campaigner-export.json'] ?? new Uint8Array()),

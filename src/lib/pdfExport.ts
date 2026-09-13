@@ -3,6 +3,7 @@ import type { Content, NamedStyle, TDocumentDefinitions } from 'pdfmake/interfac
 import type { Artifact, StatBlock } from '@/domain';
 import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } from '@/domain';
 import { getImage } from '@/db/imageRepo';
+import { fileSlug } from '@/lib/fileSlug';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToDisplayText } from '@/lib/markdown';
 import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
@@ -357,11 +358,11 @@ export async function exportArtifactPdfFile(
 }
 
 export function pdfFileName(artifact: Artifact, template: PdfTemplate): string {
-  const slug =
-    artifact.name
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '') || 'artifact';
+  // The one slug seam (lib/fileSlug). The SUFFIX stays this file's own
+  // vocabulary — a TEMPLATE name, never the module PDF's audience word
+  // (docs/18 §2.3): folding the two naming roles would make two different
+  // questions share one answer.
+  const slug = fileSlug(artifact.name, 'artifact');
   return `${slug}-${template === 'gm' ? 'gm-notes' : 'handout'}.pdf`;
 }
 

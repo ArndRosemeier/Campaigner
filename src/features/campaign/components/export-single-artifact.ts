@@ -1,6 +1,7 @@
 import type { Artifact } from '@/domain';
 import { listRevisions } from '@/db/artifactRepo';
 import { buildExport } from '@/lib/exportImport';
+import { fileSlug } from '@/lib/fileSlug';
 import { EXPORT_JSON_TYPES, openSaveTarget } from '@/lib/filePicker';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -10,15 +11,6 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * (`export-dialog.tsx`), which owns the multi-artifact UI.
  */
 
-function artifactSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '') || 'artifact'
-  );
-}
-
 /** One-click JSON export of a single artifact (tree context menu). */
 export async function exportSingleArtifact(artifact: Artifact): Promise<void> {
   // Gesture-first like the campaign dialog's `runExport`: the tree menu click
@@ -27,7 +19,7 @@ export async function exportSingleArtifact(artifact: Artifact): Promise<void> {
   let target;
   try {
     target = await openSaveTarget({
-      suggestedName: `${artifactSlug(artifact.name)}-${new Date(Date.now()).toISOString().slice(0, 10)}.json`,
+      suggestedName: `${fileSlug(artifact.name, 'artifact')}-${new Date(Date.now()).toISOString().slice(0, 10)}.json`,
       types: EXPORT_JSON_TYPES,
     });
   } catch (error) {

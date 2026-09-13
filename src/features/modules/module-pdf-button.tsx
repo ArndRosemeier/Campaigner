@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { AnyArtifact, Module } from '@/domain';
 import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
+import { fileSlug } from '@/lib/fileSlug';
 import { buildModulePdf, type ModulePdfAudience } from '@/lib/modulePdf';
 import { generatePdfBlob } from '@/lib/pdfExport';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
@@ -138,10 +139,10 @@ export function ModulePdfButton({
 
 /** `<title>-<audience>.pdf`, slugged like every other export filename. */
 function modulePdfFileName(module: Module, audience: ModulePdfAudience): string {
-  const slug =
-    module.title
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '') || 'module';
+  // The one slug seam (lib/fileSlug), with THIS caller's own fallback: a module
+  // has no artifact name, so a symbol-only title falls back to 'module'. The
+  // audience SUFFIX (`gm`/`player`) is this file's role and deliberately does
+  // NOT merge with `pdfExport.pdfFileName`'s template names (docs/18 §2.3).
+  const slug = fileSlug(module.title, 'module');
   return `${slug}-${audience === 'gm' ? 'gm' : 'player'}.pdf`;
 }
