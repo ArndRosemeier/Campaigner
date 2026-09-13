@@ -215,6 +215,23 @@ export function PackImportReport({
           {String(failed.length)} failed
         </Badge>
       </p>
+      {/* THE re-import consequence, said once, where a user meets it (docs/17
+          row 149, docs/12 §5). A citation is born against the EXACT text this
+          import stored (`contentHash = sha256Hex(text)`), and `resolveMonsterEntry`
+          matches by uuid and then by that exact hash — so re-importing a pack
+          whose stored text changed (row 149 changed it for the two PF2e
+          description lanes and the dnd5e lanes: resolved brace labels, readable
+          tables) leaves the ALREADY-SAVED citations reading `missing ref`.
+          There is no rebind tool and no contentHash re-stamp migration by the
+          owner's decision, so the repair is the user's two steps, stated here
+          rather than discovered later. Shown with every report because the
+          report is the ONE place a pack import is confirmed, and the rule is
+          true of the import just run. */}
+      <p className="mt-1 text-muted-foreground" data-testid="pack-import-rereimport-note">
+        A saved encounter cites an entry by the exact text this import stored, so re-importing a
+        pack whose entry text changed leaves those citations reading
+        {' '}&lsquo;missing ref (&lt;creature&gt;)&rsquo; — re-pick the creature there to repair them.
+      </p>
       {failed.length > 0 && (
         <>
           {/* 16-BESTIARY-FETCH §6: the report leads with a representative

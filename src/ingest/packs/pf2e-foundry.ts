@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_LABEL_LAST_LINE_BREAKS } from './text';
+import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
 /**
@@ -182,14 +182,14 @@ function mapMelee(item: ParsedMelee): { name: string; text: string } {
   if (item.system.attackEffects.value.length > 0) {
     parts.push(item.system.attackEffects.value.join(', '));
   }
-  const description = htmlToText(item.system.description.value, AT_LABEL_LAST_LINE_BREAKS);
+  const description = htmlToText(item.system.description.value, AT_BRACE_LABEL_BLOCK_AND_TABLE);
   if (description !== '') parts.push(description);
   return { name: `${item.name} ${formatModifier(item.system.bonus.value)}`, text: parts.filter((part) => part !== '').join('; ') };
 }
 
 function mapAction(item: ParsedAction): { name: string; text: string; actionType: string } {
   const traits = item.system.traits.value;
-  const description = htmlToText(item.system.description.value, AT_LABEL_LAST_LINE_BREAKS);
+  const description = htmlToText(item.system.description.value, AT_BRACE_LABEL_BLOCK_AND_TABLE);
   const text = traits.length > 0 ? `(${traits.join(', ')}) ${description}`.trim() : description;
   return { name: item.name, text, actionType: item.system.actionType.value };
 }

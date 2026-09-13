@@ -228,9 +228,10 @@ nothing failed on, because no test had ever declared there was one way to do it.
 
 **The rule now.** HTML→text for a pack document goes through ONE seam,
 `htmlToText(html, style)` in `src/ingest/packs/text.ts`, which also declares the
-three styles as data (`AT_LABEL_LAST_LINE_BREAKS`, `BRACKET_LINKS_LINE_BREAKS`,
-`AT_BRACE_LABEL_BLOCK_AND_TABLE` — named for what they DO, never for the
-adapter that uses them today). A new adapter PICKS one of those names; it does
+styles as data (`BRACKET_LINKS_LINE_BREAKS`, `AT_BRACE_LABEL_BLOCK_AND_TABLE` —
+named for what they DO, never for the adapter that uses them today; the third,
+`AT_LABEL_LAST_LINE_BREAKS`, was DELETED by docs/17 row 149, which is which row
+to read before adding or renaming one). A new adapter PICKS one of those names; it does
 not declare a style of its own, and a new STYLE is a behaviour change that
 belongs with the re-import story, never a quiet fourth combination. "One
 adapter file plus one entry in `registry.ts`" still describes adding a SOURCE;
@@ -245,13 +246,30 @@ the reader's own grammar (a `|display` slot, resolved against the artifact pool)
 They are a different grammar with a different job, which is why the row-145
 source scan DECLARES these two as its only exception rather than unifying them.
 
-**Why this amendment changed no behaviour.** Landing 1 is BYTE-PRESERVING: the
+**What a re-import does to stored citations — the pointer a future reader
+needs, stated once (docs/17 row 149, landing 2 of this arc).** A citation is
+bound to the EXACT text the import stored (`contentHash = sha256Hex(text)`), and
+the resolver matches the cited uuid first and that exact hash second
+(docs/11 §Content identity at citation birth). Row 149 changed the emitted text
+for the two PF2e description lanes and for both dnd5e lanes: a description now
+stores its resolved brace label (`Enfeebled 1`, not `Enfeebled{Enfeebled 1}`)
+and a PF2e item now stores its table as cells (`Hardness | HP | BT`, not
+`HardnessHPBT52010`). So: **after re-importing a pack whose entry text changed,
+citations saved against the OLD text read `missing ref (<creature>)` — the
+named badge, and no stat box — and the repair is the user's two steps: re-import
+the pack, then re-pick the creature in the encounter (or board/roster entry).**
+No rebind tool, no migration and no contentHash re-stamp exist, by the owner's
+decision recorded in docs/17 row 143. The same instruction is shown in the app
+on the pack-import report (`pack-import-rereimport-note`), because that is the
+surface where a user meets it.
+
+**Why landing 1 changed no behaviour.** Landing 1 is BYTE-PRESERVING: the
 returned text becomes `PackEntry.text` → the chunk's stored `text` →
 `contentHash = sha256Hex(text)`, and a changed byte strands stored citations on
 the next re-import with no heal path. The groups' divergences on `@`+brace
-notation and on tables are therefore DECLARED and still present; landing 2 owns
-fixing them together with the re-import instructions and an accepted
-`missing ref` for a citation that cannot rebind.
+notation and on tables were therefore DECLARED and left present in landing 1;
+landing 2 (docs/17 row 149) fixed them together with the re-import instruction
+above and the accepted `missing ref` for a citation that cannot rebind.
 
 ### `foundry-pf2e` mapping (all entries with `type !== 'npc'` are skipped)
 
@@ -774,7 +792,9 @@ shapes:
   property-label table is exported and reused verbatim)"* is SUPERSEDED on its
   first half — the text-stripping rules are no longer copied per adapter, both
   item lanes go through `ingest/packs/text.htmlToText` and DECLARE a style
-  (`AT_LABEL_LAST_LINE_BREAKS` / `BRACKET_LINKS_LINE_BREAKS`). The second half
+  (`BRACKET_LINKS_LINE_BREAKS`; the pf2e lane declared
+  `AT_LABEL_LAST_LINE_BREAKS` until docs/17 row 149 deleted it — see the §5
+  amendment's re-import paragraph). The second half
   still stands: the dnd5e property-label table IS exported and reused verbatim.**
   **EXTENDED by docs/17 row 147 (see the §5 amendment): "self-contained" no
   longer covers the DOCUMENT STREAM either — both item lanes take their

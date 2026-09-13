@@ -37,8 +37,13 @@ import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
  *   raw — never dropped silently.
  * - HTML `system.description.value` → plain text through the ONE ingest
  *   HTML→text seam (`./text`), declaring the dnd5e bracket-link notation +
- *   line-breaks style. AMENDED by docs/17 row 143: this lane used to carry its
- *   OWN copy of the creature adapter's strip rules ("self-contained per §5's
+ *   line-breaks style. AMENDED by docs/17 row 149: the dialect now resolves the
+ *   `@Type[…]{Label}` brace form too (this lane used to store
+ *   `phbagPouch000000{nonmagical item}` — the dnd5e reading of the SAME defect
+ *   the PF2e lanes carried); its `[[…]]`/`&reference[…]` prelude is unchanged,
+ *   and the table rule is deliberately NOT declared here (no dnd5e fixture
+ *   carries table markup). AMENDED by docs/17 row 143: this lane used to carry
+ *   its OWN copy of the creature adapter's strip rules ("self-contained per §5's
  *   precedent", docs/12 §5/§13.5) — that precedent produced seven copies and is
  *   retired.
  */

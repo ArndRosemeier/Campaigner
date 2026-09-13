@@ -512,7 +512,8 @@ test) · ❌ gap.
 | That arc's pins are REVERT-PROVEN and the non-vacuity injection is real: carrier removed → 9 named pins fail across 4 files; a name+display RECONSTRUCTION → 7 pins fail naming both strings; the token appended instead of leading → 6 pins fail; the existing information dropped → 8 pins fail; every file restored byte-identical (`md5sum -c`) between proofs | the four files above; the proofs are the measured run log in docs/17 row 100 | ✅ |
 
 | Prompt scaffolding echoed back as CONTENT is refused at the boundary that would persist it (docs/17 row 142): the three markers in the owner's report are caught at the entity finalize, at the module part write and at the spine parse, each naming the marker AND the field with nothing persisted; the literals come from ONE source shared with the composers; and ordinary prose that merely uses the same words stays green | `scaffoldingEcho.test` (30, NEW) | ✅ |
-| The HTML→text stripper is ONE ingest seam for all seven pack adapters (docs/17 row 143): 17 shared sample cases × the 3 declared styles pinned to exact bytes (10 declared divergent, 7 the styles must AGREE on), the divergence asserted as the KNOWN `LANDING 2:` residue, a source scan that finds no second stripper among the directory's ten files and all seven call sites passing their declared style, and the STORED bytes of one real fixture per group — because those bytes ARE the content hash | `html-to-text.test` (28, NEW; the pre-existing table pin in `pf2e-journal.test` and `packFetch.test` stays green through the seam) | ✅ |
+| The HTML→text stripper is ONE ingest seam for all seven pack adapters (docs/17 row 143): 17 shared sample cases × the 3 declared styles pinned to exact bytes (10 declared divergent, 7 the styles must AGREE on), the divergence asserted as the KNOWN `LANDING 2:` residue — AMENDED BY REFERENCE, docs/17 row 149: those two divergence pins are FLIPPED to the repaired bytes and the residue moves to the RETIRED `at-label-last` behaviour, 28 pins → 41; a source scan that finds no second stripper among the directory's ten files and all seven call sites passing their declared style, and the STORED bytes of one real fixture per group — because those bytes ARE the content hash | `html-to-text.test` (28, NEW; the pre-existing table pin in `pf2e-journal.test` and `packFetch.test` stays green through the seam) | ✅ |
+| The two CORRUPTED HTML→text behaviours are FIXED, per lane, on fixture evidence (docs/17 row 149): the `@`-notation brace rule is ONE shared helper, `AT_LABEL_LAST_LINE_BREAKS` is deleted, and the two PF2e description lanes moved to the block-and-table style — pinned as 41 pins in `html-to-text.test`: the 17-case differential over THREE behaviours (two live styles + the retired notation), the two named real fixtures asserted byte-exactly with their FLIPPED values (`anointing-oil` → `Enfeebled 1`; `steel-shield` → `Hardness \| HP \| BT` then `5 \| 20 \| 10`), the retired behaviour asserted as still reachable, and **every lane's emitted text hashed per lane with its pre-row-149 digest beside it**, so an UNCHANGED lane is asserted as unchanged (`foundry-pf2e`, `-journal`, `-conditions`, `-rules`) and a CHANGED lane is named (`foundry-pf2e-equipment` 2 of 11 entries, `foundry-dnd5e-srd` 1 of 13, `foundry-dnd5e-equipment` 1 of 7) | `html-to-text.test` (41, was 28); `rules-page.test` (the re-import sentence renders on the shared pack-import report) | ✅ |
 | The `where` label has ONE home and ONE declared second spelling (docs/17 row 145): a 4-case differential drives the home (`mentionView.whereLabel`), the STORED `ExpansionExcerpt.source` of `llm/campaignGrounding` and the `db/orphanSweep` refusal reason over the same inputs, requiring the two same-convention copies to be IDENTICAL and declaring the third as `prose === label.toLowerCase()` — plus a source scan proving `function whereLabel` is declared in exactly the two declared files | `mention-where-label.test` (17, NEW) | ✅ |
 | A DEAD duplicate stays deleted (docs/17 row 145): `rosterCreatureKey` — a superseded third spelling of the roster-side creature identity with zero callers — is absent from every `src/` and `tests/` file, while the LIVE spelling (`battleSeed.creatureKeyForEntry`, including the `'none'` arm that passes `null`) is intact | `creature-identity-spelling.test` (3, NEW) | ✅ |
 | The wiki-token grammar is ONE source with TWO flag variants (docs/17 row 145): a differential drives a token-bearing sample through the export consumer (`stripWikiLinks`) and the PDF consumer (`parseInline`), the vanished-link case (`plain **bold** [[Ash Gate]] and [[Kael]] and [[Pier]].`) is pinned through `mdToPdfmakeContent` itself (`Kael` must survive), and a source scan proves no second `\[\[` token regex exists outside the two declared sites | `wiki-token-grammar.test` (25, NEW) | ✅ |
@@ -2530,6 +2531,15 @@ deliberate paste from the defect (the escape-debris seam has the same property).
 
 ### One HTML→text seam for the ingest layer (docs/17 row 143, docs/18 §2.2)
 
+> **AMENDED BY REFERENCE (docs/17 row 149, landing 2).** Everything below is the
+> record of the FOLD. Its two premises are now history: the fold was
+> byte-preserving, and the corruption was declared rather than repaired. Row 149
+> repaired the two corrupted behaviours and paid the consequence the owner had
+> already accepted — see §*Landing 2* below for the pins that flipped, and
+> docs/12 §5 for the re-import instruction a user meets. Read the two together:
+> the row-143 pins named `LANDING 2:` are the ones row 149 flipped.
+
+
 Seven pack adapters each carried their own HTML→text stripper. Nothing failed
 when a copy was born — every copy was correct where it was written — so the
 duplication was invisible until the copies were run against shared inputs: two
@@ -2550,11 +2560,13 @@ deferred and no contentHash re-stamp migration exists. So the divergences are
 DECLARED, not repaired.
 
 Its own function is one seam: `htmlToText(html, style)` in
-`src/ingest/packs/text.ts`, with the three styles declared as data in that same
-file and named for what they DO — `AT_LABEL_LAST_LINE_BREAKS` (PF2e
-item/creature), `BRACKET_LINKS_LINE_BREAKS` (dnd5e item/creature),
-`AT_BRACE_LABEL_BLOCK_AND_TABLE` (PF2e rules text). Seven call sites, three
-styles; a fourth adapter picks a declared style by name.
+`src/ingest/packs/text.ts`, with the styles declared as data in that same
+file and named for what they DO — at the fold, `AT_LABEL_LAST_LINE_BREAKS`
+(PF2e item/creature), `BRACKET_LINKS_LINE_BREAKS` (dnd5e item/creature),
+`AT_BRACE_LABEL_BLOCK_AND_TABLE` (PF2e rules text); **row 149 deleted the
+first and moved its two lanes onto the third, leaving TWO declared styles and
+eight call sites** (see §*Landing 2* below). A new adapter picks a declared
+style by name.
 
 | fact pinned | where |
 |---|---|
@@ -2956,6 +2968,100 @@ sidebar — is verified by inspection and by the owner's own eyes on the exporte
 file, never by a test in this suite. The estimator is therefore tuned
 deliberately wide: when it is wrong it promotes a block to a page of its own,
 which is visible and harmless, rather than overflowing a column, which is not.
+
+### Landing 2 of the HTML→text arc — the corruption repaired, every pin flipped on purpose (docs/17 row 149, docs/18 §2.2/§5)
+
+Row 143 folded the seven strippers BYTE-PRESERVING and DECLARED the corruption
+as current behaviour, with `LANDING 2:` in the pin names so that a repair
+without the re-import story would go red on purpose. This is landing 2: the
+brace residue (`Enfeebled{Enfeebled 1}`) and the table collapse
+(`HardnessHPBT52010`) are gone from what an import STORES, the owner's recorded
+decision sets the consequence (citations bound to the old bytes read the named
+`missing ref (<creature>)`; the user re-imports the pack and re-picks the
+creature; no rebind tool, no migration, no re-stamp), and the pins flipped
+rather than being deleted.
+
+**The seam change is a DECLARATION change** (`src/ingest/packs/text.ts`): the
+brace rule `@Type[…]{Label}` → `Label` became ONE helper (`resolveBraceLabels`)
+that BOTH live notations apply; the two PF2e description lanes moved to the
+declared `@`-notation block-and-table style; and `AT_LABEL_LAST_LINE_BREAKS` was
+DELETED (its repaired behaviour would have been byte-identical to
+`AT_BRACE_LABEL_BLOCK_AND_TABLE`, and two names for one behaviour is the
+divergence the module exists to end). `at-label-last` survives in the enum,
+declared by no adapter, so the OLD bytes stay statable.
+
+| fact pinned | where |
+|---|---|
+| **The differential table over THREE behaviours, exact bytes** — the 17 cases now run the two live styles PLUS the retired `at-label-last`, still 10 declared-divergent / 7 that must agree, and the two live styles' disagreements are the two notation dialects (`[[…]]` resolves only in `bracket-links`) | `tests/ingest/packs/html-to-text.test.ts` (the `SHARED_SAMPLE` `it.each`) |
+| **The RETIRED behaviour is asserted, not described** — the old bytes are reachable in-tree, and two pins run the retired rule over the REAL fixtures' own `system.description.value` (`anointing-oil.json` → `Enfeebled{Enfeebled 1}`; `steel-shield.json` → `HardnessHPBT52010`), beside the declared style's repaired output | same file, `FAILED REVERT — the retired behaviour still produces the pre-row-149 bytes` (2 pins) |
+| **The two named real fixtures, BYTE-EXACT, with flipped values** — full `text` equality, never `toContain`: those bytes ARE the content hash. `anointing-oil.json` → `…is Enfeebled 1 until the contact…`; `steel-shield.json` → `Hardness \| HP \| BT` then `5 \| 20 \| 10` on the next line (the fixture carries `<thead>`/`<tbody>`, which is what keeps the two rows apart; the sample's bare `<table>` still runs them together — the `\s*` swallow is real and pinned both ways) | same file (2 pins, flipped) |
+| **The dnd5e residue is named, in ITS dialect** — `bag-of-beans.yml` stores `nonmagical item` (was `phbagPouch000000{nonmagical item}`) and `saber-toothed-tiger.yml` stores `claw` (was `7GCnVtakQo6iZyn7{claw}`); the two residues the landing did NOT fix (`@Embed[…]` in bag-of-beans, `&Reference[prone]` in the tiger) are asserted as present, so the day they are fixed these are the assertions that change | same file (2 pins, NEW) |
+| **EVERY lane's emitted text, hashed, with its PRE-row-149 digest beside it** — one `sha256` per adapter over all its fixtures' `name\0text\0` stream, so an UNCHANGED lane is asserted as unchanged (only a lane that must not move can pass) and a CHANGED lane is NAMED: `foundry-pf2e`, `-journal`, `-conditions` and `-rules` identical before/after; `foundry-pf2e-equipment` (2 of 11 entries), `foundry-dnd5e-srd` (1 of 13) and `foundry-dnd5e-equipment` (1 of 7) changed by decision | same file (7 pins, NEW) |
+| **The dialects cannot be merged by accident** — a pin asserts the dnd5e prelude resolves nothing under `at-brace-label` and that the shared brace rule is the ONLY overlap | same file (1 pin, NEW) |
+| **The retirement is enforced at the source** — no adapter names `AT_LABEL_LAST_LINE_BREAKS` or `at-label-last`; exactly TWO `export const …: HtmlToTextStyle` declarations exist; and the retired notation must stay in `text.ts` (a future landing that deletes it must REPLACE the old-bytes proof, not lose it) | same file (3 SCAN pins, extended) |
+| **The re-import instruction is where a user meets it** — the shared pack-import report renders `pack-import-rereimport-note` naming the two steps, on the component every import surface reuses | `tests/rules-page.test.tsx` (the manual `/rules` import path drives a real import and reads the report) |
+
+**EVERY flipped assertion, by name, with before → after.** No pin was weakened
+(no `toEqual` became `toContain`) and none was deleted; row 143's 28 pins all
+survive, flipped in place or twinned with the retired-behaviour assertion beside
+them. 41 pins now (was 28):
+
+1. `LANDING 2: a @-notation brace label survives VERBATIM in the line-breaks-only styles`
+   → `ROW 149: a @-notation brace label resolves to its LABEL in both live styles — and the retired rule still shows the old bytes`.
+   `Enfeebled{Enfeebled 1}` → `Enfeebled 1` for BOTH former line-breaks-only
+   styles, with `Enfeebled{Enfeebled 1}` kept as the RETIRED assertion.
+2. `LANDING 2: a table collapses to concatenated cells in the line-breaks-only styles`
+   → `ROW 149: an @-notation table keeps its cells, and the dnd5e dialect is NOT changed (no dnd5e fixture carries table markup)`.
+   `HardnessHPBT52010` → `Hardness \| HP \| BT \| 5 \| 20 \| 10` for the
+   `@`-notation style; the collapse stays asserted for `BRACKET_LINKS_LINE_BREAKS`
+   as the DECISION (zero `<table>`/`<td>`/`<tr>` in all 20 dnd5e fixtures).
+3. `anointing-oil.json stores the KNOWN brace residue (group A, landing 2)`
+   → `anointing-oil.json stores the RESOLVED brace label (row 149 flipped the value, kept it byte-exact)`.
+   Same full-string `toBe`; the sentence now reads `…is Enfeebled 1 until the contact is broken…`.
+4. `steel-shield.json stores the KNOWN table collapse (group A, landing 2)`
+   → `steel-shield.json stores the table as rows of cells (row 149 flipped the value, kept it byte-exact)`.
+   Same full-string `toBe`; `HardnessHPBT52010` → two lines, `Hardness \| HP \| BT` and `5 \| 20 \| 10`.
+5. The sample case `brace form` and `real-shaped pf2e ability` (two of the
+   `it.each` rows) changed EXPECTED BYTES for the two line-breaks-only styles,
+   from the residue to the label — the differential rows the two named pins above
+   are built on. `pipe form`, `label bracket form`, `bare bracket form`, `label
+   brace bracket form`, `reference form`, `budget table`, `block closers`,
+   `blank-line runs` are UNCHANGED: the dnd5e dialect's own bytes and every
+   agreement case are what they were.
+6. `gm-screen.json stores the table rows whole (group B)` — UNCHANGED bytes, and
+   re-asserted (the block-and-table lane must not move).
+7. The SOURCE SCAN's `declares exactly three styles` → `declares exactly two
+   styles, and every one of them is used by a site above`, with the retired name
+   now asserted ABSENT from every adapter; its call-site table is unchanged in
+   shape but every `pf2e-*` entry now names
+   `AT_BRACE_LABEL_BLOCK_AND_TABLE`, and the eight call sites are summed as one
+   number as well as per file.
+
+**REVERT-PROVEN — three injections, each on the exact executing line, printed
+back, `git diff --stat` taken BEFORE the run, restored from an OUT-OF-TREE copy
+(NEVER `git checkout --`) and proved byte-identical with `git hash-object`:**
+
+| injection | line it hits | result |
+|---|---|---|
+| **A — ONE LANE'S DECLARATION reverted to the old style** (the retired constant reintroduced in `text.ts`, `pf2e-equipment.ts` pointed at it) | `src/ingest/packs/pf2e-equipment.ts` (the `htmlToText(...)` call) + the constant in `text.ts` | **RED 6 / GREEN 35.** RED: `anointing-oil.json stores the RESOLVED brace label…`, `steel-shield.json stores the table as rows of cells…`, the `foundry-pf2e-equipment` lane digest, and the three source-scan pins. **`foundry-pf2e`'s digest pin and every other lane stayed GREEN** — the proof is PER-LANE, which is the whole point of deciding lane by lane |
+| **B — the brace rule DELETED** (`resolveBraceLabels` → `return html;`) | `src/ingest/packs/text.ts` (inside `resolveBraceLabels`) | **RED 10 / GREEN 31.** RED: `brace form`, `real-shaped pf2e ability`, `ROW 149: a @-notation brace label…`, all three brace-carrying fixture pins (`anointing-oil`, `bag-of-beans`, `saber-toothed-tiger`), the three affected lane digests and one FAILED-REVERT pin |
+| **C — block awareness DROPPED** (`if (blockAware)` → `if (false && blockAware)`) | `src/ingest/packs/text.ts` (the branch itself) | **RED 10 / GREEN 31.** RED: `flat table`, `budget table`, `block closers`, both flipped table pins, `steel-shield.json` + `gm-screen.json` fixture pins, the two affected lane digests and the `steel-shield` FAILED-REVERT pin |
+
+Each was restored and verified with `git hash-object`
+`31d1318f58f95c8bd6f7567af8dda31b7bc3fbba` (`src/ingest/packs/text.ts`) and
+`f74a51ed7aee8b38821f4d71f4c4d9be202c4ba9`
+(`src/ingest/packs/pf2e-equipment.ts`) identical before and after, then the same
+41 pins re-run GREEN.
+
+**What row 149's pins still cannot prove.** How many citations in a REAL library
+will read `missing ref` needs his database: it is the accepted cost (row 143's
+decision), not a measured number, and no number is invented here. The source
+scan remains a bounded GUARD, not a proof, against a ninth stripper. And the
+per-lane digests prove that a lane's bytes DID or DID NOT move — they cannot
+prove the new bytes are RIGHT for a document the fixtures do not contain (a real
+PF2e table without `<thead>`/`<tbody>`, for instance, still runs its rows
+together on one line, which the sample pin states as the measured `\s*`
+swallow).
 
 ### Remaining gaps
 

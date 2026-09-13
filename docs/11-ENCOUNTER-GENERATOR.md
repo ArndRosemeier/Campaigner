@@ -664,6 +664,19 @@ Rulebook citations now resolve by CONTENT identity, not just source uuid:
   already reports that drift (`version-drift`), and the resolver stays
   exact-content. `creatureName` is stamped now but RESERVED (unused by the
   resolver) for that future fuzzy lane.
+- **A RE-IMPORT of an updated pack is the same shape, and it is now the RECORDED
+  behaviour, not an accident** (docs/17 row 149, docs/12 §5): row 149 repaired
+  the ingest text seam, so a description stores its resolved brace label
+  (`Enfeebled 1`) and a PF2e item its table cells (`Hardness | HP | BT`) — text
+  that differs from what older imports stored, and therefore a different
+  `contentHash`. Existing citations bound to the old bytes read the named
+  `missing ref (<creature>)` after the re-import; **the repair is the user's two
+  steps — re-import the pack, then re-pick the creature** — and the instruction
+  is shown on the pack-import report (`pack-import-rereimport-note`). NO rebind
+  tool, no migration and no contentHash re-stamp exist, by the owner's decision
+  recorded in docs/17 row 143. How MANY citations a given library loses this way
+  is unmeasured: it needs the real database, and it is the accepted cost rather
+  than a number any test may assert.
 
 ### Global portrait cache (slice A — owner-ratified)
 

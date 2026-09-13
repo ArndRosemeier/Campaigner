@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { formatItemText, normalizePf2ePrice, type ItemData } from '@/domain/itemData';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_LABEL_LAST_LINE_BREAKS } from './text';
+import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -29,7 +29,12 @@ import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
  * - `system.traits.rarity` (always present in the corpus, 'common'…
  *   'unique') → verbatim `itemData.rarity`; `.value` traits → the trait line.
  * - HTML `system.description.value` → plain text through the ONE ingest
- *   HTML→text seam (`./text`), declaring the `@`-notation + line-breaks style.
+ *   HTML→text seam (`./text`), declaring the `@`-notation + block-and-table
+ *   style. AMENDED by docs/17 row 149: through row 143 this lane declared the
+ *   LINE-BREAKS-ONLY variant, which is what stored the brace residue
+ *   (`Enfeebled{Enfeebled 1}`) and the collapsed table (`HardnessHPBT52010`).
+ *   Read that row before changing the declaration again — a changed byte
+ *   strands citations stored against the old one.
  *   AMENDED by docs/17 row 143: this lane used to carry its OWN copy of the
  *   creature adapter's strip rules ("self-contained per §5's precedent",
  *   docs/12 §5/§13.5) — that precedent produced seven copies and is retired.
@@ -114,7 +119,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
     rulesEdition: null,
     publication: doc.system.publication ?? null,
   };
-  const description = htmlToText(doc.system.description?.value ?? '', AT_LABEL_LAST_LINE_BREAKS);
+  const description = htmlToText(doc.system.description?.value ?? '', AT_BRACE_LABEL_BLOCK_AND_TABLE);
   return { name: doc.name, item, text: formatItemText(item, description) };
 }
 

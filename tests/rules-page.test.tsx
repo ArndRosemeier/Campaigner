@@ -244,6 +244,18 @@ describe('rules screen', () => {
     expect(report).toHaveTextContent('1 skipped');
     expect(report).toHaveTextContent('0 failed');
 
+    // Row 149 (docs/12 §5): the re-import consequence is stated where the user
+    // meets it — a saved citation is bound to the EXACT stored text, so a
+    // re-import that changes an entry's text leaves it reading `missing ref`
+    // until the creature is re-picked. One sentence, in the existing report,
+    // and the same sentence on every surface that reuses this component.
+    expect(within(report).getByTestId('pack-import-rereimport-note')).toHaveTextContent(
+      're-pick the creature there to repair them',
+    );
+    expect(within(report).getByTestId('pack-import-rereimport-note')).toHaveTextContent(
+      'missing ref (<creature>)',
+    );
+
     // Close the dialog (it aria-hides the book list while open).
     await user.keyboard('{Escape}');
 

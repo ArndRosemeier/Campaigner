@@ -11,7 +11,7 @@ import { errorMessage } from '@/lib/errors';
  * only a pin catches it: `tests/ingest/packs/html-to-text.test.ts` is that pin
  * (the differential table + the source scan over this directory).
  *
- * ## This is a BYTE-PRESERVING refactor, and that is not optional
+ * ## The bytes are a content hash, and row 149 changed them ON PURPOSE
  *
  * The text this returns becomes `PackEntry.text` → the stored chunk `text` →
  * `contentHash = sha256Hex(text)`, stamped at import (`packImport.ts`) and
@@ -21,10 +21,19 @@ import { errorMessage } from '@/lib/errors';
  * (`exportDependencies.ts`, `exportImport.ts` throws `MissingDependenciesError`).
  * A changed byte therefore strands every stored citation on the next re-import,
  * with no heal path (docs/11's L1 "same creature, new hash" is deferred and no
- * contentHash re-stamp migration exists). So the two styles below reproduce
- * their former copies EXACTLY, defects included; the divergences are DECLARED
- * here rather than quietly repaired. Fixing them is a separate landing that
- * owns the re-import story (docs/17 row 143).
+ * contentHash re-stamp migration exists).
+ *
+ * Row 143 therefore folded the seven copies BYTE-PRESERVING and left the
+ * corruptions declared as data. Row 149 repaired the two corrupted behaviours
+ * on the owner's own recorded decision that the consequence is honest:
+ * **after a re-import of an affected pack, citations stored against the OLD
+ * bytes read `missing ref (<name>)`; the user re-imports the pack and re-picks
+ * the creature. No rebind tool, no migration, no contentHash re-stamp.**
+ * Concretely, what changed: a PF2e or dnd5e description now resolves its
+ * `@Type[…]{Label}` brace label instead of storing `Enfeebled{Enfeebled 1}`,
+ * and a PF2e item description now keeps its table structure instead of storing
+ * `HardnessHPBT52010`. docs/17 row 149 carries the per-lane evidence table,
+ * the rejected lanes and the re-import instruction.
  *
  * ## The two axes
  *
@@ -62,23 +71,34 @@ import { errorMessage } from '@/lib/errors';
  * - `at-label-last` — Foundry `@`-notation only, keeping the TARGET's last
  *   dotted segment: `@UUID[a.b.C|label]` → `C`. A `{Label}` brace form is NOT
  *   resolved — the brace text survives VERBATIM, braces included
- *   (`@UUID[…]{Enfeebled 1}` → `Enfeebled{Enfeebled 1}`), which is the KNOWN,
- *   still-unfixed PF2e-item behaviour (see `blockAware` below and docs/17
- *   row 143; the fixture that shows it is
- *   `tests/fixtures/packs/pf2e-equipment/anointing-oil.json`).
- * - `at-brace-label` — the same `@`-notation rule, but a brace form wins first:
- *   `@UUID[a.b.C]{Label}` → `Label`. This is the rules-text convention.
- * - `bracket-links` — the dnd5e document dialect: `[[target]]{Label}` → `Label`,
+ *   (`@UUID[…]{Enfeebled 1}` → `Enfeebled{Enfeebled 1}`).
+ *
+ *   **RETIRED (docs/17 row 149): no adapter declares it any more.** It is kept
+ *   in the enum, and only for that, so the OLD bytes stay REACHABLE as the old
+ *   behaviour: the differential table runs this notation against every sample
+ *   case beside the two live styles, which is what makes the repair PROVABLE
+ *   (the pin states what the retired rule emits, so "fixed" cannot mean "the
+ *   sample changed shape") and what the FAILED-REVERT injection reverts a lane
+ *   to. Nothing may ship it: the SOURCE SCAN forbids an `HtmlToTextStyle`
+ *   literal in an adapter file, and no exported style constant uses it.
+ * - `at-brace-label` — the live PF2e rule (§the declaration below): a brace
+ *   form wins FIRST — `@Type[a.b.C]{Label}` → `Label` — and anything left is
+ *   resolved by the `at-label-last` rule (`@Type[a.b.C|label]` → `C`).
+ * - `bracket-links` — the dnd5e document dialect, its OWN grammar, not a merge
+ *   of the PF2e one: a three-rule PRELUDE first — `[[target]]{Label}` → `Label`,
  *   `[[target|label]]` → the LAST label segment, `[[target]]` (no label
- *   segment) → nothing, `&reference[target]` → `target`, and then the
- *   `at-label-last` rule for any remaining `@`-notation.
+ *   segment) → nothing, `&reference[target]` → `target` — and then the brace
+ *   rule above for any remaining `@`-notation `{Label}` form. The prelude stays
+ *   first because `[[…]]` is not `@`-notation; the brace rule is shared, not
+ *   copied, because a `{Label}` suffix means the same thing in both dialects.
  */
 export type HtmlNotation = 'at-label-last' | 'at-brace-label' | 'bracket-links';
 
 /**
  * One HTML→text style: the minimum needed to reproduce the behaviours that
- * existed as seven copies. Both values of both axes are declared by a real
- * call site — there is no dead flag here.
+ * existed as seven copies. Every value of the `notation` axis that a CALL SITE
+ * declares is live; `at-label-last` alone is retired-and-reachable (read the
+ * comment above and docs/17 row 149 before deleting it).
  */
 export interface HtmlToTextStyle {
   readonly notation: HtmlNotation;
@@ -86,6 +106,9 @@ export interface HtmlToTextStyle {
    * `false` — line breaks only: `<hr>`/`<br>`/`</p>` become `\n` and every
    * other tag is dropped with nothing, so block structure and TABLES are lost
    * (`<td>` cells run together). No blank-line collapse, no per-line trim.
+   * Since docs/17 row 149 the dnd5e dialect is the only style declaring it,
+   * because no dnd5e fixture carries table markup — read that row's per-lane
+   * table before turning it off for a lane.
    *
    * `true` — block-and-table aware: the block closers
    * (`</p>`, `</h1>`–`</h6>`, `</li>`, `</blockquote>`, `</div>`, `</caption>`,
@@ -107,31 +130,36 @@ export interface HtmlToTextStyle {
 }
 
 /**
- * The THREE styles the ingest layer declares — the divergence as DATA, in one
- * place, instead of seven copies. All three are in use by real call sites; a
- * fourth adapter picks one of these BY NAME rather than declaring its own
+ * The TWO styles the ingest layer declares — the divergence that is left as
+ * DATA, in one place, instead of seven copies. Both are in use by real call
+ * sites; a new adapter picks one of these BY NAME rather than declaring its own
  * combination, because a new style is a behaviour change and belongs with the
- * re-import story (docs/17 row 143). The three are pinned byte-for-byte by the
- * differential table in `tests/ingest/packs/html-to-text.test.ts`.
+ * re-import story (docs/17 rows 143 and 149). Both are pinned byte-for-byte by
+ * the differential table in `tests/ingest/packs/html-to-text.test.ts`.
+ *
+ * Row 143 declared a THIRD (`AT_LABEL_LAST_LINE_BREAKS`, `at-label-last` +
+ * line breaks only) for the two PF2e description lanes. Row 149 DELETED it, and
+ * deliberately did not rename it: its repaired behaviour would have been
+ * byte-identical to `AT_BRACE_LABEL_BLOCK_AND_TABLE`, and two names for one
+ * behaviour is exactly the divergence this module exists to end. The two
+ * surviving names are unchanged because they still describe what they do — the
+ * NOTATION each declares and whether block/table structure survives.
  */
 
-/** PF2e item/creature descriptions: `@Type[a.b.C|…]` → `C`, line breaks only.
- *  A brace label survives verbatim and a table's cells run together — the
- *  KNOWN, still-unfixed behaviour (landing 2), not an accident. */
-export const AT_LABEL_LAST_LINE_BREAKS: HtmlToTextStyle = {
-  notation: 'at-label-last',
-  blockAware: false,
-};
-
-/** dnd5e item/creature descriptions: `[[…]]{L}` / `[[…|l]]` / `&reference[…]`
- *  resolve first, then `@Type[…|…]` → the last segment; line breaks only. */
+/** dnd5e item/creature descriptions — the dialect with its own prelude: the
+ *  `[[…]]{L}` / `[[…|l]]` / `&reference[…]` rules resolve first, then the
+ *  shared `{Label}` rule for `@`-notation, then the target's last segment;
+ *  line breaks only (`blockAware: false`, measured: no `<table>` markup exists
+ *  in any dnd5e fixture, so no dnd5e lane asked for the table rule). */
 export const BRACKET_LINKS_LINE_BREAKS: HtmlToTextStyle = {
   notation: 'bracket-links',
   blockAware: false,
 };
 
-/** PF2e rules text (journals, conditions, the feat/spell/action corpus):
- *  `@Type[…]{Label}` → `Label`, and block/table structure survives. */
+/** The `@`-notation rule — PF2e items, creatures, rules text, journals and
+ *  conditions: `@Type[…]{Label}` → `Label` first, then `@Type[a.b.C|…]` → `C`,
+ *  and block/table structure survives (`Hardness | HP | BT | 5 | 20 | 10`
+ *  rather than `HardnessHPBT52010`). */
 export const AT_BRACE_LABEL_BLOCK_AND_TABLE: HtmlToTextStyle = {
   notation: 'at-brace-label',
   blockAware: true,
@@ -154,9 +182,9 @@ const BLOCK_CLOSERS = /<\/(p|h[1-6]|li|blockquote|div|caption|table)>/gi;
  * `@Type[target|…]` → the target's LAST dotted segment.
  *
  * The `|…` tail is dropped before the split, so `@UUID[a.b.C|label]` → `C`.
- * A `{Label}` suffix is deliberately NOT matched here: for `at-label-last`
- * this pattern leaves the brace text behind as ordinary text, which is exactly
- * what the PF2e item copies did.
+ * A `{Label}` suffix is deliberately NOT matched here: it is `resolveBraceLabels`
+ * below that owns the brace form, so this rule and that one compose in the
+ * order each notation needs.
  */
 function resolveAtLabelLast(html: string): string {
   return html.replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
@@ -165,29 +193,45 @@ function resolveAtLabelLast(html: string): string {
   });
 }
 
+/**
+ * `@Type[…]{Label}` → `Label` — THE brace rule, declared once.
+ *
+ * A `{Label}` suffix is the source's own display text for the link, so it wins
+ * over anything the target would render as. Both live notations use it (row
+ * 149 fixed the residue the line-breaks-only styles stored: `Enfeebled{Enfeebled 1}`
+ * became `Enfeebled 1`), and it is applied to what is LEFT of the `@`-notation
+ * after a dialect's own prelude — never re-spelled per adapter.
+ */
+function resolveBraceLabels(html: string): string {
+  return html.replace(
+    /@(\w+)\[([^\]]*)\]\{([^}]*)\}/g,
+    (_match, _kind: string, _inner: string, label: string) => label,
+  );
+}
+
 /** Applies the declared inline-notation dialect, in the order that dialect needs. */
 function resolveNotation(html: string, notation: HtmlNotation): string {
   switch (notation) {
     case 'at-label-last':
+      // RETIRED (docs/17 row 149) — the OLD, corrupted behaviour, kept
+      // reachable so the differential pin and the FAILED-REVERT injection can
+      // state it. No adapter may declare it.
       return resolveAtLabelLast(html);
     case 'at-brace-label':
-      return resolveAtLabelLast(
-        html.replace(
-          /@(\w+)\[([^\]]*)\]\{([^}]*)\}/g,
-          (_match, _kind: string, _inner: string, label: string) => label,
-        ),
-      );
+      return resolveAtLabelLast(resolveBraceLabels(html));
     case 'bracket-links':
       return resolveAtLabelLast(
-        html
-          .replace(/\[\[[^\]]*\]\]\{([^}]*)\}/g, '$1')
-          .replace(/\[\[([^\]]*)\]\]/g, (_match, inner: string) => {
-            // [[/condition conditions:Incapacitated|incapacitated]] → last label;
-            // bracket links without a label segment render as nothing.
-            const segments = inner.split('|');
-            return segments.length > 1 ? (segments[segments.length - 1] ?? '') : '';
-          })
-          .replace(/&(amp;)?reference\[([^\]]*)\]/g, '$2'),
+        resolveBraceLabels(
+          html
+            .replace(/\[\[[^\]]*\]\]\{([^}]*)\}/g, '$1')
+            .replace(/\[\[([^\]]*)\]\]/g, (_match, inner: string) => {
+              // [[/condition conditions:Incapacitated|incapacitated]] → last label;
+              // bracket links without a label segment render as nothing.
+              const segments = inner.split('|');
+              return segments.length > 1 ? (segments[segments.length - 1] ?? '') : '';
+            })
+            .replace(/&(amp;)?reference\[([^\]]*)\]/g, '$2'),
+        ),
       );
   }
 }
@@ -214,9 +258,10 @@ function decodeTagsAndEntities(html: string, blockAware: boolean): string {
 /**
  * Strips a pack document's HTML to the plain text that becomes a chunk's
  * stored `text` (and therefore its content hash — read the header before
- * changing a byte). `style` is the caller's DECLARED convention; all three
- * declared styles are pinned byte-for-byte by the differential table in
- * `tests/ingest/packs/html-to-text.test.ts`.
+ * changing a byte). `style` is the caller's DECLARED convention; both declared
+ * styles are pinned byte-for-byte by the differential table in
+ * `tests/ingest/packs/html-to-text.test.ts`, which also pins the RETIRED
+ * `at-label-last` notation beside them (docs/17 row 149).
  */
 export function htmlToText(html: string, style: HtmlToTextStyle): string {
   const withoutNotation = resolveNotation(html, style.notation);
