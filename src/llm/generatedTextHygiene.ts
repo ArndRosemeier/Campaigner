@@ -4,6 +4,7 @@ import {
   type DebrisScanField,
 } from '@/lib/encodingHygiene';
 import { findScaffoldingEcho } from '@/llm/promptScaffolding';
+import type { RejectionReason } from '@/llm/rejectionReason';
 
 /**
  * THE boundary scan for model-generated text that is about to be persisted as
@@ -32,12 +33,37 @@ import { findScaffoldingEcho } from '@/llm/promptScaffolding';
  * `runEngine`'s finalize passes both explicitly: debris keeps the effective
  * draft AND the statblock strings, while the scaffolding half reads the
  * document text only.
+ *
+ * THE SCAN ALSO NAMES ITS CLASSES (docs/17 row 152). The two halves are TWO
+ * rejection classes — `escape-debris` and `scaffolding-echo` — so the scan
+ * returns which of them produced the issues it reports, decided by the half
+ * that produced them. A boundary that persists the refusal (runEngine's
+ * finalize) records them on the rejected step, and the engine's sentence then
+ * says what actually happened instead of claiming a JSON defect. This is NOT a
+ * second classifier: the class travels with the issues from the detector,
+ * never reconstructed from their text.
  */
-export function generatedTextIssuesForFields(
+export interface GeneratedTextScan {
+  /** The named issues, debris first then scaffolding echoes (the historic
+   * order — unchanged). */
+  readonly issues: string[];
+  /** Which classes are PRESENT in `issues`, in the same order. */
+  readonly reasons: RejectionReason[];
+}
+
+export function generatedTextScanForFields(
   fields: readonly DebrisScanField[],
   documentFields: readonly DebrisScanField[] = fields,
-): string[] {
-  return [...debrisIssuesForFields(fields), ...scaffoldingEchoIssues(documentFields)];
+): GeneratedTextScan {
+  const debris = debrisIssuesForFields(fields);
+  const echoes = scaffoldingEchoIssues(documentFields);
+  return {
+    issues: [...debris, ...echoes],
+    reasons: [
+      ...(debris.length > 0 ? (['escape-debris'] as const) : []),
+      ...(echoes.length > 0 ? (['scaffolding-echo'] as const) : []),
+    ],
+  };
 }
 
 /**

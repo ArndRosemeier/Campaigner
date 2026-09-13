@@ -59,7 +59,7 @@ import { absentable } from '@/llm/schemas';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, resolveWikiLink, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
-import { documentTextFields, generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import { documentTextFields, generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 import {
   MODULE_PREMISE_LABEL,
   PART_TOO_SHORT_REPAIR_SENTENCE,
@@ -582,7 +582,7 @@ async function runSpinePass(
 export function parseSpine(raw: string): ModuleSpine {
   const spine = moduleSpineSchema.parse(parseJsonReply(raw));
   const fields = documentTextFields(spine, 'spine');
-  const issues = generatedTextIssuesForFields(fields, fields);
+  const { issues } = generatedTextScanForFields(fields, fields);
   if (issues.length > 0) {
     throw new Error(`the spine reply was rejected — ${issues.join('; ')}`);
   }
@@ -1648,7 +1648,7 @@ export async function generatePart(
     // semantics: the chain continues, the user retries) — never persisted as a
     // ready part.
     const partField = { field: `part ${String(planIndex + 1)}`, text: markdown };
-    const hygieneIssues = generatedTextIssuesForFields([partField], [partField]);
+    const { issues: hygieneIssues } = generatedTextScanForFields([partField], [partField]);
     if (hygieneIssues.length > 0) {
       const hygieneMessage =
         `Part text is not persistable (${hygieneIssues.join('; ')}) — ` +

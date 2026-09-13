@@ -150,7 +150,12 @@ type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
 import { collectTextLeaves } from '@/lib/encodingHygiene';
-import { documentTextFields, generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import { documentTextFields, generatedTextScanForFields } from '@/llm/generatedTextHygiene';
+import {
+  rejectedStepOutput,
+  rejectedStepSentence,
+  type RejectionReason,
+} from '@/llm/rejectionReason';
 import {
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   SCHEMA_REPAIR_LEAD_IN,
@@ -1529,16 +1534,6 @@ function parseEncounterBrief(
 }
 
 /**
- * Named reasons a rejected step recorded alongside its raw reply (`issues`),
- * for the failure message and the review card. Steps that predate the field
- * yield an empty list.
- */
-export function rejectionIssues(step: Pick<RunStep, 'output'>): string[] {
-  const issues = (step.output as { issues?: unknown } | null | undefined)?.issues;
-  return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
-}
-
-/**
  * Reads the roster-only pipeline marker off a run's brief step (two-button
  * regeneration, docs/11): the brief step stamps `rosterOnly: true` when it
  * ran in repopulation scope, so continuations that rebuild `StartRunInput`
@@ -2347,14 +2342,14 @@ export class RunEngine {
         // fails the run instead of silently continuing toward placeholder
         // output (e.g. an empty artifact named after the persona — the
         // "Worldbuilder"-class bug).
+        //
+        // The SENTENCE is composed in ONE place, from the class the refusing
+        // step recorded (docs/17 row 152, docs/18 §2.2): this branch used to
+        // claim a JSON defect for every class — the scaffolding echo of row
+        // 142, an unresolvable stat source, printed signed abilities. A row
+        // written before the class was recorded says so instead of guessing.
         if (outcome.step.status === 'rejected' && input.autonomy === 'auto') {
-          const issues = rejectionIssues(outcome.step);
-          const reason =
-            `Step "${name}" rejected: the model reply could not be parsed into the required ` +
-            `JSON shape after one automatic retry` +
-            (issues.length === 0 ? '' : ` (${issues.join('; ')})`) +
-            `. The run failed without saving partial results — ` +
-            `run it again, or use manual/review autonomy to keep the raw reply for editing.`;
+          const reason = rejectedStepSentence(name, outcome.step);
           await updateRun(runId, {
             status: 'failed',
             errorMessage: reason,
@@ -3121,7 +3116,11 @@ export class RunEngine {
 
     if (parseFailed) {
       // needs_review: raw text + the named issues stored, run pauses per autonomy.
-      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
+      const step = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, issues, ['invalid-json']),
+        'rejected',
+      );
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       if (input.autonomy === 'auto') return { step };
       return { step, runStatus: 'needs_review' };
@@ -3159,7 +3158,11 @@ export class RunEngine {
           );
         }
         this.sourceRepaired.delete(runId);
-        const rejected = this.finishStep(steps[stepIndex], { raw, issues: sourceIssues }, 'rejected');
+        const rejected = this.finishStep(
+          steps[stepIndex],
+          rejectedStepOutput(raw, sourceIssues, ['unresolved-source']),
+          'rejected',
+        );
         if (input.autonomy === 'manual') return { step: rejected, runStatus: 'awaiting_user' };
         if (input.autonomy === 'auto') return { step: rejected };
         return { step: rejected, runStatus: 'needs_review' };
@@ -3312,7 +3315,11 @@ export class RunEngine {
     }
 
     if (statBlock === null) {
-      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
+      const step = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, issues, ['invalid-json']),
+        'rejected',
+      );
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
@@ -3341,7 +3348,11 @@ export class RunEngine {
         );
       }
       this.statblockRetried.delete(runId);
-      const rejected = this.finishStep(steps[stepIndex], { raw, issues: abilityIssues }, 'rejected');
+      const rejected = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, abilityIssues, ['ability-convention']),
+        'rejected',
+      );
       if (input.autonomy === 'auto') return { step: rejected };
       if (input.autonomy === 'manual') return { step: rejected, runStatus: 'awaiting_user' };
       return { step: rejected, runStatus: 'needs_review' };
@@ -3464,7 +3475,11 @@ export class RunEngine {
     }
 
     if (report === null) {
-      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
+      const step = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, issues, ['invalid-json']),
+        'rejected',
+      );
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
@@ -4066,6 +4081,10 @@ export class RunEngine {
     ): Promise<{
       brief: EncounterGeneratorBrief | null;
       issues: string[];
+      /** WHY these issues refused the reply, decided by the branch that
+       * produced them (docs/17 row 152) — the engine's sentence reads this,
+       * never the issue text. */
+      reasons: RejectionReason[];
       advisory: string | null;
       expansionActive: boolean;
     }> => {
@@ -4073,7 +4092,9 @@ export class RunEngine {
         reply,
         rosterPin === undefined ? {} : { stripStatFieldCount: rosterPin.length },
       );
-      if (result.brief === null) return { ...result, advisory: null, expansionActive: false };
+      if (result.brief === null) {
+        return { ...result, reasons: ['invalid-json'], advisory: null, expansionActive: false };
+      }
       const brief = result.brief;
       // The reply as it arrived, before the contract's zod coercion: the
       // ability convention check needs the printed sign (docs/17 row 95). The
@@ -4113,6 +4134,7 @@ export class RunEngine {
         if (brief.rooms.length !== mirrorCount) {
           return {
             brief: null,
+            reasons: ['brief-contract'],
             advisory: null,
             expansionActive: false,
             issues: [
@@ -4130,6 +4152,7 @@ export class RunEngine {
       ) {
         return {
           brief: null,
+          reasons: ['brief-contract'],
           advisory: null,
           expansionActive: false,
           issues: [
@@ -4139,6 +4162,7 @@ export class RunEngine {
       } else if (brief.rooms.length !== 1 && brief.rooms.length < 4) {
         return {
           brief: null,
+          reasons: ['brief-contract'],
           advisory: null,
           expansionActive: false,
           issues: [
@@ -4152,6 +4176,7 @@ export class RunEngine {
           if (brief.monsters.length < pinLength) {
             return {
               brief: null,
+              reasons: ['brief-contract'],
               advisory: null,
               expansionActive: false,
               issues: [
@@ -4162,6 +4187,7 @@ export class RunEngine {
         } else if (brief.monsters.length !== pinLength) {
           return {
             brief: null,
+            reasons: ['brief-contract'],
             advisory: null,
             expansionActive: false,
             issues: [
@@ -4177,7 +4203,13 @@ export class RunEngine {
           rawMonsters,
         );
         if (sourceIssues.length > 0) {
-          return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };
+          return {
+            brief: null,
+            issues: sourceIssues,
+            reasons: ['unresolved-source'],
+            advisory: null,
+            expansionActive: false,
+          };
         }
       }
       // The target's own values win over any model drift on the pinned
@@ -4211,18 +4243,36 @@ export class RunEngine {
           rawMonsters.slice(pinLength),
         );
         if (sourceIssues.length > 0) {
-          return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };
+          return {
+            brief: null,
+            issues: sourceIssues,
+            reasons: ['unresolved-source'],
+            advisory: null,
+            expansionActive: false,
+          };
         }
       }
       const coverage = encounterCoverageIssues(corrected, corrected.monsters.length);
       if (coverage.length > 0) {
-        return { brief: null, issues: coverage, advisory: null, expansionActive: false };
+        return {
+          brief: null,
+          issues: coverage,
+          reasons: ['brief-contract'],
+          advisory: null,
+          expansionActive: false,
+        };
       }
       const stamped = stampTargetLevels(corrected);
       if (budgetMode === 'verbatim') {
         // pf2e: no numeric budget ships (Paizo licensing) — the advisory is
         // the deterministic, always-loud replacement.
-        return { brief: stamped, issues: [], advisory: PF2E_BUDGET_ADVISORY, expansionActive: false };
+        return {
+          brief: stamped,
+          issues: [],
+          reasons: [],
+          advisory: PF2E_BUDGET_ADVISORY,
+          expansionActive: false,
+        };
       }
       const verdicts = await budgetVerdicts(stamped);
       if (expansion || freshCapped) {
@@ -4241,6 +4291,7 @@ export class RunEngine {
         if (shipped > cap) {
           return {
             brief: null,
+            reasons: ['brief-contract'],
             advisory: null,
             expansionActive: false,
             issues: [
@@ -4265,6 +4316,7 @@ export class RunEngine {
         return {
           brief: stamped,
           issues: [],
+          reasons: [],
           advisory: advisories.length === 0 ? null : advisories.join(' '),
           expansionActive: expansion,
         };
@@ -4272,6 +4324,7 @@ export class RunEngine {
       if (!final) {
         return {
           brief: null,
+          reasons: ['brief-contract'],
           advisory: null,
           expansionActive: false,
           issues: repairable.map((verdict) => verdict.issue ?? '').filter((issue) => issue !== ''),
@@ -4302,6 +4355,7 @@ export class RunEngine {
       return {
         brief: finalBrief,
         issues: [],
+        reasons: [],
         advisory: advisories.length === 0 ? null : advisories.join(' '),
         expansionActive: expansion,
       };
@@ -4339,7 +4393,11 @@ export class RunEngine {
       evaluated = await evaluate(raw, true);
     }
     if (evaluated.brief === null) {
-      const step = this.finishStep(steps[stepIndex], { raw, issues: evaluated.issues }, 'rejected');
+      const step = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, evaluated.issues, evaluated.reasons),
+        'rejected',
+      );
       // Same rejection mapping as every other step: manual waits for the
       // user (awaiting_user), review parks the run for triage, auto lets
       // executeFrom fail the run.
@@ -5592,7 +5650,7 @@ export class RunEngine {
     // effective draft plus the statblock strings); the scaffolding half reads
     // the reader-visible text only (`documentTextFields` drops names, aliases,
     // tags and ids — identity fields, not prose).
-    const hygieneIssues = generatedTextIssuesForFields(
+    const hygiene = generatedTextScanForFields(
       [
         ...collectTextLeaves(draft, 'draft'),
         ...collectTextLeaves(statblockOutput?.statBlock, 'statBlock'),
@@ -5602,8 +5660,12 @@ export class RunEngine {
         ...documentTextFields(statblockOutput?.statBlock, 'statBlock'),
       ],
     );
-    if (hygieneIssues.length > 0) {
-      const step = this.finishStep(steps[stepIndex], { raw: JSON.stringify(draft), issues: hygieneIssues }, 'rejected');
+    if (hygiene.issues.length > 0) {
+      const step = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(JSON.stringify(draft), hygiene.issues, hygiene.reasons),
+        'rejected',
+      );
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       if (input.autonomy === 'auto') return { step };
       return { step, runStatus: 'needs_review' };

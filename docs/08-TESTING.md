@@ -2581,9 +2581,10 @@ ONE source for the literals (compose and detect read the same constants, AGENTS
 rule 4), and a LOUD failure at every boundary that would persist reader-visible
 text — never a strip, never a placeholder.
 
-Its own function is one seam: `generatedTextHygiene.generatedTextIssuesForFields`
+Its own function is one seam: `generatedTextHygiene.generatedTextScanForFields`
 carries escape debris (its historic scope) AND this echo, so a boundary cannot
-silently lose half the check.
+silently lose half the check — and it returns `{ issues, reasons }`, naming which
+of the two classes fired (docs/17 row 152, whose pins are in the next section).
 
 | fact pinned | where |
 |---|---|
@@ -2813,12 +2814,14 @@ fourth `whereLabel`, a third `\[\[` regex, or a fifth identity spelling —
 reverting one of them is what the injections above measure, and writing a NEW
 one in a shape nobody has used slips past a textual scan. The scans read source
 TEXT, which is why they are blind to a copy computed through an intermediate
-variable. And **item 5 of the audit is NOT fixed**: `runEngine.ts:2347-2352`
-still tells the owner the reply "could not be parsed into the required JSON
-shape" for every rejection class the auto-autonomy branch sees, including the
-scaffolding-echo rejection — naming the real class needs a rejection class
-recorded at EIGHT `finishStep(..., 'rejected')` sites and a persisted-shape
-change, so it is reported rather than half-built (docs/17 row 145).
+variable. And **item 5 of the audit is no longer open**: it was deferred here
+(docs/17 row 145) because naming the real class needed one recorded at every
+`finishStep(..., 'rejected')` site plus a persisted-shape change, and it is
+FIXED by docs/17 row 152 through ONE seam (`llm/rejectionReason`) — the section
+three headings below owns its pins. The count this paragraph used to repeat
+("EIGHT sites") was a miscount in the deferral: there are SEVEN, and `:2813` is
+`runRetrieve`'s done-step write (measured at both bases, `214b86d` and
+`81fb394`).
 
 ### The reader's encounter mobs, and ONE rule for structured text (docs/17 row 146, docs/11 §What a roster row PRINTS, docs/18 §2.3)
 
@@ -3232,7 +3235,9 @@ without a replacement. TWO were changed deliberately, both named with before/aft
    `src/features/modules/canvas/snapshotChat.ts` as "the same, snapshot route". That
    file no longer IS a boundary — it is a wrapper with no apply logic, so the entry
    became a dead requirement (the full-suite gate caught it: RED 1, `scaffoldingEcho`
-   `expected 'import type { Id } …' to contain 'generatedTextIssuesForFields('`). The
+   `expected 'import type { Id } …' to contain 'generatedTextIssuesForFields('` — the
+   needle it quotes is today spelled `generatedTextScanForFields(`, docs/17 row 152;
+   the failure text is left verbatim as the record of that run). The
    entry is REMOVED and replaced, in the same test, by a ROUTING pin: each chat
    surface must hand ITS document to the one applier (`chatController.ts` →
    `editorChatHandle(`, `snapshotChat.ts` → `stringChatHandle(`) **and must not call
@@ -3253,6 +3258,51 @@ that exist today, not a proof of uniqueness, and a copy assembled at runtime or 
 in another language slips past it. Nothing proves a future author will not re-copy the
 controller into a third file. The differential proves the two HANDLES cannot drift on
 the inputs it drives; it says nothing about whether a third applier would agree.
+
+### A rejected step says WHY it was refused (docs/17 row 152, docs/18 §2.2)
+
+The engine's auto-autonomy failure sentence said *"the model reply could not be
+parsed into the required JSON shape after one automatic retry"* for EVERY
+rejection class it saw — the scaffolding echo of row 142 (nothing to do with
+JSON), an unresolvable monster stat source, a stat block that printed signed
+ability modifiers, a brief that ignored the room-shape contract, text carrying
+half-formed unicode escapes. A rejected step carried only `{ raw, issues }`, so
+there was no class to name; this landing records ONE where each refusal is
+DECIDED (`llm/rejectionReason`), composes the sentence from it in ONE place, and
+keeps the sentence that was already truthful byte-identical.
+
+| fact pinned | where |
+|---|---|
+| **One sentence per class**, each transcribed independently of the composer and each asserting that NO OTHER class's clause appears in it: `invalid-json` (the pre-152 literal, BYTE FOR BYTE, with and without issues), `unresolved-source`, `ability-convention`, `brief-contract`, `escape-debris`, `scaffolding-echo` | `tests/llm/rejectionReason.test.ts` (6 pins, NEW) |
+| **The exhaustive record** — `Object.keys(REJECTION_CLAUSES)` equals the union, no two classes share a clause, and every class's sentence carries its own clause and no other's. The clause table is a `Record<RejectionReason, string>`, so a class added to the union without a sentence is a COMPILE error; the pin re-states it at run time | same file (2 pins, NEW) |
+| **A refused output cannot be built without a class** — `rejectedStepOutput(raw, issues, [])` throws; a value outside the union is read as absent, never invented | same file (2 pins, NEW) |
+| **SCAN — the class is recorded at the site that refuses**: the engine's `'rejected',` statuses (7, with the `PromiseRejectedResult` guard subtracted) EQUAL its `rejectedStepOutput(` calls (7), no site hand-rolls `{ raw, issues }`, and each of the five classes is attached by name at its own line | same file (2 SCAN pins, NEW) |
+| **SCAN — the sentence is composed in ONE place**: the historic clause `could not be parsed into the required` appears in `llm/rejectionReason.ts` and in no other file under `src/`, and the engine calls `rejectedStepSentence(name, outcome.step)` instead of writing it | same file (1 SCAN pin, NEW) |
+| **A LEGACY row (no class) tells the truth** — with issues it reads *"this run row records no rejection class (it predates the engine recording them) — the issues it stored are the reason"*, with none *"…and no issues either"*, and neither contains `JSON`; a stored value outside the union reads the same way | same file (3 pins, NEW) |
+| **The seven deciding sites, END TO END** — each refuses through the REAL pipeline (mocked chat, fake-indexeddb) and the run's own `errorMessage` is asserted against the class's clause (never against the composer's answer): draft JSON + stat-block JSON (`invalid-json`), signed abilities (`ability-convention`), escape debris (`escape-debris`), scaffolding echo (`scaffolding-echo`), encounter source (`unresolved-source`), encounter room shape (`brief-contract`) — plus the encounter brief that never parses staying `invalid-json`, because the split is decided per BRANCH | same file (8 pins, NEW) |
+| **The scan's classes, beside its issues** — `generatedTextScanForFields` returns `{ issues, reasons }` with the debris half contributing `escape-debris`, the echo half `scaffolding-echo`, and BOTH present when both fire (the reason the stored field is a list) | `tests/llm/scaffoldingEcho.test.ts` (needle updated; its own class pins live in the new file, driven end to end) |
+
+| injection | line it hits | result |
+|---|---|---|
+| **(a) the class DROPPED from ONE deciding site** — the finalize hygiene site reverted to a hand-built `{ raw: JSON.stringify(draft), issues: hygiene.issues }` (`git diff --stat` read BEFORE the run: `src/llm/runEngine.ts \| 2 +-`) | `src/llm/runEngine.ts:5666` (printed back) | **RED 4 / GREEN 20** of the 24. RED: `escape debris … → escape-debris` (printing `expected [] to deeply equal [ 'escape-debris' ]`) and `our own prompt scaffolding echoed into the finalized draft → scaffolding-echo`, plus the two source-scan pins (the 7-vs-6 count). GREEN: every OTHER class's pin, so the proof is PER-SITE |
+| **(b) the composer defaults EVERY class to the JSON sentence** — `reasons.map((reason) => REJECTION_CLAUSES[reason]).join(' and ')` → `REJECTION_CLAUSES['invalid-json']` (`git diff --stat` read BEFORE the run: `src/llm/rejectionReason.ts \| 2 +-`) | `src/llm/rejectionReason.ts:168` (printed back) | **RED 11 / GREEN 13** of the 24. RED: all five non-JSON sentence pins, the exhaustive-record pin and all five non-JSON engine pins. GREEN: the `invalid-json` pins stay GREEN — the byte-identical unit pin and the draft engine pin — and so do all four legacy pins. **That asymmetry IS the landing**: the truthful class is untouched, the lying ones red |
+
+Both injections were restored from an OUT-OF-TREE copy
+(`/tmp/campaigner-reject-backup/`, never `git checkout --`) and proved
+byte-identical with `git hash-object`: `runEngine.ts`
+`41d7003ef28508f128462ab78fce2b45948f92a0` and `rejectionReason.ts`
+`75afce31e7f950f6ca89ce8db0f606dc3c28b95a` — before the injection and after the
+restore. The restored tree re-ran the same file plus
+`tests/llm/scaffoldingEcho.test.ts` and `tests/llm/runNotCompletedReason.test.ts`
+GREEN (65 tests).
+
+**UNPROVEN, stated as such.** No test can show that a FUTURE rejection site will
+pass a class at all: `rejectedStepOutput` makes one a required argument and the
+count scan reds a site that bypasses the constructor, but a site passing the
+WRONG class compiles and passes — the wiring proof is the eight engine pins, not
+a type. Both scan pins read source TEXT, so a class computed through an
+intermediate variable is invisible to them. And nothing here measures whether the
+owner finds the new sentences BETTER: it measures that they are true.
 
 ### Remaining gaps
 

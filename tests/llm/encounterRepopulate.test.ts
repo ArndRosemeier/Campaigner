@@ -21,7 +21,8 @@ import {
   type Persona,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
-import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
+import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
+import { rejectionIssues } from '@/llm/rejectionReason';
 import { chat } from '@/llm/openrouter';
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
 import { clearDatabase } from '../db/helpers';

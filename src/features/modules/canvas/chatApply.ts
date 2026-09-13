@@ -3,7 +3,7 @@ import type { EditorView } from '@codemirror/view';
 import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import type { CanvasEditCommand } from '@/llm/canvasChat';
 import { resolveCanvasEditAcrossParts } from '@/llm/canvasChat';
-import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
   type CanvasChatOutcome,
@@ -203,7 +203,7 @@ export function applyChatCommands(input: {
     // Generated-text hygiene scan (canvasRefine parity): escape debris OR our
     // own prompt scaffolding echoed back fails the command LOUDLY, named —
     // never silent repair (docs/17 row 142).
-    const issues = generatedTextIssuesForFields([{ field: 'replace', text: command.replace }]);
+    const { issues } = generatedTextScanForFields([{ field: 'replace', text: command.replace }]);
     if (issues.length > 0) {
       outcomes.push(
         failedOutcome(command, `unusable generated text in the replace text — ${issues.join('; ')}`),

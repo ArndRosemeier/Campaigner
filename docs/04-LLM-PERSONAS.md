@@ -304,11 +304,14 @@ composers (`features/modules/persona-request`, `llm/runEngine`'s repair turns,
 section, `llm/campaignGrounding`'s section header) render those constants, and
 `findScaffoldingEcho` matches the SAME constants — so a reworded sentence
 changes what is sent and what is detected in one edit, and a hand-copied second
-list cannot rot. `llm/generatedTextHygiene.generatedTextIssuesForFields` is the
+list cannot rot. `llm/generatedTextHygiene.generatedTextScanForFields` is the
 ONE persist-boundary scan and runs BOTH mechanical defect classes over
 reader-visible text (escape debris, and this echo): a hit rejects the artifact's
 finalize step, fails the module part, or throws out of `parseSpine` into the
-spine's existing one-repair turn. Never strip the sentence and keep going, never
+spine's existing one-repair turn. It also reports WHICH classes fired
+(`{ issues, reasons }`, docs/17 row 152), and a rejected run step records them —
+which is how the run's own failure sentence names this refusal instead of
+claiming a JSON defect it never was. Never strip the sentence and keep going, never
 a placeholder — this is detection, not a rewrite. Identity fields (`name`,
 `aliases`, `tags`, `id`) are out of scope by construction: they are link targets
 and filter metadata, not prose.

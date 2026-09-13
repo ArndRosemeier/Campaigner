@@ -12,7 +12,7 @@ import {
 } from '@/llm/canvasBusy';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
-import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 
 /**
  * Canvas refine contract (08-MODULE-DESIGNER §Module canvas): ONE loud
@@ -250,7 +250,7 @@ export async function refineModuleText(
     if (input.scope === 'part' && reply.replacement.trim() === '') {
       throw new Error('the model returned an empty replacement for the whole part');
     }
-    const issues = generatedTextIssuesForFields([
+    const { issues } = generatedTextScanForFields([
       { field: 'replacement', text: reply.replacement },
     ]);
     if (issues.length > 0) {

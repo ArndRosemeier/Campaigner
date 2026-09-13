@@ -496,7 +496,7 @@ describe('SCAN — every boundary that persists generated text runs the ONE scan
     ];
     for (const file of boundaries) {
       const text = await readFile(join(process.cwd(), file), 'utf8');
-      expect(text, file).toContain('generatedTextIssuesForFields(');
+      expect(text, file).toContain('generatedTextScanForFields(');
     }
     // THE ROUTING PIN that replaces the deleted `snapshotChat.ts` entry: each
     // chat surface hands ITS document to the one applier, so neither route
@@ -509,7 +509,7 @@ describe('SCAN — every boundary that persists generated text runs the ONE scan
       const text = await readFile(join(process.cwd(), file), 'utf8');
       expect(text, file).toContain(handle);
       expect(text, `${file} must not apply text itself`).not.toContain(
-        'generatedTextIssuesForFields(',
+        'generatedTextScanForFields(',
       );
     }
   });
