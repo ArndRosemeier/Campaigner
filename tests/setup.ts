@@ -39,6 +39,26 @@ if (typeof Element !== 'undefined' && !('scrollIntoView' in Element.prototype)) 
   });
 }
 
+// sonner's toast swipe handler calls `event.target.setPointerCapture(...)` on
+// pointerdown (dist/index.mjs:750) BEFORE it checks whether the target is a
+// button, so ANY pointer interaction with a rendered toast — `userEvent.click`
+// on the toast's close button included — throws under jsdom, which implements
+// none of the pointer-capture API. A no-op is the honest "no pointer capture in
+// jsdom" answer (the swipe geometry those calls exist for needs layout, which
+// jsdom has none of). Without this, a test that clicks a toast fails with
+// three unhandled errors and a non-zero exit while every assertion passes — a
+// trap, not a real failure. Only the method sonner actually calls is stubbed
+// (`hasPointerCapture` / `releasePointerCapture` appear nowhere in sonner or in
+// `src/`); add the others the same way if something starts calling them.
+if (typeof Element !== 'undefined' && !('setPointerCapture' in Element.prototype)) {
+  Object.defineProperty(Element.prototype, 'setPointerCapture', {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    value: () => {},
+    configurable: true,
+    writable: true,
+  });
+}
+
 // CodeMirror 6 measures text with DOM Range.getClientRects/getBoundingClientRect
 // (editor measurement runs on requestAnimationFrame after doc updates); jsdom
 // implements neither on Range, so an rAF-scheduled measure crashes the worker

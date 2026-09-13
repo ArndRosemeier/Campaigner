@@ -413,6 +413,17 @@ surface mounts nothing-checked until it does.
 
 ### jsdom notes (hit these once, then remember them)
 
+- **sonner's toast swipe handler calls `setPointerCapture` on pointerdown**
+  (`node_modules/sonner/dist/index.mjs:750`) BEFORE it checks whether the
+  target is a button, and jsdom implements no pointer-capture API at all — so
+  ANY `userEvent.click` on a rendered toast (its close button included) throws
+  `TypeError: event.target.setPointerCapture is not a function` three times and
+  exits the run non-zero **while every assertion passes**: a trap, not a
+  failure. `tests/setup.ts` stubs `Element.prototype.setPointerCapture` as a
+  no-op, which is the honest "no pointer capture, no layout" answer. Only the
+  method sonner actually calls is stubbed; add `releasePointerCapture` /
+  `hasPointerCapture` the same way if something starts calling them (nothing in
+  sonner or `src/` does today).
 - **react-resizable-panels steals pointer focus in jsdom.** Its window-level
   `pointerdown` handler hit-tests with `getBoundingClientRect()` (all zeros in
   jsdom) and focuses a resize handle on any click inside a panel group, so
@@ -477,6 +488,7 @@ test) · ❌ gap.
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
+| A PERSISTENT error notice carries a real dismiss control, and dismissing it destroys no evidence (docs/05 §Error surfaces rule, docs/17 row 136) | `toast-persistent-dismiss.test.tsx` (4 pins, NEW: the real `Toaster` + the real seam, the same through `toastErrorPersistent`, the transient case unchanged, and the console record byte-identical after the click) + `toast.test.ts` (the seam's options) | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
 | Blocked controls state their reason PERCEIVABLY (the shared device): the control stays natively disabled, the reason is associated via `aria-describedby`, the popup opens on hover AND on focus, and a live control carries none of it | `blocked-control.test` | ✅ |
 | Canvas header + chat sidebar: a reason per reason-bearing blocked control (preview/open-editor, generating, refine running, streaming proposal, the chat's module-wide block and its live-reply block), each pinned together with the unchanged `toBeDisabled()` state | `blocked-reasons.test` (device), `module-canvas.test` (the AI flows themselves) | ✅ |
@@ -1693,6 +1705,7 @@ object the console shows, so the two renderings cannot disagree.
 | **The console payload, per path**: the greppable headline, the batch context, and per failure the name, WHICH path (`refused`/`interrupted`/`run-not-completed`/`setup-error`), the run id, the terminal status, the run's OWN `failureKind` + `errorMessage`, the engine's sentence, the raw value (by IDENTITY for the run row and a thrown error), and a ZodError's issues as objects | `tests/features/entity-batch-failure-report.test.ts` (7 pins; the REAL `lib/toast`/`lib/zodErrorSummary` run, only `sonner` is faked, and the console value itself is asserted) | ✅ REVERT-PROVEN: dropping the run id from the payload → RED 2/12 (the run path AND the refusal path); wiring the `setup-error` counter to the wrong bucket → RED 2/12 once the counter pin existed (and GREEN before it — below) |
 | **The toast**: the byte-identical legacy sentence when every failure is a run failure, the class breakdown when it is not, each refusal naming the way out, an interruption named as NOT a generator failure with its way out, and NO "see the Runs tab" when no run failed | `tests/features/entity-batch-failure-report.test.ts` (5 pins) + `tests/features/entity-panel.test.tsx` (3 pre-existing pins, retargeted) | ✅ REVERT-PROVEN: raising the summary through `toastError` again → RED **6 across 3 files** (the duration pin `expected undefined to deeply equal { duration: Infinity }`, the legacy-sentence pin, the scan's rule-2 pin and the 3 panel pins) |
 | **The DECISION it rests on**: the report is PERSISTENT (`duration: Infinity`), never sonner's 4-second default | `tests/features/entity-batch-failure-report.test.ts` (`is PERSISTENT: …`) — judged through the real `lib/toast` because a mocked seam could not see the options object at all | ✅ REVERT-PROVEN by the injection above (the same run reds this pin first) |
+| **The notification's EXIT** (docs/17 row 136): the persistent notice carries sonner's close button (per toast, from the seam) and is removable by ONE activation found by accessible name, while the per-failure console record survives the dismissal byte-identical with the console call count unchanged | `tests/lib/toast-persistent-dismiss.test.tsx` (NEW — the real `Toaster` is mounted and the real seam is driven, so this is the only place the rendered control is judged; the row's `sonner`-mocked pins can see the option but never the control) | ✅ REVERT-PROVEN: `closeButton: true` → `false` on both branches (`src/lib/toast.ts:108,110`) → **RED 3/4 in that file** (plus the two option-object pins in `toast.test.ts`) with the TRANSIENT pin GREEN; the injected GLOBAL alternative (`components/ui/sonner.tsx:22`) → RED 1, exactly the transient pin |
 | **An interruption is its own class**, carrying the row's `failureKind: 'cancelled'` beside `status: 'failed'` — the pair that separates "the page reloaded" from "the generator failed" | `tests/features/entity-batch-fixed-cast.test.ts` (`a run the PAGE killed is its OWN class…`, NEW) + the seam's payload pin | ✅ REVERT-PROVEN: classifying every failed run as `run-not-completed` → RED 1/9 in that file, every other suite GREEN |
 | **A designed CAST is not a failure** (row 117's rule at this surface): the cast path reports NOTHING, runs no model call, and lands a row carrying `creatureRef` | `tests/features/creature-row-resolution.test.tsx` (`a designed CAST is a SUCCESS…`, NEW, driven through the panel button with a recorded `bestiary` slot) | ✅ REVERT-PROVEN: pushing a failure onto `failed` at the cast arm → RED 1/7 (the panel's own catch surfaces it because the file's `@/lib/toast` mock has no `toastErrorPersistent`) |
 | **The record exists EVEN WHEN THE BATCH NEVER REACHES ITS END REPORT** (the owner's refinement: *"the root problem is simply not recorded"*) — `runEntityBatch` called on its own, with no caller reporting, writes one record per failure as it happens, carrying entity, path, run id, terminal status, sentence and the batch context | `tests/features/entity-batch-fixed-cast.test.ts` (`the failure is WRITTEN DOWN when it happens …`, NEW; a console spy replaces the guard's wrapper) | ✅ REVERT-PROVEN: appending around the funnel → RED the scan's one-push pin; polluting the pasteable line with the object argument → RED this pin AND the seam's single-argument pin |
@@ -1995,6 +2008,67 @@ a measured absence of need. (3) The `missing ref` state is surfaced IN PLACE
 only, never toasted: it is a persistent data state that renders every time the
 surface opens (the louder of the two options the brief allowed), and no pin
 measures that a toast would have been worse.
+
+### A persistent notice carries a real dismiss control (docs/17 row 136, docs/18 §2.3/§4)
+
+The owner's report, verbatim: *"One small bug: That error message is still on my
+screen and the little closer it has does not close it."* MEASURED before touching
+anything (base `1ae0b3f`): `lib/toast.toastErrorPersistent` raised
+`toast.error(message, { duration: Infinity })`; `grep -rn "closeButton" src/`
+returned ZERO hits and sonner draws its close button only when
+`toast.closeButton ?? toaster.closeButton` is truthy
+(`node_modules/sonner/dist/index.mjs:521-526`, conditional at `:842`) — so a
+persistent notice had no exit at all, and the "little closer" the owner clicked
+is the app's error ICON (`OctagonXIcon`, an octagon with an X), drawn from the
+`icons={{ error: … }}` map and not a button. The pins below mount the REAL
+`Toaster` (`components/ui/sonner.tsx`) and drive the REAL seam (docs/05 §Error
+surfaces rule), because the defect lived in the options object the seam builds
+AND in what the mounted Toaster rendered — a mocked `sonner` (which
+`tests/lib/toast.test.ts` keeps for the humanization pins) cannot see either.
+
+| fact pinned | where |
+|---|---|
+| **A persistent notice is DISMISSIBLE and it is the REAL Toaster**: the notice `reportEntityBatchFailures` raises is found by `getByRole('button', { name: /^close toast$/i })`, and one activation REMOVES it from the DOM | `tests/lib/toast-persistent-dismiss.test.tsx` (`the real Toaster renders a reachable close control…`, NEW) |
+| **The control comes from the SEAM, not from one caller**: `toastErrorPersistent` called directly (the global-error surface's helper) is dismissible the same way | `tests/lib/toast-persistent-dismiss.test.tsx` (NEW) |
+| **The fix does not travel**: a transient `toastError` renders NO close control and keeps its description — a closer on a 4-second toast is a different slice, not this one | `tests/lib/toast-persistent-dismiss.test.tsx` (NEW) |
+| **Dismissing never means "evidence gone"**: after the click, the per-failure console record (the pasteable `[campaigner] entity-batch failure {…}` line) is byte-identical, the console call COUNT is unchanged, and the record still carries the reason + the `runId` that finds the failed row in the Runs tab — the record is the batch's, not the toast's | `tests/lib/toast-persistent-dismiss.test.tsx` (NEW; the record's own fields stay pinned in `tests/features/entity-batch-failure-report.test.ts`) |
+| **The seam's option object**: `closeButton: true` on BOTH branches of `toastErrorPersistent`, absent from every transient helper | `tests/lib/toast.test.ts` (2 pins gained the flag; the transient `toastError` pins assert their options by deep equality and already exclude it) |
+| **FOUR PRE-EXISTING PINS COULD NOT STAY UNCHANGED** — each asserts the seam's options object by DEEP EQUALITY, each failed with the SAME `+ "closeButton": true` in its Received diff and nothing else, and each now ASSERTS the flag (a tightening: the duration, the byte-exact copy and the absence of a description are all still pinned) | `tests/lib/toast.test.ts` `keeps plain-Error descriptions byte-identical`; `tests/features/entity-batch-failure-report.test.ts` `is PERSISTENT: …` and `keeps the sentence this app has ALWAYS raised…`; `tests/lib/globalErrors.test.ts` `still pins a message when the failure carries no Error object`. The two `expect.objectContaining({ duration: Infinity, description })` pins in `globalErrors.test.ts` passed untouched |
+| **The ROUTING**: `grep -rn "closeButton" src/` matches `lib/toast.ts` ONLY (the seam's doc and its two option objects `:108`/`:110`) — nothing on the `<Toaster>`, so a second dismiss mechanism cannot appear beside the seam's | behaviour-only, no scan pin: the `grep` above is recorded here instead, because a one-line source scan would be the only thing it asserts (docs/17 row 136) |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n` and `git diff --stat` checked BEFORE the run, one
+suite at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's
+scratch, then restored from an OUT-OF-TREE copy and verified with
+`git hash-object` — `src/lib/toast.ts` `dd621acf345a110e23f136d4bf92ddf430417b7a`,
+`src/components/ui/sonner.tsx` `9dd2975fe4d9f5a6195f6abfd84aafd3cc5e2a1c`, both
+matching after restore; `git checkout --` restores HEAD and would have destroyed
+this unfiled work, so the backup was taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| the dismiss flag reverted on BOTH branches (`closeButton: true` → `false`) | `src/lib/toast.ts:108` and `:110` (the two `toast.error` options objects; both execute — the no-detail branch is what `reportEntityBatchFailures` takes) | **RED 5** — all three new persistent pins (`Unable to find an accessible element with the role "button" and name /^close toast$/i`) plus both option-object pins — with **the FIVE transient pins GREEN**: the measured proof the fix is scoped to persistent notices |
+| **the DECLINED design injected instead**: a global `closeButton` on the `Sonner` element | `src/components/ui/sonner.tsx:22` | **RED 1, exactly the new transient pin** (`a 4-second toastError carries no close control`), every persistent pin **GREEN** — the global flag fixes the owner's bug too, and this is the pin that says why it is still the wrong design |
+| the pre-fix tree, before any change (the owner's report as a pin) | `src/lib/toast.ts:68` (the seam with no flag) | **RED 3/4** in `tests/lib/toast-persistent-dismiss.test.tsx`, every failure the same `Unable to find an accessible element`, and the rendered toast's accessible roles are `region` / `list` / `listitem` with NO `button` — i.e. the DOM held nothing that could dismiss it. The fourth pin (transient) was GREEN then and is GREEN now |
+
+Aiming note for the next writer: **the flag lives in the options object the seam
+passes, so a pin that mocks `sonner` can only see the FLAG, never the rendered
+control.** The defect was the rendered control, which is why the new file mounts
+the real Toaster; keep both, and aim any future injection at `toast.ts:108/:110`
+(both branches execute) rather than at the `if (detail === undefined)` line,
+which no injection needs to touch.
+
+**UNPROVEN.** (1) Nothing is observed in a real browser: every pin renders
+through jsdom, so "the owner now finds the closer" is read off the accessibility
+tree plus sonner's shipped CSS (an out-of-flow 20px circle with its own
+background and border at the toast's corner, `sonner/dist/styles.css:223-242`),
+never from a screen. (2) The double-X judgement (the decorative
+`OctagonXIcon` beside a real X closer) is a design call from those measurements,
+NOT a measured absence of confusion — if the owner mis-clicks the icon again,
+the next smallest remedy is the labelled "Dismiss" action docs/17 row 136
+declines today. (3) The failed-run-row half of "the evidence survives" is
+asserted only through the `runId`/`errorMessage` the record carries — the Runs
+tab's own rendering is pinned elsewhere and is not re-driven here.
 
 ### Remaining gaps
 

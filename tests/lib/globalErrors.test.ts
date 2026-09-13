@@ -56,6 +56,13 @@ describe('installGlobalErrorHandlers', () => {
   it('still pins a message when the failure carries no Error object', () => {
     window.dispatchEvent(new ErrorEvent('error', { message: 'opaque failure' }));
 
-    expect(toastErrorMock).toHaveBeenCalledWith('Unexpected error', { duration: Infinity });
+    // Exact (not `objectContaining`) on purpose: it asserts the ABSENCE of a
+    // description when there is no Error to describe. The options object also
+    // carries `closeButton: true` (docs/17 row 136), because a notice raised
+    // for an error nothing else caught must be dismissible by the owner.
+    expect(toastErrorMock).toHaveBeenCalledWith('Unexpected error', {
+      duration: Infinity,
+      closeButton: true,
+    });
   });
 });

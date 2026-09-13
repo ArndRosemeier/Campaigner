@@ -64,13 +64,50 @@ export function toastError(message: string, error?: unknown): void {
  * unhandled rejections) must not blink away after the default auto-dismiss:
  * they are the only surface for a failure nothing else caught, so they stay
  * until the user dismisses them (00-OVERVIEW "No silent fallbacks").
+ *
+ * "UNTIL THE USER DISMISSES THEM" USED TO BE A LIE, and the owner found it
+ * (docs/17 row 136, verbatim: *"That error message is still on my screen and
+ * the little closer it has does not close it."*). MEASURED: `duration:
+ * Infinity` with no dismiss affordance is not "persistent", it is PERMANENT —
+ * sonner draws its close button only when `toast.closeButton ??
+ * toaster.closeButton` is truthy (`node_modules/sonner/dist/index.mjs:521-526`,
+ * conditional render at `:842`), and neither this seam nor the app's `Toaster`
+ * (`components/ui/sonner.tsx`) passed it, so a persistent notice rendered with
+ * NO control that could remove it. The "little closer" the owner was clicking
+ * is the error ICON the app's `icons={{ error: <OctagonXIcon /> }}` map draws —
+ * an octagon containing an X, which is decoration, not a button.
+ *
+ * SO THE PERSISTENT NOTICE CARRIES SONNER'S OWN CLOSE BUTTON, per toast:
+ * `closeButton: true`. WHY PER TOAST and not on the `Toaster`
+ * (`components/ui/sonner.tsx`): a global flag would put a close X on every
+ * TRANSIENT toast too (each 4-second success/info/error), which is a UX change
+ * to surfaces that never had this problem — scope creep, not this fix. WHY THIS
+ * MECHANISM and not a labelled `ToastAction` ("Dismiss"): sonner already
+ * answers "dismiss this toast" with a real button whose accessible name is
+ * `closeButtonAriaLabel` (default `Close toast`), so wiring an action would be a
+ * SECOND dismiss mechanism for one idea (AGENTS rule 4). The icon is
+ * deliberately NOT touched: the X-in-octagon is the app's error iconography
+ * (`components/ui/sonner.tsx`), and overriding it per toast would make the same
+ * error look different depending on which seam raised it — a distinction with
+ * no meaning for the owner. The closer is visually distinct from it by
+ * construction: an out-of-flow 20px circle with its own background and border
+ * at the toast's corner (`sonner/dist/styles.css:223-242`) versus an inline
+ * 16px glyph inside the toast body.
+ *
+ * DISMISSING IS NOT FORGETTING (docs/05-UI §Error surfaces): nothing about this
+ * control removes evidence. The reason a caller passes here is ALSO on a
+ * surface that outlives the toast — every batch failure is written to the
+ * console when it happens (`features/modules/entity-batch-report`, docs/17 row
+ * 131) and its failed run row is in the Runs tab — so a dismissed notice is a
+ * cleared screen, never a lost reason. `tests/lib/toast-persistent-dismiss.test.tsx`
+ * pins both halves.
  */
 export function toastErrorPersistent(message: string, error?: unknown): void {
   const detail = errorDescription(error);
   if (detail === undefined) {
-    toast.error(message, { duration: Infinity });
+    toast.error(message, { duration: Infinity, closeButton: true });
   } else {
-    toast.error(message, { duration: Infinity, description: detail });
+    toast.error(message, { duration: Infinity, description: detail, closeButton: true });
   }
 }
 

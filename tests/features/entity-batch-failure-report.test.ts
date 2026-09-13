@@ -450,9 +450,15 @@ describe('the toast is the user-visible surface, and it does not blink away', ()
     // (4000 ms) applies and the report disappears in four seconds — the
     // owner's own "vanished quickly". `duration: Infinity` is what
     // `toastErrorPersistent` passes, and it is the only option object here.
-    const [title, options] = toastErrorMock.mock.calls[0] as [string, { duration?: number }];
+    // `closeButton: true` rides the same options object (docs/17 row 136):
+    // "nothing may auto-dismiss it" and "the user can dismiss it" are ONE
+    // decision — a persistent notice with no dismiss control was PERMANENT.
+    const [title, options] = toastErrorMock.mock.calls[0] as [
+      string,
+      { duration?: number; closeButton?: boolean },
+    ];
     expect(title).toContain('1 of 10 npcs');
-    expect(options).toEqual({ duration: Infinity });
+    expect(options).toEqual({ duration: Infinity, closeButton: true });
   });
 
   it('keeps the sentence this app has ALWAYS raised for a batch with no refusals', () => {
@@ -465,10 +471,12 @@ describe('the toast is the user-visible surface, and it does not blink away', ()
 
     // Byte-identical to the pre-change copy (pinned verbatim in
     // `tests/features/entity-panel.test.tsx`): nothing about a plain generator
-    // failure was reworded, and its runs really are in the Runs tab.
+    // failure was reworded, and its runs really are in the Runs tab. The
+    // options object is asserted EXACTLY, so this also keeps the notice
+    // dismissible (`closeButton: true`, docs/17 row 136) and descriptionless.
     expect(toastErrorMock).toHaveBeenCalledWith(
       '2 of 10 npcs failed to generate — see the Runs tab ("Kael" — gateway down; "Bram" — gateway down)',
-      { duration: Infinity },
+      { duration: Infinity, closeButton: true },
     );
   });
 
