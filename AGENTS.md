@@ -107,14 +107,30 @@ under the wrong subject). Same-tree writers therefore serialize: one
 writer stages, commits and pushes at a time. When separate worktrees are
 used:
 
-1. File disjointness still applies (no shared files across the slices).
+1. **File disjointness applies to `src/` — and CANNOT hold for the docs.** Every
+   landing amends `docs/08`, `docs/17` (and usually `docs/18`), so two concurrent
+   writers WILL conflict there. Real incident: two writers landed on the same
+   day, both numbered their ledger row **136**, and each wrote "docs/17 row 136"
+   into its own docs/08 section, docs/18 entry, code comment and test file. Two
+   rules follow:
+   - **The dispatcher assigns the ledger row number in every brief** (read
+     `docs/17` for the next free number at brief time), so two briefs cannot
+     claim the same one.
+   - A writer that still hits a docs conflict resolves it as a mechanical
+     UNION, then: renumbers ITS OWN row and every reference to it, touches
+     NOTHING of the other landing's row or references, proves that with
+     `git diff --name-only <other landing> <its commit>` naming no file from the
+     other slice, and re-gates the FULL suite on the rebased tree before
+     pushing. Never resolve a semantic difference inside another writer's slice.
 2. Gate budget: combined test workers ≤ cores. `vite.config.ts` already
    defaults `maxWorkers` to `DEFAULT_TEST_WORKERS` (2) and the CLI
    `--maxWorkers` flag does NOT bind here (§Host hygiene 3), so a bare
    `pnpm exec vitest run` is bounded as it stands; lower it further only via
    `CAMPAIGNER_TEST_WORKERS`.
-3. Rebase discipline: `git pull --rebase origin main` before every push;
-   any conflict means the disjointness check missed something — stop and
+3. Rebase discipline: `git pull --rebase origin main` before every push. A
+   conflict in the shared DOCS is expected, not a missed disjointness check
+   (item 1) — resolve it by that rule, renumber, re-gate and push. A conflict
+   anywhere else means the disjointness check missed something: stop and
    report instead of resolving.
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
