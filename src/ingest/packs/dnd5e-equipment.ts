@@ -5,6 +5,7 @@ import { formatItemText, normalizeDnd5ePrice, type ItemData } from '@/domain/ite
 import { DND5E_PROPERTY_LABELS } from './dnd5e-foundry';
 import { errorMessage } from '@/lib/errors';
 
+import { htmlToText, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -35,8 +36,12 @@ import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
  * - `system.properties` (weapon/equipment property slugs like `ver`) →
  *   traits through the shared property-label table; unknown slugs are kept
  *   raw — never dropped silently.
- * - HTML `system.description.value` → stripped plain text (the creature
- *   adapter's exact stripDescription rules, incl. [[notation]]).
+ * - HTML `system.description.value` → plain text through the ONE ingest
+ *   HTML→text seam (`./text`), declaring the dnd5e bracket-link notation +
+ *   line-breaks style. AMENDED by docs/17 row 143: this lane used to carry its
+ *   OWN copy of the creature adapter's strip rules ("self-contained per §5's
+ *   precedent", docs/12 §5/§13.5) — that precedent produced seven copies and is
+ *   retired.
  */
 
 export const FOUNDRY_DND5E_EQUIPMENT_ADAPTER_ID = 'foundry-dnd5e-equipment';
@@ -99,32 +104,6 @@ function parseDocs(text: string, fileName: string): unknown[] {
   }
 }
 
-function stripDescription(html: string): string {
-  return html
-    .replace(/\[\[[^\]]*\]\]\{([^}]*)\}/g, '$1')
-    .replace(/\[\[([^\]]*)\]\]/g, (_match, inner: string) => {
-      // [[/condition conditions:Incapacitated|incapacitated]] → last label;
-      // bracket links without a label segment render as nothing.
-      const segments = inner.split('|');
-      return segments.length > 1 ? (segments[segments.length - 1] ?? '') : '';
-    })
-    .replace(/&(amp;)?reference\[([^\]]*)\]/g, '$2')
-    .replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-      return (inner.split('|')[0] ?? '').split('.').pop() ?? '';
-    })
-    .replace(/<hr\s*\/?>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-}
 
 // --- Mapping ---------------------------------------------------------------
 
@@ -145,7 +124,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
     traits,
     rulesEdition: doc.system.source?.rules ?? null,
   };
-  const description = stripDescription(doc.system.description?.value ?? '');
+  const description = htmlToText(doc.system.description?.value ?? '', BRACKET_LINKS_LINE_BREAKS);
   return { name: doc.name, item, text: formatItemText(item, description) };
 }
 

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { errorMessage } from '@/lib/errors';
 
+import { htmlToText, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
 import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
 
 /**
@@ -106,42 +107,6 @@ function extractCitation(html: string): string | null {
   return match?.[1] ?? null;
 }
 
-/**
- * Strips pf2e journal HTML to plain text — the creature adapter's rules plus
- * TABLE AWARENESS (journal pages are dominated by rules tables; naive tag
- * stripping would run every cell together). `<tr>` opens a line, a `</td>`/
- * `</th>` followed by another cell inserts a ` | ` separator, and block
- * closers break lines. @-notation resolves label-first.
- */
-function stripJournalHtml(html: string): string {
-  const withoutNotation = html
-    .replace(/@(\w+)\[([^\]]*)\]\{([^}]*)\}/g, (_match, _kind: string, _inner: string, label: string) => label)
-    .replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-      const beforePipe = inner.split('|')[0] ?? '';
-      return beforePipe.split('.').pop() ?? '';
-    });
-  return withoutNotation
-    .replace(/<hr\s*\/?>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|h[1-6]|li|blockquote|div|caption|table)>/gi, '\n')
-    .replace(/<tr[^>]*>/gi, '')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<\/t[dh]>\s*(?=<t[dh])/gi, ' | ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .join('\n')
-    .trim();
-}
-
 // --- Mapping ---------------------------------------------------------------
 
 function mapPage(page: ParsedPage): PackSectionEntry {
@@ -154,7 +119,10 @@ function mapPage(page: ParsedPage): PackSectionEntry {
   const contentHtml = rawHtml
     .replace(/<em>Section:\s*[^<>]+?\s*<\/em>\s*/gi, '')
     .replace(/<span[^>]*>\s*<em>[^<>]+?\bpg\.\s*[^<>]*?\s*<\/em>\s*<\/span>\s*/gi, '');
-  const content = stripJournalHtml(contentHtml);
+  // Journal pages are dominated by rules tables, so this lane declares the
+  // block-and-table style — a naive strip would run every cell together (the
+  // style itself is declared in './text').
+  const content = htmlToText(contentHtml, AT_BRACE_LABEL_BLOCK_AND_TABLE);
   const lines: string[] = [page.name];
   if (content !== '') lines.push(content);
   if (citation !== null) lines.push(`Source: ${citation}`);

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { formatItemText, normalizePf2ePrice, type ItemData } from '@/domain/itemData';
 import { errorMessage } from '@/lib/errors';
 
+import { htmlToText, AT_LABEL_LAST_LINE_BREAKS } from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -27,8 +28,11 @@ import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
  *   coins / negative amounts / bad `per` fail the entry loudly.
  * - `system.traits.rarity` (always present in the corpus, 'common'…
  *   'unique') → verbatim `itemData.rarity`; `.value` traits → the trait line.
- * - HTML `system.description.value` → stripped plain text (the creature
- *   adapter's exact stripHtml rules, incl. @-notation resolution).
+ * - HTML `system.description.value` → plain text through the ONE ingest
+ *   HTML→text seam (`./text`), declaring the `@`-notation + line-breaks style.
+ *   AMENDED by docs/17 row 143: this lane used to carry its OWN copy of the
+ *   creature adapter's strip rules ("self-contained per §5's precedent",
+ *   docs/12 §5/§13.5) — that precedent produced seven copies and is retired.
  * - `system.publication` `{license, remaster, title}` → carried VERBATIM into
  *   `itemData.publication` (hygiene rider, docs/12 §15) and rendered as the
  *   text's trailing `Source:` line — per-entry licensing is preserved, never
@@ -119,26 +123,6 @@ function parseDocs(text: string, fileName: string): unknown[] {
   return docs;
 }
 
-/** Strips pf2e description HTML to plain text, resolving @-notation. */
-function stripHtml(html: string): string {
-  const withoutNotation = html.replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-    const beforePipe = inner.split('|')[0] ?? '';
-    return beforePipe.split('.').pop() ?? '';
-  });
-  return withoutNotation
-    .replace(/<hr\s*\/?>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-}
 
 // --- Mapping ---------------------------------------------------------------
 
@@ -156,7 +140,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
     rulesEdition: null,
     publication: doc.system.publication ?? null,
   };
-  const description = stripHtml(doc.system.description?.value ?? '');
+  const description = htmlToText(doc.system.description?.value ?? '', AT_LABEL_LAST_LINE_BREAKS);
   return { name: doc.name, item, text: formatItemText(item, description) };
 }
 

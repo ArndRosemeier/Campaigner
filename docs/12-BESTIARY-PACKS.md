@@ -184,6 +184,46 @@ dependency — a pack zip or a repo zip's pack folder both work). The runner
 recurses into zip folder structure so "select the whole bestiary folder zip"
 is one action.
 
+**AMENDED (docs/17 row 143) — "self-contained per §5's precedent" is RETIRED
+for text stripping; the HTML→text convention is ONE seam.** The historical
+decision, kept readable because it is the honest reason seven copies exist:
+this section's adapter contract was read as licensing each adapter to carry its
+OWN strip/Source-line helpers, and the two later arcs restated that reading —
+§13.5's *"are self-contained (shared text-stripping rules copied per §5's
+precedent; the dnd5e property-label table is exported and reused verbatim)"*
+and §15.5's *"Three adapters, self-contained per §5's precedent (each carries
+its own strip/Source-line helpers)"*. **Those two sentences are rewritten in
+this commit, by reference to this paragraph, to mark the "own strip helper"
+half SUPERSEDED; nothing else in them changed.** Note what the precedent
+actually rested on, because it is the lesson: this section never contained the
+sentence *"each adapter carries its own helpers"* — it was inferred from §5
+presenting adapters as per-adapter parsers, cited by §13.5, and then cited
+again by §15.5 as if it had been written down. A precedent that is only ever
+quoted is not a decision; it is a rumour with a lineage. The cost, measured:
+seven copies, two block conventions, THREE inline-notation dialects, and 17 of
+39 description blobs differing across the repo's own fixtures — a divergence
+nothing failed on, because no test had ever declared there was one way to do it.
+
+**The rule now.** HTML→text for a pack document goes through ONE seam,
+`htmlToText(html, style)` in `src/ingest/packs/text.ts`, which also declares the
+three styles as data (`AT_LABEL_LAST_LINE_BREAKS`, `BRACKET_LINKS_LINE_BREAKS`,
+`AT_BRACE_LABEL_BLOCK_AND_TABLE` — named for what they DO, never for the
+adapter that uses them today). A new adapter PICKS one of those names; it does
+not declare a style of its own, and a new STYLE is a behaviour change that
+belongs with the re-import story, never a quiet fourth combination. "One
+adapter file plus one entry in `registry.ts`" still describes adding a SOURCE;
+it no longer describes copying a text convention. The removal of the copies is
+held by `tests/ingest/packs/html-to-text.test.ts` (the differential table plus a
+source scan that reds on a second stripper in this directory).
+
+**Why this amendment changed no behaviour.** Landing 1 is BYTE-PRESERVING: the
+returned text becomes `PackEntry.text` → the chunk's stored `text` →
+`contentHash = sha256Hex(text)`, and a changed byte strands stored citations on
+the next re-import with no heal path. The groups' divergences on `@`+brace
+notation and on tables are therefore DECLARED and still present; landing 2 owns
+fixing them together with the re-import instructions and an accepted
+`missing ref` for a citation that cannot rebind.
+
 ### `foundry-pf2e` mapping (all entries with `type !== 'npc'` are skipped)
 
 | pf2e pack field | StatBlock target |
@@ -690,9 +730,14 @@ shapes:
 ### 13.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
 
 - Adapters accept `.json`/`.db` (pf2e) and `.yml`/`.yaml` (dnd5e), are
-  self-contained (shared text-stripping rules copied per §5's precedent;
-  the dnd5e property-label table is exported and reused verbatim), and are
-  registered after the creature adapters.
+  self-contained, and are registered after the creature adapters. **REWRITTEN by
+  docs/17 row 143 (see the §5 amendment): the parenthetical that used to read
+  *"(shared text-stripping rules copied per §5's precedent; the dnd5e
+  property-label table is exported and reused verbatim)"* is SUPERSEDED on its
+  first half — the text-stripping rules are no longer copied per adapter, both
+  item lanes go through `ingest/packs/text.htmlToText` and DECLARE a style
+  (`AT_LABEL_LAST_LINE_BREAKS` / `BRACKET_LINKS_LINE_BREAKS`). The second half
+  still stands: the dnd5e property-label table IS exported and reused verbatim.**
 - `PackAdapter.entryNoun?` names the zero-valid error's noun; the pf2e item
   source shares the pf2e repo/packRoot and `PackFetchSource.packDirs`
   scopes its advanced "list everything" listing to `packs/pf2e/equipment`
@@ -880,6 +925,15 @@ on the book, network-free adapters, loud per-entry failures.
   strip/Source-line helpers): `foundry-pf2e-journal` (JournalEntry → one
   section per page), `foundry-pf2e-conditions` (condition entities),
   `foundry-pf2e-rules` (feat/spell/action corpus). All accept `.json`/`.db`.
+  **REWRITTEN by docs/17 row 143 (see the §5 amendment): the "own strip helper"
+  half of that parenthetical is SUPERSEDED — all three lanes now share
+  `ingest/packs/text.htmlToText` and declare the block-and-table style
+  (`AT_BRACE_LABEL_BLOCK_AND_TABLE`), so the three cannot drift apart. The
+  "Source-line helper" half is NOT folded by that landing and is still carried
+  twice (`publicationSourceLine` — private in `pf2e-rules.ts`, exported from
+  `pf2e-conditions.ts`, byte-identical bodies); row 143 records it as the next
+  occupant of the same module rather than a silent fold. "Self-contained" still
+  describes the adapters' PARSERS.**
 - The corpus adapter maps the fetch-relative FOLDER PATH into heading
   categories: the pack folder names the lane ('Feats', 'Spells', 'Actions',
   'Class Features'), the first category folder rides the lane label

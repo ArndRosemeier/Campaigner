@@ -509,6 +509,7 @@ test) · ❌ gap.
 | That arc's pins are REVERT-PROVEN and the non-vacuity injection is real: carrier removed → 9 named pins fail across 4 files; a name+display RECONSTRUCTION → 7 pins fail naming both strings; the token appended instead of leading → 6 pins fail; the existing information dropped → 8 pins fail; every file restored byte-identical (`md5sum -c`) between proofs | the four files above; the proofs are the measured run log in docs/17 row 100 | ✅ |
 
 | Prompt scaffolding echoed back as CONTENT is refused at the boundary that would persist it (docs/17 row 142): the three markers in the owner's report are caught at the entity finalize, at the module part write and at the spine parse, each naming the marker AND the field with nothing persisted; the literals come from ONE source shared with the composers; and ordinary prose that merely uses the same words stays green | `scaffoldingEcho.test` (30, NEW) | ✅ |
+| The HTML→text stripper is ONE ingest seam for all seven pack adapters (docs/17 row 143): 17 shared sample cases × the 3 declared styles pinned to exact bytes (10 declared divergent, 7 the styles must AGREE on), the divergence asserted as the KNOWN `LANDING 2:` residue, a source scan that finds no second stripper among the directory's ten files and all seven call sites passing their declared style, and the STORED bytes of one real fixture per group — because those bytes ARE the content hash | `html-to-text.test` (28, NEW; the pre-existing table pin in `pf2e-journal.test` and `packFetch.test` stays green through the seam) | ✅ |
 
 ### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
 
@@ -2443,6 +2444,83 @@ before they could be markers (importing them from the feature would be an import
 cycle); and a USER hand-edit that pastes one of these sentences is rejected
 exactly like a model echo — the accepted cost of not being able to tell a
 deliberate paste from the defect (the escape-debris seam has the same property).
+
+### One HTML→text seam for the ingest layer (docs/17 row 143, docs/18 §2.2)
+
+Seven pack adapters each carried their own HTML→text stripper. Nothing failed
+when a copy was born — every copy was correct where it was written — so the
+duplication was invisible until the copies were run against shared inputs: two
+block conventions and THREE inline-notation dialects, and 17 of 39 description
+blobs differing across the repo's own fixtures. Nothing could notice, because no
+test had ever declared there was one way to do it. The owner saw the smell
+(*"7 copies of that stripper code? Or... slight variations? That smells like
+something needs to be centralized."*) and asked for the centralization; this
+landing is the fold, NOT the fix.
+
+**Why the fold is byte-preserving, and why that is not timidity.** The text a
+stripper returns becomes `PackEntry.text` → the stored chunk `text` →
+`contentHash = sha256Hex(text)`. `resolveMonsterEntry` resolves a citation by
+uuid and then by EXACT hash, and a bundle export treats an unresolvable citation
+as BLOCKING (`MissingDependenciesError`). A changed byte therefore strands
+stored citations on the next re-import, with no heal path — docs/11's L1 is
+deferred and no contentHash re-stamp migration exists. So the divergences are
+DECLARED, not repaired.
+
+Its own function is one seam: `htmlToText(html, style)` in
+`src/ingest/packs/text.ts`, with the three styles declared as data in that same
+file and named for what they DO — `AT_LABEL_LAST_LINE_BREAKS` (PF2e
+item/creature), `BRACKET_LINKS_LINE_BREAKS` (dnd5e item/creature),
+`AT_BRACE_LABEL_BLOCK_AND_TABLE` (PF2e rules text). Seven call sites, three
+styles; a fourth adapter picks a declared style by name.
+
+| fact pinned | where |
+|---|---|
+| **The shared sample table, all three styles, exact bytes** — 17 cases, `it.each`, of which **10 are declared divergent** and **7 are the cases the styles must AGREE on** (plain `<p>`, nested `<p>`, `<br>`-only, `<hr>`-only, entities, whitespace runs, a real-shaped PF2e ability), so a future style cannot quietly detach one of them | `tests/ingest/packs/html-to-text.test.ts` (17 pins, NEW) |
+| **The four declared differences, each NAMED as landing 2's** — the `@`+brace residue (`Enfeebled{Enfeebled 1}` vs `Enfeebled 1`), group A's table collapse (`HardnessHPBT52010` vs `Hardness \| HP \| BT \| 5 \| 20 \| 10`), the table-aware style's own measured quirk (**a whole row survives as ONE line** — the cell separator's `\s*` swallows the `</tr>` newline the old copies' comments claimed was a row break), and the third notation dialect (`[[…]]{L}` / `[[…\|l]]` / `&reference[…]`, literal text in every other style) | same file (4 pins, NEW) |
+| **SCAN — no second HTML→text stripper exists, and no site keeps a body of its own**: every stripper shape (`<[^>]+>`, `&nbsp;`, `@(\w+)\[`, `<br\s*\/?>`) appears in `text.ts` and NOWHERE else among the directory's ten files; all seven adapters import the seam and pass their declared style, with an EXACT call count (2 for `pf2e-foundry`, so reverting ONE of its two sites cannot hide behind the other); exactly three `export const …: HtmlToTextStyle` declarations exist, and no adapter file even mentions `blockAware` | same file (3 SCAN pins, NEW) |
+| **The STORED bytes of a real fixture, one per group** — full `text` equality, never `toContain`, because the surrounding bytes are what the hash signs: `pf2e-equipment/anointing-oil.json` (the brace residue) and `steel-shield.json` (the table collapse) through the equipment lane, and `pf2e-journal/gm-screen.json` (the table rows whole) through the journal lane | same file (3 pins, NEW) |
+| **The pre-existing structural pin stays green THROUGH the seam**: `Difficulty \| XP Budget \| Character Adjustment` and `Trivial \| 40 or less \| 10 or less`, asserted both as the fragments the old pin uses and as the whole section text | `tests/ingest/packs/pf2e-journal.test.ts` (untouched, green), re-pinned whole in the new file |
+| **NO EXISTING PIN COVERED THE PARAGRAPH CONVENTION OR ANY COPY'S WHOLE OUTPUT** (verified, not assumed): the stripped description is asserted in exactly two pre-existing places, both `toContain` fragments; the one whole-`text` pin that touches a stripper (`pf2e-foundry.test.ts:123`) exercises an EMPTY description. The absence is the whole reason the drift was invisible — and it is also why a behaviour-only pin could never have caught it | `tests/ingest/packs/*` (measurement, no new pin) |
+
+**How the fold was proven behaviour-free — the strongest evidence available,
+and it is not a test.** The seven pre-refactor bodies were extracted VERBATIM out
+of tree from the base commit (every line after the renamed declaration compared
+byte-for-byte against `git show 214b86d:<path>`; all seven
+`body-verbatim=true`), and:
+
+1. **Adapter level, pre vs post.** All seven adapters were driven over ALL their
+   fixtures (41 emitted `text`s across seven lanes) BEFORE the refactor and
+   after it. The two dumps are **byte-identical**
+   (`sha256 5a0b4ff4e8a1637134044c02a1db1b5cad0c5919dd29f3430bc3193bbe2480ba`
+   both times). This is the evidence that matters, because it is exactly the
+   bytes `contentHash` signs.
+2. **Seam level, all seven sites.** The NEW seam, at each site's declared style,
+   was compared against the FROZEN pre-refactor body for that site over the
+   shared sample: **7 sites × 17 cases, 0 mismatches.**
+3. The new real-fixture pins then assert the STORED bytes those dumps contained,
+   so the proof is now a permanent pin rather than a scratch measurement.
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the block/table branch DISABLED** (`if (blockAware)` → `if (false && blockAware)`) | `src/ingest/packs/text.ts:183` (the injected line, printed back; diffed against an out-of-tree copy BEFORE the run) | **RED 9 / GREEN 195** of the same 204. RED: the `flat table`, `budget table` and `block closers` sample cases, the two `LANDING 2` / one-line-row divergence pins, the `gm-screen.json` fixture pin, and the three PRE-EXISTING pins that reach a table (`pf2e-journal.test` ×2, `packFetch.test` ×1) — so the table rule is visible to behaviour because a REAL fixture asserts it |
+| **I2 — the brace pre-pass DELETED** from `case 'at-brace-label'` (`return resolveAtLabelLast(html)`) | `src/ingest/packs/text.ts:156` | **RED 3 / GREEN 201.** RED: the `brace form` and `real-shaped pf2e ability` sample cases and the `LANDING 2: a @-notation brace label survives VERBATIM…` pin — **and NOT ONE PRE-EXISTING PIN.** The brace rule had ZERO behavioural coverage (the only `@UUID[…]{…}` form in any fixture is the group-A `anointing-oil.json` one; `frightened.json` has none). This is the measurement behind the source scan's existence |
+
+Each injection was restored from an OUT-OF-TREE copy — NEVER `git checkout --`,
+which restores HEAD and would have destroyed the uncommitted refactor — and
+proved byte-identical with `git hash-object`
+(`bdc3f1eae7fd47395d79fbe8536db5afb835496a` before and after), then the same
+15 files / 204 tests re-run GREEN.
+
+**UNPROVEN.** No test can show that a future adapter author will not write copy
+eight: the source scan is a GUARD over a finite shape list, not a proof. A
+stripper built from shapes nobody has ever used would slip past it — which is
+why the scan also asserts the INVERSE (the seam's own shapes may appear in
+`text.ts` and nowhere else in the directory), so copy eight fails the moment it
+reuses a shape anyone has ever needed. And the OWNER-VISIBLE cost that landing 2
+pays is unmeasured here: how many stored citations will read `missing ref` on
+the next re-import of the PF2e item packs needs a real database, so landing 2
+inherits "this is the accepted cost" as a DECISION, not as a number.
+
 
 ### Remaining gaps
 

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { abilityModifier, formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
+import { htmlToText, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
 /**
@@ -346,33 +347,6 @@ function parseDocs(text: string, fileName: string): unknown[] {
   }
 }
 
-/** Strips dnd5e description HTML to plain text, resolving link notation. */
-function stripDescription(html: string): string {
-  return html
-    .replace(/\[\[[^\]]*\]\]\{([^}]*)\}/g, '$1')
-    .replace(/\[\[([^\]]*)\]\]/g, (_match, inner: string) => {
-      // [[/condition conditions:Incapacitated|incapacitated]] → last label;
-      // bracket links without a label segment render as nothing.
-      const segments = inner.split('|');
-      return segments.length > 1 ? (segments[segments.length - 1] ?? '') : '';
-    })
-    .replace(/&(amp;)?reference\[([^\]]*)\]/g, '$2')
-    .replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-      return (inner.split('|')[0] ?? '').split('.').pop() ?? '';
-    })
-    .replace(/<hr\s*\/?>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-}
 
 function titleCase(slug: string): string {
   return slug
@@ -617,7 +591,7 @@ function mapFeat(item: ParsedFeat): { name: string; text: string; bucket: 'trait
   const activations = Object.values(item.system.activities)
     .map((activity) => activity.activation.type)
     .filter((type) => type !== '');
-  const text = stripDescription(item.system.description.value);
+  const text = htmlToText(item.system.description.value, BRACKET_LINKS_LINE_BREAKS);
   if (activations.includes('reaction')) return { name: item.name, text, bucket: 'reactions' };
   // Feats with no activity (Pack Tactics, Keen Hearing and Smell) or a
   // passive/none activation cost nothing — they are the printed traits.

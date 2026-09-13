@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { errorMessage } from '@/lib/errors';
 
+import { htmlToText, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
 import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
 
 /**
@@ -117,35 +118,6 @@ function parseDocs(text: string, fileName: string): unknown[] {
   return docs;
 }
 
-/** Strips pf2e description HTML to plain text, resolving @-notation. */
-function stripHtml(html: string): string {
-  const withoutNotation = html
-    .replace(/@(\w+)\[([^\]]*)\]\{([^}]*)\}/g, (_match, _kind: string, _inner: string, label: string) => label)
-    .replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-      const beforePipe = inner.split('|')[0] ?? '';
-      return beforePipe.split('.').pop() ?? '';
-    });
-  return withoutNotation
-    .replace(/<hr\s*\/?>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|h[1-6]|li|blockquote|div|caption|table)>/gi, '\n')
-    .replace(/<tr[^>]*>/gi, '')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<\/t[dh]>\s*(?=<t[dh])/gi, ' | ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, '\'')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .join('\n')
-    .trim();
-}
 
 /** The per-entry source line — verbatim `publication`, never dropped. */
 function publicationSourceLine(
@@ -283,7 +255,7 @@ function mapRulesDoc(doc: ParsedRulesDoc, fileName: string): PackSectionEntry {
     .map((prerequisite) => prerequisite.value.trim())
     .filter((prerequisite) => prerequisite !== '');
   if (prerequisites.length > 0) lines.push(`Prerequisites: ${prerequisites.join('; ')}`);
-  const description = stripHtml(doc.system.description.value);
+  const description = htmlToText(doc.system.description.value, AT_BRACE_LABEL_BLOCK_AND_TABLE);
   if (description !== '') lines.push(description);
   const source = publicationSourceLine(doc.system.publication);
   if (source !== null) lines.push(source);
