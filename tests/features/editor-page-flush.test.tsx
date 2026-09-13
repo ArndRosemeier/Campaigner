@@ -234,12 +234,47 @@ describe('the artifact editor flushes a pending autosave when the page goes away
       await waitFor(() => {
         expect(toastErrorMock).toHaveBeenCalledWith('Autosave failed', expect.any(Error));
       });
+      // Nothing was written, and the draft is still the owner's to keep.
+      expect((await load(id)).body).toBe('');
+      expect(await revisionCount(id)).toBe(1);
     } finally {
       restore();
     }
-    // Nothing was written, and the draft is still the owner's to keep.
-    expect((await load(id)).body).toBe('');
-    expect(await revisionCount(id)).toBe(1);
+
+    // THE RETRY — and the reason this test owns it. A failed write leaves the
+    // pending gate OPEN (`lastSavedRef` only moves on a write that LANDED), so
+    // EVERY later flush re-issues the same draft, and that includes the unmount
+    // flush `cleanup()` runs at the end of this test. MEASURED on the pre-fix
+    // tree: THAT write was still in flight when the jsdom environment was torn
+    // down — a probe logging the seam and the Dexie tables saw its
+    // `updateArtifact` call arrive from `cleanup()`, after this file's own
+    // `afterEach` had put the real writer back — and the flush's own failure
+    // path then dispatched `setSaveState` into a torn-down React:
+    // `Unhandled Rejection: ReferenceError: window is not defined`, at
+    // `getCurrentEventPriority ← requestUpdateLane ← dispatchSetState`, which
+    // turned a 288-file / 3324-test green run red with every test passing.
+    // No product path awaits a page-hide flush (a lifecycle handler cannot hold
+    // the page open), so the containment belongs to whoever starts the chain:
+    // the test settles the retry through the seam here, and the landed write
+    // closes the gate — so the unmount flush `cleanup()` later runs is its
+    // no-op and nothing is left to settle after the environment is gone.
+    // docs/18 §4.
+    const writes = { writes: 0 };
+    const stopCounting = countWrites(writes);
+    try {
+      flushPageHide();
+      await waitFor(async () => {
+        expect(await revisionCount(id)).toBe(2);
+      }, WRITE_LANDED);
+      // The write was ISSUED by the flush, not by the 800 ms debounce:
+      // `updateArtifact` writes the artifact row and the revision row in the
+      // same transaction, and the counter is installed over both tables.
+      expect(writes.writes).toBeGreaterThan(0);
+    } finally {
+      stopCounting();
+    }
+    expect((await load(id)).body).toBe('Doomed edit');
+    expect(await revisionCount(id)).toBe(2);
   });
 });
 

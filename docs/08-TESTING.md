@@ -1018,6 +1018,76 @@ this section loads the machine: every pin is a single bounded suite at
 | **A promised behaviour change that the code makes UNREACHABLE, measured rather than pinned:** "`moduleGen` stops writing an alias equal to the artifact's own name" cannot happen at HEAD — the pass records a variant only when `canonicalKey !== nameKey` (`moduleGen.ts:2221`, `if (canonicalKey === nameKey) continue;`) and finds the artifact BY that canonical key (`:2224`), so the variant is structurally guaranteed ≠ the artifact's own name under this very comparison. There is no behavioural pin to write; the self-name rule is DEFENCE there, pinned at the rule table and at the write path, and the moduleGen fold is byte-identical | `domain/artifactAlias.test.ts` `never treats the artifact’s OWN name as an alias`; `db/artifactRepo-alias.test.ts` `writes NOTHING when the pool already answers` | stated |
 | **UNPROVEN — stated, not implied:** no live-provider and no real-browser run (every pin mocks the transport or drives jsdom); the scan is TEXTUAL and blind to a copy composed at runtime (nothing in `src/` does that); the `moduleGen` self-name skip is unreachable (above); `campaign-tree.tsx:313-317` is a live seventh copy, unfolded by instruction (docs/18 §5); the two extra dedupe consequences (the prose-only duplicate-append and `moduleGen`'s within-batch dedupe) are proved REACHABLE by construction and by their pins, never observed in the owner's real campaign data; and the reader pin drives the popover's editable Name field because a chip click cannot reach that state | `docs/17 row 121`; `docs/18 §2.1/§4/§5` | stated |
 
+### The page-hide flush's retry: a test that triggers a fire-and-forget chain OWNS it (docs/17 row 122, docs/18 §4)
+
+The dispatcher found `pnpm lint && pnpm typecheck && vitest run` exiting **1**
+while reporting **288 files / 3324 tests green** plus an `Unhandled Errors`
+block — `Unhandled Rejection: ReferenceError: window is not defined`, at
+`getCurrentEventPriority ← requestUpdateLane ← dispatchSetState ←
+src/features/campaign/components/artifact-editor.tsx:251`, originating in
+`tests/features/editor-page-flush.test.tsx`. No test failed, because nothing was
+wrong with the app: a fire-and-forget flush settled after jsdom was gone. The
+pin below is the fix, and it is a TEST-side fix — `src/lib/pageFlush.ts` has no
+behaviour change (its contract gained item 4, VOID-RETURNING, in the doc
+comment).
+
+**REPRODUCED DETERMINISTICALLY FIRST (the `89e5d71` method, not suite
+repetition).** Instrumenting `globalThis.window` with an accessor that RECORDS
+the reader reproduced the dispatcher's stack verbatim, in one isolated run of
+the target file: the reader was React's `getCurrentEventPriority`, reached from
+`dispatchSetState` at `artifact-editor.tsx:251` — the SUCCESS line
+`setSaveState('saved')`, not the `setSaveState('error')` the brief suspected.
+A second probe (one write deferred by a macrotask, the test ending before it
+settled) produced the same unhandled rejection. **MEASURED mechanism:** the
+page-hide flush fails against the pin's refusing stub, so `lastSavedRef` does
+not move and `saveDraft`'s pending gate stays OPEN; the editor's registration
+effect cleanup is `unregister(); flushPendingEdits();`, so the UNMOUNT flush
+`cleanup()` runs re-issues the same draft — and vitest runs a FILE's `afterEach`
+BEFORE `tests/setup.ts`'s, so the pin's `finally { restore() }` has already put
+the REAL writer back. The retry therefore hits real Dexie, settles after
+teardown, and its continuation dispatches into a dead React. A probe logging the
+seam, the repository and both Dexie tables showed that unmount write arriving
+ONCE, from `cleanup()`, after every write the test body itself had awaited.
+**NOT (a):** the write never failed in that pin; **it is (c)** (the environment
+tearing down mid-write), conditioned on **(b)** (a deferred promise chain
+settling after the test finished).
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| A failing page-hide write still reaches the owner (`Autosave failed`), writes no row and fires no revision — the pin's existing assertions, unchanged | `editor-page-flush.test` | ✅ byte-unchanged |
+| **The retry a FAILED flush leaves queued is SETTLED INSIDE THE TEST**: after the refusal is lifted, the same seam is dispatched again and the revision row reaches 2 within `AUTOSAVE_DELAY_MS + 1000` — the WAIT is what the pin enforces (removing it reds the pin immediately), and `countWrites` is kept as the wrong-reason GUARD against the 800 ms debounce being the cause | `editor-page-flush.test` (`reports a failing write on the page-hide flush too`) | ✅ REVERT-PROVEN (the WAIT: injection I1, 1 red). The retry BLOCK as a whole is not revert-proven IN-FILE — deleting it leaves the file green while re-opening the defect, which is exactly how it reached the full-suite gate; the probe measures it instead (the `updateArtifact` call arrives from `cleanup()`, after the file's `afterEach`) |
+| Because the retry LANDS, `lastSavedRef` moves and the gate CLOSES — so the unmount flush `cleanup()` runs is a no-op: no write, no `setState`, nothing left to settle after the environment is gone | `editor-page-flush.test` (the same pin's final assertions: `body === 'Doomed edit'`, `revisionCount === 2`, and the suite's green count unchanged) | ✅ |
+| The seam cannot receive a rejecting promise TODAY: all FOUR registrations were MEASURED to return `undefined` (an instrumented seam printed every `flush()` return value across the editor's suite and produced nothing) | the probe measurement recorded in docs/17 row 122 | ✅ measured — and NOT type-enforced: an `async () => {}` argument typechecks clean against `PageFlush` (measured: `tsc --noEmit` on a probe file, exit 0), so the void return is a convention, not a guarantee. No runtime guard exists |
+
+**NON-VACUITY (REVERT-PROVEN lines — each injection applied, the killed pins
+named, then restored byte-identically and verified with `git hash-object` before
+and after).** `tests/features/editor-page-flush.test.tsx` was
+`d406239e4565c9437da9ecd5aeb04710dd25199b` at every restore (verified with
+`git hash-object` before and after each injection; the comment above the retry
+block was tightened after the injections, so the hash recorded here is the
+committed one).
+
+| Injected line | Killed |
+| --- | --- |
+| The retry block DELETED (back to the pre-fix pin's shape: refused write, toast asserted, assertions after `restore()`, test over) | **0 in-file** — this is the honest result and it is the reason the defect reached a full-suite gate: the pin passes while leaving the unmount retry in flight, and the failure surfaces only as an `Unhandled Errors` block, in ANOTHER run, under teardown timing that a single file does not reproduce. Proved instead by the probe: with the retry removed, the unmount flush's `updateArtifact` call arrives from `cleanup()` AFTER the file's own `afterEach` and after every awaited write — i.e. in flight when the environment goes away |
+| The retry's WAIT removed (the second `flushPageHide()` dispatched, then asserted immediately) | **1** — the same pin, at `expected '' to be 'Doomed edit'`: without the wait the write has not settled, which is the whole point of the pin |
+| The retry's `countWrites` instrument removed (the wait and the landed-row assertions kept) | **0 — GREEN, and it names a line the pin does not reach.** The write-issued assertion is a GUARD against the 800 ms debounce being the cause of the landed row, not the pin's subject; the landed row is what proves the write settled. Kept because a row that lands for the wrong reason is exactly the failure mode this file's history is made of, but reported as a guard rather than as REVERT-PROVEN coverage |
+| The retry's `flushPageHide()` dispatch removed (the wait and the counter kept) | **0 — GREEN, and this one is the interesting one**: with the component still mounted, the 800 ms debounce ALSO lands the write inside the pin's wait bound, so the PIN's own pin — "nothing is in flight at teardown" — is what the test enforces, and the dispatch is the direct trigger rather than the only possible one. The pre-fix tree had neither: no wait, no dispatch, and `cleanup()`'s unmount retry re-issued the write after the file's `afterEach` had restored the real writer. That is why the fix is the WAIT (settling what the test starts), and the dispatch is kept because it reaches the retry through the seam the defect lives on |
+
+**UNPROVEN here too.** No frequency is claimed: the race is timing-dependent by
+construction, the dispatcher saw it, the probes reproduce it on demand, and two
+FULL pre-fix suite runs on this box came back green (`288/288`, `3324/3324`,
+exit 0) — so "how rare" is unknown. A future writer that registers a `Promise`-returning
+flush could still leak a rejection the seam cannot see — and that needs no cast:
+MEASURED, an `async () => {}` argument is accepted against `PageFlush` with no
+diagnostic (`tsc --noEmit`, exit 0), so the compiler does not stand in the way.
+No runtime guard was built, because a detector would be a second production
+mechanism serving a test-only race; the seam's doc comment names the gap. And the other three writers were audited by
+READING their gates (the board nulls `persistTimer` before writing; the draft
+writer's page-hide half returns early unless `timerRef.current !== null`), not by
+injection — only the editor's flush was driven red.
+
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

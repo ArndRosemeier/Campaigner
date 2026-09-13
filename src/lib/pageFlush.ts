@@ -39,6 +39,34 @@ import { toastError } from '@/lib/toast';
  *    failures loudly (each one toasts by name); a throw that escaped a
  *    lifecycle listener would be invisible, so anything that does escape is
  *    toasted here (AGENTS rule 2 — no error ends in a console line).
+ * 4. **VOID-RETURNING.** A flush returns NOTHING — it is `() => void`, not
+ *    `() => void | Promise<void>` — and that is what makes "a page-hide flush
+ *    cannot reject unhandled" structural rather than a promise nobody can keep.
+ *    The `try`/`catch` above contains a SYNCHRONOUS throw only, so a flush that
+ *    RETURNED a promise would put its rejection outside this seam's reach, with
+ *    nothing awaiting it: the caller is a lifecycle listener that cannot hold
+ *    the page open. Async work therefore stays fire-and-forget INSIDE the
+ *    writer (`void saveDraft()`, `void persistLayout()`,
+ *    `void flushChatPersist()`), which is the writer's own business and already
+ *    has its own loud failure path. A caller that needs a rejection handled must
+ *    handle it where the promise is created.
+ *
+ *    NOTE, MEASURED rather than assumed: `PageFlush = () => void` does NOT make
+ *    a promise-returning flush a compile error — TypeScript accepts an `async`
+ *    function wherever `() => void` is expected (verified: an `async () => {}`
+ *    argument typechecks clean against this declaration). So this item is a
+ *    CONVENTION the four writers keep by returning `undefined` (measured, ledger
+ *    122), not something the compiler enforces. If a flush ever needs to return
+ *    a promise, the seam has to change first — with its own settle-or-surface
+ *    story for a rejection the `try`/`catch` cannot reach.
+ *
+ *    Do NOT add a `.catch(() => {})` here or at a caller to quiet a rejection:
+ *    it would SILENCE the one signal that shows an unhandled rejection exists,
+ *    and it would double-report failures the writers already toast by name
+ *    (AGENTS rules 1–2). A test that triggers this chain OWNS it and must settle
+ *    it inside the test — docs/18 §4 (ledger 122) tells that story: a
+ *    fire-and-forget flush that settled after jsdom was torn down turned a
+ *    288-file / 3324-test green run red.
  *
  * What this seam deliberately does NOT do: it never AWAITS the writers (a
  * lifecycle handler cannot hold the page open) and it has no opinion about
@@ -49,7 +77,7 @@ import { toastError } from '@/lib/toast';
 
 /**
  * A writer's "land what you have now" function. Must be pending-gated,
- * idempotent and non-throwing — see the contract above.
+ * idempotent, non-throwing and VOID-returning — see the contract above.
  */
 export type PageFlush = () => void;
 
