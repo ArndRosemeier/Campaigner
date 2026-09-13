@@ -40,6 +40,16 @@ import {
  *    site is reachable behaviourally (`module-board-rewrite.test.tsx` pins the
  *    mocked `toastError` call), so the other six are held by the SOURCE SCAN
  *    below — named as such rather than pretended into a behavioural pin.
+ *
+ * docs/17 row 123 folded the FOURTH copy of the blocked-control sentence
+ * (`entity-panel.tsx`'s `generateAllBlockedReason`, the one carve-out this file
+ * used to carry as a SUBSET check) and then made that check an EQUALITY: the
+ * sentence is now stated in exactly one source file. Measured under the fold:
+ * reverting `entity-panel.tsx` to the inline literal leaves all 19
+ * `generate-everything.test.tsx` pins GREEN (byte-identical copy) and REDs ONLY
+ * the equality scan, while changing that one executing line to a different
+ * sentence REDs the panel's own title/reason pin and leaves the scan green. The
+ * two halves reach different failures, which is why both exist.
  */
 
 const toastErrorMock = vi.mocked(toast.error);
@@ -68,14 +78,6 @@ const ROUTED_SITES_PER_FILE: Record<(typeof FOLDED_FILES)[number], number> = {
   'features/modules/board/boardNodes.tsx': 0,
   'features/modules/spine-checkpoint.tsx': 0,
 };
-
-/**
- * `entity-panel.tsx` still carries the blocked-control sentence inline
- * (`generateAllBlockedReason`). It is a known remaining copy, NOT a mistake in
- * this pin: that file belongs to a different slice, so this check is a SUBSET
- * (any other holder fails, and the carve-out may be deleted the day it folds).
- */
-const KNOWN_REMAINING_COPY = ['features/modules/entity-panel.tsx'];
 
 function srcFilesContaining(snippet: string): string[] {
   const root = join(process.cwd(), 'src');
@@ -162,14 +164,15 @@ describe('module-busy fold', () => {
     ]);
   });
 
-  it('leaves the blocked-control sentence only in the fold plus the documented carve-out', () => {
-    const holders = srcFilesContaining(MODULE_GENERATING_REASON);
-    expect(holders).toContain('features/modules/module-busy.ts');
-    for (const file of holders) {
-      if (file === 'features/modules/module-busy.ts') continue;
-      expect(KNOWN_REMAINING_COPY).toContain(file);
-    }
-    for (const folded of FOLDED_FILES) expect(holders).not.toContain(folded);
+  it('leaves the blocked-control sentence in exactly ONE source file', () => {
+    // EQUALITY, not a subset: it was a SUBSET while `entity-panel.tsx` still
+    // carried the sentence inline (a concurrent slice owned that file), and an
+    // assertion shaped to tolerate the fourth copy must not outlive it — the
+    // sentence is now stated in exactly one source file, and any new copy REDs
+    // here with its path named.
+    expect(srcFilesContaining(MODULE_GENERATING_REASON)).toEqual([
+      'features/modules/module-busy.ts',
+    ]);
   });
 
   it('routes every folded busy catch site through toastModuleBusy (SOURCE SCAN)', () => {

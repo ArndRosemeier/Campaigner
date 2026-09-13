@@ -63,6 +63,7 @@ import {
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureOnlyNotice } from '@/features/modules/detailed-entity';
+import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
 import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
@@ -370,11 +371,18 @@ export function EntityPanel({
    * owner to guess. A module whose parts pass has not finished is named here as
    * well, with the honest remedy (the text path) rather than a silent re-entry
    * that the seam would refuse anyway.
+   *
+   * The parts-pass sentence is the blocked-control SEAM's
+   * (`features/modules/module-busy.MODULE_GENERATING_REASON`, docs/17 row 123) —
+   * the fourth copy of it lived here inline until this file was touched; the
+   * other two sentences on this control answer THIS control's own questions (a
+   * queued image/encounter-map job, a parts pass that did not land) and are
+   * deliberately not merged into it.
    */
   function generateAllBlockedReason(): string | null {
     if (generatingAll) return 'Generating…';
     if (module.status === 'generating') {
-      return 'The module is generating right now — wait for it (or press Stop).';
+      return MODULE_GENERATING_REASON;
     }
     if (generateAllLive) {
       return 'A generation for this module is already running — wait for it (or press Stop all in the progress dock).';
