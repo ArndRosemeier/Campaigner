@@ -53,7 +53,13 @@ Rules:
     artifacts cascade — emits outside act. This was the intermittent flake in
     `battle-surface.test.tsx > selection card` ("tap shows the card…"):
     fixed by moving `tapToken`'s battle-row read into `actDrained`, zero
-    assertion changes. Do NOT wrap paired `fireEvent` pointer sequences in
+    assertion changes. The SAME window, found a second time in
+    `board-page-flush.test.tsx`: its two flush tests ended in a bare
+    `await persistedPart0(...)` after the write's `waitFor`, and the row that
+    flush wrote reaches React through `useModule`'s liveQuery — measured
+    landing **5.8ms after the wait returned**, RED 2/7 with the cause delayed
+    and 9/9 green alone (docs/17 row 153, and the rule docs/18 §4 already
+    states). Do NOT wrap paired `fireEvent` pointer sequences in
     one spanning act — each `fireEvent` flushes its own render and
     down→up gesture pairing reads that state; a spanning act defers the
     commit and strands the gesture gate. The same wrapper migrated the
@@ -3303,6 +3309,61 @@ WRONG class compiles and passes — the wiring proof is the eight engine pins, n
 a type. Both scan pins read source TEXT, so a class computed through an
 intermediate variable is invisible to them. And nothing here measures whether the
 owner finds the new sentences BETTER: it measures that they are true.
+
+### The page-hide flush tests settle the row update they cause (docs/17 row 153, docs/18 §4)
+
+`tests/features/board-page-flush.test.tsx` was the ONE file the console-hygiene
+guard tripped, and only under concurrent load: RED twice in multi-writer and
+foreign-suite runs, **9/9 green** when run alone, never red under a single-worker
+gate. A page-hide flush issues a real `patchModule` write; the row it writes
+reaches React through the module's liveQuery (`useModule`), and RTL's `waitFor`
+runs with the act environment DISABLED and drains exactly ONE macrotask before
+restoring it. The two flush tests then ended in a BARE `await persistedPart0(...)`,
+which restored the act window while that delivery was still in flight — the class
+docs/18 §4 already states (*"a DB write into a tree whose live queries are mounted
+(`useModule` etc.) is drained, not awaited bare"*). This landing is that rule
+APPLIED, not a new convention.
+
+| fact pinned | where |
+|---|---|
+| **The settle is the ROW CARRYING THE DRAG'S DESTINATION**, asserted INSIDE the wait (`x > 500`, `y > 500`) — where the old shape read the canvas once AFTER the wait and asserted only `not.toBeNull()`. The wait's timeout is unchanged, so the condition got stronger rather than the window wider | `tests/features/board-page-flush.test.tsx` (`lands on pagehide, inside the debounce window`, `lands on visibilitychange → hidden`) |
+| **The update the flush causes is drained inside act** before the test ends, through the ONE seam (`tests/helpers/flush.ts` `flushAsyncUpdates` — this file's existing import; no new helper, no second mechanism) | same two tests |
+| **The write is still INSIDE the debounce window** — the timing pin is unchanged and still asserted (`Date.now() - started` below `BOARD_PERSIST_DEBOUNCE_MS`), and so is the one-write-per-signal count | `lands on pagehide …` |
+| **Nothing about the guard moved**: `tests/setup.ts` is byte-identical, `ALLOWED_NOISE` gains no entry, and the suite still holds ZERO act-timing allowances | `tests/setup.ts` (unchanged) |
+
+| injection | line it hits | result |
+|---|---|---|
+| **(a) the read the cause names DELAYED 20ms** — `getModule` gains a `setTimeout` before its `db.modules.get` (`git diff --stat` read BEFORE the run: `src/db/moduleRepo.ts \| 5 +++++`) | `src/db/moduleRepo.ts:38` (printed back) | un-cured **RED 2 failed / 7 passed** (exit 1): the two flush tests, each with three act-warning entries naming `BoardPage` and `@xyflow`'s `MarkerDefinitions` — the same subjects the recorded foreign run carries |
+| **(b) the same injection at 60ms** | same line | un-cured **RED 2/7**, cured **GREEN 9/9**: the pair repeats at a second delay level, so the reproduction is not tuned to one number |
+| **(c) the injection REMOVED, cure in place** | — | **GREEN 9/9 three sequential runs**; the file counts 9 tests before and after (nothing deleted, renamed, skipped or relaxed) |
+
+Both injections were restored from an OUT-OF-TREE copy (`/tmp/flake-inj/w153/`,
+never `git checkout --`) and proved byte-identical by `sha1`:
+`moduleRepo.ts` `38f28675ce1a80971e1cb82ff1cd19c4b6d6cbcc`,
+`BoardPage.tsx` `3d0c40f56ead5e2e9bb467bb234741d514ada14b` and
+`tests/setup.ts` `3be889fdea60582ad669bcf5300a5de9848a0b09` — before the
+injection and after the restore.
+
+**SETTLED, NOT DISCARDED — measured, not assumed.** With the 20ms delay the
+row's delivery to React lands at `5609.9`, INSIDE the drain's `5585.0 → 5610.5`
+window, so the update is delivered while the board is mounted; that is the
+difference between settling it and stopping the test earlier. The un-cured twin
+of the same run puts that delivery **5.8ms AFTER** the test's last wait
+(dispatch `5875.2` → `waitFor` returned `5898.1` → first warning `5903.9`),
+i.e. inside the bare read. The fold ALONE — the asserted settle without the
+drain — also passes with the cause delayed (measured), so the drain is the
+explicit settle rather than the lever that makes the test pass.
+
+**UNPROVEN, stated as such.** No test here can show that another load pattern
+will not surface a DIFFERENT leak in this file: the guard remains the detector
+and this landing removes only the window the recorded failure actually used. The
+drain is BOUNDED (20 rounds — the seam's default), not a proof that no delivery
+can outrun it; what makes the tail structural rather than hopeful is RTL's own
+`cleanup()`, which wraps `root.unmount()` in `act`
+(`@testing-library/react@16.3.3` `pure.js`), so a delivery that outruns the
+drain is absorbed by the unmount instead of being silenced by an allowance — an
+allowance would be the forbidden move. And a green run on an idle box is not
+evidence for this class: the delay-injection pair is.
 
 ### Remaining gaps
 

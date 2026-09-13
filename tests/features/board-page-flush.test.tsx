@@ -286,14 +286,23 @@ describe('a pending board layout write lands when the page goes away', () => {
     // Synchronous: the flush issues the write INSIDE the pagehide handler.
     expect(patchModuleMock).toHaveBeenCalledTimes(1);
 
+    // The settle is the ROW CARRYING THE DRAG'S DESTINATION — not merely a
+    // non-null canvas read once after the wait. Asserting the destination
+    // inside the `waitFor` is what makes the wait a wait for the product's
+    // own guarantee, and it keeps the reads outside the act window the
+    // console guard watches (docs/08-TESTING.md §Console guard).
     await waitFor(async () => {
-      expect(await persistedCanvas(world.moduleId)).not.toBeNull();
+      const position = await persistedPart0(world.moduleId);
+      expect(position.x).toBeGreaterThan(500);
+      expect(position.y).toBeGreaterThan(500);
     }, WRITE_LANDED);
     expect(Date.now() - started).toBeLessThan(DEBOUNCE_MS);
     expect(patchModuleMock).toHaveBeenCalledTimes(1);
-    const position = await persistedPart0(world.moduleId);
-    expect(position.x).toBeGreaterThan(500);
-    expect(position.y).toBeGreaterThan(500);
+    // The flush started a REAL row write, and the row it wrote reaches React
+    // through the module's liveQuery. Settle that delivery INSIDE act — the
+    // one drain seam (tests/helpers/flush.ts) — because a bare Dexie read
+    // here re-opens the act window and the delivery lands in it (ledger 153).
+    await flushAsyncUpdates();
   });
 
   it('lands on visibilitychange → hidden', async () => {
@@ -305,12 +314,15 @@ describe('a pending board layout write lands when the page goes away', () => {
     expect(patchModuleMock).toHaveBeenCalledTimes(1);
 
     await waitFor(async () => {
-      expect(await persistedCanvas(world.moduleId)).not.toBeNull();
+      const position = await persistedPart0(world.moduleId);
+      expect(position.x).toBeGreaterThan(500);
+      expect(position.y).toBeGreaterThan(500);
     }, WRITE_LANDED);
     expect(patchModuleMock).toHaveBeenCalledTimes(1);
-    const position = await persistedPart0(world.moduleId);
-    expect(position.x).toBeGreaterThan(500);
-    expect(position.y).toBeGreaterThan(500);
+    // Same settle as the pagehide test above: the row update this flush
+    // produced is delivered through the module's liveQuery, so it is drained
+    // inside act rather than left to land in a bare read.
+    await flushAsyncUpdates();
   });
 
   it('does not flush on visibilitychange → VISIBLE (a tab switch is not a write)', async () => {
