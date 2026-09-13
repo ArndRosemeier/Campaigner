@@ -591,6 +591,13 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             ? await fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
             : [],
           kind === 'encounter',
+          // The batch's kind IS the entity's kind, and it keys the brief's
+          // OWNERSHIP BOUNDARY (docs/17 row 140): a location/event/faction
+          // detail is told what the encounter owns, so it references the
+          // opposition instead of writing tactics and GM handling advice for
+          // a fight it does not own. `npc`/`encounter`/`note` render the
+          // pre-boundary bytes exactly.
+          kind,
           instruction,
         );
         // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this

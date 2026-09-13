@@ -1244,6 +1244,60 @@ summary toast. The background image queue likewise generates up to
 writers' room personas, the encounter pipeline's stages) stay strictly
 sequential.
 
+### What each kind OWNS — one fact, one owner (the ownership boundary)
+
+**Owner report, verbatim:** *"In my module, a few of the Location Details Detail
+the Mobs that appear there and even give GM hints on how to handle the Encounter
+there. Thats not what Location Details are for. We have Encounters for that."*
+(docs/17 row 140; a re-report of row 10 with a wider content class — row 10
+covered INVENTED monsters, this one covers the mobs the module text already names
+AND the handling advice.)
+
+Every entity detail is built by ONE brief (`features/modules/persona-request.ts`,
+`buildEntityBrief`) which the batch, the post-generation automation, the stub
+popover's single-entity delegation and the change/refill seam all share. The
+brief's `kind` decides a final OWNERSHIP paragraph (`OWNERSHIP_BOUNDARY_BY_KIND`,
+exhaustive over `StubKind`), so a detail worker is told what its artifact owns
+and what the encounter owns:
+
+| kind | what its detail OWNS | boundary paragraph |
+|---|---|---|
+| `location` | `locationType`, `inhabitants` (people and factions, never monsters), `pointsOfInterest`, `hooks`; hazards, traps and environmental complications | YES — `PLACE_OWNERSHIP_BOUNDARY` |
+| `event` | the same fields (its draft contract IS the location's) | YES — the SAME constant as `location`, so a reword cannot drift the two apart |
+| `faction` | goals, methods, resources, ranks — what it wants, how it operates, what it controls and how it is ranked | YES — `FACTION_OWNERSHIP_BOUNDARY` (its own third sentence: the "order of battle" the module text asks for is the encounter's material, so no preferred tactics) |
+| `npc` | its appearance, personality and its OWN stat block | NO — byte-identical to the pre-boundary brief |
+| `encounter` | the OPPOSITION: the roster, its counts, the terrain, the tactics, the treasure, the layout and the map | NO — byte-identical; this is the kind the boundary points AT |
+| `note` | the plot/arc material | NO — nobody reported a note boundary; decided out of scope, not overlooked |
+
+The paragraph (docs/17 row 140 quotes it in full) says: the OPPOSITION belongs to
+the encounter artifact — point at where the fight is, by the name the module
+text's own wiki-link uses, instead of describing it; no tactics, no
+encounter-handling advice, no GM guidance on running the fight; `inhabitants`
+means people and factions and never monsters; and the case the owner hit — module
+text written in the encounter's own field vocabulary (*"If the party acts"*,
+*"Secrets"*, *"Outcome"*) is the ENCOUNTER's material, never restated as this
+artifact's own detail. Its reason is stated in ONE clause — **one fact, one
+owner** — and it cites the module prose's own clause
+(`promptStyles.PARTS_MECHANICS`, *"encounters live in separate encounter
+artifacts … no tactics or terrain rules"*) rather than inventing a second
+principle: a fact written in two artifacts is two accounts of one fight, and the
+encounter is the one a GM reads for it.
+
+**Why it is in CODE and not in the persona prompt.** Built-in persona text is
+DISCRETIONARY and seed-once (`db/personaRepo.ts:32`: built-in seeding skips
+existing slugs), so a prompt clause reaches a new install only — that is why the
+Worldbuilder/Event Weaver clause written for this very case in September reached
+nobody. The owner decided AGAINST refreshing un-hand-edited built-in rows
+(docs/18 §4 records the decision verbatim and the consequence: an enforcement
+rule must live in code). Do not "fix" this boundary by editing
+`llm/personas/builtins.ts` again.
+
+**What the context paragraphs do NOT lose.** The brief still hands the worker
+EVERY paragraph of the module document that mentions the name
+(`lib/wikilinks.surroundingParagraphs`), the encounter's scene block included:
+the module text is the ground truth it reads. What changed is what the entity
+OWNS, never what it may see.
+
 ### Entity intent — the author's note that steers a detail worker (owner idea)
 
 **Owner request, verbatim:** *"The LLM building the module might have a specific

@@ -155,10 +155,12 @@ describe('the brief builder itself', () => {
     const args = ['Halvar', 'The stair sinks.', 'Premise.', 3] as const;
     const plain = buildEntityBrief(...args);
 
-    expect(buildEntityBrief(...args, [], false, 'Make her a smuggler.')).toBe(
+    // The kind is the boundary key (docs/17 row 139): `npc` renders no
+    // boundary paragraph, so the instruction stays the LAST paragraph.
+    expect(buildEntityBrief(...args, [], false, 'npc', 'Make her a smuggler.')).toBe(
       `${plain}\n\nAdditional instruction: Make her a smuggler.`,
     );
-    expect(buildEntityBrief(...args, [], false, '')).toBe(plain);
+    expect(buildEntityBrief(...args, [], false, 'npc', '')).toBe(plain);
     expect(plain.endsWith('make this entity serve the module text.')).toBe(true);
   });
 });

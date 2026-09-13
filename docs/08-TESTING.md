@@ -521,6 +521,7 @@ test) · ❌ gap.
 | Incremental classification engine: new names only, existing records byte-identical, second run makes no model call, variant folded onto a recorded canonical (no duplicate record), invalid reply twice → error recorded + gate closed + no record, refuses while the flag is false, second module untouched, snapshot only when it writes | `moduleGen.test` (incremental describe) | ✅ |
 | Unclassified-name derivation (exact/case-insensitive, skips resolved names and pending proposals), append-only record merge (cap throws loudly), proposal union/dedupe | `entityNormalization.test` | ✅ |
 | The record gate holds: a name with no record has NO button (counts exclude it), and only the record unlocks the kind's button | `entity-classify-new.test`, `entity-panel.test` | ✅ |
+| The kind ownership boundary (docs/17 row 140): a `location`/`event`/`faction` brief carries the OPPOSITION-boundary paragraph LAST and still carries the module text it was handed; `npc`/`encounter`/`note` and every kind-less caller are BYTE-IDENTICAL; and the PRODUCTION seam (`runEntityBatch`) actually passes its kind | `kindOwnershipBoundary.test` (14, NEW) | ✅ |
 
 ### The creature tier (docs/17 row 106, docs/11 D5 second revision)
 
@@ -2243,6 +2244,60 @@ wrote a plan itself fails. The write itself is pinned where it now lives, by
 three NEW pins in `tests/llm/modulePlan.test.ts` (`planAndStoreModuleDocument`
 persists + returns the patched row; it REPLACES a stored plan on a second call;
 a refused reply writes NOTHING and the previous plan survives).
+
+### What an entity detail OWNS is keyed by KIND (docs/17 row 140, docs/08-MODULE-DESIGNER §M4-C, docs/18 §2.2/§4)
+
+The owner reported that location details were describing the mobs at the place
+and giving GM advice on running the fight there — *"Thats not what Location
+Details are for. We have Encounters for that."* The cause was structural: ONE
+brief for all six kinds with no location contract, and the one prompt clause
+written for it (`builtins.ts`, `fe1d365`) lived in a seed-once STORED row that no
+existing install ever receives. The rule now lives in CODE, keyed by kind, at the
+seam every entity detail passes through: `buildEntityBrief`'s `kind` parameter
+selects `OWNERSHIP_BOUNDARY_BY_KIND` (an exhaustive `Record<StubKind, string |
+null>`), appended as the brief's LAST paragraph for `location`, `event` and
+`faction` only.
+
+| fact pinned | where |
+|---|---|
+| **The boundary is IN the location brief and is LAST**, naming every clause the owner's report needs: the opposition belongs to the encounter artifact, point at where it is fought by the module's own wiki-link name, no tactics / no encounter-handling advice / no GM guidance on running the fight, `inhabitants` means people and factions and never monsters, the encounter-POV field vocabulary ("If the party acts", "Secrets", "Outcome") is refused by name, the reason ("one fact, one owner") and the module prose's own clause are both present | `tests/llm/kindOwnershipBoundary.test.ts` (`a LOCATION brief carries the boundary — and still carries the encounter scene it was handed`, NEW) |
+| **The context paragraphs are NOT filtered to achieve it**: the whole encounter scene block arrives byte-for-byte inside the same brief (docs/17 row 140 — the fix is about ownership, never about what the worker may read) | same pin |
+| **`event` is byte-identical to `location`** (its draft contract IS the location's) — one constant, so a reword cannot drift them apart | `tests/llm/kindOwnershipBoundary.test.ts` (`an EVENT brief carries the SAME bytes…`, NEW; plus the constant-equality assertion in `the OTHER three kinds append exactly their paragraph`) |
+| **`faction` has its OWN boundary**: its fields are what the faction wants/operates/controls, the "order of battle" is the encounter's material, no preferred tactics — and the location-only `inhabitants` clause stays OUT of a faction brief | `tests/llm/kindOwnershipBoundary.test.ts` (`a FACTION brief carries its own boundary…`, NEW) |
+| **The boundary does not break the change seam's instruction**: a location brief with an instruction carries the boundary and still ENDS with the one `Additional instruction: …` paragraph | `tests/llm/kindOwnershipBoundary.test.ts` (`renders the boundary LAST, and the change instruction still rides after it`, NEW) |
+| **`npc`, `encounter` and `note` are BYTE-IDENTICAL with and without their kind** (`toBe` against the kind-less brief, not `toContain`), the encounter's scene framing and the standing instructions unmoved, and an OMITTED kind is the same bytes as `npc` — the property every pre-existing caller relies on | `tests/llm/kindOwnershipBoundary.test.ts` (3 `it.each` pins + `an omitted kind is the same bytes as \`npc\`…`, NEW) |
+| **The PRODUCTION seam passes its kind** (a pure brief-side change would ship nothing): `runEntityBatch` for `location`, `event` and `faction` hands the engine a brief carrying the boundary AND the module text; for `npc` and `encounter` the brief carries no boundary and keeps its own context label (`Where it is mentioned:` / `The scene this encounter must stage…`) | `tests/llm/kindOwnershipBoundary.test.ts` (2 `it.each` families, 5 pins, NEW — the engine is faked, the brief STRING is the assertion target, exactly as `entity-batch-fixed-cast.test` does at this seam) |
+
+**NO PRE-EXISTING PIN NEEDED A NEW BYTE — measured, not assumed.** At the changed
+tree the whole PRE-EXISTING suite is GREEN (`303 files / 3463 tests`, 0 failures
+at `CAMPAIGNER_TEST_WORKERS=2`), because no pre-existing test passed a kind, so
+no `location`/`event`/`faction` brief was byte-pinned anywhere before this slice;
+`buildEntityBrief`'s direct callers in tests all omitted the parameter and keep
+their bytes. The ONE pre-existing test file touched is
+`tests/features/change-artifact-instruction.test.ts`, whose two brief-builder
+calls gained the new positional `'npc'` argument — its `npc` bytes and its
+"instruction is appended last" assertion are unchanged, so nothing was loosened.
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back and `git diff --stat` checked BEFORE the run, one suite at a time at
+`CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's scratch, then
+restored from an OUT-OF-TREE copy and verified with `git hash-object` —
+`src/features/modules/persona-request.ts`
+`93c70c2c43f625791682a20914d974a589647548` before and after, plus
+`src/features/modules/entity-batch.ts` `a2d518544853cb25f8d333efb2e3664bedc3c3f4`
+for I2; `git checkout --` restores HEAD and would have destroyed this uncommitted
+work, so the backups were taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the boundary disabled for the three kinds** (`location`/`event`/`faction` set to `null` in `OWNERSHIP_BOUNDARY_BY_KIND`) | `persona-request.ts:116-118` (the injected lines, printed back) | **RED 8 / GREEN 6.** RED: the 5 location/event/faction pins and the 3 `location`/`event`/`faction` BATCH pins. GREEN, i.e. the npc/encounter/note pins NEVER NOTICE: the 3 byte-identity pins, the omitted-kind pin, and BOTH `npc`/`encounter` batch pins |
+| **I2 — the kind NOT passed by the production seam** (the `kind,` argument removed from the `buildEntityBrief` call in `entity-batch.ts`) | `entity-batch.ts:593` (the injected lines, printed back) | **RED 3 / GREEN 11.** RED: EXACTLY the three batch pins. GREEN: every unit pin AND both `npc`/`encounter` batch pins — the plumbing carries its own forcing pin, so I1 and I2 are not the same proof |
+
+**UNPROVEN.** No test can show that a model OBEYS the paragraph. Every pin here is
+a byte pin on a composed string plus a plumbing pin at the seam; the behavioural
+claim rests on the owner's next regeneration (docs/17 row 140 states exactly what
+to look for). A model that ignores the paragraph produces the old output and no
+test fails.
 
 ### Remaining gaps
 

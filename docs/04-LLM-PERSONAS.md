@@ -151,15 +151,30 @@ are not chainable (chainRunner/moduleForge reject them).
 | slug             | name              | producesKind | mode     | one-line purpose                       |
 |------------------|-------------------|--------------|----------|----------------------------------------|
 | npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
-| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; never invents monsters (owner-ratified prompt contract: hazards welcome, creatures live in encounters/dungeons — reference where a creature will be encountered instead of statting it) |
-| event-weaver     | Event Weaver      | event        | generate | Social/non-combat occasions; same location-shaped contract, never invents monsters |
-| faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks     |
+| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; hazards welcome. The monster boundary is NOT carried by this prompt (a built-in prompt is a seed-once row — see below): it is ENFORCED in code, keyed by kind, in `buildEntityBrief` (docs/17 row 140) — the opposition belongs to the encounter artifact, `inhabitants` means people and factions, and a location writes no tactics and no GM handling advice |
+| event-weaver     | Event Weaver      | event        | generate | Social/non-combat occasions; location-shaped, with the SAME kind-keyed ownership boundary in code (docs/17 row 140) |
+| faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks — and the fight is the encounter's: no preferred tactics, enforced by the kind-keyed boundary in code (docs/17 row 140) |
 | plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
 | arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
 | encounter-smith  | Encounter Smith   | encounter    | generate | Balanced encounters with monsters       |
 | encounter-cartographer | Encounter Cartographer | encounter | encounter | Complete room layouts and generated battlemaps |
 | continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
 | illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |
+
+**A built-in prompt is DISCRETIONARY — an enforcement rule can never live in
+one** (docs/17 row 140, docs/18 §4). "Insert if slug missing; never overwrite
+user edits" cuts both ways: `seed.seedBuiltInPersonas` skips a slug that already
+exists (`db/personaRepo.ts:32`), so editing a prompt in `builtins.ts` reaches a
+NEW install only and every install that already exists keeps the old bytes
+forever. The owner was asked whether to refresh un-hand-edited built-in rows and
+DECIDED AGAINST IT, verbatim: *"If the user wants to regenerate things with a new
+prompt he can already do so, so... no need for that. I dont see that as something
+that will happen often-"* — the user's channel is Settings → Personas → Reset to
+default (then regenerate) and it is expected to be rare. So persona text carries
+STYLE, emphases and habits; a rule that must hold for every generation belongs in
+code, at a seam every call passes through (`buildEntityBrief`'s kind-keyed
+ownership paragraph is the worked example). Do not "fix" a boundary or a refusal
+by editing a built-in prompt.
 
 `postCreateExtras` (optional, declared) — the extras the creation dialog
 offers for a NEWLY created artifact; unset → derived from `mode`/`producesKind`
