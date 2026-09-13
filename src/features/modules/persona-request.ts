@@ -9,6 +9,8 @@ import {
   ENTITY_NAME_VERBATIM_SUFFIX,
   ENTITY_SCENE_CONTEXT_LABEL,
   ENTITY_SERVE_MODULE_TEXT,
+  INTENT_HIERARCHY,
+  INTENT_LABEL,
   MODULE_PREMISE_LABEL,
   OWNERSHIP_BOUNDARY_BY_KIND,
 } from '@/llm/promptScaffolding';
@@ -94,28 +96,16 @@ export function stubKindCarriesPartyLevel(kind: StubKind): boolean {
  */
 
 /**
- * The intent paragraph's ONE form (08 §M4-C "Entity intent", docs/17 row 141):
- * `Additional instruction: …` and this are ONE form with two sources — that one
- * is TRANSIENT (a change request), this one PERSISTENT (the entity's recorded
- * intent).
- *
- * It states its own HIERARCHY, and that sentence is load-bearing: a steering
- * note that outranked the module text would be a second author, so the
- * paragraph says EMPHASIS and OWNERSHIP move while what the module text states
- * is fixed and the kind's own charter still governs what the artifact may
- * contain (which is what keeps the ownership boundary above it binding).
- */
-const INTENT_LABEL = "The module's author intended: ";
-
-const INTENT_HIERARCHY =
-  ' This steers EMPHASIS and OWNERSHIP; what the module text states is fixed, and your own charter still governs what this kind may contain.';
-
-/**
  * The intent paragraph for one entity, or `null` when there is no intent — and
  * `null`, `undefined`, `''` and a whitespace-only note ALL mean no intent, so
  * none of them renders an empty paragraph and an entity without a note produces
  * the brief it produced before this field existed, BYTE FOR BYTE (the same
  * property `withAdditionalInstruction` has for an empty instruction).
+ *
+ * Its two literals live in `llm/promptScaffolding` (docs/17 row 145) so the
+ * scaffolding-echo detector can read the SAME bytes from the SAME seam; the
+ * composed paragraph is byte-identical to the one this module built before the
+ * move. The paragraph's WHY stayed with the constants.
  */
 function intentParagraph(intent: string | null | undefined): string | null {
   const note = intent?.trim() ?? '';

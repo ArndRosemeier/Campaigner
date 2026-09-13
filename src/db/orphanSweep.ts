@@ -125,11 +125,31 @@ export interface OrphanSweepOptions {
 /** The reason an ambiguity-shadowed candidate is refused (verbatim, 08 §M4-C). */
 export const AMBIGUITY_KEEP_REASON = 'same-named entity exists — resolve the duplicate first';
 
-/** 'premise' / 'part-<planIndex>' → the reader's label (Premise / Part N, 1-based). */
+/** 'premise' / 'part-<planIndex>' → the lowercase PROSE label this sentence
+ * needs ("premise" / "part N", planIndex + 1, 1-based). DELIBERATELY a second
+ * spelling of the reader's `features/campaign/mentionView.whereLabel`
+ * ("Premise" / "Part N"): this one is embedded mid-sentence in a user-visible
+ * refusal ("mentioned in campaign prose — "Tide Gate" premise ×1") and is
+ * pinned case-sensitively, so the two are named, intentional data and never
+ * drift (docs/17 row 145, `tests/features/mention-where-label.test.ts`).
+ * Anything that is neither shape is a LOUD error, never an invented value: the
+ * sibling renders a malformed `where` verbatim, while the old body here turned
+ * `''` into `part 1` and `part-1e3` into `part 1001` — a placeholder standing
+ * in for required data (AGENTS rule 1). The throw is UNREACHABLE by
+ * construction, which is what makes it safe: every `where` reaching this
+ * function comes from `domain/wikiGraph.moduleDocuments` ->
+ * `'premise'` | `` `part-${planIndex}` `` over a `moduleSchema`-parsed row
+ * (`planIndex: z.number().int().nonnegative()`), through the UNCAPPED
+ * `buildWikiGraph` calls at `:223`/`:232`. The guard is the
+ * `boardEdges.planIndexOf` shape, so a future caller that widens the input
+ * fails loud instead of printing a wrong site. */
 function whereLabel(where: string): string {
   if (where === 'premise') return 'premise';
-  const partIndex = Number(where.slice('part-'.length));
-  return Number.isNaN(partIndex) ? where : `part ${String(partIndex + 1)}`;
+  const match = /^part-(\d+)$/.exec(where);
+  if (match === null) {
+    throw new Error(`sweepOrphanedArtifacts: unknown mention document "${where}"`);
+  }
+  return `part ${String(Number(match[1]) + 1)}`;
 }
 
 /** The loud mention reason: names the site(s) that resolved to the row. */

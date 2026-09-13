@@ -1,5 +1,7 @@
 import type { Content } from 'pdfmake/interfaces';
 
+import { WIKI_LINK_TOKEN } from '@/lib/wikilinks';
+
 /**
  * Markdown → pdfmake content (07-MILESTONE-3 M3-D): paragraphs, bold/italic,
  * h1–h3, bullet/numbered lists, and blockquotes (→ bordered, shaded, italic
@@ -21,8 +23,6 @@ export type MdBlock =
   | { kind: 'list'; ordered: boolean; items: InlineRun[][] }
   | { kind: 'quote'; runs: InlineRun[] }
   | { kind: 'fence'; text: string };
-
-const WIKI_TOKEN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/;
 
 /** Parses inline `**bold**`, `*italic*` / `_italic_`, `` `code` ``, and
  * `[[wiki-links]]` (→ bold display text) runs. */
@@ -47,11 +47,14 @@ export function parseInline(text: string): InlineRun[] {
   return runs.length === 0 ? [{ text: '' }] : runs;
 }
 
-/** Appends a text slice, turning any `[[wiki-link]]` into a bold run. */
+/** Appends a text slice, turning any `[[wiki-link]]` into a bold run. Loops
+ * with `exec` on ONE string, so it reads the shared NON-global
+ * `lib/wikilinks.WIKI_LINK_TOKEN`: a global pattern would carry `lastIndex`
+ * between calls and silently skip every second link (docs/17 row 145). */
 function pushWithWiki(text: string, runs: InlineRun[]): void {
   let rest = text;
   for (;;) {
-    const match = WIKI_TOKEN.exec(rest);
+    const match = WIKI_LINK_TOKEN.exec(rest);
     if (match?.index === undefined) break;
     if (match.index > 0) runs.push({ text: rest.slice(0, match.index) });
     const name = (match[1] ?? '').trim();

@@ -86,6 +86,21 @@ this spec's file name only.
   and `nodeFirstMentionRoute` deep-links a graph node to its first
   mention — throwing loudly on a mention-less node, which the derivation
   cannot produce.
+- **`whereLabel` is the ONE home of that convention (docs/17 row 145).**
+  `llm/campaignGrounding` carried a private byte-identical copy (differing only
+  by the absent `export`) and builds every `ExpansionExcerpt.source` from it —
+  the string that is STORED on the run row and rendered back into the prompt on
+  resume — so the copy was deleted and this home imported. **The ONE deliberate
+  second spelling is `db/orphanSweep.whereLabel`**: lowercase PROSE
+  (`premise` / `part N`) embedded mid-sentence in a user-visible refusal
+  ("mentioned in campaign prose — \"Tide Gate\" premise ×1") and pinned
+  case-sensitively; the owner was told both spellings exist and agreed to leave
+  them, so the differential pin (`tests/features/mention-where-label.test.ts`)
+  DECLARES the relation (`prose === label.toLowerCase()`) rather than treating
+  one as drift. This home renders an unrecognized `where` VERBATIM (its own
+  contract); only the sweep's copy throws, and its throw is unreachable by
+  construction (every `where` comes from `domain/wikiGraph.moduleDocuments` over
+  a schema-parsed `planIndex`).
 
 ## 3. Mentions panel (entity detail surface)
 

@@ -1,12 +1,8 @@
 import {
-  contentCreatureKey,
-  libraryCreatureKey,
   newId,
   stampNewEntity,
   type CreatureImage,
   type Id,
-  type MonsterEntry,
-  type StatBlock,
 } from '@/domain';
 import { db } from '@/db/db';
 
@@ -75,19 +71,4 @@ export async function insertCreatureImageRow(options: {
   };
   await db.creatureImages.add(row);
   return row;
-}
-
-/**
- * The roster/citation side of a creature's identity, for the modules that
- * enumerate a roster (the portrait batch, the gap detector): ONE spelling of
- * "which creature is this roster entry?" — a library creature's cited chunk,
- * or an invented mob's content identity. `null` for an entry whose creature is
- * an AUTHORED artifact (an `npc-ref`): its portrait lives on that artifact, so
- * it has no presentation identity at all.
- */
-export function rosterCreatureKey(entry: MonsterEntry, statBlock: StatBlock | null): string | null {
-  if (entry.source.type === 'rulebook') return libraryCreatureKey(entry.source.chunkId);
-  if (entry.source.type === 'inline') return contentCreatureKey(entry.name, entry.source.statBlock);
-  if (entry.source.type === 'none') return contentCreatureKey(entry.name, statBlock);
-  return null;
 }

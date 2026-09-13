@@ -12,6 +12,15 @@ import {
   surroundingParagraphs,
   WIKI_LINK_PATTERN,
 } from '@/lib/wikilinks';
+// The `where` convention's ONE implementation (14 §2), imported rather than
+// re-declared: this module's `source` is STORED on the run row's
+// `expansionExcerpts` and rendered back into the prompt on resume, so a second
+// spelling here would store a different label than the reader shows. This is an
+// `llm → features` import, the `moduleGen → post-generation` precedent
+// (docs/18 §5). The third, deliberately-different spelling is
+// `db/orphanSweep.whereLabel` — lowercase prose, pinned case-sensitively as a
+// user-visible sentence (docs/17 row 145).
+import { whereLabel } from '@/features/campaign/mentionView';
 import { z } from 'zod';
 
 /**
@@ -345,14 +354,6 @@ function documentMarkdown(module: Module, where: string): string | null {
   if (match === null) return null;
   const part = module.parts.find((candidate) => candidate.planIndex === Number(match[1]));
   return part === undefined ? null : part.markdown;
-}
-
-/** The mentionView convention (14 §2): 'premise' → "Premise",
- * 'part-<planIndex>' → "Part N" (planIndex + 1 — the reader's numbering). */
-function whereLabel(where: string): string {
-  if (where === 'premise') return 'Premise';
-  const match = /^part-(\d+)$/.exec(where);
-  return match !== null ? `Part ${String(Number(match[1]) + 1)}` : where;
 }
 
 /** The excerpt text for a node's document: the first spelling that matches a

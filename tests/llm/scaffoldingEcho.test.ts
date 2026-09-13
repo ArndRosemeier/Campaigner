@@ -26,6 +26,8 @@ import {
   FACTION_OWNERSHIP_BOUNDARY,
   FIXED_CAST_SECTION_FOOTER,
   FIXED_CAST_SECTION_HEADER,
+  INTENT_HIERARCHY,
+  INTENT_LABEL,
   MODULE_PREMISE_LABEL,
   PART_TOO_SHORT_REPAIR_SENTENCE,
   PLACE_OWNERSHIP_BOUNDARY,
@@ -207,6 +209,8 @@ describe("the marker set is the composers' own bytes (one source)", () => {
     ['the "do not invent unrelated sub-plots" rule', ENTITY_SERVE_MODULE_TEXT],
     ['the location/event ownership boundary', PLACE_OWNERSHIP_BOUNDARY],
     ['the faction ownership boundary', FACTION_OWNERSHIP_BOUNDARY],
+    ['the entity-intent label', INTENT_LABEL],
+    ['the entity-intent hierarchy sentence', INTENT_HIERARCHY],
     ['the grounding section header', GROUNDING_SECTION_HEADER],
     ['the fixed-cast section header', FIXED_CAST_SECTION_HEADER],
     ['the fixed-cast section footer', FIXED_CAST_SECTION_FOOTER],
@@ -218,6 +222,50 @@ describe("the marker set is the composers' own bytes (one source)", () => {
     // and this is also the shortest statement of the one-source rule: the
     // literal here IS the constant the composer renders.
     expect(findScaffoldingEcho(literal).map((hit) => hit.label)).toEqual([label]);
+  });
+
+  it('a brief CARRYING AN INTENT is detected, both of its literals included (docs/17 row 145)', () => {
+    // The gap this pin closes: row 142's detector could not mark the
+    // intent paragraph, because its two constants lived in
+    // `features/modules/persona-request` and importing them into this seam would
+    // have been an import cycle. They moved DOWN to `llm/promptScaffolding`
+    // (where the composer now imports them back), and the composed paragraph is
+    // byte-identical — `tests/features/entity-intent-brief.test.tsx` transcribes
+    // it and stays green UNCHANGED.
+    const brief = buildEntityBrief(
+      'The Salt Market',
+      'The party crosses [[The Salt Market]] at dusk.',
+      'A harbor town raised its bell.',
+      2,
+      [],
+      false,
+      'location',
+      'Park her at the docks.',
+      'The market is a front for the smugglers.',
+    );
+    const found = findScaffoldingEcho(brief).map((hit) => hit.label);
+    expect(found).toContain('the entity-intent label');
+    expect(found).toContain('the entity-intent hierarchy sentence');
+  });
+
+  it('…and a note containing a QUOTE is still detected — the reason the markers are literals', () => {
+    // A SLOTTED marker cannot see this note: its slot is `[^\n"]+`, because the
+    // entity-brief intro's own slot is a quoted name. The intent note is free
+    // prose and legitimately carries quotes, so a slotted form would be silently
+    // DEAD here — the exact failure mode the marker set exists to prevent.
+    const brief = buildEntityBrief(
+      'The Salt Market',
+      'The party crosses [[The Salt Market]] at dusk.',
+      'A harbor town raised its bell.',
+      2,
+      [],
+      false,
+      'location',
+      'Park her at the docks.',
+      'The "bustle" is a cover; play the stalls as fear.',
+    );
+    expect(findScaffoldingEcho(brief).map((hit) => hit.label)).toContain('the entity-intent label');
+    expect(brief).toContain('The "bustle" is a cover; play the stalls as fear.');
   });
 
   it('matches the FULL literal, never a fragment — a truncated run of the same words passes', () => {

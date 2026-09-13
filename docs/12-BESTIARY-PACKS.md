@@ -223,7 +223,14 @@ belongs with the re-import story, never a quiet fourth combination. "One
 adapter file plus one entry in `registry.ts`" still describes adding a SOURCE;
 it no longer describes copying a text convention. The removal of the copies is
 held by `tests/ingest/packs/html-to-text.test.ts` (the differential table plus a
-source scan that reds on a second stripper in this directory).
+source scan that reds on a second stripper in this directory). **A `[[…]]` in a PACK DOCUMENT is not the app's wiki-link token, and must not be
+folded onto it** (docs/17 row 145): the dnd5e dialect's two regexes in
+`text.ts` (`[[target]]{Label}` → the label, `[[target|label]]` → the LAST label
+segment, a label-less `[[target]]` → nothing) are rewritten at IMPORT time and
+resolve nothing, while `lib/wikilinks.WIKI_LINK_PATTERN`/`WIKI_LINK_TOKEN` are
+the reader's own grammar (a `|display` slot, resolved against the artifact pool).
+They are a different grammar with a different job, which is why the row-145
+source scan DECLARES these two as its only exception rather than unifying them.
 
 **Why this amendment changed no behaviour.** Landing 1 is BYTE-PRESERVING: the
 returned text becomes `PackEntry.text` → the chunk's stored `text` →

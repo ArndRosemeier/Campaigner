@@ -175,7 +175,12 @@ byte-identically — no new searches, embeddings, or LLM calls.
   helper's 1200 default), trying the node's first-seen spelling then remaining
   names (alias-written mentions). A mention exists by construction
   (`mentionsByDocument`); the impossible empty case throws loudly — the
-  mentionView convention (14 §2), per AGENTS rule 1.
+  mentionView convention (14 §2), per AGENTS rule 1. **The `Part N` half of
+  that line IS `mentionView.whereLabel` (docs/17 row 145)**, imported rather
+  than re-declared: the string is STORED as `ExpansionExcerpt.source`, rides the
+  run row's `expansionExcerpts` and is rendered back into the prompt on resume,
+  so a private copy here would store a different label than the reader shows
+  (`db/orphanSweep`'s lowercase prose spelling is the ONE declared exception).
 - Computed **entirely inside `retrieveContext`** and persisted on the retrieve
   step output as additive zod fields with defaults (the
   storedRetrieveOutputSchema pattern, runEngine.ts:113-119):

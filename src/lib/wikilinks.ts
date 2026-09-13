@@ -8,8 +8,30 @@ import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
  * reader marks such chips with a ⚠ tooltip listing the candidates).
  */
 
-/** The wiki-link token pattern used everywhere (renderer, PDF, extraction). */
-export const WIKI_LINK_PATTERN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+/**
+ * THE wiki-link token GRAMMAR, as one source string (08-MODULE-DESIGNER M4-A):
+ * `[[Name]]` or `[[Name|display text]]`. This is the ONLY place the token's
+ * shape is written down — the app's token consumers build their pattern from
+ * this string, and a second literal anywhere is a second grammar.
+ */
+const WIKI_LINK_GRAMMAR = String.raw`\[\[([^\]|]+)(?:\|([^\]]+))?\]\]`;
+
+/** The wiki-link token pattern used everywhere the text is ITERATED or
+ * REPLACED (renderer, PDF, extraction, graph counting) — global, because
+ * `matchAll`/`replaceAll` need `lastIndex` to advance. */
+export const WIKI_LINK_PATTERN = new RegExp(WIKI_LINK_GRAMMAR, 'g');
+
+/**
+ * The SAME grammar, NON-global: for a consumer that LOOPS with `exec` on one
+ * string. A global regex carries `lastIndex` BETWEEN calls, so the second call
+ * on a fresh slice resumes where the first stopped — the trap this companion
+ * exists to prevent. MEASURED (docs/17 row 145): `lib/mdToPdfmake.pushWithWiki`
+ * looping on the shared GLOBAL pattern silently DROPPED every second wiki link
+ * from a rendered PDF (`['Ash Gate','Kael','Pier']` → `['Ash Gate', null,
+ * 'Pier']`), with no error anywhere. A non-global regex never reads or writes
+ * `lastIndex`, so one shared value is safe for every looping caller.
+ */
+export const WIKI_LINK_TOKEN = new RegExp(WIKI_LINK_GRAMMAR);
 
 export interface ExtractedWikiLink {
   /** The link target as written (trimmed). */

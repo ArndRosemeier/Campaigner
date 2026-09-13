@@ -510,6 +510,10 @@ test) · ❌ gap.
 
 | Prompt scaffolding echoed back as CONTENT is refused at the boundary that would persist it (docs/17 row 142): the three markers in the owner's report are caught at the entity finalize, at the module part write and at the spine parse, each naming the marker AND the field with nothing persisted; the literals come from ONE source shared with the composers; and ordinary prose that merely uses the same words stays green | `scaffoldingEcho.test` (30, NEW) | ✅ |
 | The HTML→text stripper is ONE ingest seam for all seven pack adapters (docs/17 row 143): 17 shared sample cases × the 3 declared styles pinned to exact bytes (10 declared divergent, 7 the styles must AGREE on), the divergence asserted as the KNOWN `LANDING 2:` residue, a source scan that finds no second stripper among the directory's ten files and all seven call sites passing their declared style, and the STORED bytes of one real fixture per group — because those bytes ARE the content hash | `html-to-text.test` (28, NEW; the pre-existing table pin in `pf2e-journal.test` and `packFetch.test` stays green through the seam) | ✅ |
+| The `where` label has ONE home and ONE declared second spelling (docs/17 row 145): a 4-case differential drives the home (`mentionView.whereLabel`), the STORED `ExpansionExcerpt.source` of `llm/campaignGrounding` and the `db/orphanSweep` refusal reason over the same inputs, requiring the two same-convention copies to be IDENTICAL and declaring the third as `prose === label.toLowerCase()` — plus a source scan proving `function whereLabel` is declared in exactly the two declared files | `mention-where-label.test` (17, NEW) | ✅ |
+| A DEAD duplicate stays deleted (docs/17 row 145): `rosterCreatureKey` — a superseded third spelling of the roster-side creature identity with zero callers — is absent from every `src/` and `tests/` file, while the LIVE spelling (`battleSeed.creatureKeyForEntry`, including the `'none'` arm that passes `null`) is intact | `creature-identity-spelling.test` (3, NEW) | ✅ |
+| The wiki-token grammar is ONE source with TWO flag variants (docs/17 row 145): a differential drives a token-bearing sample through the export consumer (`stripWikiLinks`) and the PDF consumer (`parseInline`), the vanished-link case (`plain **bold** [[Ash Gate]] and [[Kael]] and [[Pier]].`) is pinned through `mdToPdfmakeContent` itself (`Kael` must survive), and a source scan proves no second `\[\[` token regex exists outside the two declared sites | `wiki-token-grammar.test` (25, NEW) | ✅ |
+| An entity-intent paragraph is scaffolding the echo detector can SEE (docs/17 rows 141/145): the two literals moved into `llm/promptScaffolding`, an intent-bearing brief is detected on both markers, and a note containing a QUOTE is detected too (the case a slotted marker would silently miss) | `scaffoldingEcho.test` (30 → 34) | ✅ |
 
 ### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
 
@@ -2574,6 +2578,60 @@ real campaign ingests produces a page-accurate origin — `pageStart` is the chu
 own field and its accuracy is the ingest's concern, not this renderer's; (d) the
 READER half of the owner's answer 2 (the jump and the entity panel listing), which
 is a separate slice and untested here by design.
+
+### The duplication audit's cheap half (docs/17 row 145, docs/18 §2.2/§2.3/§4/§5, docs/14 §2)
+
+An owner-directed audit ran every candidate copy of five duplicated ideas against
+SHARED INPUTS before anything was touched. Three of the five were byte-identical
+copies that nothing failed on, because no test had ever declared there was one
+way to do the thing. This landing is the cheap half, and its shape follows the
+audit rather than the word "centralize": ONE copy FOLDED (with its stored bytes
+pinned), ONE duplicate DELETED (it had zero callers), ONE grammar given a
+non-global COMPANION rather than a shared constant, ONE marker gap closed by
+MOVING two constants, and ONE finding REPORTED instead of half-built.
+
+| fact pinned | where |
+|---|---|
+| **The `where` label differential** — 4 cases (`premise`, `part-0`, `part-1`, `part-11`) driven through the home (`mentionView.whereLabel`), the STORED `ExpansionExcerpt.source` of `llm/campaignGrounding` and the `db/orphanSweep` refusal reason. The two same-convention copies must be IDENTICAL; the third is DECLARED (`prose === label.toLowerCase()`) as one relation, not two unrelated tables | `tests/features/mention-where-label.test.ts` (17, NEW) |
+| **SCAN — `function whereLabel` is declared in exactly the two declared files** (the home and the deliberately-lowercase `db/orphanSweep` copy), no `llm/` file declares one, `llm/campaignGrounding` imports the home AND builds its `source` from it, and the sweep's carve-out still holds its copy with the LOUD guard instead of the values it used to invent | same file (3 SCAN pins, NEW) |
+| **The deleted duplicate's ABSENCE** — `rosterCreatureKey` appears in no `src/` or `tests/` file (the scan's own file is the one declared exclusion), `db/creatureImages` no longer names the two identity helpers at all, and the LIVE spelling `battleSeed.creatureKeyForEntry` keeps all three arms including the `'none'` → `null` one the dead copy disagreed on | `tests/db/creature-identity-spelling.test.ts` (3, NEW) |
+| **The wiki-token differential** — 8 token-bearing strings (well-formed, padded, aliased, two lookalikes that must stay LITERAL) through the export consumer (`stripWikiLinks`) and the PDF consumer (`parseInline`): identical rendered text AND identical link names | `tests/lib/wiki-token-grammar.test.ts` (25, NEW) |
+| **The vanished-link case, pinned through the REAL PDF entry** — `plain **bold** [[Ash Gate]] and [[Kael]] and [[Pier]].` must render all three names, and `mdToPdfmakeContent` (what `lib/modulePdf` calls) must contain all three with no `[[` left; a second pin re-runs the loop with the GLOBAL pattern to record the measured loss (`['Ash Gate', 'Pier']`) as the reason the code is shaped this way | same file (3 pins, NEW) |
+| **SCAN — the grammar is written down ONCE** — every `\[\[`-bearing non-comment line in `src/` is counted per file and must equal the two declared sites (`lib/wikilinks.ts` = 1, the ingest dnd5e DOCUMENT dialect `ingest/packs/text.ts` = 2, a different grammar), with a rot check that each declared carve-out still holds its regex; `lib/mdToPdfmake` must contain zero and must import the companion | same file (3 SCAN pins, NEW) |
+| **The intent paragraph is DETECTED** — a brief carrying an intent is caught on both of the moved literals, and a note containing a QUOTE is caught too (the case the slotted-marker shape would silently miss, which is why two LITERAL markers were used) | `tests/llm/scaffoldingEcho.test.ts` (30 → 34) |
+| **The rendered intent paragraph is BYTE-IDENTICAL after the constants moved** — row 141's pins are green UNCHANGED, including the test that transcribes the paragraph verbatim rather than importing it and the pins asserting a note-less brief is byte-identical | `tests/features/entity-intent-brief.test.tsx` (11, UNTOUCHED), `tests/features/entity-intent-batch.test.ts` (5, UNTOUCHED), `tests/features/persona-request.test.ts`, `tests/llm/kindOwnershipBoundary.test.ts` |
+| **The stored-output byte proof for the fold** — the pins that already covered the STORED `source` stay green unchanged, and I1b shows they notice a changed label | `tests/llm/campaignGrounding.test.ts:294,311`, `tests/llm/runEngine-grounding-expansion.test.ts:249` |
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the FOLD REVERTED** (the private byte-identical copy re-declared in `llm/campaignGrounding`, the import removed) | `src/llm/campaignGrounding.ts:15-20` (printed back; `git diff --stat` read BEFORE the run) | **RED 1 / GREEN 51** of the same 52. RED: ONLY the new source-scan pin. GREEN: all 16 behavioural differential pins AND every pre-existing stored-output pin — the measured proof that behaviour alone can NEVER see a byte-identical copy, which is why the scan exists |
+| **I1b — the STORED label changed** (off-by-one in `campaignGrounding`'s `source`) | `src/llm/campaignGrounding.ts:327` | **RED 6 / GREEN 43** of 49. RED: the three new STORED-source differential pins (`part-0/1/11`; the `premise` arm is unmoved), the source-scan pin, and TWO PRE-EXISTING pins in `campaignGrounding.test.ts` (`sums shared-edge weight across the documents the entities share`, `renders part provenance with the reader numbering (planIndex + 1)`) — so the stored bytes really are held |
+| **I2 — the DELETED duplicate re-added** | `src/db/creatureImages.ts` (appended, printed back) | **RED 1 / GREEN 55** of 56. RED: the absence pin, and nothing else — no fixture and no live behaviour notices, which is the deletion's own claim stated as a measurement |
+| **I3 — the OBVIOUS-but-WRONG fold** (the shared GLOBAL `WIKI_LINK_PATTERN` used by the looping `pushWithWiki`) | `src/lib/mdToPdfmake.ts:3,57` | **RED 6 / GREEN 95** of 101. RED: the two new differential agreement pins for multi-token strings, both vanished-link pins, the new source pin, and a PRE-EXISTING pin (`wiki-raw-export.test`'s `the two pipelines agree: one body, the display in both, brackets in neither`, which reports the raw token `[[ Ash Gate |the gate]]` inside the rendered module definition). The new differential's own failure reads `expected 'a the gate and [[Pier]]' to be 'a the gate and Pier'`. GREEN: every single-token `mdToPdfmake` pin, all of `wikilinks.test`, `modulePdf.test` and the rest of the new file — **a single-token test can never catch this**, which is the whole point |
+| **I4 — the two intent MARKERS removed** from `SCAFFOLDING_MARKERS` | `src/llm/promptScaffolding.ts:253` | **RED 4 / GREEN 71** of 75. RED: exactly the four intent pins (the two new `it.each` literals plus the intent-bearing and quoted-note pins). GREEN: every other marker pin, `escapeDebris`, `persona-request`, the kind-boundary file and row 141's 16 intent pins — so the marker set's other members do not notice, and the constants move is independent of the detection |
+
+Every injection was restored from an OUT-OF-TREE copy in
+`/tmp/campaigner-sweep-backup/` — NEVER `git checkout --`, which restores HEAD
+and would have destroyed the uncommitted landing — and proved byte-identical
+with `git hash-object`: `campaignGrounding.ts`
+`901c47668d80b7cfe64bb1176c41bbcaf0b205b5`, `mdToPdfmake.ts`
+`5c129ce89ce99dc6a38d4cf770cd3e90d409e8fe`, `promptScaffolding.ts`
+`e2074a87fb5d40a7041d75743f1f70e9e5788421`, `creatureImages.ts`
+`739d24b8902329ca37ef4232bdbb5c5e6c29fede` — before the injection and after the
+restore.
+
+**UNPROVEN, stated as such.** Every scan here is a GUARD over shapes someone has
+used, not a proof: no test can show that a future author will not declare a
+fourth `whereLabel`, a third `\[\[` regex, or a fifth identity spelling —
+reverting one of them is what the injections above measure, and writing a NEW
+one in a shape nobody has used slips past a textual scan. The scans read source
+TEXT, which is why they are blind to a copy computed through an intermediate
+variable. And **item 5 of the audit is NOT fixed**: `runEngine.ts:2347-2352`
+still tells the owner the reply "could not be parsed into the required JSON
+shape" for every rejection class the auto-autonomy branch sees, including the
+scaffolding-echo rejection — naming the real class needs a rejection class
+recorded at EIGHT `finishStep(..., 'rejected')` sites and a persisted-shape
+change, so it is reported rather than half-built (docs/17 row 145).
 
 ### Remaining gaps
 

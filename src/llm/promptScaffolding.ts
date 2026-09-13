@@ -78,6 +78,36 @@ export const ENTITY_SERVE_MODULE_TEXT =
   'Do not invent unrelated sub-plots; make this entity serve the module text.';
 
 /* -------------------------------------------------------------------------
+ * The entity INTENT paragraph (docs/17 row 141; moved here by row 145)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The intent paragraph's ONE form (08 §M4-C "Entity intent", docs/17 row 141):
+ * `Additional instruction: …` and this are ONE form with two sources — that one
+ * is TRANSIENT (a change request), this one PERSISTENT (the entity's recorded
+ * intent).
+ *
+ * It states its own HIERARCHY, and that sentence is load-bearing: a steering
+ * note that outranked the module text would be a second author, so the
+ * paragraph says EMPHASIS and OWNERSHIP move while what the module text states
+ * is fixed and the kind's own charter still governs what the artifact may
+ * contain (which is what keeps the ownership boundary above it binding).
+ *
+ * WHY THESE TWO LITERALS LIVE HERE AND NOT IN
+ * `features/modules/persona-request` (docs/17 row 145): row 142's
+ * scaffolding-echo detector can only mark a sentence whose bytes it can READ
+ * from the composer, and importing them from the feature into this module would
+ * be an import cycle (the feature already imports this one). Moving the
+ * literals down to the seam BOTH modules can see is what closed that gap; not
+ * one byte of the composed paragraph moved (row 141's 31 pins stay green
+ * unchanged).
+ */
+export const INTENT_LABEL = "The module's author intended: ";
+
+export const INTENT_HIERARCHY =
+  ' This steers EMPHASIS and OWNERSHIP; what the module text states is fixed, and your own charter still governs what this kind may contain.';
+
+/* -------------------------------------------------------------------------
  * The KIND ownership boundaries (docs/17 row 140 — moved here UNCHANGED)
  * ---------------------------------------------------------------------- */
 
@@ -212,6 +242,16 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   literalMarker('the "do not invent unrelated sub-plots" rule', ENTITY_SERVE_MODULE_TEXT),
   literalMarker('the location/event ownership boundary', PLACE_OWNERSHIP_BOUNDARY),
   literalMarker('the faction ownership boundary', FACTION_OWNERSHIP_BOUNDARY),
+  // The intent paragraph (docs/17 rows 141/145). TWO literal markers, one per
+  // composer constant — NOT the slotted form the entity-brief intro uses,
+  // because THIS slot is a free-text note (the module author's intent, up to
+  // 400 chars of model-written prose) and the slotted form's `[^\n"]+` slot
+  // cannot span a quote: a note reading `the "bustle" is a cover` would make
+  // the marker silently dead, which is the failure mode this file exists to
+  // prevent. A label literal is the same class of marker the context and
+  // premise labels already use.
+  literalMarker('the entity-intent label', INTENT_LABEL),
+  literalMarker('the entity-intent hierarchy sentence', INTENT_HIERARCHY),
   literalMarker('the grounding section header', GROUNDING_SECTION_HEADER),
   literalMarker('the fixed-cast section header', FIXED_CAST_SECTION_HEADER),
   literalMarker('the fixed-cast section footer', FIXED_CAST_SECTION_FOOTER),
