@@ -462,11 +462,24 @@ describe('the generation the verdict unlocks', () => {
     // The batch is async: wait for the write rather than assuming the click
     // drained it (the old fixture got away with it because the barrier below
     // held the label; nothing about the model guarantees the timing).
+    //
+    // The barrier covers the FIELD this test asserts, not merely the row's
+    // existence (docs/08-TESTING §A barrier must cover the FIELD it asserts).
+    // The row becomes observable one revision BEFORE its `module:<title>`
+    // compatibility tag: `alignEntityName` renames it per TARGET, while the tag
+    // is stamped only after the WHOLE target pool drains
+    // (`features/modules/entity-batch.ts`'s post-batch stamp loop). A wait
+    // satisfied by the rename alone therefore returned ~2 ms ahead of the
+    // stamp, and the tag assertion below raced a state the barrier did not
+    // cover — roughly one failure in 3417 under full-suite load. Asserting the
+    // tag INSIDE the wait is the pattern `entity-panel.test.tsx`'s batch pin
+    // already uses.
     const landed = await waitFor(async () => {
       const rows = (await listArtifactsByCampaign(campaign.id)).filter(
         (artifact) => artifact.name === 'Zombie',
       );
       expect(rows).toHaveLength(1);
+      expect(rows[0]?.tags).toContain('module:Ember Crypt');
       return rows;
     });
     const npc = landed[0];

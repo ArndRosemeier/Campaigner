@@ -380,6 +380,17 @@ Two shapes that were tested and RULED OUT, so they are not "fixed" by mistake:
   the cascade, so no other bare await in this test needs a wrapper. The drain
   belongs on the step that CAUSES the cascade, not on every await in the test (a
   cure that wraps everything is a cure that hides the next cause).
+- **A barrier must cover the FIELD the test asserts, not merely the row's
+  existence** (docs/17 row 132). `creature-row-resolution.test.tsx`'s
+  Library-only-npc test waited for the batch's row to EXIST and then asserted its
+  `module:<title>` tag — but the rename that makes the row observable happens per
+  TARGET (`entity-batch.ts:639`), while the tag is stamped only after the whole
+  target pool drains (`:691-703`), so the barrier returned ~2 ms early and the
+  tag assertion raced rev 3 (~1 failure in 3417 under load, 0 unloaded). Proved
+  by DELAYING the stamp loop 300 ms: RED 4/4 un-cured, GREEN 3/3 cured, GREEN 3/3
+  with the delay removed. The full mechanism, the alternative that was declined
+  and the `tail` forensics lesson are in §A barrier must cover the FIELD it
+  asserts.
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
@@ -1731,6 +1742,99 @@ the pins assert. The needle list is comment-BLIND, which is why
 `entity-batch.ts`'s historical quote of the old toast is a KNOWN holder in the
 one-composer pin ("2 of 5 npcs failed to generate" inside a doc comment) rather
 than a surprise red.
+
+### A barrier must cover the FIELD it asserts (docs/17 row 132, docs/18 §4)
+
+`tests/features/creature-row-resolution.test.tsx`'s "lands a module-owned npc of
+the exact name for a LIBRARY-only name" failed once in a full-suite run — one
+failure in 3417 tests, and 0 in the eight sequential unloaded runs the read-only
+probe took (0 in two more here). The failing assertion was the row's
+`module:Ember Crypt` tag. The cause was NOT the app: the test's barrier covered a
+state the product reaches BEFORE the field the test asserts.
+
+**The mechanism, at the base commit `0425eb4`.** Per target, the batch starts a
+run, waits for it, then aligns the row's name to the exact entity name —
+`features/modules/entity-batch.ts:639` calls `alignEntityName` (`:94`), whose
+`artifactRepo.updateArtifact` (`:111`) is the write that makes the row
+observable with the right `name`, `moduleId`, no `creatureRef` and the right
+`summary` (rev 2). The `module:<title>` compatibility tag is stamped only AFTER
+`mapConcurrency`/`mapWithConcurrency` has drained the WHOLE target pool, in the
+post-batch loop at `:691-703` (`getArtifact` `:696`, the idempotence test `:697`,
+`stampModuleOwnership` `:698`) (rev 3). Between rev 2 and rev 3 the row is
+visible without its tag. The test's barrier (`:465-471` at the base commit,
+`:477-484` once the cure's comment lines were added above it) asserted only that
+ONE row of that name exists, so it was satisfied by rev 2 — and the tag
+assertion that followed raced rev 3. Measured gap rev2→rev3
+unloaded: ~2 ms against `waitFor`'s 50 ms poll interval, hence ~1 in 3417 under
+load and 0 unloaded.
+
+**The delay experiment, both directions** (the `89e5d71` method; one suite at a
+time, `CAMPAIGNER_TEST_WORKERS=2`, output kept in full). Injected immediately
+before `const artifact = await artifactRepo.getArtifact(artifactId);` in the
+post-batch stamp loop:
+
+```ts
+await new Promise((r) => setTimeout(r, 300));
+```
+
+- **UNFIXED + delay → RED 4/4** (four sequential runs), all four
+  `AssertionError: expected [ 'undead' ] to include 'module:Ember Crypt'` at
+  `tests/features/creature-row-resolution.test.tsx:477:22`. That is the SAME
+  assertion the cure leaves at `:490` (the cure moved nothing — it added lines
+  above it), and `:477` is where every line reference in this section's forensics
+  note comes from. 300 ms and not the probe's 3000 ms on purpose: a delay longer
+  than `waitFor`'s 1000 ms default timeout reds the test by TIMEOUT, which proves
+  nothing about where the barrier stops.
+- **FIXED + the SAME delay still injected → GREEN 3/3** (7/7 tests). That is the
+  proof the barrier now covers rev 3 rather than merely ending later.
+- **Injection REMOVED → GREEN 3/3** (`git checkout --` on the file;
+  `git hash-object src/features/modules/entity-batch.ts` =
+  `645bb743d67bc1417feba04e1961e1bffbe0cb02` before and after, and `git diff`
+  empty for it).
+- **Control, unfixed and WITHOUT the injection → GREEN 2/2.** The race is latent,
+  which is exactly why it was invisible until the cause was delayed — a green run
+  is not evidence for this class in either direction.
+
+**The cure.** The tag assertion moved INSIDE the barrier (`:482`), the pattern
+`tests/features/entity-panel.test.tsx:765-771` already uses on this same batch —
+a barrier must cover the FIELD being asserted, not merely the row's existence.
+Waiting on the batch's completion signal instead was considered and declined: it
+would pin the assertion to a UI proxy for "the pool drained" (the panel's own
+label), a SECOND fact that can drift from the stamp loop, while asserting the tag
+inside the wait is a direct read of the asserted field and needs nothing new. The
+assertion stays at `:490` as well — it is the pin, and it can no longer race.
+`flushAsyncUpdates` (`:509`) and `actDrained` are NOT part of this cure: they
+drain pending React updates, and no amount of draining makes the stamp happen
+sooner.
+
+**The app is NOT changed, and the intermediate state is benign — do not "fix"
+it.** The tag is a compatibility marker whose only readers are the batch's own
+idempotence check (`entity-batch.ts:697`) and the cast re-stamp
+(`db/creatureRepo.ts:580`); no UI surface filters on it. A row that is
+module-owned from birth (`placementModuleId`, `entity-batch.ts:587-589`) and
+tagged a few milliseconds later is the designed revision order, and stamping
+earlier would buy an extra revision (or a differently-timed write) to satisfy a
+test. If that ordering ever matters to a product surface it is a design question
+with its own ledger row, never a test cure.
+
+**The same shape at the cast test (`:571-578`) is SAFE, measured rather than
+assumed, and was left untouched.** `db/creatureRepo.castCreatureAsNpc` writes
+`tags: [moduleTag]` (`:595`), `moduleId` (`:596`) and `data.creatureRef` (`:605`)
+in ONE `createArtifact` call — one transaction — so the row's existence and the
+`creatureRef` that test asserts (`:581`) become observable together, and the cast
+arm runs before any run is started (`entity-batch.ts:522-543`). Confirmed by the
+injection above: that pin stayed GREEN in all four RED runs.
+
+**The forensics lesson, which cost a separate investigation.** The original
+sighting's evidence was destroyed by piping the gate through `tail -10`, and the
+surviving tail MISATTRIBUTED the failure: **a gate tail that ends on a code-frame
+line N can be an N−2 failure, because vitest prints context lines.** A real
+`:479` failure prints its caret under 479 and continues to `:481`; the observed
+tail ended at `:479` and was a `:477` failure. This run reproduces that exact
+shape: the RED above ends its frame at `479|` with the caret under `477|` and
+prints nothing beyond — indistinguishable, in a `tail`, from a `:479` failure
+whose context line happened to be last. Hence `AGENTS.md` §Workflow: write the
+gate's raw output to a file and keep it; never pipe it through `tail`/`head`.
 
 ### Remaining gaps
 

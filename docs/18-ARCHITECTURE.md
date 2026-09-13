@@ -1862,6 +1862,27 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   a needle that fires on correct code gets deleted, so the count sentence's own
   tail is a needle instead. The needle loop short-circuits on the first match.
 
+- **The `module:<title>` compatibility tag lands only after the batch's target
+  POOL drains, by design — so a produced row is observable WITHOUT it for a few
+  milliseconds** (docs/17 row 132, docs/08 §A barrier must cover the FIELD it
+  asserts). In `features/modules/entity-batch.ts` the per-target leg renames the
+  row as soon as its own run settles (`alignEntityName`, `:639`), while the tag
+  is stamped by the post-batch loop that runs only once
+  `mapConcurrency`/`mapWithConcurrency` has drained the WHOLE pool
+  (`:691-703`). Between those two revisions the artifact is a normal,
+  module-owned row — module ownership is set from birth via
+  `placementModuleId` (`:587-589`), which is what the wiki-link resolution and
+  the post-run battlemap read — it simply does not carry the tag yet. That state
+  is BENIGN and must not be "fixed": the tag's only readers are the batch's own
+  idempotence check (`:697`) and the cast re-stamp
+  (`db/creatureRepo.ts:580`), no UI surface filters on it, and stamping earlier
+  would buy an extra revision (or a differently-timed write) for no product
+  reason. The ordering DOES cost a test barrier, and that is where it bit: a wait
+  satisfied by the rename (a row of the right name existing) does not cover the
+  tag, which is how `tests/features/creature-row-resolution.test.tsx` raced it.
+  Assert the tag INSIDE the wait — the cure there (`:482`) and the pattern
+  `entity-panel.test.tsx:765-771` already uses — never after a weaker one.
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them
