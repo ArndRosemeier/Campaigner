@@ -89,6 +89,34 @@ the paste: what the owner says he SEES ON SCREEN (one line asking that settles
 it when the distinction decides the work), or a rendered artifact we can inspect
 ourselves.
 
+## Centralization (rule 4, made mechanical)
+
+Owner-ratified: *"Always try to centralize when you see distributed code pieces
+that do basically the same. KISS principle, keep it simple."* Duplication is
+invisible when a copy is BORN — nothing fails, and each copy is correct where it
+was written — so it is caught by pins, not by discipline. Three obligations:
+
+1. **A brief names the seam it extends.** Before dispatching, find how the repo
+   already does the thing (grep, then `docs/18` §2) and name that ONE seam in the
+   brief. A writer that finds a SECOND mechanism for the same idea reports it in
+   its landing report instead of quietly adding a third; folding it in is part of
+   the change unless that is genuinely more expensive than the defect, in which
+   case the brief or the report says so plainly and leaves a note where the next
+   reader will hit it.
+2. **A centralization lands with an "exactly one" pin** — a test that goes red
+   when a second implementation appears: a source-level pin over the call sites,
+   or a DIFFERENTIAL pin running every copy against the same inputs and requiring
+   identical output. Real case this exists for: seven copies of the HTML→text
+   stripper drifted into two behaviours, one of which stored corrupted text in
+   the library, and no test could notice because no test had ever declared there
+   was one way to do it. Never centralize by prose alone.
+3. **An index entry is checkable, a decision is history.** `docs/18` §2 rows name
+   a seam and where it lives — a landing that moves or deletes one updates the
+   row in the same commit (binding, same as adding a seam). Docs that RESTATE
+   behaviour rot, so the test is the statement instead; docs that record
+   DECISIONS never rot, which is why `docs/17` works. Pointers stay honest by
+   being updated, never by being remembered.
+
 ## Workflow
 
 - Start every task at `docs/18-ARCHITECTURE.md` (the seam index: layer map,
