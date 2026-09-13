@@ -522,6 +522,10 @@ test) · ❌ gap.
 | Unclassified-name derivation (exact/case-insensitive, skips resolved names and pending proposals), append-only record merge (cap throws loudly), proposal union/dedupe | `entityNormalization.test` | ✅ |
 | The record gate holds: a name with no record has NO button (counts exclude it), and only the record unlocks the kind's button | `entity-classify-new.test`, `entity-panel.test` | ✅ |
 | The kind ownership boundary (docs/17 row 140): a `location`/`event`/`faction` brief carries the OPPOSITION-boundary paragraph LAST and still carries the module text it was handed; `npc`/`encounter`/`note` and every kind-less caller are BYTE-IDENTICAL; and the PRODUCTION seam (`runEntityBatch`) actually passes its kind | `kindOwnershipBoundary.test` (14, NEW) | ✅ |
+| The entity INTENT record field (docs/17 row 141): additive/optional with ONE spelling of absence (key absent, `null`, `''`, whitespace), a LOUD cap at 400 (never a truncation), the spine reply's `null`/missing/present round-trip, the note carried across name normalization (and two different notes refused by name), and the ONE reader `entityIntentFor` | `entity-intent.test` (15, NEW) | ✅ |
+| The intent PARAGRAPH in the brief: exact composition and position (after the ownership boundary, before `Additional instruction: …`), and a record with NO note producing the pre-field brief BYTE FOR BYTE | `entity-intent-brief.test` (11, NEW) | ✅ |
+| The intent reaches the WORKER: the batch hands the record's note to the engine's brief, a neighbour with no note stays clean, and the CHANGE/refill lane (`changeArtifact` → `runEntityBatch`) carries it as well | `entity-intent-batch.test` (5, NEW) | ✅ |
+| The spine ASKS for the note in the app's own voice (system message, bound from the same constant), the emitted contract makes `intent` REQUIRED-nullable, and the STYLE-COMPOSED prompt is untouched (every `promptStyles` classic fixture still green) | `moduleGen.test` (the spine-contract pins, extended) | ✅ |
 
 ### The creature tier (docs/17 row 106, docs/11 D5 second revision)
 
@@ -2305,6 +2309,77 @@ a byte pin on a composed string plus a plumbing pin at the seam; the behavioural
 claim rests on the owner's next regeneration (docs/17 row 140 states exactly what
 to look for). A model that ignores the paragraph produces the old output and no
 test fails.
+
+### Entity intent — the author's note that steers a detail worker (docs/17 row 141, docs/08-MODULE-DESIGNER §M4-C, docs/18 §2.2/§4)
+
+The owner asked for *"an optional hint parameter in the link to steer detail
+building"*, was shown that a name is not merely gathered from the module text but
+RECORDED as an entity, and answered *"Then that is the right place."* The note
+therefore lives on the entity RECORD (`moduleEntityKindSchema.intent`), is written
+by the spine planner for the names it invents, and reaches the detail worker as
+one paragraph of `buildEntityBrief`, immediately before the `Additional
+instruction: …` paragraph and after the kind's ownership boundary.
+
+| fact pinned | where |
+|---|---|
+| **The field is as additive as a field can be**: a record written before it parses with NO `intent` key at all, and `null`, `''` and a whitespace-only note ALL read as absent — ONE spelling of absence downstream, nothing backfilled, no default materialized | `tests/domain/entity-intent.test.ts` (4 pins, NEW) |
+| **The cap is LOUD and NAMED, never a truncation**: exactly 400 characters pass; 401 fail the zod boundary with the path `intent` and a message naming the field, the limit and the remedy — and the same failure lands on the SPINE REPLY (`entities.0.intent` through `parseSpineEntities`), which is the path a production run takes (one escalated repair retry, then the run fails loudly) | `tests/domain/entity-intent.test.ts` (`the cap is enforced by the schema, not by a truncation` + `an over-long intent in a reply fails the spine parse LOUDLY, by field and limit`, NEW) |
+| **A spine reply may spell absence as `null`** (the strict subset cannot omit a key) and a present note round-trips through the spine call's parse | `tests/domain/entity-intent.test.ts` (2 pins, NEW) |
+| **The note SURVIVES name normalization**, which replaces `module.entityKinds` a moment after the planner records it: the canonical record gains the source record's note, an ABSORBED variant still hands its note to the canonical it resolved to, a source with no note leaves the record untouched BY IDENTITY, the same note on two variants is one note, and two DIFFERENT notes are refused loudly by name (never picked) | `tests/domain/entity-intent.test.ts` (5 pins, NEW) |
+| **ONE reader**: `entityIntentFor` matches case-insensitively, trims, and returns `null` for an unknown name, a `''` note and a whitespace-only note | `tests/domain/entity-intent.test.ts` (2 pins, NEW) |
+| **The brief's exact composition**: deleting exactly the intent paragraph plus the blank line it brought from the WITH-note brief reproduces the no-note brief character for character (so the REST of the brief did not move); the paragraph sits AFTER `What this artifact OWNS — one fact, one owner:` and BEFORE the `Additional instruction: …` one, which still ends the brief | `tests/features/entity-intent-brief.test.tsx` (2 pins, NEW) |
+| **The paragraph's words are the SPEC's**, transcribed in the test rather than imported, so a reworded hierarchy sentence fails the pin | same pin (the literal) |
+| **A kind that owns its boundary (`npc`) still gets the paragraph**, in the same position | `tests/features/entity-intent-brief.test.tsx` (NEW) |
+| **BYTE-IDENTICAL when there is no note**: key absent, `null`, `''` and whitespace all `toBe` the brief built by hand with no intent, and no empty paragraph ever appears (no `\n\n\n`) | `tests/features/entity-intent-brief.test.tsx` (2 pins, NEW) |
+| **The pre-existing byte pins are UNCHANGED and GREEN**: `kindOwnershipBoundary.test.ts` (14) and `persona-request.test.ts` assert exactly the no-note briefs this landing must not move — as do `change-artifact-instruction.test.ts` and `moduleGen-cast.test.ts` | those four files, untouched, in the gate |
+| **The note is ABSENT from every reader-facing surface**, with the fixture proved NON-VACUOUS in the same pins (the note IS on the row and DOES reach the brief, so the silence means "never reads the field") | `tests/features/entity-intent-brief.test.tsx` (5 pins, NEW): `moduleDocumentText` + `assembleModulePartsDocument` (the text every export wiki-strips), the `WikiMarkdown` READER render (chips + raw-token tooltips, with the chip asserted present), `buildModuleDefinition` JSON (the module PDF document model), and the entity PANEL's own rows (`useModuleEntities` — no note field exists to print) |
+| **The batch hands the record's note to the worker**, and the note is read PER ENTITY (a neighbour with no note keeps a clean brief) | `tests/features/entity-intent-batch.test.ts` (3 pins, NEW; the engine is faked, the brief STRING is the assertion target, as `entity-batch-fixed-cast.test` does at this seam) |
+| **The CHANGE/refill lane receives it too** — the seam the owner will use to see the difference. It is covered BY CONSTRUCTION (the lane re-enters `runEntityBatch` with the module row, `change-artifact.ts:353`) AND by two explicit pins that drive the REAL `changeArtifact` seam: with a note the brief carries the paragraph, without one it carries the pre-change bytes | `tests/features/entity-intent-batch.test.ts` (2 pins, NEW) |
+| **The spine call ASKS for the note** in the app's own voice, and the emitted contract makes `intent` REQUIRED-nullable — while the STYLE-COMPOSED user prompt contains no `"intent"` at all, which is why every classic fixture under `tests/fixtures/promptStyles/` is untouched | `tests/llm/moduleGen.test.ts` (the spine-contract pins, EXTENDED in place: same test, same emitted-schema assertions, plus the intent ones) |
+
+**THE PLACEMENT OF THE REQUEST IS A MEASURED DECISION, not a style preference.**
+The clause rides the spine call's SYSTEM message (`moduleGen.SPINE_ENTITY_INTENT`)
+and not a `contract.*` value, because the spine fixtures keep their original
+"byte-identical to the pre-styles builders" meaning (docs/18 §4): a contract-value
+clause would re-render the composed spine prompt for every existing module and
+retire that provenance, and it would sit inside the owner's EDITABLE style, where
+an app contract must not live. The pin that keeps it honest is the negative half —
+`expect(userContent).not.toContain('"intent"')` — with
+`promptStyles-classic-identity.test.ts` green and all eleven fixtures byte-unchanged.
+
+**NO PRE-EXISTING PIN NEEDED NEW BYTES — measured, not assumed.** The whole
+pre-existing suite is GREEN at the changed tree with the two named brief-pin files
+untouched; the only pre-existing test file EDITED is `tests/llm/moduleGen.test.ts`,
+whose spine-contract test gained assertions about the emitted schema, the system
+message and the absence from the composed prompt (a tightening: every assertion it
+already had is still there, and the top-level property list it asserts is
+unchanged).
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed back
+with `grep -n` and `git diff --stat` checked BEFORE the run, one suite at a time at
+`CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's scratch, then restored
+from an OUT-OF-TREE copy and verified with `git hash-object` —
+`src/domain/module.ts` `598dd732102c9aac5cce2c275ac7008e73117a22` and
+`src/features/modules/persona-request.ts`
+`dc9fed3b3f002280a539553c3694be4802ccbf5a` before and after; `git checkout --`
+restores HEAD and would have destroyed this uncommitted work, so the backups were
+taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the record's note read as ABSENT** (`entityIntentFor` returns `null`): the ONE place the note is READ | `domain/module.ts:659` (`return null; // INJECTION I1`, printed back) | **RED 7 / GREEN 76** over the 7 files run (3 new + the 4 pre-existing brief-pin files). RED: the `entityIntentFor` read pin, both batch pins that expect the note, the change-lane pin, both exact-composition pins and the non-vacuity pin. GREEN: **every pre-existing brief pin** — `kindOwnershipBoundary` (14), `persona-request`, `change-artifact-instruction`, `moduleGen-cast` — i.e. the no-note bytes never notice |
+| **I2 — the paragraph itself disabled** (`intentParagraph` returns `null`): the brief's own emission | `features/modules/persona-request.ts:147` (`return null; // INJECTION I2`, printed back) | **RED 7 / GREEN 76**, and the RED set differs from I1's by exactly one pin (the direct-call `npc` pin, which passes the note positionally and never touches the record reader). GREEN: the same four pre-existing files plus the domain record file — so BOTH ends of the wiring (the read and the paragraph) are forced by a pin of their own |
+
+**UNPROVEN, stated plainly (docs/17 row 141 says what to look for).** No test can
+show that a model OBEYS the intent paragraph: every pin is a byte pin on a composed
+string plus a plumbing pin at the seam, so a model that ignores the note produces
+the old output and no test fails. No test can show that the spine RELIABLY fills the
+field either — every run in the suite mocks the transport, so "the planner, prompted
+in production, writes a useful intent" is unmeasured (the same limitation row 107
+recorded for the bestiary slot). The absence pin covers the surfaces that exist
+TODAY; it does not render the full `EntityPanel` (its row type `EntityEntry` is
+pinned to carry no note field instead), and slice B — the owner-editable field — is
+NOT built and must extend that pin when it lands.
 
 ### Remaining gaps
 

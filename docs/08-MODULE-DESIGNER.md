@@ -1371,8 +1371,25 @@ the document and every export must not show it); not a way to author the artifac
 proxy (mechanics still come from the grounded rules excerpts, and an intent cannot
 override what the module text states as fixed).
 
-**Slices.** (A) the field + the generator emitting it + the brief consuming it + the
-hierarchy text; (B) the entity-panel field and its write path. Each lands with: a pin
+**Slices.** (**A — LANDED**, docs/17 row 141: the field
+(`domain/module.moduleEntityKindSchema.intent`, capped at
+`ENTITY_INTENT_MAX_LENGTH` = 400 and folded to `undefined` for `null`/`''`/
+whitespace), the generator emitting it (the spine call's system-message clause
+`moduleGen.SPINE_ENTITY_INTENT` — NOT a style contract value, which would retire
+the pre-styles spine fixtures' provenance and could be edited away by a user
+style, docs/18 §4 — plus `intent: absentable(z.string())` on the emitted
+contract, the carry through name normalization in `withEntityBestiarySlots`, and
+the ONE reader `domain/module.entityIntentFor` at the ONE call site,
+`features/modules/entity-batch.ts`, which the batch, the automation, the stub
+popover and the change/refill lane all pass through), the brief consuming it
+(the paragraph above, rendered immediately before `buildEntityBrief`'s
+`Additional instruction: …` and after the kind's ownership boundary) and the
+hierarchy text. Absent/`null`/`''` leave the brief BYTE-IDENTICAL, a value past
+the cap fails the spine parse loudly, and the note is pinned ABSENT from the
+reader, the module document and the export document model.
+(**B — NOT LANDED**: the entity-panel field and its write path. The entity
+editor UI is untouched, nothing but `entityIntentFor` reads the field, and
+slice B must extend the absence pin when it lands.) Each lands with: a pin
 proving a record WITH intent changes the brief, a pin proving a record WITHOUT it is
 byte-identical, a loud cap refusal, and an absence pin that no reader-facing surface
 prints the intent.

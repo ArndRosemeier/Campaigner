@@ -1,5 +1,5 @@
 import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, PersonaRun } from '@/domain';
-import { bestiarySlotForEntity, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
+import { bestiarySlotForEntity, entityIntentFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -599,6 +599,16 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           // pre-boundary bytes exactly.
           kind,
           instruction,
+          // The module author's recorded intent for this entity (docs/17 row
+          // 141), read through the ONE reader (`entityIntentFor`) and rendered
+          // as the brief's own paragraph just before the instruction. `null`
+          // for every entity without a note — which is every module written
+          // before the field — leaving the brief byte-identical. This seam is
+          // the batch's, the post-generation automation's, the stub popover's
+          // single-entity delegation's AND the change/refill lane's (the change
+          // lane re-enters through `runEntityBatch` with the module row), so
+          // every detail worker receives the note by construction.
+          entityIntentFor(module.entityKinds, target.name),
         );
         // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
         // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY

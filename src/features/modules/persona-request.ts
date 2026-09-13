@@ -119,6 +119,35 @@ const OWNERSHIP_BOUNDARY_BY_KIND: Readonly<Record<StubKind, string | null>> = {
 };
 
 /**
+ * The intent paragraph's ONE form (08 §M4-C "Entity intent", docs/17 row 141):
+ * `Additional instruction: …` and this are ONE form with two sources — that one
+ * is TRANSIENT (a change request), this one PERSISTENT (the entity's recorded
+ * intent).
+ *
+ * It states its own HIERARCHY, and that sentence is load-bearing: a steering
+ * note that outranked the module text would be a second author, so the
+ * paragraph says EMPHASIS and OWNERSHIP move while what the module text states
+ * is fixed and the kind's own charter still governs what the artifact may
+ * contain (which is what keeps the ownership boundary above it binding).
+ */
+const INTENT_LABEL = "The module's author intended: ";
+
+const INTENT_HIERARCHY =
+  ' This steers EMPHASIS and OWNERSHIP; what the module text states is fixed, and your own charter still governs what this kind may contain.';
+
+/**
+ * The intent paragraph for one entity, or `null` when there is no intent — and
+ * `null`, `undefined`, `''` and a whitespace-only note ALL mean no intent, so
+ * none of them renders an empty paragraph and an entity without a note produces
+ * the brief it produced before this field existed, BYTE FOR BYTE (the same
+ * property `withAdditionalInstruction` has for an empty instruction).
+ */
+function intentParagraph(intent: string | null | undefined): string | null {
+  const note = intent?.trim() ?? '';
+  return note === '' ? null : `${INTENT_LABEL}${note}.${INTENT_HIERARCHY}`;
+}
+
+/**
  * The brief for "Generate with persona" (08 §M4-C): link name + the
  * paragraphs surrounding its occurrences (cap ~1200 chars) + module premise.
  * No numeric entity quotas — the persona details exactly this one entity.
@@ -158,6 +187,14 @@ const OWNERSHIP_BOUNDARY_BY_KIND: Readonly<Record<StubKind, string | null>> = {
  * generation, batch and automation pins the bytes it always did. The
  * instruction only ever ADDS a paragraph: the name-verbatim rule below and the
  * rest of the charter still govern, and a reply that violates them fails loud.
+ *
+ * `intent` is the module author's recorded note about what this entity is FOR
+ * (docs/17 row 141), read off the module's entity RECORD by the CALLER through
+ * `domain/module.entityIntentFor` — the ONE read of that field — and rendered
+ * as its own paragraph immediately BEFORE the `Additional instruction: …` one,
+ * after the ownership boundary. Absent/`null`/`''` render NOTHING and leave the
+ * brief byte-identical, pinned by `tests/features/persona-request.test.ts` and
+ * `tests/llm/kindOwnershipBoundary.test.ts` as they stood before this field.
  */
 export function buildEntityBrief(
   name: string,
@@ -168,6 +205,7 @@ export function buildEntityBrief(
   encounterScene = false,
   kind?: StubKind,
   instruction = '',
+  intent: string | null | undefined = null,
 ): string {
   const contextLabel = encounterScene
     ? 'The scene this encounter must stage — whatever it states about the opposition and the place is FIXED, and the roster and the map must match it:'
@@ -188,6 +226,11 @@ export function buildEntityBrief(
       // instruction a location otherwise obeys by retelling the fight it was
       // handed (docs/17 row 140).
       kind === undefined ? null : OWNERSHIP_BOUNDARY_BY_KIND[kind],
+      // The author's own note LAST of the body — immediately before the
+      // transient `Additional instruction: …` paragraph the seam below appends,
+      // and AFTER the boundary so the boundary still closes the charter it
+      // qualifies (docs/17 rows 140/141).
+      intentParagraph(intent),
     ]
       .filter((part) => part !== null)
       .join('\n\n'),

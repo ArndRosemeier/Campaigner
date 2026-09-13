@@ -7,6 +7,7 @@ import {
   encounterFloorPerPart,
   encounterFloorTotal,
   ENTITY_KINDS,
+  ENTITY_INTENT_MAX_LENGTH,
   entityBestiarySlotSchema,
   entityKindFor,
   moduleCreationPool,
@@ -468,11 +469,12 @@ async function runSpinePass(
         );
         // Spine-time verdicts map names only — the records are the canonical
         // form of the planner's own entity list. The planner's BESTIARY slots
-        // are carried onto them by name (docs/17 row 107): the normalization
-        // reply answers which canonical name each listed name refers to and
-        // knows nothing about casting, so the request the model already made
-        // rides through the substitution rather than being dropped with the
-        // variant-keyed records it was written on.
+        // (docs/17 row 107) and its entity INTENT notes (docs/17 row 141) are
+        // carried onto them by name: the normalization reply answers which
+        // canonical name each listed name refers to and knows nothing about
+        // either, so what the model already recorded rides through the
+        // substitution rather than being dropped with the variant-keyed records
+        // it was written on.
         normalizedKinds = withEntityBestiarySlots(canonicalEntityRecords(verdicts), nextKinds);
       }
       const saved = await patchModule(moduleId, {
@@ -584,12 +586,21 @@ const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSche
  * (strictSchema.ts) — so `absentable` is what lets a reply that asks for NO
  * cast answer `"bestiary": null` and still land on the stored `T | undefined`
  * shape. Both spellings read the same: no cast.
+ *
+ * `intent` (docs/17 row 141) is spelled the same way for the same reason: the
+ * strict subset cannot express an ABSENT key, so a planner with nothing to say
+ * about an entity answers `"intent": null`, which lands on the record's
+ * `undefined` — one meaning ("no note"), one spelling in the contract. The
+ * LENGTH cap is the record schema's (`ENTITY_INTENT_MAX_LENGTH`), because the
+ * strict subset strips `maxLength`; the spine clause states the same number to
+ * the model, so the prompt and the boundary cannot disagree.
  */
 const modelEntityKindSchema = z.object({
   name: z.string().trim().min(1),
   kind: z.enum(ENTITY_KINDS),
   absorbed: z.array(z.string()).default([]),
   bestiary: absentable(entityBestiarySlotSchema),
+  intent: absentable(z.string()),
 });
 
 /**
@@ -878,6 +889,38 @@ async function priorModulesOf(module: Module, override?: boolean): Promise<Modul
   return modules.filter((candidate) => candidate.id !== module.id);
 }
 
+/**
+ * The spine call's own request for the entity INTENT note (08 §M4-C "Entity
+ * intent", docs/17 row 141): the author's hint about what an entity he invents
+ * is FOR, which the detail worker that fills the name in could not otherwise
+ * know. It is asked for the names the planner INVENTS, only where there is
+ * something to say, and `null` everywhere else.
+ *
+ * WHY IT RIDES THE SPINE CALL'S SYSTEM MESSAGE AND NOT THE STYLE-COMPOSED
+ * PROMPT. The composed prompt is the STYLE layer: its contract values are
+ * injected into the owner's editable template, and every byte of the classic
+ * composition is pinned against fixtures captured from the PRE-STYLES builders
+ * (`tests/llm/promptStyles-classic-identity.test.ts`, docs/18 §4) — a clause
+ * added to a contract value would break that provenance for every existing
+ * module, and it would also be editable away by a user style, which an app
+ * contract must not be. The system message is the app's own voice ("Always
+ * answer in the exact JSON format requested") and carries the reply-format
+ * addition the strict decoder requires: `intent` is a REQUIRED-nullable property
+ * in the emitted schema, so the model must be told the key exists.
+ *
+ * The number comes from `ENTITY_INTENT_MAX_LENGTH` — the SAME constant the
+ * record schema enforces — so the prompt can never ask for a note the boundary
+ * then refuses.
+ */
+const SPINE_ENTITY_INTENT =
+  ` Every entity entry ALSO carries "intent": a short note of your OWN intent for a name you invent — ` +
+  `what this place, person, faction or fight is FOR, and which reading of the name you meant — where a ` +
+  `detail writer could not tell it from the text alone (at most ${String(ENTITY_INTENT_MAX_LENGTH)} ` +
+  `characters, one or two sentences). Write it only where you have something to say beyond the name and its ` +
+  `kind, and answer "intent": null for every other entity. It is your AUTHORING note, not a summary of the ` +
+  `entity, not a substitute for the module text and never a description of what the artifact should contain ` +
+  `in place of the story; it steers emphasis, it does not overrule the text. It is never shown to a reader.`;
+
 async function spineMessages(
   module: Module,
   campaign: Campaign,
@@ -952,7 +995,8 @@ async function spineMessages(
       content:
         'You are the Module Architect, an expert adventure designer for tabletop RPGs. ' +
         'You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. ' +
-        'Always answer in the exact JSON format requested. Never include commentary outside the JSON.',
+        'Always answer in the exact JSON format requested. Never include commentary outside the JSON.' +
+        SPINE_ENTITY_INTENT,
     },
     { role: 'user', content: composed.text },
   ];
@@ -2319,11 +2363,12 @@ async function applyNormalizationVerdict(
   }
 
   // The pass's own canonical records, carrying any BESTIARY slot the model
-  // asked for onto the canonical name it landed on (docs/17 row 107) — the
-  // FULL pass answers the records that replaced the planner's list, and on an
-  // INCREMENTAL run the module's existing records keep their bytes
+  // asked for (docs/17 row 107) and any entity INTENT note the records hold
+  // (docs/17 row 141) onto the canonical name they landed on — the FULL pass
+  // answers the records that replaced the planner's list, and on an INCREMENTAL
+  // run the module's existing records keep their bytes
   // (`mergeNewEntityRecords`) while the new ones are freshly classified names
-  // that carry no slot of their own.
+  // that carry no slot and no note of their own.
   const canonical = withEntityBestiarySlots(canonicalEntityRecords(verdicts), module.entityKinds);
   const records =
     mode === 'incremental' ? mergeNewEntityRecords(module.entityKinds, canonical) : canonical;

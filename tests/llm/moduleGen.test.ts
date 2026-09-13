@@ -359,7 +359,29 @@ describe('runSpine', () => {
     expect(Object.keys(spineSchema?.properties ?? {})).not.toContain('writerModel');
     expect(messages[0]?.role).toBe('system');
     expect(messages[0]?.content).toContain('Module Architect');
+    // The entity INTENT note (docs/17 row 141): the emitted strict contract must
+    // let a planner EXPRESS it, and since the strict subset has no "optional" the
+    // property is REQUIRED and NULLABLE — `null` is the planner's "nothing to say
+    // about this one".
+    const entitiesSchema = (
+      spineSchema?.properties as
+        | { entities?: { items?: { properties?: Record<string, unknown>; required?: string[] } } }
+        | undefined
+    )?.entities?.items;
+    expect(Object.keys(entitiesSchema?.properties ?? {})).toContain('intent');
+    expect(entitiesSchema?.required).toContain('intent');
+    expect(entitiesSchema?.properties?.intent).toMatchObject({ type: ['string', 'null'] });
+    // The REQUIREMENT is asked for in the app's own voice — the spine call's
+    // system message — and NOT in the style-composed prompt, whose classic bytes
+    // stay pinned against fixtures captured from the PRE-STYLES builders
+    // (tests/llm/promptStyles-classic-identity.test.ts, docs/18 §4). The bound is
+    // the record schema's own constant (ENTITY_INTENT_MAX_LENGTH), so the prompt
+    // cannot ask for a note the boundary then refuses.
+    expect(messages[0]?.content).toContain('"intent"');
+    expect(messages[0]?.content).toContain('400 characters');
+    expect(messages[0]?.content).toContain('"intent": null');
     const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
+    expect(userContent).not.toContain('"intent"');
     expect(userContent).toContain('Module concept: A harbor bell that rings by itself beneath the water.');
     expect(userContent).toContain('Party levels 1–3');
   }, 20000);

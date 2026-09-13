@@ -397,6 +397,16 @@ export const entityBestiarySlotSchema = z.object({
 export type EntityBestiarySlot = z.infer<typeof entityBestiarySlotSchema>;
 
 /**
+ * How long an entity's author's-intent note may be (08 §M4-C "Entity intent",
+ * docs/17 row 141). ONE constant: the record schema refuses anything past it and
+ * the spine clause states the SAME number to the model, so the prompt can never
+ * promise a length the boundary then rejects (AGENTS rule 4). The cap is a
+ * steering note, not a draft — it bounds the note, and a value past it is a LOUD
+ * validation failure, never a silent truncation (AGENTS rules 1/3).
+ */
+export const ENTITY_INTENT_MAX_LENGTH = 400;
+
+/**
  * One model-recorded entity type: a wiki-link name and its kind.
  *
  * Rows written before the conflict-kind vocabulary was retired may still carry
@@ -435,27 +445,78 @@ export const moduleEntityKindSchema = z.object({
    */
   bestiary: z
     .preprocess((value) => (value === null ? undefined : value), entityBestiarySlotSchema.optional()),
+  /**
+   * The module author's note about what this entity is FOR — the hint that
+   * steers the detail worker which fills the name in (08 §M4-C "Entity intent",
+   * docs/17 row 141).
+   *
+   * ADDITIVE and OPTIONAL, exactly as strictly additive as `bestiary` above: a
+   * record written before the field, the model's own `"intent": null` (the
+   * strict contract's spelling of "nothing to say") and an empty string ALL read
+   * as "no intent" — the preprocessor folds `null`, `''` and a whitespace-only
+   * value to `undefined`, so there is ONE spelling of absence downstream, nothing
+   * is backfilled and no default is materialized onto rows that predate the
+   * question. Every existing assertion about a record's shape
+   * (`{ name, kind, absorbed }`) stays true.
+   *
+   * BOUNDED to a steering note, not a draft: `ENTITY_INTENT_MAX_LENGTH` is
+   * enforced HERE, at the boundary that parses both the model's spine reply and
+   * every stored row — a longer value is a validation ERROR that fails the run
+   * loudly (AGENTS rules 1/3), never a silent truncation. The strict JSON
+   * contract cannot carry the bound (its subset strips `maxLength`), which is why
+   * the spine clause states the same number to the model.
+   *
+   * It is an AUTHORING note, never printed on a surface a reader sees: the
+   * reader, the canvas, the module document and every export read prose, and the
+   * only consumer of this field is `buildEntityBrief` (via `entityIntentFor`
+   * below). Slice (B) — the owner's editable field in the entity panel — is NOT
+   * built; nothing else may read it.
+   */
+  intent: z.preprocess(
+    (value) => {
+      if (value === null) return undefined;
+      if (typeof value !== 'string') return value;
+      const note = value.trim();
+      return note === '' ? undefined : note;
+    },
+    z
+      .string()
+      .max(ENTITY_INTENT_MAX_LENGTH, {
+        // Loud and NAMED (AGENTS rules 1/3): the reason says which field, which
+        // limit, and that shortening is the remedy — never a truncation.
+        message: `an entity's intent is a steering note of at most ${String(ENTITY_INTENT_MAX_LENGTH)} characters — shorten it, it is never truncated`,
+      })
+      .optional(),
+  ),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
 
 /**
- * Carries the model's bestiary slots onto the CANONICAL records a name
- * normalization pass produces (docs/17 row 107).
+ * Carries the model-RECORDED fields the normalizer cannot know about onto the
+ * CANONICAL records a name normalization pass produces (docs/17 row 107; the
+ * author's intent, docs/17 row 141).
  *
- * The normalization reply describes names and canonicals; it knows nothing
- * about casting, and it must not have to — so the pass records the canonical
- * names+kind ("records: `module.entityKinds` is REPLACED with these —
- * never merged into the previous variant-keyed records") and this helper
- * restores the REQUEST the model already made. Matching is exact and
- * case-insensitive over the record's own name plus every `absorbed` variant,
- * the same comparison the normalization pass itself is allowed to use; a name
- * whose spelling the pass canonicalized keeps its request, because the variant
- * it was written under still resolves to that canonical.
+ * The name is HISTORICAL: the helper was written for the bestiary slot and now
+ * carries the entity's `intent` too, because the reason is the same for both —
+ * and a second carry function would be a second mechanism for one idea (AGENTS
+ * rule 4). Both fields are the MODEL's own record, written on the variant-keyed
+ * records the reply produced; the normalization reply answers which canonical
+ * name each listed name refers to and knows nothing about either, so the
+ * requests the model already made ride through the substitution rather than
+ * being dropped with the records they were written on. Without this the spine
+ * pass would record an intent and the very next pass (name normalization,
+ * `moduleGen.normalizeAndSave`) would silently delete it.
  *
- * LOUD, never a pick (AGENTS rule 1): two source records answering one
- * canonical with DIFFERENT creatures is a state the normalizer cannot have
- * meant, and quietly choosing one would silently re-stat an entity.
+ * Matching is exact and case-insensitive over the record's own name plus every
+ * `absorbed` variant, the same comparison the normalization pass itself is
+ * allowed to use; a name whose spelling the pass canonicalized keeps its request,
+ * because the variant it was written under still resolves to that canonical.
+ *
+ * LOUD, never a pick (AGENTS rule 1): two source records answering one canonical
+ * with DIFFERENT creatures — or with two different intents — is a state the
+ * normalizer cannot have meant, and quietly choosing one would silently re-stat
+ * or silently re-steer an entity.
  */
 export function withEntityBestiarySlots(
   records: readonly ModuleEntityKind[],
@@ -480,7 +541,16 @@ export function withEntityBestiarySlots(
       if (slot === undefined) continue;
       if (!found.some((existing) => sameSlot(existing, slot))) found.push(slot);
     }
-    if (found.length === 0) return record;
+    // The author's intents the same source records carry (docs/17 row 141):
+    // exact, trimmed equality — two spellings of one note are one note, two
+    // different notes about one entity are a contradiction.
+    const intents: string[] = [];
+    for (const entry of contributing) {
+      const note = entry.intent?.trim();
+      if (note === undefined || note === '') continue;
+      if (!intents.includes(note)) intents.push(note);
+    }
+    if (found.length === 0 && intents.length === 0) return record;
     if (found.length > 1) {
       // Two source records answer ONE canonical with different creatures: the
       // normalizer cannot have meant that, and picking one would silently
@@ -490,7 +560,19 @@ export function withEntityBestiarySlots(
           `creatures (${found.map((slot) => `«${slot.creature}»`).join(' and ')}) — one entity cannot be cast twice`,
       );
     }
-    return { ...record, bestiary: found[0] };
+    if (intents.length > 1) {
+      // The same rule for the author's note: it steers what this entity is FOR,
+      // so two of them are two different entities wearing one name.
+      throw new Error(
+        `entity intent: «${record.name}» was given two different author's notes ` +
+          `(${intents.map((note) => `«${note}»`).join(' and ')}) — one entity has one intent`,
+      );
+    }
+    return {
+      ...record,
+      ...(found[0] === undefined ? {} : { bestiary: found[0] }),
+      ...(intents[0] === undefined ? {} : { intent: intents[0] }),
+    };
   });
 }
 
@@ -550,6 +632,31 @@ export function bestiarySlotForEntity(
   const target = name.trim().toLowerCase();
   if (target === '') return null;
   return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.bestiary ?? null;
+}
+
+/**
+ * The author's-intent note the module RECORDED for one entity name, read back
+ * at the moment its detail brief is built (08 §M4-C "Entity intent", docs/17 row
+ * 141). `null` when the name has no record or its record carries no note —
+ * which is every module written before the field, every `null` the model
+ * answered, and every `''`. ONE read, so the batch, the post-generation
+ * automation, the stub popover's single-entity delegation and the change/refill
+ * seam can never disagree about which note an entity carries (AGENTS rule 4):
+ * they all reach the brief through `buildEntityBrief`.
+ *
+ * The schema above already folds `null`/`''`/whitespace to `undefined`; the
+ * empty check is repeated here because a record may be built in code without
+ * passing that parse, and `''` must read as NO INTENT rather than as an empty
+ * paragraph on the brief (the byte-identical rule).
+ */
+export function entityIntentFor(
+  entityKinds: readonly ModuleEntityKind[],
+  name: string,
+): string | null {
+  const target = name.trim().toLowerCase();
+  if (target === '') return null;
+  const value = entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.intent?.trim();
+  return value === undefined || value === '' ? null : value;
 }
 /**
  * The module canvas chat thread (08-MODULE-DESIGNER §Module canvas chat,
