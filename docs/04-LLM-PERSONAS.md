@@ -290,6 +290,29 @@ step LOUDLY with the debris named in the issues (review pause under
 manual/review, run failure under `auto`), and nothing persists. Never
 repair-and-continue, never a placeholder.
 
+**Prompt-scaffolding echo (the prompt we SENT must never come back as content).**
+The brief and the schema-repair prompts are OURS, verbatim, and a model
+intermittently echoes one of them back into the text it was asked to write — the
+owner found *"The artifact \"name\" field must be exactly \"Nisselkraut\" —
+verbatim, with no epithets, titles, or additions (put those in the body). Do not
+invent unrelated sub-plots; make this entity serve the module text. Campaign
+grounding (derived from wiki-links): -"* PRINTED in a generated artifact. Every
+fixed sentence and section label a brief or a repair prompt is built from is
+therefore exported from ONE module (`src/llm/promptScaffolding.ts`), the
+composers (`features/modules/persona-request`, `llm/runEngine`'s repair turns,
+`llm/moduleGen`'s spine/part repair turns, `llm/roomBudget`'s fixed-cast
+section, `llm/campaignGrounding`'s section header) render those constants, and
+`findScaffoldingEcho` matches the SAME constants — so a reworded sentence
+changes what is sent and what is detected in one edit, and a hand-copied second
+list cannot rot. `llm/generatedTextHygiene.generatedTextIssuesForFields` is the
+ONE persist-boundary scan and runs BOTH mechanical defect classes over
+reader-visible text (escape debris, and this echo): a hit rejects the artifact's
+finalize step, fails the module part, or throws out of `parseSpine` into the
+spine's existing one-repair turn. Never strip the sentence and keep going, never
+a placeholder — this is detection, not a rewrite. Identity fields (`name`,
+`aliases`, `tags`, `id`) are out of scope by construction: they are link targets
+and filter metadata, not prose.
+
 ### Autonomy semantics
 
 After each step completes:

@@ -4,6 +4,7 @@ import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from
 import { creatureRefIsEmpty, npcCreatureRef } from '@/domain';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { parseLevelSort } from '@/llm/encounterRoster';
+import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
 import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
@@ -570,11 +571,7 @@ export function fixedCastSectionFor(cast: readonly FixedCastMember[]): string | 
       : `- "${member.name}" (${member.summary}): use these stats as-is — embed them as this monster's ` +
         `complete inline "statBlock" (never substitute a generic equivalent):\n${JSON.stringify(member.statBlock)}`,
   );
-  return [
-    'Fixed cast — these named participants MUST appear in this encounter roster (one roster entry each, exact names):',
-    ...lines,
-    'Design the REST of the roster as usual — only the fixed cast above is pinned.',
-  ].join('\n');
+  return [FIXED_CAST_SECTION_HEADER, ...lines, FIXED_CAST_SECTION_FOOTER].join('\n');
 }
 
 /**

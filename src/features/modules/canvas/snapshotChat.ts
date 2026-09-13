@@ -9,7 +9,7 @@ import {
 } from '@/llm/canvasChat';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import { getModule } from '@/db/moduleRepo';
-import { debrisIssuesForFields } from '@/lib/encodingHygiene';
+import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
   useCanvasChatStore,
@@ -136,9 +136,11 @@ export function applyChatCommandsToSnapshot(input: {
   };
 
   for (const command of input.commands) {
-    const issues = debrisIssuesForFields([{ field: 'replace', text: command.replace }]);
+    const issues = generatedTextIssuesForFields([{ field: 'replace', text: command.replace }]);
     if (issues.length > 0) {
-      outcomes.push(failedOutcome(command, `escape debris in the replace text — ${issues.join('; ')}`));
+      outcomes.push(
+        failedOutcome(command, `unusable generated text in the replace text — ${issues.join('; ')}`),
+      );
       continue;
     }
     if (command.search.trim() === '') {

@@ -59,7 +59,12 @@ import { absentable } from '@/llm/schemas';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, resolveWikiLink, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
-import { debrisIssuesForFields } from '@/lib/encodingHygiene';
+import { documentTextFields, generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import {
+  MODULE_PREMISE_LABEL,
+  PART_TOO_SHORT_REPAIR_SENTENCE,
+  SCHEMA_REPAIR_LEAD_IN,
+} from '@/llm/promptScaffolding';
 // The engine triggers the module's own post-generation automation (the
 // unattended paths have no UI to do it); the orchestrator never imports this
 // module, so the direction stays acyclic.
@@ -413,7 +418,7 @@ async function runSpinePass(
           ...messages,
           {
             role: 'user',
-            content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
+            content: `${SCHEMA_REPAIR_LEAD_IN} ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
           },
         ],
         {
@@ -564,9 +569,24 @@ async function runSpinePass(
   }
 }
 
-/** Parses + validates the spine from model output (shared JSON-reply boundary). */
+/** Parses + validates the spine from model output (shared JSON-reply boundary).
+ *
+ * The reply is DOCUMENT text — `premise`, `themes` and every `partPlan` entry
+ * are printed for the reader — so it passes the SAME generated-text hygiene
+ * scan every other persisting boundary runs (docs/17 row 142): escape debris
+ * and OUR OWN prompt scaffolding echoed back (a spine prompt's section label or
+ * rule sentence arriving as premise prose). A hit THROWS here, which is the
+ * spine's own existing bound: `runSpine`'s one invalid-JSON repair turn names
+ * the issue back to the model, and a second reply that still carries it fails
+ * the module LOUDLY (never a silently persisted premise). */
 export function parseSpine(raw: string): ModuleSpine {
-  return moduleSpineSchema.parse(parseJsonReply(raw));
+  const spine = moduleSpineSchema.parse(parseJsonReply(raw));
+  const fields = documentTextFields(spine, 'spine');
+  const issues = generatedTextIssuesForFields(fields, fields);
+  if (issues.length > 0) {
+    throw new Error(`the spine reply was rejected — ${issues.join('; ')}`);
+  }
+  return spine;
 }
 
 /** The pass-0 entity record schema ({ entities: [{ name, kind }] }). */
@@ -1620,26 +1640,29 @@ export async function generatePart(
       options,
     );
     const markdown: string = called.markdown;
-    // Escape-debris hygiene backstop (18-ARCHITECTURE seam): generated part
+    // Generated-text hygiene backstop (18-ARCHITECTURE seam): generated part
     // prose is already-decoded stored text — a `?xx` tail or literal
-    // `\uXXXX` in it is mangled output, never content. The part fails with
-    // the debris named (existing failed semantics: the chain continues, the
-    // user retries) — debris is never persisted as a ready part.
-    const debrisIssues = debrisIssuesForFields([{ field: `part ${String(planIndex + 1)}`, text: markdown }]);
-    if (debrisIssues.length > 0) {
-      const debrisMessage =
-        `Part text contains escape debris (${debrisIssues.join('; ')}) — ` +
-        'half-formed unicode escape in generated prose; refusing to persist. Retry the part.';
+    // `\uXXXX` in it is mangled output, never content, and OUR OWN prompt
+    // scaffolding echoed back into the part is the same class of defect
+    // (docs/17 row 142). The part fails with the defect named (existing failed
+    // semantics: the chain continues, the user retries) — never persisted as a
+    // ready part.
+    const partField = { field: `part ${String(planIndex + 1)}`, text: markdown };
+    const hygieneIssues = generatedTextIssuesForFields([partField], [partField]);
+    if (hygieneIssues.length > 0) {
+      const hygieneMessage =
+        `Part text is not persistable (${hygieneIssues.join('; ')}) — ` +
+        'generated prose carrying escape debris or our own prompt scaffolding is a defect, not content; refusing to persist. Retry the part.';
       await setPart({
         planIndex,
         markdown: '',
         status: 'failed',
-        errorMessage: debrisMessage,
+        errorMessage: hygieneMessage,
         edited: false,
         writerModel: carriedWriterModel,
         origin: carriedOrigin,
       });
-      throw new Error(debrisMessage);
+      throw new Error(hygieneMessage);
     }
     await setPart({
       planIndex,
@@ -1837,7 +1860,7 @@ async function partCall(
     const retry = await chat(
       [
         ...messages,
-        { role: 'user', content: 'Your previous reply was too short. Write the full part now.' },
+        { role: 'user', content: PART_TOO_SHORT_REPAIR_SENTENCE },
       ],
       {
         model: repairModel(model, settings),
@@ -1910,7 +1933,7 @@ function normalizationMessages(
       ? null
       : `Entity names already recorded for this module (canonical spellings — a new name that refers to one of these entities maps onto that exact spelling):\n${recorded.join('\n')}`;
   const instruction = [
-    `Module premise for context:\n${premise}`,
+    `${MODULE_PREMISE_LABEL}\n${premise}`,
     'For each entity name below, decide which canonical entity it refers to.',
     index,
     recordedIndex,

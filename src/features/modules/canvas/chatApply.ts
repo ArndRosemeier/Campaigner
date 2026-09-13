@@ -3,7 +3,7 @@ import type { EditorView } from '@codemirror/view';
 import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import type { CanvasEditCommand } from '@/llm/canvasChat';
 import { resolveCanvasEditAcrossParts } from '@/llm/canvasChat';
-import { debrisIssuesForFields } from '@/lib/encodingHygiene';
+import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
   type CanvasChatOutcome,
@@ -119,11 +119,14 @@ export function applyChatCommandsToDocument(input: {
     splitPartsDocument(view.state.doc.toString(), input.partPlan);
 
   for (const command of input.commands) {
-    // Encoding-hygiene debris scan (canvasRefine parity): a hit fails the
-    // command LOUDLY naming the debris — never silent repair.
-    const issues = debrisIssuesForFields([{ field: 'replace', text: command.replace }]);
+    // Generated-text hygiene scan (canvasRefine parity): escape debris OR our
+    // own prompt scaffolding echoed back fails the command LOUDLY, named —
+    // never silent repair (docs/17 row 142).
+    const issues = generatedTextIssuesForFields([{ field: 'replace', text: command.replace }]);
     if (issues.length > 0) {
-      outcomes.push(failedOutcome(command, `escape debris in the replace text — ${issues.join('; ')}`));
+      outcomes.push(
+        failedOutcome(command, `unusable generated text in the replace text — ${issues.join('; ')}`),
+      );
       continue;
     }
     if (command.search.trim() === '') {

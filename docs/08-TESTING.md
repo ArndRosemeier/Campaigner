@@ -508,6 +508,8 @@ test) · ❌ gap.
 | Row 105's pins are REVERT-PROVEN, one revert at a time, each file restored byte-identical (`md5sum -c`): the leak restored in `markdownToDisplayText` → 8 named pins fail (7 in `wiki-raw-export.test` + the split pin in `pdfExport.test`), the GM-notes one printing `expected 'He guards the gate…' / received 'He guards [[Encounter:Ash Gate\|the gate]] …'`; the GM body site alone reverted → 2 fail (its own pin + the parity pin) while the handout pin passes; the handout site alone reverted → the mirror image. NON-VACUITY INJECTIONS: a naive `\[\[\|\]\]` bracket strip (drops the display half) → 7 pins fail including the literal pin; `display ?? name` without the trim → 5 fail on `[[Kael\|  the smith  ]]` | the three files above; the proofs are the measured run log in docs/17 row 105 | ✅ |
 | That arc's pins are REVERT-PROVEN and the non-vacuity injection is real: carrier removed → 9 named pins fail across 4 files; a name+display RECONSTRUCTION → 7 pins fail naming both strings; the token appended instead of leading → 6 pins fail; the existing information dropped → 8 pins fail; every file restored byte-identical (`md5sum -c`) between proofs | the four files above; the proofs are the measured run log in docs/17 row 100 | ✅ |
 
+| Prompt scaffolding echoed back as CONTENT is refused at the boundary that would persist it (docs/17 row 142): the three markers in the owner's report are caught at the entity finalize, at the module part write and at the spine parse, each naming the marker AND the field with nothing persisted; the literals come from ONE source shared with the composers; and ordinary prose that merely uses the same words stays green | `scaffoldingEcho.test` (30, NEW) | ✅ |
+
 ### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
 
 | Surface | Covered by | State |
@@ -2380,6 +2382,67 @@ recorded for the bestiary slot). The absence pin covers the surfaces that exist
 TODAY; it does not render the full `EntityPanel` (its row type `EntityEntry` is
 pinned to carry no note field instead), and slice B — the owner-editable field — is
 NOT built and must extend that pin when it lands.
+
+### Prompt scaffolding echoed back into a document (docs/17 row 142, docs/18 §2.2/§4)
+
+The owner found OUR OWN brief printed in a generated artifact — *"The artifact
+\"name\" field must be exactly \"Nisselkraut\" — verbatim, with no epithets,
+titles, or additions (put those in the body). Do not invent unrelated
+sub-plots; make this entity serve the module text. Campaign grounding (derived
+from wiki-links): -"*. Those are three of the sentences WE send: two paragraphs
+of `buildEntityBrief` and `campaignGrounding.GROUNDING_SECTION_HEADER`. A model
+echoed its instructions and no seam had ever compared generated text against the
+prompt that produced it, so the echo validated as a normal draft and finalize
+wrote it into the artifact the owner reads. The fix is a MECHANICAL detector
+(the strings are ours, so membership is decidable — no classifier, docs/18 §4),
+ONE source for the literals (compose and detect read the same constants, AGENTS
+rule 4), and a LOUD failure at every boundary that would persist reader-visible
+text — never a strip, never a placeholder.
+
+Its own function is one seam: `generatedTextHygiene.generatedTextIssuesForFields`
+carries escape debris (its historic scope) AND this echo, so a boundary cannot
+silently lose half the check.
+
+| fact pinned | where |
+|---|---|
+| **The three markers the OWNER reported are caught at the REAL finalize seam**, each naming the marker and `draft.body`, with no artifact created and no result link — plus the two further brief literals (the module-premise label and the row-140 ownership boundary) through the same `it.each` | `tests/llm/scaffoldingEcho.test.ts` (5 pins, NEW) |
+| **The MODULE path passes the SAME seam**: `parseSpine` throws on a spine `premise` that echoes the scaffolding (naming `spine.premise` — the throw lands in the spine's existing one-repair turn, which is the bounded retry), and a module PART whose prose echoes it is written `failed` with the marker named and its markdown NEVER stored | `tests/llm/scaffoldingEcho.test.ts` (2 pins, NEW) |
+| **The literals are ONE source** — the pin that fails if a composer's label and the detector's marker diverge: the composed brief is ITSELF detected, against the exact expected label set (a composer that stops reading a shared constant reds it) | `tests/llm/scaffoldingEcho.test.ts` (`the brief we SEND is itself scaffolding…`, NEW) |
+| **Every shared literal is DETECTED on its own** (12 pins, `it.each` over the constants the composers render): a marker that could not fire is a marker nobody would notice going dead | same file (`every shared literal is DETECTED on its own…`, NEW) |
+| **The marker set is the owner's own bytes**: the constants the reporters quoted are pinned byte-exact, so the detector cannot be watching something the model was never sent | same file (`the literals the OWNER saw are markers, byte-exact`, NEW) |
+| **FULL literal, never a fragment** — a truncated run of a marker's own words does not fire | same file (`matches the FULL literal…`, NEW) |
+| **NO FALSE POSITIVES**: ordinary prose about the same subjects (\"The GM should not invent new factions…\", \"Do not invent unrelated sub-plots for the party to chase…\", \"Where it is mentioned twice…\", \"The party is level 3…\") yields NOTHING | same file (`a generically similar sentence…`, NEW — GREEN, the brief's rule 4) |
+| **Identity fields are out of scope by construction**: `documentTextFields` keeps `body` and `monsters[].notes` and drops `name`, `aliases` and `tags` | same file (`identity fields are NOT this seam's business…`, NEW) |
+| **The brief is BYTE-IDENTICAL to the base commit** after the literals moved: three argument sets (context-free, encounter, location with its ownership boundary) compared against a FROZEN `JSON.stringify` of the BASE module's own output at `d94d4e9` | same file (3 pins, NEW) |
+| **SCAN — no boundary may call the debris half directly** (it would drop the scaffolding half): `debrisIssuesForFields(` appears only in its own definition and in the aggregate, over `src/**`; and the six boundaries that persist reader-visible text all call the aggregate | same file (2 SCAN pins, NEW) |
+
+**REVERT-PROVEN** (I1, applied to the exact executing line, printed back and
+`git diff --stat` checked BEFORE the run; the clean-set run of the same 13 files
+was `230 tests`, 0 failures (the three entity-intent test files row 141
+landed concurrently are IN that set); one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`,
+raw output kept in the slice's scratch, then restored from an OUT-OF-TREE copy —
+NEVER `git checkout --`, which restores HEAD and would have destroyed this
+uncommitted work):
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the DETECTOR DISABLED** (`for (const marker of SCAFFOLDING_MARKERS.slice(0, 0))` — the loop reads no marker, nothing else touched) | `src/llm/promptScaffolding.ts:249` (the injected line, printed back) | **RED 21 / GREEN 209.** RED: EXACTLY the pins that assert detection — the one-source pin, the other-brief-shapes pin, the 12 per-literal detection pins, the 5 entity `it.each` pins, the spine pin, the part pin. GREEN: all **200 OTHER tests in the same run** — escape-debris finalize and module part, the brief byte pins, the 14 row-140 boundary pins, canvas refine, canvas chat changes, the module plan, module canvas, the encoding-hygiene unit tests, and the three entity-intent files row 141 landed concurrently — so the check disturbs NO unrelated pin; plus the 9 pins in the new file that do not assert detection (the byte-exact literals, the fragment pin, the false-positive pin, the identity-field pin, the three frozen-byte pins and the two SCAN pins — the SCANs read source TEXT, so a behaviour injection cannot red them, by design) |
+
+Restored byte-identically and proved with `git hash-object`
+(`src/llm/promptScaffolding.ts` `7fbdcbcecb0b2d37f6db5637c5947f964364938e` before
+and after).
+
+**UNPROVEN.** No test can show that a MODEL STOPS ECHOING — the seam catches the
+echo, it does not prevent it, and whether the failure rate on real runs is
+tolerable is something only the owner's runs can show (docs/17 row 142 says what
+to do if it is not). Also NOT pinned: the module spine/part PROMPT's own section
+labels are not in the marker set, so an echo of one of those reaches the seam
+undetected — and the same is true of the intent paragraph docs/17 row 141 just
+landed, whose two literals would have to MOVE into `llm/promptScaffolding`
+before they could be markers (importing them from the feature would be an import
+cycle); and a USER hand-edit that pastes one of these sentences is rejected
+exactly like a model echo — the accepted cost of not being able to tell a
+deliberate paste from the defect (the escape-debris seam has the same property).
 
 ### Remaining gaps
 

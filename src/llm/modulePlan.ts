@@ -22,7 +22,7 @@ import {
 } from '@/llm/canvasBusy';
 import { parseJsonReply, parseErrorSummary } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
-import { debrisIssuesForFields } from '@/lib/encodingHygiene';
+import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
 import { modulePdfArtifacts, modulePdfImageRequests } from '@/lib/modulePdf';
 
 /**
@@ -143,7 +143,7 @@ export async function planModuleDocument(
 
     // Boundary validation (AGENTS 3): fail loud, never a coerced default.
     const reply = modulePlannerReplySchema.parse(parseJsonReply(raw));
-    const issues = debrisIssuesForFields(
+    const issues = generatedTextIssuesForFields(
       reply.sections.map((section, index) => ({
         field: `sections.${String(index)}.title`,
         text: section.title,

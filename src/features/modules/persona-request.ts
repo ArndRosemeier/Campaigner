@@ -1,6 +1,17 @@
 import type { EntityKind } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
 import { withAdditionalInstruction } from '@/llm/additionalInstruction';
+import {
+  ENTITY_BRIEF_INTRO_PREFIX,
+  ENTITY_BRIEF_INTRO_SUFFIX,
+  ENTITY_CONTEXT_LABEL,
+  ENTITY_NAME_VERBATIM_PREFIX,
+  ENTITY_NAME_VERBATIM_SUFFIX,
+  ENTITY_SCENE_CONTEXT_LABEL,
+  ENTITY_SERVE_MODULE_TEXT,
+  MODULE_PREMISE_LABEL,
+  OWNERSHIP_BOUNDARY_BY_KIND,
+} from '@/llm/promptScaffolding';
 import { fixedCastSectionFor, partyLevelLine, type FixedCastMember } from '@/llm/roomBudget';
 
 /**
@@ -53,25 +64,15 @@ export function stubKindCarriesPartyLevel(kind: StubKind): boolean {
 }
 
 /**
- * The OWNERSHIP BOUNDARY for the NON-COMBAT kinds (docs/17 row 140): what a
- * location, an event or a faction detail owns, and what the encounter owns.
+ * The OWNERSHIP BOUNDARY itself, and every fixed sentence this brief is made
+ * of, now live in `llm/promptScaffolding` — the ONE source the composer and the
+ * scaffolding-echo detector both read (docs/17 row 142, AGENTS rule 4). The
+ * boundaries' rendered bytes are unchanged (docs/17 row 140; the 14 pins in
+ * `tests/llm/kindOwnershipBoundary.test.ts` are untouched): the constants moved,
+ * nothing about their text did.
  *
- * WHY IT LIVES HERE AND NOT IN THE PERSONA TEXT. The rule is not new — the
- * Worldbuilder and Event Weaver built-in prompts have carried a version of it
- * since `fe1d365`, and `promptStyles.PARTS_MECHANICS` states it to the module
- * writer itself ("Encounters live in separate encounter artifacts … no monster
- * roster with counts, no tactics or terrain rules"). The persona layer cannot
- * carry it: personas are user-editable STORED rows seeded once by
- * `seed.seedBuiltInPersonas` / `personaRepo` (a slug that already exists is
- * never rewritten), so editing a built-in prompt reaches a NEW install only
- * and every existing install keeps the old bytes forever (docs/18 §4, docs/17
- * row 140). This seam is the ONE place every entity detail passes through —
- * the batch, post-generation's automation, the stub popover's single-entity
- * delegation and the change/refill seam all build their brief here — so the
- * rule is keyed by KIND, in code, and cannot be outrun by a stored row.
- *
- * WHY THE NON-COMBAT KINDS NEED IT AT ALL. A detail worker is handed every
- * paragraph of the module document that mentions the name
+ * WHY THE RECORD IS KEYED BY KIND AT ALL (row 140): a detail worker is handed
+ * every paragraph of the module document that mentions the name
  * (`lib/wikilinks.surroundingParagraphs`), and a module's scene blocks are
  * written from the ENCOUNTER's point of view — `PART_SCENE_FIELD_LABELS`
  * ("Where", "If the party acts", "Secrets", "Outcome") are GM-facing field
@@ -81,42 +82,16 @@ export function stubKindCarriesPartyLevel(kind: StubKind): boolean {
  * owner's report verbatim: *"a few of the Location Details Detail the Mobs
  * that appear there and even give GM hints on how to handle the Encounter
  * there. Thats not what Location Details are for. We have Encounters for
- * that."* The context paragraphs are NOT filtered or shrunk to fix this (the
- * module text is the ground truth the worker reads); what changes is what the
- * entity OWNS.
+ * that."* The context paragraphs are NOT filtered or shrunk (the module text is
+ * the ground truth the worker reads); what the paragraph changes is what the
+ * entity OWNS. The Record is EXHAUSTIVE over the entity kinds, so a new kind
+ * cannot be added without deciding its boundary (the compiler refuses).
  *
- * ONE FACT, ONE OWNER is the reason the paragraph states: the same fact
- * written in two artifacts is two accounts of one fight, and the encounter
- * artifact is the one a GM reads for it (`encounterDraftSchema` already holds
- * difficulty, levelHint, `monsters[]`, terrain, tactics, treasure and the
- * per-room layout — nothing is lost by stopping).
- *
- * Scoped to exactly the three kinds the report's class covers (`location`,
- * `event`, `faction`). `npc` legitimately owns stat blocks and `encounter`
- * owns the opposition, so both render `null` and their briefs stay
- * BYTE-IDENTICAL — as does every brief built without a kind. The Record is
- * EXHAUSTIVE over `StubKind`, so a new entity kind cannot be added without
- * deciding its boundary (the compiler refuses).
+ * WHY IT CANNOT LIVE IN THE PERSONA TEXT: personas are user-editable STORED
+ * rows seeded once (`seed.seedBuiltInPersonas` / `personaRepo` — a slug that
+ * already exists is never rewritten), so editing a built-in prompt reaches a
+ * NEW install only (docs/18 §4, docs/17 row 140).
  */
-const PLACE_OWNERSHIP_BOUNDARY = `What this artifact OWNS — one fact, one owner: the module prose draws this line itself ("encounters live in separate encounter artifacts"), so the OPPOSITION belongs to the encounter artifact — its creatures, their counts, its tactics and how the fight is run are that artifact's content, and that is where a GM gets them. If the story needs the opposition, point at where it is fought by the name the module text's own wiki-link uses instead of describing the opposition here, and write no tactics, no encounter-handling advice and no GM guidance on running the fight. "inhabitants" means the people and factions who are here — never monsters. And when the module text you are given is written from the encounter's point of view (fields such as "If the party acts", "Secrets" or "Outcome"), that material belongs to that encounter: do not restate it, do not extend it, and do not turn it into this artifact's own detail.`;
-
-const FACTION_OWNERSHIP_BOUNDARY = `What this artifact OWNS — one fact, one owner: the module prose draws this line itself ("encounters live in separate encounter artifacts"), so the OPPOSITION belongs to the encounter artifact — its creatures, their counts, its tactics and how the fight is run are that artifact's content, and that is where a GM gets them. If the story needs the opposition, point at where it is fought by the name the module text's own wiki-link uses instead of describing the opposition here, and write no tactics, no encounter-handling advice and no GM guidance on running the fight. A faction row owns what this faction wants, how it operates, what it controls and how it is ranked — the "order of battle" the module text asks for is the encounter's material, so write no preferred tactics and no encounter-handling advice for it. And when the module text you are given is written from the encounter's point of view (fields such as "If the party acts", "Secrets" or "Outcome"), that material belongs to that encounter: do not restate it, do not extend it, and do not turn it into this artifact's own detail.`;
-
-/**
- * ONE paragraph per kind, or `null` for the kinds that own their boundary.
- * `event` is not a copy of `location` by accident: its draft contract IS the
- * location's (`llm/schemas.eventDraftSchema = locationDraftSchema`) and its
- * built-in persona carries the mirrored clause, so the two share ONE constant
- * and cannot drift.
- */
-const OWNERSHIP_BOUNDARY_BY_KIND: Readonly<Record<StubKind, string | null>> = {
-  npc: null,
-  encounter: null,
-  note: null,
-  location: PLACE_OWNERSHIP_BOUNDARY,
-  event: PLACE_OWNERSHIP_BOUNDARY,
-  faction: FACTION_OWNERSHIP_BOUNDARY,
-};
 
 /**
  * The intent paragraph's ONE form (08 §M4-C "Entity intent", docs/17 row 141):
@@ -172,7 +147,8 @@ function intentParagraph(intent: string | null | undefined): string | null {
  * change: every non-encounter brief renders the same bytes as before, pinned by
  * `tests/features/persona-request.test.ts`.
  *
- * `kind` keys the OWNERSHIP BOUNDARY above (docs/17 row 140). The caller's
+ * `kind` keys the OWNERSHIP BOUNDARY (`llm/promptScaffolding`, docs/17 row
+ * 140). The caller's
  * entity kind is the only thing that decides it: `location`, `event` and
  * `faction` briefs carry the boundary paragraph last; `npc`, `encounter` and
  * `note` — and every brief built with no kind at all — render the
@@ -207,20 +183,18 @@ export function buildEntityBrief(
   instruction = '',
   intent: string | null | undefined = null,
 ): string {
-  const contextLabel = encounterScene
-    ? 'The scene this encounter must stage — whatever it states about the opposition and the place is FIXED, and the roster and the map must match it:'
-    : 'Where it is mentioned:';
+  const contextLabel = encounterScene ? ENTITY_SCENE_CONTEXT_LABEL : ENTITY_CONTEXT_LABEL;
   return withAdditionalInstruction(
     [
-      `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
+      `${ENTITY_BRIEF_INTRO_PREFIX}${name}${ENTITY_BRIEF_INTRO_SUFFIX}`,
       contextParagraphs === '' ? null : `${contextLabel}\n\n${contextParagraphs}`,
-      premise === '' ? null : `Module premise for context:\n\n${premise}`,
+      premise === '' ? null : `${MODULE_PREMISE_LABEL}\n\n${premise}`,
       partyLevel === undefined ? null : partyLevelLine(partyLevel),
       fixedCastSectionFor(fixedCast),
       // The artifact is linked back from the module's wiki-link, which resolves
       // by exact name — the name field must be verbatim; epithets go in the body.
-      `The artifact "name" field must be exactly "${name}" — verbatim, with no epithets, titles, or additions (put those in the body).`,
-      'Do not invent unrelated sub-plots; make this entity serve the module text.',
+      `${ENTITY_NAME_VERBATIM_PREFIX}${name}${ENTITY_NAME_VERBATIM_SUFFIX}`,
+      ENTITY_SERVE_MODULE_TEXT,
       // LAST, so the boundary reads as the qualification of everything above
       // it — including that "serve the module text" line, which is the
       // instruction a location otherwise obeys by retelling the fight it was

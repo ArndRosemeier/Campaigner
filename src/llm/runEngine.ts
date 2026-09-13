@@ -149,7 +149,12 @@ import { surroundingParagraphs } from '@/lib/wikilinks';
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
-import { collectTextLeaves, debrisIssuesForFields } from '@/lib/encodingHygiene';
+import { collectTextLeaves } from '@/lib/encodingHygiene';
+import { documentTextFields, generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
+import {
+  ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
+  SCHEMA_REPAIR_LEAD_IN,
+} from '@/llm/promptScaffolding';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
@@ -3109,7 +3114,7 @@ export class RunEngine {
           steps,
           input,
           signal,
-          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${SCHEMA_REPAIR_LEAD_IN}\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`,
         );
       }
     }
@@ -3150,7 +3155,7 @@ export class RunEngine {
             steps,
             input,
             signal,
-            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply left monsters without a resolvable stat-block source:\n- ${sourceIssues.join('\n- ')}\nFor each offender ${context.rosterLines.length > 0 ? 'cite an exact name from the bestiary roster via "sourceName", ' : ''}a listed stat-block excerpt via "sourceChunkIndex", or provide a complete inline "statBlock".${inlineRequired} Reply with corrected JSON only.`,
+            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${ENCOUNTER_SOURCE_REPAIR_LEAD_IN}\n- ${sourceIssues.join('\n- ')}\nFor each offender ${context.rosterLines.length > 0 ? 'cite an exact name from the bestiary roster via "sourceName", ' : ''}a listed stat-block excerpt via "sourceChunkIndex", or provide a complete inline "statBlock".${inlineRequired} Reply with corrected JSON only.`,
           );
         }
         this.sourceRepaired.delete(runId);
@@ -5574,18 +5579,31 @@ export class RunEngine {
     const statblockStep = steps.find((step) => step.name === 'statblock');
     const statblockOutput = (statblockStep?.userEdit ?? statblockStep?.output) as
       { statBlock?: StatBlock } | null | undefined;
-    // Escape-debris hygiene backstop (18-ARCHITECTURE seam): the UTF-8
-    // contract in `llm/language.ts` is prevention, this is detection. The
-    // effective draft (body/summary/name, encounter monster notes/treasure)
-    // plus the statblock strings are scanned BEFORE any create/updateArtifact
-    // below — a hit rejects the step LOUDLY with the debris named in the
-    // issues, and nothing persists. Never repair-and-continue (AGENTS 1-2).
-    const debrisIssues = debrisIssuesForFields([
-      ...collectTextLeaves(draft, 'draft'),
-      ...collectTextLeaves(statblockOutput?.statBlock, 'statBlock'),
-    ]);
-    if (debrisIssues.length > 0) {
-      const step = this.finishStep(steps[stepIndex], { raw: JSON.stringify(draft), issues: debrisIssues }, 'rejected');
+    // Generated-text hygiene backstop (18-ARCHITECTURE seam), ONE scan for TWO
+    // mechanical defect classes: escape debris (the UTF-8 contract in
+    // `llm/language.ts` is prevention, this is detection) and OUR OWN prompt
+    // scaffolding echoed back as content (docs/17 row 142 — a model printed the
+    // entity brief into the artifact the owner read). Both are scanned BEFORE
+    // any create/updateArtifact below — a hit rejects the step LOUDLY with the
+    // defect named in the issues, and nothing persists. Never repair-and-
+    // continue, never strip the text and keep going (AGENTS 1-2).
+    //
+    // The debris half keeps its historic scope (every string leaf of the
+    // effective draft plus the statblock strings); the scaffolding half reads
+    // the reader-visible text only (`documentTextFields` drops names, aliases,
+    // tags and ids — identity fields, not prose).
+    const hygieneIssues = generatedTextIssuesForFields(
+      [
+        ...collectTextLeaves(draft, 'draft'),
+        ...collectTextLeaves(statblockOutput?.statBlock, 'statBlock'),
+      ],
+      [
+        ...documentTextFields(draft, 'draft'),
+        ...documentTextFields(statblockOutput?.statBlock, 'statBlock'),
+      ],
+    );
+    if (hygieneIssues.length > 0) {
+      const step = this.finishStep(steps[stepIndex], { raw: JSON.stringify(draft), issues: hygieneIssues }, 'rejected');
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       if (input.autonomy === 'auto') return { step };
       return { step, runStatus: 'needs_review' };
