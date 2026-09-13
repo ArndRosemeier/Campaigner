@@ -31,7 +31,7 @@ import {
  * applier is ONE function now (`applyChatCommands`) and the two entry points
  * are ~5-line ADAPTERS over it (there is no second implementation to drift).
  * The differential pin that obliges this seam (AGENTS §Centralization item 2)
- * is `tests/features/canvas-chat-apply-differential.test.ts`, which runs BOTH
+ * is `tests/features/canvas-chat-apply-differential.test.tsx`, which runs BOTH
  * entry points over one input table and requires identical document text and
  * identical outcome fields.
  *

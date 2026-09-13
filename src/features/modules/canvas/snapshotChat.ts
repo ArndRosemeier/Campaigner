@@ -26,7 +26,7 @@ import {
  *   3000-case differential fuzz found ZERO divergences, which is what made the
  *   copy pure risk — nothing fails when a copy is born, and an edit to one
  *   side would silently split the two behaviours.
- *   `tests/features/canvas-chat-apply-differential.test.ts` runs both entry
+ *   `tests/features/canvas-chat-apply-differential.test.tsx` runs both entry
  *   points over one input table requiring identical documents and identical
  *   outcome fields (AGENTS §Centralization item 2). Re-exported here so the
  *   preview callers keep one import path for their surface.
