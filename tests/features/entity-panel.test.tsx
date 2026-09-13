@@ -41,8 +41,23 @@ import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { useProgressStore } from '@/lib/progress';
+import type * as toastModule from '@/lib/toast';
 
-vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+// The panel's batch failures go out through the ONE reporting seam
+// (`features/modules/entity-batch-report`), which raises `toastErrorPersistent`
+// — so the real helper is WRAPPED rather than replaced: the pins on the batch
+// summary below record the sentence the seam composed while the persistent
+// toast still really happens. A summary raised through `toastError` is a
+// failure of those pins, which is the point (it is the transient helper that
+// made the owner's report blink away in four seconds).
+vi.mock('@/lib/toast', async (importOriginal) => {
+  const actual = await importOriginal<typeof toastModule>();
+  return {
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+    toastErrorPersistent: vi.fn(actual.toastErrorPersistent),
+  };
+});
 
 // The image queue's LLM/image entry points — the panel test drives the queue
 // with real Dexie rows but mocked generation.
@@ -67,6 +82,8 @@ const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 const { toastSuccess } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
+const { toastErrorPersistent } = await import('@/lib/toast');
+const toastErrorPersistentMock = vi.mocked(toastErrorPersistent);
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -270,6 +287,7 @@ describe('EntityPanel', () => {
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
     toastErrorMock.mockClear();
+    toastErrorPersistentMock.mockClear();
   });
   afterEach(cleanup);
 
@@ -800,9 +818,13 @@ describe('EntityPanel', () => {
     );
     await user.click(screen.getByTestId('batch-npc'));
 
-    // Kael is named loudly; Bram was still generated in parallel.
+    // Kael is named loudly; Bram was still generated in parallel. The
+    // sentence is byte-identical to the one this app always raised for a plain
+    // generator failure (docs/17 row 131); it is now raised through the ONE
+    // reporting seam and PERSISTENTLY, so it cannot blink away unread. A
+    // `toastError` call here instead would fail this pin.
     await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith(
+      expect(toastErrorPersistentMock).toHaveBeenCalledWith(
         '1 of 2 npcs failed to generate — see the Runs tab ("Kael" — gateway down)',
       );
     });
@@ -842,7 +864,7 @@ describe('EntityPanel', () => {
     await user.click(screen.getByTestId('batch-npc'));
 
     await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith(
+      expect(toastErrorPersistentMock).toHaveBeenCalledWith(
         '2 of 2 npcs failed to generate — see the Runs tab ("Kael" — gateway down; "Bram" — gateway down)',
       );
     });
@@ -894,7 +916,7 @@ describe('EntityPanel', () => {
 
     // Exactly the entities without a produced artifact.
     await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith(
+      expect(toastErrorPersistentMock).toHaveBeenCalledWith(
         '1 of 3 npcs failed to generate — see the Runs tab ("Bram" — gateway down)',
       );
     });
@@ -980,6 +1002,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     useProgressStore.getState().reset();
     chatMock.mockReset();
     toastErrorMock.mockClear();
+    toastErrorPersistentMock.mockClear();
   });
   afterEach(cleanup);
 
@@ -1385,6 +1408,7 @@ describe('EntityPanel — orphaned entities', () => {
   beforeEach(clearDatabase);
   beforeEach(() => {
     toastErrorMock.mockClear();
+    toastErrorPersistentMock.mockClear();
     toastSuccessMock.mockClear();
   });
   afterEach(cleanup);

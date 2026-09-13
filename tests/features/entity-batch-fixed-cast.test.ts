@@ -1,13 +1,18 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { z } from 'zod';
 
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule, type Campaign, type Module, type PersonaRun, type StatBlock } from '@/domain';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
+import {
+  BATCH_FAILURE_CONSOLE_PREFIX,
+  BATCH_FAILURE_RECORD_TAG,
+} from '@/features/modules/entity-batch-report';
 import type * as runEngineModule from '@/llm/runEngine';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
@@ -123,7 +128,24 @@ function completedWith(artifactId: string): PersonaRun {
 
 /** A run that died on its own, with the sentence the engine composed. */
 function failedWith(errorMessage: string): PersonaRun {
-  return { status: 'failed', resultArtifactId: null, errorMessage } as unknown as PersonaRun;
+  return {
+    status: 'failed',
+    resultArtifactId: null,
+    errorMessage,
+    failureKind: null,
+  } as unknown as PersonaRun;
+}
+
+/** A run the PAGE killed: exactly what `db/runRepo.failRunningRuns` writes on
+ * app start (status `failed`, so the withdrawal predicate does NOT silence it,
+ * plus the classification that says it was not the generator). */
+function interruptedByReload(): PersonaRun {
+  return {
+    status: 'failed',
+    resultArtifactId: null,
+    errorMessage: 'Interrupted by reload',
+    failureKind: 'cancelled',
+  } as unknown as PersonaRun;
 }
 
 /** A withdrawn run — the owner's own Stop (docs/17 row 117). */
@@ -145,6 +167,17 @@ beforeEach(async () => {
   waitForRunStatusMock.mockReset();
   toastErrorMock.mockReset();
 });
+
+/** A `[campaigner] entity-batch failure {…}` line, parsed back into its record.
+ * The tag is the contract: it is what makes the line greppable and the JSON
+ * what makes it pasteable. */
+function recordLines(spy: MockInstance<(...data: unknown[]) => void>): Record<string, unknown>[] {
+  const prefix = `${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_FAILURE_RECORD_TAG} `;
+  return spy.mock.calls
+    .map((call) => call[0])
+    .filter((value): value is string => typeof value === 'string' && value.startsWith(prefix))
+    .map((line) => JSON.parse(line.slice(prefix.length)) as Record<string, unknown>);
+}
 
 describe('encounter batch briefs pin the landed fixed cast', () => {
   it('the brief carries the scene NPC summary plus the must-appear instruction', async () => {
@@ -229,8 +262,9 @@ describe('a batch entity whose run did not complete says WHY through the engine�
     const { campaign, module } = await seedWorld();
     const sentence =
       'Step "draft" rejected: the model reply could not be parsed. The run failed without saving partial results — run it again.';
+    const run = failedWith(sentence);
     startRunMock.mockResolvedValue('run-1');
-    waitForRunStatusMock.mockResolvedValue(failedWith(sentence));
+    waitForRunStatusMock.mockResolvedValue(run);
 
     const result = await runEntityBatch({
       module,
@@ -240,8 +274,22 @@ describe('a batch entity whose run did not complete says WHY through the engine�
     });
 
     // Byte-identical to what the engine wrote: no status, no label, no
-    // wrapper — the message IS the sentence.
-    expect(result.failed).toEqual([{ name: 'Kael', message: sentence }]);
+    // wrapper — the message IS the sentence. The rest of the record is what
+    // the reporting seam reads (docs/17 row 131): which path, which run, its
+    // terminal status, and the RAW engine row behind the sentence.
+    const [failure] = result.failed;
+    expect(failure).toEqual({
+      name: 'Kael',
+      kind: 'run-not-completed',
+      message: sentence,
+      runId: 'run-1',
+      status: 'failed',
+      errorMessage: sentence,
+      raw: run,
+    });
+    // …and the raw row survives by IDENTITY (a copy would prove nothing about
+    // what the reporting layer actually receives).
+    expect(failure?.raw).toBe(run);
     expect(result.generated).toEqual([]);
     // The failure list IS this seam's loud surface (it is what the caller
     // throws at the owner — pinned in `tests/features/change-artifact.test.ts`,
@@ -253,8 +301,9 @@ describe('a batch entity whose run did not complete says WHY through the engine�
 
   it('falls back to `run ended <status>` when the engine wrote nothing', async () => {
     const { campaign, module } = await seedWorld();
+    const run = failedWith('');
     startRunMock.mockResolvedValue('run-1');
-    waitForRunStatusMock.mockResolvedValue(failedWith(''));
+    waitForRunStatusMock.mockResolvedValue(run);
 
     const result = await runEntityBatch({
       module,
@@ -263,7 +312,92 @@ describe('a batch entity whose run did not complete says WHY through the engine�
       targets: [{ name: 'Kael' }],
     });
 
-    expect(result.failed).toEqual([{ name: 'Kael', message: 'run ended failed' }]);
+    expect(result.failed).toEqual([
+      {
+        name: 'Kael',
+        kind: 'run-not-completed',
+        message: 'run ended failed',
+        runId: 'run-1',
+        status: 'failed',
+        errorMessage: '',
+        raw: run,
+      },
+    ]);
+  });
+
+  it('a run the PAGE killed is its OWN class, and carries the reload’s own classification', async () => {
+    const { campaign, module } = await seedWorld();
+    const run = interruptedByReload();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(run);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    // The asymmetry that made this a class of its own: `isRunWithdrawn` reads
+    // `status === 'cancelled'` (the owner's Stop), so a run the RELOAD killed
+    // — `status: 'failed'` with `failureKind: 'cancelled'` — lands in the
+    // failure list. Without the classification it would reach the owner as
+    // "N of M npcs failed to generate", i.e. as a broken generator.
+    expect(result.failed).toEqual([
+      {
+        name: 'Kael',
+        kind: 'interrupted',
+        message: 'Interrupted by reload',
+        runId: 'run-1',
+        status: 'failed',
+        failureKind: 'cancelled',
+        errorMessage: 'Interrupted by reload',
+        raw: run,
+      },
+    ]);
+    expect(result.generated).toEqual([]);
+  });
+
+  it('the failure is WRITTEN DOWN when it happens — the record survives a batch that never reaches its end report', async () => {
+    const { campaign, module } = await seedWorld();
+    const sentence = 'Step "draft" rejected: the model reply could not be parsed.';
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(failedWith(sentence));
+    // A spy replaces the console-hygiene guard's own wrapper, so a file that
+    // drives failing batches can assert the record instead of muting it.
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // NO caller reports this batch: `runEntityBatch` is called on its own, which
+    // is exactly the situation the owner described — a batch that dies
+    // mid-flight (a page reload, his Stop, a throw) never reaches the
+    // batch-END report, and an end-of-batch-only dump would have left him with
+    // nothing to paste.
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }, { name: 'Bram' }],
+    });
+    expect(result.failed).toHaveLength(2);
+
+    const records = recordLines(consoleSpy);
+    expect(records).toHaveLength(2);
+    const kael = records.find((record) => record.name === 'Kael');
+    // Everything needed to diagnose without guessing: which entity, which path,
+    // which run, the run's own terminal status and sentence — plus the batch
+    // the failure belongs to.
+    expect(kael?.kind).toBe('run-not-completed');
+    expect(kael?.message).toBe(sentence);
+    expect(kael?.status).toBe('failed');
+    expect(kael?.batchKind).toBe('npc');
+    expect(kael?.total).toBe(2);
+    const moduleField = kael?.module as { title: string };
+    expect(moduleField.title).toBe('The Pit Module');
+    // One line, ONE string argument — so "copy this line" is faithful in any
+    // devtools rather than a devtools-specific preview.
+    expect(consoleSpy.mock.calls[0]).toHaveLength(1);
+    expect(consoleSpy.mock.calls[0]?.[0]).toContain(`${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_FAILURE_RECORD_TAG} `);
+    consoleSpy.mockRestore();
   });
 
   it('a run the OWNER stopped is still WITHDRAWN here: no failure entry and no red toast (row 117’s silence holds)', async () => {
@@ -284,5 +418,114 @@ describe('a batch entity whose run did not complete says WHY through the engine�
     expect(result.failed).toEqual([]);
     expect(result.generated).toEqual([]);
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+});
+
+/** A cast creature's citation — the field `isCastCreatureNpc` reads. */
+const CHUNK_ID = '5a4f0c9e-1111-4111-8111-000000000001';
+
+/**
+ * The RECORD every failure now is (docs/17 row 131): the three paths an
+ * entity can end up without an artifact are three different FACTS, and the
+ * reporting seam can only tell the owner which one he hit if the record
+ * carries it. Each pin below drives one path at the batch and asserts the
+ * whole record, `raw` by IDENTITY (a deep-equal copy of an object the site
+ * never passed would pass a shape pin and prove nothing about what the
+ * reporting layer receives — lesson 4).
+ */
+describe('a batch failure records WHICH path it came down, with the raw evidence', () => {
+  it('a run that landed on a CAST CREATURE npc is REFUSED — a designed stop, with the row it would have overwritten', async () => {
+    const { campaign, module } = await seedWorld();
+    const cast = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Zombie',
+      summary: '',
+      body: '',
+      links: [],
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: CHUNK_ID } },
+    });
+    const run = completedWith(cast.id);
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockResolvedValue(run);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    const [failure] = result.failed;
+    expect(failure?.name).toBe('Kael');
+    // A DESIGNED stop is named as one — never an anonymous "failed to generate".
+    expect(failure?.kind).toBe('refused');
+    expect(failure?.message).toContain("is this campaign's own npc for a library creature");
+    // …and the refusal sentence carries the way OUT (the seam's own wording).
+    expect(failure?.message).toContain('make a separate npc of that name');
+    expect(failure?.runId).toBe('run-1');
+    // The run COMPLETED: the refusal is the BATCH's, which is exactly why the
+    // Runs tab cannot show this as a failed run.
+    expect(failure?.status).toBe('completed');
+    // The raw evidence is the row the write was refused for. Content equality
+    // is the ONLY assertion available at this path, and that limit is
+    // MEASURED rather than assumed: the batch reads it through
+    // `artifactRepo.getArtifact`, which parses the stored row, so every read
+    // (the batch's and this test's) is a fresh object — an identity pin here
+    // would fail against correct code. Identity IS pinned where the site hands
+    // a value over untouched: the run row below and the thrown value.
+    expect(failure?.raw).toEqual(cast);
+    expect((failure?.raw as { data: { creatureRef?: unknown } }).data.creatureRef).toEqual({
+      chunkId: CHUNK_ID,
+    });
+    expect(result.generated).toEqual([]);
+    // The refusal is a TRUE no-op: the cast row is untouched.
+    expect((await getArtifact(cast.id))?.name).toBe('Zombie');
+  });
+
+  it('a setup throw keeps the THROWN VALUE, and names no run when none was started', async () => {
+    const { campaign, module } = await seedWorld();
+    const thrown = new Error('No API key configured — add one in Settings');
+    startRunMock.mockRejectedValue(thrown);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    const [failure] = result.failed;
+    expect(failure?.kind).toBe('setup-error');
+    expect(failure?.message).toBe('No API key configured — add one in Settings');
+    // No run was started, so there is no id to point at — an honest absence,
+    // never a fabricated one.
+    expect(failure?.runId).toBeUndefined();
+    expect(failure?.status).toBeUndefined();
+    // The thrown object itself, not the sentence `errorMessage` made of it.
+    expect(failure?.raw).toBe(thrown);
+  });
+
+  it('a VALIDATION throw keeps its zod issues as objects (never a JSON wall in a string)', async () => {
+    const { campaign, module } = await seedWorld();
+    const parsed = z.object({ name: z.string() }).safeParse({});
+    if (parsed.success) throw new Error('fixture should fail validation');
+    startRunMock.mockRejectedValue(parsed.error);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }],
+    });
+
+    const [failure] = result.failed;
+    expect(failure?.kind).toBe('setup-error');
+    // `errorMessage` flattens a ZodError to its raw issues array — the record
+    // keeps the ERROR, so the reporting layer can still read the issues.
+    expect(failure?.message).toContain('invalid_type');
+    expect(failure?.raw).toBe(parsed.error);
+    expect((failure?.raw as z.ZodError).issues).toHaveLength(1);
   });
 });

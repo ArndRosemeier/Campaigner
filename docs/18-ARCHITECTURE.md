@@ -245,6 +245,9 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | **Hold a cross-tab generation lease (and opt out of the freeze heuristics)** (docs/17 row 110) | `lib/generationLocks.withGenerationLock(moduleGenLockName(id), work)` around every generation pass (`moduleGen`'s spine/parts passes, `post-generation`'s sweep): `navigator.locks.request(name, { ifAvailable: true }, …)` and the callback's promise IS the hold, so the lock is released when the pass settles (throw, abort or success). With no Web Locks API the work runs DIRECTLY (`webLocksAvailable()` false), and an unavailable lock (another tab) still runs the work | making a pass depend on the lock, or blocking on it (`ifAvailable: true` so a second tab never queues behind a lease — that would be a new failure mode, not a fix); assuming the API exists when reading liveness (a missing `navigator.locks` means the cross-tab half of `isModuleGenClaimed` answers `false` — the page-local registry is then the only signal, stated in §4); an in-repo lock registry standing in for the real API |
 | **Tell the owner, from a BACKGROUNDED tab, that a long generation finished or failed** (docs/17 row 110) | `lib/backgroundTitle`: `setBackgroundActivity(id, { label, state })` / `clearBackgroundActivity(id)` / `clearFinishedBackgroundActivities()`, applied through `applyBackgroundTitle()` — `document.title` is written ONLY while `document.hidden` (`Working: <label> — Campaigner`, `✓ Finished: …`, `⚠ Failed: …`, failed outranks finished outranks running, same-rank extras as `(+N more)`), and the app's own title is restored while the page is visible. Runs register from `runEngine` (label = persona name), generation passes from `moduleGen` (label = module title) | writing the title while the page is visible (it is a STRIP surface, not the document the owner is reading); a verdict a stop never reached (a user stop CLEARS the entry rather than inventing "finished"); using the title as a progress meter (the module never guesses "part 2 of 5" — the label is the caller's); leaving a `✓`/`⚠` on screen for the next trip away (`clearFinishedBackgroundActivities` runs on the way back in) |
 | **Say "this module already has a generation running"** (docs/17 row 120) | `features/modules/module-busy.ts` — THE one seam for the condition's COPY, and it is deliberately TWO sentences. `MODULE_BUSY_TOAST_TITLE` + `toastModuleBusy(error)` = the toast for a refused ACTION, the ONE call for all seven catch sites (ChatSidebar ×2, CanvasPage ×4, BoardPage ×1). `MODULE_GENERATING_REASON` = the reason a blocked CONTROL states through `BlockedControl`, the ONE constant for all FOUR readers (CanvasPage's `busyReason`/`saveBlockedReason`, `spine-checkpoint`, `boardNodes`, and `entity-panel`'s `generateAllBlockedReason`, folded by ledger 123). One condition, TWO audiences — a disabled control has no action to have been refused, and a refusal toast states nothing about a control — so the sentences are never collapsed into one (AGENTS rule 4: what is shared is the FACT, not the sentence). Inherently cross-surface (canvas, board, checkpoint), which is exactly why it is a module and not a private constant per file | a per-file `MODULE_GENERATING_REASON` copy (the audit found THREE, plus a fourth inline in `entity-panel.tsx` — folded by ledger 123, so the sentence is stated in exactly ONE source file, asserted by EQUALITY rather than by the carve-out subset that licensed the fourth copy); ONE merged sentence for both audiences; a literal toast title in a catch block; letting `ModuleBusyError.message` reach the owner as the toast's description — the toast seam drops it BY ERROR NAME and logs the raw error instead (the message is a sentence of its own since ledger 123 and carries no row id; the suppression STAYS because the title already names the state and both ways out, so a description would only restate it). The GATE is not here and must not move: `llm/canvasBusy` (the in-page claim registry) and `lib/generationLocks` (the cross-tab advisory lease) stay two authorities for two jobs |
+| **Record WHY an entity batch failed — per failure as it happens, and per batch at the end — and then tell the owner** (docs/17 row 131; owner, verbatim: *"the root problem is simply not recorded … something in the console to post back to you"*) | `features/modules/entity-batch-report` — THE seam, with ONE writer per failure and ONE per batch. **Per failure** (as it happens, from the batch's single funnel — see the next row): `recordEntityBatchFailure(context, failure)` emits the PASTEABLE line `[campaigner] entity-batch failure {…}` as ONE string argument, plus the same record as a live object under a DISTINCT tag (`[campaigner] entity-batch detail …`). **Per batch**: `reportEntityBatchFailures({ campaign, module, kind, total, failures })` — the ONE call BOTH batch surfaces make (`entity-panel.tsx`'s per-kind button and `post-generation.ts`'s unattended sweep) and the ONE composer of the count sentence — emits the greppable headline `[campaigner] <kind> batch: N of M failed` with the structured payload, the same payload again as the pasteable `[campaigner] entity-batch summary {…}` line (one source of truth: the line is produced FROM the object the console shows, pinned by deep equality), and `toastErrorPersistent(sentence)` (rule 2 — never console-only **and** never transient: the count has no other surface, the dock drops its job, and a refusal's run COMPLETED while a setup throw starts no run at all). Every payload carries the batch context (`campaign`, `module`, `batchKind`, `total` — `batchKind` because `kind` is the FAILURE's class in the same object) and per failure `name`, `kind`, `message`, `runId`, `status`, `failureKind`, `errorMessage`, `raw`, `issues`. The record it reports is `entity-batch.EntityBatchFailure` | a second copy of the sentence at a call site (it was at two, character-for-character); `toastError` (transient — the measured cause of the owner's "vanished quickly"); reporting only at batch END (a batch that dies mid-flight then leaves no evidence); a live object as the only form (devtools' "copy object" truncates nested values — the line is the deliverable); the pasteable line carrying a second argument (a devtools-specific preview lands in whatever gets copied); two different facts sharing the `kind` key; building the payload by re-deriving what the record already holds (`errorMessage(error)` flattens a ZodError to its raw issues array); treating a designed refusal or a page-reload interruption as a generator failure; a console entry with no user-visible surface |
+
+| **Append a failed entity to the batch's list** (docs/17 row 131) | `features/modules/entity-batch.ts`'s local `recordFailure(failure)` — the ONLY line in the file that appends to `failed`, and it writes the failure down through `recordEntityBatchFailure` in the same breath. Every failure arm (a cast-creature refusal, a run that did not complete or was interrupted, a setup throw) calls it, so no class can be counted without being recorded — and the record exists even when the batch never reaches its callers' end-of-batch report (a page reload, the owner's Stop, a throw out of the function). A scan pin holds `failed.push(` to exactly one occurrence and `recordEntityBatchFailure(` to this one caller | appending in each arm and reporting at batch end (the shape that lost the owner's evidence); four call sites each logging on their own (rule 4); re-deriving the batch context at each arm instead of closing over it |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
@@ -1728,6 +1731,136 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   inherits nothing) — the call count is the only thing that reaches those, and it
   reaches them only when the caller STOPS calling the seam.
 
+
+- **A batch failure's toast vanished in four seconds, and the console said
+  nothing at all** (docs/17 row 131, MEASURED — do not "rediscover" it as a
+  rendering bug). `lib/toast.toastError` passes NO `duration`, so sonner's own
+  default applies: `TOAST_LIFETIME = 4000` (`node_modules/sonner/dist/index.mjs:470`,
+  sonner 2.0.8), and the app's single `<Toaster>` (`app/layout/AppShell.tsx:229`)
+  sets no `duration` either, so `toast.duration || durationFromToaster ||
+  TOAST_LIFETIME` resolves to 4000 ms. The entity batch's summary was raised
+  through exactly that helper, which is the owner's "vanished quickly". It was
+  ALSO the only record: nothing on that path reached `console.error`, and the
+  progress dock carries no failure field (`lib/progress.ProgressJob` has
+  `id`/`label`/`detail`/`progress`/`href`) and drops the job on finish
+  (`entity-batch.ts` calls `progressFinish(jobId)`). So `toastErrorPersistent`
+  (`duration: Infinity`) is the helper the file's own doc names for "a failure
+  nothing else caught" — and for a `refused` or a `setup-error` failure there is
+  not even a failed run row to fall back on: a refusal's run COMPLETED, and a
+  setup throw before `startRun` leaves no row at all.
+
+- **"Cancelled" is TWO different facts in this codebase, and the difference is
+  the difference between silence and a failure report** (docs/17 row 131,
+  MEASURED). A run whose `status` is `'cancelled'` is the WITHDRAWN owner-stop:
+  `entity-batch.ts` reads `isRunWithdrawn` first and records NOTHING (row 117's
+  silence, pinned at three surfaces). A run killed by a page reload is
+  `status: 'failed'` with `failureKind: 'cancelled'` —
+  `db/runRepo.failRunningRuns` (called from an `AppShell` mount effect) writes
+  exactly that — so it takes the failure arm and used to reach the owner as
+  "N of M npcs failed to generate". The batch therefore names it
+  `interrupted`, never `cancelled`, and the payload carries the run's own
+  `failureKind` + `errorMessage` beside its status. **The row cannot separate a
+  reload from a genuine abort**: `llm/failureKind.failureKindOf` returns
+  `'cancelled'` for any `DOMException` named `AbortError` (`failureKind.ts:35`)
+  and `failRunningRuns` writes the same value, so both are indistinguishable in
+  `failureKind`; only the `errorMessage` literal ('Interrupted by reload', the
+  default argument of `failRunningRuns`) tells them apart, and copy is not a
+  classifier — the seam names the class from the ROW's own vocabulary ("cancelled
+  or interrupted", the label `domain/run.FAILURE_KIND_LABELS.cancelled` shows)
+  rather than claiming to know which one it was.
+
+- **A batch's `refused` failure has no caller that can reach it at HEAD — read
+  this before "fixing" its absence from a log** (docs/17 row 131, reasoned from
+  the code and MEASURED at the guard). `entity-batch.ts`'s cast guard fires only
+  when the run's `resultArtifactId` is a CAST CREATURE npc. Every caller that
+  creates entities passes a target with no `artifactId` (`post-generation.batchTargets`,
+  the panel's unresolved buckets, `entity-detail.generateSingleEntity`), which the
+  engine's generate finalize turns into `createArtifact` — a FRESH row — and
+  `dataForDraft('npc', …)` never writes `creatureRef`; the only creator of that
+  field is `db/creatureRepo.castCreatureAsNpc`. The one caller that DOES pass
+  `artifactId` (the change lane) refuses a cast creature BEFORE the batch runs
+  (`change-artifact.resolveChangeRoute`, `:240-247`, consulted at `:396-397`).
+  So the guard is a belt whose input no path supplies today: the pins in
+  `tests/features/entity-batch-fixed-cast.test.ts` drive it with a faked engine,
+  which proves the BRANCH, not its reachability. A name that resolves only to a
+  library creature is still generated as the module's own entity (that path is
+  pinned in `tests/features/creature-row-resolution.test.tsx`), and an entity the
+  module RECORDED a bestiary slot for is CAST — a SUCCESS, in `result.cast`,
+  never in `result.failed`.
+
+- **An identity assertion is only available for a value the site hands over
+  untouched** (docs/17 row 131, MEASURED the hard way). `EntityBatchFailure.raw`
+  is pinned with `toBe` for the run row and for a thrown error (the batch stores
+  the reference it was given). It canNOT be pinned that way for a `refused`
+  failure: the raw value is the destination artifact read through
+  `artifactRepo.getArtifact`, which zod-parses the stored row, so **every read
+  returns a fresh object** — `expect(failure.raw).toBe(<the same row read in the
+  test>)` failed against CORRECT code before the pin was changed to content
+  equality plus a field-level assertion. Lesson: before writing `toBe` on a
+  value, check who produced it — a repo read is a copy.
+
+- **The record the owner pastes is a TEXT LINE, and that is a deliberate shape**
+  (docs/17 row 131, MEASURED). A console row carrying `[jsonString, object]` is
+  inspectable but not faithfully copyable — devtools renders its own (truncated)
+  preview of the object argument into whatever gets copied — so the pasteable
+  record is emitted as a SINGLE string argument, and the live object is a
+  SECOND entry under a DIFFERENT tag (`[campaigner] entity-batch detail …`). The
+  distinct tag is not cosmetic: while both entries began with the record tag, a
+  parser reading `[campaigner] entity-batch failure …` could not tell the JSON
+  line from the human one (MEASURED — the parse threw on
+  `run-not-completed`). Two further measured properties of that line: it is
+  produced from the very object the batch summary shows (`summary` deep-equals
+  `payload`, so a field cannot exist in one and not the other), and a value
+  `JSON.stringify` cannot serialize (a cycle, a `BigInt`) yields a line that
+  SAYS `unserializable` rather than throwing — throwing there would abort the
+  batch, and a reporting failure must never become a generation failure.
+
+- **Two facts may not share one key in a diagnostic payload** (docs/17 row 131,
+  MEASURED the moment the per-failure record was written). The batch's kind
+  (`npc`/`location`/…) and the failure's class (`refused`/`interrupted`/
+  `run-not-completed`/`setup-error`) both wanted to be `kind`; spread in one
+  object, the failure's class silently OVERWROTE the batch's kind and the record
+  became unreadable in a way no shape pin could see. The batch's kind is
+  `batchKind` in every record; `kind` means the failure's class, which is the
+  field the owner named. Same family as the two spellings of "cancelled" above:
+  this payload's whole job is to be unambiguous to someone diagnosing from one
+  line.
+
+- **A new `console.error` in a code path the suite exercises fails EVERY test
+  that reaches it** (`tests/setup.ts` §Console guard). The batch-failure entry is
+  deliberate output from a real failing batch, so `entity-panel.test.tsx` needed
+  documented `ALLOWED_NOISE` entries, scoped PER FILE and matched on the
+  record's own tags (`[campaigner] entity-batch failure|summary|detail` and the
+  `<kind> batch: N of M failed` headline). FOUR files needed one, and the count
+  is itself the measurement: recording moved into the BATCH (so the record
+  survives a batch that never reports), and `moduleGen-cast.test.ts` +
+  `stop-orchestration.test.ts` started failing the guard the moment it did —
+  the guard caught the new output in files nobody had thought about, which is
+  exactly what it is for. A FIFTH file that starts driving a failing batch will
+  fail with `Console noise leaked into …` rather than silently joining the
+  allowance; the fix is a documented `why`, never a spy that hides a real
+  regression (the files that PIN the records do spy — they assert the value,
+  which is a different thing).
+
+- **A source scan for this fold has a MEASURED hole, and it is stated rather
+  than implied** (docs/17 row 131, docs/08 §The fold is invisible to
+  behaviour/§A batch failure is reported through ONE seam). The seal
+  (`tests/features/entity-batch-failure-report-scan.test.ts`) pins the seam's
+  caller SET by equality, the files that contain the count sentence by
+  equality, four composition needles, and that the seam raises both surfaces.
+  Injected one at a time: reverting either call site's fold REDs 3 scan pins
+  (behaviour green at the sweep, red at the panel because its pins assert the
+  persistent helper); re-adding the plain copy BESIDE a surviving seam call
+  REDs 2. **The attack it was not designed for walked through**: the same
+  sentence rebuilt from pieces (`['failed','to','generate'].join(' ')`,
+  `${kind}s` for the plural, `String.fromCharCode(59)` for the join,
+  `'see the '+'Runs '+'tab'` for the tail) beside a surviving call left the scan
+  **GREEN 5/5** and all 35 behavioural pins GREEN. Nothing in the suite catches
+  that; a needle list quotes a spelling, and this copy has no spelling to
+  quote. A `.join('; ')` needle was tried first and REJECTED for firing on
+  healthy code in both files (`entity-panel.tsx:678`, `post-generation.ts:453`) —
+  a needle that fires on correct code gets deleted, so the count sentence's own
+  tail is a needle instead. The needle loop short-circuits on the first match.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

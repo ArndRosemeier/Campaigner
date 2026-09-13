@@ -69,7 +69,8 @@ import {
   FULL_AUTOMATION_TARGET,
 } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
-import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
+import { runEntityBatch } from '@/features/modules/entity-batch';
+import { reportEntityBatchFailures } from '@/features/modules/entity-batch-report';
 import {
   classifyNewModuleEntityNames,
   NORMALIZATION_FAILURE_MESSAGE,
@@ -748,17 +749,17 @@ export function EntityPanel({
     try {
       const result = await runEntityBatch({ module, campaign, kind, targets });
       // Failed entities are loud: the bar finishing must not look like
-      // success when some runs died (their detail lives in the Runs tab).
-      // Ground truth = every target WITHOUT a produced artifact.
-      if (result.failed.length > 0) {
-        const summary = result.failed
-          .map((failure) => `"${failure.name}" — ${failure.message}`)
-          .join('; ');
-        toastError(
-          `${String(result.failed.length)} of ${String(targets.length)} ${KIND_PLURALS[kind]} failed to generate — ` +
-            `see the Runs tab (${summary})`,
-        );
-      }
+      // success when some runs died. ONE reporting seam raises the console
+      // payload AND the toast (docs/18 §2.3, `entity-batch-report`), so this
+      // button and the unattended sweep cannot drift in what they tell the
+      // owner. Ground truth = every target WITHOUT a produced artifact.
+      reportEntityBatchFailures({
+        module,
+        campaign,
+        kind,
+        total: targets.length,
+        failures: result.failed,
+      });
     } catch (error) {
       toastError('Batch generation failed', error);
     } finally {

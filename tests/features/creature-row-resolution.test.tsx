@@ -529,4 +529,51 @@ describe('the generation the verdict unlocks', () => {
     expect((await resolveCreatureCitation({ chunkId }, 'Zombie')).chunk?.id).toBe(chunkId);
     expect(toastErrorMock.mock.calls).toEqual([]);
   }, 30_000);
+
+  /**
+   * The CAST path is the OTHER designed outcome at this batch, and the one
+   * that must never be counted as a failure (docs/17 row 117: a deliberate
+   * outcome is not a failure). When the module RECORDS a bestiary slot for an
+   * entity, its npc is cast from the library instead of generated — the batch
+   * returns the name in `cast`, never in `failed`, so the reporting seam
+   * (`features/modules/entity-batch-report`, docs/17 row 131) is never even
+   * reached.
+   */
+  it('a designed CAST is a SUCCESS: no failure is reported at all, so no count sentence can include it', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const module = creatureModule(campaign.id, {
+      entityKinds: [
+        { name: 'Zombie', kind: 'npc', absorbed: [], bestiary: { creature: 'Zombie' } },
+      ],
+    });
+    await saveModule(module);
+    await seedBuiltInPersonas();
+    await seedLibraryCreature();
+    chatMock.mockImplementation(respondToBatch());
+
+    renderPanel(module, [], campaign);
+    await user.click(screen.getByTestId('batch-npc'));
+
+    const landed = await waitFor(async () => {
+      const rows = (await listArtifactsByCampaign(campaign.id)).filter(
+        (artifact) => artifact.name === 'Zombie',
+      );
+      expect(rows).toHaveLength(1);
+      return rows;
+    });
+    // CAST, not generated: the row cites the library creature (docs/11 D4).
+    const npc = landed[0];
+    if (npc?.kind !== 'npc') throw new Error('no npc of that name landed');
+    expect(npc.data.creatureRef).toBeDefined();
+    // The cast ran no model call at all — that is what makes it a different
+    // path rather than a quieter failure.
+    expect(chatMock).not.toHaveBeenCalled();
+    // Nothing is reported: no transient toast, and no PERSISTENT one either
+    // (the seam raises `toastErrorPersistent`, absent from this file's mock —
+    // so a reported failure would surface here as the panel's own
+    // 'Batch generation failed' toast instead of passing silently).
+    expect(toastErrorMock.mock.calls).toEqual([]);
+    await flushAsyncUpdates();
+  }, 30_000);
 });

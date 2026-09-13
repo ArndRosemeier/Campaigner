@@ -22,6 +22,7 @@ import {
 import { hasDetailedEntity } from '@/features/modules/detailed-entity';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
+import { reportEntityBatchFailures } from '@/features/modules/entity-batch-report';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { errorMessage } from '@/lib/errors';
@@ -313,15 +314,17 @@ async function runModulePostGenerationUnlocked(
           targets: names.map((name) => ({ name })),
         });
         generatedCount += result.generated.length;
-        if (result.failed.length > 0) {
-          const summary = result.failed
-            .map((failure) => `"${failure.name}" — ${failure.message}`)
-            .join('; ');
-          toastError(
-            `${String(result.failed.length)} of ${String(names.length)} ${kind}s failed to generate — ` +
-              `see the Runs tab (${summary})`,
-          );
-        }
+        // ONE reporting seam for both surfaces (docs/18 §2.3,
+        // `entity-batch-report`): the console payload and the toast are raised
+        // together, from the same count sentence the entity panel's batch
+        // button uses, so the automation and that button cannot drift.
+        reportEntityBatchFailures({
+          module,
+          campaign,
+          kind,
+          total: names.length,
+          failures: result.failed,
+        });
       }
     }
 

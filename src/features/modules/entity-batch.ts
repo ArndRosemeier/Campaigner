@@ -1,4 +1,4 @@
-import type { Campaign, EntityBestiarySlot, Id, Module } from '@/domain';
+import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, PersonaRun } from '@/domain';
 import { bestiarySlotForEntity, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
@@ -19,6 +19,7 @@ import {
 import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
 import { surroundingParagraphs } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
+import { recordEntityBatchFailure } from '@/features/modules/entity-batch-report';
 import { toastError } from '@/lib/toast';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { useProgressStore } from '@/lib/progress';
@@ -50,7 +51,11 @@ import { useProgressStore } from '@/lib/progress';
  *
  * Failure semantics (08 §M4-C / AGENTS rule 2): a failed RUN does not stop
  * the batch — the other runs finish, and every entity without a produced
- * artifact is reported loudly (toast + the failed runs in the Runs tab).
+ * artifact is reported loudly through the ONE reporting seam
+ * (`features/modules/entity-batch-report`), which raises the console payload
+ * and the toast together. A failure here is a RECORD (`kind` + run id +
+ * status + the raw value), never a flattened sentence: the reporting layer
+ * needs the whole thing (AGENTS rule 1).
  * Progress rides the shared dock (`module-entities-<moduleId>-<kind>`).
  *
  * A CANCELLED run is not a failure: the engine cancelled it because the user
@@ -287,13 +292,78 @@ export interface RunEntityBatchInput {
   instruction?: string;
 }
 
-/** One entity whose run produced no artifact, with the reason. */
+/**
+ * WHICH way an entity ended up without an artifact. The distinction is the
+ * owner's own question put into the record ("is my generator broken, or is the
+ * system deliberately declining?"), so it is a field rather than something a
+ * reader has to parse out of the sentence:
+ *
+ * - `refused` — a designed stop. The run finished, and the batch refused to
+ *   write onto the CAST CREATURE npc the run landed on (`isCastCreatureNpc`,
+ *   `domain/creature`'s `castCreatureWriteRefusal`). Nothing is broken.
+ * - `interrupted` — the run's own `failureKind` is `'cancelled'` (`docs/05`
+ *   renders it "Cancelled or interrupted"): it died with the page
+ *   (`db/runRepo.failRunningRuns`, 'Interrupted by reload') or was aborted.
+ *   Nothing is broken either — the batch just has to be run again.
+ * - `run-not-completed` — the run row exists and the run itself failed.
+ * - `setup-error` — the batch never got as far as a finished run: something
+ *   threw while setting this entity's run up.
+ *
+ * DELIBERATELY NOT `cancelled`: a run whose STATUS is `'cancelled'` is the
+ * WITHDRAWN case this batch keeps silent (`isRunWithdrawn`, docs/17 row 117),
+ * and an interruption is a different fact — status `'failed'`, the run killed
+ * under it. Two names for two things, so neither can be read as the other.
+ */
+export type EntityBatchFailureKind =
+  | 'refused'
+  | 'interrupted'
+  | 'run-not-completed'
+  | 'setup-error';
+
+/**
+ * One entity whose run produced no artifact, with the reason AND the raw
+ * evidence behind it. The reporting layer (`entity-batch-report`) is the only
+ * reader: it composes the owner-facing sentence and the console payload from
+ * exactly these fields, so nothing is flattened away on the way (AGENTS rule
+ * 1) and the two surfaces cannot drift apart (rule 4).
+ */
 export interface EntityBatchFailure {
   /** The entity (wiki-link target) the failed run belonged to. */
   name: string;
+  /** Which path this failure came from. */
+  kind: EntityBatchFailureKind;
   /** The run's errorMessage, the thrown setup error's message, or the
    * terminal status when the engine recorded neither. */
   message: string;
+  /** The run this failure belongs to. Absent when no run was started (a setup
+   * throw before `startRun`) — its presence is what lets the owner find the
+   * row in the Runs tab without guessing. */
+  runId?: Id;
+  /** That run's terminal status, copied rather than re-read: the run row can
+   * be gone (or rewritten) by the time anyone reports. */
+  status?: PersonaRun['status'];
+  /**
+   * That run's OWN failure classification (`domain/run`), and its own
+   * `errorMessage` verbatim — promoted out of the run row so the reporting
+   * layer never has to reach into `raw`. `'cancelled'` is what separates "the
+   * page reloaded while this was running" from "the provider or a contract
+   * failed"; it is the classification the Runs tab shows beside the run.
+   * Absent when the failure did not come from a run.
+   */
+  failureKind?: FailureKind;
+  errorMessage?: string;
+  /**
+   * The RAW value behind `message`, kept for the console payload (never
+   * rendered into a toast):
+   *
+   * - `refused` → the destination artifact the write was refused for — the
+   *   cast creature whose name collides;
+   * - `interrupted` / `run-not-completed` → the run ROW (`PersonaRun`), i.e.
+   *   the engine's own record of what happened;
+   * - `setup-error` → the value that was thrown (a `ZodError` included, so
+   *   the issues survive as objects rather than as a JSON wall in a string).
+   */
+  raw?: unknown;
 }
 
 export interface EntityBatchProduced {
@@ -321,15 +391,17 @@ export interface EntityBatchResult {
    * the wiki link. A cast artifact is in here too: it IS the produced
    * artifact for that entity. */
   produced: EntityBatchProduced[];
-  /** Entities that produced no artifact, with the reason — loud in the
-   * toast and the Runs tab (AGENTS rule 2). */
+  /** Entities that produced no artifact, with the reason and the raw evidence
+   * — reported through the ONE seam (`features/modules/entity-batch-report`),
+   * loud in the console and in a toast (AGENTS rule 2). */
   failed: EntityBatchFailure[];
 }
 
 /**
  * Runs one batch. Throws only on setup failures (no persona); run failures
- * are collected into `failed` — the caller decides how loudly to surface
- * them (the panel toasts per batch; the automation aggregates per module).
+ * are collected into `failed` — the CALLER reports them, and both callers
+ * report them through the one seam (`features/modules/entity-batch-report`),
+ * so the panel's button and the unattended sweep say the same thing.
  */
 export async function runEntityBatch(input: RunEntityBatchInput): Promise<EntityBatchResult> {
   const { module, campaign, kind, targets } = input;
@@ -349,6 +421,19 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const cast: string[] = [];
   const produced: EntityBatchProduced[] = [];
   const failed: EntityBatchFailure[] = [];
+  /**
+   * THE ONE FUNNEL a failure goes through: it is APPENDED to the batch's list
+   * and WRITTEN DOWN through the reporting seam, at the moment it happens —
+   * never later, because a batch can die mid-flight (a page reload, the owner's
+   * Stop, a throw out of this function) and a failure that is only reported at
+   * batch end would leave no evidence at all. Every failure arm below calls
+   * this, and a scan pin holds `failed.push` to this one line so a NEW arm
+   * cannot append without recording.
+   */
+  const recordFailure = (failure: EntityBatchFailure): void => {
+    failed.push(failure);
+    recordEntityBatchFailure({ module, campaign, kind, total }, failure);
+  };
   // In-flight entities for the dock detail: name → current run step label.
   const inFlight = new Map<string, string | null>();
   let completed = 0;
@@ -417,6 +502,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       if (stoppedSince(epoch)) return;
       inFlight.set(target.name, null);
       updateDetail();
+      // The run this entity starts, when it gets far enough to have one: the
+      // catch below reports it too (a wait that throws still leaves a row in
+      // the Runs tab, and the owner has to be able to find it).
+      let runId: Id | undefined;
       try {
         // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
         // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY
@@ -499,7 +588,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             ? { placementModuleId: module.id }
             : { targetArtifactId: target.artifactId }),
         };
-        const runId = await runEngine.startRun(runInput);
+        runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
         const outcome = await waitForRunStatus(runId);
         if (isRunWithdrawn(outcome)) {
@@ -526,7 +615,18 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           const destination = await artifactRepo.getArtifact(outcome.resultArtifactId);
           if (destination !== undefined && isCastCreatureNpc(destination)) {
             const refusal = castCreatureWriteRefusal(destination.name, target.name);
-            failed.push({ name: target.name, message: refusal });
+            recordFailure({
+              name: target.name,
+              kind: 'refused',
+              message: refusal,
+              runId,
+              status: outcome.status,
+              // A run row carries a classification or null; a faked engine row
+              // may omit it entirely, so the presence test is truthiness.
+              ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
+              errorMessage: outcome.errorMessage,
+              raw: destination,
+            });
             toastError(`Refused to write a generated entity onto ${castCreatureLabel(destination.name)}`, new Error(refusal));
           } else {
             producedIds.push(outcome.resultArtifactId);
@@ -547,18 +647,40 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           // otherwise — the engine's ONE sentence seam for why a run did not
           // finish (docs/18 §2, `runNotCompletedReason`). A completed run
           // without an artifact is its own anomaly and says so.
-          failed.push({
+          //
+          // AN INTERRUPTION IS ITS OWN CLASS, not a generation failure: a run
+          // killed with the page is marked `status: 'failed'` with
+          // `failureKind: 'cancelled'` (`db/runRepo.failRunningRuns`), which is
+          // deliberately NOT the `status: 'cancelled'` the withdrawal predicate
+          // above keeps silent — so without this branch a reload mid-batch
+          // would be reported to the owner as "N of M npcs failed to generate".
+          recordFailure({
             name: target.name,
+            kind: outcome.failureKind === 'cancelled' ? 'interrupted' : 'run-not-completed',
             message:
               outcome.status !== 'completed'
                 ? runNotCompletedReason(outcome)
                 : 'the run completed without producing an artifact',
+            runId,
+            status: outcome.status,
+            ...(outcome.failureKind ? { failureKind: outcome.failureKind } : {}),
+            errorMessage: outcome.errorMessage,
+            raw: outcome,
           });
         }
       } catch (error) {
         // Setup failure for this entity (e.g. key missing): recorded as a
-        // failure with its reason — the batch continues with the others.
-        failed.push({ name: target.name, message: errorMessage(error) });
+        // failure with its reason — the batch continues with the others. The
+        // THROWN VALUE rides along untouched (`raw`): the reporting layer needs
+        // the object, not the sentence `errorMessage` makes of it — a
+        // ZodError's `message` is the raw issues array (AGENTS rule 1).
+        recordFailure({
+          name: target.name,
+          kind: 'setup-error',
+          message: errorMessage(error),
+          ...(runId === undefined ? {} : { runId }),
+          raw: error,
+        });
       } finally {
         inFlight.delete(target.name);
         completed += 1;

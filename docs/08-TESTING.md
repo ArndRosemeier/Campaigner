@@ -1650,6 +1650,88 @@ that names a DIFFERENT class for the same alphabet (`[^A-Za-z0-9]`, `\W`), and a
 hand-rolled slug in a NEW caller — the needle list is per-caller, so a fifth
 caller inherits nothing.
 
+### A batch failure is reported through ONE seam (docs/17 row 131, docs/18 §2.3/§4)
+
+The owner ran module generation and got `4 of 10 npcs failed to generate` —
+*"the error was a lot longer, vanished quickly though"* — and asked for it to be
+*"a lot more expressive … and put it in the console"*. MEASURED before touching
+anything: (a) `toastError` passes no `duration`, so sonner's `TOAST_LIFETIME`
+(4000 ms) dismissed the batch's only record; (b) nothing on that path reached
+`console.error`; (c) the count conflated a designed cast-creature refusal, a run
+that did not complete, an interruption by page reload and a setup throw. The
+cure is `features/modules/entity-batch-report.reportEntityBatchFailures` — ONE
+call that raises a structured console entry (`[campaigner] <kind> batch: N of M
+failed`) AND a PERSISTENT toast — fed by `EntityBatchFailure`'s new
+`kind`/`runId`/`status`/`failureKind`/`errorMessage`/`raw`. The copy answers the
+owner's real question (is my generator broken?) by stating each class
+separately, while a batch of plain run failures keeps the old sentence byte for
+byte.
+
+The record is TWO entries per failure and TWO per batch, deliberately: the
+pasteable line is a SINGLE string argument (a row that also carries an object
+argument renders a devtools-specific, truncated preview into whatever gets
+copied — the line is the deliverable), and the live object follows under its own
+distinct tag (`[campaigner] entity-batch detail …`) so the line to copy can
+never be confused with the object to expand. Every line is produced from the
+object the console shows, so the two renderings cannot disagree.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The console payload, per path**: the greppable headline, the batch context, and per failure the name, WHICH path (`refused`/`interrupted`/`run-not-completed`/`setup-error`), the run id, the terminal status, the run's OWN `failureKind` + `errorMessage`, the engine's sentence, the raw value (by IDENTITY for the run row and a thrown error), and a ZodError's issues as objects | `tests/features/entity-batch-failure-report.test.ts` (7 pins; the REAL `lib/toast`/`lib/zodErrorSummary` run, only `sonner` is faked, and the console value itself is asserted) | ✅ REVERT-PROVEN: dropping the run id from the payload → RED 2/12 (the run path AND the refusal path); wiring the `setup-error` counter to the wrong bucket → RED 2/12 once the counter pin existed (and GREEN before it — below) |
+| **The toast**: the byte-identical legacy sentence when every failure is a run failure, the class breakdown when it is not, each refusal naming the way out, an interruption named as NOT a generator failure with its way out, and NO "see the Runs tab" when no run failed | `tests/features/entity-batch-failure-report.test.ts` (5 pins) + `tests/features/entity-panel.test.tsx` (3 pre-existing pins, retargeted) | ✅ REVERT-PROVEN: raising the summary through `toastError` again → RED **6 across 3 files** (the duration pin `expected undefined to deeply equal { duration: Infinity }`, the legacy-sentence pin, the scan's rule-2 pin and the 3 panel pins) |
+| **The DECISION it rests on**: the report is PERSISTENT (`duration: Infinity`), never sonner's 4-second default | `tests/features/entity-batch-failure-report.test.ts` (`is PERSISTENT: …`) — judged through the real `lib/toast` because a mocked seam could not see the options object at all | ✅ REVERT-PROVEN by the injection above (the same run reds this pin first) |
+| **An interruption is its own class**, carrying the row's `failureKind: 'cancelled'` beside `status: 'failed'` — the pair that separates "the page reloaded" from "the generator failed" | `tests/features/entity-batch-fixed-cast.test.ts` (`a run the PAGE killed is its OWN class…`, NEW) + the seam's payload pin | ✅ REVERT-PROVEN: classifying every failed run as `run-not-completed` → RED 1/9 in that file, every other suite GREEN |
+| **A designed CAST is not a failure** (row 117's rule at this surface): the cast path reports NOTHING, runs no model call, and lands a row carrying `creatureRef` | `tests/features/creature-row-resolution.test.tsx` (`a designed CAST is a SUCCESS…`, NEW, driven through the panel button with a recorded `bestiary` slot) | ✅ REVERT-PROVEN: pushing a failure onto `failed` at the cast arm → RED 1/7 (the panel's own catch surfaces it because the file's `@/lib/toast` mock has no `toastErrorPersistent`) |
+| **The record exists EVEN WHEN THE BATCH NEVER REACHES ITS END REPORT** (the owner's refinement: *"the root problem is simply not recorded"*) — `runEntityBatch` called on its own, with no caller reporting, writes one record per failure as it happens, carrying entity, path, run id, terminal status, sentence and the batch context | `tests/features/entity-batch-fixed-cast.test.ts` (`the failure is WRITTEN DOWN when it happens …`, NEW; a console spy replaces the guard's wrapper) | ✅ REVERT-PROVEN: appending around the funnel → RED the scan's one-push pin; polluting the pasteable line with the object argument → RED this pin AND the seam's single-argument pin |
+| **The pasteable TEXT form**: `[campaigner] entity-batch failure {…}` per failure and `[campaigner] entity-batch summary {…}` per batch, each a SINGLE string argument, each carrying every discriminating field, the summary line deep-equal to the summary object, and an unserializable value producing a line that says so instead of throwing | `tests/features/entity-batch-failure-report.test.ts` (4 pins) | ✅ REVERT-PROVEN: building the summary line from a different object → RED 1 (the deep-equality pin); giving the pasteable line a second argument → RED 2 (here and in the batch suite); restoring the `kind` collision → RED 3 across two files |
+| **The ROUTING** — exactly the two call sites go through the seam, the count sentence is composed in exactly ONE file, no call site re-states it, ONE funnel appends to the batch's failure list (and writes it down), the seam's per-failure entry point has exactly one caller, the tags are distinct and the seam raises BOTH surfaces (never console-only) | `tests/features/entity-batch-failure-report-scan.test.ts` (`scan`, 7 pins, labelled as scans, >200-file non-vacuity check, allowlist-rot check) | ✅ REVERT-PROVEN: each fold re-inlined at its own call site REDs 3 scan pins while the SWEEP's behavioural suites stay GREEN; a failure arm appending around the funnel REDs the one-push pin (below) |
+| **REGRESSION GUARD — the pre-existing pins**: 296 files / 3395 tests at `origin/main` @ `9944fcc` before the change, and 298 files / 3417 tests after it, `CAMPAIGNER_TEST_WORKERS=2 pnpm exec vitest run` exit 0 | the full gate | ⚠️ FIVE pre-existing pins could NOT pass unchanged, and both reasons are MEASURED rather than assumed: `toEqual` fails on an extra DEFINED property (2 pins in `entity-batch-fixed-cast.test.ts` asserting the failure record) and `toHaveBeenCalledWith('msg')` fails when the call carries a second argument (3 pins in `entity-panel.test.tsx`). Both were updated to STRICTER assertions (the full record; the persistent helper), never loosened, and both are attributed in the report |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n`, `git diff --stat` checked BEFORE the run, then
+restored from a byte-exact baseline copy and verified with `git hash-object` —
+`entity-batch.ts` `8db7636f2d01770eae2fce17c51b2f8ef9245f86`,
+`entity-batch-report.ts` `f525dc6dbcd889185fe18c93128b17c342939c41`,
+`entity-panel.tsx` `98ecccbd3dc2200422273bf4642257e444fc6c77`,
+`post-generation.ts` `d560f465ba178ac380d78a31ccfb09c0626e458d` — all four
+matched after restore; one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`):
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1a — the SWEEP's fold reverted** to its hand-rolled copy (the pre-change shape, `${kind}s`) | `post-generation.ts:321` | **scan RED 3/5** (the seam-call-set equality, the one-composer equality, the needle loop) while **32 behavioural pins stayed GREEN** (`module-post-generation` + the seam suite) — a byte-identical fold is invisible to behaviour |
+| **I1b — the PANEL's fold reverted** the same way | `entity-panel.tsx:756` | **RED 6**: the same 3 scan pins PLUS the 3 panel summary pins (those assert the persistent helper, which the reverted copy does not use) |
+| **I2 — the run's identity dropped** (`runId: failure.runId ?? null` → `runId: null`) | `entity-batch-report.ts:70` | **RED 2/12** (the run-path pin and the refusal pin), scan **GREEN** — the payload's EVIDENCE is held behaviourally |
+| **I3 — the summary raised through the TRANSIENT helper** again | `entity-batch-report.ts:207` | **RED 6 across 3 files** (the duration pin, the legacy-sentence pin, the scan's rule-2 pin, the 3 panel pins) |
+| **I4 — every failed run classified `run-not-completed`** (the interruption class conflated away) | `entity-batch.ts:645` | **RED 1/9** in `entity-batch-fixed-cast.test.ts`; the seam, scan and panel suites **GREEN** |
+| **I5 — the `setup-error` counter wired to the `run-not-completed` bucket** BEFORE the counter pins existed | `entity-batch-report.ts:122` | **GREEN 55/55 across 4 files — the one line of this change NO pin reached**; the class counters were carried in the payload and asserted nowhere |
+| **I5b — the same injection AFTER pinning every class counter** in the two payload tests | same line | **RED 2/12** — the blind line is now covered, which is why the counters are pinned |
+| **I6a — the OLD copy ADDED BESIDE the surviving seam call** (call set unchanged, plain spelling) | `post-generation.ts:328` | **scan RED 2/5** (the one-composer equality + the needle loop); the seam-call-set pin stayed **GREEN**, which is exactly why the needles exist |
+| **I6b — the SAME sentence rebuilt from pieces beside the surviving call** (`['failed','to','generate'].join(' ')`, `${kind}s`, `String.fromCharCode(59)`, `'see the '+'Runs '+'tab'`) | `post-generation.ts:328` | **GREEN 35/35 across 3 files — the MEASURED hole** (below) |
+| **I7 — a designed CAST pushed onto `failed`** as well as `cast` | `entity-batch.ts:527` | **RED 1/7** — exactly the new "a designed CAST is a SUCCESS" pin |
+| **I8 — one failure arm appends AROUND the funnel** (`recordFailure` → `failed.push`) | `entity-batch.ts:677` | **scan RED 1/7** (the one-`failed.push` pin: `expected [ 'failed.push(', 'failed.push(' ] to have a length of 1`) and the batch suite **GREEN 9/9** — the append still happens, only the RECORD is lost, which is precisely the failure mode the pin exists for |
+| **I9 — the pasteable line given a SECOND argument** (the object appended to the same call) | `entity-batch-report.ts:284` | **RED 2** — the seam's single-string-argument pin and the batch suite's moment-of-failure pin; the faithfulness property is held in two files on purpose |
+| **I10 — the summary line built from a DIFFERENT object** than the payload the console shows | `entity-batch-report.ts:302` | **RED 1** (`expected { campaign: …, failed: 2 } to deeply equal { campaign: …, …(9) }`) — the line and the object cannot drift |
+| **I11 — the batch kind and the failure kind collide under `kind`** again | `entity-batch-report.ts:120` | **RED 3** across two files (`expected undefined to be 'npc'` three times) — the two-meaning key is caught, and it was NOT caught before the pins existed (the collision was found by writing the pin) |
+
+**The scan's own limits, MEASURED (docs/18 §4).** A needle list quotes a
+SPELLING, so the attack the scan was NOT designed for (I6b) walked straight
+through it: rebuilding every fragment of the sentence — the phrase, the plural,
+the joiner, the tail — left the scan GREEN 5/5 and all 35 behavioural pins
+GREEN, because the call set, the sentence-holder scan and the four needles all
+read the SOURCE TEXT of a copy that no longer contains any of those strings.
+What still catches I6b is nothing in this suite: the hole is stated here so the
+next reader does not read "5 scan pins" as "the fold cannot be reopened". The
+same measurement decided which needles exist: a `.join('; ')` needle was tried
+FIRST and reddened on healthy code in both files (`entity-panel.tsx:678`,
+`post-generation.ts:453`) — a needle that fires on correct code gets deleted, so
+the defect shape is caught by naming the sentence's own tail (`see the Runs
+tab`) instead. The needle loop also short-circuits on the first match, so a
+red run names one needle and not the others; the per-needle count is not what
+the pins assert. The needle list is comment-BLIND, which is why
+`entity-batch.ts`'s historical quote of the old toast is a KNOWN holder in the
+one-composer pin ("2 of 5 npcs failed to generate" inside a doc comment) rather
+than a surprise red.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

@@ -147,6 +147,12 @@ const ALLOWED_NOISE: readonly {
     message: /Indexing all PDF objects/,
     why: 'the ingest-failure test deliberately feeds pdfjs a truncated PDF ("%PDF" header, no body); pdfjs warns while scanning for a recoverable xref and the ingest then fails loudly \u2014 the warning is the expected trace of the loud failure under test.',
   },
+  {
+    file: /entity-panel\.test\.|entity-batch-fixed-cast\.test\.|moduleGen-cast\.test\.|stop-orchestration\.test\./,
+    message:
+      /\[campaigner\] (entity-batch (failure|summary|detail)|\w+ batch: \d+ of \d+ failed)/,
+    why: 'the batch-failure reporting seam (features/modules/entity-batch-report, docs/17 row 131) DELIBERATELY writes down every failure: one pasteable line plus its live object the moment the failure happens, then the batch headline and the pasteable summary line. These four files drive REAL failing batches or a real refused cast, through the panel button, through `runEntityBatch` itself, through the module-gen cast finalize and through a stop-orchestration failure — so the records are the code under test working, not a regression. Scoped per file on purpose: a fifth file that starts driving a failing batch will fail with this message rather than silently joining the allowance, and the files that PIN the records spy on `console.error` instead (a spy is not noise). The seam stays completely silent for a batch with no failures, which is pinned too.',
+  },
 ];
 
 function isAllowed(entry: NoiseEntry, file: string): boolean {
