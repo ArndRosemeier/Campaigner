@@ -4,11 +4,10 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { generateImages } from '@/llm/imageGen';
-import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
+import { buildImagePrompt } from '@/llm/imagePromptDraft';
+import { generateOneImage } from '@/llm/oneImage';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
-import { intakeImage } from '@/lib/imageIntake';
 import { resolveWikiLink } from '@/lib/wikilinks';
 
 /**
@@ -84,16 +83,13 @@ async function processJob(
     return 'skipped';
   }
   const prompt = await draftPrompt(artifact, job.campaignId);
-  const finalPrompt = assembleImagePrompt(prompt);
-  // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
-  // trigger on this path — the queue only ever asks for one image.
-  const generated = await generateImages(finalPrompt, 1, {
+  // ONE image, prepared for storage: the seam owns the prompt contract
+  // assembly, the n=1 call (and why its candidate-count caps cannot fire),
+  // the empty-result refusal and the EXIF-safe intake (docs/18 §2.2).
+  const generated = await generateOneImage(prompt, {
     model: settings.imageModel,
     signal: ctx.signal,
   });
-  const blob = generated.images[0];
-  if (blob === undefined) throw new Error('the image API returned no image');
-  const intake = await intakeImage(blob);
   // Store + attach (as cover) is ONE repo transaction — a crash between
   // the image write and the artifact update must not leak the blob as an
   // unreferenced orphan or leave the artifact pointing at nothing.
@@ -101,12 +97,7 @@ async function processJob(
     createImages: [
       {
         campaignId: job.campaignId,
-        blob: intake.blob,
-        mimeType: intake.mimeType,
-        width: intake.width,
-        height: intake.height,
-        prompt: finalPrompt,
-        model: generated.modelUsed,
+        ...generated,
         source: 'generated',
         // The skip branch above guarantees the artifact had no image yet.
         asCover: true,

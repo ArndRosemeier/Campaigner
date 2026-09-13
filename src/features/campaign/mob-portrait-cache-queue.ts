@@ -11,15 +11,13 @@ import {
   storeCanonicalPortraitIfAbsent,
 } from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
-import { generateImages } from '@/llm/imageGen';
+import { generateOneImage } from '@/llm/oneImage';
 import {
-  assembleImagePrompt,
   buildImagePrompt,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
   type PortraitGroundingChunk,
 } from '@/llm/imagePromptDraft';
-import { intakeImage } from '@/lib/imageIntake';
 
 /**
  * Mob portrait cache worker (docs/11 D5 amendment, slice A): generate-once
@@ -98,7 +96,8 @@ export async function ensureCanonicalMobPortrait(
  * A joiner awaits the shared generation but keeps its own cancellation: an
  * abort withdraws THIS caller (AbortError) without cancelling work other
  * campaigns are awaiting. The owner (who created the entry) drives the real
- * abort through `generateImages` instead.
+ * abort through the generation seam (`generateOneImage`, which forwards the
+ * signal to `generateImages`) instead.
  */
 async function joinPending(
   options: EnsureCanonicalPortrait,
@@ -194,28 +193,22 @@ async function generateFreshCanonicalImage(
   loaded: CanonicalInputs,
 ): Promise<StoredImage> {
   const settings = await getSettings();
-  const finalPrompt = assembleImagePrompt(
+  // ONE image, prepared for storage (n=1, owner-ratified: one portrait per
+  // creature kind): the seam owns the prompt contract assembly, the n=1 call,
+  // the empty-result refusal and the EXIF-safe intake.
+  const generated = await generateOneImage(
     await draftCanonicalPrompt(loaded.canonical, loaded.chunk, options.campaignId),
+    {
+      model: settings.imageModel,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
   );
-  // n=1 (owner-ratified): one portrait per creature kind.
-  const generated = await generateImages(finalPrompt, 1, {
-    model: settings.imageModel,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-  const blob = generated.images[0];
-  if (blob === undefined) throw new Error('the image API returned no image');
-  const intake = await intakeImage(blob);
   // Byte preparation is NOT Dexie work (the async-transaction trap) — it
   // happens before the publish transaction opens; the repo owns the
   // put/replace inside it.
   return buildStoredImage({
     campaignId: null,
-    blob: intake.blob,
-    mimeType: intake.mimeType,
-    width: intake.width,
-    height: intake.height,
-    prompt: finalPrompt,
-    model: generated.modelUsed,
+    ...generated,
     source: 'generated',
   });
 }

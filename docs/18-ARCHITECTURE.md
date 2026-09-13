@@ -135,6 +135,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Cancel all in-flight runs | `runEngine.cancelAllActive()` — the engine's controller registry is the authoritative in-flight set (rows → resumable 'cancelled'; paused runs are not stoppable work) | querying `db.runs` for 'running' rows; ad-hoc cancel sweeps |
 | Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), classic encounter `brief→layout→schematic→stylize→pick→finalize` (pick ALWAYS pauses; NO verify step — D14, the user is the judge and Regenerate candidates is the correction) and vision encounter `brief→vision-map→finalize` (docs/11 D19: complex-only, no pick pause — the single map is selected by contract, locate+verify is the gate; the shape re-resolves after the brief stamps its `mapPath` marker) | a bespoke pipeline for a shape that fits an existing plan |
 | Image generation | `imageGen.generateImages` — UNCONDITIONAL model-chain escalation on ANY error (typed OpenRouter error envelopes classify structurally); `cappedToOne`/`fallback`/`filteredCount` surface as user-visible step notices; a single-entry chain's failure names the missing fallback config | raw image API calls elsewhere |
+| **Generate ONE image and prepare it for storage — THE one way** (ledger 126) | `llm/oneImage.generateOneImage(prompt: ImagePromptDraft, { model, signal })` — owns the prompt-contract assembly (`assembleImagePrompt`), the n=1 call, the empty-result refusal (`NO_IMAGE_FROM_API_MESSAGE`) and the EXIF-safe `imageIntake.intakeImage`; returns `GeneratedOneImage` (`{ blob, mimeType, width, height, prompt, model }` — the intake result PLUS the assembled prompt and the escalation-aware `modelUsed`), which is `NewStoredImage` minus `campaignId`/`source`/`role` and the shape every one-image storage writer takes. Four byte-identical hand-rolled copies became this call (cover queue, entity queue, mob portrait queue, canonical portrait cache); the shape's own repeated type literals read `GeneratedOneImage` now too | re-assembling a draft + calling `generateImages(…, 1, …)` + re-checking `images[0]` + calling `intakeImage` at a call site (four copies drifted into a fifth wording of "the API gave us nothing" with the refusal pinned zero times); passing `n` — the seam is n=1 by construction, and candidate-choice paths are a different question |
+| **Image generation with a CANDIDATE COUNT (the owner picks)** — deliberately NOT the seam above | `imageGen.generateImages(prompt, n, …)` stays the entry point for the two paths that answer "how many, and which one wins": `runEngine`'s persona generate step (`n: 2` + the pick step, `:5336`) and the encounter map's `unattended ? 1 : 2` pair (`:4705`, intake `{ role: 'map' }`). `runEngine`'s vision-map step (`:4491`) is a third boundary: a raw `buildLabeledMapPrompt` string (the documented text-render carve-out — no draft to assemble), a `{ role: 'map' }` intake, and it reaches the client through `encounterRunAdapters`, the indirection the run/map pins spy on — so it keeps its own sentence, which names the consequence the owner sees | routing a candidate-count path through `generateOneImage` (the seam takes no `n` on purpose); folding `:4491` for the wording alone (it would bypass `encounterRunAdapters` and lose the map consequence — §4) |
 | Monster stat lookups | `monsterResolve.resolveMonsterEntryWithRepos`; fighter shapes via `db/fighterStats.ts` (`fighterStatsFromArtifact`, `buildFighterStatsLookup`) | re-parsing `statBlock` ad hoc |
 | Rulebook citation identity (chunk-hash-fallback) | the rulebook `monsterSource` carries additive optional `contentHash` + reserved `creatureName` (`domain/artifact.ts`); EVERY birth stamps both through the pure `contentIdentityFor` (`domain/encounterResolve.ts`) — runEngine finalize (both remap sites, via `rulebookSourceFor`, which throws loud on a vanished chunk), the editor rulebook-link dialog, the spawn picker (`buildMobPickEntry`); `resolveMonsterEntry` falls back to `getChunkByContentHash` on a uuid miss (exact hash only — same creature/new version stays `missing ref`; L1 deferred, docs/11); `collectDependencies` carries a dangling entry's own stamp onto its `missing-chunk` citation (chunk wins when present) so re-exports stay L0-clearable | stamping citations uuid-only; a same-creature fuzzy match at resolve; healing chunkIds to local rows |
 | Monster level → sort key | `encounterRoster.parseLevelSort` | a second level parser — the module creator's window reads it too, over the chunk's own `statBlock.level` (docs/17 row 114) |
@@ -1611,6 +1613,38 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   blind to a collapsed reason and a title restating it reads as clean (the
   first run of injection I3 came back GREEN on the scan for exactly that
   reason, which is why the resolution exists).
+
+- **An error path copied four times can be pinned ZERO times — and a
+  copy-pasted RATIONALE is what makes the copies read as deliberate decisions**
+  (ledger 126, measured). The "generate ONE image and prepare it for storage"
+  tail stood in four files byte for byte (`cover-image-queue.ts:94-103`,
+  `entity-image-queue.ts:87-96`, `mob-portrait-queue.ts:351-360`,
+  `mob-portrait-cache-queue.ts:197-207` at base `d6b54fa`): assemble the
+  contract, `generateImages(prompt, 1, …)`, refuse an empty result, intake.
+  Each copy carried the SAME explanatory comment ("candidate-count caps cannot
+  trigger on this path"), and that is exactly what made four copies of one tail
+  read like four places that had each thought about it; a fifth site words the
+  same fact completely differently (`runEngine.ts:4491`, "The image model
+  returned no map images…"). MEASURED: `grep -rn 'the image API returned no
+  image' tests/` found NOTHING — the refusal that stands between an empty API
+  answer and a silently blank cover or portrait was asserted by no test
+  anywhere, in any of its four copies, and nothing failed when three of the
+  four were deleted. A duplicated failure branch is therefore worth LESS than
+  its line count suggests: it looks defended because it is repeated, and it is
+  defended once per copy by nothing at all. The seam is `llm/oneImage.ts` and
+  its refusal is pinned by name in `tests/llm/oneImage-seam.test.ts`.
+  Two further measurements from the same slice, both counter-intuitive:
+  (1) **a fold is invisible to behaviour** — reverting EACH of the four folds
+  to its byte-identical pre-fold block left 60 pre-existing behavioural pins
+  GREEN (11 + 6 + 27 + 16) with only the source scan red, so the scan is the
+  pin and behaviour is the regression net; (2) **`Blob` deep equality is
+  CONTENT-BLIND in vitest** — passing a DIFFERENT Blob to the intake
+  (`intakeImage(new Blob(['other']))`) left all 9 seam pins GREEN, because two
+  Blobs of different bytes have no own enumerable properties and compare deep-
+  equal. `expect(mock).toHaveBeenCalledWith(blob)` therefore asserts that SOME
+  blob reached the intake, not WHICH bytes; the pin needs reference identity
+  (`expect(mock.mock.calls[0]?.[0]).toBe(raw)`). Any pin that asserts a Blob
+  argument by value anywhere in this suite has the same hole.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

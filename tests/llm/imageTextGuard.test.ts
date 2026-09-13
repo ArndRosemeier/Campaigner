@@ -398,14 +398,18 @@ describe('image-prompt caller registry (fail-closed)', () => {
     // call whose prompt never saw the guard) fails the test. The vision path
     // and the lab bench are the documented carve-out family (their prompts
     // carry the tailored plaque clause, pinned above).
+    //
+    // The four one-image queues LEFT this list in ledger 126: their
+    // `generateImages(finalPrompt, 1, …)` tails are ONE seam now
+    // (`llm/oneImage.generateOneImage`, which takes the DRAFT and assembles
+    // the contract itself), so the seam is the direct producer those files
+    // used to be — and the seam's own source scan pins that they cannot go
+    // back to calling the client directly.
     expect(srcFilesContaining('generateImages(')).toEqual(
       [
-        'features/campaign/mob-portrait-cache-queue.ts',
-        'features/campaign/mob-portrait-queue.ts',
-        'features/covers/cover-image-queue.ts',
         'features/lab/labClients.ts',
-        'features/modules/entity-image-queue.ts',
         'llm/imageGen.ts',
+        'llm/oneImage.ts',
         'llm/runEngine.ts',
       ].sort(),
     );

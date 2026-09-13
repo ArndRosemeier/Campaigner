@@ -12,16 +12,14 @@ import { canonicalCreatureName, isCanonicalCitation } from '@/db/mobPortraitCach
 import { db } from '@/db/db';
 import { createImage } from '@/db/imageRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { generateImages } from '@/llm/imageGen';
+import { generateOneImage, type GeneratedOneImage } from '@/llm/oneImage';
 import {
-  assembleImagePrompt,
   buildImagePrompt,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
 } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
-import { intakeImage } from '@/lib/imageIntake';
 import {
   portraitArtIn,
   rosterParticipantRoute,
@@ -179,14 +177,7 @@ async function commitCreaturePortrait(options: {
   /** The stored image row the portrait is (canonical clone or fresh bytes). */
   imageId: Id;
   /** The bytes to attach when the portrait belongs on an artifact's cover. */
-  attach: {
-    blob: Blob;
-    mimeType: string;
-    width: number;
-    height: number;
-    prompt: string;
-    model: string;
-  } | null;
+  attach: GeneratedOneImage | null;
   /** The stored row to reference when the portrait belongs on the campaign's
    * presentation row. */
   storedRow: StoredImage | null;
@@ -228,14 +219,7 @@ async function commitCreaturePortrait(options: {
  * transaction opens (the Dexie async-transaction trap). */
 async function storeGeneratedRow(
   campaignId: Id,
-  portrait: {
-    blob: Blob;
-    mimeType: string;
-    width: number;
-    height: number;
-    prompt: string;
-    model: string;
-  },
+  portrait: GeneratedOneImage,
 ): Promise<StoredImage> {
   return createImage({ campaignId, source: 'generated', role: 'artwork', ...portrait });
 }
@@ -255,14 +239,7 @@ async function liveArtifactImages(artifactId: Id): Promise<Id[]> {
 
 /** The canonical slot's shared bytes as an attachable pair — the clone path a
  * CREATURE citation takes (the global row is never attached itself). */
-async function slotBytes(imageId: Id): Promise<{
-  blob: Blob;
-  mimeType: string;
-  width: number;
-  height: number;
-  prompt: string;
-  model: string;
-}> {
+async function slotBytes(imageId: Id): Promise<GeneratedOneImage> {
   const cached = await db.images.get(imageId);
   if (cached === undefined) {
     throw new Error(
@@ -348,24 +325,13 @@ async function processJob(
     body = job.grounding ?? '';
   }
   const prompt = await draftPrompt(job, artifact, summary, body, chunkGrounded);
-  const finalPrompt = assembleImagePrompt(prompt);
-  // n=1 (owner-ratified): one portrait per creature kind — candidate-count
-  // caps (imageGen's n-retry, cappedToOne) cannot trigger on this path.
-  const generated = await generateImages(finalPrompt, 1, {
+  // n=1 (owner-ratified): ONE portrait per creature kind. The seam owns the
+  // prompt contract assembly, the n=1 call (and why its candidate-count caps
+  // cannot fire), the empty-result refusal and the EXIF-safe intake.
+  const portrait = await generateOneImage(prompt, {
     model: settings.imageModel,
     signal: ctx.signal,
   });
-  const blob = generated.images[0];
-  if (blob === undefined) throw new Error('the image API returned no image');
-  const intake = await intakeImage(blob);
-  const portrait = {
-    blob: intake.blob,
-    mimeType: intake.mimeType,
-    width: intake.width,
-    height: intake.height,
-    prompt: finalPrompt,
-    model: generated.modelUsed,
-  };
   // A LOCAL generation is this campaign's own portrait: it is stored as a
   // campaign-scoped row and never published to the shared canonical slot (a
   // flavored citation and an invented mob are local-only by construction), and

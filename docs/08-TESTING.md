@@ -1322,6 +1322,87 @@ natively disabled control" stays the documented premise, and what is measured
 here is that the attribute is GONE.
 
 
+### The one way to generate ONE image (docs/17 row 126, docs/18 §2.2/§4)
+
+"Assemble the prompt contract → `generateImages(prompt, 1, …)` → refuse an empty
+result → EXIF-safe intake" stood in FOUR files byte for byte
+(`cover-image-queue.ts:94-103`, `entity-image-queue.ts:87-96`,
+`mob-portrait-queue.ts:351-360`, `mob-portrait-cache-queue.ts:197-207` at base
+`d6b54fa`), each copy carrying the same explanatory comment, and the refusal
+sentence was a literal four times over. **MEASURED, and the reason this is a
+slice rather than a tidy-up: `grep -rn 'the image API returned no image'
+tests/` found NO pin at all** — the branch that keeps an empty API answer from
+becoming a blank cover or portrait was asserted by nothing, in any copy. The
+tail is now ONE seam, `src/llm/oneImage.ts → generateOneImage(prompt, { model,
+signal })` (contract assembly + n=1 + refusal + intake, returning
+`GeneratedOneImage` = the intake result plus the assembled prompt and the
+escalation-aware `modelUsed`), and the four sites are one seam call plus their
+own storage question. The candidate-count paths (`runEngine.ts:5336` n=2 + pick,
+`:4705` `unattended ? 1 : 2`) and the vision-map step (`:4491`: raw
+`buildLabeledMapPrompt`, `{ role: 'map' }` intake, reached through
+`encounterRunAdapters`) are named boundaries in docs/18 §2.2/§4, not oversights.
+Nothing here loads the machine: every pin is a single bounded run at
+`CAMPAIGNER_TEST_WORKERS=2`, one at a time, and the injections are text edits.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The seam's happy path**: the contract is assembled FROM THE DRAFT, the API is asked for exactly ONE image with the caller's model and signal, the intake receives the API's own blob OBJECT, and the result is exactly the six-field shape every writer spreads | `tests/llm/oneImage-seam.test.ts` (`assembles the prompt contract, asks for exactly ONE image and intakes the returned blob`) | ✅ REVERT-PROVEN: skipping the assembly → RED 1 of 9; `1` → `2` → RED 1; dropping `signal` → RED 1; `generated.modelUsed` → `options.model` → RED 1; un-assembled returned `prompt` → RED 1; zeroed returned `width` → RED 1 |
+| **The seam's empty-result refusal, with its message NAMED** — the pin the audit found missing, and the one that stands between an empty API answer and a silently blank cover/portrait | `tests/llm/oneImage-seam.test.ts` (`refuses an empty result LOUDLY, naming the message the four hand-rolled copies each carried`; the thrown `message` is compared for EQUALITY to the literal and to `NO_IMAGE_FROM_API_MESSAGE`, and the intake is asserted NOT called) | ✅ REVERT-PROVEN: DELETING the guard (and casting the blob to satisfy TS) → RED 1 of 9, this pin; rewording the sentence → RED 2 (this pin + the one-holder scan). The refusal is DEFENCE at the seam — `imageGen.ts:237-239` already throws when zero candidates come back — and it is pinned so a future refactor cannot turn it into a blank row |
+| **The seam propagates API failures unchanged** (no error handling of its own, no catch-and-continue — AGENTS 1) | `tests/llm/oneImage-seam.test.ts` (`propagates the API failure unchanged`) | ✅ asserted by IDENTITY (`rejects.toBe(failure)`), so a re-wrap fails |
+| **A pin that asserts a Blob argument BY VALUE is vacant — MEASURED:** `intakeImage(new Blob(['other']))` left **all 9 pins GREEN**, because two Blobs of different bytes compare deep-equal in vitest (no own enumerable properties). The seam's intake pin now asserts REFERENCE IDENTITY (`expect(intakeImageMock.mock.calls[0]?.[0]).toBe(raw)`, `expect(result.blob).toBe(stored)`) as well as `toHaveBeenCalledWith` | `tests/llm/oneImage-seam.test.ts` (the happy path's two identity assertions); docs/18 §4 | ✅ REVERT-PROVEN **as a hole found BY injection**: before the identity assertions the injection was GREEN 9/9; after them the same injection is RED 1 of 9 |
+| **All four folded sites route through the seam** — a SOURCE SCAN, labelled as a scan in its name, counting `generateOneImage(` = 1 per file and requiring `generateImages(`, `intakeImage(`, `assembleImagePrompt(` and the refusal literal to be GONE from each | `tests/llm/oneImage-seam.test.ts` (`scan: routes the one-image tail in <file> through the seam`, one pin per folded file) | ✅ REVERT-PROVEN: reverting ANY of the four folds (restored byte-identically from `HEAD`, `git diff --stat` empty while injected) REDs its route pin — a COUNT, not a lower bound |
+| **The hand-rolled shape exists in exactly the documented boundaries and nowhere else** — the same SCAN: a file calling BOTH `generateImages(` and `intakeImage(` must be `llm/runEngine.ts` (the map paths + the adapter indirection) or `llm/oneImage.ts` (the seam itself), with a >200-file non-vacuity check and an allowlist-rot check | `tests/llm/oneImage-seam.test.ts` (`scan: leaves the hand-rolled generate-plus-intake shape in exactly the documented boundaries (and nowhere else)`) | ✅ the rot half is REVERT-PROVEN by renaming the seam's own intake call → RED (the boundary set shrinks to `['llm/runEngine.ts']`) |
+| **The refusal sentence is stated in exactly ONE source file** (the seam) — a SCAN, so a fifth wording cannot appear beside it | `tests/llm/oneImage-seam.test.ts` (`scan: states the empty-result sentence in exactly ONE source file, and the seam reads it from there`) | ✅ REVERT-PROVEN: the four wholesale fold reverts each RED it (holders `[llm/oneImage.ts, <reverted file>]`); a reword REDs it (holders `[]`) |
+| **REGRESSION GUARD — every pre-existing pin passes UNCHANGED**: `tests/features/cover-image-queue.test.ts` 11, `tests/features/entity-image-queue.test.ts` 6, `tests/features/mob-portrait-queue.test.ts` 19, `tests/features/mob-portrait-regen.test.ts` 8, `tests/db/mob-portrait-cache.test.ts` 16 | those five files, run one suite at a time | ✅ byte-unchanged and green (60 tests). **NONE of them asserted the fold's shape** — which is the measured point below: they stay green under every one of the four fold reverts |
+| **ONE pre-existing assertion DID have to change, and the full gate is what caught it**: `tests/llm/imageTextGuard.test.ts:401` is a fail-closed REGISTRY of every file calling `generateImages(` (so a prompt bypassing the text-render guard fails loudly). The fold legitimately changes its membership — the four queues leave, `llm/oneImage.ts` joins — and the registry's own comment instructs exactly that ("then extend this list"). The pin's MEANING is unchanged; its list is. The sibling registry in the same file (`buildImagePrompt(` call sites) passes UNCHANGED | `tests/llm/imageTextGuard.test.ts` (the one edited list + a comment naming ledger 126) | ✅ reported rather than re-run until green: the failure is deterministic and is a direct consequence of the fold, not a flake (failed 1 of 3359 on the first full-gate run, with the exact membership diff printed) |
+
+**REVERT-PROVEN lines** (each injection applied, printed back with `grep -n`,
+diffed against a byte-exact baseline copy, then restored and verified with
+`git hash-object` — every baseline hash matched before and after):
+
+| injection | line it hits | result |
+|---|---|---|
+| `assembleImagePrompt(prompt)` → `prompt.prompt` | `oneImage.ts:93` (the executing line; the seam's own verified line number, not a filter) | **RED 1/9** — the happy path's assembled-prompt assertion |
+| the n=1 argument `1` → `2` | `oneImage.ts:94` | **RED 1/9** |
+| `signal: options.signal` deleted from the API call | `oneImage.ts:96` | **RED 1/9** |
+| the returned `model: generated.modelUsed` → `options.model` | `oneImage.ts:111` | **RED 1/9** |
+| the empty-result guard DELETED (`intakeImage(blob as Blob)`) | `oneImage.ts:103` — the guard's own line | **RED 1/9**, the refusal pin |
+| the refusal sentence reworded (`…returned nothing`) | `oneImage.ts:55` | **RED 2/9** — the refusal pin + the one-holder scan |
+| the returned `prompt: finalPrompt` → `prompt.prompt` | `oneImage.ts:110` | **RED 1/9** |
+| the returned `width: intake.width` → `0` | `oneImage.ts:108` | **RED 1/9** |
+| the seam's own `intakeImage(blob)` renamed (`intakeImageRenamed`) | `oneImage.ts:104` | **RED 2/9** — the happy path + the allowlist-rot half (`expected [ 'llm/runEngine.ts' ] to deeply equal [ 'llm/oneImage.ts', 'llm/runEngine.ts' ]`) |
+| `intakeImage(blob)` → `intakeImage(new Blob(['other'], …))` | `oneImage.ts:104` | **GREEN 9/9 first** — the Blob-equality hole, named above; **RED 1/9** after the identity assertions were added and the injection re-run |
+| **the fold reverted WHOLE, one file at a time** (`git show HEAD:<file>`, byte-identical to the base commit) | `cover-image-queue.ts:94-103`, `entity-image-queue.ts:87-96`, `mob-portrait-queue.ts:351-360`, `mob-portrait-cache-queue.ts:197-207` | **RED 3/9 each** (offender scan + that file's route pin + the sentence-holder scan) and **GREEN: 11 / 6 / 27 / 16 pre-existing behavioural pins — 60 in total** |
+
+### The fold is invisible to behaviour — which is why the scan exists
+
+Measured four times, not assumed: reverting each folded tail to its
+byte-identical pre-fold block leaves every behavioural pin in the repo GREEN (60
+of them across the five suites above) while only the source scan goes red. A
+byte-identical fold cannot be detected by behaviour — the seam and the four
+copies produce the same calls with the same arguments — so no behavioural pin
+can hold this fold, and the scan's name says "scan" so the next reader knows
+which instrument is doing the work. The same lesson bit twice in this slice: the
+refusal's own pin had to be WRITTEN (nothing pinned it in four copies), and the
+intake pin's first form was vacant until an injection proved it (Blob deep
+equality, above).
+
+**UNPROVEN.** (1) No live-provider and no real-browser run: every pin mocks
+`generateImages` and `intakeImage` at the module boundary, so what is proved is
+the WIRING — the seam's integration with the real client (transport, escalation,
+EXIF decode) is unchanged and untested here. (2) The empty-result refusal is
+unreachable through the real client today (`imageGen.ts:237-239` throws first);
+it is pinned as defence, and no pin drives the real client into that state.
+(3) The scan is TEXTUAL: it cannot see a copy composed at runtime, and its
+needles are call-shaped, so a COMMENT mentioning `generateImages(` in a folded
+file would trip it (none does today). (4) The returned `mimeType` and `height`
+were not individually injected — they are lines of the same object literal as
+the injected `width`, reached by the same `toEqual` assertion. (5)
+`runEngine.ts:4491`'s map sentence was deliberately NOT made to adopt the seam's
+message; the reasoning (adapter indirection + the consequence it names) lives in
+docs/18 §2.2/§4 and ledger 126, and no pin covers that decision either way.
+
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
