@@ -362,9 +362,46 @@ export function ownPageNote(name: string): string {
   return `“${name}” has its own page, following this one.`;
 }
 
-/** A sidebar/own-page marker run, in the document's kicker tier (§3: 8 pt). */
-function marker(text: string): Content {
-  return { text: text.toUpperCase(), style: 'kicker', margin: [0, 0, 0, 4] };
+/**
+ * The sentence a LATER reference to a companion that already printed carries
+ * instead of printing the companion a second time (docs/19 §10.1: *"ONCE, with
+ * a link back"* — the owner's own answer, and the spec's own note that this
+ * pointer IS the §5 pointer sentence). It is a SENTENCE, not a page number:
+ * the builder is definition-only, so nothing here knows a page (the same limit
+ * §5's own-page pointer lives with).
+ */
+export function earlierDetailNote(name: string): string {
+  return `The details of “${name}” print earlier in this document.`;
+}
+
+/**
+ * A sidebar/own-page marker run, in the document's kicker tier (§3: 8 pt).
+ * `destination` makes the marker an INTERNAL LINK — the ONE reason this
+ * function takes a second argument, and the whole of §10.1's link back: a
+ * reader who meets the reference a second time can jump to where the companion
+ * printed. Without a destination the node is byte-identical to what every
+ * existing marker printed.
+ */
+function marker(text: string, destination?: string): Content {
+  const upper = text.toUpperCase();
+  if (destination === undefined) {
+    return { text: upper, style: 'kicker', margin: [0, 0, 0, 4] };
+  }
+  return {
+    text: [{ text: upper, linkToDestination: destination }],
+    style: 'kicker',
+    margin: [0, 0, 0, 4],
+  };
+}
+
+/**
+ * §10.1's link back AS CONTENT: the pointer a repeated reference carries in the
+ * sidebar where its companion would have printed, linked to the destination the
+ * companion actually printed at. It goes through the SAME `marker` the own-page
+ * pointer uses, so the document has ONE pointer sentence form and not two.
+ */
+export function earlierDetailMarker(name: string, destination: string): Content {
+  return marker(earlierDetailNote(name), destination);
 }
 
 /**

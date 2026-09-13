@@ -40,6 +40,7 @@ import {
   PAGE_CONTENT_WIDTH,
   PAGE_MARGIN,
   SIDEBAR_COLUMN_WIDTH,
+  earlierDetailMarker,
   estimateHeight,
   paginateDocument,
   detailPlacement,
@@ -770,6 +771,125 @@ interface RenderState {
    * arithmetic measure a document nobody prints.
    */
   measureStyles: Readonly<Record<string, MeasureStyle>>;
+  /**
+   * Every artifact the document prints → the places in the DOCUMENT'S OWN TEXT
+   * that refer to it (docs/19 §7). Built once, from the same reader's rule that
+   * decides placement, so an artifact's back-references and its locality can
+   * never disagree.
+   */
+  referenceSites: ReadonlyMap<Id, readonly ReferenceSite[]>;
+  /**
+   * The destination a wiki-link's NAME prints at, resolved through the reader's
+   * own rule (`lib/wikilinks.resolveWikiLink`) against the same pool the wiki
+   * chips resolve against — THE one answer every body of the document links by
+   * (docs/19 §7's first bullet). `undefined` ⇒ no destination in this document,
+   * so the run stays the bold display text it always was (pdfmake throws on a
+   * dangling `linkToDestination`).
+   */
+  wikiDestination: (name: string) => string | undefined;
+  /**
+   * The companion already printed, by artifact id (docs/19 §10.1). Mutable by
+   * design and per BUILD: "prints once" is a fact about one document, never
+   * about a stored row.
+   */
+  companionsPrinted: Map<Id, string>;
+}
+
+/**
+ * ONE place in the document's own text where a row is referred to — the unit
+ * docs/19 §7's *"Every artifact section states where it is referenced from"* is
+ * made of.
+ */
+export interface ReferenceSite {
+  /** The name the place carries IN THE DOCUMENT: a section's (or part's) title,
+   * or the derived `Referenced from` label. */
+  label: string;
+  /** The pdfmake destination that place prints at. */
+  destination: string;
+  /** The place's own text — what the ONE reference rule is applied to. */
+  text: string;
+}
+
+/**
+ * docs/19 §7, DERIVED: the places in the document's own text whose wiki-links
+ * name this row, in document order.
+ *
+ * THE one rule, and deliberately the SAME one that decides placement (docs/19
+ * §4: locality is computed from the first reference): `extractWikiLinks` over
+ * the place's text, resolved by the reader's own resolver
+ * (`lib/wikilinks.resolveWikiLink`) against the reader's own pool, module tier
+ * included. A second "is this row mentioned" rule would let a row be placed
+ * beside a sentence that its own back-reference list does not name — the two
+ * halves of §4/§7 disagreeing about what a reference IS.
+ *
+ * The places are only the MODULE'S OWN TEXT (premise, parts), never another
+ * artifact section: §7 asks where the artifact is referred to FROM, and the
+ * module's prose is where a reader meets it.
+ */
+export function referenceSitesFor(
+  artifact: AnyArtifact,
+  sites: readonly ReferenceSite[],
+  module: Module,
+  artifacts: readonly AnyArtifact[],
+): ReferenceSite[] {
+  return sites.filter((site) =>
+    extractWikiLinks(site.text).some(
+      (link) =>
+        resolveWikiLink(link.name, artifacts, { moduleId: module.id }).artifact?.id ===
+        artifact.id,
+    ),
+  );
+}
+
+/**
+ * §7's back-reference line, as content: `Referenced from: <place> · <place>`,
+ * every place an INTERNAL LINK to where it prints. It is appended to the
+ * artifact section's own text column, because §7 binds the SECTION to state it
+ * and NOT every artifact section has a companion to state it in — `read-aloud`
+ * and `aside` sections deliberately carry no sidebar detail at all
+ * (`roleDetail`), and an artifact section must not lose its back-references
+ * because of the role the plan chose for it.
+ *
+ * A row the document's own text never names gets NO line: there is nothing to
+ * state (and the procedural outline may legitimately print such a row, docs/19
+ * §10 question 3's two limits).
+ */
+function referencedFromContent(artifact: AnyArtifact, state: RenderState): Content[] {
+  const sites = state.referenceSites.get(artifact.id) ?? [];
+  if (sites.length === 0) return [];
+  const runs: Content[] = [{ text: 'Referenced from: ', bold: true }];
+  sites.forEach((site, index) => {
+    if (index > 0) runs.push({ text: ' · ' });
+    runs.push({ text: site.label, linkToDestination: site.destination });
+  });
+  return [{ text: runs, style: 'muted', margin: [0, 4, 0, 0] }];
+}
+
+/**
+ * docs/19 §10.1, the owner's own answer — *"ONCE, with a link back"*: the ONE
+ * rule for a companion that would print a second time.
+ *
+ * The FIRST section that actually carries a companion prints it and is
+ * recorded; every later one prints the §5-shaped pointer instead, LINKED to
+ * where the companion printed. The record is taken only when a companion is
+ * really emitted: a section whose role carries no companion (`read-aloud`,
+ * `aside`) must not claim the row and then point a reader at a sidebar that
+ * holds nothing — the artifact's mechanics would print NOWHERE, which §10's
+ * second answer ("the document is COMPLETE") forbids.
+ */
+function companionOnce(input: {
+  artifact: AnyArtifact;
+  destination: string;
+  detail: Content[];
+  state: RenderState;
+}): Content[] {
+  if (input.detail.length === 0) return input.detail;
+  const earlier = input.state.companionsPrinted.get(input.artifact.id);
+  if (earlier === undefined) {
+    input.state.companionsPrinted.set(input.artifact.id, input.destination);
+    return input.detail;
+  }
+  return [earlierDetailMarker(input.artifact.name, earlier)];
 }
 
 /**
@@ -1039,9 +1159,16 @@ function artifactLinksContent(artifact: AnyArtifact, state: RenderState): Conten
 /**
  * One artifact's PROSE — "the text" (docs/19 §3): the row's own body, through
  * the ONE markdown seam. Always main-column content, never a companion.
+ *
+ * Every `[[wiki-link]]` the body carries is an INTERNAL LINK to where that row
+ * prints (docs/19 §7: *"Every reference in the text is an internal link to the
+ * thing it names"*) — resolved by the SAME reader's resolver the chips use, so
+ * the PDF and the app cannot name different rows. A name this document has no
+ * destination for keeps its bold display run and gets no link at all.
  */
-function artifactProse(artifact: AnyArtifact): Content[] {
-  return artifact.body.trim() === '' ? [] : mdToPdfmakeContent(artifact.body);
+function artifactProse(artifact: AnyArtifact, state: RenderState): Content[] {
+  if (artifact.body.trim() === '') return [];
+  return mdToPdfmakeContent(artifact.body, { destinationFor: state.wikiDestination });
 }
 
 /**
@@ -1268,9 +1395,15 @@ const PLAN_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
 };
 
 /** The module's premise as document content, or the LOUD missing-premise box. */
-function premiseContent(module: Module, problems: ModulePdfProblem[]): Content[] {
+function premiseContent(
+  module: Module,
+  problems: ModulePdfProblem[],
+  state: RenderState,
+): Content[] {
   const premise = module.spine?.premise ?? '';
-  if (premise.trim() !== '') return mdToPdfmakeContent(premise);
+  if (premise.trim() !== '') {
+    return mdToPdfmakeContent(premise, { destinationFor: state.wikiDestination });
+  }
   const reason = 'the module has no premise yet (the spine pass has not run)';
   problems.push({ where: 'the premise of the module', reason });
   return [alertBox(`The premise is missing — ${reason}`)];
@@ -1281,9 +1414,12 @@ function partTextContent(
   part: RenderedPart,
   total: number,
   problems: ModulePdfProblem[],
+  state: RenderState,
 ): Content[] {
   const position = part.planIndex + 1;
-  if (part.text.trim() !== '') return mdToPdfmakeContent(part.text);
+  if (part.text.trim() !== '') {
+    return mdToPdfmakeContent(part.text, { destinationFor: state.wikiDestination });
+  }
   const reason = `part ${String(position)} of ${String(total)} has no text yet`;
   problems.push({ where: `part ${String(position)} (“${part.title}”)`, reason });
   return [alertBox(`Part ${String(position)} — “${part.title}” is empty — ${reason}`)];
@@ -1362,7 +1498,7 @@ function plannedSectionBlock(
   let blocks: Content[];
   if (source.type === 'part') {
     if (source.planIndex === -1) {
-      blocks = premiseContent(module, state.problems);
+      blocks = premiseContent(module, state.problems, state);
     } else {
       const part = parts.get(source.planIndex);
       // A part the parts-document seam refused (or a module with no spine at
@@ -1374,7 +1510,7 @@ function plannedSectionBlock(
                 `“${section.title}” — the part text could not be read (the parts of the module could not be assembled)`,
               ),
             ]
-          : partTextContent(part, total, state.problems);
+          : partTextContent(part, total, state.problems, state);
     }
   } else {
     const artifact = section.artifact;
@@ -1383,7 +1519,7 @@ function plannedSectionBlock(
         alertBox(`“${section.title}” — the row it names is not in this document's pool`),
       ];
     } else {
-      blocks = artifactProse(artifact);
+      blocks = artifactProse(artifact, state);
     }
   }
 
@@ -1393,7 +1529,23 @@ function plannedSectionBlock(
     main.push(...anchoredImageContent(image, state));
   }
   main.push(...roleProse(section.role, blocks));
-  const detail = roleDetail(section.role, section.artifact, state);
+  // §7's back-references: the section states where the row is referred to
+  // from. It rides the MAIN column, after the section's text, so an
+  // `aside`/`read-aloud` section (which carries no companion by role) states it
+  // too.
+  if (section.artifact !== null) {
+    main.push(...referencedFromContent(section.artifact, state));
+  }
+  const artifact = section.artifact;
+  const detail =
+    artifact === null
+      ? []
+      : companionOnce({
+          artifact,
+          destination: section.destination,
+          detail: roleDetail(section.role, artifact, state),
+          state,
+        });
   return {
     main,
     detail,
@@ -1500,12 +1652,13 @@ function chapterBlock(title: string, id: string, kickerText: string | null): Pag
  * One artifact as a flow block, for the PROCEDURAL outline and the NPC
  * gallery: the chapter's kicker and the artifact's name are the block's main
  * content together with its prose, and `artifactDetail` is the companion the
- * page model places by §4/§5.
+ * page model places by §4/§5. The block closes with §7's back-references — the
+ * places in the document's own text that name this row.
  */
 function artifactBlock(
   artifact: AnyArtifact,
   state: RenderState,
-  options: { chapterKicker: string | null; covers: boolean; destination: string | null },
+  options: { chapterKicker: string | null; covers: boolean; destination: string },
 ): PageBlock {
   const main: Content[] = [];
   if (options.chapterKicker !== null) main.push(kicker(options.chapterKicker));
@@ -1513,10 +1666,16 @@ function artifactBlock(
     text: artifact.name,
     style: 'artifact',
     tocItem: 'chapters',
-    ...(options.destination === null ? {} : { id: options.destination }),
+    id: options.destination,
   });
-  main.push(...artifactProse(artifact));
-  const detail = artifactDetail(artifact, state, { covers: options.covers });
+  main.push(...artifactProse(artifact, state));
+  main.push(...referencedFromContent(artifact, state));
+  const detail = companionOnce({
+    artifact,
+    destination: options.destination,
+    detail: artifactDetail(artifact, state, { covers: options.covers }),
+    state,
+  });
   return {
     main,
     detail,
@@ -1635,6 +1794,53 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   for (const npc of gallery) {
     if (!destinations.has(npc.id)) destinations.set(npc.id, `node-${npc.id}`);
   }
+  // docs/19 §7's reference places: the module's OWN TEXT as THIS document
+  // prints it — the premise and every part the document carries — each with the
+  // destination a reader can actually jump to. Built from the same two branches
+  // the flow below takes, so a place this document does not print (a part
+  // section the audience filtered out, a part that was never read) is never
+  // offered as a reference site.
+  const referencePlaces: ReferenceSite[] =
+    printableSections === null
+      ? [
+          { label: 'Premise', destination: 'node-premise', text: module.spine?.premise ?? '' },
+          ...parts.map((part) => ({
+            label: part.title,
+            destination: `node-part-${String(part.planIndex)}`,
+            text: part.text,
+          })),
+        ]
+      : printableSections.flatMap((section): ReferenceSite[] => {
+          if (section.source.type !== 'part') return [];
+          return [
+            {
+              label: section.title,
+              destination: section.destination,
+              text:
+                section.source.planIndex === -1
+                  ? (module.spine?.premise ?? '')
+                  : (partsByIndex.get(section.source.planIndex)?.text ?? ''),
+            },
+          ];
+        });
+  // Every row the document prints → where its OWN text refers to it, through
+  // the ONE rule (`referenceSitesFor`), so §7's back-references and §4's
+  // derived locality are the same reading of the same text.
+  const referenceSites = new Map<Id, readonly ReferenceSite[]>(
+    [...printedArtifacts, ...gallery].map((artifact) => [
+      artifact.id,
+      referenceSitesFor(artifact, referencePlaces, module, input.artifacts),
+    ]),
+  );
+  // THE one wiki-link destination rule for the document's own text (docs/19 §7
+  // bullet 1): the reader's own resolver over the reader's own pool, then the
+  // destination this document printed that row at. A name with no destination
+  // here is not a link — there is nothing to jump to, and pdfmake throws on a
+  // dangling `linkToDestination`.
+  const wikiDestination = (name: string): string | undefined => {
+    const artifact = resolveWikiLink(name, input.artifacts, { moduleId: module.id }).artifact;
+    return artifact === undefined ? undefined : destinations.get(artifact.id);
+  };
   // The document's ONE type repertoire (docs/19 §3): body 11 pt (the
   // defaultStyle), the detail tier 9.5 pt for the sidebar, the kicker at 8 pt,
   // the role treatments. Declared BEFORE the flow is built, because the page
@@ -1665,7 +1871,19 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     aside: { fontSize: 9.5, italics: true, color: '#555555' },
   };
 
-  const state: RenderState = { input, audience, destinations, byId, problems, measureStyles };
+  const state: RenderState = {
+    input,
+    audience,
+    destinations,
+    byId,
+    problems,
+    measureStyles,
+    referenceSites,
+    wikiDestination,
+    // Per BUILD: "a companion prints once" is a fact about the document being
+    // built now, never about a stored row (docs/19 §10.1, render-time only).
+    companionsPrinted: new Map<Id, string>(),
+  };
 
   const content: Content[] = [];
 

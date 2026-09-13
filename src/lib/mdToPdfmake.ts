@@ -15,6 +15,30 @@ export interface InlineRun {
   text: string;
   bold?: boolean;
   italics?: boolean;
+  /**
+   * Where this run's `[[wiki-link]]` prints, when the caller can answer that
+   * (docs/19 §7: *"Every reference in the text is an internal link to the
+   * thing it names"*). Render-time only, and absent for every caller that
+   * passes no resolver — this module has no idea what a destination is, so the
+   * caller owns the answer through `MdRenderOptions.destinationFor`.
+   */
+  linkToDestination?: string;
+}
+
+/**
+ * What a caller may know that this renderer cannot: where a wiki-link's name
+ * prints in the document being built. ONE hook, because the rule for WHICH row
+ * a name resolves to is the reader's own resolver (`lib/wikilinks.resolveWikiLink`)
+ * and must stay with the caller that owns the artifact pool — a second
+ * resolution rule inside a markdown renderer is exactly the drift docs/18 §2
+ * forbids (the chip renderer and the PDF must name the same row).
+ */
+export interface MdRenderOptions {
+  /** The destination a `[[name]]` prints at, or `undefined` when the document
+   * has none (an unresolved name, or a row this document does not print): then
+   * the run stays bold display text and no link is emitted, because pdfmake
+   * throws on a `linkToDestination` no node carries. */
+  destinationFor?: (name: string) => string | undefined;
 }
 
 export type MdBlock =
@@ -25,14 +49,15 @@ export type MdBlock =
   | { kind: 'fence'; text: string };
 
 /** Parses inline `**bold**`, `*italic*` / `_italic_`, `` `code` ``, and
- * `[[wiki-links]]` (→ bold display text) runs. */
-export function parseInline(text: string): InlineRun[] {
+ * `[[wiki-links]]` (→ bold display text) runs. With `options.destinationFor` a
+ * wiki run also carries where its name prints (docs/19 §7). */
+export function parseInline(text: string, options: MdRenderOptions = {}): InlineRun[] {
   const runs: InlineRun[] = [];
   const pattern = /(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(`[^`]+`)/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const index = match.index;
-    if (index > last) pushWithWiki(text.slice(last, index), runs);
+    if (index > last) pushWithWiki(text.slice(last, index), runs, options);
     const token = match[0];
     if (token.startsWith('**')) {
       runs.push({ text: token.slice(2, -2), bold: true });
@@ -43,15 +68,16 @@ export function parseInline(text: string): InlineRun[] {
     }
     last = index + token.length;
   }
-  if (last < text.length) pushWithWiki(text.slice(last), runs);
+  if (last < text.length) pushWithWiki(text.slice(last), runs, options);
   return runs.length === 0 ? [{ text: '' }] : runs;
 }
 
-/** Appends a text slice, turning any `[[wiki-link]]` into a bold run. Loops
+/** Appends a text slice, turning any `[[wiki-link]]` into a bold run — linked
+ * to the destination the caller's resolver names, when it names one. Loops
  * with `exec` on ONE string, so it reads the shared NON-global
  * `lib/wikilinks.WIKI_LINK_TOKEN`: a global pattern would carry `lastIndex`
  * between calls and silently skip every second link (docs/17 row 145). */
-function pushWithWiki(text: string, runs: InlineRun[]): void {
+function pushWithWiki(text: string, runs: InlineRun[], options: MdRenderOptions): void {
   let rest = text;
   for (;;) {
     const match = WIKI_LINK_TOKEN.exec(rest);
@@ -59,7 +85,12 @@ function pushWithWiki(text: string, runs: InlineRun[]): void {
     if (match.index > 0) runs.push({ text: rest.slice(0, match.index) });
     const name = (match[1] ?? '').trim();
     const display = (match[2] ?? '').trim();
-    runs.push({ text: display === '' ? name : display, bold: true });
+    const destination = options.destinationFor?.(name);
+    runs.push({
+      text: display === '' ? name : display,
+      bold: true,
+      ...(destination === undefined ? {} : { linkToDestination: destination }),
+    });
     rest = rest.slice(match.index + match[0].length);
   }
   if (rest !== '') runs.push({ text: rest });

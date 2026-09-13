@@ -168,7 +168,7 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
     }
   });
 
-  it('adds exactly the page model’s own pointers, and nothing else', async () => {
+  it('adds exactly the page model’s own pointers and the navigation’s own lines, and nothing else', async () => {
     const built = await documents();
     const added: Record<string, string[]> = {};
     for (const [name, definition] of Object.entries(built)) {
@@ -176,21 +176,85 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
       if (before === undefined) throw new Error(`no baseline captured for ${name}`);
       added[name] = missingRuns(contentRuns(definition), before.runs);
     }
-    // The ONLY runs the layout introduces are its own signposts: the sidebar
-    // pointer left where an own-page artifact is referred to (§5). Nothing else
-    // in the document is new — in particular not one content run is rewritten,
-    // which is what makes "the same set of content strings" a real claim.
+    // The ONLY runs the document gains over the pre-layout renderer, by name
+    // and in order, because the navigation slice (docs/17 row 151) ADDS runs
+    // and this assertion is an EQUALITY on purpose — an extra run still fails:
+    //
+    // 1. the §5 own-page pointer, one per own-page artifact, unchanged since
+    //    row 148;
+    // 2. §7's back-reference line, one per artifact section that states where
+    //    it is referred to from: `Referenced from: ` + one linked run per
+    //    reference place + a ` · ` separator between them. A place label that
+    //    is ALSO a heading in the document (the premise/part titles) shows up
+    //    here once per section that names it, because the diff is a MULTISET
+    //    difference, not a set of new strings;
+    // 3. `Referenced from: ` itself is genuinely new (hence the `strings` delta
+    //    of +2/+2/+1 below: `Referenced from: ` and the ` · ` separator);
+    //
+    // and nothing else — in particular not one content run is rewritten, which
+    // is what makes "the same set of content strings" a real claim. The order
+    // is document order: the premise/part sites of each artifact section
+    // (Old Tower: premise + both parts; The Turning/Marek/The Tide
+    // Wardens/GM cheat sheet: the premise only; Pier Ambush/The Drowned Crown:
+    // the premise + the part that names them).
     expect(added).toEqual({
       'large-procedural': [
         '“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
+        'Referenced from: ',
+        'Premise',
+        ' · ',
+        'The Dockyards',
         '“THE TURNING” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
+        'Referenced from: ',
+        'Premise',
         '“PIER AMBUSH” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
+        'Referenced from: ',
+        'Premise',
+        ' · ',
+        'The Vault',
+        'Referenced from: ',
+        'Premise',
+        'Referenced from: ',
+        'Premise',
+        'Referenced from: ',
+        'Premise',
+        ' · ',
+        'The Vault',
+        'Referenced from: ',
+        'Premise',
+        'Referenced from: ',
+        'Premise',
+        ' · ',
+        'The Dockyards',
       ],
       'large-planned': [
         '“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
+        'Referenced from: ',
+        'Before the Gate',
+        ' · ',
+        'The Dockyards',
+        'Referenced from: ',
+        'Before the Gate',
+        ' · ',
+        'The Dockyards',
         '“PIER AMBUSH” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
+        'Referenced from: ',
+        'Before the Gate',
+        ' · ',
+        'A Word on the Tide',
+        'Referenced from: ',
+        'Before the Gate',
+        'Referenced from: ',
+        'Before the Gate',
+        ' · ',
+        'A Word on the Tide',
       ],
-      'small-procedural': [],
+      'small-procedural': [
+        'Referenced from: ',
+        'Premise',
+        'Referenced from: ',
+        'Premise',
+      ],
     });
   });
 
@@ -202,10 +266,14 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
         return [name, { runs: runs.length, strings: contentStrings(definition).length }];
       }),
     );
+    // AFTER the navigation slice (docs/17 row 151): +24 / +18 / +4 runs against
+    // row 148's numbers (220/165/53), all of them the §7 back-reference lines
+    // itemised in the test above; +2/+2/+1 distinct strings (`Referenced from: `
+    // and the ` · ` separator — every place label already printed as a heading).
     expect(counts).toEqual({
-      'large-procedural': { runs: 220, strings: 159 },
-      'large-planned': { runs: 165, strings: 130 },
-      'small-procedural': { runs: 53, strings: 48 },
+      'large-procedural': { runs: 244, strings: 161 },
+      'large-planned': { runs: 183, strings: 132 },
+      'small-procedural': { runs: 57, strings: 49 },
     });
     // The BEFORE numbers, from the same extractor at the base commit.
     expect(
