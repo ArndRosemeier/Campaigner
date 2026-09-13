@@ -1580,8 +1580,12 @@ own group.
 
 ChatGPT-canvas-style co-authoring for the whole module in ONE document at
 `/c/:campaignId/m/:moduleId/canvas` (the route name the Board rename freed),
-entered from the reader header (**Canvas**, beside **Board**) and the modules
-list row. Screen text is docs/05 §Module canvas; implementation in
+entered from the modules list row (the plain canvas) or from the reader
+header's **Chat** entry (the same canvas with the chat sidebar forced open —
+the reader header's ONLY canvas destination: the **Canvas** link that stood
+beside **Board** was retired by owner request, ledger row 138, because it and
+**Chat** landed on this same page). Screen text is docs/05 §Module canvas;
+implementation in
 `src/features/modules/canvas/`.
 
 - **The substrate is CodeMirror 6, text-first** (research-ratified): the
@@ -1900,8 +1904,13 @@ row 51): "No part selection. Whole module in context (without premise),
 parts split by an easy to see delimiter … I want the model to see the whole
 module and be able to make changes to the whole module" + an uncapped
 read-only grounding block for continuity. Entry: the reader header's **Chat**
-link (next to Canvas) routes to the canvas with the sidebar forced open
-(`canvasChatPath`, `?chat=open`, ledger 57); the modules list row's own Chat
+link routes to the canvas with the sidebar forced open
+(`canvasChatPath`, `?chat=open`, ledger 57) and is the reader header's ONLY
+canvas-destination entry — the **Canvas** link that stood beside it was
+RETIRED by owner request (ledger row 138: the two controls landed on this same
+page and differed only in the sidebar preset, which a plain canvas arrival
+opens by DEFAULT anyway), so the reader nav reads **Board + Chat +
+Contents**; the modules list row's own Chat
 entry was DROPPED by owner decision 2026-09-10 (ledger row 91, AMENDS 57) —
 it landed on this same canvas, so the row keeps one icon per destination and
 the chat stays one click away from the row's Canvas icon through the

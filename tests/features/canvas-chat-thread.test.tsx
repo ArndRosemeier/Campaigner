@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { canvasChatPath, canvasPath, modulePath, modulesPath } from '@/app/routes';
+import { boardPath, canvasChatPath, canvasPath, modulePath, modulesPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -482,6 +482,45 @@ describe('canvas chat front door', () => {
     expect(window.location.pathname).toContain(`/m/${world.moduleId}/canvas`);
     expect(window.location.search).toContain('chat=open');
     expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+
+  it('the reader header holds exactly ONE canvas destination — the Chat entry (owner request, ledger 138)', async () => {
+    renderAppAt(modulePath(world.campaignId, world.moduleId));
+    await screen.findByTestId('chat-header-link', {}, { timeout: 10_000 });
+
+    // The header's nav controls are ANCHORS carrying `role="button"` (the
+    // Button primitive renders its `render` prop that way), so both roles are
+    // queried and the DESTINATION decides: every control whose `href` points
+    // at this module's canvas. A re-added Canvas control fails this count
+    // whatever test id or label it is given. The retired plain-canvas entry
+    // (`canvasPath`) and the surviving Chat entry (`canvasChatPath`) are the
+    // SAME destination — they differ only in the forced-open sidebar, which is
+    // why the reader keeps one of them (owner request, verbatim: "looks like
+    // the canvas and the chat button do exactly the same. Lets retire the
+    // canvas button.").
+    const canvasDestination = (control: HTMLElement): boolean =>
+      (control.getAttribute('href') ?? '').includes(`/m/${world.moduleId}/canvas`);
+    const canvasDestinations = [
+      ...screen.getAllByRole('button'),
+      ...screen.getAllByRole('link'),
+    ].filter(canvasDestination);
+    expect(canvasDestinations).toHaveLength(1);
+    expect(canvasDestinations[0]).toHaveAttribute(
+      'href',
+      canvasChatPath(world.campaignId, world.moduleId),
+    );
+    expect(canvasDestinations[0]).toHaveAccessibleName('Chat');
+
+    // …and the retired control is gone by test id AND by accessible name.
+    expect(screen.queryByTestId('canvas-header-link')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Canvas' })).not.toBeInTheDocument();
+    // The reader nav that remains: Board + Chat + Contents.
+    expect(screen.getByRole('button', { name: 'Board' })).toHaveAttribute(
+      'href',
+      boardPath(world.campaignId, world.moduleId),
+    );
+    expect(screen.getByRole('button', { name: /table of contents/i })).toBeInTheDocument();
     await flushAsyncUpdates();
   });
 });

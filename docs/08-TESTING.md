@@ -474,6 +474,7 @@ test) · ❌ gap.
 | Quick-find (Ctrl+K): scoped artifacts, Library labels, module navigation, rule preview/pin | `quickfind-modules.test`, `quickfind-topbar.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
 | Module reader as play view: battle link and encounter-row seed action | `module-reader.test`, `entity-panel.test` | ✅ |
+| Module reader header nav — **Board + Chat + Contents**, with exactly ONE canvas destination: the **Chat** entry (`canvasChatPath`, i.e. the canvas with `?chat=open`), the plain-canvas **Canvas** control retired by owner request and gone by test id AND by accessible name (docs/17 row 138) | `canvas-chat-thread.test` (the one-canvas-destination count pin + the live Chat routing pin) | ✅ |
 | Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset, layout-cell grid metrics | `battle-surface.test` | ✅ |
 | Battle engine goldens: HP split, initiative, veils, legacy/layout snapping, staging ground | `battle-engine.test` | ✅ |
 | Battle persistence: module lifecycle, v10→v11 clearing, v11→v12 layout defaults | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
@@ -2124,6 +2125,62 @@ inferred from `fixedCastForEncounter` rather than measured on his data. (3) A
 model-authored block that DIFFERS from the library's (the no-fixed-cast case) is
 discarded in favour of the row's citation with no advisory: a deliberate
 precedence, not a measured absence of owner surprise.
+
+### The reader header has ONE canvas entry (docs/17 row 138, docs/05 §Module canvas, docs/08-MODULE-DESIGNER §Module canvas chat)
+
+The owner reported the reader header's **Canvas** and **Chat** buttons doing
+"exactly the same" and asked to retire the Canvas one. Measured at base
+`1ec1164`: `ModuleReaderPage.tsx:463-474` was Canvas →
+`canvasPath(campaignId, moduleId)`, `:475-487` was Chat →
+`canvasChatPath(campaignId, moduleId)`, and `canvasChatPath`
+(`src/app/routes.ts:104-118`) is `canvasPath` plus ONE query parameter —
+`?chat=open`. ONE destination, one sidebar PRESET of difference; the plain
+arrival opens the sidebar by default anyway (ledger 57/58). The Canvas button,
+its comment, `SquarePenIcon` and the file's `canvasPath` import are gone; the
+reader nav is **Board + Chat + Contents**. `canvasPath` itself is untouched and
+still used by `ModulesListPage.tsx:267` (the row's canvas icon), so the plain
+canvas keeps its entry and no destination is lost.
+
+**NO PRE-EXISTING PIN WAS DELETED, measured rather than assumed:**
+`grep -rn "canvas-header-link" --include=*.ts --include=*.tsx .` returned
+exactly ONE line in the whole tree — the source line being removed — and the
+two grep hits for `chat-header-link`/`board-header-link` under `tests/` are the
+`canvas-chat-thread` Chat pin (kept, still green, it is the surviving-button
+half of the pair) and nothing else. There was therefore no pin about the
+duplication to delete and no assertion to loosen; the durable half is the NEW
+pin.
+
+| fact pinned | where |
+|---|---|
+| The reader header holds exactly ONE control whose destination is the module canvas: the controls are enumerated BY ROLE (both `button` and `link` — the header's nav controls are anchors carrying `role="button"`), filtered by the `href` they point at, and the count is 1 — so a re-added Canvas control fails it whatever test id or label it carries | `tests/features/canvas-chat-thread.test.tsx` (`the reader header holds exactly ONE canvas destination — the Chat entry (owner request, ledger 138)`, NEW) |
+| …and that one is the **Chat** entry: its `href` is byte-equal to `canvasChatPath` (the canvas with `?chat=open`), its accessible name is `Chat`, and the retired control is gone by test id AND by accessible name | same pin |
+| The reader nav that remains is **Board + Chat + Contents**: `Board` still routes to `boardPath`, and the contents toggle is still there | same pin |
+| The surviving Chat entry still ROUTES there end to end (click → `/m/<id>/canvas` + `chat=open` + the sidebar mounted) | `tests/features/canvas-chat-thread.test.tsx` (`a reader-header Chat entry routes to the canvas with the chat open`, PRE-EXISTING, unchanged) |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `grep -n` and `git diff --stat` checked BEFORE the run, one suite at a
+time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's scratch,
+then restored from an OUT-OF-TREE copy and verified with `git hash-object` —
+`src/features/modules/ModuleReaderPage.tsx` `2cac05debf8c812dfceb5f47757874e8c07846f1`
+before and after BOTH injections; `git checkout --` restores HEAD and would have
+destroyed this uncommitted work, so the backup was taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| **I1 — the removed control put BACK** (the whole Canvas `Button` with `data-testid="canvas-header-link"` and its `canvasPath` target re-added beside Chat, `canvasPath` re-imported) | `ModuleReaderPage.tsx:462` (the injected marker line, printed back) | **RED 1 of 9 — exactly the new pin**: `expected [ <a role="button" …(5)></a>, …(1) ] to have a length of 1 but got 2`, with the pre-existing Chat routing pin GREEN (the duplication comes back, the surviving button does not move) |
+| **I2 — the retained button pointed at the plain canvas** (`canvasChatPath(campaignId, moduleId)` → `canvasPath(campaignId, moduleId)` at the Chat button, `canvasPath` re-imported) | `ModuleReaderPage.tsx:471` (the injected marker line, printed back) | **RED 2 of 9 — the new pin** (`Expected the element to have attribute: href="…/canvas?chat=open"` / `Received: href="…/canvas"`) **and the pre-existing routing pin** (`expected '' to contain 'chat=open'`) — i.e. the pin catches a same-destination/target swap, not only a duplicate, and it is not a restatement of the routing pin |
+
+**WHAT THIS SLICE COULD NOT PROVE.** (1) No real-browser or owner-sighting run:
+every pin is jsdom, and "the reader nav is less confusing now" is the owner's
+report plus the measurement of ONE destination, not a usability measurement.
+(2) The retired control's absence is pinned by test id and by accessible name,
+so a future third entry carrying a DIFFERENT label and test id would be caught
+only by the destination count — which is why the count, not the name, is the
+primary assertion. (3) The consequence the change carries is stated and NOT
+pinned: the reader header's only canvas entry now forces the chat sidebar open
+(deliberate, ledger 57), and no pin asserts what a reader does about it —
+the remedy (the list row's Canvas icon, the sidebar's own toggle) is documented
+in docs/05 §Module canvas rather than measured.
 
 ### Remaining gaps
 

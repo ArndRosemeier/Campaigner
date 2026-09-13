@@ -12,12 +12,11 @@ import {
   PlayIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-  SquarePenIcon,
   SwordsIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { artifactPath, battlePath, boardPath, canvasChatPath, canvasPath, modulesPath } from '@/app/routes';
+import { artifactPath, battlePath, boardPath, canvasChatPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { WriterModelId } from '@/components/writer-model-id';
@@ -460,21 +459,11 @@ export function ModuleReaderPage(): JSX.Element {
                 <NetworkIcon aria-hidden data-icon="inline-start" />
                 Board
               </Button>
-              {/* Per-part document canvas (08 §Module canvas) — the module
-                  child surface for co-authoring ONE part beside the board. */}
-              <Button
-                variant="outline"
-                size="xs"
-                data-testid="canvas-header-link"
-                render={<Link to={canvasPath(campaignId, moduleId)} />}
-                nativeButton={false}
-              >
-                <SquarePenIcon aria-hidden data-icon="inline-start" />
-                Canvas
-              </Button>
-              {/* Chat front door (08 §Module canvas chat, ledger 57) — one
-                  click from the reader to talking to the module: the canvas
-                  with the chat sidebar forced open. */}
+              {/* Chat front door (08 §Module canvas chat, ledger 57) — the
+                  reader's ONE canvas-destination entry (ledger 138, owner
+                  request: the Canvas button beside it landed on this same
+                  page). One click from the reader to talking to the module:
+                  the canvas with the chat sidebar forced open. */}
               <Button
                 variant="outline"
                 size="xs"
