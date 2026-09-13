@@ -81,7 +81,16 @@ better route to the same intent exists.
 - Any arc that adds or changes a seam, convention, gotcha or known-debt entry
   amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
   spec — an unamended seam is treated as missing.
-- Gate before every commit: `pnpm lint && pnpm typecheck && pnpm test`.
+- Gate before every commit: `pnpm lint && pnpm typecheck && pnpm test`. **Keep the
+  gate's RAW output** — write it to a file and keep that file until the landing
+  is verified; never pipe the run through `tail`/`head`. Real incident
+  (2026-xx, a landing's gate): one test failed, the writer had piped the run
+  through `tail -10`, and both the failing test's NAME and its
+  `Expected`/`Received` block were destroyed. The surviving tail ended on a
+  *context* line two lines BELOW the real assertion, so the loss not only hid
+  the received value but actively misattributed the failure to the wrong line —
+  it cost a full separate investigation to recover. A red run whose evidence was
+  discarded cannot be diagnosed.
 - Commit style: subject + root-cause body + test count. Author identity is
   set per-commit via
   `git -c user.name='Campaigner Dev' -c user.email='dev@campaigner.local' commit`.
