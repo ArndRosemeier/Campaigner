@@ -29,6 +29,7 @@ import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
@@ -295,9 +296,15 @@ describe('"Fix module problems" on the canvas', () => {
 
     const button = screen.getByTestId('canvas-fix-problems');
     expect(button).toHaveTextContent('Fix module problems');
-    // The button says what it does when disabled (title) and carries no state
-    // of its own — it is rendered from the derived problem set.
+    // A LIVE control offers the DESCRIPTION of what pressing it does — a `title`
+    // is a surface the owner can reach only while the control can act, so this
+    // is where that copy belongs (docs/18 §4, ledger 125). The state that holds
+    // the control is stated by the wrapper, and only there.
     expect(button).toBeEnabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'Rewrite the parts whose text falls short of the encounter floor',
+    );
     await userEvent.click(button);
 
     const dialog = await screen.findByTestId('canvas-fix-problems-dialog');
@@ -394,7 +401,7 @@ describe('"Fix module problems" on the canvas', () => {
     expect(screen.getByTestId('canvas-fix-problems')).toBeInTheDocument();
   }, 30_000);
 
-  it('is disabled with an honest reason while the editor holds unsaved edits', async () => {
+  it('is disabled with an honest reason while the editor holds unsaved edits — through the device, never in a title', async () => {
     const user = userEvent.setup();
     await seedWorld();
     await mountCanvasEditor(user);
@@ -404,12 +411,17 @@ describe('"Fix module problems" on the canvas', () => {
     });
     await flushAsyncUpdates();
 
-    const button = screen.getByTestId('canvas-fix-problems');
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute(
-      'title',
+    await expectBlockedReason(
+      user,
+      'canvas-fix-problems',
       'Save or discard your edits first — this action rewrites the module text on disk, not the editor copy.',
     );
+    // The reason lives ONLY in the wrapper (docs/18 §4, ledger 125): the `title`
+    // used to carry `derivedBlocked ?? <description>`, so the held control stated
+    // the same sentence twice and one of the two was a surface no browser renders.
+    // The description survives on the ENABLED control (its own pin above) — it is
+    // simply never offered on a control that cannot act.
+    expect(screen.getByTestId('canvas-fix-problems')).not.toHaveAttribute('title');
   }, 30_000);
 });
 
@@ -596,5 +608,32 @@ describe('"Resume automatic module creation" on the canvas', () => {
     expect(enqueueEncounterMaps).not.toHaveBeenCalled();
     expect(enqueueMobPortraits).not.toHaveBeenCalled();
     expect(await listArtifactsByCampaign(world.campaignId)).toHaveLength(1);
+  }, 30_000);
+
+  it('states the dirty-editor reason through the device, and offers its description only while LIVE', async () => {
+    const user = userEvent.setup();
+    await seedResumable();
+    await mountCanvasEditor(user);
+
+    // Live: the description of what the action does is on the control — a
+    // `title` is a surface only a control that can act ever exposes.
+    expect(screen.getByTestId('canvas-resume-automation')).toHaveAttribute(
+      'title',
+      'Generate only what creation was asked to automate and the module does not have yet',
+    );
+
+    // Unsaved editor edits hold it, and the reason is stated by the wrapper —
+    // the same expression the `title` used to restate (docs/18 §4, ledger 125).
+    act(() => {
+      activeCanvasView.current?.dispatch({ changes: { from: 0, insert: 'X' } });
+    });
+    await flushAsyncUpdates();
+    await expectBlockedReason(
+      user,
+      'canvas-resume-automation',
+      'Save or discard your edits first — this action rewrites the module text on disk, not the editor copy.',
+    );
+    expect(screen.getByTestId('canvas-resume-automation')).not.toHaveAttribute('title');
+    await flushAsyncUpdates();
   }, 30_000);
 });

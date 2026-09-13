@@ -16,6 +16,7 @@ import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
 import { saveModulePartText } from '@/features/modules/partText';
 import { cancelModuleGen, runParts } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
@@ -373,15 +374,53 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     // The gate's reason is stated twice on purpose, and now BOTH are real: the
     // text beside the control (a visible surface) and the shared
     // blocked-control device, which is what a mouse/keyboard/AT user can
-    // actually perceive on the control itself. The `title` mirror alone was not
-    // (a natively disabled button renders none in Chrome).
+    // actually perceive on the control itself. A `title` mirror would not be
+    // (a natively disabled button renders none in Chrome) — and the control
+    // carries none (docs/18 §4, ledger 125).
     const batchReason = screen.getByTestId('batch-npc-reason');
     expect(batchReason).toHaveTextContent('Entity name normalization failed');
     expect(screen.getByTestId('batch-npc-blocked')).toHaveAttribute(
       'aria-describedby',
       batchReason.id,
     );
+    expect(screen.getByTestId('batch-npc')).not.toHaveAttribute('title');
   }, 20000);
+
+  it('holds the classification control with the module-generating reason — ONE statement of it, in the wrapper', async () => {
+    const user = userEvent.setup();
+    // A live generation owns the module while the text carries a name no pass
+    // has recorded: the control is dead and its own label says nothing about
+    // why (it still reads "Classify N new names").
+    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await patchModule(world.moduleId, { status: 'generating' });
+    await renderFreshPanel();
+
+    const button = screen.getByTestId('entity-classify-new');
+    expect(button).toHaveTextContent('Classify 1 new name');
+    await expectBlockedReason(
+      user,
+      'entity-classify-new',
+      'The module is generating — its own normalization pass records the names when the parts land.',
+    );
+    // The sentence is stated ONCE. It used to be written twice, 17 lines apart:
+    // the wrapper's `reason` and the first branch of the child's `title`, whose
+    // second branch was the description below. Only the reason is perceivable,
+    // so only the reason survives on a held control (docs/18 §4, ledger 125).
+    expect(button).not.toHaveAttribute('title');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('offers the classification DESCRIPTION only while the control can act', async () => {
+    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await renderFreshPanel();
+
+    const button = screen.getByTestId('entity-classify-new');
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'Classify the names this text picked up since the last pass (one model call, the same pass as at creation) — their batch buttons then appear.',
+    );
+  }, 30_000);
 
   it('is idempotent: a repeated click classifies nothing twice and a re-render never calls the model', async () => {
     const user = userEvent.setup();

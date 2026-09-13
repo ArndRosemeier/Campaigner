@@ -530,6 +530,14 @@ export function CanvasPage(): JSX.Element {
   // is not a reason to block anything.
   const aiBlockedReason = busyReason(busy, refineInFlight, wholeProposal !== undefined);
   const viewBusyReason = viewBusy ? busyReason(busy, refineInFlight, suggestions.length > 0) : null;
+  // The two derived actions' gates, ONE expression each so their `disabled` and
+  // the description they offer while LIVE can never disagree (AGENTS rule 4).
+  // A `title` is the description's PERCEIVABLE home only on a live control: on
+  // the `disabled` child beside it Chrome renders none and no pointer or key
+  // ever reaches it, which is why the reason a held control states lives in the
+  // wrapper's `reason` and nowhere else (docs/18 §2.3/§4, ledger 125).
+  const fixBlocked = derivedBlocked !== null || fixRunning;
+  const resumeBlocked = derivedBlocked !== null || resumeRunning;
 
   // The preview highlight: the whole-doc replacement mapped onto its
   // part's range (identity-gated — a hand edit, proposal accept or next
@@ -1534,8 +1542,12 @@ export function CanvasPage(): JSX.Element {
               <Button
                 variant="outline"
                 size="xs"
-                disabled={derivedBlocked !== null || fixRunning}
-                title={derivedBlocked ?? 'Rewrite the parts whose text falls short of the encounter floor'}
+                disabled={fixBlocked}
+                title={
+                  fixBlocked
+                    ? undefined
+                    : 'Rewrite the parts whose text falls short of the encounter floor'
+                }
                 data-testid="canvas-fix-problems"
                 onClick={() => {
                   setFixOpen(true);
@@ -1554,8 +1566,12 @@ export function CanvasPage(): JSX.Element {
               <Button
                 variant="outline"
                 size="xs"
-                disabled={derivedBlocked !== null || resumeRunning}
-                title={derivedBlocked ?? 'Generate only what creation was asked to automate and the module does not have yet'}
+                disabled={resumeBlocked}
+                title={
+                  resumeBlocked
+                    ? undefined
+                    : 'Generate only what creation was asked to automate and the module does not have yet'
+                }
                 data-testid="canvas-resume-automation"
                 onClick={() => {
                   setResumeOpen(true);
@@ -1691,7 +1707,14 @@ export function CanvasPage(): JSX.Element {
                 variant="outline"
                 size="xs"
                 disabled={saving || busy || previewOpen}
-                title={saving ? undefined : (saveBlockedReason(busy, previewOpen) ?? undefined)}
+                /*
+                 * NO `title`, deliberately (docs/18 §4, ledger 125): the sentence
+                 * this control states while it is held is the SAME expression the
+                 * wrapper's `reason` carries (`saveBlockedReason`), and a title on
+                 * a natively disabled button is rendered by no browser and reached
+                 * by no pointer or key — so all a second copy buys is a second
+                 * place to drift. "Saving…" is the live half and its own label.
+                 */
                 data-testid="canvas-save"
                 onClick={() => {
                   void saveDoc('user', 'Manual edit', 'Module saved');

@@ -470,6 +470,8 @@ test) · ❌ gap.
 | Blocked controls state their reason PERCEIVABLY (the shared device): the control stays natively disabled, the reason is associated via `aria-describedby`, the popup opens on hover AND on focus, and a live control carries none of it | `blocked-control.test` | ✅ |
 | Canvas header + chat sidebar: a reason per reason-bearing blocked control (preview/open-editor, generating, refine running, streaming proposal, the chat's module-wide block and its live-reply block), each pinned together with the unchanged `toBeDisabled()` state | `blocked-reasons.test` (device), `module-canvas.test` (the AI flows themselves) | ✅ |
 | Converted reason sites keep their gate and gain the perceivable reason (`generate-everything`, the entity batch gate, encounter Repopulate/Regenerate everything) | `generate-everything.test`, `entity-classify-new.test`, `images-ui.test` | ✅ |
+| A reason is never stated in a `title` beside its wrapper (docs/17 row 125): the five surfaces that restated it there state it ONLY through the device now, and the two the audit missed are held as NAMED debt by an equality-asserted scan (`generate-everything`, encounter Repopulate) | `blocked-control-title-scan.test` (SCAN, 2), `module-canvas.test` (the Save control), `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (the batch gate + classify) | ✅ (2 known sites, named) |
+| The DESCRIPTION a held control used to lose survives on the LIVE control: each of the three gated descriptions is asserted byte-identical while the control can act, and its ABSENCE is asserted while the control is held | `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (classify) | ✅ |
 | Self-evident blocks are pinned AS self-evident (no reason wrapper): a blank chat input, an already-`Reported` outcome, the Versions menu's clear-all beside its own empty-state paragraph | `blocked-reasons.test` | ✅ |
 | The SILENT-block sweep (docs/17 row 99): every control that was disabled with no reason stated anywhere now states one through the shared device, in the gate's own order, and each pin asserts the gate is UNCHANGED (`toBeDisabled()` / `aria-disabled` per the control's own form) together with the reason being present, associated, focusable and openable on hover | `blocked-reasons-writers-room.test` (8 + 3), `blocked-reasons-entity-sweep.test` (stub popover 3 + images 2 + export 1), `spine-checkpoint.test` (4), `module-board-rewrite.test` (1), `rules-page.test` (5), `rules/embedding-panel.test` (2), `bestiary-fetch-section.test` (1), `mob-portraits-section.test` (2), `dice-roller.test` (1) | ✅ |
 | Every one of those pins is REVERT-PROVEN, both directions: with the reason reverted to `null` the NAMED pin fails (31/31, one control at a time, files restored byte-identical by `md5`), with the reason replaced by a wrong sentence it fails on the exact text (4 injections), and for a SELF-EVIDENT pin the forbidden wrapper is injected at that control and the pin fails (11), while the controls carrying no wrapper at all are proven by relaxing their gate so the pin's held half is exercised (4) | the above files; the scripts are scratch, the proofs are the measured run log recorded in docs/17 row 99 | ✅ |
@@ -1245,6 +1247,79 @@ not traced into Base UI's internals. (3) Which of the four menu items Base UI
 chooses to focus was not determined — only that the held item's wrapper is what
 receives it, in both menus where a held item exists. (4) The internal drain has
 no failing pin of its own (the green injection above).
+
+
+### A reason is never stated in a `title` beside its wrapper (docs/17 row 125, docs/18 §2.3/§4)
+
+Seven controls in `src/` stated why they were held in a `title` on the disabled
+child of a `BlockedControl` — a surface no browser renders for a natively
+`disabled` control and no keyboard reaches. The wrapper already delivers the
+reason (hover and focus, plus the `aria-describedby` hidden node), so the
+`title` was pure loss and a second place for the sentence to drift: one of the
+seven wrote the wrapper's own sentence out again 17 lines away, and one carried
+a comment blessing the duplication. Five were named by the audit that opened
+this slice; re-verification found two more (`generate-everything`,
+`encounter-repopulate`).
+
+**What the pins are.** `tests/features/blocked-control-title-scan.test.ts` is a
+labelled SOURCE scan (it reads `src/**` as text and renders nothing). Its
+violation list is asserted by EQUALITY against a two-entry known list, so a
+sixth offender reds it and fixing a named one reds it too. Two rules catch the
+two shapes the defect took: `shape` (a bare identifier or a `??`, where which
+half is visible depends on the state and the reason is the invisible one) and
+`branch` (a title literal that is also in the wrapper's `reason`). A title that
+is only a DESCRIPTION, gated on the control being able to act, is explicitly not
+a violation — three surfaces keep theirs that way, and each is pinned in both
+directions (byte-identical while live, absent while held). Plus a coverage pin:
+the scanner reaches all six named wrappers, and exactly five wrappers in `src/`
+carry ANY title — a new one is a deliberate act.
+
+**REVERT-PROVEN, every injection applied, printed back with `grep -n`,
+`git diff --stat` checked BEFORE the run, and restored byte-identically
+(`git hash-object` identical before and after, all six files touched):**
+
+| injection | line it hits | result |
+|---|---|---|
+| I1 the canvas-save `title` restored | `CanvasPage.tsx:1710`, the save button | **RED 3** — both scan pins + the module-canvas Save pin |
+| I2 the batch `title={batchGateReason}` restored | `entity-panel.tsx:929` | **RED 3** — both scan pins + the batch-gate pin |
+| I3 the classify title's REASON branch restored | `entity-panel.tsx:953` | **RED 2** — the scan's `branch` rule + the classify pin |
+| I4 the Fix control's `title` back to `derivedBlocked ?? '…'` | `CanvasPage.tsx:1546` | **RED 2** — the scan + its held-state pin |
+| I5 the same for Resume | `CanvasPage.tsx:1570` | **RED 2** — the scan + its held-state pin |
+| I6 the reason SENTENCE's value changed | `entity-panel.tsx:297` (the `const`) | **RED 1** — the classify pin; scan **GREEN** |
+| I7 `module.status === 'generating'` dropped from the gate | `entity-panel.tsx:294` | **RED 1** — the pin's `toBeDisabled()` half |
+| I8 the description made UNGATED | `entity-panel.tsx:951` | **RED 1** — the held-state `not.toHaveAttribute('title')`; scan **GREEN** |
+| I9 a known-list entry disturbed | `blocked-control-title-scan.test.ts:58` | **RED 1** — the equality assertion |
+| I10 the classify DESCRIPTION deleted | `entity-panel.tsx` (the title block) | **RED 2** — the scan's population pin + the live-description pin |
+| I12 the Save reason's sentence changed | `CanvasPage.tsx:2271` | **RED 1** — `module-canvas.test` |
+| I13 the batch gate reason's sentence changed | `entity-panel.tsx:282` | **RED 2** — `entity-classify-new.test` + `entity-panel.test` |
+
+**The GREEN ones, named rather than dressed as coverage.** (a) The FIRST run of
+I3 left the scan **GREEN**: the `branch` rule compares literals against the
+`reason={…}` expression, and a reason collapsed into a body `const` puts its
+sentence OUTSIDE the span — so a title restating a collapsed reason read as
+clean. The scan now resolves a bare-identifier `reason` one level to its `const`
+declaration; the re-run of I3 is the RED 2 above. The line the pins did not
+reach was the scan's own `reason` resolution, and the measurement is why it
+exists. (b) I11 un-collapsing the classify reason (inline ternary, byte-identical
+arms, the `const` deleted) → **3 files, 40/40 GREEN**: a FOLD of this kind is
+byte-identical by construction and has no behavioural detector — what the pins
+reach is the title duplication, not the collapse (the same shape row 123
+measured). (c) Under **I2**, `entity-panel.test.tsx` (28 tests) stayed GREEN: no
+pin there reads the batch child's `title`; only the scan and the classify file's
+batch-gate pin do. (d) Under **I4** the Fix control's LIVE-description pin stayed
+GREEN — with the control live, `derivedBlocked ?? '…'` and
+`fixBlocked ? undefined : '…'` produce the SAME string, so only the held-state
+pin and the scan reach the gating. (e) Under **I6** and **I8** the scan stayed
+GREEN: a changed VALUE and an ungated description are not restatements — that
+boundary is held by behaviour, not by the scan.
+
+**What the scan cannot do.** It reads `src/**` as text, so a sentence COMPOSED at
+runtime is invisible to it, and `reason` identifiers are resolved only ONE level
+(a reason named through a second alias is invisible to the `branch` rule); the
+`title="…"` literal form is compared by the `branch` rule only. No real-browser
+run: jsdom has no rendering, so "Chrome draws no tooltip for a `title` on a
+natively disabled control" stays the documented premise, and what is measured
+here is that the attribute is GONE.
 
 
 ### Remaining gaps

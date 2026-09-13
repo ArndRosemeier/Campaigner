@@ -282,6 +282,25 @@ export function EntityPanel({
       ? 'Entity name normalization failed — retry it before batch generation.'
       : 'Entity names are not normalized yet — run the pass before batch generation.';
 
+  /**
+   * The incremental classification's gate and the ONE reason it states, both
+   * read from the SAME three states in the same order (AGENTS rule 4, docs/18
+   * §2.3). `generating` is the arm that is not self-evident — the label says
+   * "Classify N new names" while the module's own normalization pass records
+   * the names when the parts land, so the owner is told to wait rather than to
+   * press a control that would only refuse. `classifying`/`normalizing` are
+   * self-evident (the label reads "Classifying…") and get NO reason.
+   */
+  const classifyBlocked = classifying || normalizing || module.status === 'generating';
+  const classifyBlockedReason =
+    module.status === 'generating'
+      ? 'The module is generating — its own normalization pass records the names when the parts land.'
+      : classifying
+        ? null // the label itself reads "Classifying…"
+        : normalizing
+          ? 'A normalization pass is running — wait for it.'
+          : null;
+
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
   const unresolved = entries.filter((entry) => !entry.resolved);
@@ -893,6 +912,9 @@ export function EntityPanel({
                   // (already stated in place beside it), then a DIFFERENT
                   // kind's batch running — the one state whose label says
                   // nothing (this kind's own run renders "Generating…").
+                  // There is NO `title` on the child, deliberately (docs/18 §4,
+                  // ledger 125): the gate sentence it used to repeat is this
+                  // same `batchGateReason`, so the wrapper IS its one home.
                   reason={
                     batchGateReason ??
                     (batching !== null && batching !== kind
@@ -904,7 +926,6 @@ export function EntityPanel({
                     variant="outline"
                     size="xs"
                     disabled={batching !== null || !batchGateOpen}
-                    title={batchGateReason}
                     data-testid={`batch-${kind}`}
                     onClick={() => {
                       void generateBatch(kind);
@@ -917,25 +938,19 @@ export function EntityPanel({
               );
             })}
             {batchGateOpen && unclassified.length > 0 && (
-              <BlockedControl
-                testId="entity-classify-new"
-                reason={
-                  module.status === 'generating'
-                    ? 'The module is generating — its own normalization pass records the names when the parts land.'
-                    : classifying
-                      ? null // the label itself reads "Classifying…"
-                      : normalizing
-                        ? 'A normalization pass is running — wait for it.'
-                        : null
-                }
-              >
+              <BlockedControl testId="entity-classify-new" reason={classifyBlockedReason}>
                 <Button
                   variant="outline"
                   size="xs"
-                  disabled={classifying || normalizing || module.status === 'generating'}
+                  disabled={classifyBlocked}
+                  // The DESCRIPTION, not a reason (docs/18 §4, ledger 125): it
+                  // says what pressing the control will do, so it is offered
+                  // only while the control can act — where a `title` is a
+                  // surface the owner can actually reach. The state that holds
+                  // the control is stated by the wrapper above and ONLY there.
                   title={
-                    module.status === 'generating'
-                      ? 'The module is generating — its own normalization pass records the names when the parts land.'
+                    classifyBlocked
+                      ? undefined
                       : 'Classify the names this text picked up since the last pass (one model call, the same pass as at creation) — their batch buttons then appear.'
                   }
                   data-testid="entity-classify-new"
