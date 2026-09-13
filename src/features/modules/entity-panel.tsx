@@ -88,6 +88,7 @@ import {
 import { rewriteWikiLinkTargets } from '@/lib/wikilinks';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import { RunBattleButton } from '@/features/play/run-battle';
+import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { cn } from '@/lib/utils';
 
 /** Every generator-authored text of a module, for post-save wikilink scans. */
@@ -1077,6 +1078,7 @@ export function EntityPanel({
                       entry={entry}
                       focused
                       module={module}
+                      artifacts={artifacts}
                       imageMode={imageMode}
                       imageState={imageStateFor(entry)}
                       onOpenCard={onOpenCard}
@@ -1109,6 +1111,7 @@ export function EntityPanel({
                     entry={entry}
                     focused={false}
                     module={module}
+                    artifacts={artifacts}
                     imageMode={imageMode}
                     imageState={imageStateFor(entry)}
                     onOpenCard={onOpenCard}
@@ -1356,6 +1359,7 @@ function EntityRow({
   entry,
   focused,
   module,
+  artifacts,
   imageMode,
   imageState,
   onOpenCard,
@@ -1366,6 +1370,13 @@ function EntityRow({
   entry: EntityEntry;
   focused: boolean;
   module: Module;
+  /**
+   * The panel's artifact pool. It is handed to the ONE roster panel below an
+   * encounter row for the `npc-ref` cross-reference (docs/17 row 146) — the
+   * same question the module PDF answers with its destination map — and for
+   * nothing else.
+   */
+  artifacts: readonly AnyArtifact[];
   /** Images mode swaps the star for the image checkbox (M4-C). */
   imageMode: boolean;
   imageState: EntityImageState;
@@ -1374,8 +1385,13 @@ function EntityRow({
   onToggleFocus: () => void;
   onImageToggle: () => void;
 }): JSX.Element {
+  const artifact = entry.artifact;
+  const encounter = artifact?.kind === 'encounter' ? artifact : undefined;
   return (
-    <li className="flex items-center">
+    // `flex-wrap` + a full-width roster block below (docs/17 row 146): the row
+    // itself keeps its controls on ONE line exactly as before, and an
+    // encounter's mobs wrap onto their own line UNDER it.
+    <li className="flex flex-wrap items-center">
       <button
         type="button"
         data-testid="entity-row"
@@ -1507,6 +1523,25 @@ function EntityRow({
         >
           <StarIcon aria-hidden className={cn('size-4', focused && 'fill-current')} />
         </Button>
+      )}
+      {encounter !== undefined && (
+        /* The encounter's MOBS, under the encounter's own row (owner's answer,
+         * verbatim: *"Keep the jump, and list the encounter's mobs below its row
+         * in the reader's entity panel."* — docs/17 row 146). The row's own
+         * click still jumps into the workspace EXACTLY as before (the page's
+         * `onOpenCard` navigates for an encounter) and `RunBattleButton` above
+         * still runs or resumes the battle: this block ADDS the reference and
+         * the numbers, it replaces no control.
+         *
+         * It renders through the ONE roster panel — `MonsterStatblocksPanel`,
+         * which asks `domain/encounterResolve.rosterReferenceFor` /
+         * `rosterStatBlockFor` what each row prints, the same rules the module
+         * PDF and the GM export render. This file composes NO reference string
+         * (a second formatter here is the defect; a source scan holds it), and
+         * it resolves nothing itself: the panel owns the ONE resolution. */
+        <div className="w-full pb-1 pl-2" data-testid="entity-encounter-mobs">
+          <MonsterStatblocksPanel monsters={encounter.data.monsters} targets={artifacts} />
+        </div>
       )}
     </li>
   );

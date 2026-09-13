@@ -570,7 +570,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           patch({ monsters });
         }}
       />
-      <MonsterStatblocksPanel monsters={data.monsters} />
+      <MonsterStatblocksPanel monsters={data.monsters} targets={campaignArtifacts} />
       <div className="grid grid-cols-2 gap-2">
         <Field label="Location kind">
           <Select

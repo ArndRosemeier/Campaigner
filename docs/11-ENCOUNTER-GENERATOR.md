@@ -99,9 +99,33 @@ module generated before this change keeps its stored citations and gains the num
 on its next export. A `rulebook`-cited row's numbers print for the PLAYER document
 too, exactly as an `inline` row's always have.
 
-**Still open:** the reader half (owner's answer *"Keep the jump, and list the
-encounter's mobs below its row in the reader's entity panel."*) is a separate slice
-over the module reader / entity panel and is NOT part of this one.
+**The reader half LANDED (docs/17 row 146).** The owner's answer — *"Keep the
+jump, and list the encounter's mobs below its row in the reader's entity panel."*
+— is implemented over the module reader / entity panel, and the JUMP is untouched:
+pressing an encounter's entity row still navigates straight to that encounter in
+the workspace (`ModuleReaderPage`'s `onOpenCard`), and `RunBattleButton` still runs
+or resumes the battle. What is ADDED is the block below the row
+(`data-testid="entity-encounter-mobs"`), which mounts the ONE roster panel every
+in-app surface uses, `features/campaign/components/monster-source.MonsterStatblocksPanel`:
+
+- the REFERENCE of every entry comes from `rosterReferenceFor` — the reader and
+  the app compose no reference string of their own, so the panel a GM reads and
+  the book he prints cannot label one entry differently;
+- EVERY roster entry is listed, `none` included (the panel used to drop a
+  name-only mob entirely, which is part of the "mobs are not detailed" report);
+- a citation nothing can supply prints the NAMED `missing ref (<creature>)` line
+  with NO box under it, never an empty row or a placeholder (AGENTS rule 1);
+- **one deliberate difference from the PRINT rule, stated rather than hidden**:
+  the box a row shows is `rosterStatBlockFor(...) ?? resolved.statBlock`. The two
+  agree on every arm but `npc-ref` — in the BOOKS an `npc-ref` row prints
+  `— see <name>` and no box, because that NPC's numbers print at its own entry a
+  page away, while the app's sidebar has no page to turn to, so the linked row's
+  numbers stay under its own row. Nothing is invented: the fallback is the block
+  the ONE resolution already read (docs/12 §Storage — nothing materialized).
+
+Nothing about the citation or the materialization changes: the panel reads the
+citation at render time, writes nothing, and a module generated before this change
+gets the reader listing on its next visit (docs/11 D2/D3 bind unchanged).
 
 
 

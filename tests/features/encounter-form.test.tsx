@@ -98,12 +98,15 @@ describe('encounter form monster sources', () => {
 
     const panel = await screen.findByTestId('stat-blocks-panel');
     expect(panel).toBeInTheDocument();
-    // NPC link resolves with origin badge.
-    await screen.findByText('NPC: Vexra');
-    // Dangling rulebook chunk → warning badge, no crash.
-    // The reason is NAMED (`missing ref (Ghost)`, docs/11 D9) and the badge
-    // renders it in its compact form — the roster row already shows the
-    // creature's name right beside it, so the badge does not repeat it.
+    // The NPC link resolves through the SHARED formatter (docs/17 row 146): the
+    // panel prints the SAME reference line the exported books print — `see
+    // Vexra` for a row this surface can cross-reference — instead of composing
+    // its own origin badge.
+    await screen.findByText(/— see Vexra/);
+    // Dangling rulebook chunk → the NAMED reason, in the panel's line AND in
+    // the compact warning badge (`missing ref (Ghost)`, docs/11 D9), never a
+    // crash and never an empty row.
+    await screen.findByText(/— missing ref \(Ghost\)/);
     await screen.findByText('missing ref');
     expect(await screen.findByText('Ghost')).toBeInTheDocument();
     // The resolved stat block card renders the NPC's stats.

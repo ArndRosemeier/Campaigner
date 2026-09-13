@@ -111,10 +111,18 @@ function StatsCard({ statBlock, name }: { statBlock: StatBlock; name: string }):
 
 export function EncounterCard({
   encounter,
+  artifacts,
   onOpenEditor,
   showWriterModel = false,
 }: {
   encounter: AnyArtifact & { kind: 'encounter'; data: EncounterArtifactData };
+  /**
+   * The rows this surface can cross-reference, handed to the ONE roster panel
+   * (docs/17 row 146): an `npc-ref` roster entry prints the formatter's
+   * ` — see <name>` only for a row this pool holds. Explicit at every mount, so
+   * a surface can never quietly claim a cross-reference it cannot make.
+   */
+  artifacts: readonly AnyArtifact[];
   onOpenEditor?: ((artifact: AnyArtifact) => void) | undefined;
   /** Show the id of the model that wrote this card's text (see `NpcCard`;
    * default off — the peek modal opts in). */
@@ -143,7 +151,7 @@ export function EncounterCard({
       {encounter.summary !== '' && (
         <p className="text-sm break-words text-muted-foreground">{encounter.summary}</p>
       )}
-      <MonsterStatblocksPanel monsters={data.monsters} />
+      <MonsterStatblocksPanel monsters={data.monsters} targets={artifacts} />
       {showWriterModel && (
         <WriterModelId model={encounter.writerModel} testId="encounter-card-writer-model" />
       )}

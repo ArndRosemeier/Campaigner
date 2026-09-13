@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 'lucide-react';
@@ -6,7 +6,11 @@ import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 
 import type { AnyArtifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
 import { blankStatBlock } from '@/domain';
-import { isMissingRefOrigin } from '@/domain/encounterResolve';
+import {
+  isMissingRefOrigin,
+  rosterReferenceFor,
+  rosterStatBlockFor,
+} from '@/domain/encounterResolve';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,11 +40,14 @@ import { contentIdentityFor } from '@/domain/encounterResolve';
 import { searchRules } from '@/search';
 
 /**
- * Monster source controls + resolved Stat blocks panel (07-MILESTONE-3
- * M3-B): each encounter monster row carries a source selector — link an NPC
- * artifact, cite an ingested rulebook statblock chunk, embed inline stats,
- * or stay name-only. Below the list the resolved stat blocks render as
- * cards; dangling references show a warning badge, never a crash.
+ * Monster source controls + resolved roster panel (07-MILESTONE-3 M3-B): each
+ * encounter monster row carries a source selector — link an NPC artifact, cite
+ * an ingested rulebook statblock chunk, embed inline stats, or stay name-only.
+ * Below the list EVERY roster entry renders as a card with the reference and the
+ * numbers the ONE domain rules produce (docs/17 rows 144/146 —
+ * `MonsterStatblocksPanel`), so the editor, the session-mode card and the module
+ * reader's entity panel all read the same line the exported books print; a
+ * dangling reference names itself, never a crash.
  */
 
 const SOURCE_OPTIONS: { value: MonsterSource['type']; label: string }[] = [
@@ -338,40 +345,110 @@ function InlineStatblockEditor({
   return <StatBlockForm statBlock={statBlock} onChange={onChange} />;
 }
 
-/** Resolved stat-block cards for every sourced monster entry (M3-B). */
+/**
+ * The resolved roster of ONE encounter: a card per entry carrying the reference
+ * and the numbers a GM needs to run it (M3-B, extended by docs/17 rows 144/146).
+ *
+ * ONE RULE, both renderers: the reference comes from
+ * `domain/encounterResolve.rosterReferenceFor` and the numbers from
+ * `rosterStatBlockFor` — the same two seams the module PDF and the
+ * single-artifact export render — so the app can never label a roster entry
+ * differently from the book it is about to print. This component composes
+ * NOTHING: a hand-rolled reference string here is exactly the second mechanism
+ * AGENTS rule 4 forbids (`tests/features/reader-encounter-roster.test.tsx` scans
+ * for one).
+ *
+ * EVERY entry is listed, `none` included: a name-only creature is a mob the GM
+ * has to find, and the formatter's own sentence says what is true about it —
+ * the panel used to drop the row entirely, which is the "no mobs detailed"
+ * complaint this slice answers. A citation nothing can supply prints the NAMED
+ * `missing ref (<creature>)` line and NO box (never an empty or invented one,
+ * AGENTS rule 1).
+ */
 export function MonsterStatblocksPanel({
   monsters,
+  targets,
 }: {
   monsters: readonly MonsterEntry[];
+  /**
+   * The rows THIS surface can cross-reference, for an `npc-ref` entry — the
+   * same question `ModulePdfInput`'s destination map answers for the book. The
+   * formatter needs the target's NAME and prints ` — see <name>` for a row the
+   * surface can point at, and its own named `missing ref (…)` reason for one it
+   * cannot; passing a row that does not exist here would therefore be a claim
+   * the surface cannot honour, so the pool is stated explicitly at every mount
+   * rather than guessed.
+   */
+  targets: readonly AnyArtifact[];
 }): JSX.Element | null {
-  const sourced = monsters.filter((monster) => monster.source.type !== 'none');
   const resolved = useLiveQuery(
-    () => resolveMonsterEntries(sourced),
-    [JSON.stringify(sourced)],
+    () => resolveMonsterEntries(monsters),
+    [JSON.stringify(monsters)],
   );
-  if (sourced.length === 0) return null;
+  const byId = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
+  if (monsters.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-2" data-testid="stat-blocks-panel">
       <span className="text-xs font-medium text-muted-foreground">Stat blocks</span>
       {(resolved ?? []).map((entry, index) => {
-        const monster = sourced[index];
+        const monster = monsters[index];
         if (monster === undefined) return null;
+        // The reference is the formatter's, extracted for exactly this row —
+        // never reworded here. While the live query is still resolving, no row
+        // is printed at all (an unresolved citation must never flash as truth).
+        const target =
+          monster.source.type === 'npc-ref'
+            ? byId.get(monster.source.artifactId)
+            : undefined;
+        const reference = rosterReferenceFor(
+          monster,
+          entry,
+          target === undefined ? undefined : { name: target.name, destination: target.id },
+        );
+        /*
+         * THE BOX: the PRINT rule first (`rosterStatBlockFor`), then the block
+         * the resolution itself produced. The two agree on every arm but one,
+         * and the difference is deliberate and visible rather than hidden: an
+         * `npc-ref` row prints NO box in the books because its numbers print at
+         * that NPC's own entry one page away (the reference says `see <name>`),
+         * while a sidebar has no page to turn to — so the linked row's numbers
+         * stay under its own row here. Nothing is invented either way: the
+         * fallback is the SAME chunk-or-artifact block the ONE resolution read,
+         * and a citation nothing can supply is `null` on both sides, which
+         * prints the named `missing ref (…)` line and no box at all.
+         */
+        const statBlock = rosterStatBlockFor(monster, entry) ?? entry.statBlock;
         return (
-          <div key={`${monster.name}-${index}`} className="flex flex-col gap-1 rounded-md border p-2">
-            <div className="flex items-center gap-2">
+          <div
+            key={`${monster.name}-${index}`}
+            className="flex flex-col gap-1 rounded-md border p-2"
+            data-testid="roster-entry"
+            data-name={monster.name}
+          >
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{monster.name}</span>
               <Badge variant="outline">×{monster.count}</Badge>
-              {isMissingRefOrigin(entry.origin) ? (
+              <MonsterSourceBadge source={monster.source} />
+              {isMissingRefOrigin(entry.origin) && (
                 <Badge variant="destructive" aria-label="Missing reference">
                   <FileWarningIcon aria-hidden className="size-3" /> missing ref
                 </Badge>
-              ) : (
-                <Badge variant="secondary">{entry.origin}</Badge>
               )}
             </div>
-            {entry.statBlock !== null && (
-              <StatBlockCard statBlock={entry.statBlock} name={monster.name} />
+            {reference.printed !== '' && (
+              <span
+                className="text-xs text-muted-foreground"
+                data-testid="roster-reference"
+              >
+                {reference.printed}
+              </span>
+            )}
+            {monster.notes !== '' && (
+              <span className="text-xs text-muted-foreground">{monster.notes}</span>
+            )}
+            {statBlock !== null && (
+              <StatBlockCard statBlock={statBlock} name={monster.name} />
             )}
           </div>
         );

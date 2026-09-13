@@ -251,7 +251,7 @@ function PeekBody({
     return <NpcCard npc={artifact} showWriterModel />;
   }
   if (artifact.kind === 'encounter') {
-    return <EncounterCard encounter={artifact} showWriterModel />;
+    return <EncounterCard encounter={artifact} artifacts={artifacts} showWriterModel />;
   }
   return (
     <div className="flex flex-col gap-2" data-testid="peek-body">

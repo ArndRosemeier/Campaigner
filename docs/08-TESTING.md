@@ -474,6 +474,7 @@ test) · ❌ gap.
 | Quick-find (Ctrl+K): scoped artifacts, Library labels, module navigation, rule preview/pin | `quickfind-modules.test`, `quickfind-topbar.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
 | Module reader as play view: battle link and encounter-row seed action | `module-reader.test`, `entity-panel.test` | ✅ |
+| **An encounter's mobs are listed BELOW its entity row** with each mob's reference and numbers, while the row's jump into the workspace is unchanged (docs/17 row 146) | `reader-encounter-roster.test` (2 behaviour pins driving the real `ModuleReaderPage`) | ✅ |
 | Module reader header nav — **Board + Chat + Contents**, with exactly ONE canvas destination: the **Chat** entry (`canvasChatPath`, i.e. the canvas with `?chat=open`), the plain-canvas **Canvas** control retired by owner request and gone by test id AND by accessible name (docs/17 row 138) | `canvas-chat-thread.test` (the one-canvas-destination count pin + the live Chat routing pin) | ✅ |
 | Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset, layout-cell grid metrics | `battle-surface.test` | ✅ |
 | Battle engine goldens: HP split, initiative, veils, legacy/layout snapping, staging ground | `battle-engine.test` | ✅ |
@@ -2677,6 +2678,46 @@ extraction is written against the two renderers' current row SHAPE (a text array
 whose runs start with the row label), so a structural rewrite of a roster row has
 to update it — it would then fail LOUDLY (the row is not found → `null` → the
 non-vacuity guard reds) rather than silently compare nothing.
+
+**B — the reader half: the encounter's mobs below its row.** The owner's answer,
+verbatim: *"Keep the jump, and list the encounter's mobs below its row in the
+reader's entity panel."* The jump is UNTOUCHED — `ModuleReaderPage`'s `onOpenCard`
+still navigates an encounter click straight to the workspace, and
+`RunBattleButton` still runs/resumes the battle — and the block below the row
+mounts the ONE in-app roster panel, `MonsterStatblocksPanel`, which renders
+`domain/encounterResolve.rosterReferenceFor` / `rosterStatBlockFor` (docs/17 row
+144's seam). The reader composes no reference and resolves nothing itself; every
+roster entry is listed, `none` included, and an unresolvable citation keeps the
+named `missing ref (<creature>)` line with no box.
+
+| fact pinned | where |
+|---|---|
+| **The mobs appear under the encounter's row, with the reference the BOOKS print** (`— Bestiary p.132`, the formatter's own line) and the cited chunk's OWN numbers (the trait, the reaction, the AC value), for the roster's cited entry | `features/reader-encounter-roster.test.tsx` (`lists every mob with its reference and numbers, and the jump still works`) — driven through the REAL reader (app router at the module path), not the component in isolation |
+| **EVERY entry is listed**, in roster order, `none` included, whose line is the formatter's no-citation statement — the panel used to DROP a name-only mob | the same pin (`data-name` order asserted) |
+| **The jump is unchanged**: pressing the encounter row lands on `artifactPath(campaignId, encounterId)` with no peek modal | the same pin (the click happens AFTER the list was asserted, so the test proves both halves coexist) |
+| **A citation nothing can resolve stays LOUD, by name, with NO box**: `— missing ref (Cave Fisher)` on the row and an ABSENCE assertion on the box (`queryByText('AC')`, the trait text), so an empty or invented block fails | `features/reader-encounter-roster.test.tsx` (`keeps a citation nothing can resolve LOUD, by name, with no box`) |
+| **EXACTLY ONE reference in the app** (AGENTS rule 4, made mechanical): `entity-panel.tsx` mounts the shared panel and holds NO `rosterReferenceFor`/`rosterStatBlockFor`/`resolveMonsterEntr` and none of the reference vocabulary; the panel holds the two domain calls and no copy of the sentences, no `Bestiary p.` and no `${entry.origin}` template | `features/reader-encounter-roster.test.tsx` (`EXACTLY ONE roster reference implementation in the app`, 2 source pins, comments stripped) |
+| **The panel's mount points stay explicit**: `kind-forms.EncounterForm`, `play/artifact-cards.EncounterCard` and the reader all pass the `npc-ref` target pool as a REQUIRED prop, so a surface cannot silently claim a cross-reference it cannot make | the same source pins + the pre-existing `features/encounter-form.test.tsx` pin, retargeted to the formatter's own line |
+| **REGRESSION GUARD — the pre-existing panel pin could not pass unchanged, and the change is stated rather than hidden**: `encounter-form.test.tsx` asserted the panel's hand-built origin badge (`findByText('NPC: Vexra')`), which the formatter's own line (`— see Vexra`) replaces; the assertion was RETARGETED to the shared line (never loosened), and the row's box assertion (the linked NPC's numbers) still passes | `features/encounter-form.test.tsx` (17 tests green) |
+
+**REVERT-PROVEN** (each injection printed with `git diff --stat` BEFORE its run,
+the file restored from an OUT-OF-TREE copy and re-hashed with `git hash-object`,
+every hash identical before and after: `entity-panel.tsx`
+`72d240dd6aa2d03028f32f40df45bd59137c6091`, `monster-source.tsx`
+`9800044fe334a677c341934247aad25e8260b03e`):
+
+| injection | what it does | RED | GREEN (unchanged) |
+|---|---|---|---|
+| **B-I1** the reader's `entity-encounter-mobs` block is deleted from `entity-panel.tsx` | removes the whole feature from the reader | **3** — both behaviour pins (the mobs never appear; the row's list block is absent) and the `entity-panel.tsx` source pin | the panel-side source pin (the panel still renders the rule) and all of `module-reader.test.tsx` / `entity-panel.test.tsx` — which is exactly why the new pins are the ones that hold this behaviour |
+| **B-I2** the panel's reference becomes `reference.printed + ' [mob]'` in `monster-source.tsx` | the app decorates the line the books print | **2** — both behaviour pins, `expected " — Bestiary p.132" / received " — Bestiary p.132 [mob]"`. MEASURED and instructive: the FIRST draft of these pins used `toHaveTextContent` — a SUBSTRING match — and this injection stayed GREEN (3 files / 50 tests), the same one-sided blindness commit A tightened in the books; the pins now compare `textContent` EXACTLY | both source pins (the decorator still calls the formatter) — the differential against the books lives in `roster-reference-parity.test.ts` and is pinned there |
+
+**What these pins still CANNOT prove**: that a real browser lays the block out
+under the row (jsdom asserts the DOM structure and the click behaviour, not
+geometry); that a future surface mounting the panel passes a MEANINGFUL `targets`
+pool (the prop is required, so the choice is explicit — but `[]` is type-correct);
+and that an `npc-ref` row's numbers match the books, because the app deliberately
+shows them where the books print `see <name>` (docs/11 states the one-arm
+difference, and it is NOT covered by a differential pin).
 
 ### Remaining gaps
 
