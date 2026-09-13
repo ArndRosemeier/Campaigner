@@ -3,21 +3,21 @@ import { toastError } from '@/lib/toast';
 /**
  * The page-hide flush seam (docs/17 row 111).
  *
- * Three writers in this app debounce a row write: the canvas chat thread
+ * Four writers in this app debounce a row write: the canvas chat thread
  * (`features/modules/canvas/chatPersist`, 600 ms), the New Module draft
- * (`features/modules/new-module-dialog`, 500 ms) and the module board's layout
- * (`features/modules/board/BoardPage`, 600 ms). Each of them flushed on
- * UNMOUNT — which covers a route change and nothing else. A tab that is
- * BACKGROUNDED and then frozen or discarded (mobile Safari, Chrome's tab
+ * (`features/modules/new-module-dialog`, 500 ms), the module board's layout
+ * (`features/modules/board/BoardPage`, 600 ms) and the artifact editor's draft
+ * (`features/campaign/components/artifact-editor`, 800 ms). Each of them
+ * flushed on UNMOUNT — which covers a route change and nothing else. A tab that
+ * is BACKGROUNDED and then frozen or discarded (mobile Safari, Chrome's tab
  * freezing, a bfcache navigation) never unmounts, so a settled chat turn or a
  * typed draft sitting inside its debounce window was simply gone: the row kept
  * its old value and no surface said so.
  *
- * TWO of the three are on this seam today (the chat thread and the draft). The
- * board's layout write has exactly the same exposure and is NOT wired here yet:
- * `features/modules/board/BoardPage` still flushes on unmount only, and that
- * file was out of this slice's reach. The seam was built to take it — a
- * pending-gated flush plus one `registerPageFlush` call, nothing else.
+ * ALL FOUR are on this seam now (the board and the artifact editor joined in
+ * ledger row 118, via the same pending-gated flush plus one
+ * `registerPageFlush` call — nothing else). A fifth debounced writer belongs
+ * here too: register it, do not add a second listener.
  *
  * The browser's own signals for "this page is going away or being put to
  * sleep" are `pagehide` and `visibilitychange` → `hidden`, and they are what
