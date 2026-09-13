@@ -232,6 +232,33 @@ words for this path: *"she will have zombie stats but with prose"*). Pinned in
 `tests/llm/refill-creature-stats.test.ts`; the failure surface this rule's
 refusal speaks through is recorded in docs/05 §Error surfaces and docs/18 §4.
 
+**The borrowed numbers are DERIVED at read time and now RENDERED — read-only and
+labelled** (docs/17 row 134; until that row they were drawn nowhere the owner
+looked, which is the second half of his *"No text, no stat block, nothing"*).
+The derivation is ONE rule, `domain/encounterResolve.resolveDerivedNpcStats` —
+the same one the encounter roster's `npc-ref` arm has always read, so a row's
+details panel, an encounter listing that row and a battle token can never answer
+"which numbers are this npc's?" differently — repo-wired for top code as
+`db/creatureRepo.resolveDerivedNpcStats`, which is the read the UI asks. The
+RENDER is ONE component, `features/campaign/components/borrowed-stats.
+BorrowedStatBlock`, mounted by the artifact editor's `NpcForm` (the details
+surface the owner opens) and by the read-only `NpcCard` (the module reader's peek
+modal and the session-mode card); it draws the library's block with a
+`Borrowed from the library` badge and the disclosed origin label
+(`NPC: Aunt Agatha (stats from Monster Manual p.316)`), so a reader can always
+tell borrowed numbers from an authored block — and NOTHING is stored on the row,
+so a library re-import or a corrected creature changes what she shows with no
+write to any artifact. A cited row is therefore offered **no "Add stat block"
+button**: asking such a row for a block is refused before any model call (the
+half above) and `npcDataSchema` refuses to keep the pair, so that button was an
+affordance that could never produce anything. **Failure is loud in both forms**:
+a library that no longer holds the creature renders the named
+`missing ref (Zombie)` in place — never a blank or greyish stat area — and a
+citation carrying neither a chunk id nor a content hash is an error, shown in
+place and raised through `lib/toast`. A non-cited npc is untouched: an authored
+block renders and edits exactly as before, and an npc with neither citation nor
+block keeps its "Add stat block" affordance.
+
 **The asymmetry stays structural.** The encounter side can cite and cannot cast,
 because it holds no cast seam and no schema field to express one; the new tests
 extend that pin from the encounter ARTIFACT's data schema to the encounter

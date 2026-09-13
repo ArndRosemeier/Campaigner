@@ -13,6 +13,7 @@ import type {
 import { useImageUrl } from '@/features/images/use-image-url';
 import { WriterModelId } from '@/components/writer-model-id';
 import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
+import { BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 
 /**
@@ -71,6 +72,13 @@ export function NpcCard({
           <div className="text-base">
             <StatsCard statBlock={data.statBlock} name={npc.name} />
           </div>
+        )}
+        {/* A CITED row (docs/11 D3): no block of its own, its numbers are the
+            library creature's — the SAME read the editor's details panel makes
+            (ledger row 134), so this read-only card never shows a named zombie
+            with a portrait and nothing else. */}
+        {data.statBlock === null && data.creatureRef !== undefined && (
+          <BorrowedStatBlock npcName={npc.name} citation={data.creatureRef} />
         )}
       </div>
       {showWriterModel && (

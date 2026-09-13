@@ -16,6 +16,7 @@ import type { AnyArtifact,
 } from '@/domain';
 import { blankStatBlock, CANONICAL_ROOM_MARKERS } from '@/domain';
 import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
+import { BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 
@@ -126,7 +127,14 @@ export function NpcForm({
       <div className="flex flex-col gap-2 border-t pt-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Stat block</h2>
-          {data.statBlock === null ? (
+          {/* A CITED row (docs/11 D3) has no block of its OWN by design — its
+              numbers are the library creature's, derived at read time — so the
+              "Add stat block" affordance is NOT offered here: the cited-row
+              refill refuses such a block before any model call and
+              `npcDataSchema` refuses the pair by name, which made that button a
+              dead end (ledger row 134). Borrowed numbers render read-only
+              below, labelled with their source. */}
+          {data.creatureRef !== undefined ? null : data.statBlock === null ? (
             <Button
               size="xs"
               variant="outline"
@@ -160,10 +168,13 @@ export function NpcForm({
             </div>
           )}
         </div>
-        {data.statBlock !== null && !editingStatBlock && (
+        {data.creatureRef !== undefined && (
+          <BorrowedStatBlock npcName={artifactName} citation={data.creatureRef} />
+        )}
+        {data.creatureRef === undefined && data.statBlock !== null && !editingStatBlock && (
           <StatBlockCard statBlock={data.statBlock} name={artifactName} />
         )}
-        {data.statBlock !== null && editingStatBlock && (
+        {data.creatureRef === undefined && data.statBlock !== null && editingStatBlock && (
           <StatBlockForm statBlock={data.statBlock} onChange={setStatBlock} />
         )}
       </div>

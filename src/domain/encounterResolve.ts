@@ -1,4 +1,5 @@
 import type { AnyArtifact, Id, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
+import { creatureRefIsEmpty } from '@/domain/creature';
 
 /**
  * Monster source resolution (07-MILESTONE-3 M3-B; re-based on the library tier
@@ -183,6 +184,49 @@ export async function resolveCreatureCitation(
   };
 }
 
+/**
+ * The numbers of an AUTHORED NPC that BORROWS them from a library creature
+ * (docs/11 D3, the owner's Aunt Agatha path: *"she will have zombie stats but
+ * with prose"*). `npcName` is the row's OWN name — the identity a reader
+ * opened — and the label LEADS with it, so borrowed numbers are never taken
+ * for an authored block.
+ *
+ * THE one derived-stats rule. The encounter roster's `npc-ref` arm below and
+ * `db/creatureRepo.resolveDerivedNpcStats` (the repo-wired read every UI
+ * surface asks) both go through THIS, so a row's details panel, an encounter
+ * listing that row and a battle token can never answer "which numbers are
+ * this npc's?" differently.
+ *
+ * TWO ways it fails, both NAMED: a citation that carries neither key at all is
+ * a dead pointer and an ERROR (`creatureRefIsEmpty` — calling it "missing"
+ * would hide a write-side bug behind a read-side label, which is the same
+ * refusal the repo-level citation resolver makes), and a citation the library
+ * cannot supply answers the one shared `missing ref (<the creature>)` label —
+ * the citation's own stamped creature name, never the row's title, because a
+ * reader has to be told WHAT is missing.
+ */
+export async function resolveDerivedNpcStats(
+  npcName: string,
+  citation: CreatureCitation,
+  lookups: MonsterLookups,
+): Promise<ResolvedCreature> {
+  if (creatureRefIsEmpty(citation)) {
+    throw new Error(
+      `creature citation for "${npcName}" carries neither a chunk id nor a content hash — nothing can resolve it`,
+    );
+  }
+  const creature = await resolveCreatureCitation(
+    citation,
+    creatureCitationName(citation, npcName),
+    lookups,
+  );
+  if (creature.statBlock === null) return creature;
+  return {
+    statBlock: creature.statBlock,
+    origin: derivedStatOrigin(npcName, creature.origin),
+  };
+}
+
 export async function resolveMonsterEntry(
   entry: MonsterEntry,
   lookups: MonsterLookups,
@@ -205,14 +249,10 @@ export async function resolveMonsterEntry(
       const creatureRef = artifact.data.creatureRef;
       if (creatureRef !== undefined) {
         // D3, the Aunt Agatha path: her prose, the library creature's stats —
-        // resolved exactly like a `rulebook` citation (uuid, then content
-        // hash) so the two can never answer differently.
-        const creature = await resolveCreatureCitation(creatureRef, artifact.name, lookups);
-        if (creature.statBlock === null) return creature;
-        return {
-          statBlock: creature.statBlock,
-          origin: derivedStatOrigin(artifact.name, creature.origin),
-        };
+        // ONE rule with the row's own details surface (docs/17 row 134):
+        // `resolveDerivedNpcStats` above is what both call, so an encounter
+        // can never list numbers the npc's own panel does not show.
+        return resolveDerivedNpcStats(artifact.name, creatureRef, lookups);
       }
       return { statBlock: artifact.data.statBlock, origin: `NPC: ${artifact.name}` };
     }

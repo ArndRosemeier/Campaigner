@@ -19,11 +19,12 @@ import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import {
   creatureCitationName,
   creatureOriginLabel,
-  derivedStatOrigin,
   missingCreatureOrigin,
   resolveCreatureChunk,
+  resolveDerivedNpcStats as derivedNpcStats,
   type CreatureCitation,
   type MonsterLookups,
+  type ResolvedCreature,
 } from '@/domain/encounterResolve';
 import {
   createArtifact,
@@ -167,22 +168,21 @@ export async function resolveCreatureCitation(
 }
 
 /**
- * The origin label + stats of an AUTHORED NPC whose number source is derived
- * from a library creature (docs/11 D3): leads with the NPC's name and
- * discloses the derivation. A missing library row is the SAME single failure
- * mode as everywhere else (`missingCreatureOrigin`) — a named "missing ref",
- * never a silent absence.
+ * The numbers of an AUTHORED NPC whose number source is DERIVED from a library
+ * creature (docs/11 D3), repo-wired for top code: this wrapper only supplies
+ * the library lookups — the RULE (the resolution order, the `derivedStatOrigin`
+ * label and the `missing ref` failure) lives in
+ * `domain/encounterResolve.resolveDerivedNpcStats`, which the encounter
+ * roster's `npc-ref` arm reads too, so a row's own details surface and an
+ * encounter listing it cannot disagree. Read-only by construction: it derives,
+ * and nothing here writes a block onto the row (the `creatureRef` + authored
+ * is refused by `npcDataSchema`).
  */
-export async function resolveDerivedNpcStats(
+export function resolveDerivedNpcStats(
   npcName: string,
   citation: CreatureRef,
-): Promise<{ statBlock: StatBlock | null; origin: string }> {
-  const listing = await resolveCreatureCitation(citation, npcName);
-  if (listing.statBlock === null) return { statBlock: null, origin: listing.origin };
-  return {
-    statBlock: listing.statBlock,
-    origin: derivedStatOrigin(npcName, listing.origin),
-  };
+): Promise<ResolvedCreature> {
+  return derivedNpcStats(npcName, citation, creatureLookups());
 }
 
 /** The identity of a creature with no library row behind it — an invented mob

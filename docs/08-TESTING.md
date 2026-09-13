@@ -1882,6 +1882,63 @@ A behavioural replay of this rule costs nothing when the fold is byte-identical:
 injection 5 shows the shape scan is the ONLY thing standing between the codebase
 and a re-inlined rule.
 
+### A cited npc's borrowed numbers (docs/17 row 134, docs/11 §A cited row's REFILL, docs/18 §2/§4)
+
+A cast creature npc has no stat block of its own by design (`npcDataSchema`
+refuses a `creatureRef` beside an authored block by name) — its numbers are the
+library creature's, DERIVED at read time. They were rendered on the encounter
+panel and the battle board and NOWHERE the row's own details surface could be
+seen, which is the second half of the owner's *"No text, no stat block,
+nothing"*: `NpcForm` drew nothing and offered an "Add stat block" button that
+the cited-row refill refuses before any model call. The fix folds the two
+spellings of the derivation into ONE rule and draws it with ONE read-only
+component.
+
+| fact pinned | where |
+|---|---|
+| **The editor shows the LIBRARY creature's real numbers, labelled as borrowed**: AC 14 / HP 22 / the action line from the seeded chunk (not "something rendered"), the `Borrowed from the library` badge, the disclosed origin `NPC: Aunt Agatha (stats from Bestiary p.4)`, ZERO controls inside the card, NO "Add stat block" button, and the row left UNWRITTEN (`statBlock` still null, the citation byte-identical) after the whole render | `tests/features/cast-row-borrowed-stats.test.tsx` (`renders the library creature's real numbers, labelled as borrowed, with no authored-block affordance`, NEW) |
+| **The read-only card carries the same numbers and the same label** — the module reader's peek modal / session-mode card mount, so the row is not "a portrait and nothing else" on the reading side either | `tests/features/cast-row-borrowed-stats.test.tsx` (NEW) |
+| **A non-cited npc is UNCHANGED, both shapes**: an authored block still renders with its Edit/Remove controls and no borrowed card; an npc with neither citation nor block still offers "Add stat block" | `tests/features/cast-row-borrowed-stats.test.tsx` (2 pins, NEW) |
+| **A missing library creature is LOUD and NAMED, never blank** (AGENTS 1/2): after the cited chunk is deleted the panel renders the destructive notice with the shared `missing ref (Bog Zombie)` reason, no stat text at all, and still no authored-block affordance | `tests/features/cast-row-borrowed-stats.test.tsx` (NEW) |
+| **A citation carrying neither key is an ERROR at the derived rule**, surfaced in place (the read THROWS, the panel says so) — the `creatureRefIsEmpty` refusal the repo-level resolver always made, now reachable by both readers of a cited row | `tests/features/cast-row-borrowed-stats.test.tsx` (NEW) |
+| **The encounter reader answers the IDENTICAL label and values** for a roster entry linked to the cast row (`NPC: Aunt Agatha (stats from Bestiary p.4)`, HP 22) and the IDENTICAL creature-naming when the library row is gone (`missing ref (Bog Zombie)`) — the fold's whole point, checked on both readers rather than on one | `tests/features/cast-row-borrowed-stats.test.tsx` (2 pins, NEW) |
+| **The refused pair stays unconstructible and unwritable**: `npcDataSchema` refuses citation + authored block by name (and accepts the citation with a null block), and `updateArtifact` REJECTS a hand-written pair, leaving the stored row's block null with its citation intact | `tests/features/cast-row-borrowed-stats.test.tsx` (2 pins, NEW; the schema refine itself is also pinned in `tests/db/creatureRepo.test.ts`) |
+| **The kept-unchanged half of the owner's own rule**: the cited-row refill's step-off (the statblock step `'skipped'` with its reason before any model call, the citation byte-identical, `statBlock` null) | `tests/llm/refill-creature-stats.test.ts` (6 pins, PRE-EXISTING, passing unchanged) |
+| **The ROUTING** — the derived-stats label is composed in `domain/encounterResolve.ts` ALONE (its definition plus exactly ONE call), the repo-wired read makes exactly one call of the domain rule and composes no label of its own, the derivation has exactly three holders in `src/`, and both surfaces MOUNT the one renderer rather than a `StatBlockCard` of their own | `tests/features/cast-row-borrowed-stats-scan.test.ts` (`scan: …`, 2 pins, NEW, labelled as scans, with a >200-file non-vacuity check) |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n` and `git diff --stat` checked BEFORE the run, one
+suite at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's
+scratch, then restored from an OUT-OF-TREE copy and verified with
+`git hash-object` — `kind-forms.tsx`
+`2d718da4a9cdf7bb98320b0a1e40cc0b725008aa`, `borrowed-stats.tsx`
+`d38306580f46fbda5bc17675a008c52b9eb29c91`, `artifact-cards.tsx`
+`4ba8cb241cf6f03dcda8152e9a1a9b86dd41a0e1`, `encounterResolve.ts`
+`d982b8abf97b885232f0f50faacfbac2c7a0a944`, `creatureRepo.ts`
+`0b8d0b44076c9d2a660ddd27ff477888e0a3a3ae`, all five matching after every
+restore; `git checkout --` restores HEAD and would have destroyed this unfiled
+work, so the backup was taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| the `NpcForm` mount dead-ened (the pre-fix editor behaviour) | `kind-forms.tsx:171` | **RED 3** (the editor's ready, missing-creature and empty-citation pins); the CARD pin, both encounter pins, both non-cited pins and the scan **GREEN** — the two mounts are genuinely separate |
+| the cited-row guard on the "Add stat block" button deleted | `kind-forms.tsx:137` | **RED 2** (the two pins asserting the button is absent); every other pin GREEN |
+| the `creatureRefIsEmpty` refusal deleted from the derived rule | `encounterResolve.ts:213-217` | **RED 1** (the empty-citation pin, which then renders the named missing-ref notice); the missing-creature pin correctly stayed GREEN |
+| the creature name no longer stamped into the missing label | `encounterResolve.ts:220` | **RED 2**, one per reader (the editor and the encounter panel); `encounterResolve.test.ts` 17/17 GREEN because its four `missing ref (…)` pins are `rulebook` sources that already resolved their own name |
+| **the FOLD reverted** — `creatureRepo.resolveDerivedNpcStats` re-inlines the whole rule (plus the reintroduced `derivedStatOrigin` import) | `creatureRepo.ts:185-190` | **RED 2, and ONLY the two scan pins: all 49 behavioural pins stayed GREEN** (`creatureRepo` + `encounterResolve` + the new behaviour files) — the repo's next measured instance of the rule stated above (the sibling folds' `77, 176, 60, 18` and the four image queues), and the reason the scan exists |
+| the `NpcCard` mount dead-ened | `artifact-cards.tsx:80` | **RED 1** (the card pin) with the SCAN **GREEN** — an honest limit of a textual scan (the mount text is still in the file), and the reason the behavioural card pin is kept |
+| the loading-state copy reworded | `borrowed-stats.tsx:74` | **GREEN, 12/12** — names the ONE line no pin reaches: the transient "Reading <name>'s stats from the library…" state every pin awaits PAST |
+
+**UNPROVEN.** (1) Nothing is observed in a real browser or against a live
+library: every pin renders through jsdom with `fake-indexeddb`, so "the owner
+sees the numbers" is read off the DOM. (2) The panel reads the derivation ONCE
+per mount through an effect (not a Dexie live query), so a library change made
+while the editor is open does not repaint until it remounts — a KISS choice, not
+a measured absence of need. (3) The `missing ref` state is surfaced IN PLACE
+only, never toasted: it is a persistent data state that renders every time the
+surface opens (the louder of the two options the brief allowed), and no pin
+measures that a toast would have been worse.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
