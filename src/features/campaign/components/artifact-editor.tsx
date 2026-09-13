@@ -643,6 +643,13 @@ function EncounterRegenControls({
   // Repopulating a roomless complex has nothing to stock — Regenerate
   // everything builds rooms and a map first.
   const repopulateBlocked = complex && data.layout === null;
+  /**
+   * The ONE gate expression behind Repopulate (AGENTS rule 4): the same boolean
+   * drives the child's `disabled` and the DESCRIPTION it offers, so "held" and
+   * "has a description" cannot disagree (docs/18 §4, ledger 125 — the shape the
+   * classification control and CanvasPage's gates took).
+   */
+  const repopulateHeld = running !== null || repopulateBlocked;
 
   async function run(action: 'repopulate' | 'everything'): Promise<void> {
     if (running !== null) return;
@@ -720,10 +727,12 @@ function EncounterRegenControls({
         </BlockedControl>
         <BlockedControl
           testId="encounter-repopulate"
-          // Reasons in the order they hold the control: the roomless complex
-          // (its own sentence, already in the `title`), then the OTHER action's
-          // run — the one blocked state whose label says nothing (this action's
-          // own run renders "Repopulating…").
+          // Reasons in the order they hold the control: the roomless complex,
+          // then the OTHER action's run — the one blocked state whose label says
+          // nothing (this action's own run renders "Repopulating…"). Each
+          // sentence is written ONCE, here (docs/18 §2.3/§4, ledger 125): the
+          // roomless one used to be repeated verbatim in the child's `title`,
+          // where no browser renders it and no key reaches it.
           reason={
             repopulateBlocked
               ? 'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first'
@@ -736,10 +745,15 @@ function EncounterRegenControls({
             variant="outline"
             size="sm"
             data-testid="encounter-repopulate"
-            disabled={running !== null || repopulateBlocked}
+            disabled={repopulateHeld}
+            // The DESCRIPTION, not a reason (docs/18 §4, ledger 125): what
+            // pressing the control does, offered only while it can act. `held`
+            // here is the SAME expression as `disabled` above, so a held control
+            // never carries a description, and the roomless complex states its
+            // case in the wrapper's reason and nowhere else.
             title={
-              repopulateBlocked
-                ? 'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first'
+              repopulateHeld
+                ? undefined
                 : complex
                   ? 'New roster for all rooms — rooms, layout and map kept'
                   : 'New one-fight roster — map kept'

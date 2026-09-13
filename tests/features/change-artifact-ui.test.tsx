@@ -11,6 +11,7 @@ import type { AnyArtifact } from '@/domain';
 import type * as ChangeArtifactModule from '@/features/modules/change-artifact';
 import type * as ToastModule from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
 
 /**
  * The routed UI call site (docs/17 row 101, docs/18 §2): the artifact editor's
@@ -161,4 +162,29 @@ describe('the editor\u2019s encounter actions route through the change seam', ()
     );
     expect(toastSuccessMock).not.toHaveBeenCalled();
   });
+
+  it('a held Repopulate offers NO description — the other action\u2019s run states its reason once, in the wrapper', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    // The OTHER action stays in flight, which is the one held state whose own
+    // label says nothing on Repopulate ("Repopulate" would still be its label).
+    regenerateMock.mockImplementation(() => new Promise(() => undefined));
+    renderEditor(encounter, campaignId);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('encounter-regenerate-everything'));
+    await waitFor(() => {
+      expect(regenerateMock).toHaveBeenCalled();
+    });
+
+    // The reason is stated by the wrapper — the device the owner can perceive
+    // (docs/18 §2.3) — and the description is NOT offered: `title` and
+    // `disabled` read the SAME gate expression, so a control that cannot act
+    // never advertises what pressing it would do (docs/18 §4, ledger 126).
+    await expectBlockedReason(
+      user,
+      'encounter-repopulate',
+      'Regenerate everything is running right now — wait for it.',
+    );
+    expect(screen.getByTestId('encounter-repopulate')).not.toHaveAttribute('title');
+  }, 30_000);
 });

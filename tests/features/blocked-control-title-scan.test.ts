@@ -28,41 +28,35 @@ import { describe, expect, it } from 'vitest';
  *  - `branch` — the title expression carries a string literal the wrapper's own
  *    `reason` expression also carries. That is the same sentence written twice.
  *
+ * HONEST LIMIT, MEASURED (ledger 127 injection I3, kept GREEN on purpose): the
+ * `branch` rule compares string LITERALS, so it can only see a sentence that is
+ * written inside the wrapper's own `reason={…}` span — or in the `const` that
+ * span names outright, which `resolveIdentifier` below follows one level. A
+ * reason that reaches the wrapper through a FUNCTION CALL has no literal in the
+ * span at all, and a title quoting that sentence verbatim therefore reads as
+ * clean. entity-panel's `generate-everything` is exactly that site: its
+ * sentences come from `generateAllBlockedReason()`, so only the `shape` rule
+ * guards it (which is the shape that control's defect actually took). The
+ * blindness is REPORTED here rather than papered over with a scanner that parses
+ * ternaries and function bodies.
+ *
  * What is NOT a violation, and must not be treated as one: a DESCRIPTION —
  * "what pressing this control does" — gated on the control being able to act
  * (`title={blocked ? undefined : '…'}`). A `title` on a LIVE control is a
- * surface the owner really has; three of the five surfaces keep their
- * description that way, and each one has a behavioural pin asserting both
- * halves (no title while held, the description while live).
+ * surface the owner really has; every one of the five wrappers that carries a
+ * `title` now keeps its description that way, and each has a behavioural pin
+ * asserting both halves (no title while held, the description while live).
  *
- * The scan's known list is asserted by EQUALITY, never as a subset: a sixth
- * offender reds it, and fixing one of the two named ones ALSO reds it, so the
- * allowance cannot outlive its cause (docs/17 row 123's lesson).
+ * The scan carries NO allowance. Ledger 125 named exactly two sites it had
+ * deliberately left un-folded (both pinned as titles by other files) in a
+ * `KNOWN_RESTATED_TITLES` list asserted by EQUALITY so a third offender — or a
+ * silent fix of one of the two — could not rot unnoticed. Ledger 127 folded
+ * those two and the list went with them: `restatedTitleViolations()` must now be
+ * EMPTY. An allowance must not outlive its cause (rows 123/125's own lesson), so
+ * the equality was the transition device, never the destination.
  */
 
 const SRC = 'src';
-
-/** The two sites this slice MEASURED and deliberately did not fold, with why. */
-const KNOWN_RESTATED_TITLES = [
-  {
-    file: 'src/features/campaign/components/artifact-editor.tsx',
-    testId: 'encounter-repopulate',
-    rule: 'branch',
-    // `title={repopulateBlocked ? '<the reason sentence>' : …}` while the
-    // wrapper's `reason` opens with the byte-identical sentence. NOT folded by
-    // ledger 125: the brief scoped the five sites named in it, and this is a
-    // sixth found by re-verification (see the row's findings).
-  },
-  {
-    file: 'src/features/modules/entity-panel.tsx',
-    testId: 'generate-everything',
-    rule: 'shape',
-    // `title={generateAllBlocked ?? '<description>'}`. NOT folded by ledger 125
-    // for the same reason, and it is pinned as a title by
-    // tests/features/generate-everything.test.tsx:646 and :676 — pins the
-    // follow-up slice must rewrite with it.
-  },
-] as const;
 
 interface BlockedControlSpan {
   file: string;
@@ -200,9 +194,10 @@ describe('SCAN: a reason is never stated in a title beside its BlockedControl wr
       expect(found).toContain(testId);
     }
 
-    // The population of titles inside a wrapper, by EQUALITY: the three gated
-    // DESCRIPTIONS this slice kept, plus the two named debt sites below. A new
-    // title here is a deliberate act that must update this list.
+    // The population of titles inside a wrapper, by EQUALITY: the five gated
+    // DESCRIPTIONS — the only thing a `title` may now carry here. A new title in
+    // this list, and a title that disappears from it, are both deliberate acts
+    // that must update this assertion.
     expect(
       spans
         .filter((span) => span.title !== null)
@@ -217,9 +212,9 @@ describe('SCAN: a reason is never stated in a title beside its BlockedControl wr
     ]);
   });
 
-  it('no wrapper states its reason in the child’s title — the two that still do are named, licensed debt', async () => {
-    expect(await restatedTitleViolations()).toEqual(
-      KNOWN_RESTATED_TITLES.map(({ file, testId, rule }) => ({ file, testId, rule })),
-    );
+  it('no wrapper states its reason in the child’s title — anywhere in src/, with no allowance left', async () => {
+    // EMPTY, not "unchanged": ledger 127 removed the two-entry allowance this
+    // used to equal as well as the two sites it named (docs/17 rows 123/125).
+    expect(await restatedTitleViolations()).toEqual([]);
   });
 });

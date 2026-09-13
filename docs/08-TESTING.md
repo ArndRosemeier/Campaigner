@@ -470,8 +470,8 @@ test) · ❌ gap.
 | Blocked controls state their reason PERCEIVABLY (the shared device): the control stays natively disabled, the reason is associated via `aria-describedby`, the popup opens on hover AND on focus, and a live control carries none of it | `blocked-control.test` | ✅ |
 | Canvas header + chat sidebar: a reason per reason-bearing blocked control (preview/open-editor, generating, refine running, streaming proposal, the chat's module-wide block and its live-reply block), each pinned together with the unchanged `toBeDisabled()` state | `blocked-reasons.test` (device), `module-canvas.test` (the AI flows themselves) | ✅ |
 | Converted reason sites keep their gate and gain the perceivable reason (`generate-everything`, the entity batch gate, encounter Repopulate/Regenerate everything) | `generate-everything.test`, `entity-classify-new.test`, `images-ui.test` | ✅ |
-| A reason is never stated in a `title` beside its wrapper (docs/17 row 125): the five surfaces that restated it there state it ONLY through the device now, and the two the audit missed are held as NAMED debt by an equality-asserted scan (`generate-everything`, encounter Repopulate) | `blocked-control-title-scan.test` (SCAN, 2), `module-canvas.test` (the Save control), `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (the batch gate + classify) | ✅ (2 known sites, named) |
-| The DESCRIPTION a held control used to lose survives on the LIVE control: each of the three gated descriptions is asserted byte-identical while the control can act, and its ABSENCE is asserted while the control is held | `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (classify) | ✅ |
+| A reason is never stated in a `title` beside its wrapper (docs/17 rows 125/127): all SEVEN surfaces that restated it there state it ONLY through the device now, the scan's two-entry known list was DELETED in the same commit that folded the two sites it licensed, and any restated title in `src/**` reds it | `blocked-control-title-scan.test` (SCAN, 2 — strict, no allowance), `module-canvas.test` (the Save control), `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (the batch gate + classify), `generate-everything.test` (both held states), `editor-surfaces.test` + `change-artifact-ui.test` (Repopulate, both held states) | ✅ |
+| The DESCRIPTION a held control used to lose survives on the LIVE control: each of the five gated descriptions is asserted byte-identical while the control can act, and its ABSENCE is asserted while the control is held (gated on the FULL held expression, so no held state leaks one) | `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (classify), `generate-everything.test` (live + two held), `editor-surfaces.test` (stocked complex + single), `change-artifact-ui.test` (held by the other run) | ✅ |
 | Self-evident blocks are pinned AS self-evident (no reason wrapper): a blank chat input, an already-`Reported` outcome, the Versions menu's clear-all beside its own empty-state paragraph | `blocked-reasons.test` | ✅ |
 | The SILENT-block sweep (docs/17 row 99): every control that was disabled with no reason stated anywhere now states one through the shared device, in the gate's own order, and each pin asserts the gate is UNCHANGED (`toBeDisabled()` / `aria-disabled` per the control's own form) together with the reason being present, associated, focusable and openable on hover | `blocked-reasons-writers-room.test` (8 + 3), `blocked-reasons-entity-sweep.test` (stub popover 3 + images 2 + export 1), `spine-checkpoint.test` (4), `module-board-rewrite.test` (1), `rules-page.test` (5), `rules/embedding-panel.test` (2), `bestiary-fetch-section.test` (1), `mob-portraits-section.test` (2), `dice-roller.test` (1) | ✅ |
 | Every one of those pins is REVERT-PROVEN, both directions: with the reason reverted to `null` the NAMED pin fails (31/31, one control at a time, files restored byte-identical by `md5`), with the reason replaced by a wrong sentence it fails on the exact text (4 injections), and for a SELF-EVIDENT pin the forbidden wrapper is injected at that control and the pin fails (11), while the controls carrying no wrapper at all are proven by relaxing their gate so the pin's held half is exercised (4) | the above files; the scripts are scratch, the proofs are the measured run log recorded in docs/17 row 99 | ✅ |
@@ -1319,7 +1319,102 @@ runtime is invisible to it, and `reason` identifiers are resolved only ONE level
 `title="…"` literal form is compared by the `branch` rule only. No real-browser
 run: jsdom has no rendering, so "Chrome draws no tooltip for a `title` on a
 natively disabled control" stays the documented premise, and what is measured
-here is that the attribute is GONE.
+here is that the attribute is GONE. The paragraph above describes the state
+ledger 125 LEFT BEHIND — its equality list and the two sites it named are gone
+in the section below (docs/17 row 127).
+
+
+### The two `title` sites the audit missed, cured — and the scan loses its allowance (docs/17 row 127, docs/18 §2.3/§4)
+
+Ledger 125 folded five of the seven wrappers whose disabled child restated the
+wrapper's `reason` in a `title`, and deliberately left two of them —
+`entity-panel`'s `generate-everything` and `artifact-editor`'s
+`encounter-repopulate` — because two pre-existing assertions pinned the very
+title to be removed (`generate-everything.test.tsx:646` asserted
+`toHaveAttribute('title', <the reason>)`; `:676` asserted that the title contains
+`'fix the text first'`). Both sites are folded here and the two-entry
+`KNOWN_RESTATED_TITLES` allowance went with them, because an allowance must not
+outlive its cause (the lesson rows 123/125 recorded): the scan's violation list
+is now asserted to be **EMPTY** against the whole of `src/**`, and the population
+of titles inside wrappers is STILL asserted by EQUALITY — so a restated title
+reds the scan, and a description quietly disappearing reds it too (measured:
+injection I8).
+
+**Per-site decisions, with the text.**
+
+- **`generate-everything`** — `title={generateAllBlocked ?? '<description>'}`
+  becomes `title={generateAllHeld ? undefined : '<description>'}`. The FIRST half
+  was the wrapper's own `reason` (whose expression is
+  `reason={generatingAll ? null : generateAllBlocked}`), so it is REMOVED; the
+  description survives BYTE-IDENTICAL and is now gated on the SAME boolean as the
+  child's `disabled` (`const generateAllHeld = generateAllBlocked !== null`) —
+  one gate expression read twice, AGENTS rule 4, the shape row 125 gave
+  `classifyBlocked` and CanvasPage's two gates. Nothing is reworded, moved or
+  dropped, and the phrase `'fix the text first'` was never title-only copy: it is
+  part of `generateAllBlockedReason()`'s failed-status sentence, and the pin now
+  asserts that sentence on the REASON through `expectBlockedReason` (byte-exact,
+  therefore stronger than the `toContain` it replaces).
+- **`encounter-repopulate`** — `title={repopulateBlocked ? '<the reason
+  sentence>' : complex ? '…' : '…'}` becomes
+  `title={repopulateHeld ? undefined : complex ? '…' : '…'}`. The roomless-complex
+  sentence is REMOVED from the title — it is the wrapper's `reason` verbatim —
+  and the two descriptions survive byte-identical. The comment that blessed the
+  duplication by name (*"its own sentence, already in the `title`"*) now states
+  the rule instead. ONE behaviour change beyond the literal brief, reported
+  rather than smuggled: the gate is the FULL held expression
+  (`const repopulateHeld = running !== null || repopulateBlocked`), not
+  `repopulateBlocked` alone, because before this change the OTHER action's run
+  held the control while the child still advertised its description — a `title`
+  on a control that cannot act, exactly the defect this arc removes. That state
+  carries no description now, and it is pinned (I5 reds when the gate is narrowed
+  back, which no other pin in the repo reaches).
+
+**Matrix rows.**
+
+| Surface | Covered by | State |
+|---|---|---|
+| `generate-everything`: the generating-module reason stated through the device (hidden node + `aria-describedby` + tab stop + the settled popup) with NO `title` while held, and the description byte-identical while LIVE | `generate-everything.test` (2 rewritten pins + 1 live assertion in the work-count pin) | ✅ |
+| Repopulate: the roomless-complex reason through the device with NO `title` while held, the description byte-identical on a STOCKED complex and on a single, and NO description while the other action's run holds it | `editor-surfaces.test` (+2), `change-artifact-ui.test` (+1) | ✅ |
+| The scan is STRICT: the violation list is EMPTY and the title population by EQUALITY (a title leaving the list reds it as loudly as a new one) | `blocked-control-title-scan.test` (2) | ✅ |
+
+**REVERT-PROVEN, every injection applied to the committed tree, the injected
+line printed back with `grep -n`, `git diff --stat` checked BEFORE the run, and
+restored byte-identically (`git hash-object` identical before and after, both
+files):**
+
+| injection | line it hits | result |
+|---|---|---|
+| I1 the reason half of the `generate-everything` title restored (`title={generateAllBlocked ?? '<description>'}`) | `entity-panel.tsx:861` | **RED 3** — the scan's `shape` rule + both held-state pins |
+| I2 the roomless-complex branch restored in the Repopulate title | `artifact-editor.tsx:755` | **RED 2** — the scan's `branch` rule (the rule that first went blind, row 125's I3) + the held-state pin |
+| I4 the description gate INVERTED (`generateAllHeld ? '<description>' : undefined`) | `entity-panel.tsx:861` | **RED 3** — the LIVE-description pin + both held-state pins |
+| I5 the Repopulate description gate NARROWED back to `repopulateBlocked` | `artifact-editor.tsx:755` | **RED 1** — the `running === 'everything'` held pin (the only pin that reaches it) |
+| I6 the Repopulate description VALUE changed (`'…rooms, layout and map kept'` → `'…layout and map kept'`) | `artifact-editor.tsx:758` | **RED 1** — the live-description pin; scan **GREEN** |
+| I7 the one gate expression hardwired (`const generateAllHeld = false`) | `entity-panel.tsx:428` | **RED 2** — both held-state pins |
+| I8 the `generate-everything` `title` attribute DELETED outright | `entity-panel.tsx:860-864` | **RED 2** — the scan's title-population equality + the live-description pin |
+| I3 a LITERAL restatement of the failed-run reason injected into the held branch of that title | `entity-panel.tsx:862` | scan **GREEN** — the measured blindness below; the two held-state pins RED |
+
+**The GREEN one, named rather than dressed as coverage.** I3 is the scan's own
+eyesight measured: the `branch` rule compares LITERALS, and the entity-panel
+reason reaches the wrapper through a FUNCTION CALL (`generateAllBlockedReason()`)
+whose sentences are therefore nowhere inside the `reason={…}` span — so a title
+quoting that sentence verbatim read as clean (2/2 GREEN) while the two
+behavioural pins RED. The scan's `shape` rule still guards that control, and it
+is the shape this control's defect actually took (I1 reds); closing the gap would
+need a scanner that parses ternaries and function bodies, which is not worth its
+complexity here. This is row 125's lesson one level deeper — a sentence that
+moves outside the span is invisible to a literal comparison — and it is recorded
+in docs/18 §4 rather than papered over. (The two other boundaries row 125
+measured reproduce here: I6 proves a changed VALUE is behaviour's business, not
+the scan's, and both sites' descriptions stay byte-identical.)
+
+**Carried forward, with the pins that reach them.** (1) `images-ui.test.tsx:313`
+still describes the roomless-complex reason as asked for *"not only in a `title`"*
+— the reason is asserted there through the device and still passes, but its
+comment is stale now that the control carries no `title`; it was left untouched
+on purpose (that file belongs to the concurrent image slice's neighbourhood and
+nothing false is asserted, only narrated). (2) No real-browser run: what is
+measured is that the attribute is gone, never what Chrome would have drawn
+(row 98's honest limit). (3) The scan's textual limit above (I3).
 
 
 ### The one way to generate ONE image (docs/17 row 126, docs/18 §2.2/§4)

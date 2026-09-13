@@ -384,12 +384,13 @@ export function EntityPanel({
   const generateAllLive = useModuleQueuesBusy(module.id);
 
   /**
-   * Why "Generate everything" is disabled right now (null = it is not) — the
-   * `saveBlockedReason` / `derivedActionBlockedReason` house convention: a
-   * disabled control states its honest reason in `title` instead of leaving the
-   * owner to guess. A module whose parts pass has not finished is named here as
-   * well, with the honest remedy (the text path) rather than a silent re-entry
-   * that the seam would refuse anyway.
+   * Why "Generate everything" is disabled right now (null = it is not). Its ONE
+   * home is the `BlockedControl` wrapper's `reason` below, the device that makes
+   * it perceivable (docs/18 §2.3/§4, ledger 125) — a `title` beside the natively
+   * disabled child is rendered by no browser and reached by no pointer or key,
+   * so it is never a second copy of this sentence. A module whose parts pass has
+   * not finished is named here as well, with the honest remedy (the text path)
+   * rather than a silent re-entry that the seam would refuse anyway.
    *
    * The parts-pass sentence is the blocked-control SEAM's
    * (`features/modules/module-busy.MODULE_GENERATING_REASON`, docs/17 row 123) —
@@ -416,6 +417,15 @@ export function EntityPanel({
   }
 
   const generateAllBlocked = generateAllBlockedReason();
+
+  /**
+   * The ONE gate expression behind "Generate everything" (AGENTS rule 4): the
+   * same boolean drives the child's `disabled` and the DESCRIPTION it offers, so
+   * "held" and "has a description" can never disagree — the shape ledger 125
+   * established for the classification control (`classifyBlocked`) and for
+   * CanvasPage's two gates.
+   */
+  const generateAllHeld = generateAllBlocked !== null;
 
   /**
    * The confirmed "Generate everything": the SAME pipeline as "Resume automatic
@@ -841,10 +851,16 @@ export function EntityPanel({
                 <Button
                   variant="outline"
                   size="xs"
-                  disabled={generateAllBlocked !== null}
+                  disabled={generateAllHeld}
+                  // The DESCRIPTION, not a reason (docs/18 §4, ledger 125): it
+                  // says what pressing the control will do, so it is offered only
+                  // while the control can act. The state that holds the control
+                  // is stated by the wrapper above and ONLY there — the sentence
+                  // this used to carry when held was that same `reason`.
                   title={
-                    generateAllBlocked ??
-                    'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.'
+                    generateAllHeld
+                      ? undefined
+                      : 'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.'
                   }
                   data-testid="generate-everything"
                   onClick={() => {

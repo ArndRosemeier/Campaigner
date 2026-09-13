@@ -6,9 +6,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { blankStatBlock, type Artifact, type ArtifactLink, type StatBlock } from '@/domain';
+import {
+  blankStatBlock,
+  type Artifact,
+  type ArtifactLink,
+  type EncounterArtifactData,
+  type StatBlock,
+} from '@/domain';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
 import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
@@ -21,6 +28,62 @@ const NPC_DATA = {
   appearance: 'Small, soot-stained.',
   personality: 'Manic, cheerful.',
   statBlock: null,
+};
+
+/**
+ * The ONE complex-encounter fixture the two Repopulate-copy pins read (AGENTS
+ * rule 4): they differ ONLY in the layout — a two-room dungeon the control can
+ * repopulate, or `null` (roomless: it is held). `EncounterArtifactData` is
+ * annotated here because an inline literal against the artifact-data union
+ * narrows its members to `never`.
+ */
+function complexEncounterData(layout: EncounterArtifactData['layout']): EncounterArtifactData {
+  return {
+    difficulty: 'old',
+    levelHint: '4',
+    monsters: [],
+    terrain: '',
+    tactics: '',
+    treasure: '',
+    mapImageId: null,
+    preset: 'standard',
+    locationKind: 'dungeon',
+    siteShape: 'complex',
+    budgetAdvisory: '',
+    layout,
+  };
+}
+
+/** Two rooms (a complex needs more than one, `encounterDataSchema`): stocked. */
+const STOCKED_COMPLEX_LAYOUT: EncounterArtifactData['layout'] = {
+  gridW: 24,
+  gridH: 18,
+  theme: 'undercroft',
+  rooms: [
+    {
+      id: '00000000-0000-4000-8000-0000000000e1',
+      name: 'A',
+      rects: [{ x: 1, y: 1, w: 6, h: 6 }],
+      mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+      description: '',
+      monsterIndexes: [],
+      spawn: true,
+      key: '',
+      keyTreasure: '',
+    },
+    {
+      id: '00000000-0000-4000-8000-0000000000e2',
+      name: 'B',
+      rects: [{ x: 10, y: 1, w: 6, h: 6 }],
+      mobsRect: { x: 11, y: 2, w: 4, h: 4 },
+      description: '',
+      monsterIndexes: [],
+      spawn: false,
+      key: '',
+      keyTreasure: '',
+    },
+  ],
+  corridors: [],
 };
 
 function testStatBlock(): StatBlock {
@@ -340,6 +403,72 @@ describe('editor surfaces', () => {
     await flushAsyncUpdates();
   }, 20000);
 
+  it('Repopulate states the roomless reason through the device — ONE statement of it, never a title', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Roomless copy', system: 'dnd5e' });
+    const roomless = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Empty Halls',
+      summary: '',
+      body: '',
+      data: complexEncounterData(null),
+    });
+    render(
+      <ArtifactEditor
+        artifact={roomless}
+        campaignId={roomless.campaignId}
+        campaignArtifacts={[roomless]}
+        campaignSystem="dnd5e"
+      />,
+    );
+
+    // HELD: the reason is perceivable through the wrapper — the hidden node the
+    // wrapper points at with `aria-describedby`, the tab stop, and the popup the
+    // helper settles out of the document before hovering (docs/18 §2.3).
+    await expectBlockedReason(
+      user,
+      'encounter-repopulate',
+      'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first',
+    );
+    // The sentence used to be written a SECOND time, as the first branch of the
+    // child's `title`, under a comment that blessed the duplication by name
+    // ("its own sentence, already in the `title`"). That copy is gone: a `title`
+    // on a natively disabled button is rendered by no browser and reached by no
+    // pointer or key, and a second copy is only a second place for the sentence
+    // to drift (docs/18 §4, ledger 126).
+    expect(screen.getByTestId('encounter-repopulate')).not.toHaveAttribute('title');
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('Repopulate offers its DESCRIPTION only while it can act (stocked complex)', async () => {
+    const campaign = await createCampaign({ name: 'Stocked copy', system: 'dnd5e' });
+    const stocked = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Stocked Halls',
+      summary: '',
+      body: '',
+      data: complexEncounterData(STOCKED_COMPLEX_LAYOUT),
+    });
+    render(
+      <ArtifactEditor
+        artifact={stocked}
+        campaignId={stocked.campaignId}
+        campaignArtifacts={[stocked]}
+        campaignSystem="dnd5e"
+      />,
+    );
+
+    // LIVE: a `title` is a surface only a control that can act ever exposes, so
+    // this is where the description of what pressing the control does belongs —
+    // byte-identical to the copy the old title carried on its live branch.
+    const button = screen.getByTestId('encounter-repopulate');
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute('title', 'New roster for all rooms — rooms, layout and map kept');
+    await flushAsyncUpdates();
+  }, 20000);
+
   it('complex encounters offer a per-run map path choice for Regenerate everything (docs/11 vision path steering)', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Steering', system: 'dnd5e' });
@@ -429,6 +558,12 @@ describe('editor surfaces', () => {
     const section = screen.getByTestId('encounter-ai-section');
     expect(within(section).queryByTestId('encounter-regen-map-path')).not.toBeInTheDocument();
     expect(within(section).queryByTestId('encounter-regen-map-path-hint')).not.toBeInTheDocument();
+    // Repopulate can act here, so it offers the single-site DESCRIPTION — the
+    // other branch of the same gated `title` (docs/18 §4, ledger 126).
+    expect(within(section).getByTestId('encounter-repopulate')).toHaveAttribute(
+      'title',
+      'New one-fight roster — map kept',
+    );
     await flushAsyncUpdates();
   }, 20000);
 });

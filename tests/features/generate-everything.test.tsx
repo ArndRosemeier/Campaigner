@@ -39,6 +39,7 @@ import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
 import type * as ModuleGenModule from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason } from '../helpers/blocked-reason';
 
 /**
  * "Generate everything" (owner request, verbatim: "In the entities sidebar i
@@ -467,6 +468,15 @@ describe('the entity sidebar control', () => {
     // The count IS the deviation's own work count (two text-named entities with
     // no artifact, and no image follows from a missing artifact).
     expect(button).toHaveTextContent(/^Generate everything \(\d+\)$/);
+    // LIVE, the control offers the DESCRIPTION of what pressing it does — the one
+    // thing a `title` may carry inside a `BlockedControl` wrapper, because a
+    // `title` is a surface only a control that can act ever exposes (docs/18 §4,
+    // ledger 126). This expression used to be the second half of
+    // `generateAllBlocked ?? '<description>'`, whose first half was the reason.
+    expect(button).toHaveAttribute(
+      'title',
+      'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.',
+    );
     await userEvent.click(button);
 
     const dialog = await screen.findByTestId('generate-everything-dialog');
@@ -636,33 +646,33 @@ describe('the entity sidebar control', () => {
     });
   }, 60_000);
 
-  it('is disabled with the REASON while the module is generating', async () => {
+  it('states the REASON through the device while the module is generating — and carries no title', async () => {
+    const user = userEvent.setup();
     const { campaign, module } = await seedModule({ automationIntent: null, status: 'generating' });
 
     renderPanel({ campaign, module }, await panelArtifacts({ campaign, module }));
 
-    const button = screen.getByTestId('generate-everything');
-    expect(button).toBeDisabled();
-    expect(button).toHaveAttribute(
-      'title',
+    // The reason is PERCEIVABLE, not merely present: a `title` on a natively
+    // disabled button never renders in Chrome (no pointer event reaches it — the
+    // shadcn Button carries `disabled:pointer-events-none` on top) and is
+    // unreachable by keyboard, so the shared blocked-control device is its ONE
+    // home — a hidden node the wrapper points at with `aria-describedby`, the tab
+    // stop, and the popup the helper settles out of the document first
+    // (docs/18 §2.3/§4, ledger rows 124/125).
+    await expectBlockedReason(
+      user,
+      'generate-everything',
       'The module is generating right now — wait for it (or press Stop).',
     );
-    // …and the SAME sentence is perceivable, not merely present: a `title` on a
-    // natively disabled button never renders in Chrome (no pointer event reaches
-    // it — the shadcn Button carries `disabled:pointer-events-none` on top) and
-    // is unreachable by keyboard, so the shared blocked-control device carries
-    // it and associates it for AT (docs/18 §2.3).
-    const reason = screen.getByTestId('generate-everything-reason');
-    expect(reason).toHaveTextContent(
-      'The module is generating right now — wait for it (or press Stop).',
-    );
-    expect(screen.getByTestId('generate-everything-blocked')).toHaveAttribute(
-      'aria-describedby',
-      reason.id,
-    );
+    // The child's `title` used to be `generateAllBlocked ?? '<description>'`, so
+    // the HELD control stated this same sentence a second time — in the copy no
+    // browser renders (docs/18 §4, ledger 126). The description survives on the
+    // live control, pinned by its own assertion above.
+    expect(screen.getByTestId('generate-everything')).not.toHaveAttribute('title');
   }, 60_000);
 
-  it('names the text path as the reason when the parts pass failed', async () => {
+  it('names the text path as the reason when the parts pass failed — on the REASON, not in a title', async () => {
+    const user = userEvent.setup();
     const { campaign, module } = await seedModule({
       automationIntent: null,
       status: 'failed',
@@ -671,9 +681,15 @@ describe('the entity sidebar control', () => {
 
     renderPanel({ campaign, module }, await panelArtifacts({ campaign, module }));
 
-    const button = screen.getByTestId('generate-everything');
-    expect(button).toBeDisabled();
-    expect(button.getAttribute('title')).toContain('fix the text first');
+    // The 'fix the text first' phrase is part of the reason sentence itself (this
+    // assertion is byte-exact and therefore contains it) — it was never
+    // title-only copy, so nothing is lost with the title.
+    await expectBlockedReason(
+      user,
+      'generate-everything',
+      'This module\'s parts pass did not finish (status: failed — Encounter floor not met: the module needs 1 distinct named encounters) — fix the text first ("Fix module problems" or a hand edit); a module whose parts did not land has nothing to automate.',
+    );
+    expect(screen.getByTestId('generate-everything')).not.toHaveAttribute('title');
   }, 60_000);
 
   it('reports a finished run in the sidebar, not only in the dock', async () => {
