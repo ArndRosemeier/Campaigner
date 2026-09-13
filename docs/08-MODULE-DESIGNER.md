@@ -1244,6 +1244,85 @@ summary toast. The background image queue likewise generates up to
 writers' room personas, the encounter pipeline's stages) stay strictly
 sequential.
 
+### Entity intent — the author's note that steers a detail worker (owner idea)
+
+**Owner request, verbatim:** *"The LLM building the module might have a specific
+idea for the artifacts, so how about an optional hint parameter in the link to
+steer detail building?"* — and, on being shown that a name is not merely gathered
+from the text but RECORDED as an entity: *"Then that is the right place."*
+
+The problem it answers: a detail worker receives only the window of text around
+its mention plus the premise (`buildEntityBrief`,
+`features/modules/persona-request.ts`), so the module author's INTENT for a name —
+what this place is FOR, whether the opposition here belongs to an encounter, which
+reading of the sentence was meant — is lost between the spine call that wrote the
+name and the worker that fills it in. This is the one channel for it.
+
+**Where it lives: the RECORD, not the wiki-link.** The suggestion was a hint
+parameter in the link; the record is the right carrier, and the reasons are
+properties of the code, not taste:
+
+- **The token's two slots are taken** — `[[Name]]` / `[[Name|display]]`, where the
+  display slot is the ALIAS mechanism name normalization depends on (`fix-01`,
+  `alignEntityName`). A third meaning would have to be unambiguously separable from
+  both, inside a token whose whole job is to BE the name.
+- **The token is the most-wired seam in the app** (docs/18 §2): `WIKI_LINK_PATTERN`,
+  `splitWikiText`, `remark-wikilinks`, the chip renderer and its
+  `WIKI_RAW_ATTRIBUTE` tooltip (row 100), the graph, backlinks/orphans, name
+  normalization and the wiki-stripping EVERY export renders (row 105). Each would
+  have to learn what a hint is — and the chip shows the raw token to a READER, so an
+  authoring note would leak into the document.
+- **A hint belongs to the entity, not to a mention.** One entity is mentioned many
+  times; per-mention hints would multiply and could contradict each other about one
+  artifact.
+- **A record survives edits.** The prose is regenerated and hand-edited constantly;
+  an inline hint dies with the sentence that carried it.
+- **The record is already model-authored as structured JSON** — the spine call's
+  reply is `{ entities: [{ name, kind, absorbed, bestiary }] }`
+  (`moduleGen.entityKindsReplySchema`), so one more optional field costs no new
+  mechanism (AGENTS rule 4).
+
+**The field.** `moduleEntityKindSchema.intent`, additive and optional, following the
+`bestiary` field's precedent exactly: a record written before the field, the model's
+own `null`, and an empty string ALL read as "no intent", nothing is backfilled and no
+default is materialized (owner decision: no migration ceremony in this testing
+phase). The model-facing reply spells absence as `null`, because the strict subset
+cannot express an absent key — the same reason `bestiary` is nullable there. Bounded:
+a steering note, not a draft — a length cap (start at 400 characters) with a LOUD
+refusal past it, never a silent truncation.
+
+**Who writes it.** (1) The module generator, in the spine call, for the names it just
+invented. (2) The owner, in the entity panel, before or after generation, saved
+through the module's one write seam — the manual steering channel; re-running a detail
+worker then applies it.
+
+**How a worker receives it.** A labelled paragraph in `buildEntityBrief`, alongside the
+existing `Additional instruction: …` paragraph (row 101) — ONE form, two sources: that
+one is transient (a change request), this one persistent (the entity's intent). The
+paragraph states its own hierarchy, because a steering note that outranks the module
+text would be a second author:
+
+> The module's author intended: <intent>. This steers EMPHASIS and OWNERSHIP; what the
+> module text states is fixed, and your own charter still governs what this kind may
+> contain.
+
+**The byte-identical rule (binding).** An entity with NO intent must produce the brief
+it produces today, byte for byte — the same property `withAdditionalInstruction` has
+for an empty instruction, and every existing brief pin keeps asserting its bytes. An
+empty or `null` intent is not an empty paragraph.
+
+**Non-goals.** Not a per-mention hint; not a syntax change in the wiki token; not
+printed on any surface a reader sees (it is an authoring note — the reader, the canvas,
+the document and every export must not show it); not a way to author the artifact by
+proxy (mechanics still come from the grounded rules excerpts, and an intent cannot
+override what the module text states as fixed).
+
+**Slices.** (A) the field + the generator emitting it + the brief consuming it + the
+hierarchy text; (B) the entity-panel field and its write path. Each lands with: a pin
+proving a record WITH intent changes the brief, a pin proving a record WITHOUT it is
+byte-identical, a loud cap refusal, and an absence pin that no reader-facing surface
+prints the intent.
+
 ### Names the text picks up later (the record gate is a TEXT gate)
 
 Every batch bucket is keyed by a RECORD (`module.entityKinds`) — never a
