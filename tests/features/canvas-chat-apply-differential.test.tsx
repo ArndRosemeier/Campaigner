@@ -456,7 +456,7 @@ describe('the chat applier is the ONLY one (SOURCE SCAN)', () => {
         }
         if (!/\.tsx?$/.test(entry.name)) continue;
         if (full === join(srcDir, 'llm', 'canvasChat.ts')) continue; // the declaration
-        if (/resolveCanvasEditAcrossParts\(/.test(readFileSync(full, 'utf8'))) {
+        if (readFileSync(full, 'utf8').includes('resolveCanvasEditAcrossParts(')) {
           callers.push(relative(process.cwd(), full));
         }
       }
