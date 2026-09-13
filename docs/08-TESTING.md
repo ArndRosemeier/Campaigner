@@ -1870,13 +1870,13 @@ and after; one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept):
 
 | injection | line it hits | result |
 |---|---|---|
-| the whole authoring arm deleted (the pre-fix behaviour: cast and return) | `entity-batch.ts:642-688` | **RED 6** — both thin end-to-end pins, the "aims the run AT THE CAST ROW" pin, the "its OWN sentence" pin, the failure-funnel pin and the scan — and **GREEN on the described side, the withdrawal pin and every PRE-EXISTING cast pin** (the withdrawal pin is green because no run exists to be stopped: a withdrawal pin cannot see an arm that never runs) |
+| the whole authoring arm deleted (the pre-fix behaviour: cast and return) | `entity-batch.ts:632-689` | **RED 6** — both thin end-to-end pins, the "aims the run AT THE CAST ROW" pin, the "its OWN sentence" pin, the failure-funnel pin and the scan — and **GREEN on the described side, the withdrawal pin and every PRE-EXISTING cast pin** (the withdrawal pin is green because no run exists to be stopped: a withdrawal pin cannot see an arm that never runs) |
 | the module-paragraph ask deleted (always author) | `entity-batch.ts:642` | **RED 2** (the scan and "the module's OWN prose decides": a run IS spent and the module's prose WOULD be replaced); the created-row pins stayed GREEN because a created row's body IS the module paragraph — the row-body ask shadows it, which is why the reused-row pin was added |
 | the row-body ask deleted (always author a thin module) | `entity-batch.ts:654` | **RED 2** (the no-clobber pin and the scan) |
 | the name no longer taken out of the passage (the floor applied to the raw text) | `wikilinks.ts:347-353` | **RED 7 across three files** (2 seam pins + 5 batch pins); the "never mentions her at all" case stayed GREEN, correctly — its context is empty either way |
 | **the same rule RE-INLINED at the call site** (equivalent spelling, no seam call) | `entity-batch.ts:642` | **RED 1, only the scan** — **all 85 behavioural pins GREEN** |
-| the engine's cited-row statblock step-off disabled | `runEngine.ts:3168` | **RED 2** with the refusal in the raw output: the description run asks for a block, the block lands in the run row, `runEngine.mergeRefillData` refuses the pair by name and the run fails |
-| the vanished-row guard's sentence reworded | `entity-batch.ts:645-649` | **GREEN, 86/86** — names the ONE line no pin reaches (the cast row disappearing between its own write and the read is not a state a fixture can produce; it is a loud guard, not a covered branch) |
+| the engine's cited-row statblock step-off disabled | `runEngine.ts:3169` | **RED 2** with the refusal in the raw output: the description run asks for a block, the block lands in the run row, `runEngine.mergeRefillData` refuses the pair by name and the run fails |
+| the vanished-row guard's sentence reworded | `entity-batch.ts:644-648` | **GREEN, 86/86** — names the ONE line no pin reaches (the cast row disappearing between its own write and the read is not a state a fixture can produce; it is a loud guard, not a covered branch) |
 
 A behavioural replay of this rule costs nothing when the fold is byte-identical:
 injection 5 shows the shape scan is the ONLY thing standing between the codebase

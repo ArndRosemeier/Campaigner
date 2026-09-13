@@ -1299,7 +1299,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   cast rows, and the cast writer writes both fields in one literal. AMENDED
   (docs/17 row 133): the emitted `entity-batch` run is no longer always
   `target.artifactId === undefined` — the cast branch now starts its DESCRIPTION
-  run AT the row it just cast (`entity-batch.ts:658-665`), so this refusal is
+  run AT the row it just cast (`entity-batch.ts:655-665`), so this refusal is
   reachable from the ordinary generate path in exactly one way: if that run ever
   asks for a stat block. The step-off (above, and §2's description row) is what
   keeps it unreachable, and it is PINNED by measurement rather than assumed —
