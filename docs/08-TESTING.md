@@ -1553,6 +1553,53 @@ all seven baseline hashes matched before and after; one suite at a time at
 | the boundary's `: <message>` suffix dropped | `encounterRegen.ts:124` | **RED 2** — the failed-leg pin + the scan's boundary pin |
 | **the withdrawn arm's LABEL changed to a bogus one** (`runNotCompletedReason(run, 'bogus-withdrawn-label')`) | `encounter-map-queue.ts:155` | **GREEN 25/25** — the line the pins do not reach, and cannot: the withdrawn throw exists to STOP the body, its sentence is never reported (the silence is the `ctx.withdraw()` + the predicate), so no behavioural pin can see it. The fold there is held by the scan's COUNT alone |
 
+### The encounter-map offer and the encounter-map work walk ONE rule (docs/17 row 129, docs/18 §2.3/§4)
+
+The entity sidebar's "Generate N encounter maps" button counted the module's
+map gaps with an INLINE copy of the filter
+`features/modules/post-generation.encountersNeedingMaps` already exported —
+character-identical (`artifact.kind === 'encounter' &&
+artifact.moduleId === module.id && (artifact.data.layout === null ||
+artifact.data.mapImageId === null)`), and the seam already returned the
+`{id, name}` pair the panel's job payload built by hand. The panel now calls the
+seam; `post-generation.ts`, `encounter-map-queue.ts`, `automation-deviation.ts`
+and `src/lib/jobQueue.ts` are untouched. Two decisions were made and both are
+written down: the fold itself, and the REFUSAL to fold
+`isEncounterMapPending` into the offer (it reads the queue's store, so it would
+give the pure sweep and the deviation a global mutable dependency, and a
+re-offered encounter is dropped anyway by the enqueue dedupe against
+queued + active — the count can over-advertise but cannot double-book).
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The panel's map count and payload**: four candidate rows — neither half of the gap, a LAYOUT with no image (still work), both halves (not work), and a gap owned by ANOTHER module (not this panel's work) — the label reads `Generate 2 encounter maps` and the enqueue carries exactly those two artifact ids | `tests/features/entity-panel.test.tsx` (`counts the map gaps by the sweep’s own rule, and enqueues exactly those`, NEW) | ✅ REVERT-PROVEN: weakening the seam's rule (`moduleId === module.id` dropped) → RED this pin alone (1 of 29) with the scan GREEN |
+| **The ROUTING** — the panel's map list comes from the offer seam and from nothing else, and the gap disjunction is composed in exactly the offer seam and the queue's per-artifact guard | `tests/features/encounter-map-offer-scan.test.ts` (`scan: …`, 2 pins, labelled as scans, with a >200-file non-vacuity check and both rules pinned as values) | ✅ REVERT-PROVEN: reverting the fold WHOLE → RED both scan pins while 29/29 behavioural pins stay GREEN (below) |
+| **REGRESSION GUARD — every pre-existing pin passes UNCHANGED**: `tests/features/entity-panel.test.tsx` 28 pre-existing pins (incl. the `Generate 1 encounter map` pin), `tests/features/automation-deviation.test.ts` 11, `tests/features/module-resume-automation.test.ts` 9 | those three files, one suite at a time at `CAMPAIGNER_TEST_WORKERS=2` | ✅ green — and NOT ONE of them asserted the fold's shape or the panel's number, which is why the scan and the new count pin exist |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+printed back with `grep -n`, `git diff --stat` checked BEFORE the run, then
+restored from a byte-exact baseline copy and verified with `git hash-object` —
+`entity-panel.tsx` `5f9865dc56a589e4b030916b94f3b756b2cbecfb` and
+`post-generation.ts` `a1c972f5746a307b2efce366bc555074bd3633cc` before and
+after, both matched; one suite at a time at `CAMPAIGNER_TEST_WORKERS=2`):
+
+| injection | line it hits | result |
+|---|---|---|
+| **the fold reverted WHOLE** (`git show HEAD:src/features/modules/entity-panel.tsx`) | `entity-panel.tsx:307-312` back, seam call gone | **GREEN: 29/29 `entity-panel` pins** — a byte-identical fold is invisible to behaviour — and **RED 2/2 scan pins** (disjunction holders `[3] vs [2]`, seam calls `+0 ≠ 1`) |
+| the seam's rule weakened (`artifact.moduleId === module.id` deleted from `encountersNeedingMaps`) | `post-generation.ts:168` | **RED 1/29** — exactly the new count pin — and **GREEN 2/2 scan pins** |
+| a truthiness-shaped copy added beside the seam (`!a.data.layout || !a.data.mapImageId`) | `entity-panel.tsx:324` | **GREEN 29/29 behaviour**, disjunction pin **GREEN**, the `mapImageId` FIELD needle **RED 1/2** |
+| **a copy that borrows the queue's own guard** (`artifacts.filter((a) => a.kind === 'encounter' && a.moduleId === module.id && encounterNeedsMap(a))`) | `entity-panel.tsx:325` | **GREEN 2/2 FIRST — every needle missed it** (the shape the scan was not designed for). After the fourth needle (`encounterNeedsMap(` banned in the panel) was added: **RED 1/2**, naming that needle |
+| the DECLINED pending filter folded into the emitter line (`.filter((e) => !isEncounterMapPending(module.id, e.id))`) | `entity-panel.tsx:323` | **GREEN 29/29 behaviour** and **RED 1/2 scan** on the pinned emitter VALUE line — the decision is test-visible, not behaviour-held |
+
+**The scan's own limits, MEASURED (docs/18 §4).** The disjunction needle cannot
+see the question asked in another shape (a truthiness test), and the two FIELD
+needles are what cover that. A copy that arrives through a NAMED predicate
+evaded all three needles (injection 4) and needed a fourth. What is still
+invisible: a copy that arrives through a FUNCTION CALL in another module which
+itself calls `encounterNeedsMap`, and any comment in the panel naming that guard
+WITH a call parenthesis (the needle set is comment-blind — this seam's comments
+name it without one).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

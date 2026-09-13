@@ -64,7 +64,10 @@ import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureOnlyNotice } from '@/features/modules/detailed-entity';
 import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
-import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
+import {
+  encountersNeedingMaps,
+  FULL_AUTOMATION_TARGET,
+} from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
 import {
@@ -304,12 +307,20 @@ export function EntityPanel({
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
   const unresolved = entries.filter((entry) => !entry.resolved);
-  const encountersNeedingMaps = artifacts.filter(
-    (artifact) =>
-      artifact.kind === 'encounter' &&
-      artifact.moduleId === module.id &&
-      (artifact.data.layout === null || artifact.data.mapImageId === null),
-  );
+  /**
+   * The map gap is the SEAM's rule, never a second copy of it (AGENTS rule 4,
+   * docs/18 §2.3): the SAME `encountersNeedingMaps` the post-generation sweep
+   * and the "Resume automatic module creation" deviation call, so the number
+   * this button advertises and the work the sweep would do cannot drift.
+   *
+   * Deliberately NOT filtered by `isEncounterMapPending` (docs/18 §2.3, ledger
+   * 129): that verdict is the QUEUE's read of its own store, so folding it in
+   * here would hand the pure sweep and the deviation a global mutable
+   * dependency and change THEIR plans — and a job already queued for an
+   * encounter here is dropped by the factory's own enqueue dedupe, so the
+   * count can over-advertise but can never double-book.
+   */
+  const mapTargets = encountersNeedingMaps(module, artifacts);
   // Batch buckets use the kinds the GENERATOR recorded (08 §M4-C) — never a
   // client heuristic. Names without a record are not batchable; clicking
   // their row classifies/asks in the stub popover instead.
@@ -885,14 +896,14 @@ export function EntityPanel({
                 Nothing missing
               </span>
             )}
-            {encountersNeedingMaps.length > 0 && (
+            {mapTargets.length > 0 && (
               <Button
                 variant="outline"
                 size="xs"
                 data-testid="generate-encounter-maps"
                 onClick={() => {
                   enqueueEncounterMaps(
-                    encountersNeedingMaps.map((encounter) => ({
+                    mapTargets.map((encounter) => ({
                       campaignId: module.campaignId,
                       moduleId: module.id,
                       artifactId: encounter.id,
@@ -902,7 +913,7 @@ export function EntityPanel({
                 }}
               >
                 <ImageIcon aria-hidden data-icon="inline-start" />
-                Generate {encountersNeedingMaps.length} encounter map{encountersNeedingMaps.length === 1 ? '' : 's'}
+                Generate {mapTargets.length} encounter map{mapTargets.length === 1 ? '' : 's'}
               </Button>
             )}
             {failedEncounterMaps.length > 0 && (

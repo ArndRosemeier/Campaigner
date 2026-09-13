@@ -217,6 +217,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Graph page derivation | `domain/wikiGraph.ts` (pure; docs/13/14/15) | graph logic in components |
 | Bounded parallelism | `lib/parallel.mapWithConcurrency` | unguarded `Promise.all` over unbounded arrays |
 | Encounter map automation | `useEncounterMapQueue` + the guards `encounterNeedsMap` / `isEncounterMapPending` (serial by contract) | re-enqueueing an already-mapped encounter; a second queue implementation |
+| **Decide an encounter still needs a map** (ledger 129) | TWO named halves of one fact, never a third copy. **The OFFER** — "which encounters are map work" — is `features/modules/post-generation.encountersNeedingMaps(module, artifacts)`: kind `'encounter'` + `moduleId === module.id` + the GAP (`data.layout === null \|\| data.mapImageId === null`, a DISJUNCTION — a stored layout with no image IS still work). Every surface that PROMISES map work reads it and nothing else: the post-generation sweep's battlemap block, the "Resume automatic module creation" deviation (`automation-deviation.deriveAutomationDeviation`), and the entity sidebar's "Generate N encounter maps" button — label, count AND payload (ledger 129). **The QUEUE's per-artifact guard** is `features/modules/encounter-map-queue.encounterNeedsMap(artifact)` — the gap ALONE, with no kind and no ownership test, because the enqueue site already chose the target; it is the no-double-work belt inside `processJob` (state can change while a job waits). **The pending question is a THIRD thing and stays where it is:** `isEncounterMapPending` reads the queue's own zustand store, so it is read by the AUTOMATION enqueue lanes and is deliberately NOT folded into the offer — folding it would hand the pure sweep and the deviation a global mutable dependency and change THEIR plans, and a re-offered encounter is dropped anyway by `lib/jobQueue`'s enqueue dedupe against queued + active, so the panel's count can over-advertise but can never double-book | a second inline copy of the offer filter (the panel's, cured by ledger 129 — it also could not see `isEncounterMapPending`, which is how the advertised count and the sweep's work drift); reading `data.mapImageId`/`data.layout` for this question at any other site; deciding the gap from the layout alone; moving the pending query into `encountersNeedingMaps` |
 | Post-run automation | `features/campaign/post-run-extras.ts` — rides the queues AFTER a completed run | reopening/failing a finished run row |
 | Dev logging | `lib/debug.debugLog` | bare `console.log` (lint) or `console.error` as an error surface |
 | Stop every running generation | `features/progress/stopAllGenerations` + the dock's Stop all button — the ONE sweep, and it has TWO halves. **(1) Cancel the units**: the FOUR queues' `cancelAll` (`useMobPortraitQueue`, `useEntityImageQueue`, `useEncounterMapQueue`, `useCoverImageQueue` — covers were the real miss: a working `cancelAll` nobody called), `runEngine.cancelAllActive` (every in-flight run; paused `awaiting_user`/`needs_review` runs are not generating and stay), `cancelModuleGen` (every module row at `'generating'`), `chainRunner.cancel`, and `cancelCanvasGenerations` (`llm/canvasBusy` — canvas chat/refine turns stream with no run row, so the registry is the only seam that reaches them; it aborts the turn's own signal AND the caller's controller, which is what makes the partial reply render 'aborted' instead of a "Chat failed" toast). **(2) Seal the "no new units" gate**: `lib/stopEpoch.bumpStopEpoch()` runs FIRST, before any cancel. Non-destructive: cancelled runs/rows stay resumable, queue jobs settle 'cancelled' silently, the count names the DISTINCT stopped units (a module counted as a forge is not counted again for its canvas turn). NOT covered, by design: PDF builds and backup jobs (no cancel seam), the cross-campaign shared mob-portrait cache worker (local participation aborts; the shared worker is not the user's job), queue FAILED retry lists (user-recoverable) | a second stop path or per-surface ad-hoc cancel wiring |
@@ -1684,6 +1685,31 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   WITHOUT one; that is a constraint of the instrument, not a style rule, and the
   same blindness means a copy that composes the sentence through an intermediate
   variable is invisible to it (the pin's header says so).
+
+- **A source scan cannot see a copy that arrives through a NAMED PREDICATE**
+  (ledger 129, MEASURED twice on the encounter-map offer). The offer scan
+  (`tests/features/encounter-map-offer-scan.test.ts`) holds the panel's routing
+  with four needles — the gap DISJUNCTION, the two FIELD names, and the offer
+  seam's own call count and pinned emitter line — and the measurements split
+  them apart rather than lumping them: (a) a truthiness spelling
+  (`!a.data.layout || !a.data.mapImageId`) does NOT match the disjunction needle
+  but IS caught by the field needles; (b) a copy that borrows the queue's own
+  per-artifact guard —
+  `artifacts.filter((a) => a.kind === 'encounter' && a.moduleId === module.id && encounterNeedsMap(a))`
+  — matched NONE of the first three needles, left the scan GREEN 2/2 and the
+  count pin GREEN too, and needed a fourth needle (banning `encounterNeedsMap(`
+  in the panel) to red; (c) folding the DECLINED pending filter into the emitter
+  line reds the scan's VALUE pin while 29/29 behavioural pins stay green. So a
+  byte-identical or behaviourally-identical copy is invisible to behaviour and
+  must be caught by a needle that names the SHAPE the copy took — which is why
+  the needles are enumerated in the scan and in docs/08 rather than summarised
+  as "the scan guards this". The residual blindness is stated, not implied: a
+  copy arriving through a FUNCTION CALL in another module that itself calls
+  `encounterNeedsMap` is still invisible (the ledger 125/127 lesson one level
+  deeper), and the needle set is comment-BLIND — a comment in the panel naming
+  the guard WITH a call parenthesis would red it, so this seam's comments name
+  it without one.
+
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

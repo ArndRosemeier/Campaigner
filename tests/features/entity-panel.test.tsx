@@ -35,6 +35,7 @@ import {
   type MonsterEntry,
 } from '@/domain';import { emptyBoard } from '@/domain/battle/board';
 import { EntityPanel } from '@/features/modules/entity-panel';
+import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useModuleEntities } from '@/features/modules/use-module-entities';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
@@ -264,6 +265,7 @@ describe('EntityPanel', () => {
   beforeEach(() => {
     useProgressStore.getState().reset();
     useEntityImageQueue.getState().reset();
+    useEncounterMapQueue.getState().reset();
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -306,6 +308,131 @@ describe('EntityPanel', () => {
     await waitFor(async () => {
       const battle = await db.battles.where('moduleId').equals(module.id).first();
       expect(battle?.encounterArtifactId).toBe(encounter.id);
+    });
+  });
+
+  /**
+   * The map offer is the SEAM's rule, not a second copy of it (docs/17 row 129,
+   * docs/18 §2.3): the panel reads `encountersNeedingMaps` — the very list the
+   * post-generation sweep enqueues and the deviation counts — so the number the
+   * button advertises and the work the sweep would do cannot drift.
+   *
+   * The four candidate rows are chosen so that a WRONG rule yields a different
+   * number and a different payload: a stored LAYOUT with no map image is still
+   * work, a stored MAP IMAGE with no layout is still work, a fully mapped
+   * encounter is not, and a row owned by another module is not. The scan
+   * (`tests/features/encounter-map-offer-scan.test.ts`) is what holds the
+   * ROUTING, because a reverted fold produces the same number and the same
+   * payload by construction (docs/08).
+   */
+  it('counts the map gaps by the sweep’s own rule, and enqueues exactly those', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Drowned', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id);
+    const elsewhere = moduleFixture(campaign.id);
+
+    const layout: EncounterArtifactData['layout'] = {
+      gridW: 20,
+      gridH: 20,
+      theme: 'crypt',
+      rooms: [
+        {
+          id: newId(),
+          name: 'The Tide Gate',
+          rects: [{ x: 1, y: 1, w: 5, h: 5 }],
+          mobsRect: { x: 1, y: 1, w: 5, h: 5 },
+          description: '',
+          monsterIndexes: [],
+          spawn: true,
+          key: '',
+          keyTreasure: '',
+        },
+      ],
+      corridors: [],
+    };
+
+    /**
+     * The encounter data SHAPE, annotated because an inline literal against the
+     * artifact-data union narrows its members to `never` (the same note
+     * `tests/features/editor-surfaces.test.tsx` carries).
+     */
+    function mapGapData(
+      overrides: Partial<Pick<EncounterArtifactData, 'layout' | 'mapImageId'>>,
+    ): EncounterArtifactData {
+      return {
+        difficulty: 'old',
+        levelHint: '4',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+        layout: null,
+        ...overrides,
+      };
+    }
+
+    // Neither layout nor map image: work.
+    const noLayout = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Gate Ambush',
+      data: mapGapData({}),
+    });
+    // A stored LAYOUT with no map image: still work (the gap is a disjunction,
+    // not "no layout").
+    const layoutOnly = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Pier Ambush',
+      data: mapGapData({ layout }),
+    });
+    // Both halves present: NOT work.
+    const fullyMapped = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Tide Vault',
+      data: mapGapData({ layout, mapImageId: newId() }),
+    });
+    // A gap owned by ANOTHER module: not this panel's work.
+    const foreign = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: elsewhere.id,
+      kind: 'encounter',
+      name: 'Somebody Else’s Ambush',
+      data: mapGapData({}),
+    });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[noLayout, layoutOnly, fullyMapped, foreign]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const button = await screen.findByTestId('generate-encounter-maps');
+    expect(button).toHaveTextContent('Generate 2 encounter maps');
+
+    await user.click(button);
+    await waitFor(() => {
+      const state = useEncounterMapQueue.getState();
+      // Every list an enqueued job can be sitting in: the queue pumps
+      // immediately and the job settles 'failed' (no Cartographer persona is
+      // seeded here), so a `queued`-only read would race the pump.
+      const handedToTheQueue = [...state.queued, ...state.active, ...state.failed].map(
+        (job) => job.artifactId,
+      );
+      expect([...handedToTheQueue].sort()).toEqual([noLayout.id, layoutOnly.id].sort());
     });
   });
 
