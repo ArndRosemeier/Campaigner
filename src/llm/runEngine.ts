@@ -1189,9 +1189,12 @@ function mergeRefillData(
     // cited target (`runStatblock`), so this is unreachable from the pipeline
     // it just ran; it is reachable from a run PERSISTED before that rule
     // (resumed, or with an edited statblock step), which is exactly why the
-    // refusal is here rather than assumed away. Verified 2026-09-11: this is
-    // the ONLY place in `src/` that can put the two fields on one row (the
-    // other reader/writer sites are recorded in docs/18 §4).
+    // refusal is here rather than assumed away. Corrected 2026-09-13 by
+    // docs/17 row 137: this is NOT the only place in `src/` that could put the
+    // two fields on one row — `materializeMonsterNpc`'s reuse branch could and
+    // did (a roster monster named like a cast creature row), and it now LINKS
+    // that row instead of writing (`isCastCreatureNpc`, the comment there).
+    // Both sites are recorded in docs/18 §4.
     //
     // LOUD, and by neither precedence nor omission: dropping the citation
     // would sever the identity that states where the numbers come from, and
@@ -1372,6 +1375,44 @@ async function materializeMonsterNpc(
   if (existing !== undefined) {
     if (existing.kind !== 'npc') {
       throw new Error(`"${existing.name}" matched an NPC name lookup but is a ${existing.kind}`);
+    }
+    // THE REFUSED PAIR IS NEVER CONSTRUCTED ON THE ROSTER PATH EITHER (docs/11
+    // §A cited row's REFILL, "NEVER CONSTRUCT the refused pair"; docs/17 row
+    // 137, which corrects row 112's OWN audit — that audit named
+    // `mergeRefillData` the one pair-builder, and it was wrong).
+    //
+    // A row carrying `creatureRef` is a CAST CREATURE: its numbers are the
+    // LIBRARY's, and `npcDataSchema` refuses an authored block beside that
+    // citation BY NAME. Such a row is ALSO stat-less by construction
+    // (`statBlock: null` sits in the SAME literal as the citation — the ONE
+    // cast function in `db/creatureRepo` is its sole creator), so the
+    // `statBlock === null` test below is TRUE for it and used to write the
+    // model's block on: `creatureRef` + `statBlock` on one row.
+    //
+    // WHY the model had a block at all — the fault was OURS, not its: the
+    // fixed-cast brief ORDERS a scene member that is a cast row to embed the
+    // library creature's own block as this monster's complete inline
+    // `statBlock` (`roomBudget.fixedCastSectionFor`, fed by
+    // `fixedCastStatsFor`'s citation branch), and nothing in the draft
+    // contract mentions `creatureRef` — the model never learns it exists.
+    // Obeying the brief built the pair. The same guard covers the no-fixed-cast
+    // case, where a model-authored block happens to match a campaign-wide cast
+    // row by name: the row's citation still wins.
+    //
+    // And the failure REPEATED forever, which is what made the owner's report
+    // deterministic across a fresh retry: `anyArtifactSchema.parse` runs BEFORE
+    // the write (`updateArtifact`), so the refused pair left the cast row
+    // stat-less and every retry walked the identical path.
+    //
+    // So: LINK, never write. The caller wraps the returned id as an
+    // `npc-ref`, and the reader takes that row's numbers from the library
+    // through the ONE derived rule (`domain/encounterResolve.
+    // resolveDerivedNpcStats`) — nothing is lost, because the block the model
+    // embedded WAS the library's own block. The schema refusal stays exactly as
+    // it is: this guard removes the constructor, the backstop stands.
+    if (isCastCreatureNpc(existing)) {
+      cache.set(key, existing.id);
+      return existing.id;
     }
     if (existing.data.statBlock === null) {
       await updateArtifact(

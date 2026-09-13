@@ -1309,6 +1309,30 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   future writer: never add a second creator/merger of these two fields, and never
   "resolve" the pair by preferring one side — a silent preference is how a
   derived number starts disagreeing with the library it cites.
+- **THE ROSTER PATH WAS THE SECOND PAIR-BUILDER, and row 112's audit said there
+  was only one** (docs/17 row 137, correcting row 112; the code comment at
+  `runEngine.ts`'s refill refusal carried the same false claim and now names
+  both sites). The `mergeRefillData` refusal above is NOT the only place that
+  could put `creatureRef` and `statBlock` on one row. `runEngine.
+  materializeMonsterNpc`'s reuse branch — the finalize seam that reuses a
+  same-named NPC row for a roster monster — filled a stat-less match with the
+  model's inline block, and a CAST CREATURE row is stat-less BY CONSTRUCTION, so
+  a roster monster named like a cast row built the refused pair. This is the
+  owner's own failing encounter; it was DETERMINISTIC on a fresh retry because
+  `anyArtifactSchema.parse` runs BEFORE the write in `updateArtifact`, so nothing
+  landed and every retry re-walked the path. And the model was not at fault: the
+  fixed-cast brief ORDERS such a participant to embed the library creature's
+  block inline (`roomBudget.fixedCastSectionFor`), while the draft contract
+  never exposes `creatureRef`, so the model cannot know the two collide. The
+  branch now LINKS the cast row and writes NOTHING (`isCastCreatureNpc`, the ONE
+  classification — never a second predicate), reusing the "NEVER CONSTRUCT the
+  refused pair" rule in docs/11 §A cited row's REFILL; the roster's `npc-ref`
+  arm then reads the library's numbers through the ONE derived rule, so nothing
+  is lost. The no-fixed-cast variant is covered by the same guard: a
+  model-authored block matching a campaign-wide cast row by name — the row's
+  citation wins. Do not re-open the write, and do not add a "copy the block onto
+  the cast row" special case: the pair is refused by name at the schema and its
+  constructor is gone.
 - **A zod issue dump is not a user-facing message, and a UNION makes it
   worse** (ledger 112, measured). `ZodError.message` IS the raw
   `[{code,path,message}…]` JSON, and `lib/toast` humanizes only a toast's

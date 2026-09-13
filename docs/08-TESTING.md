@@ -2070,6 +2070,61 @@ declines today. (3) The failed-run-row half of "the evidence survives" is
 asserted only through the `runId`/`errorMessage` the record carries — the Runs
 tab's own rendering is pinned elsewhere and is not re-driven here.
 
+### The roster path never builds the refused pair (docs/17 row 137, docs/11 §A cited row's REFILL, docs/18 §4)
+
+The owner reported ONE of two encounters failing, with the identical error on a
+fresh retry: *"Refused by a data check: data.creatureRef: an npc carries either
+an authored stat block or a library creatureRef to derive one from, never both"*.
+It was deterministic because the parse precedes the write, and it was OURS:
+finalize's reuse branch (`runEngine.materializeMonsterNpc`) filled a stat-less
+same-named row with the model's inline block — and a CAST CREATURE row is
+stat-less BY CONSTRUCTION — while the fixed-cast brief had ORDERED the model to
+embed that block inline, never telling it `creatureRef` exists. The branch now
+LINKS the cast row and writes nothing (`isCastCreatureNpc`), so the roster reads
+the library's numbers through the derived rule the previous slice pinned. Pins
+live in `tests/llm/finalize-cast-glue.test.ts` (6, NEW), driven through the REAL
+engine with only the transport faked, on a fixture mirroring the owner's own
+scene — the campaign «Ein delikates Problem», the module «New Module», the
+encounter «Tod im Seitenrohr» and an ALIASED link to the cast member
+(`[[Dreizehnter Ablauf|Dreizehnten Ablauf]]`).
+
+| fact pinned | where |
+|---|---|
+| **The ORDER the model obeyed is produced by production code**: the aliased link is found through its TARGET name (the encounter's own wiki-linked name never joins its own cast), and the brief carries *"use these stats as-is — embed them as this monster's complete inline `statBlock`"* plus the LIBRARY creature's own block | `tests/llm/finalize-cast-glue.test.ts` (`finds the ALIASED cast member and ORDERS the library block inline`, NEW) |
+| **THE FORCING PIN**: a roster monster whose name a cast row already answers COMPLETES the run (RED before the guard, with the owner's own sentence in the run row), the persisted roster entry is an `npc-ref` to that row, and the row is byte-identical afterwards (`toEqual` on the whole artifact; `creatureRef` byte-identical, `statBlock` still null) — the write that built the refused pair is gone | `tests/llm/finalize-cast-glue.test.ts` (`LINKS the cast row and writes NOTHING onto it…`, NEW) |
+| **Nothing is lost**: the roster entry's `npc-ref` arm resolves to the LIBRARY's real numbers with the disclosed origin `NPC: Dreizehnter Ablauf (stats from Bestiary p.132)` — the block the model embedded WAS the library's own block | same pin (through `resolveMonsterEntryWithRepos`, the repo-wired reader) |
+| **The blast radius is covered too**: with NO fixed cast in the brief at all — an ordinary caller whose model-authored block happens to match a campaign-wide cast row by name — the row is still linked and untouched | `tests/llm/finalize-cast-glue.test.ts` (`LINKS a cast row the model named on its own…`, NEW) |
+| **A monster with NO same-named row still MATERIALIZES a new npc artifact carrying its block** (module-owned, no citation, exactly one such row) | `tests/llm/finalize-cast-glue.test.ts` (NEW) |
+| **A same-named ORDINARY (non-cited) stat-less npc row still RECEIVES the block**, with no twin minted — the pre-existing reuse behaviour is untouched | `tests/llm/finalize-cast-glue.test.ts` (NEW) |
+| **The schema refusal is still a live backstop**: a pair constructed by other means (`updateArtifact` with an authored block on the cited row) is refused with the named sentence and the row is left byte-identical | `tests/llm/finalize-cast-glue.test.ts` (NEW; the refine itself is also pinned in `tests/db/creatureRepo.test.ts`) |
+
+**REVERT-PROVEN** (the injection applied to the exact executing line, printed
+back with `grep -n` and `git diff --stat` checked BEFORE the run, one suite at a
+time at `CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's scratch,
+then restored from an OUT-OF-TREE copy and verified with `git hash-object` —
+`src/llm/runEngine.ts` `f08f8b3345a41454be220cfcf3a9e74f5ee2603b` before and
+after; `git checkout --` restores HEAD and would have destroyed this uncommitted
+work, so the backup was taken first):
+
+| injection | line it hits | result |
+|---|---|---|
+| the new guard disabled (`if (isCastCreatureNpc(existing))` → `if (false && isCastCreatureNpc(existing))`) | `runEngine.ts:1413` (the fixed file) | **RED 2 — exactly the two forcing pins**, each with the owner's own sentence back in the run row (`status failed, failureKind invalid-output: Refused by a data check: data.creatureRef: … Nothing was written.`), and **all 158 tests in the 11 neighbouring suites GREEN** (`finalize-cast-glue`'s other 4 pins, `encounterRun`, `fixedCast`, `refill-creature-stats`, `moduleGen-cast`, `encounterRepopulate`, `creatureRepo`, `cast-row-borrowed-stats` + its scan, `entity-batch-fixed-cast`, `creature-row-resolution`, `bestiary-roster`) — the measured proof that the guard is the only line carrying this behaviour and that the neighbours did not move |
+
+**RED BEFORE / GREEN AFTER, kept.** At the base commit the two forcing pins were
+RED with `the run produced no artifact (status failed, failureKind
+invalid-output: Refused by a data check: data.creatureRef: …)` and the other 4
+pins were GREEN (the neighbours and the backstop were never broken); after the
+guard the file is 6/6.
+
+**UNPROVEN.** (1) No live-provider run: every pin mocks the transport at the
+protocol boundary. (2) The owner's own run row was not replayed — the
+reproduction drives the same code path from a crafted campaign mirroring his
+scene shape, and "the sibling encounter had no cast row to collide with" is
+inferred from `fixedCastForEncounter` rather than measured on his data. (3) A
+model-authored block that DIFFERS from the library's (the no-fixed-cast case) is
+discarded in favour of the row's citation with no advisory: a deliberate
+precedence, not a measured absence of owner surprise.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

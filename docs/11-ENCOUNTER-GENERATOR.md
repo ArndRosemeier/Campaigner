@@ -245,6 +245,48 @@ never drop the block (that discards what a user-edited step produced), and never
 the pipeline it just ran; it stays because a run PERSISTED before this rule —
 resumed, or with a hand-edited statblock step — can still deliver one.
 
+**The roster path never constructs it either — the second builder was OURS
+(docs/17 row 137).** The rule above was audited at every `creatureRef` site and
+the audit named `mergeRefillData` the only pair-builder; that was WRONG, and the
+owner hit the other one. `runEngine.materializeMonsterNpc` — the finalize seam
+that gives a roster monster an NPC row — finds a same-named row and, when that
+row was stat-less, filled it with the model's inline block. A CAST CREATURE row
+IS stat-less by construction (`statBlock: null` in the SAME literal as the
+citation, written by the ONE cast function in `db/creatureRepo`), so the
+same-named cast row was filled: `creatureRef` + `statBlock` on one row, refused
+by `npcDataSchema`'s refine. **The model was not disobedient — it was ORDERED
+to produce that block.** The fixed-cast brief tells a scene member that is a
+cast row to embed the library creature's own block as the monster's complete
+inline `statBlock` (`fixedCastSectionFor`, whose numbers `fixedCastStatsFor`
+derives from the citation), and nothing in the draft contract mentions
+`creatureRef`, so a model has no way to learn it exists. Obeying the brief built
+the pair; the fault was ours, and the model is not blamed for it. The same
+guard covers the no-fixed-cast case: a model-authored block that happens to
+match a campaign-wide cast row by name — no brief ordered that block, and the
+row's citation still wins over it.
+
+The branch now LINKS such a row and writes NOTHING, reusing the ONE
+classification of "this npc stands for a library creature"
+(`domain/creature.isCastCreatureNpc`): the roster entry becomes an `npc-ref` to
+the cast row, and the reader takes the numbers from the library through the
+derived-stats rule above — nothing is lost, because the block the model
+embedded WAS the library's own block. The failure REPEATED forever before the
+guard, which is what made the owner's report deterministic across a fresh retry:
+`anyArtifactSchema.parse` runs BEFORE the write in `updateArtifact`, so the
+refused pair left the cast row stat-less and every retry walked the identical
+path. **The schema refusal stays exactly as it is** — the guard removes the
+constructor, the backstop stands for anything unforeseen.
+
+**The prompt half is deliberately NOT in that slice.** The brief still orders a
+cast participant to copy its numbers, and the honest instruction for such a
+participant — name it, do not copy its numbers — is a real improvement, but it
+is a SEPARATE change and must not be made alone: if the model stops embedding a
+block, finalize dies EARLIER, at `finalize: monster "X" has no stat-block
+source` (`runEngine`'s roster loop), and the owner still cannot generate the
+encounter. The order matters: the link-not-write guard first (done), the
+instruction second — and the instruction only becomes safe once the roster entry
+for a cast member is allowed to carry neither a citation nor a block.
+
 **The citation is IDENTITY, not content: a refill never deletes it.** Refilling
 Aunt Agatha's prose leaves her `creatureRef` byte-identical and her `statBlock`
 null, which is what keeps her numbers the library zombie's (the owner's own
