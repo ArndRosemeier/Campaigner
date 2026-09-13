@@ -189,7 +189,7 @@ describe('foundry-dnd5e-equipment adapter', () => {
     );
     await expect(
       foundryDnd5eEquipmentAdapter.parseFile('bad.yml', new TextEncoder().encode('name: [unclosed')),
-    ).rejects.toThrow('not valid YAML');
+    ).rejects.toThrow('invalid YAML');
   });
 
   it('collects a loud per-entry failure on an unsupported coin (never a silent zero)', async () => {

@@ -400,9 +400,17 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
     expect(CALL_SITES).toHaveLength(7);
     for (const { file, style, callCount } of CALL_SITES) {
       const text = source(file);
+      // The seam's import is matched NAME BY NAME, not as one literal line:
+      // docs/17 row 147 added the document-parser helper (`parseJsonDocs` /
+      // `parseYamlDocs`) to these very import statements, and a whole-line
+      // `toContain` would fail on an addition that is the point of that row.
+      // The claim is unchanged — the file imports `htmlToText` AND its declared
+      // style from `./text` — and `parse-docs.test.ts` owns the parser half.
       expect(text, `${file} does not import the seam`).toContain(
-        `import { htmlToText, ${style} } from './text';`,
+        'import { htmlToText, ',
       );
+      expect(text, `${file} does not import from ./text`).toContain("} from './text';");
+      expect(text, `${file} does not declare the style it uses`).toContain(style);
       const calls = text.match(/htmlToText\(/g) ?? [];
       expect(calls.length, `${file}: htmlToText call count`).toBe(callCount);
       const styled = text.match(new RegExp(`htmlToText\\([^;]*?${style}\\)`, 'gs')) ?? [];

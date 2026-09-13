@@ -1,11 +1,10 @@
-import { loadAll } from 'js-yaml';
 import { z } from 'zod';
 
 import { formatItemText, normalizeDnd5ePrice, type ItemData } from '@/domain/itemData';
 import { DND5E_PROPERTY_LABELS } from './dnd5e-foundry';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, BRACKET_LINKS_LINE_BREAKS } from './text';
+import { htmlToText, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -88,23 +87,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Parses one YAML document per file (the `_source` shape). A multi-document
- *  or unparseable file fails loudly. */
-function parseDocs(text: string, fileName: string): unknown[] {
-  const trimmed = text.trim();
-  if (trimmed === '') throw new Error(`${fileName}: file is empty`);
-  try {
-    const docs: unknown[] = loadAll(trimmed);
-    const parsed = docs.filter((doc) => doc !== null && doc !== undefined);
-    if (parsed.length === 0) throw new Error(`${fileName}: no YAML document`);
-    return parsed;
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith(`${fileName}:`)) throw error;
-    throw new Error(`${fileName}: not valid YAML: ${errorMessage(error)}`, { cause: error });
-  }
-}
-
-
 // --- Mapping ---------------------------------------------------------------
 
 function mapEquipment(doc: ParsedEquipment): PackItemEntry {
@@ -133,7 +115,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
 /** Synchronous parse body — wrapped into a promise by `parseFile`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
-  const docs = parseDocs(text, fileName);
+  const docs = parseYamlDocs(text, fileName);
   const items: PackItemEntry[] = [];
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;

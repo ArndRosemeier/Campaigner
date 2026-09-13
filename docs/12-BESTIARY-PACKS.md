@@ -203,7 +203,20 @@ precedent; the dnd5e property-label table is exported and reused verbatim)"*
 and §15.5's *"Three adapters, self-contained per §5's precedent (each carries
 its own strip/Source-line helpers)"*. **Those two sentences are rewritten in
 this commit, by reference to this paragraph, to mark the "own strip helper"
-half SUPERSEDED; nothing else in them changed.** Note what the precedent
+half SUPERSEDED; nothing else in them changed.** **EXTENDED (docs/17 row 147),
+by the same reference — the DOCUMENT PARSER half is now spent too, and the
+Source-line half is PINNED but still carried.** `parseDocs` was spelled SEVEN
+times in THREE bodies (five byte-identical JSON/NDJSON bodies plus two YAML
+bodies that DISAGREED about a comment-only file); the seven call sites now take
+their documents from `packs/text.parseJsonDocs` / `parseYamlDocs`, so
+"self-contained" no longer covers a per-adapter document parser either — what it
+still honestly describes is each adapter's own SCHEMA and MAPPER, which is the
+part §13.5 and §15.5 are about. **The `publicationSourceLine` half of §15.5's
+parenthetical is NOT folded** — row 147 landed the differential pin
+(`tests/ingest/packs/source-line.test.ts`) and measured all four sites
+byte-identical, but left the fold as the owner's call, because §15.5's own text
+still describes the copies as carried and three of the four sites feed the
+chunk `text` that `contentHash` signs, with no heal path. Note what the precedent
 actually rested on, because it is the lesson: this section never contained the
 sentence *"each adapter carries its own helpers"* — it was inferred from §5
 presenting adapters as per-adapter parsers, cited by §13.5, and then cited
@@ -763,6 +776,14 @@ shapes:
   item lanes go through `ingest/packs/text.htmlToText` and DECLARE a style
   (`AT_LABEL_LAST_LINE_BREAKS` / `BRACKET_LINKS_LINE_BREAKS`). The second half
   still stands: the dnd5e property-label table IS exported and reused verbatim.**
+  **EXTENDED by docs/17 row 147 (see the §5 amendment): "self-contained" no
+  longer covers the DOCUMENT STREAM either — both item lanes take their
+  documents from `ingest/packs/text.parseYamlDocs` (whole-file YAML, one
+  document per `---`), the pf2e lanes from `parseJsonDocs`, so what each adapter
+  still owns is its zod SCHEMA and its MAPPER. The dnd5e EQUIPMENT lane's YAML
+  body was the one that silently swallowed a comment-only file; the seam's rule
+  (no document at all → loud file-level failure; a `null` document → one counted
+  skip) is now the only one either dnd5e lane can take.**
 - `PackAdapter.entryNoun?` names the zero-valid error's noun; the pf2e item
   source shares the pf2e repo/packRoot and `PackFetchSource.packDirs`
   scopes its advanced "list everything" listing to `packs/pf2e/equipment`
@@ -957,8 +978,18 @@ on the book, network-free adapters, loud per-entry failures.
   "Source-line helper" half is NOT folded by that landing and is still carried
   twice (`publicationSourceLine` — private in `pf2e-rules.ts`, exported from
   `pf2e-conditions.ts`, byte-identical bodies); row 143 records it as the next
-  occupant of the same module rather than a silent fold. "Self-contained" still
-  describes the adapters' PARSERS.**
+  occupant of the same module rather than a silent fold. **EXTENDED by docs/17
+  row 147 (see the §5 amendment): that row TOOK the occupancy for the document
+  parsers — all three lanes, and both dnd5e lanes, now take their documents from
+  `ingest/packs/text.parseJsonDocs` / `parseYamlDocs`, so "self-contained"
+  describes the adapters' SCHEMAS and MAPPERS only. It did NOT fold the
+  Source-line helper: it landed the four-site DIFFERENTIAL pin instead
+  (`tests/ingest/packs/source-line.test.ts`, all four byte-identical on the two
+  real fixture families plus six edge shapes, with the raw `extras['Source']`
+  form declared as the one intentional difference), because that sentence above
+  still describes the copies as carried. The fold stays the OWNER'S CALL and
+  the pin is what makes it safe to defer — a drift between the copies now fails
+  a named test.**
 - The corpus adapter maps the fetch-relative FOLDER PATH into heading
   categories: the pack folder names the lane ('Feats', 'Spells', 'Actions',
   'Class Features'), the first category folder rides the lane label

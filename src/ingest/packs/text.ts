@@ -1,3 +1,7 @@
+import { loadAll } from 'js-yaml';
+
+import { errorMessage } from '@/lib/errors';
+
 /**
  * The ingest layer's ONE HTML→text seam (AGENTS §Centralization rule 4).
  *
@@ -33,17 +37,23 @@
  *
  * ## Where the sibling helpers go
  *
- * This module is the ingest layer's TEXT-CONVENTIONS module, not a file per
- * helper: a future ingest text/parse seam (`parseDocs` is the next one — its
- * two YAML bodies disagree today) belongs HERE beside `htmlToText`, so the
- * directory keeps one place where ingest's text conventions live.
+ * This module is the ingest layer's DOCUMENT-CONVENTIONS module — text AND the
+ * document stream that feeds it — not a file per helper. `parseJsonDocs` and
+ * `parseYamlDocs` below are its second and third occupants (docs/17 row 147):
+ * `parseDocs` used to be spelled SEVEN times in three bodies across this
+ * directory, and the two YAML bodies DISAGREED (a comment-only file was a loud
+ * failure in one adapter and accounted NOWHERE in the other — the AGENTS rule 1
+ * shape). Seven call sites, two helpers, one rule, pinned by
+ * `tests/ingest/packs/parse-docs.test.ts`.
  *
- * Two ADJACENT duplications in this directory are deliberately NOT folded here
- * (they are a different idea from HTML→text, and one logical task per commit):
- * `parseDocs` (two bodies that disagree, one silently swallowing a
- * comment-only file) and `publicationSourceLine` (two byte-identical copies —
- * private in `pf2e-rules.ts`, exported from `pf2e-conditions.ts`). Both are
- * recorded in docs/17 row 143 as the natural next occupants of this module.
+ * ONE adjacent duplication in this directory is deliberately NOT folded here:
+ * `publicationSourceLine` (two byte-identical copies — private in
+ * `pf2e-rules.ts`, exported from `pf2e-conditions.ts` — plus two INLINE
+ * spellings, `domain/itemData.ts` and `pf2e-foundry.ts`). It is a different
+ * idea from document parsing, and three of the four sites feed chunk `text` →
+ * `contentHash` with no heal path (see above), so docs/17 row 147 lands the
+ * DIFFERENTIAL PIN and leaves the fold as the owner's call: docs/12 §15.5 still
+ * describes the copies as carried. Read that row before folding it.
  */
 
 /**
@@ -218,4 +228,80 @@ export function htmlToText(html: string, style: HtmlToTextStyle): string {
     .map((line) => line.trim())
     .join('\n')
     .trim();
+}
+
+// --- The document stream a pack file carries (docs/17 row 147) --------------
+
+/**
+ * A pack DATA file's documents: whole-file JSON when possible, otherwise
+ * newline-delimited JSON (the older `.db` pack format, one document per line).
+ *
+ * An empty or whitespace-only file fails LOUDLY with that name; a line that
+ * fails to parse fails the file loudly with its 1-BASED line number. The
+ * invariant the JSON family has always held: **every non-empty input either
+ * yields at least one document or throws** — a file can never come back
+ * accounted NOWHERE. `parseYamlDocs` below now holds the same rule.
+ */
+export function parseJsonDocs(text: string, fileName: string): unknown[] {
+  const trimmed = text.trim();
+  if (trimmed === '') throw new Error(`${fileName}: file is empty`);
+  try {
+    return [JSON.parse(trimmed) as unknown];
+  } catch {
+    // Fall through to NDJSON — this branch decides nothing, the loop below
+    // still fails loudly per line.
+  }
+  const docs: unknown[] = [];
+  for (const [index, line] of trimmed.split('\n').entries()) {
+    const candidate = line.trim();
+    if (candidate === '') continue;
+    try {
+      docs.push(JSON.parse(candidate) as unknown);
+    } catch (error) {
+      throw new Error(`${fileName}: line ${String(index + 1)} is not valid JSON: ${errorMessage(error)}`, { cause: error });
+    }
+  }
+  return docs;
+}
+
+/**
+ * A YAML file's documents (one per `---` document in the stream) via js-yaml's
+ * `loadAll`.
+ *
+ * THE RULE, and it is data — the JSON family's own invariant, made true here
+ * (docs/17 row 147):
+ *
+ * 1. **A stream that yields NO document at all is a LOUD file-level failure.**
+ *    `js-yaml` returns `[]` for a comment-only file (`'# comment only'`) and
+ *    for a purely blank one, so those are exactly the inputs this catches. Two
+ *    dnd5e adapters used to DISAGREE here: one returned `[]`, and a file whose
+ *    documents were ALL null came back as `{entries: 0, skipped: 0,
+ *    failures: []}` through the per-file door (`packImport.ts`) — accounted
+ *    NOWHERE, with no surface at all. AGENTS rule 1 forbids precisely that,
+ *    and nothing pinned it.
+ * 2. **A document that parses to `null` is RETURNED**, so the adapter counts it
+ *    as a SKIP. A bare `---`, an explicit `null` and `'# c\n---\n# c2'` (a
+ *    separator between two comment-only regions still DECLARES a document) are
+ *    contentless, but they ARE documents: `skip` is the honest accounting for
+ *    them, not a failure and not nothing. Never reintroduce
+ *    `docs.filter((doc) => doc != null)` here — that filter IS the
+ *    silent-drop defect, not a tidy-up.
+ *
+ * A whitespace-only file keeps the loud empty-file failure BOTH YAML bodies
+ * already had, and an unparseable one keeps the foundry body's wording —
+ * `invalid YAML: …`, the sentence a pre-existing test assertion already names
+ * as a literal. The retired equipment body's `not valid YAML` is a SUPERSEDED
+ * spelling of the same sentence (docs/17 row 147 records the choice).
+ */
+export function parseYamlDocs(text: string, fileName: string): unknown[] {
+  const trimmed = text.trim();
+  if (trimmed === '') throw new Error(`${fileName}: file is empty`);
+  let docs: unknown[];
+  try {
+    docs = loadAll(trimmed);
+  } catch (error) {
+    throw new Error(`${fileName}: invalid YAML: ${errorMessage(error)}`, { cause: error });
+  }
+  if (docs.length === 0) throw new Error(`${fileName}: no YAML document`);
+  return docs;
 }

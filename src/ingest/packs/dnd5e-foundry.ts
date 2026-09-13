@@ -1,10 +1,9 @@
-import { loadAll } from 'js-yaml';
 import { z } from 'zod';
 
 import { abilityModifier, formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, BRACKET_LINKS_LINE_BREAKS } from './text';
+import { htmlToText, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
 /**
@@ -332,21 +331,6 @@ type ParsedArmorPiece = z.infer<typeof armorPieceSchema>;
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-
-/**
- * Whole-file YAML (or a multi-document YAML stream) via js-yaml. A file that
- * fails to parse fails the file loudly with its name and the parser message.
- */
-function parseDocs(text: string, fileName: string): unknown[] {
-  const trimmed = text.trim();
-  if (trimmed === '') throw new Error(`${fileName}: file is empty`);
-  try {
-    return loadAll(trimmed);
-  } catch (error) {
-    throw new Error(`${fileName}: invalid YAML: ${errorMessage(error)}`, { cause: error });
-  }
-}
-
 
 function titleCase(slug: string): string {
   return slug
@@ -944,7 +928,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
 /** Synchronous parse body — wrapped into a promise by `parseFile`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
-  const docs = parseDocs(text, fileName);
+  const docs = parseYamlDocs(text, fileName);
   const entries: PackEntry[] = [];
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;

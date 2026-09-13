@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
+import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
 import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
 
 /**
@@ -66,32 +66,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Whole-file JSON when possible, otherwise newline-delimited JSON (the older
- * `.db` pack format). A line that fails to parse fails the file loudly.
- */
-function parseDocs(text: string, fileName: string): unknown[] {
-  const trimmed = text.trim();
-  if (trimmed === '') throw new Error(`${fileName}: file is empty`);
-  try {
-    return [JSON.parse(trimmed) as unknown];
-  } catch {
-    // Fall through to NDJSON — this branch decides nothing, the loop below
-    // still fails loudly per line.
-  }
-  const docs: unknown[] = [];
-  for (const [index, line] of trimmed.split('\n').entries()) {
-    const candidate = line.trim();
-    if (candidate === '') continue;
-    try {
-      docs.push(JSON.parse(candidate) as unknown);
-    } catch (error) {
-      throw new Error(`${fileName}: line ${String(index + 1)} is not valid JSON: ${errorMessage(error)}`, { cause: error });
-    }
-  }
-  return docs;
-}
-
 /** The page's grouping footer, verbatim from the HTML (`null` when absent). */
 function extractSection(html: string): string | null {
   const match = /<em>Section:\s*([^<>]+?)\s*<\/em>/i.exec(html);
@@ -138,7 +112,7 @@ function mapPage(page: ParsedPage): PackSectionEntry {
 /** Synchronous parse body — wrapped into a promise by `parseFile`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
-  const docs = parseDocs(text, fileName);
+  const docs = parseJsonDocs(text, fileName);
   const sections: PackSectionEntry[] = [];
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;

@@ -372,6 +372,9 @@ describe('foundry-dnd5e-srd adapter', () => {
     await expect(
       foundryDnd5eSrdAdapter.parseFile('empty.yml', new TextEncoder().encode('   ')),
     ).rejects.toThrow('empty.yml: file is empty');
+    // The NAME said "not valid YAML" while the assertion said "invalid YAML" —
+    // the seam kept the assertion's wording (docs/17 row 147), so the name
+    // now matches the sentence both dnd5e lanes throw.
     await expect(
       foundryDnd5eSrdAdapter.parseFile('broken.yml', new TextEncoder().encode('name: [unclosed')),
     ).rejects.toThrow('broken.yml: invalid YAML');

@@ -515,6 +515,8 @@ test) · ❌ gap.
 | The `where` label has ONE home and ONE declared second spelling (docs/17 row 145): a 4-case differential drives the home (`mentionView.whereLabel`), the STORED `ExpansionExcerpt.source` of `llm/campaignGrounding` and the `db/orphanSweep` refusal reason over the same inputs, requiring the two same-convention copies to be IDENTICAL and declaring the third as `prose === label.toLowerCase()` — plus a source scan proving `function whereLabel` is declared in exactly the two declared files | `mention-where-label.test` (17, NEW) | ✅ |
 | A DEAD duplicate stays deleted (docs/17 row 145): `rosterCreatureKey` — a superseded third spelling of the roster-side creature identity with zero callers — is absent from every `src/` and `tests/` file, while the LIVE spelling (`battleSeed.creatureKeyForEntry`, including the `'none'` arm that passes `null`) is intact | `creature-identity-spelling.test` (3, NEW) | ✅ |
 | The wiki-token grammar is ONE source with TWO flag variants (docs/17 row 145): a differential drives a token-bearing sample through the export consumer (`stripWikiLinks`) and the PDF consumer (`parseInline`), the vanished-link case (`plain **bold** [[Ash Gate]] and [[Kael]] and [[Pier]].`) is pinned through `mdToPdfmakeContent` itself (`Kael` must survive), and a source scan proves no second `\[\[` token regex exists outside the two declared sites | `wiki-token-grammar.test` (25, NEW) | ✅ |
+| The pack document STREAM comes from ONE ingest seam, and the two dnd5e YAML bodies can no longer disagree (docs/17 row 147): the rule pinned directly (a comment-only file → a LOUD `<file>: no YAML document`; a bare `---`/`null`/`# c\n---\n# c2` → a RETURNED `[null]` counted as a skip; whitespace-only → `file is empty`; unparseable → `invalid YAML:` with its `cause` kept), the JSON family's own invariant asserted as "never an empty array for a non-empty input", the ACCOUNTING asserted through the REAL adapters (`entries`/`items`/`sections`/`skipped`/`failures` together, one `---` document = exactly 1 skip and 0 failures in BOTH dnd5e lanes), and a source scan that leaves `JSON.parse`, `loadAll`, `from 'js-yaml'` and `function parseDocs` in `text.ts` and NOWHERE else among the directory's ten files | `parse-docs.test` (15, NEW) | ✅ |
+| The `Source:` line is ONE rule across FOUR sites, with its one real difference DECLARED rather than unified (docs/17 row 147): a differential drives the three prefixed sites (`pf2e-conditions.publicationSourceLine` exported, the same rule reached through the REAL `pf2e-rules` adapter, and the inline rule inside the REAL `domain/itemData.formatItemText`) plus the raw `extras['Source']` form over title-only / license-only / both / neither / null / absent, requiring the prefixed three to be byte-identical and the raw form to equal them minus the `Source: ` prefix — then re-runs the real fixtures (`pf2e-conditions/{blinded,frightened}.json`, the four `pf2e-rules/*.json`, `pf2e-equipment/longsword.json`+`anointing-oil.json`) through the real adapters | `source-line.test` (7, NEW) | ✅ |
 | An entity-intent paragraph is scaffolding the echo detector can SEE (docs/17 rows 141/145): the two literals moved into `llm/promptScaffolding`, an intent-bearing brief is detected on both markers, and a note containing a QUOTE is detected too (the case a slotted marker would silently miss) | `scaffoldingEcho.test` (30 → 34) | ✅ |
 
 ### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
@@ -2771,6 +2773,107 @@ a pc/npc) split paragraphs — they do not go through this rule yet, recorded as
 known debt in docs/18 §5 rather than folded here (folding them re-pins every
 GM-notes definition dump in the same landing, which is more expensive than the
 defect on the path the owner reads).
+
+### One document-parser seam for the ingest layer (docs/17 row 147, docs/18 §2.2/§5)
+
+`parseDocs` was spelled SEVEN times in THREE bodies across the seven pack
+adapters — five byte-identical JSON/NDJSON bodies and two YAML bodies — and the
+two YAML bodies **DISAGREED**:
+
+| input | `dnd5e-foundry.ts` (`loadAll` raw) | `dnd5e-equipment.ts` (filter nulls → throw) |
+|---|---|---|
+| `'# comment only'` | `[]` — **no throw** | THROW `no YAML document` |
+| `'---\n'` / `'null\n'` | `[null]` — no throw | THROW |
+| `'   \n'` | THROW `file is empty` | THROW `file is empty` |
+| unparseable | THROW `invalid YAML: …` | THROW `not valid YAML: …` |
+
+Through the one per-file door (`packImport.ts:198-203`, which pushes
+`parsed.failures` and nothing else) the comment-only file made the foundry
+adapter contribute `{entries: 0, skipped: 0, failures: []}` — the file was
+accounted **NOWHERE**, no failure, no skip, no surface, while the import
+reported a clean book. That is the AGENTS rule 1 shape, and **nothing pinned
+it**: the divergence lived in the branch no test reached.
+
+**The rule adopted is the JSON family's own invariant**, which its five copies
+had always held: every non-empty input either yields at least one document or
+throws. Made true for YAML it has two halves, and the second is the one that is
+easy to get wrong — a stream that yields NO document at all is a LOUD file-level
+failure (`<file>: no YAML document`), and a document that parses to `null` is
+RETURNED and counted as a SKIP. So the nulls are not filtered
+(`docs.filter((doc) => doc != null)` *is* the defect, not a tidy-up) and the only
+new throw is `docs.length === 0`. The divergent branch was the unpinned one and
+it was resolved toward the branch that FAILS LOUDLY rather than toward the one
+that happened to have a test.
+
+One message wording was chosen and exactly one existing test literal changed:
+`invalid YAML` (it mirrors the sibling JSON family's `is not valid JSON:`, it
+distinguishes a parse failure from the stream-level `no YAML document`, and a
+pre-existing assertion already named it), so
+`dnd5e-equipment.test.ts`'s `.rejects.toThrow('not valid YAML')` became
+`'invalid YAML'`. That file's foundry sibling was NAMED "not valid YAML" while
+its assertion said `invalid YAML`; the name now matches the sentence.
+
+The seam lives in `src/ingest/packs/text.ts`, the module whose header row 143
+wrote to host these next occupants: `parseJsonDocs(text, fileName)` (whole-file
+JSON, else NDJSON one document per line) and `parseYamlDocs(text, fileName)`
+(`loadAll`, one document per `---`), both `(text, fileName)` exactly as the
+copies were, with the byte-identical bodies moved VERBATIM so every message,
+every `{ cause }` and the NDJSON line-number convention survive. `js-yaml` is
+now imported by `text.ts` and by no adapter.
+
+| fact pinned | where |
+|---|---|
+| **THE RULE, directly**: a comment-only file is a loud `<file>: no YAML document`; a bare `---`, an explicit `null`, `---\n~` and `# c\n---\n# c2` each RETURN `[null]`; a real document followed by `---` keeps BOTH in order; whitespace-only → `file is empty`; unparseable → `invalid YAML:` with its `cause` preserved | `tests/ingest/packs/parse-docs.test.ts` (NEW) |
+| **THE JSON INVARIANT at the seam**: whole-file JSON, NDJSON, top-level `42` / `[]` / `null`, and the failure sides (empty → `file is empty`; `{"a": 1}\nnot json` → `line 2 is not valid JSON`), plus one table asserting "**never an empty array for a non-empty input**" over 17 shape/parser pairs | same file |
+| **THE ACCOUNTING, through the REAL adapters** — because "accounted nowhere" is the actual defect, not the throw: `foundry-dnd5e-srd` on `'# comment only'` REJECTS instead of resolving `{entries: 0, skipped: 0, failures: []}`; the same bytes produce the SAME sentence through BOTH dnd5e lanes; a bare `---` and an explicit `null` are exactly `skipped: 1, failures: []` with `entries`/`items`/`sections` all empty in BOTH lanes (the counters TOGETHER, so a document moved into `failures` cannot hide); and a real `longsword.yml` + `---` + a non-item document is `1 item, 2 skipped, 0 failures` | same file |
+| **SCAN — no second document parser exists**: `JSON.parse`, `loadAll`, `from 'js-yaml'` and `function parseDocs` appear in `text.ts` and NOWHERE else among the directory's ten files; each helper is defined EXACTLY once; all seven call sites import their declared helper and call it EXACTLY once, with exactly one document-parsing call per adapter; the registry's seven adapter ids are cross-checked against the site table, so an EIGHTH adapter fails here rather than being missed | same file (4 SCAN pins) |
+| **THE DIVERGENCE, kept as the record**: the comment-only file is driven through both real dnd5e adapters in one test whose expected value is the two IDENTICAL sentences — with the pre-fix behaviour (`NO THROW — accounted nowhere`) written down as the reason the pin exists | same file |
+| **THE `Source:` LINE — a differential over FOUR sites** (docs/17 row 147, docs/18 §2.2): the exported rule, the same rule reached through the REAL `pf2e-rules` adapter, the inline rule through the REAL `formatItemText`, and the raw `extras['Source']` form, all driven over title-only / license-only / both / neither / `null` / absent — the prefixed three byte-identical on every input, the raw form REQUIRED to equal them minus the `Source: ` prefix, and the prefix proven to be the ONLY difference | `tests/ingest/packs/source-line.test.ts` (7, NEW) |
+| **THE `Source:` LINE on the REAL corpus**: `pf2e-conditions/{blinded,frightened}.json`, the four `pf2e-rules/*.json` and `pf2e-equipment/{longsword,anointing-oil}.json` each carry exactly ONE `Source: ` line, as the section's/item's own last line, byte-equal to the seam's output — and the creature lane's `extras.Source` is asserted **ABSENT** on `pf2e/wolf.json`, which is the honest statement that no pf2e creature fixture carries a `publication` block | same file |
+| **The row-143 SOURCE SCAN** had to move one assertion: it pinned each adapter's `./text` import as a whole-line literal, and row 147 adds a helper name to those very import statements. It now asserts the claim name-by-name (`'import { htmlToText, '` + `"} from './text';"` + the style name), so a REMOVED import still fails while an ADDED helper does not — and the parser half is owned by `parse-docs.test.ts` | `tests/ingest/packs/html-to-text.test.ts` (amended, with the reason in a comment) |
+| **THE ARRAY-JSON HOLE is RECORDED, not fixed** (docs/17 row 147, docs/18 §5): a top-level array JSON is ONE document to all five JSON lanes, so it is one counted skip and the book fails with `no valid creature entries in the pack selection (1 skipped, 0 failed)` where the same creatures as NDJSON import fine. It is NOT a duplication (all five copies always agreed) and it is UNTESTED today: exactly one test feeds an array JSON at all (`pf2e-foundry.test.ts:27`) and it asserts only that no fetch happened | docs/18 §5 (measurement, no new pin) |
+
+**How the fold was proven behaviour-free.** The seven retired bodies were
+extracted verbatim from the base commit and compared against the new helpers'
+bodies character for character, and the message set was enumerated after the
+move: the only message that CHANGED anywhere in the seven lanes is the
+equipment lane's `not valid YAML` → `invalid YAML`, which is exactly the one
+test literal the landing changed. Every other existing assertion — the NDJSON
+line numbering, `file is empty`, the `<file>: ` prefixing, the `document N: `
+per-entry failures — is byte-identical and stayed green untouched.
+
+| injection | line it hits | measured result |
+|---|---|---|
+| **A — the silent drop RE-INTRODUCED**: `return docs;` → `return docs.filter((doc) => doc != null);` in `parseYamlDocs` | `src/ingest/packs/text.ts`, immediately after the `docs.length === 0` check | **RED: 1 file / 4 tests failed, 222 passed (226)** — `returns a document that parses to null, so the adapter counts a SKIP`; `never returns an empty array for a non-empty input — the invariant, stated directly`; `a bare \`---\` document is ONE counted skip in BOTH dnd5e lanes — not a failure, not nothing`; `counts each null document of a real stream, in order, alongside the real ones`. Restored → **GREEN: 17 files / 226 passed** |
+| **B — the empty-stream check DELETED**: `if (docs.length === 0) throw new Error(...)` removed, so `loadAll`'s `[]` flows back out to the adapter | `src/ingest/packs/text.ts` | **RED: 1 file / 5 tests failed, 221 passed (226)** — `fails a YAML stream that yields NO document at all, loudly and by name`; the invariant table; `foundry-dnd5e-srd records the file-level failure instead of a silent empty result`; `the same file is a loud failure through BOTH dnd5e lanes, with identical wording`; `a comment-only file is a FAILURE in both lanes today, where they used to disagree`. Restored → **GREEN: 17 files / 226 passed** |
+| **C1 — the not-taken fold REVERTED, byte-identically**: the live private rule in `pf2e-rules.ts` re-declared with identical output | `src/ingest/packs/pf2e-rules.ts` | **GREEN: 17 files / 226 passed (0 red)** — the EXPECTED, HONEST result: a byte-identical revert is invisible to every behavioural pin, and this landing took no fold for a source scan to notice. It is the reason the differential exists rather than a source scan: see C2. Restored → GREEN |
+| **C2 — the same copy DRIFTS**: the rules copy's separator becomes ` — ` instead of ` (…)`, so its output stops matching the seam's | `src/ingest/packs/pf2e-rules.ts` | **RED: 3 files / 7 tests failed, 219 passed (226)** — named in `source-line.test.ts` (`the three PREFIXED sites agree with each other on all six edge shapes`; `the two publicationSourceLine copies are byte-identical for EVERY input tested`; `conditions, rules and equipment carry the SAME rendered line for one publication`), in `pf2e-rules.test.ts` (3 real-fixture pins) and in `packFetch.test.ts` (1). Restored → **GREEN: 17 files / 226 passed** |
+
+Every injection was restored from an OUT-OF-TREE copy — NEVER `git checkout --`,
+which restores HEAD and would have destroyed the uncommitted refactor — and
+proved byte-identical with `git hash-object` plus `md5sum -c` against that copy
+after every run; the four files' hashes are identical pre-injection and
+post-restore, and the `src/` diff returns to exactly the refactor. (The first
+attempt at C added a SECOND declaration instead of replacing the live one: a
+`SyntaxError` that failed all 11 importing files, which proves nothing about the
+pins — recorded here because a green-looking module-load failure is exactly the
+kind of measurement that lies. It was re-run as C1/C2 above.)
+
+**UNPROVEN, stated as such.** A textual scan is a GUARD over shapes someone has
+used, not a proof: an eighth document parser written in a shape nobody has used
+slips past it, and a copy computed through an INTERMEDIATE VARIABLE (a `parse`
+bound to whichever helper a branch picked, then called) is invisible to a scan
+that looks for the two helper NAMES. A THIRD dialect is legitimate and expected
+— a TOML lane is a new document dialect and belongs in `text.ts` beside these
+two rather than in an adapter. The `Source:` differential cannot show that a
+fifth spelling will not be written either; what it proves is that the FOUR that
+exist cannot drift apart unnoticed on the fixtures and edges it drives — and C1
+shows the limit from the other side, since a byte-identical fifth copy would be
+invisible to it too. The raw `extras['Source']` form (site 4) has no real
+fixture carrying a `publication` block for the creature lane, so its real-data
+path rests on the transcription plus the declared prefix relation, not on a pf2e
+creature fixture.
+
 
 ### Remaining gaps
 
