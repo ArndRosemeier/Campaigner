@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The alias-merge seam's SOURCE SCAN (docs/17 row 121, docs/18 §2.1, docs/08
- * §The one way to add an alias).
+ * The alias-merge seam's SOURCE SCAN (docs/17 rows 121 + 123, docs/18 §2.1,
+ * docs/08 §The one way to add an alias).
  *
  * WHY A SCAN AND NOT A BEHAVIOURAL PIN. Folding six hand-rolled copies onto one
  * rule is byte-identical BY CONSTRUCTION on five of the six sites and on every
@@ -18,8 +18,17 @@ import { describe, expect, it } from 'vitest';
  *    and a hand-appended alias pool) exist in exactly the documented boundary
  *    files — a new caller that rolls its own trips here with its path named;
  * 2. every FOLDED file still routes its alias writes through the seam, counted,
- *    so silently reverting one of the six sites to the old shape fails even
+ *    so silently reverting one of the seven sites to the old shape fails even
  *    though every behavioural pin stays green.
+ *
+ * The SEVENTH copy (`campaign-tree.tsx`'s rename-keep-alias path) was a
+ * documented SUBSET-shaped carve-out here while it was unfolded; row 122 folded
+ * it, and the carve-out is DELETED rather than kept — an allowlist entry that
+ * exists only because something was not folded must not outlive the fold, or it
+ * silently licenses the shape it was excusing. Folding it could not turn this
+ * pin red, and the fold does not: the campaign-tree file is in `FOLDED` now, so
+ * both halves of the scan are strict about it (reverting the fold REDs the
+ * offender pin AND the route pin).
  */
 describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
   /**
@@ -42,8 +51,6 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
       'the RESOLVER — it answers a link against the pool (name first, then aliases, then scope tiers), which is a different question from "may this name join the pool"',
     'features/campaign/components/alias-editor.tsx':
       'the FORM — it REJECTS a keystroke a person just typed (UI feedback, no row write), rather than merging a name the app decided to add',
-    'features/campaign/components/campaign-tree.tsx':
-      'a SEVENTH copy the audit did not count (untrimmed rename-keep-alias, `:314-317`). NOT folded here on purpose — folding it is a THIRD behaviour change and the brief said to report rather than smuggle; it is named in docs/18 §5 and the landing report as the next slice',
   };
 
   /**
@@ -62,6 +69,12 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     'features/modules/stub-popover.tsx': { needles: [['addArtifactAliases(', 1]] },
     'features/modules/ModuleReaderPage.tsx': { needles: [['addArtifactAliases(', 1]] },
     'features/modules/entity-batch.ts': {
+      needles: [
+        ['mergeAliasNames(', 1],
+        ['sameAliasName(', 1],
+      ],
+    },
+    'features/campaign/components/campaign-tree.tsx': {
       needles: [
         ['mergeAliasNames(', 1],
         ['sameAliasName(', 1],

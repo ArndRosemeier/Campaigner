@@ -31,7 +31,7 @@ import {
   defaultScopeToggles,
   globalArtifactKindSchema,
 } from '@/domain';
-import { defaultArtifactName } from '@/domain';
+import { defaultArtifactName, mergeAliasNames, sameAliasName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-single-artifact';
 import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
@@ -310,11 +310,14 @@ export function CampaignTree({
       // Renaming (M4-A): offer keeping the old name as an alias so existing
       // module text keeps resolving — never rewrite the text itself. The new
       // name absorbs any alias that already spells it (no redundant alias).
-      const withOldName =
-        renameKeepAlias && !target.aliases.some((alias) => alias.toLowerCase() === target.name.toLowerCase())
-          ? [...target.aliases, target.name]
-          : target.aliases;
-      const aliases = withOldName.filter((alias) => alias.toLowerCase() !== name.toLowerCase());
+      // BOTH halves are the SEAM's rule (`domain/artifactAlias`, docs/17 row
+      // 121), never a local comparison: TRIMMED and case-insensitive on both
+      // sides, so a pool already carrying the old name under different
+      // surrounding whitespace does not get it written a second time, and the
+      // new name is passed as `artifactName` so an alias equal to it is never
+      // stored (it could never resolve — the resolver matches the name first).
+      const kept = target.aliases.filter((alias) => !sameAliasName(alias, name));
+      const aliases = renameKeepAlias ? mergeAliasNames(kept, [target.name], name) : kept;
       await artifactRepo.updateArtifact(target.id, { name, aliases });
       toastSuccess('Renamed');
     } catch (error) {

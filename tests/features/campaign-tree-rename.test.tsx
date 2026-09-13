@@ -174,4 +174,60 @@ describe('CampaignTree rename dialog', () => {
       expect(matches).toHaveLength(0);
     });
   }, 20000);
+
+  /**
+   * docs/17 row 123: the two comparisons in this dialog are the SEAM's
+   * (`domain/artifactAlias.sameAliasName` — TRIMMED, case-insensitive), not a
+   * local `toLowerCase()` on both sides. Both pins below are RED when the
+   * hand-rolled copy comes back: it compared untrimmed, so a pool alias that
+   * differs from the name ONLY by surrounding whitespace was a second name.
+   */
+  it('does not write the old name TWICE when the pool already spells it with surrounding whitespace', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // `[[Old Tower]]` already resolves (the resolver TRIMS), so the rename must
+    // not add a second spelling of the same name to the pool.
+    const artifact = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Old Tower',
+      aliases: ['Old Tower '],
+    });
+
+    renderWorkspace(workspacePath(campaign.id));
+    expect(await screen.findByText('Old Tower')).toBeInTheDocument();
+
+    await openRenameDialog(user, 'Old Tower');
+    await submitRename(user, 'Tower Ruins', true);
+
+    await waitFor(async () => {
+      const stored = await getArtifact(artifact.id);
+      expect(stored?.name).toBe('Tower Ruins');
+      expect(stored?.aliases).toEqual(['Old Tower ']);
+    });
+  }, 20000);
+
+  it('absorbs an alias that spells the new name with surrounding whitespace', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const artifact = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Old Tower',
+      aliases: ['tower ruins '],
+    });
+
+    renderWorkspace(workspacePath(campaign.id));
+    expect(await screen.findByText('Old Tower')).toBeInTheDocument();
+
+    await openRenameDialog(user, 'Old Tower');
+    await submitRename(user, 'Tower Ruins', true);
+
+    await waitFor(async () => {
+      const stored = await getArtifact(artifact.id);
+      expect(stored?.name).toBe('Tower Ruins');
+      // The redundant spelling is gone, and the old name is the pool's alias.
+      expect(stored?.aliases).toEqual(['Old Tower']);
+    });
+  }, 20000);
 });
