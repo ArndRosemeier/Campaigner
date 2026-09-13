@@ -90,6 +90,13 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   default the autonomous dispatcher made on the owner's behalf, numbered and
   grouped by area with its living location and rationale; each item is
   independently reversible (say the id, the behavior changes)
+- `19-DOCUMENT-LAYOUT.md` — the readable, self-sufficient document (layout v2):
+  the owner's intent verbatim, the split the design keeps (the model decides what
+  belongs with what, the renderer decides where it fits), the page model
+  (screen-first: main column + sidebar, detail type tiers), placement (beside, vs
+  own pages ADJACENT to the reference — never an appendix), the overflow ladder,
+  the planner's toolkit, what we will NOT do, the open questions, and the build
+  order. **Design ratified, not built** — see docs/18 §5.
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard

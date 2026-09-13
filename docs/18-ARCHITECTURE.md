@@ -1,7 +1,7 @@
 # 18 — Architecture: the code map and the seam index
 
 This is the layer between `AGENTS.md` (binding rules) and the feature specs
-(docs/04/05/07/08/11/12/13/14/15/16/17): the high-level map of how the code is
+(docs/04/05/07/08/11/12/13/14/15/16/17/19): the high-level map of how the code is
 organized and — for everything that has needed doing more than once — THE one
 way to do it. Before writing a repo function, a queue, a toast path or a
 schema conversion, check §2; a seam already exists for it.
@@ -1983,6 +1983,17 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   arms.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **The module document's LAYOUT is v1-shaped.** Sections print linearly, in plan
+  order, and every non-aside planned section BREAKS the page
+  (`lib/modulePdf.resolveDocumentPlan` → the body builder), so the document reads
+  as a list of full-page sections — exactly the owner's report that "texts are
+  just pasted one after the other" and that the relations are unusable. The
+  ratified v2 design (page-level MAIN COLUMN + SIDEBAR, oversize artifacts on
+  their OWN pages adjacent to the first reference, detail type tiers, the overflow
+  ladder) is written in **docs/19** and **not built** — its §11 lists the slices.
+  Until a slice lands, neither the linear layout NOR a piece of the v2 design is
+  "the way"; and the planner's blindness (one-line, capped artifact excerpts —
+  docs/19 §1) is part of the same debt, not a prompt bug to fix in place.
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them
   and do not add a further one): `db/seed.ts` + `db/personaRepo.ts` →
