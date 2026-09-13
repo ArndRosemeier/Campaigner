@@ -24,11 +24,15 @@ const MODULE_BUSY_ERROR_NAME = 'ModuleBusyError';
  *
  * - a ZodError's `.message` IS the raw `[{code,path,message}...]` array → the
  *   description carries the counted/grouped/capped summary instead;
- * - a module-busy refusal's `.message` IS `Module <id> is already generating`
- *   (`src/llm/moduleGen.ts`), an internal row id handed to the owner for a
- *   condition its title already names together with both ways out → the
- *   description is DROPPED (`tests/features/module-busy.test.tsx` pins the
- *   real class here) and the raw error is logged instead.
+ * - a module-busy refusal (`src/llm/moduleGen.ts`) → the description is DROPPED
+ *   and the raw error is logged instead (`tests/features/module-busy.test.ts`
+ *   pins the real class here). Its `.message` used to be the internal row id
+ *   ``Module <id> is already generating``; that reword landed in docs/17 row
+ *   123 and the message is a sentence now — the branch STAYS, because its
+ *   remaining reason is the copy, not the uuid: the caller's title already
+ *   names the state and both ways out (`module-busy.MODULE_BUSY_TOAST_TITLE`),
+ *   so rendering the refusal's own sentence under it would say the same thing
+ *   twice in one toast. The raw error still goes to the console.
  *
  * The leading `message` title is untouched in both cases: only the description
  * is humanized, so every existing caller's copy reads exactly as before.

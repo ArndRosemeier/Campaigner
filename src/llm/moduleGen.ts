@@ -118,9 +118,34 @@ export const moduleGenEvents = new ModuleGenEmitter();
 /** In-flight generation per module; a second start on the same row throws. */
 const controllers = new Map<Id, AbortController>();
 
+/**
+ * A SECOND generation was refused because this module's single generation slot
+ * is taken (`controllerFor` here, `llm/canvasBusy.claimModuleGeneration`,
+ * `llm/canvasRefine`, `llm/canvasChat`, `llm/modulePlan`). Loud and never
+ * queued: the caller decides how to say it (`features/modules/module-busy`).
+ *
+ * The MESSAGE is a sentence for the owner, and it carries NO row id
+ * (docs/17 row 123). It used to be ``Module <uuid> is already generating``, and
+ * that text reached the owner twice over: as the chat card's `error` line
+ * (`canvas/chatController`'s failed-turn write and `canvas/snapshotChat`'s
+ * mirror read `error.message` for ANY thrown error, and a busy refusal is one
+ * of them) and as a toast's description (`lib/toast.ts` suppressed the
+ * description for this class by NAME; it still does, because the title already
+ * names the state and both ways out, so a description could only restate it).
+ */
 export class ModuleBusyError extends Error {
+  /**
+   * The module whose generation slot refused the call. STRUCTURAL, and the
+   * replacement for the id that used to ride in the message: the console/log
+   * path prints the error OBJECT (`lib/toast.ts` logs the raw error for a busy
+   * refusal), and a caller that needs the row reads this field instead of
+   * parsing text. Never render it to the owner.
+   */
+  readonly moduleId: Id;
+
   constructor(moduleId: Id) {
-    super(`Module ${moduleId} is already generating`);
+    super('This module is already generating — wait for it to finish or stop it first.');
+    this.moduleId = moduleId;
     this.name = 'ModuleBusyError';
   }
 }

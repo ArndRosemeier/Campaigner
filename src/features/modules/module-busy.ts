@@ -29,16 +29,17 @@ import { toastError } from '@/lib/toast';
  * or releases NOTHING. Folding the two mechanisms together would be a behaviour
  * change, not a copy fold.
  *
- * THE RAW ERROR IS NOT THE DESCRIPTION. `ModuleBusyError`'s own message is
- * `Module <id> is already generating` — an internal row id, not a sentence for
- * the owner (the audit found it rendering as this toast's detail line, so one
- * fact reached the owner as a friendly title plus a uuid). The helper still
- * passes the ERROR OBJECT through unchanged: it remains the toast seam's cause,
- * and the raw uuid-bearing text goes to the console — one click away in
- * devtools — exactly like the ZodError branch at that seam. That suppression is
- * pinned against the REAL error class in `tests/features/module-busy.test.tsx`,
- * so renaming the class turns the pin red instead of leaking the id back into a
- * toast.
+ * THE RAW ERROR IS NOT THE DESCRIPTION. `ModuleBusyError`'s own message is a
+ * sentence for the owner and carries no row id (docs/17 row 123 — it used to be
+ * ``Module <id> is already generating``, which rendered as this toast's detail
+ * line: one friendly title plus a uuid). The helper still passes the ERROR
+ * OBJECT through unchanged: it remains the toast seam's cause, and the raw
+ * error goes to the console — one click away in devtools — exactly like the
+ * ZodError branch at that seam. That suppression is pinned against the REAL
+ * error class in `tests/features/module-busy.test.ts`, so renaming the class
+ * turns the pin red instead of leaking the id back into a toast; it STAYS after
+ * the reword because the title above already names the state and both ways out,
+ * so the refusal's own sentence as a description would only restate it.
  */
 
 /**

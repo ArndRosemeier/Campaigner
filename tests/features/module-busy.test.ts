@@ -11,6 +11,7 @@ vi.mock('sonner', () => ({
 import { toast } from 'sonner';
 
 import { ModuleBusyError } from '@/llm/moduleGen';
+import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
 import { toastError } from '@/lib/toast';
 import {
   MODULE_BUSY_TOAST_TITLE,
@@ -35,7 +36,12 @@ import {
  * 2. the helper's user-visible outcome is pinned through the REAL toast seam:
  *    the shared title, and NO uuid-bearing description (the audit found
  *    `Module 3f2… is already generating` rendering as this toast's detail line,
- *    so the owner read a friendly sentence plus an internal row id);
+ *    so the owner read a friendly sentence plus an internal row id). docs/17 row
+ *    123 reworded that message into a sentence and moved the id into a
+ *    structural `moduleId` field — the DESCRIPTION is still dropped on purpose
+ *    (the title already says it), so the pin now asserts the id is ON the error
+ *    and NOT in its message, and a separate pin drives the REAL refusal path
+ *    (`llm/canvasBusy`'s second claim) to prove the sentence the owner meets;
  * 3. every folded CALL SITE still routes through the helper. Only the board
  *    site is reachable behaviourally (`module-board-rewrite.test.tsx` pins the
  *    mocked `toastError` call), so the other six are held by the SOURCE SCAN
@@ -123,18 +129,22 @@ describe('module-busy sentences', () => {
 });
 
 describe('toastModuleBusy', () => {
-  it('toasts the shared title, WITHOUT the uuid-bearing error message as the detail line', () => {
+  it("toasts the shared title, WITHOUT the refusal's own sentence as the detail line", () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const busyError = new ModuleBusyError('module-3f2e-91ab-4c77');
-    // The id IS the error's own message — so the pin below is not vacuous: the
-    // seam has something to leak and does not.
-    expect(busyError.message).toContain('module-3f2e-91ab-4c77');
+    // The branch fires on the class's NAME — pinned on the REAL class, so this
+    // is the non-vacuity that belongs to the SUPPRESSION (the message contract
+    // itself is pinned in the ModuleBusyError describe below, and
+    // `lib/toast.test.ts` proves a plain Error's description still passes
+    // through byte-identical, so the seam is not dropping descriptions for
+    // everything).
+    expect(busyError.name).toBe('ModuleBusyError');
 
     toastModuleBusy(busyError);
 
     // ONE argument: no `{ description }` at all. The title already names the
-    // state and both ways out, so a description could only restate it or leak
-    // the row id.
+    // state and both ways out, so the refusal's own sentence as a description
+    // would say the same thing twice in one toast.
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).toHaveBeenCalledWith(MODULE_BUSY_TOAST_TITLE);
     // Still loud: the raw error is one click away in devtools, not swallowed.
@@ -142,10 +152,10 @@ describe('toastModuleBusy', () => {
     consoleSpy.mockRestore();
   });
 
-  it('drops the uuid for a directly-toasted busy refusal too (the seam, not the helper)', () => {
+  it('drops the description for a directly-toasted busy refusal too (the seam, not the helper)', () => {
     // Belt for the same fact at the seam itself: `toastError` is reached with a
-    // busy error's object by other paths as well, and the uuid must not reach
-    // the owner through any of them.
+    // busy error's object by other paths as well, and the seam's own decision
+    // (no description for this class) must hold through all of them.
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const busyError = new ModuleBusyError('module-77aa-0b31');
 
@@ -154,6 +164,46 @@ describe('toastModuleBusy', () => {
     expect(toastErrorMock).toHaveBeenCalledWith(MODULE_BUSY_TOAST_TITLE);
     expect(consoleSpy).toHaveBeenCalledWith(busyError);
     consoleSpy.mockRestore();
+  });
+});
+
+/**
+ * docs/17 row 123: `ModuleBusyError`'s message is a SENTENCE for the owner, and
+ * the row id it used to spell out rides STRUCTURALLY (`moduleId`). The expected
+ * sentence below is an independent copy (never imported) so this pin moves only
+ * when the source does, and the pin drives the REAL refusal path (the shared
+ * registry's second claim), not a hand-built error.
+ */
+describe('ModuleBusyError', () => {
+  const MODULE_ID = 'module-3f2e-91ab-4c77';
+  const OWNER_SENTENCE =
+    'This module is already generating — wait for it to finish or stop it first.';
+
+  it('states a sentence for the owner, and carries the row id structurally', () => {
+    const direct = new ModuleBusyError(MODULE_ID);
+    expect(direct.message).toBe(OWNER_SENTENCE);
+    expect(direct.message).not.toContain(MODULE_ID);
+    expect(direct.moduleId).toBe(MODULE_ID);
+    // The toast seam recognises the class BY NAME — the reword must not touch it.
+    expect(direct.name).toBe('ModuleBusyError');
+
+    // The refusal the owner actually meets is thrown by the shared registry.
+    claimModuleGeneration(MODULE_ID);
+    try {
+      let caught: unknown;
+      try {
+        claimModuleGeneration(MODULE_ID);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ModuleBusyError);
+      const busy = caught as ModuleBusyError;
+      expect(busy.message).toBe(OWNER_SENTENCE);
+      expect(busy.message).not.toContain(MODULE_ID);
+      expect(busy.moduleId).toBe(MODULE_ID);
+    } finally {
+      releaseModuleGeneration(MODULE_ID);
+    }
   });
 });
 
