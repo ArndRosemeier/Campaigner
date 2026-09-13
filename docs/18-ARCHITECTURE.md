@@ -1402,6 +1402,47 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   Cartographer persona). Two lines of the seam are consistency rather than
   coverage, named in §5.
 
+- **A named seam whose doc comment promises "one wording" is not a seam until
+  every site CALLS it — and a catch that decides cancel-vs-failure must read the
+  cancel helper, so a guard on a signal nobody passes is not a cure** (docs/17
+  row 119; AGENTS rule 4). MEASURED at base `2fabc05`:
+  `recordNormalizationFailure` (`src/llm/moduleGen.ts:1133-1135`) carried the
+  promise *"ONE wording, so a repair run and a parts pass report it
+  identically"* while two sites re-stated its body inline (`:1999` in the full
+  pass's own catch, `:2128` in the incremental classification's) and a fourth
+  copy sat in the entity panel's belt (`entity-panel.tsx:467`) — and the copy
+  that had DRIFTED was `:2128`: the only one of the four catches with no
+  `isCancel` guard, on a pass that also handed `normalizationCall` no signal
+  (`:2114-2123`), so the stop it could not recognize was the stop it would
+  record as the owner's failure. Two rules, both enforced by pins rather than by
+  comment. (1) **Every site calls the seam.** The sentence now exists in exactly
+  one file under `src/` and the panel reads the export
+  (`NORMALIZATION_FAILURE_MESSAGE`, `moduleGen.ts:1136`); the pin is a SOURCE
+  SCAN (`tests/features/normalization-failure-wording.test.tsx`), because a
+  toast spy cannot see a copy — reverting the panel's belt to its literal, or
+  the full pass's catch to its inline copy, leaves every behavioural pin green
+  (the words are byte-identical by requirement; only the scan's file list and
+  its occurrence count go red). (2) **A cancel guard must be able to fire.**
+  `isCancel(error, signal)` is the ONE cancel-vs-failure decision, and it needs
+  the run's own signal, so the SIGNAL MUST BE THREADED into the call the guard
+  wraps: `classifyNewModuleEntityNames(moduleId, signal?)`
+  (`moduleGen.ts:2100`) passes `{ canonicalNames, signal }` into the same
+  `normalizationCall` the full pass uses (`:2152`) and guards its catch at
+  `:2165`. REACHABILITY IS PART OF THE ENTRY, not an afterthought: no caller
+  passes a signal today (both its callers are buttons —
+  `entity-panel.tsx:484`, `resume-automation.ts:187` — and the resume sweep's own
+  entry points are buttons too), the pass has no run row, no `'generating'` forge
+  row and no canvas handle for Stop all to find
+  (`features/progress/stop-all-generations.ts:92-138`), and the stop epoch gates
+  only the NEXT unit (`lib/stopEpoch.ts:14`), so this guard is DEFENCE and its
+  own doc comment says so. Read a guard's presence as a shape, never as coverage:
+  the pin that proves it is an aborted controller handed to the pass directly.
+  A catch that has no signal must NOT re-derive the decision privately — it reads
+  `signal !== undefined && isCancel(error, signal)`, which keeps the pre-existing
+  verdict for a signal-less call instead of reading an `AbortError`'s type as a
+  user stop (`isCancel`'s own doc, `moduleGen.ts:209-217`: the signal is the
+  source of truth, not the error's type).
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them

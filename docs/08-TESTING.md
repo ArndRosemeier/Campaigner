@@ -901,6 +901,49 @@ board pins assert the write was ISSUED and the row carries the drag — they do 
 re-measure `moduleRepo.patchModule`'s read-inside-the-transaction merge against a
 concurrent parts write.
 
+### The normalization-failure sentence (docs/17 row 119, docs/18 §4)
+
+The sentence a failed normalization pass shows is ONE seam
+(`NORMALIZATION_FAILURE_MESSAGE`, toasted by `recordNormalizationFailure`), and
+the classification pass's catch now carries the same cancel guard its sibling
+carries. Both halves are pinned here; the wording itself is pinned verbatim by
+the four pre-existing assertions, which pass byte-unchanged.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| The four sites that report a failed pass read ONE export: changing `NORMALIZATION_FAILURE_MESSAGE`'s value REDs every verbatim pin (`tests/llm/moduleGen.test.ts:1057`/`:1122`/`:1255`, `tests/features/entity-classify-new.test.tsx:359`) plus the two new sentence assertions | those four files | ✅ |
+| A STOP landing while the incremental classification's call is in flight is NOT a normalization failure: the abort PROPAGATES, `entityNamesNormalized` stays `true`, no error is recorded and nothing is toasted — and the pass's own signal really reached `chat` (asserted on `mock.calls[0][1].signal`) | `moduleGen.test.ts` (`:1341`) | ✅ |
+| A GENUINE failure with a live (never-aborted) signal still records the error, closes the gate and toasts the ONE shared sentence — the guard excuses a stop, never a provider | `moduleGen.test.ts` (`:1367`) | ✅ |
+| The panel's belt toast uses the seam's sentence (the pass mocked to throw, the "Normalize names" control clicked, the toast asserted against the export) | `normalization-failure-wording.test.tsx` (`:106`) | ✅ |
+| The sentence is STATED in exactly one file under `src/**` (scan over every `.ts`/`.tsx`, with a file-count non-vacuity check), the panel contains the export's name and NOT the literal, `moduleGen.ts` states it exactly once and goes through its seam at five catches | `normalization-failure-wording.test.tsx` (`:132`) | ✅ |
+| The sibling surfaces are deliberately NOT folded and keep their own wording, because each answers a different question: the sweep's refusal (`resume-automation.ts:213`), the disabled batch control's gate reason (`entity-panel.tsx:281`), the row-error label (`entity-panel.tsx:779`) | `module-problems.test.ts` + `module-resume-automation.test.ts` (re-run, unchanged) | ✅ |
+
+**NON-VACUITY (REVERT-PROVEN lines — each injection applied, the killed pins
+named, then restored byte-identically and verified with `git hash-object` before
+and after; every hash matched).** `src/llm/moduleGen.ts` was
+`1f54384e80ba0cb9f8ec74326009afac9240df15`, `entity-panel.tsx`
+`3ccc75e6ef3b475b3e12ff6454587277d9753ab4` and `resume-automation.ts`
+`fb0291429cbd61070205a45dcb26b839d91be069` at every restore.
+
+| Injected line | Killed |
+| --- | --- |
+| `moduleGen.ts:2165` — the `isCancel` guard DELETED from the classification's catch | **1** of 68 in `moduleGen.test.ts` — "a STOP mid-pass is not a normalization failure" (it resolved `{classified: [], failed: true}` instead of rejecting) |
+| `moduleGen.ts:2152` — the signal DROPPED from the classify call (`{ canonicalNames: recordedNames }`) | **1** — the same pin, now at the `carried` assertion (`undefined` where the controller was expected): the guard alone is not enough, the call must be cancellable |
+| `moduleGen.ts:1137` — the shared constant's VALUE changed | **5** in the two files above + **1** of 8 in `entity-classify-new.test.tsx` (the pre-existing panel pin) — proof that all four pinned sites read the fold rather than a private copy |
+| A FOURTH copy of the sentence appended to `resume-automation.ts` (a flaw-detector injection, not a revert of shipped code) | **1** — the source scan, reporting two files instead of one |
+| `moduleGen.ts:2013` — the full pass's fold REVERTED to the inline literal | **1** — the scan only (its "stated exactly once" split). The 77 behavioural pins stayed GREEN, and that is the honest result: a fold is byte-identical by construction, so no behavioural pin can reach it |
+| `entity-panel.tsx:472` — the panel's fold REVERTED to its literal | **1** — the scan only (the file list). The belt pin stayed GREEN for the same reason: a toast spy cannot tell a copy from the shared constant, which is exactly why the fold's own pin is a source scan |
+
+**UNPROVEN here.** No live-provider or real-browser run observes any of it —
+every pin mocks `chat` at the protocol boundary. No test drives a Stop into the
+classification pass through a real caller, because no caller CAN pass a signal
+(that is the reachability finding, docs/17 row 119): the cancelled-pass pin
+hands the pass a controller directly, so it proves the pass's behaviour and not
+the app's reachability. With no signal the pass still records a same-realm
+`AbortError` as a failure, deliberately (the signal is the source of truth, not
+the error's type), and no pin covers that branch. The scan is textual: a copy
+split across a template literal or a concatenation would not be seen.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

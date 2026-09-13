@@ -66,7 +66,11 @@ import { creatureOnlyNotice } from '@/features/modules/detailed-entity';
 import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
-import { classifyNewModuleEntityNames, normalizeModuleEntityNames } from '@/llm/moduleGen';
+import {
+  classifyNewModuleEntityNames,
+  NORMALIZATION_FAILURE_MESSAGE,
+  normalizeModuleEntityNames,
+} from '@/llm/moduleGen';
 import { unclassifiedEntityNames } from '@/domain/entityNormalization';
 import {
   STUB_KINDS,
@@ -458,13 +462,14 @@ export function EntityPanel({
 
   /** fix-01: (Re-)runs the entity-name normalization pass. Failures are
    * recorded on the module row + toasted inside the pass — this only adds
-   * the belt for unexpected throws. */
+   * the belt for unexpected throws, and it says the ONE wording the pass's own
+   * failures say (`NORMALIZATION_FAILURE_MESSAGE`), never a second copy. */
   async function runNormalization(): Promise<void> {
     setNormalizing(true);
     try {
       await normalizeModuleEntityNames(module.id);
     } catch (error) {
-      toastError('Entity name normalization failed — retry from the entity panel', error);
+      toastError(NORMALIZATION_FAILURE_MESSAGE, error);
     } finally {
       setNormalizing(false);
     }

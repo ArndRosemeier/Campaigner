@@ -1126,12 +1126,26 @@ async function restorePartAfterFailedRepair(moduleId: Id, snapshot: ModulePart |
 }
 
 /**
+ * The user-visible sentence of a failed normalization pass — ONE wording, so the
+ * post-parts normalization, the re-normalization after a floor repair, the
+ * incremental classification and the entity panel's own belt all report it
+ * identically. Exported because the panel's belt is not a pass failure (it has
+ * no module-row write to ride `recordNormalizationFailure` for) yet must not
+ * carry a fourth copy of the sentence.
+ */
+export const NORMALIZATION_FAILURE_MESSAGE =
+  'Entity name normalization failed — retry from the entity panel';
+
+/**
  * The user-visible half of a failed normalization pass (the pass records the
  * gate state on the module row itself — `entityNamesNormalized: false` + the
  * error). ONE wording, so a repair run and a parts pass report it identically.
+ * Every normalization catch goes through THIS — never `toastError` with the
+ * sentence spelled out again (the three sites that did drifted: the
+ * classification catch was the one catch of the four with no cancel guard).
  */
 function recordNormalizationFailure(error: unknown): void {
-  toastError('Entity name normalization failed — retry from the entity panel', error);
+  toastError(NORMALIZATION_FAILURE_MESSAGE, error);
 }
 
 // --- Pass 1 — parts ----------------------------------------------------------
@@ -1996,7 +2010,7 @@ export async function normalizeModuleEntityNames(
     }
     const message = errorMessage(error);
     await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
-    toastError('Entity name normalization failed — retry from the entity panel', error);
+    recordNormalizationFailure(error);
     return;
   }
 
@@ -2069,12 +2083,24 @@ export function unclassifiedModuleNames(
  * Failure semantics are the full pass's, deliberately (never swallowed): the
  * error is recorded with `entityNamesNormalized: false` — which CLOSES the
  * batch gate (nothing is batchable-with-a-guess, no name is silently dropped)
- * — plus a toast, and the panel's Retry (the full pass) is the recovery.
+ * — plus a toast, and the panel's Retry (the full pass) is the recovery. A STOP
+ * is the exception, as in the full pass: a caller that passes a signal gets its
+ * abort propagated instead of a failure recorded against the user's own stop.
+ *
+ * `signal` is DEFENCE, not a live cure: neither caller passes one today (the
+ * panel's button and the resume sweep are user-driven, with no controller of
+ * their own), so nothing can abort this pass yet. It exists so that the one
+ * cancellation decision stays ONE decision (`isCancel`) the moment a caller
+ * does hold a controller, rather than a fourth copy of the wording plus a
+ * missing guard.
  *
  * Refuses to run when the row's names are not normalized: the records may be
  * stale for the whole text, and the full pass owns that state.
  */
-export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEntityClassification> {
+export async function classifyNewModuleEntityNames(
+  moduleId: Id,
+  signal?: AbortSignal,
+): Promise<NewEntityClassification> {
   const module = await requireModule(moduleId);
   if (!module.entityNamesNormalized) {
     throw new Error(
@@ -2120,12 +2146,26 @@ export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEnt
       settings.defaultChatModel,
       targets,
       artifactNames,
-      { canonicalNames: recordedNames },
+      // The pass's own signal, exactly like the full pass: a stop must abort
+      // this call too — it is the same model call, reached from a second entry
+      // point. Undefined for today's callers (see the doc above).
+      { canonicalNames: recordedNames, signal },
     );
   } catch (error) {
+    // A STOP is not a normalization failure — the sibling guard of the full
+    // pass, for the sibling reason: recording a failure + toasting would blame
+    // the user's stop on the model and close the batch gate over a pass that
+    // was simply interrupted (the abort propagates; the caller's cancel path
+    // owns the quiet rewind). Read through `isCancel`, the ONE cancel-vs-
+    // failure decision, and only when a signal exists: without one there is no
+    // `signal.aborted` source of truth, and the helper's error-type fallback
+    // would read a transport `AbortError` as a user stop. With a signal passed
+    // this IS the full pass's test (`signal.aborted`), so the two catches can
+    // never disagree about one stop.
+    if (signal !== undefined && isCancel(error, signal)) throw error;
     const message = errorMessage(error);
     await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
-    toastError('Entity name normalization failed — retry from the entity panel', error);
+    recordNormalizationFailure(error);
     return { classified: [], failed: true };
   }
 

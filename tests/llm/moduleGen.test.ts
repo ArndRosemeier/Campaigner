@@ -19,6 +19,7 @@ import {
   generateMissingParts,
   moduleGenEvents,
   ModuleBusyError,
+  NORMALIZATION_FAILURE_MESSAGE,
   normalizeModuleEntityNames,
   normalizePartMarkdown,
   parseSpine,
@@ -1335,6 +1336,55 @@ describe('incremental classification of names the text picked up later (08 §M4-
     // The no-op run (nothing unclassified) must not add a version row.
     await classifyNewModuleEntityNames(moduleId);
     expect(await listModuleVersions(moduleId)).toHaveLength(versionsBefore + 1);
+  }, 20000);
+
+  it('a STOP mid-pass is not a normalization failure: nothing recorded, no toast, the abort propagates', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    const controller = new AbortController();
+    // The user's Stop lands while the classification call is in flight: the
+    // pass's own signal aborts and the transport rejects with the platform's
+    // AbortError (openrouter's abortable sleep is its only producer).
+    chatMock.mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    });
+
+    await expect(classifyNewModuleEntityNames(moduleId, controller.signal)).rejects.toThrow();
+
+    // The signal reaches the pass's own CALL, not only the guard around it.
+    const carried = (chatMock.mock.calls[0]?.[1] as { signal?: AbortSignal } | undefined)?.signal;
+    expect(carried).toBe(controller.signal);
+    const after = await getModule(moduleId);
+    // A stop is not a failure (ledger rows 115–117, 119): the gate stays open,
+    // no error is recorded, and the failure sentence is never toasted — the
+    // quiet cancel path owns the rewind.
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('a genuine failure with a live signal still records and toasts the ONE shared sentence', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    // A controller that never aborts: nothing was stopped, so nothing is
+    // excused — the failure is recorded (gate closed) and surfaced.
+    const controller = new AbortController();
+    chatMock.mockRejectedValue(new Error('normalization provider down'));
+
+    const result = await classifyNewModuleEntityNames(moduleId, controller.signal);
+
+    expect(result).toEqual({ classified: [], failed: true });
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('normalization provider down');
+    expect(toastErrorMock).toHaveBeenCalledWith(NORMALIZATION_FAILURE_MESSAGE, expect.any(Error));
+    // The export IS the sentence the three verbatim pins above assert — one
+    // wording for the post-parts pass, the repair re-run, the classification
+    // and the panel's belt.
+    expect(NORMALIZATION_FAILURE_MESSAGE).toBe(
+      'Entity name normalization failed — retry from the entity panel',
+    );
   }, 20000);
 });
 
