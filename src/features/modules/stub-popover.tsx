@@ -173,12 +173,12 @@ export function StubPopover({
       );
       if (artifact === undefined) throw new Error(`the artifact "${canonicalArtifactName}" vanished`);
       const alias = name.trim();
-      const needsAlias =
-        alias.toLowerCase() !== artifact.name.trim().toLowerCase() &&
-        !artifact.aliases.some((existing) => existing.trim().toLowerCase() === alias.toLowerCase());
-      if (needsAlias) {
-        await artifactRepo.updateArtifact(artifact.id, { aliases: [...artifact.aliases, alias] });
-      }
+      // The ONE alias write path (`artifactRepo.addArtifactAliases` — the merge
+      // rule of `domain/artifactAlias`: trimmed, case-insensitive, never a
+      // duplicate, never the artifact's own name, and NO write at all when the
+      // pool already answers, which is the "needsAlias" guard this call
+      // replaces).
+      await artifactRepo.addArtifactAliases(artifact.id, [alias]);
       // LINKS hook: this module just referenced another scope's artifact by
       // alias-linking — a second-module use promotes it to shared campaign
       // ownership (no-op when already shared or own-module).

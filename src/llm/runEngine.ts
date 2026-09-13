@@ -29,6 +29,10 @@ import {
   moduleDocumentText,
   npcCreatureRef,
   spawnFirstPath,
+  // The ONE alias merge rule (docs/17 row 121): the three in-place writes below
+  // read it directly because their alias rides a combined content patch.
+  mergeAliasNames,
+  sameAliasName,
   abilityScoreFromModifier,
   drawFillGrade,
   newId,
@@ -5754,11 +5758,13 @@ export class RunEngine {
           );
         }
         const nextName = draftName.trim();
-        const nextAliases =
-          nextName.toLowerCase() === target.name.trim().toLowerCase() ||
-          target.aliases.some((alias) => alias.trim().toLowerCase() === nextName.toLowerCase())
-            ? target.aliases
-            : [...target.aliases, target.name];
+        // The name the row is about to carry was answerable a moment ago, so it
+        // stays answerable: it joins the pool through the ONE alias merge rule
+        // (`mergeAliasNames` — trimmed, case-insensitive, never a duplicate,
+        // never equal to the row's own new name). The alias rides THIS patch
+        // (name + prose + provenance are one revision), which is why the rule is
+        // called directly instead of through `artifactRepo.addArtifactAliases`.
+        const nextAliases = mergeAliasNames(target.aliases, [target.name], nextName);
         await updateArtifact(
           target.id,
           {
@@ -5780,24 +5786,22 @@ export class RunEngine {
       // The prose checkbox (two-button regeneration): ticked, the draft's
       // name REPLACES the target's (the old name becomes an alias, so links
       // keep resolving); unticked, the default name-preserving alias
-      // behavior holds — the Smith charter for singles is unchanged.
+      // behavior holds — the Smith charter for singles is unchanged. Both
+      // halves are the ONE alias merge rule: the renamed half first drops any
+      // alias that already spells the NEW name (the new name absorbs it), then
+      // merges the old name in; the name-preserving half merges the draft's
+      // name. Never a duplicate, never a self-name alias — and the alias rides
+      // the content patch below, so the rule is called directly rather than
+      // through `artifactRepo.addArtifactAliases`.
       const renamed = input.encounterRedesignName === true &&
-        modelAlias.toLowerCase() !== target.name.trim().toLowerCase();
+        !sameAliasName(modelAlias, target.name);
       const aliases = renamed
-        ? [
-          ...target.aliases.filter(
-            (alias) => alias.trim().toLowerCase() !== modelAlias.toLowerCase(),
-          ),
-          ...(target.aliases.some(
-            (alias) => alias.trim().toLowerCase() === target.name.trim().toLowerCase(),
+        ? mergeAliasNames(
+            target.aliases.filter((alias) => !sameAliasName(alias, modelAlias)),
+            [target.name],
+            modelAlias,
           )
-            ? []
-            : [target.name]),
-        ]
-        : modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
-            target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
-          ? target.aliases
-          : [...target.aliases, modelAlias];
+        : mergeAliasNames(target.aliases, [modelAlias], target.name);
       // In-place fill reconciliation (docs/11 D12; packing amended by the
       // fill-grade arc): `data.monsters` is the NEW roster while the
       // target's layout stays byte-identical — without re-partitioning,
@@ -5998,11 +6002,10 @@ export class RunEngine {
       // generation rides the retrieve step (targetModuleGrounding).
       if (input.persona.mode === 'generate' && target.kind === kind) {
         const modelAlias = draftName.trim();
-        const aliases =
-          modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
-          target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
-            ? target.aliases
-            : [...target.aliases, modelAlias];
+        // The model's invented name joins the pool through the ONE alias merge
+        // rule (trimmed, case-insensitive, never a duplicate, never equal to the
+        // row's own name) and rides the content patch below — one revision.
+        const aliases = mergeAliasNames(target.aliases, [modelAlias], target.name);
         await updateArtifact(
           target.id,
           {

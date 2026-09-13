@@ -89,6 +89,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | To do X | Use Y | NOT Z |
 |---|---|---|
 | Read/write artifacts | `artifactRepo` — every read zod-parses the row; a list feeding MODULE CREATION is narrowed first by `domain/artifact.moduleCreationPool` (the Party is excluded — `MODULE_CREATION_EXCLUDED_KINDS`, ledger 69, §2.2) | importing `db` and querying `db.artifacts` raw; passing a raw campaign list into a module-creation prompt, index or resolution set |
+| **Add a name to an artifact's alias pool — THE one way** (the pool `[[wiki links]]` resolve against: ledger 121) | `domain/artifactAlias.mergeAliasNames(existing, names, artifactName)` — the ONE comparison (`sameAliasName`: TRIMMED, case-insensitive) and the ONE merge rule: a name equal to the artifact's OWN name is NOT an alias (`resolveWikiLink` matches the name first, so it could never resolve), a duplicate is never stored (against the pool OR against an earlier name of the same batch), the accepted spelling is stored VERBATIM (the comparison trims, the row does not), and a merge that adds nothing returns the caller's list UNCHANGED — the same reference — so `merged === existing` is the "nothing to write" test. Persisting it is `artifactRepo.addArtifactAliases(id, names, meta)`: the row is read INSIDE its own `rw` tx over artifacts+revisions (the `stampModuleOwnership` shape, so a caller's stale snapshot cannot clobber a concurrent alias) and written as ONE revision, or `null` with NOTHING written when the pool already answers (a missing row throws). Callers whose alias rides a COMBINED content patch — the run engine's three in-place writes (`:5756`, `:5784`, `:6000` at base `276f41f`) and `entity-batch.alignEntityName`'s rename — call `mergeAliasNames` and put the result in their OWN patch: the write path is for an alias-only save, and a second write there would split one revision in two | a hand-rolled `aliases.some((a) => a.trim().toLowerCase() === …)` or `[...artifact.aliases, name]` anywhere (six copies had drifted into THREE comparison rules, one untrimmed — the reader duplicated an alias the batch skipped); writing a pool from a snapshot read outside the transaction; `[...artifact.aliases, …]` beside the seam. **Deliberate boundaries, not oversights:** `lib/wikilinks.ts` RESOLVES a link against the pool (a different question — folding it would tie resolution precedence to the merge rule), and `features/campaign/components/alias-editor.tsx` REJECTS a keystroke a person just typed (form feedback, no row write). One live divergence is recorded in §5 (`campaign-tree.tsx`) |
 | Change an artifact's scope (move / adopt / publish / BULK release) | `moveToModule` / `adoptIntoCampaign` / `publishToLibrary` and the bulk form `releaseModuleOwnership(rows, tx)` (`deleteModule`'s 'keep' branch) — all funnel through the private `moveScope`, one tx incl. image re-anchor; the bulk form runs `moveScope` per row INSIDE the caller's rw tx (`ScopeTx`) so every released row gets the same revision snapshot + `updatedAt` a single move writes | a patch carrying `campaignId`/`moduleId` — `updateArtifact` pins scope fields; a `table.modify({moduleId: null})` bulk write that skips the revision contract |
 | Promote an artifact on second-module use (link / roster / battle) | `db/artifactAutoPromote` — `promoteSecondModuleUses` (post-save text scans), `promoteRosterUses` (roster/seed/spawn hooks), `promoteArtifactForModuleUse[Loud]` (single-artifact) — every path funnels through `adoptIntoCampaign` → `moveScope` (no separate core state); the surface is a batched `toastSuccess` notice, never run-issue escalation | hooking render (`wiki-markdown` resolution stays pure); a second scope writer; silent promotion |
 | Give a generated artifact module ownership | `artifactRepo.stampModuleOwnership` (loud existence check inside the tx) | `updateArtifact` with `moduleId` |
@@ -1481,7 +1482,72 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      it — so the name is the contract, and it is pinned against the REAL class
      rather than left implicit) and logs the raw error to the console instead.
 
+- **Copies of a comparison rule drift into DIFFERENT rules before anyone
+  notices, and folding them back is INVISIBLE to every behavioural pin — so the
+  fold needs a source scan, and the scan is the pin that holds it** (ledger 121).
+  MEASURED on this slice, on a shared 8-core box with `CAMPAIGNER_TEST_WORKERS=2`,
+  one suite at a time. (1) **The drift.** "Add this name to an artifact's alias
+  pool, case-insensitively, without duplicating" was hand-rolled SIX times, and
+  the six copies implemented THREE different comparison rules: five compared
+  `trim().toLowerCase()`, `ModuleReaderPage.linkExisting` compared
+  `toLowerCase()` on both sides UNTRIMMED, and `moduleGen`'s variant filter
+  compared the stored pool trimmed but never against the artifact's own name at
+  all. The untrimmed one is the one with a live consequence: a stored alias
+  `"Kael "` (an imported row, a backup restore, an older writer) already answers
+  `[[Kael]]` — the RESOLVER trims, `wikilinks.ts:177` — so the reader appended a
+  duplicate `"Kael"` that `entity-batch.alignEntityName` skipped: one name, two
+  rows, and a pool whose spelling depended on which surface touched it last.
+  Every individual site looked correct on its own, which is exactly why six
+  copies survived an audit pass that was looking for them. (2) **A fold is
+  invisible to behaviour, so it cannot be pinned behaviourally.** Reverting ONE
+  of the six folds and re-running the suites that cover it: `runEngine`'s
+  encounter-refill site → **52 behavioural pins GREEN** (2 scan pins RED);
+  `runEngine`'s generate-persona site → **17 GREEN** (2 RED);
+  `moduleGen` → **91 GREEN** (2 RED); `stub-popover` → **34 GREEN** (2 RED);
+  `entity-batch.alignEntityName` → **7 GREEN** (2 RED). The fold is
+  byte-identical BY CONSTRUCTION — same value, same writes — so the only thing
+  that can see a half-done, partial or later-reverted fold is a scan of the
+  SOURCE, counted per file (`tests/features/alias-merge-seam.test.ts`, labelled
+  as a scan in its name and in this doc). The two folds that CAN be seen
+  behaviourally are the two that changed a rule: the reader's trim
+  (`module-reader.test.tsx`, its own RED) and the prose-only branch's
+  duplicate-append (`encounterRepopulate.test.ts`, its own RED). (3) **A brief
+  can promise a behaviour change that the code makes unreachable**, and the
+  honest answer is to measure it rather than to write a pin that cannot fail:
+  the expected "`moduleGen` stops writing a self-name alias" is impossible at
+  HEAD — the pass only records a variant when `canonicalKey !== nameKey`
+  (`moduleGen.ts:2221`) and finds the artifact BY that canonical key (`:2224`),
+  so the variant is structurally guaranteed ≠ the artifact's own name — the fold
+  there is byte-identical and the self-name rule is defence, pinned at the rule
+  and the write path instead. (4) **A surface that looks reachable may not be**:
+  the reader's untrimmed comparison is reachable ONLY through the stub popover's
+  editable Name field, because a name the resolver answers can never produce an
+  unresolved chip (the resolver trims) and the reader's resolution pool
+  (`useArtifacts` + library, `ModuleReaderPage.tsx:124`) is a SUPERSET of the
+  picker's (`useScopedArtifacts('moduleView')`) — so the UI pin drives that
+  route, and the row/ledger say so instead of implying a chip click was enough.
+  (5) **The audit missed a seventh copy** (`campaign-tree.tsx:313-317`), found by
+  the seam's own scan-shaped review rather than by the audit — recorded in §5.
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **A SEVENTH hand-rolled copy of the alias merge lives outside the
+  `domain/artifactAlias` seam** (ledger 121, finding (c)):
+  `features/campaign/components/campaign-tree.tsx:313-317`, the rename dialog's
+  "add the old name as an alias" path. It compares UNTRIMMED on both sides
+  (`target.aliases.some((alias) => alias.toLowerCase() === target.name.toLowerCase())`,
+  `withOldName.filter((alias) => alias.toLowerCase() !== name.toLowerCase())`)
+  and hand-appends its pool, so a row whose alias differs from the old name only
+  by surrounding whitespace gets the old name written TWICE, and renaming onto a
+  name the row already spells inside its own pool keeps a redundant alias. It was
+  left UNFOLDED on purpose: folding it is a THIRD behaviour change and the slice
+  was told to report rather than smuggle (the audit counted six sites; this is
+  the seventh, found by the seam review). The scan in
+  `tests/features/alias-merge-seam.test.ts` records it as a documented carve-out
+  (`BOUNDARIES`), so folding it later cannot turn the pin red. Folding it is one
+  import plus this four-line patch — `const kept = target.aliases.filter((alias)
+  => !sameAliasName(alias, name));` then `const aliases = renameKeepAlias ?
+  mergeAliasNames(kept, [target.name], name) : kept;` — and its own pins
+  (`tests/features/campaign-tree-rename.test.tsx`, 5) stay green either way.
 - **A FOURTH copy of the blocked-control sentence lives outside the
   module-busy seam** (ledger 120): `features/modules/entity-panel.tsx`'s
   `generateAllBlockedReason` returns `'The module is generating right now — wait

@@ -44,7 +44,7 @@ import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/
 // through `db/creatureRepo.castCreatureAsNpc`, the ONE cast function
 // (docs/18 §2.2).
 import { collectCreatorRoster } from '@/llm/creatorRoster';
-import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { addArtifactAliases, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -2228,15 +2228,14 @@ async function applyNormalizationVerdict(
   }
 
   // Aliases make future hand-written variant links resolve on their own
-  // (campaign-wide), so no further text rewriting ever happens.
+  // (campaign-wide), so no further text rewriting ever happens. ONE write per
+  // artifact through the alias seam (`artifactRepo.addArtifactAliases` — the ONE
+  // merge rule: trimmed, case-insensitive, never a duplicate, never a name equal
+  // to the artifact's own name) and ONE write only when something is actually
+  // added: the helper returns `null` on a pool that already answered, where the
+  // hand-rolled version here wrote a revision that changed nothing.
   for (const [artifactId, variants] of aliasAdditions) {
-    const artifact = artifacts.find((candidate) => candidate.id === artifactId);
-    if (artifact === undefined) continue;
-    const additions = variants.filter(
-      (variant) => !artifact.aliases.some((alias) => alias.trim().toLowerCase() === variant.toLowerCase()),
-    );
-    if (additions.length === 0) continue;
-    await updateArtifact(artifactId, { aliases: [...artifact.aliases, ...additions] });
+    await addArtifactAliases(artifactId, variants);
   }
 
   // CONSENT (fix-01, re-based on AUTHORSHIP by docs/17 row 113): a rewrite is

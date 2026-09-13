@@ -22,6 +22,7 @@ import {
   MAX_REVISIONS_PER_ARTIFACT,
   globalArtifactKindSchema,
   globalArtifactSchema,
+  mergeAliasNames,
 } from '@/domain';
 import type { Table } from 'dexie';
 
@@ -174,6 +175,47 @@ export async function updateArtifact(
     if (next.kind !== current.kind) {
       throw new Error('An artifact update may not change its kind.');
     }
+    await writeRevision(next, meta);
+    return next;
+  });
+}
+
+/**
+ * Add names to an artifact's alias pool — the ONE write path for the alias
+ * merge (docs/17 row 121, docs/18 §2.1). The rule itself is
+ * `domain/artifactAlias.mergeAliasNames` (trimmed, case-insensitive, never a
+ * duplicate, never a name equal to the artifact's own name); this function owns
+ * PERSISTING its answer.
+ *
+ * The row is read INSIDE this transaction — the shape of the neighbouring row
+ * writers (`stampModuleOwnership`) — so a caller's stale snapshot can never
+ * clobber an alias another writer added in between, and the merged pool is one
+ * revisioned save with one `updatedAt`. Returns the written row, or `null` when
+ * the pool already answered: a `null` means NOTHING WAS WRITTEN, not a failure
+ * (the row is guaranteed to exist — a missing row throws `NotFoundError`).
+ *
+ * Callers that must land the alias in the SAME revision as other fields — the
+ * run engine's combined content patches, `entity-batch.alignEntityName`'s
+ * rename — call `mergeAliasNames` directly and put the result in their own
+ * patch: a second write there would split one save into two revisions and
+ * leave the alias on the row when the content write fails.
+ */
+export async function addArtifactAliases(
+  id: Id,
+  names: readonly string[],
+  meta: RevisionMeta = USER_SAVE,
+): Promise<AnyArtifact | null> {
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const current = await db.artifacts.get(id);
+    if (current === undefined) throw new NotFoundError('Artifact', id);
+    const aliases = mergeAliasNames(current.aliases, names, current.name);
+    if (aliases === current.aliases) return null;
+    const next = anyArtifactSchema.parse({
+      ...current,
+      aliases,
+      currentRevision: current.currentRevision + 1,
+      updatedAt: Date.now(),
+    });
     await writeRevision(next, meta);
     return next;
   });

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { artifactPath, battlePath, modulePath } from '@/app/routes';
-import { createArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -22,6 +22,8 @@ import {
   type Module,
   type ModuleEntityKind,
   type TextOrigin,
+  mergeAliasNames,
+  sameAliasName,
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
@@ -791,6 +793,65 @@ describe('ModuleReaderPage', () => {
       () => {
         expect(screen.queryByTestId('stub-popover')).not.toBeInTheDocument();
         expect(screen.queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('does not duplicate an alias that differs only by surrounding whitespace — the reader and the merge AGREE (docs/17 row 121)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    // The canonical row already ANSWERS the name with an alias that carries a
+    // trailing space: `"Kael the Bold "`. The reader's own untrimmed comparison
+    // read that as a DIFFERENT name and appended a duplicate `"Kael the Bold"`,
+    // while the batch path (`entity-batch.alignEntityName`) compared trimmed and
+    // skipped it. Both now ask `domain/artifactAlias`.
+    const canonical = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Warden Bellamy',
+      summary: 'The tower keeper.',
+      aliases: ['Kael the Bold '],
+    });
+    classifyEntityNameMock.mockResolvedValue({ kind: 'npc', canonical: 'Warden Bellamy' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    await user.click(chip);
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+    // The popover's NAME field is the reader's link name (its own editable
+    // state, `stub-popover.tsx:94`, read by `onLinkExisting(name.trim())`).
+    // MEASURED, and the reason this pin edits it: a name the resolver already
+    // answers can never reach this path — the resolver trims AND its pool
+    // (`useArtifacts` + library, `ModuleReaderPage:124`) is a superset of the
+    // picker's (`useScopedArtifacts('moduleView')`) — so the duplicate the
+    // untrimmed comparison produced is reachable only with a name typed here.
+    const nameField = within(popover).getByLabelText('Name');
+    await user.clear(nameField);
+    await user.type(nameField, 'Kael the Bold');
+    // The reader's OTHER alias path (not the verdict's alias-linking): the
+    // explicit "Use existing entity…" picker.
+    await user.click(within(popover).getByRole('button', { name: /Use existing entity/ }));
+
+    await user.type(
+      await screen.findByTestId('quickfind-input', {}, { timeout: 5_000 }),
+      'Warden',
+    );
+    await user.click(await screen.findByTestId('quickfind-artifact', {}, { timeout: 5_000 }));
+
+    await waitFor(
+      async () => {
+        const after = await getArtifact(canonical.id);
+        // EXACTLY ONE alias answers this name (the stored "Kael the Bold "),
+        // and the pool is what the shared merge rule produces for the same
+        // input — one rule, two surfaces, nothing left to drift.
+        expect(after?.aliases.filter((alias) => sameAliasName(alias, 'Kael the Bold'))).toEqual([
+          'Kael the Bold ',
+        ]);
+        expect(after?.aliases).toEqual(
+          mergeAliasNames(['Kael the Bold '], ['Kael the Bold'], 'Warden Bellamy'),
+        );
       },
       { timeout: 10_000 },
     );

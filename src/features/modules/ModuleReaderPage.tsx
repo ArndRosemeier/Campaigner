@@ -279,9 +279,12 @@ export function ModuleReaderPage(): JSX.Element {
     if (name === null) return;
     setLinkTargetName(null);
     try {
-      if (!artifact.aliases.some((alias) => alias.toLowerCase() === name.toLowerCase())) {
-        await artifactRepo.updateArtifact(artifact.id, { aliases: [...artifact.aliases, name] });
-      }
+      // The ONE alias write path (`artifactRepo.addArtifactAliases`): the merge
+      // rule lives in `domain/artifactAlias` and compares TRIMMED, so an
+      // existing alias spelled `"Kael "` no longer gets a duplicate `"Kael"`
+      // appended here while `entity-batch.alignEntityName` skipped it — the two
+      // surfaces now agree, and a pool that already answers writes nothing.
+      await artifactRepo.addArtifactAliases(artifact.id, [name]);
       toastSuccess(`“${name}” now resolves to ${artifact.name}`);
     } catch (error) {
       toastError('Could not use the existing entity', error);

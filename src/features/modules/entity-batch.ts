@@ -1,5 +1,5 @@
 import type { Campaign, EntityBestiarySlot, Id, Module } from '@/domain';
-import { bestiarySlotForEntity, moduleDocumentText, moduleTagFor } from '@/domain';
+import { bestiarySlotForEntity, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -92,13 +92,17 @@ export async function alignEntityName(artifactId: Id, entityName: string): Promi
   if (isCastCreatureNpc(artifact)) {
     throw new Error(castCreatureWriteRefusal(artifact.name, entityName));
   }
-  if (artifact.name.trim().toLowerCase() === entityName.trim().toLowerCase()) return;
+  if (sameAliasName(artifact.name, entityName)) return;
   const modelName = artifact.name;
-  const aliases = artifact.aliases.some(
-    (alias) => alias.trim().toLowerCase() === modelName.trim().toLowerCase(),
-  )
-    ? artifact.aliases
-    : [...artifact.aliases, modelName];
+  // The "is the old name already an alias?" question is the MERGE's own
+  // dedupe (docs/17 row 121): the comparison lives in `domain/artifactAlias`
+  // and is never re-stated here — a hand-rolled `alias.trim().toLowerCase()`
+  // beside it is exactly how the reader drifted into an untrimmed one. The
+  // merge result rides the RENAME patch below (one revision: name + aliases),
+  // so this uses the shared RULE rather than `artifactRepo.addArtifactAliases`.
+  // Which artifact a name BELONGS to (`libraryCitationForEntity`, the creature
+  // lookup above) is a different question and stays out of the seam.
+  const aliases = mergeAliasNames(artifact.aliases, [modelName], entityName);
   await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
 }
 

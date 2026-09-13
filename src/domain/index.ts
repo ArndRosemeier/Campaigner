@@ -3,6 +3,7 @@
  * `/src/domain` — features never define their own copies of entity types.
  */
 export * from '@/domain/artifact';
+export * from '@/domain/artifactAlias';
 export * from '@/domain/artifactRevision';
 export * from '@/domain/battle';
 export * from '@/domain/campaign';

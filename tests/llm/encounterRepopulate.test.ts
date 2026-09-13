@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getAnyArtifact, getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
@@ -520,6 +520,47 @@ describe('prose checkbox (prose-only redesign)', () => {
       ['Goblin Boss|2', 'Goblin Boss|2', 'Goblin Boss|2', 'Goblin Boss|2'],
     );
     expect(JSON.stringify(beforeMonsters)).not.toBe(JSON.stringify(after.data.monsters));
+  });
+
+  it('renames without writing the old name TWICE when the pool already carries it (docs/17 row 121)', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedComplexTarget(campaign.id, goblinChunkId);
+    // The pool already spells the row's OWN current name (an imported row, or
+    // one the reader's old self-name append left behind). The hand-rolled guard
+    // on this path asked whether the pool answered the NEW name and then
+    // appended the OLD one unconditionally — so it wrote "Old Undercroft" a
+    // second time, and one name became two rows in the alias editor. The ONE
+    // merge rule dedupes against the pool it is appending to.
+    await updateArtifact(target.id, { aliases: ['Old Undercroft'] });
+
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(REPOPULATE_BRIEF), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({
+        text: JSON.stringify(smithDraft({
+          name: 'The Ash Redoubt',
+          summary: 'A renamed crypt.',
+          body: '# The Ash Redoubt\nRedesigned prose.',
+          monsters: [0, 1, 2, 3].map((index) => ({
+            name: 'Goblin Boss',
+            count: 2,
+            notes: ['entry guards', 'ossuary pack', 'ritual circle', 'sanctum guard'][index] ?? '',
+            treasure: '',
+            statBlock: INLINE_STATBLOCK,
+          })),
+        })),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    await repopulateEncounter(target.id, { redesignProse: true });
+
+    const after = await getArtifact(target.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.name).toBe('The Ash Redoubt');
+    // Once — the old name still answers every `[[Old Undercroft]]`, and it is
+    // not written a second time.
+    expect(after.aliases).toEqual(['Old Undercroft']);
   });
 
   it('OFF keeps name and prose (covered above) — and a prose reply that rewrites monsters fails loud with nothing persisted', async () => {
