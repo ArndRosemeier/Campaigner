@@ -84,6 +84,14 @@ of ours (real near-miss: a `—` pasted as `?` was read as a PDF font failure an
 nearly cost a slice chasing an encoding bug that does not exist, while the real
 signal sat in the same quote).
 
+The mechanism, owner-described (verbatim substance): DSH runs inside a grokbot
+instance in the cloud; the owner has remote access to its virtual screen, and
+text he copies travels through a translation layer into the grok VM **which
+mangles umlauts** on the way. So the mangling is produced before anything of
+ours sees the text. The distinction that decides work: a mangled character in
+the PASTE is the transport; a mangled character he SEES ON SCREEN in the app or
+in a generated PDF is ours, and worth a slice.
+
 Diagnose a genuine encoding or rendering problem only from evidence that is not
 the paste: what the owner says he SEES ON SCREEN (one line asking that settles
 it when the distinction decides the work), or a rendered artifact we can inspect
@@ -204,6 +212,22 @@ pull --rebase` refuse mid-landing — real incident: a writer had to verify
 `behind=0` and push `HEAD:main` directly because the dispatcher's edit sat
 unstaged in `AGENTS.md`. Stage, commit and push dispatcher edits in ONE
 chained command, and never leave one uncommitted while a writer is gating.
+
+## The environment this runs in (owner-described)
+
+- **The box is a grokbot instance in the cloud**, and grokbot is its admin while
+  the owner works through a remote view of its virtual screen. **Another agent
+  is therefore active on the same box and the same user account** — it can run
+  suites (a six-worker `vitest` run was caught this way), so a suite you did not
+  start is not yours: identify ownership by `/proc/<pid>/cwd`, reap only your
+  own, and WAIT for the rest (§Host hygiene 7).
+- **A push to `main` DEPLOYS** (GitHub to the owner's own server), and he then
+  tests it in Chrome on Windows. So `main` is not a staging area: a red or
+  half-finished landing is user-visible within minutes of the push, which is why
+  the gate runs before every push and why an unverified landing is never
+  "probably fine".
+- Starving this box does not merely slow a build — it costs the owner his
+  remote screen and can kill the harness itself (§Host hygiene 7).
 
 ## Host hygiene (load discipline)
 
