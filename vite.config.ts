@@ -128,6 +128,18 @@ export default defineConfig(({ mode }) => {
       // testMaxWorkers above). The CLI flag does NOT work here, and this value
       // is repeated in each project for that reason.
       maxWorkers,
+      // HARD per-worker heap cap. Owner directive (verbatim): "please make sure
+      // that you restrict the mem use to not more than 4gb or so since you are
+      // not the only worker here." This bounds each worker's V8 heap; it cannot
+      // bound OFF-heap memory (pdfjs holds ArrayBuffers), which is why the gate
+      // also runs in CHUNKS under a watchdog (scripts/gate.sh, AGENTS §Host
+      // hygiene 7). Together: no single gate run is allowed to approach the
+      // box's capacity, and a run that does is killed rather than allowed to
+      // take dsh with it.
+      poolOptions: {
+        forks: { execArgv: ['--max-old-space-size=1536'] },
+        threads: { execArgv: ['--max-old-space-size=1536'] },
+      },
       testTimeout: 20_000,
       projects: [
         {
