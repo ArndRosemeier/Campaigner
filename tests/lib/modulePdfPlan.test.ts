@@ -796,8 +796,16 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // and adds the own-page pointers — so the definition is bigger and the
     // BYTE-IDENTITY above is what this pin is actually about. UPDATED AGAIN by
     // docs/17 row 151 (6973 → 8095): §7's `Referenced from:` line, and the
-    // internal link on every wiki-link of the module's own text.
-    expect(first.length).toBe(8095);
+    // internal link on every wiki-link of the module's own text. UPDATED AGAIN
+    // by docs/17 row 156 (8095 → 8131): the cover, the Contents page and the
+    // treasure-ledger page are page nodes from the paginator now instead of
+    // loose top-level nodes, and each of those three costs exactly its
+    // `{"stack":[…]}` wrapper — measured on the small fixture (5235 → 5259),
+    // where two of the three are present, because the Contents page's own
+    // `pageBreak` merely MOVES from the heading node onto its page node. No
+    // text run moves: the differential in `tests/lib/pdfLayout.test.ts` is
+    // untouched by row 156 and the rendered pages are byte-identical.
+    expect(first.length).toBe(8131);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {

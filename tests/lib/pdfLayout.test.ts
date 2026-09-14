@@ -6,15 +6,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/db';
 import { buildModuleDefinition, buildModulePdfDocument } from '@/lib/modulePdf';
+import { generatePdfBlob } from '@/lib/pdfExport';
+import { copyBytes, openPdfDocument } from '@/lib/pdfRuntime';
 import {
   COLUMN_GUTTER,
   DETAIL_FONT_SIZE,
   MAIN_COLUMN_WIDTH,
+  PAGE_CONTENT_HEIGHT,
   PAGE_MARGIN,
   SIDEBAR_COLUMN_WIDTH,
   detailPlacement,
   earlierDetailNote,
+  estimateHeight,
   paginateDocument,
+  type MeasureContext,
   type PageBlock,
 } from '@/lib/pdfPageModel';
 import { clearDatabase } from '../db/helpers';
@@ -61,6 +66,17 @@ import {
  * 5. **§7 NAVIGATION and the owner's §10.1 sidebar answer** (docs/17 row 151) —
  *    the links, the back-references, and "a companion prints once, later
  *    references link back", each pinned in BOTH directions.
+ * 6. **THE CONTENTS PAGE'S PAGE NUMBERS, on the RENDERED document** (docs/17
+ *    row 156, docs/19 §7's second bullet) — the ToC's numbers are pdfmake's own
+ *    page references, so this is the first pin in the repo that opens the PDF
+ *    the export actually produces (pdfjs), reads each page's text layer back,
+ *    and requires the number the Contents prints to BE the page that section
+ *    lands on. A definition-level pin cannot see a page number at all: the
+ *    entries and their numbers do not exist until pdfmake lays the document out
+ *    (`pdfmake/js/DocMeasure.js` → `measureToc`), which is why two earlier
+ *    slices could not tell whether the numbers were real. This one can, and it
+ *    does not re-derive pdfmake's rule: the expected page is read off the
+ *    rendered page that carries the section's heading at its own type size.
  */
 
 interface Baseline {
@@ -942,3 +958,326 @@ describe('§10.1 the sidebar answer — a companion prints ONCE, later reference
     expect(runs.filter((run) => run === pointer)).toEqual([pointer]);
   });
 });
+
+// --- 9. §7’s Contents page, on the RENDERED document --------------------------
+
+/**
+ * THE PDF, READ BACK (docs/17 row 156, docs/19 §7's second bullet).
+ *
+ * Every pin below is about a page a reader holds, not about a definition:
+ * `generatePdfBlob` produces the document the export produces, pdfjs opens it,
+ * and each page's text layer is read item by item. An item carries its own
+ * string AND its own rendered type size (`height`), which is the whole reason
+ * this is possible: it lets a section's HEADING be told apart from the same
+ * name mentioned in the prose (11 pt) or shouted in a pointer sentence (8 pt).
+ *
+ * WHY IT HAD TO BE DONE HERE. The Contents entries and their page numbers do
+ * not exist in the definition at all — pdfmake builds them while it lays the
+ * document out (`pdfmake/js/DocMeasure.js` → `measureToc` reads the `tocItem`
+ * nodes and fills the page-number cells with page references). A
+ * definition-level suite can therefore see the `toc` node and the `tocItem`
+ * markers and still not know whether a single number prints, let alone whether
+ * it is the right one — which is exactly the gap docs/17 rows 148 and 151
+ * described as "the ToC still prints without page numbers".
+ */
+interface RenderedItem {
+  readonly text: string;
+  readonly size: number;
+}
+
+interface RenderedDocument {
+  /** Every page's text items, in reading order, empty runs dropped. */
+  readonly pages: readonly (readonly RenderedItem[])[];
+  /** Every page's internal link DESTINATIONS, in the PDF's own order. */
+  readonly linkDests: readonly (readonly string[])[];
+}
+
+/** Render a definition and read the whole document back through pdfjs. */
+async function render(document: Parameters<typeof generatePdfBlob>[0]): Promise<RenderedDocument> {
+  const blob = await generatePdfBlob(document);
+  const bytes = copyBytes(new Uint8Array(await blob.arrayBuffer()));
+  const { doc, destroy } = await openPdfDocument(bytes);
+  try {
+    const pages: RenderedItem[][] = [];
+    const linkDests: string[][] = [];
+    for (let page = 1; page <= doc.numPages; page += 1) {
+      const proxy = await doc.getPage(page);
+      const content = await proxy.getTextContent();
+      pages.push(
+        content.items
+          .map((item) => ('str' in item ? { text: item.str, size: Math.round(item.height) } : null))
+          .filter((item): item is RenderedItem => item !== null)
+          .filter((item) => item.text.trim() !== ''),
+      );
+      linkDests.push(
+        (await proxy.getAnnotations())
+          .map((annotation) => {
+            const dest = (annotation as { dest?: unknown }).dest;
+            if (typeof dest === 'string') return dest;
+            const ref = Array.isArray(dest) ? (dest[0] as unknown) : undefined;
+            const name = (ref as { name?: unknown } | undefined)?.name;
+            return typeof name === 'string' ? name : '';
+          })
+          .filter((dest) => dest !== ''),
+      );
+    }
+    return { pages, linkDests };
+  } finally {
+    await destroy();
+  }
+}
+
+/**
+ * The sections the Contents lists, READ OFF THE DEFINITION: the text of every
+ * `tocItem` node, its own `id`, and the type size its own style gives it. The
+ * size is not hardcoded here — it comes from the document's ONE style
+ * dictionary, the same one the paginator measures with.
+ */
+function contentsEntries(
+  definition: { content: unknown; styles?: unknown },
+  node: unknown = definition.content,
+  out: { text: string; id: string; size: number }[] = [],
+): { text: string; id: string; size: number }[] {
+  if (Array.isArray(node)) {
+    for (const child of node) contentsEntries(definition, child, out);
+    return out;
+  }
+  if (typeof node !== 'object' || node === null) return out;
+  const record = node as Json;
+  if (record.tocItem !== undefined) {
+    const styles = (definition.styles ?? {}) as Record<string, { fontSize?: number }>;
+    const style = typeof record.style === 'string' ? styles[record.style] : undefined;
+    const size = style?.fontSize;
+    if (typeof record.text !== 'string' || typeof record.id !== 'string' || size === undefined) {
+      throw new Error(`a listed section is missing its own text, id or type size: ${json(record)}`);
+    }
+    out.push({ text: record.text, id: record.id, size });
+  }
+  for (const value of Object.values(record)) contentsEntries(definition, value, out);
+  return out;
+}
+
+/** The 1-based page of the Contents: the page node carrying its heading — the
+ * page a reader reads the list off, which is the page these pins measure. */
+function contentsPageNumber(definition: { content: unknown }): number {
+  const index = pages(definition).findIndex((page) =>
+    json(page).includes('"text":"Contents","style":"part"'),
+  );
+  if (index === -1) throw new Error('the document carries no Contents page');
+  return index + 1;
+}
+
+/**
+ * The page a section's heading ACTUALLY printed on, read from the rendered
+ * document: the first page — never the Contents page itself — that carries the
+ * heading's own text at the heading's own type size. The size is what
+ * distinguishes the heading from the same name in the prose.
+ */
+function sectionPage(
+  rendered: RenderedDocument,
+  entry: { text: string; size: number },
+  contentsPage: number,
+): number {
+  for (const [index, items] of rendered.pages.entries()) {
+    const page = index + 1;
+    if (page === contentsPage) continue;
+    if (items.some((item) => item.text === entry.text && item.size === entry.size)) return page;
+  }
+  throw new Error(`“${entry.text}” (${String(entry.size)} pt) prints on no page`);
+}
+
+/**
+ * The Contents page decoded: every (label, number) pair the reader sees, in the
+ * order it prints. A number cell is the ONLY pure-digit item on that page (the
+ * footer is one run, `Beneath the Docks · 2`), and it follows its label.
+ */
+function printedContents(items: readonly RenderedItem[]): { label: string; number: number }[] {
+  const out: { label: string; number: number }[] = [];
+  for (let index = 1; index < items.length; index += 1) {
+    const item = items[index];
+    const label = items[index - 1];
+    if (item === undefined || label === undefined) continue;
+    if (!/^\d+$/.test(item.text)) continue;
+    if (label.text.trim() === '' || /^\d+$/.test(label.text)) continue;
+    out.push({ label: label.text, number: Number(item.text) });
+  }
+  return out;
+}
+
+describe('§7 the Contents page’s numbers ARE the pages (docs/17 row 156)', () => {
+  beforeEach(clearDatabase);
+
+  it('prints, for every section of all three documents, the page that section really lands on', async () => {
+    const built = await documents();
+    const measured: Record<string, string[]> = {};
+    // The locator's discrimination, collected across the three documents: a
+    // heading is found by its own text AT ITS OWN TYPE SIZE, so a listed section
+    // must never print at the body size the prose around it uses — and the
+    // documents must between them use more than one heading size (checked after
+    // the loop), or the size clause would be doing no work.
+    const headingSizes = new Set<number>();
+    for (const [name, definition] of Object.entries(built)) {
+      const entries = contentsEntries(definition);
+      const bodySize = (definition.defaultStyle as { fontSize?: number } | undefined)?.fontSize;
+      // NON-VACUITY: the document lists real sections, and the Contents is the
+      // SECOND page — the cover is first, and the whole comparison below is off
+      // if the Contents page is not the page we read it from.
+      expect(entries.length).toBeGreaterThan(3);
+      expect(bodySize).toBeDefined();
+      for (const entry of entries) {
+        headingSizes.add(entry.size);
+        expect({ section: entry.text, size: entry.size }).not.toEqual({
+          section: entry.text,
+          size: bodySize,
+        });
+      }
+      const contentsPage = contentsPageNumber(definition);
+      expect(contentsPage).toBe(2);
+
+      const rendered = await render(definition);
+      const printed = printedContents(rendered.pages[contentsPage - 1] ?? []);
+      // The Contents lists exactly the document's sections, once each and in
+      // the document's own order: a missing entry, an extra one, a reordering
+      // and a page number invented for a section that does not exist each fail
+      // here. This is also the pin a TOC WITHOUT ENTRIES cannot pass.
+      expect(printed.map((entry) => entry.label)).toEqual(entries.map((entry) => entry.text));
+      for (const [index, entry] of entries.entries()) {
+        const row = printed[index];
+        if (row === undefined) throw new Error(`${name}: no printed row for “${entry.text}”`);
+        const real = sectionPage(rendered, entry, contentsPage);
+        measured[name] = [...(measured[name] ?? []), `${entry.text}=${String(row.number)}`];
+        // THE PIN: the number the reader sees, against the page the heading is
+        // actually printed on. A guessed or off-by-one number is exactly what
+        // this line catches, and pdfmake's own number is the only thing that
+        // can pass it.
+        expect({ section: entry.text, page: row.number }).toEqual({ section: entry.text, page: real });
+      }
+      // …and the numbers really are page numbers: several distinct values, none
+      // of them inside the front matter the Contents itself sits in.
+      const numbers = printed.map((entry) => entry.number);
+      expect(new Set(numbers).size).toBeGreaterThan(1);
+      expect(Math.min(...numbers)).toBeGreaterThan(contentsPage);
+    }
+    expect(headingSizes.size).toBeGreaterThan(1);
+    // The measured numbers, stated: if a layout change moves a section, the
+    // assertion above tells the two documents apart and this records what the
+    // fixtures' Contents pages said, on the rendered page.
+    expect(measured).toEqual({
+      'large-procedural': [
+        'Premise=3', 'Part plan=4', 'The Dockyards=5', 'The Vault=6', 'Locations=7',
+        'Old Tower=8', 'Events=9', 'The Turning=10', 'Encounters=11', 'Pier Ambush=12',
+        'Factions=14', 'The Tide Wardens=14', 'Party=15', 'Marek=15', 'Plot arcs=16',
+        'The Drowned Crown=16', 'Notes=17', 'GM cheat sheet=17', 'NPC Gallery=18',
+        'Vexra=18', 'Treasure=19',
+      ],
+      'large-planned': [
+        'Before the Gate=3', 'The Dockyards=3', 'The Old Tower=4', 'Vexra at the Gate=5',
+        'Ambush on the Pier=6', 'What the Crown Wants=8', 'Treasure=9',
+      ],
+      'small-procedural': [
+        'Premise=3', 'Part plan=4', 'The Crossing=5', 'Locations=6', 'The Quiet Ford=6',
+        'NPC Gallery=7', 'The Ferryman=7',
+      ],
+    });
+  });
+
+  it('links each entry to the section’s OWN destination — the identity §7’s link seam already uses', async () => {
+    const built = await documents();
+    for (const [name, definition] of Object.entries(built)) {
+      const entries = contentsEntries(definition);
+      const contentsPage = contentsPageNumber(definition);
+      const rendered = await render(definition);
+      // pdfmake fills each entry's label AND number with
+      // `linkToDestination: getNodeId(node)` (`DocMeasure.measureToc`), i.e.
+      // the section node's own `id` — the same destination §7's wiki-link seam
+      // (`mdToPdfmake` → `destinationFor`) sends a reader to. So the Contents
+      // needs no link rule of its own, and this reads the links out of the
+      // rendered PDF, not out of the definition.
+      const dests = rendered.linkDests[contentsPage - 1] ?? [];
+      expect(dests.length).toBeGreaterThan(0);
+      const order: string[] = [];
+      for (const dest of dests) if (order[order.length - 1] !== dest) order.push(dest);
+      expect(`${name}:${order.join(',')}`).toBe(
+        `${name}:${entries.map((entry) => entry.id).join(',')}`,
+      );
+    }
+  });
+
+  it('is a page the page model measured and emitted, like every other page', async () => {
+    const built = await documents();
+    for (const [name, definition] of Object.entries(built)) {
+      const nodes = pages(definition);
+      // EVERY page of the document is a page node the paginator produced: one
+      // `stack` (a page with no companion) or one `columns` (a page with a
+      // sidebar), and only the FIRST carries no break — a `pageBreak` on the
+      // document's first node makes pdfmake print an empty page in front of the
+      // cover. A second, hand-placed page is what this forbids.
+      expect(nodes.length).toBeGreaterThan(3);
+      for (const [index, node] of nodes.entries()) {
+        expect(Array.isArray(node.stack) || Array.isArray(node.columns)).toBe(true);
+        expect(node.pageBreak).toBe(index > 0 ? 'before' : undefined);
+      }
+      // The Contents is ONE of those pages: its heading carries no break of its
+      // own (the page owns the break), and it holds the ToC node.
+      const tocPage = nodes[contentsPageNumber(definition) - 1];
+      if (tocPage === undefined) throw new Error(`${name}: no Contents page`);
+      expect(json(tocPage)).toContain('"toc":{"id":"chapters"');
+      expect(json(tocPage)).not.toContain('"text":"Contents","style":"part","pageBreak"');
+      // MEASURED, and the reason it keeps a page to itself: the paginator
+      // reserves a full page for a ToC (`estimateHeight`'s `toc` branch), so no
+      // section can share the page its own Contents sits on.
+      const context: MeasureContext = {
+        width: MAIN_COLUMN_WIDTH,
+        fontSize: 11,
+        lineHeight: 1.35,
+        styles: (definition.styles ?? {}),
+      };
+      expect(estimateHeight({ toc: { id: 'chapters' } }, context)).toBe(PAGE_CONTENT_HEIGHT);
+      expect(json(tocPage)).not.toContain('"text":"Premise","style":"chapter"');
+    }
+  });
+
+  it('prints the same numbers for the same document twice (the clock is pinned, not the ambient one)', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const input = {
+      module: large.module,
+      artifacts: large.artifacts,
+      images: large.images,
+      compiledAt: BASELINE_COMPILED_AT,
+      ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
+    };
+    // docs/17 row 154's pin: the compared document is a document with a KNOWN
+    // compile day, so the page breaks (and therefore every number in the
+    // Contents) cannot depend on when the suite runs.
+    const first = buildModuleDefinition(input);
+    const second = buildModuleDefinition({ ...input });
+    const contentsOf = (definition: { content: unknown }): string =>
+      json(pages(definition)[contentsPageNumber(definition) - 1]);
+    expect(contentsOf(second)).toBe(contentsOf(first));
+    const rendered = await render(first);
+    const page = contentsPageNumber(first);
+    expect(printedContents(rendered.pages[page - 1] ?? []).map((entry) => entry.number)).toEqual(
+      printedContents((await render(second)).pages[page - 1] ?? []).map((entry) => entry.number),
+    );
+  });
+});
+
+/**
+ * WHAT THESE PINS STILL CANNOT PROVE (docs/17 row 156), so nobody reads more
+ * into them than they carry:
+ *
+ * - **that a click on an entry MOVES the reader.** The annotations are read out
+ *   of the PDF (`dest` names the section's own `id`), which is the condition a
+ *   viewer needs — but whether THIS viewer follows an internal destination is
+ *   the viewer's behaviour, not the file's, and no test can press the link.
+ * - **that the Contents page LOOKS right.** Nothing here says anything about
+ *   the visual hierarchy: that the entries are legible, that the page reads as
+ *   a Contents page, or — the one a reader will notice first — that the word
+ *   “Contents” prints TWICE above the list (a heading node and the ToC's own
+ *   title, both since the ToC node landed; removing one would drop a text run
+ *   the content-preservation differential pins, which is why row 156 left it
+ *   alone rather than quietly changing what the document prints).
+ * - **that a screen viewer's own navigation pane agrees.** The footer's page
+ *   number, the Contents' numbers and the viewer's outline are three surfaces;
+ *   only the first two are ours, and only the second is measured here.
+ */

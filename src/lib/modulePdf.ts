@@ -254,12 +254,17 @@ const ALERT_BOX_LAYOUT = {
  * naming the site and the reason: a reader of the PDF must never have to guess
  * why a plate or a section is absent (AGENTS rule 1).
  */
-function alertBox(text: string, options: { pageBreak?: boolean } = {}): Content {
+/**
+ * A statement the reader must not miss, in the page's own main column. It
+ * carries NO page break: whether it stands on a page of its own is the page
+ * model's decision, asked for by the block that holds it (row 148's rule, and
+ * row 156 moved the remaining `pageBreak` arguments onto blocks).
+ */
+function alertBox(text: string): Content {
   return {
     table: { widths: ['*'], body: [[{ text, italics: true, color: ALERT }]] },
     layout: ALERT_BOX_LAYOUT,
     margin: [0, 4, 0, 6],
-    ...(options.pageBreak === true ? { pageBreak: 'before' as const } : {}),
   };
 }
 
@@ -1656,13 +1661,20 @@ function blockPlacement(input: {
  * style stack — the smaller type for detail is the lever that absorbs the fit
  * problem, and it is applied here, once, rather than at every builder.
  *
- * Every page starts with a break: the body always follows the Contents page,
- * and a break is the PAGE MODEL's to decide (§3), never a node's.
+ * Every page but the FIRST starts with a break: the body always follows the
+ * Contents page, and a break is the PAGE MODEL's to decide (§3), never a node's.
+ * The first page takes none because there is nothing to break away from — and
+ * because a `pageBreak: 'before'` on the document's first node makes pdfmake
+ * emit an EMPTY page in front of the cover (measured: a two-node probe of the
+ * exact shape this function emits renders as `['', 'COVER', 'SECOND']`, three
+ * pages for two nodes), which would push every number in the document's own
+ * Contents out by one.
  */
 function pageNodes(pages: readonly DocumentPage[]): Content[] {
-  return pages.map((page): Content => {
+  return pages.map((page, index): Content => {
+    const breakBefore = index === 0 ? {} : { pageBreak: 'before' as const };
     if (page.sidebar.length === 0) {
-      return { stack: page.main, pageBreak: 'before' };
+      return { stack: page.main, ...breakBefore };
     }
     return {
       columns: [
@@ -1675,7 +1687,7 @@ function pageNodes(pages: readonly DocumentPage[]): Content[] {
         },
       ],
       columnGap: COLUMN_GUTTER,
-      pageBreak: 'before',
+      ...breakBefore,
     };
   });
 }
@@ -1687,22 +1699,33 @@ function chapterHeading(title: string, id: string): Content {
 }
 
 /**
+ * A block with NO companion of its own — the cover, the Contents, a verdict
+ * statement, a part's prose, the treasure ledger. Its content is the whole of
+ * what it prints, so the page model measures it and decides both its page and
+ * where that page ends; `breakBefore` is the ONE break a page can ask for
+ * (docs/19 §3), and it is asked HERE rather than by a `pageBreak` on a node.
+ */
+function plainBlock(main: Content[], options: { breakBefore?: boolean } = {}): PageBlock {
+  return {
+    main,
+    detail: [],
+    placement: { kind: 'beside' },
+    name: null,
+    ...(options.breakBefore === true ? { breakBefore: true } : {}),
+  };
+}
+
+/**
  * A chapter opening as a flow block: the heading and its kicker, and nothing
  * else. It is `breakBefore` so a chapter always starts a page (docs/19 §3:
  * breaks happen "where content or the plan demands one … a chapter start"),
  * and it carries no companion of its own.
  */
 function chapterBlock(title: string, id: string, kickerText: string | null): PageBlock {
-  return {
-    main: [
-      chapterHeading(title, id),
-      ...(kickerText === null ? [] : [kicker(kickerText)]),
-    ],
-    detail: [],
-    placement: { kind: 'beside' },
-    name: null,
-    breakBefore: true,
-  };
+  return plainBlock(
+    [chapterHeading(title, id), ...(kickerText === null ? [] : [kicker(kickerText)])],
+    { breakBefore: true },
+  );
 }
 
 /**
@@ -1944,16 +1967,28 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     companionsPrinted: new Map<Id, string>(),
   };
 
+  // THE DOCUMENT IS PAGES, and this list is the whole of it: the cover, the
+  // Contents, a verdict statement, the body and the back matter are all
+  // `PageBlock`s, and `lib/pdfPageModel` measures every one of them and decides
+  // where each page ends (docs/19 §3, docs/17 row 148). Nothing below pushes a
+  // page node of its own — a second placement rule is exactly the drift
+  // docs/18 §2.3 forbids, and it is what kept the Contents page outside the
+  // paginator until row 156.
+  const blocks: PageBlock[] = [];
+
+  // The pdfmake definition's content: the pages, and nothing else (filled in
+  // ONCE, after the page model has laid every block out).
   const content: Content[] = [];
 
   // ---- Cover -------------------------------------------------------------
+  const cover: Content[] = [];
   const compiledAt = input.compiledAt ?? new Date();
   const compiledDay = compiledAt.toISOString().slice(0, 10);
   const levelLine =
     module.levelMax > module.levelMin
       ? `A module for levels ${String(module.levelMin)}–${String(module.levelMax)}`
       : `A module for level ${String(module.levelMin)}`;
-  content.push(
+  cover.push(
     { text: module.title, style: 'coverTitle', margin: [0, 120, 0, 8] },
     {
       text: [levelLine, module.tone.trim()].filter((part) => part !== '').join(' · '),
@@ -1966,31 +2001,54 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     if (dataUrl === undefined) {
       const failure = failureFor(images, module.coverImageId);
       const reason = failure?.reason ?? 'it was not in the preloaded image set';
-      content.push(
+      cover.push(
         alertBox(`“${module.title}” has a cover image that could not be embedded — ${reason}`),
       );
       problems.push({ where, reason });
     } else {
-      content.push(imageNode(dataUrl, where, { fit: [300, 300], alignment: 'center', margin: [0, 24, 0, 0] }));
+      cover.push(imageNode(dataUrl, where, { fit: [300, 300], alignment: 'center', margin: [0, 24, 0, 0] }));
     }
   }
-  content.push({
+  cover.push({
     text: `Compiled with Campaigner · ${compiledDay}`,
     style: 'muted',
     alignment: 'center',
     margin: [0, 24, 0, 0],
   });
+  blocks.push(plainBlock(cover));
 
   // ---- Contents ----------------------------------------------------------
-  content.push({ text: 'Contents', style: 'part', pageBreak: 'before' });
-  content.push({ toc: { id: 'chapters', title: { text: 'Contents', style: 'part' } } });
+  // §7's second bullet, and the reason this page is a BLOCK like any other: the
+  // Contents lists every section this document prints, in the order it prints
+  // them, with the page number pdfmake resolves while it lays the document out
+  // (docs/17 row 156). The number is never ours to compute — `{ toc: … }` plus
+  // `tocItem: 'chapters'` on the headings is pdfmake's own page reference, and a
+  // hand-rolled "which page is this on" map would be a second placement rule
+  // that drifts from the paginator (docs/18 §2.3).
+  //
+  // pdfmake builds each entry as `linkToDestination: getNodeId(node)`
+  // (`pdfmake/js/DocMeasure.js` → `measureToc`), i.e. the section heading's OWN
+  // `id` — the same identity §7's link seam (`mdToPdfmake.MdRenderOptions.
+  // destinationFor`) already links to, so the TOC adds no second link rule.
+  //
+  // The estimator reserves one page for it (`estimateHeight`'s `toc` branch,
+  // docs/17 row 148), which is what keeps it on a page of its own.
+  blocks.push(
+    plainBlock(
+      [
+        { text: 'Contents', style: 'part' },
+        { toc: { id: 'chapters', title: { text: 'Contents', style: 'part' } } },
+      ],
+      { breakBefore: true },
+    ),
+  );
 
   // ---- The plan's verdict, in the document ---------------------------------
   // A stored plan that CANNOT be applied is never a silent fallback: the owner
   // sees it here, on the page he opens, AND on the export's problems list.
   if (planOutcome.status === 'invalid' || planOutcome.status === 'rejected') {
     problems.push({ where: PLAN_PROBLEM_WHERE, reason: planOutcome.reason });
-    content.push(alertBox(planFallbackStatement(planOutcome.reason), { pageBreak: true }));
+    blocks.push(plainBlock([alertBox(planFallbackStatement(planOutcome.reason))], { breakBefore: true }));
   } else if (input.planFailure !== undefined) {
     // The export PLANNED and the planning FAILED (docs/17 row 139). The document
     // still lands — the renderer's contract is that a missing row is a visible
@@ -1998,7 +2056,11 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     // like a successful planned export: the reason is stated on its own page AND
     // pushed onto the problems list the export surface reports.
     const planApplied = planOutcome.status === 'applied';
-    content.push(alertBox(planFailureStatement(planApplied, input.planFailure), { pageBreak: true }));
+    blocks.push(
+      plainBlock([alertBox(planFailureStatement(planApplied, input.planFailure))], {
+        breakBefore: true,
+      }),
+    );
     problems.push({
       where: PLAN_PROBLEM_WHERE,
       reason:
@@ -2013,7 +2075,9 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   // export's problem list say so by name (docs/19 §9 — never a silent
   // disappearance).
   if (omitted.length > 0) {
-    content.push(alertBox(omittedArtifactsStatement(omitted), { pageBreak: true }));
+    blocks.push(
+      plainBlock([alertBox(omittedArtifactsStatement(omitted))], { breakBefore: true }),
+    );
     for (const artifact of omitted) {
       problems.push({
         where: `the document plan’s placement of “${artifact.name}”`,
@@ -2030,24 +2094,17 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   // column, a page break or a type size: that is `lib/pdfPageModel`'s single
   // job — docs/19 §2's split, where the plan says what belongs with what and
   // the renderer says where it fits.
-  const blocks: PageBlock[] = [];
-
   if (printableSections === null) {
     // ---- Premise ---------------------------------------------------------
     blocks.push(chapterBlock('Premise', 'node-premise', module.title));
-    blocks.push({
-      main: premiseContent(module, problems, state),
-      detail: [],
-      placement: { kind: 'beside' },
-      name: null,
-    });
+    blocks.push(plainBlock(premiseContent(module, problems, state)));
 
     // ---- Part plan (GM only: the planning apparatus, not the story) ------
     const partPlan = module.spine?.partPlan ?? [];
     if (audience === 'gm' && partPlan.length > 0) {
       blocks.push(chapterBlock('Part plan', 'node-plan', `${String(partPlan.length)} planned parts`));
-      blocks.push({
-        main: [
+      blocks.push(
+        plainBlock([
           {
             table: {
               widths: ['auto', 'auto', '*', '*'],
@@ -2068,11 +2125,8 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
             },
             layout: 'lightHorizontalLines',
           },
-        ],
-        detail: [],
-        placement: { kind: 'beside' },
-        name: null,
-      });
+        ]),
+      );
     }
 
     // ---- The parts -------------------------------------------------------
@@ -2086,12 +2140,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
           `Part ${String(position)} of ${String(total)}${levelText}`,
         ),
       );
-      blocks.push({
-        main: partTextContent(part, total, problems, state),
-        detail: [],
-        placement: { kind: 'beside' },
-        name: null,
-      });
+      blocks.push(plainBlock(partTextContent(part, total, problems, state)));
     }
 
     // ---- Per-kind reference chapters --------------------------------------
@@ -2132,36 +2181,43 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     }
   }
 
-  // The page model turns the flow into pages: main column + sidebar (docs/19
-  // §3), own pages for the oversized things (§4), the overflow ladder (§5).
-  content.push(...pageNodes(paginateDocument(blocks, { styles: measureStyles })));
-
   // ---- Back matter: the treasure ledger (GM only) ------------------------
   // A ledger is a table, not a companion: it keeps a page of its own, at full
-  // width, exactly as it always did. Its rows carry BOTH sources (docs/17 row
-  // 159): the encounter's own line, and one labelled line per mob that carries
-  // something — the header keeps the encounter as the column's subject, and a
-  // mob's row names the encounter it belongs to AND the creature.
+  // width, exactly as it always did — asked for as a BLOCK like every other
+  // page, so the paginator measures it and no node carries a break of its own.
+  // Its rows carry BOTH sources (docs/17 row 159): the encounter's own line,
+  // and one labelled line per mob that carries something — the header keeps the
+  // encounter as the column's subject, and a mob's row names the encounter it
+  // belongs to AND the creature.
   if (ledger.length > 0) {
-    content.push({
-      text: 'Treasure',
-      style: 'chapter',
-      tocItem: 'chapters',
-      id: 'node-treasure',
-      pageBreak: 'before',
-    });
-    content.push(kicker('Treasure ledger'));
-    content.push({
-      table: {
-        widths: ['*', '*'],
-        body: [
-          [{ text: 'Encounter', bold: true }, { text: 'Treasure', bold: true }],
-          ...ledger.map((row) => [row.where, row.treasure]),
+    blocks.push(
+      plainBlock(
+        [
+          chapterHeading('Treasure', 'node-treasure'),
+          kicker('Treasure ledger'),
+          {
+            table: {
+              widths: ['*', '*'],
+              body: [
+                [{ text: 'Encounter', bold: true }, { text: 'Treasure', bold: true }],
+                ...ledger.map((row) => [row.where, row.treasure]),
+              ],
+            },
+            layout: 'lightHorizontalLines',
+          },
         ],
-      },
-      layout: 'lightHorizontalLines',
-    });
+        { breakBefore: true },
+      ),
+    );
   }
+
+  // The page model turns the flow into pages: main column + sidebar (docs/19
+  // §3), own pages for the oversized things (§4), the overflow ladder (§5).
+  // Every page of the document is one of these nodes — the cover and the
+  // Contents included — so `content` below names no page the paginator has not
+  // measured.
+  content.push(...pageNodes(paginateDocument(blocks, { styles: measureStyles })));
+
   // ONE report per problem: a failure the loader recorded is pushed up front
   // (so an image that is no longer referenced is still reported) and the
   // renderer pushes it again at the site it printed a placeholder for. The

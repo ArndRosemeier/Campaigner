@@ -497,6 +497,7 @@ test) · ❌ gap.
 | The module PDF: the module-sourced document, no scaffolding, map plates, GM vs player, loud failures | `modulePdf.test` | ✅ |
 | The module PDF's export surface: ONE control on both surfaces, GM/player as an argument, problems reported | `module-pdf-export.test`, `module-canvas.test` | ✅ |
 | **The module PDF's PAGE MODEL**: main column + sidebar, sections that flow, the placement ladder (beside / continued / its own page), the verbatim contract and a CONTENT-PRESERVATION differential over three real documents (docs/17 row 148) | `pdfLayout.test` (19 pins, NEW) + the 6 updated assertions in `modulePdf.test`/`modulePdfPlan.test` | ✅ |
+| **The module PDF's CONTENTS page carries REAL page numbers** (docs/17 row 156, docs/19 §7): the number printed in the Contents equals the page the section's heading really prints on, for all 21 + 7 + 7 sections of the three fixture documents — read back off the RENDERED PDF with pdfjs, not off a definition | `pdfLayout.test` (4 new pins: the rendered-page equality with a measured numbers table, the entry count/order, the PDF's own link annotations, the page-model shape and determinism under the pinned `compiledAt`) | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
@@ -674,7 +675,16 @@ after every one of the five):
 | **I4** `omitted` is always empty | the owner's decision 3 is dropped: an unreferenced row prints again | **1** — exactly the omission pin |
 | **I5** every planned artifact section is filtered out of the printed document | a layout change starts dropping whole sections | **5** — the differential, the added-runs pin, the counts report, the flowing-sections pin, and the completeness pin (which is why that pin is on the headings: it was GREEN under this injection while it pinned names) |
 
-**What a test cannot prove:** jsdom asserts the pdfmake DEFINITION, never a
+**UPDATED by docs/17 row 156 — a PDF pin CAN now read the rendered page.** The
+sentence below was true when it was written and is no longer the whole truth:
+`generatePdfBlob` produces the real PDF in jsdom and pdfjs reads every page's
+text layer back (`openPdfDocument` → `getPage(n).getTextContent()`, items
+carrying their own string and their own type size), which is how the Contents'
+page numbers are pinned against the pages they name — see the row-156 section
+below for the technique and its limits. What is still NOT visible this way is
+anything that is not TEXT or an annotation: column widths, pagination INSIDE a
+page node, colours, and how a page looks. **What a test cannot prove:** jsdom
+asserts the pdfmake DEFINITION, never a
 rendered page — pdfmake's own column and pagination behaviour is unverified here,
 and the definition is the only artifact the suite ever sees. So the following is
 NOT proven by anything above: that pdfmake keeps a `columns` row on one page

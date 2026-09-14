@@ -19,7 +19,7 @@ the pins exist at HEAD, `spec only` means nothing implements it yet):**
 | §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
 | §9 "no silent fitting" (a promotion, continuation or omission is visible and diagnosable) | **BUILT** — docs/17 row 148 |
 | §6 The planner's toolkit (real content through the chat's retrieval seam) | spec only |
-| §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | **BUILT** except the page numbers — docs/17 row 151 (bullets 1, 3 and 4; the `chapters` TOC still prints without page numbers, see §7) |
+| §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | **BUILT** — docs/17 row 151 (bullets 1, 3 and 4) and row 156 (bullet 2: the Contents prints pdfmake's own page numbers, proved by reading the rendered pages back with pdfjs) |
 | §8 One press, every export plans | **BUILT** — docs/17 row 139 |
 | §10.4 Print refinement / duplex spread pairing | OPEN, deferred (§11 step 6) |
 | §10.5 Geometry and detail type sizes are starting points | the BUILT values are listed in docs/17 row 148; they are tuned, not frozen |
@@ -209,7 +209,8 @@ toolkit is an improvement rather than a blocker for §3–§5.
 
 - Every reference in the text is an internal link to the thing it names (exists for
   wiki-links; extend to every reference).
-- A TOC with page numbers (the `chapters` TOC exists).
+- A TOC with page numbers (the `chapters` TOC exists, and since docs/17 row 156 it
+  prints them — see the notes below).
 - Every artifact section states where it is referenced from.
 - The audience split stays: one plan, and a full / GM / player document from it.
 
@@ -223,9 +224,19 @@ section states where it is referred to from: one line, `Referenced from: <place>
 link to where it prints — and a row the document's own text never names states
 nothing, because there is nothing to state. The audience split is unchanged, and
 every link is checked to name a destination the same document actually carries
-(pdfmake throws on a dangling one). **A TOC with PAGE NUMBERS is still NOT
-built** — the `chapters` TOC prints without them, exactly as this paragraph said
-before, and the builder is definition-only, so nothing in it knows a page.
+(pdfmake throws on a dangling one). **The second bullet is built too (docs/17
+row 156), and this paragraph's earlier claim that "the `chapters` TOC prints
+without them" was WRONG** — it was never checked against a page, and it was
+never true: pdfmake resolves the numbers itself while it lays the document out
+(`{ toc: { id: 'chapters', … } }` plus `tocItem: 'chapters'` on every heading),
+so the builder never needs to know a page. Row 156 rendered the document,
+read every page back with pdfjs, and pinned the number the Contents prints
+against the page each section's heading actually prints on — 21 + 7 + 7
+sections, all equal. Two structural notes come with it: the Contents page is a
+page the paginator measures and emits like every other page (it used to be two
+loose nodes with a `pageBreak`, i.e. a page outside §3's page model), and every
+ToC entry links through the section heading's own `id` — the SAME identity the
+paragraph above describes — so §7 has one link rule, not two.
 
 ## 8. The export flow
 
@@ -300,6 +311,7 @@ call, not a spec default.** No question in this section is still open.
    landed with 3, because a placement rule with no paginator has nowhere to put
    its answer).
 5. ~~**Navigation:** back-references from artifact sections, links everywhere.~~
-   **DONE** (docs/17 row 151 — except §7's TOC-with-page-numbers bullet, which is
-   explicitly still not built).
+   **DONE** (docs/17 row 151) — **and §7 is COMPLETE**: its second bullet, the
+   TOC's page numbers, landed as its own slice (docs/17 row 156), proved on the
+   rendered page. Everything §7 asks for now exists.
 6. **Print refinement** (OPEN, §10).
