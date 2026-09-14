@@ -216,11 +216,17 @@ chained command, and never leave one uncommitted while a writer is gating.
 ## The environment this runs in (owner-described)
 
 - **The box is a grokbot instance in the cloud**, and grokbot is its admin while
-  the owner works through a remote view of its virtual screen. **Another agent
-  is therefore active on the same box and the same user account** — it can run
-  suites (a six-worker `vitest` run was caught this way), so a suite you did not
-  start is not yours: identify ownership by `/proc/<pid>/cwd`, reap only your
-  own, and WAIT for the rest (§Host hygiene 7).
+  the owner works through a remote view of its virtual screen.
+- **The owner runs ANOTHER, SEPARATE DSH project in parallel in this same
+  harness** (owner-corrected: the extra agents belong to that project, NOT to
+  grokbot — an earlier version of this note said otherwise and was wrong). They
+  share the box, the user account and the memory; their `vitest` runs have been
+  caught at six workers with no ceiling. So a suite you did not start is not
+  yours: identify ownership by `/proc/<pid>/cwd`, reap only your own, and WAIT
+  for the rest (§Host hygiene 7) — never reap a peer project's gate.
+  Their runs are outside our rules, and the OOM killer takes whatever is
+  largest, which is the harness BOTH projects live in: the discipline below
+  protects the other project's sessions as much as ours.
 - **A push to `main` DEPLOYS** (GitHub to the owner's own server), and he then
   tests it in Chrome on Windows. So `main` is not a staging area: a red or
   half-finished landing is user-visible within minutes of the push, which is why
