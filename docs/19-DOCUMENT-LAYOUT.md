@@ -248,6 +248,12 @@ before, and the builder is definition-only, so nothing in it knows a page.
   and can render identically from a stored value (§2).
 - No silent fitting: any promotion, continuation or omission is visible in the
   document and diagnosable afterwards.
+- **No unlabelled or merged treasure.** The back matter's treasure ledger names
+  the carrier of every line it prints: the encounter itself for its own
+  `treasure` field, and `<encounter> · <mob> ×count` for what one of its roster
+  entries carries (docs/17 row 159). A mob that carries nothing contributes no
+  line and no row at all — never a label over a blank value — and the ledger is
+  GM-only back matter, like every secret the player document strips.
 - No second canvas entry point in the reader header (row 138) and no second
   mechanism for one idea anywhere (AGENTS rule 4).
 

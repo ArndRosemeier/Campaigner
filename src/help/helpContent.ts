@@ -133,7 +133,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or use an existing entity.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',
       'The entity panel can batch-generate unresolved entities, including encounter stubs. “Generate encounter maps” runs the Cartographer unattended for mapless module encounters and keeps failures retryable.',
-      'The "Module PDF" button in the module canvas header prints the module itself — cover, contents, premise, part plan, every part in order, its artifacts (map plates at the encounters), the NPC gallery and the treasure ledger. The player version leaves out the planning and the secrets.',
+      'The "Module PDF" button in the module canvas header prints the module itself — cover, contents, premise, part plan, every part in order, its artifacts (map plates at the encounters), the NPC gallery and the treasure ledger. The ledger is GM-only back matter: one line per printed encounter for the treasure recorded on it, plus a line for each mob that carries something, named so you can see which creature holds what. It reads those fields only — loot written inside a published adventure or stat block is not parsed into it. The player version leaves out the planning and the secrets.',
     ],
     keywords: 'module wiki links spine parts entities stub batch pdf export',
   },

@@ -23,12 +23,15 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
+  type AnyArtifact,
   type Campaign,
   type Id,
+  type Module,
   type MonsterEntry,
   type StatBlock,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
+import { buildModuleDefinition } from '@/lib/modulePdf';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -66,6 +69,11 @@ vi.mock('@/llm/openrouter', () => ({
 const FORD = 'Ford Ambush';
 const CITED = 'Cave Fisher';
 const NAME_ONLY = 'Harbour Thug';
+/** What the CITED mob carries — printed by the reader AND by the module book. */
+const CITED_TREASURE = 'Pouch: 5 gp, a silver bell';
+/** The ENCOUNTER's own line — a different string, so the two sources can never
+ * be confused in an assertion about which one a surface printed. */
+const ENCOUNTER_TREASURE = 'a chained grimoire on the altar';
 
 function citedStatBlock(): StatBlock {
   return statBlockSchema.parse({
@@ -97,7 +105,10 @@ function citedEntry(chunkId: Id, contentHash: string): MonsterEntry {
     name: CITED,
     count: 1,
     notes: '',
-    treasure: '',
+    // What ONE instance carries — the GM checklist text the reader's roster row
+    // and the module book both print through the SAME domain rule (docs/17 row
+    // 159). The name-only mob below carries nothing and prints no line at all.
+    treasure: CITED_TREASURE,
     source: { type: 'rulebook', chunkId, contentHash, creatureName: CITED },
   };
 }
@@ -111,6 +122,10 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
   campaignId: Id;
   moduleId: Id;
   encounterId: Id;
+  /** The module row and its scoped artifacts — the module BOOK's own input, so
+   * the reader's roster row can be compared with the page it will be printed on. */
+  module: Module;
+  artifacts: AnyArtifact[];
 }> {
   await seedBuiltInPersonas();
   const campaign: Campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
@@ -147,7 +162,7 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
       ],
       terrain: 'wet planks',
       tactics: 'drag them under',
-      treasure: 'a silver bell',
+      treasure: ENCOUNTER_TREASURE,
       mapImageId: null,
       layout: null,
       preset: 'standard',
@@ -183,7 +198,13 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
       }),
     ],
   });
-  return { campaignId: campaign.id, moduleId: module.id, encounterId: encounter.id };
+  return {
+    campaignId: campaign.id,
+    moduleId: module.id,
+    encounterId: encounter.id,
+    module,
+    artifacts: [encounter],
+  };
 }
 
 function renderAppAt(path: string): void {
@@ -212,6 +233,60 @@ async function findMobs(item: HTMLElement): Promise<HTMLElement> {
     { timeout: 10_000 },
   );
   return block;
+}
+
+/** Every text run of a pdfmake node, in document order. */
+function runsOf(node: unknown, out: string[] = []): string[] {
+  if (typeof node === 'string') return out;
+  if (Array.isArray(node)) {
+    for (const child of node) runsOf(child, out);
+    return out;
+  }
+  if (typeof node !== 'object' || node === null) return out;
+  const record = node as Record<string, unknown>;
+  const text: unknown = record.text;
+  if (typeof text === 'string') out.push(text);
+  else if (text !== undefined) runsOf(text, out);
+  for (const [key, value] of Object.entries(record)) {
+    if (key !== 'text') runsOf(value, out);
+  }
+  return out;
+}
+
+/**
+ * The TREASURE line the module BOOK prints under ONE roster row — read from that
+ * row's own block (the `stack` whose first text array starts with the mob's
+ * `Name ×count` label), never from the formatter the reader also calls: the two
+ * surfaces are compared with each other, not each with the rule. `null` means
+ * the book printed no such line for that row.
+ */
+function printedBookTreasure(node: unknown, label: string): string | null {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = printedBookTreasure(child, label);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof node !== 'object' || node === null) return null;
+  const record = node as Record<string, unknown>;
+  const stack = record.stack;
+  if (Array.isArray(stack)) {
+    const first = stack[0] as Record<string, unknown> | undefined;
+    const text = first?.text;
+    if (Array.isArray(text) && runsOf(text).join('').startsWith(label)) {
+      for (const child of stack) {
+        const line = runsOf(child).join('');
+        if (line.startsWith('Treasure: ')) return line;
+      }
+      return null;
+    }
+  }
+  for (const value of Object.values(record)) {
+    const found = printedBookTreasure(value, label);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 beforeEach(clearDatabase);
@@ -299,6 +374,47 @@ describe('the module reader lists an encounter’s mobs below its row', () => {
     );
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('shows what a mob carries, in the book’s own words — and nothing for a mob that carries nothing', async () => {
+    const { campaignId, moduleId, module, artifacts } = await seedReader({
+      statBlock: citedStatBlock(),
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const { item } = await findEncounterRow();
+    const mobs = await findMobs(item);
+    const entries = within(mobs).getAllByTestId('roster-entry');
+    const citedRow = entries[0];
+    const nameOnlyRow = entries[1];
+    if (citedRow === undefined || nameOnlyRow === undefined) {
+      throw new Error('both roster rows must be listed');
+    }
+
+    // The reader prints the mob's own authored text through the domain rule…
+    const readerLine = within(citedRow).getByTestId('roster-treasure').textContent;
+    expect(readerLine).toBe(`Treasure: ${CITED_TREASURE}`);
+
+    // …and the MODULE BOOK, built from the same rows, prints the SAME line under
+    // the same mob. The two are compared with EACH OTHER — each is extracted
+    // from its own surface (the DOM / the definition), never read back from the
+    // formatter both call, so a reader that reworded the line reds this file.
+    const definition = buildModuleDefinition({ module, artifacts });
+    const bookLine = printedBookTreasure(definition, `${CITED} ×1`);
+    expect(bookLine).not.toBeNull();
+    expect(bookLine).toBe(readerLine);
+    // Anchored to the words the seed authored, so a rule that answered the SAME
+    // wrong string on both surfaces still fails here.
+    expect(bookLine).toBe(`Treasure: ${CITED_TREASURE}`);
+
+    // The mob that carries nothing renders NO element — not an empty span and
+    // not a label standing over a blank value (AGENTS rule 1) — in the reader…
+    expect(within(nameOnlyRow).queryByTestId('roster-treasure')).not.toBeInTheDocument();
+    expect(printedBookTreasure(definition, `${NAME_ONLY} ×2`)).toBeNull();
+    // …and the encounter's OWN treasure is not what either surface printed here
+    // (the two sources are separate lines, never one merged string).
+    expect(readerLine).not.toContain(ENCOUNTER_TREASURE);
+    await flushAsyncUpdates();
+  }, 20_000);
 });
 
 /**
@@ -347,5 +463,18 @@ describe('EXACTLY ONE roster reference implementation in the app', () => {
     // to a roster line.
     expect(panel).not.toContain('entry.origin`');
     expect(panel).not.toContain('${entry.origin}');
+  });
+
+  it('the panel prints a mob’s TREASURE through the domain rule too (docs/17 row 159)', () => {
+    const panel = code(PANEL);
+    // The line comes from the ONE rule the books render…
+    expect(panel).toContain('rosterTreasureFor');
+    // …and the panel composes no label of its own and takes no emptiness
+    // decision by reading the roster entry's raw field: `rosterTreasureFor`'s
+    // `null` is the whole answer, so an empty span or a label over a blank
+    // value has nowhere to come from (AGENTS rules 1 and 4).
+    expect(panel).not.toContain('Treasure: ');
+    expect(panel).not.toContain('monster.treasure');
+    expect(panel).not.toContain('entry.treasure');
   });
 });

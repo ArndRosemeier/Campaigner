@@ -245,7 +245,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Print',
         markdown:
-          'The module canvas header → "Module PDF" prints the module itself: cover, contents, the premise, the part plan, every part in order, the artifacts its prose owns or mentions (with map plates at the encounters), the NPC gallery and the treasure ledger. The same button offers the player version, which leaves out the planning and the secrets. Individual artifacts still export GM notes or a player handout from the campaign tree.',
+          'The module canvas header → "Module PDF" prints the module itself: cover, contents, the premise, the part plan, every part in order, the artifacts its prose owns or mentions (with map plates at the encounters), the NPC gallery and the treasure ledger. The ledger is GM-only back matter: the treasure recorded on each printed encounter, and a named line for every mob that carries something — only what those fields hold, never loot parsed out of a published pack. The same button offers the player version, which leaves out the planning and the secrets. Individual artifacts still export GM notes or a player handout from the campaign tree.',
       },
     ],
     appLink: {

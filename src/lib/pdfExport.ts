@@ -5,6 +5,7 @@ import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } fr
 import {
   rosterReferenceFor,
   rosterStatBlockFor,
+  rosterTreasureFor,
   type ResolvedMonster,
 } from '@/domain/encounterResolve';
 import { getImage } from '@/db/imageRepo';
@@ -113,7 +114,8 @@ function statBlockSection(statBlock: StatBlock): object[] {
 
 /**
  * The encounter roster AS PRINTED by this export, one row per participant:
- * `Name ×count — Bestiary p.132: notes`, then the creature's stat box.
+ * `Name ×count — Bestiary p.132: notes`, then the treasure it carries, then the
+ * creature's stat box.
  *
  * THE reference rule and THE box rule are the SHARED ones (docs/17 row 144):
  * `domain/encounterResolve.rosterReferenceFor` decides what the reference says and
@@ -121,6 +123,12 @@ function statBlockSection(statBlock: StatBlock): object[] {
  * the box — the same three seams the module book uses, so one entry cannot read
  * or count differently in the two books. Before this, a `rulebook`-cited mob
  * reached the GM as a bare name with no reference and no numbers at all.
+ *
+ * THE treasure rule is shared the same way (docs/17 row 159): the line comes
+ * from `rosterTreasureFor` and it is a NODE OF ITS OWN, never appended to the
+ * roster line — the reference rendered beside the name would otherwise end up
+ * carrying the treasure, and the module book prints the mob's treasure under the
+ * same name in its own line. A mob that carries nothing prints no line.
  *
  * The numbers are the cited library chunk's own, read at export time; nothing is
  * copied into the database (docs/12 §Storage).
@@ -131,6 +139,7 @@ function rosterRows(artifact: Artifact, roster?: readonly ResolvedMonster[]): ob
     const resolved = roster?.[index];
     const reference = rosterReferenceFor(monster, resolved).printed;
     const statBlock = rosterStatBlockFor(monster, resolved);
+    const treasure = rosterTreasureFor(monster);
     return [
       {
         text: [
@@ -140,6 +149,7 @@ function rosterRows(artifact: Artifact, roster?: readonly ResolvedMonster[]): ob
         ],
         style: 'value',
       },
+      ...(treasure === null ? [] : [{ text: treasure.printed, style: 'value' } as object]),
       ...(statBlock === null
         ? []
         : [

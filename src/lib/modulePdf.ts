@@ -26,6 +26,7 @@ import {
   missingCreatureOrigin,
   rosterReferenceFor,
   rosterStatBlockFor,
+  rosterTreasureFor,
   type ResolvedMonster,
 } from '@/domain/encounterResolve';
 import { getBattleByModule } from '@/db/battleRepo';
@@ -1011,6 +1012,17 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
         // above the notes stands alone (never an empty or invented block).
         const statBlock = rosterStatBlockFor(monster, resolved);
         const cited = monster.source.type === 'rulebook';
+        // THE treasure rule, shared with the single-artifact export and the
+        // reader's roster row (docs/17 row 159): what ONE instance carries is
+        // authored on the roster entry, and `rosterTreasureFor` decides whether
+        // there is anything to print at all. `null` prints NOTHING — no line and
+        // no label standing over a blank value (AGENTS rule 1).
+        //
+        // GM ONLY, like the encounter's own `Treasure` line below: mob treasure
+        // is a GM checklist (`docs/11 §Room keys`, the token card's own rule), so
+        // the player document carries none of it — never in the section and
+        // never in the ledger, which the player export drops whole.
+        const treasure = player ? null : rosterTreasureFor(monster);
         return {
           stack: [
             {
@@ -1026,6 +1038,7 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
               ],
             },
             ...(monster.notes === '' ? [] : [{ text: monster.notes, style: 'muted' }]),
+            ...(treasure === null ? [] : [{ text: treasure.printed, style: 'muted' }]),
             ...(statBlock === null
               ? []
               : [
@@ -1254,20 +1267,58 @@ function npcGallery(scoped: readonly AnyArtifact[], audience: ModulePdfAudience)
 }
 
 /**
+ * The separator between an encounter's name and the mob that carries the
+ * treasure, in a ledger row's own label.
+ */
+const LEDGER_CARRIER_SEPARATOR = ' · ';
+
+/** One ledger row: WHO the treasure belongs to, and the treasure itself. */
+interface TreasureLedgerRow {
+  /** The encounter, or `<encounter> · <mob> ×count` for a mob's own row. */
+  where: string;
+  treasure: string;
+}
+
+/**
  * The treasure ledger rows: every encounter the BODY printed that stores
  * treasure (the encounters chapter in the procedural document; the planned
- * encounter sections when a plan is applied).
+ * encounter sections when a plan is applied) — and, for each of those
+ * encounters, the treasure ITS MOBS carry (docs/17 row 159).
+ *
+ * TWO SOURCES, ONE TABLE, NEVER ONE MERGED STRING. The encounter's own
+ * `treasure` field is the encounter-level line, exactly as it always was; a
+ * roster entry's `treasure` gets a row of its OWN, labelled by the creature that
+ * carries it (`Pier Ambush · Cultist ×4`), because a GM reading back matter has
+ * to know WHICH mob the pouch is on — the per-mob treasure was authored, stored,
+ * shown on the token card and rendered in the encounter section, and reached no
+ * ledger at all before this row. Whether a mob has anything to contribute is
+ * `rosterTreasureFor`'s answer and nobody else's (the ONE emptiness rule): a mob
+ * that carries nothing adds NO row, never a label standing over a blank value.
+ *
+ * The label is the carrier rather than a nested block on purpose: a row survives
+ * a page break, and a mob row read at the top of a fresh page still names its
+ * encounter.
  */
-function treasureLedger(
-  printed: readonly AnyArtifact[],
-): { name: string; treasure: string }[] {
+function treasureLedger(printed: readonly AnyArtifact[]): TreasureLedgerRow[] {
   return printed
     .filter((entry) => entry.kind === 'encounter')
-    .flatMap((entry): { name: string; treasure: string }[] =>
-      entry.data.treasure.trim() !== ''
-        ? [{ name: entry.name, treasure: entry.data.treasure }]
-        : [],
-    );
+    .flatMap((entry): TreasureLedgerRow[] => {
+      const rows: TreasureLedgerRow[] = [];
+      // The encounter's OWN field, untouched (including its whitespace): this is
+      // the line the ledger has always printed for it.
+      if (entry.data.treasure.trim() !== '') {
+        rows.push({ where: entry.name, treasure: entry.data.treasure });
+      }
+      for (const monster of entry.data.monsters) {
+        const treasure = rosterTreasureFor(monster);
+        if (treasure === null) continue;
+        rows.push({
+          where: `${entry.name}${LEDGER_CARRIER_SEPARATOR}${monster.name} ×${monster.count}`,
+          treasure: treasure.text,
+        });
+      }
+      return rows;
+    });
 }
 
 // --- The four role treatments ----------------------------------------------
@@ -1775,8 +1826,10 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   const gallery = npcGallery(scoped, audience).filter(
     (npc) => !printedIds.has(npc.id) && !omittedIds.has(npc.id),
   );
-  // The ledger aggregates the encounters' `treasure` field, which the player
-  // document strips from every encounter — so it is a GM-only appendix. The
+  // The ledger aggregates the treasure of the printed encounters — their own
+  // `treasure` field AND what each of their mobs carries (docs/17 row 159) —
+  // and the player document strips BOTH from every encounter (the encounter
+  // fields and the GM-only roster treasure), so it stays a GM-only appendix. The
   // shipped renderer printed it to players, contradicting §M3-D's own rule.
   const ledger =
     audience === 'gm'
@@ -2085,7 +2138,10 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
 
   // ---- Back matter: the treasure ledger (GM only) ------------------------
   // A ledger is a table, not a companion: it keeps a page of its own, at full
-  // width, exactly as it always did.
+  // width, exactly as it always did. Its rows carry BOTH sources (docs/17 row
+  // 159): the encounter's own line, and one labelled line per mob that carries
+  // something — the header keeps the encounter as the column's subject, and a
+  // mob's row names the encounter it belongs to AND the creature.
   if (ledger.length > 0) {
     content.push({
       text: 'Treasure',
@@ -2100,7 +2156,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
         widths: ['*', '*'],
         body: [
           [{ text: 'Encounter', bold: true }, { text: 'Treasure', bold: true }],
-          ...ledger.map((row) => [row.name, row.treasure]),
+          ...ledger.map((row) => [row.where, row.treasure]),
         ],
       },
       layout: 'lightHorizontalLines',

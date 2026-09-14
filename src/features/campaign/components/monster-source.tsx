@@ -10,6 +10,7 @@ import {
   isMissingRefOrigin,
   rosterReferenceFor,
   rosterStatBlockFor,
+  rosterTreasureFor,
 } from '@/domain/encounterResolve';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { Badge } from '@/components/ui/badge';
@@ -384,13 +385,13 @@ function InlineStatblockEditor({
  * and the numbers a GM needs to run it (M3-B, extended by docs/17 rows 144/146).
  *
  * ONE RULE, both renderers: the reference comes from
- * `domain/encounterResolve.rosterReferenceFor` and the numbers from
- * `rosterStatBlockFor` — the same two seams the module PDF and the
- * single-artifact export render — so the app can never label a roster entry
- * differently from the book it is about to print. This component composes
- * NOTHING: a hand-rolled reference string here is exactly the second mechanism
- * AGENTS rule 4 forbids (`tests/features/reader-encounter-roster.test.tsx` scans
- * for one).
+ * `domain/encounterResolve.rosterReferenceFor`, the numbers from
+ * `rosterStatBlockFor` and the treasure from `rosterTreasureFor` — the same
+ * three seams the module PDF and the single-artifact export render — so the app
+ * can never label a roster entry differently from the book it is about to print.
+ * This component composes NOTHING: a hand-rolled reference string here is
+ * exactly the second mechanism AGENTS rule 4 forbids
+ * (`tests/features/reader-encounter-roster.test.tsx` scans for one).
  *
  * EVERY entry is listed, `none` included: a name-only creature is a mob the GM
  * has to find, and the formatter's own sentence says what is true about it —
@@ -453,6 +454,14 @@ export function MonsterStatblocksPanel({
          * prints the named `missing ref (…)` line and no box at all.
          */
         const statBlock = rosterStatBlockFor(monster, entry) ?? entry.statBlock;
+        /*
+         * THE TREASURE, through the SAME rule the books use (docs/17 row 159):
+         * `rosterTreasureFor` decides whether this mob carries anything and
+         * composes the labelled line, so the row a GM reads here and the line the
+         * module PDF prints under the same mob cannot drift — and a mob that
+         * carries nothing renders NO element at all, never a label over a blank.
+         */
+        const treasure = rosterTreasureFor(monster);
         return (
           <div
             key={`${monster.name}-${index}`}
@@ -480,6 +489,11 @@ export function MonsterStatblocksPanel({
             )}
             {monster.notes !== '' && (
               <span className="text-xs text-muted-foreground">{monster.notes}</span>
+            )}
+            {treasure !== null && (
+              <span className="text-xs text-muted-foreground" data-testid="roster-treasure">
+                {treasure.printed}
+              </span>
             )}
             {statBlock !== null && (
               <StatBlockCard statBlock={statBlock} name={monster.name} />

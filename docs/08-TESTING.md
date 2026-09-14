@@ -607,6 +607,7 @@ test) · ❌ gap.
 | A cited mob's numbers reach BOTH books through ONE formatter and ONE box — differential over the two real documents, and a source scan for a second implementation | `lib/roster-reference-parity.test` | ✅ |
 | The differential is a real EQUALITY, not two one-sided containments: the reference is EXTRACTED from each rendered book on its own and compared, with a non-vacuity guard on both sides — a decoration added to ONE exporter reds the file (MEASURED, docs/17 row 146) | `lib/roster-reference-parity.test` (`a cited mob's reference is byte-identical…`, tightened) | ✅ |
 | GM vs player from ONE builder: the player document drops gm-only rows, notes, plot arcs, faction methods, encounter tactics/treasure/terrain, PC notes, the part plan and the treasure ledger — while maps stay in both | `modulePdf.test` — the same fixture rendered twice and diffed by what it must NOT contain | ✅ |
+| **The treasure ledger carries BOTH sources** — the encounter's own `treasure` line AND one labelled row (`<encounter> · <mob> ×count`) per roster entry that carries something, with no row for a mob that carries nothing and no ledger at all when nothing anywhere stores treasure (docs/17 row 159) | `lib/per-mob-treasure.test` (5 pins, one an exact `toEqual` on the ledger's header and rows) | ✅ |
 | The export surface: ONE control (canvas header + campaign tree module group), GM/player as an ARGUMENT to the ONE renderer, destination acquired before the build, the blob written, problems reported, picker cancel silent | `module-pdf-export.test` | ✅ |
 | Exports do not leak the internal token (row 105's rule) and `writerModel` provenance never reaches a document | `wiki-raw-export.test`, `provenance-export.test`, `modulePdf.test` | ✅ |
 | Retired-table data is reported, never swallowed: an old export file's `deliverables` rows are counted BEFORE tolerant parsing, and a v20 database's rows are counted by the v21 upgrade | `exportImport.test` ("retired-table import tolerance"), `backup.test`, `migration.test` (v20 → v21) | ✅ |
@@ -3598,6 +3599,83 @@ literals, task-list checkboxes, footnotes) are ON as a consequence of the one
 dependency, and their appearance in a real module's prose has never been read by
 the owner — the reader-parity pin only proves a document with NONE of those
 constructs renders byte-identically.
+### Per-mob treasure reaches the ledger (docs/17 row 159, docs/11 §Room keys, docs/18 §2.3)
+
+A roster entry's `treasure` was authored in the encounter editor, stored on
+`MonsterEntry.treasure`, frozen onto every seeded token and printed GM-only on
+the token card and in the canvas chat's details block — and the module PDF's
+treasure ledger read the ENCOUNTER's own `treasure` field and nothing else. The
+net effect was worse than an omission: an encounter whose own field was empty was
+skipped by the ledger WHOLE, so a GM who typed "Pouch: 5 gp, a silver bell" on
+every Bandit got a token card, an editor field, a chat line — and an EMPTY
+treasure ledger, no per-mob line in the encounter section, and nothing in the
+reader. Nothing warned him (help and guide advertised "the treasure ledger"
+without bounding it), and no pin named the ledger's rows at all.
+
+The fix is ONE seam extended, never a second mechanism: `domain/encounterResolve`
+gains `rosterTreasureFor(entry)`, which answers both "does this mob carry
+anything" (`null`) and "what is the one printed line" (`{ text, printed }`, the
+`Treasure: ` label composed in `TREASURE_LABEL`). All four roster-printing
+surfaces render it — the module book's encounter section (a `muted` line under
+the mob's name, GM-only), its ledger (`treasureLedger`, one labelled row per
+carrying mob), the single-artifact GM export (`rosterRows`, a NODE of its own so
+the pinned reference string stays intact), and the reader's roster row
+(`data-testid="roster-treasure"`). The encounter's own field keeps its own line
+everywhere; the two sources are never merged.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| The ledger's ROWS: the encounter's own line, then one labelled row per carrying mob in roster order — an EXACT `toEqual` on the header AND the rows | `lib/per-mob-treasure.test` (`prints ONE row per source …`) | ✅ |
+| An encounter whose ONLY treasure is on its roster produces a ledger (the fix's essence — this document had NO ledger before) | `lib/per-mob-treasure.test` (`produces a ledger for an encounter whose ONLY treasure is on its roster`) | ✅ |
+| A mob that carries nothing: no ledger row, no line in its own encounter-section block, and no label over a blank (only ONE bare `Treasure: ` run exists — the encounter's own labeled section, whose value is the run beside it) | `lib/per-mob-treasure.test` (both pins above) | ✅ |
+| An encounter with no treasure anywhere still produces NO ledger (no chapter node, no kicker, no table), with non-vacuity: that document really prints the encounter and its mob | `lib/per-mob-treasure.test` (`produces NO ledger when no printed encounter stores treasure anywhere`) | ✅ |
+| The PLAYER document carries none of it — no ledger, no mob line, not even the encounter-level line — while the encounters themselves still print | `lib/per-mob-treasure.test` (`carries none of it into the PLAYER document`) | ✅ |
+| The module book's encounter section prints the mob's line under THAT mob, and the encounter's own line stays separate and unmerged | `lib/per-mob-treasure.test` (`prints the mob's treasure in the encounter section, under the mob it belongs to`) | ✅ |
+| **ONE formatter, both books**: the line is EXTRACTED from each document on its own (the row found by its own `Name ×count` label, the treasure read from its sibling) and the two are compared — with non-vacuity on both sides, `null` for the empty mob in BOTH, and no ledger in the single-artifact export | `lib/roster-reference-parity.test` (`a mob's TREASURE is the same line in both books …`) | ✅ |
+| **ONE formatter, the app too**: the reader's rendered span is compared with the line the module BOOK prints for the same mob, each read from its own surface, never from the rule both call | `features/reader-encounter-roster.test.tsx` (`shows what a mob carries, in the book's own words …`) | ✅ |
+| **EXACTLY ONE label and ONE emptiness rule** (AGENTS §Centralization 2): the label lives in the domain module alone, and `modulePdf`, `pdfExport` and `monster-source` read no roster entry's raw field for printing | `lib/roster-reference-parity.test.ts` (`the roster TREASURE goes through its own ONE rule …`), `features/reader-encounter-roster.test.tsx` (`the panel prints a mob's TREASURE through the domain rule too`) | ✅ |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy —
+`/tmp/tres-backup`, never `git checkout --` — and proved by `git hash-object`
+identical before and after: `modulePdf.ts`
+`c5bbdebcf65bd7c7f480d577f0be27f2cb87a500`, `monster-source.tsx`
+`1480580930a1cb0f93866948ef423f8c47f94ea9`; raw logs kept):
+
+| injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) the per-mob ledger rows dropped** (`if (treasure !== null) continue;` at the roster loop in `treasureLedger`) | **RED 3 failed / 13 passed (16)** across the two lib files: the exact-rows `toEqual`, the only-roster-treasure non-vacuity pin, and the parity file's labelled-row assertion |
+| **(b) the audience guard removed** (`const treasure = rosterTreasureFor(monster);` in the encounter section — per-mob treasure reaches the player book) | **RED 1 failed / 4 passed (5)**, exactly the player pin, whose `Expected`/`Received` block shows `Treasure: Pouch: 5 gp, a silver bell` sitting in the PLAYER document's text |
+| **(c) the reader made to diverge** (its own span rendering `Carried: {monster.treasure}` with its own emptiness check) | **RED 2 failed / 4 passed (6)**: the reader-vs-book equality reds with `expected 'Carried: Pouch: 5 gp, a silver bell' to be 'Treasure: Pouch: 5 gp, a silver bell'`, AND the source scan reds on the raw-field read — the drift caught on both sides |
+
+**NUMBERS** (bounded gate, `CAMPAIGNER_TEST_WORKERS=1`, raw log kept). The
+baseline was re-derived twice: directly at `b5a917d` **324 files / 3807 tests,
+exit 0**, and again at the REBASED base `bfbaece` **325 files / 3825 tests**
+(row 158 landed mid-slice and its own gate states +1 file / +18 tests). This
+landing gates on the rebased tree at **326 files / 3834 tests, exit 0** — +1
+file, +9 tests over the base, the nine pins below, no existing assertion
+edited, no test skipped, `Errors:` absent. The FULL suite was re-run after the
+rebase, because the rebased tree is not the tree the first green run covered.
+
+**UNPROVEN, stated as such.** jsdom asserts pdfmake DEFINITIONS and DOM, never a
+rendered page. Nothing here proves the ledger LOOKS right: whether a multi-line
+mob treasure wraps inside its table cell, where the ledger's table breaks across
+a page, or whether a long carrier label (`Pier Ambush · Cultist ×4`) leaves the
+`Treasure` column enough width — every ledger column is `'*'`, so a long label
+and a long loot list share the row equally, and that share is the owner's
+judgement in a real PDF. Three things only he can check: (1) an encounter with
+BOTH an encounter-level line and per-mob lines — that the two row kinds read as
+distinct back matter; (2) a mob whose treasure is three or more lines; (3) a
+ledger long enough to cross a page, where a mob row at the top of a continuation
+page is readable only because its label repeats the encounter. **And the honest
+LIMIT of the feature itself:** the ledger holds only what was authored on the
+encounter's and its mobs' `treasure` fields — a published pack's own carried
+items are never parsed into them, and the layout's per-room `keyTreasure` is a
+play-time key card, not a ledger source. That enrichment is a separate, unbuilt
+arc the owner has declined; the help and guide sentences state the bound instead
+of implying otherwise.
 
 ### Remaining gaps
 

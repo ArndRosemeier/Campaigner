@@ -26,6 +26,7 @@ import { createRulebook } from '@/db/rulebookRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { buildModuleDefinition, statBoxContent } from '@/lib/modulePdf';
 import { buildGmNotesDefinition, resolveExportRoster } from '@/lib/pdfExport';
+import { rosterTreasureFor } from '@/domain/encounterResolve';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 
@@ -125,6 +126,58 @@ function printedReference(
     : rest;
 }
 
+/** Whether a node is a roster ROW for `label` (a text array starting with it). */
+function isRowNode(node: unknown, label: string): boolean {
+  if (typeof node !== 'object' || node === null) return false;
+  const text = (node as Record<string, unknown>).text;
+  if (!Array.isArray(text)) return false;
+  return referenceRuns(text).join('').startsWith(label);
+}
+
+/** The nodes printed AFTER a roster row in the same container (the row's own
+ * block: the module book's `stack`, the GM export's `Monsters` list). */
+function rowSiblings(node: unknown, label: string): unknown[] | null {
+  if (Array.isArray(node)) {
+    const items: unknown[] = node;
+    const index = items.findIndex((child) => isRowNode(child, label));
+    if (index >= 0) return items.slice(index + 1);
+    for (const child of items) {
+      const found = rowSiblings(child, label);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof node !== 'object' || node === null) return null;
+  for (const value of Object.values(node as Record<string, unknown>)) {
+    const found = rowSiblings(value, label);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+/**
+ * The TREASURE line one book printed for ONE roster row, read from that row's
+ * OWN block: the row is the text array starting with the creature's
+ * `Name ×count` label, and the treasure is its SIBLING in the same container
+ * whose runs read `Treasure: …` (docs/17 row 159).
+ *
+ * `null` means the book printed no treasure for that row. Every caller treats
+ * `null` as a FACT TO ASSERT — the mob that carries nothing must answer `null`
+ * in BOTH books, and the mob that carries something must answer a line in both —
+ * so an extraction that silently answered `''`, or one that found the encounter's
+ * own `Treasure` labeled section instead of the row's line, cannot make the
+ * cross-book equality below pass on nothing.
+ */
+function printedTreasure(document: unknown, label: string): string | null {
+  const siblings = rowSiblings(document, label);
+  if (siblings === null) return null;
+  for (const sibling of siblings) {
+    const line = referenceRuns(sibling).join('');
+    if (line.startsWith('Treasure: ')) return line;
+  }
+  return null;
+}
+
 function citedStatBlock(): StatBlock {
   return statBlockSchema.parse({
     system: 'pathfinder2e',
@@ -194,7 +247,9 @@ async function seedEncounter(): Promise<{
           name: 'Cave Fisher',
           count: 1,
           notes: 'clings to the pilings',
-          treasure: '',
+          // The mob CARRIES something: the treasure line is the third thing the
+          // two books must agree about (docs/17 row 159).
+          treasure: 'Pouch: 5 gp, a bone key',
           source: {
             type: 'rulebook',
             chunkId: chunk.id,
@@ -415,6 +470,64 @@ describe('both exporters print the SAME reference (one formatter)', () => {
       expect(text).not.toContain('44 (8d8)');
     }
   });
+
+  it('a mob’s TREASURE is the same line in both books — and nothing at all for a mob that carries none', async () => {
+    const { artifact, module, artifacts, monsters } = await seedEncounter();
+    const roster = await resolveExportRoster(artifact);
+    const cited = monsters[0];
+    const nameOnly = monsters[1];
+    if (cited === undefined || nameOnly === undefined) {
+      throw new Error('the seed must build both roster rows');
+    }
+    const citedLabel = `${cited.name} ×${String(cited.count)}`;
+    const nameOnlyLabel = `${nameOnly.name} ×${String(nameOnly.count)}`;
+
+    const moduleDefinition = buildModuleDefinition({
+      module,
+      artifacts,
+      rosterResolution: { [artifact.id]: roster },
+    });
+    const exportDefinition = buildGmNotesDefinition(artifact, null, roster);
+
+    // EXTRACTED from each book on its own — never read from the shared
+    // formatter, which would compare the rule with itself.
+    const moduleLine = printedTreasure(moduleDefinition, citedLabel);
+    const exportLine = printedTreasure(exportDefinition, citedLabel);
+
+    // NON-VACUITY, both sides, and anchored to the words the seed authored: an
+    // absent or empty extraction cannot make the equality below pass.
+    expect(moduleLine).not.toBeNull();
+    expect(exportLine).not.toBeNull();
+    expect(moduleLine).toBe('Treasure: Pouch: 5 gp, a bone key');
+    expect(moduleLine).toBe(exportLine);
+    // …and it is the ONE rule's own line, printed under the mob that carries it.
+    expect(moduleLine).toBe(rosterTreasureFor(cited)?.printed);
+
+    // The mob that carries NOTHING prints no line in EITHER book — and the
+    // rule answers `null` for it, so a label over a blank value has nowhere to
+    // come from (AGENTS rule 1).
+    expect(rosterTreasureFor(nameOnly)).toBeNull();
+    expect(printedTreasure(moduleDefinition, nameOnlyLabel)).toBeNull();
+    expect(printedTreasure(exportDefinition, nameOnlyLabel)).toBeNull();
+
+    // The treasure is a line of its OWN, never folded into the reference the two
+    // books were already pinned on: a renderer that appended it to the row would
+    // red the reference differential AND this one, in both books.
+    expect(printedReference(moduleDefinition, citedLabel, cited.notes)).toBe(' — Bestiary p.132');
+    expect(printedReference(exportDefinition, citedLabel, cited.notes)).toBe(' — Bestiary p.132');
+
+    // The module BOOK's ledger carries the roster's treasure as its own labelled
+    // row (docs/17 row 159) — read off the definition's own bytes because a
+    // ledger CELL is a plain string, which `textOf` deliberately does not
+    // collect (it reads text RUNS, the unit a reader sees).
+    expect(JSON.stringify(moduleDefinition)).toContain(`"Pier Ambush · ${citedLabel}"`);
+    expect(textOf(moduleDefinition)).toContain('TREASURE LEDGER');
+    // …and the single-artifact export grows NO ledger of its own: the back
+    // matter belongs to the module book, and a second ledger would be a second
+    // mechanism for one idea (AGENTS rule 4).
+    expect(textOf(exportDefinition)).not.toContain('TREASURE LEDGER');
+    expect(JSON.stringify(exportDefinition)).not.toContain('TREASURE LEDGER');
+  });
 });
 
 describe('EXACTLY ONE implementation of the roster reference', () => {
@@ -474,6 +587,37 @@ describe('EXACTLY ONE implementation of the roster reference', () => {
     expect(code('src/lib/modulePdf.ts')).toContain('export function statBoxContent');
     // And only the shared box's own definition exists.
     expect(code('src/lib/pdfExport.ts')).not.toContain('export function statBoxContent');
+  });
+
+  it('the roster TREASURE goes through its own ONE rule, whose label lives in the domain module alone (docs/17 row 159)', () => {
+    const domain = code('src/domain/encounterResolve.ts');
+    // The rule and the ONE label live in the domain module…
+    expect(domain).toContain('export function rosterTreasureFor');
+    expect(domain).toContain("const TREASURE_LABEL = 'Treasure: '");
+    // …and EVERY roster-printing surface renders that rule rather than reading
+    // the field itself: the module book's encounter section, the single-artifact
+    // GM export's roster rows, and the reader's roster row.
+    for (const source of [
+      'src/lib/modulePdf.ts',
+      'src/lib/pdfExport.ts',
+      'src/features/campaign/components/monster-source.tsx',
+    ]) {
+      const text = code(source);
+      expect(text).toContain('rosterTreasureFor');
+      // No second label, and no second emptiness decision taken by reading the
+      // roster entry's raw field for printing: `data.treasure` (the ENCOUNTER's
+      // own field, a different thing) is the only `.treasure` these may touch,
+      // and it is spelled as one.
+      expect(text).not.toContain('Treasure: ');
+      expect(text).not.toContain('monster.treasure');
+      expect(text).not.toContain('entry.treasure');
+    }
+    // The encounter's own field still prints through the shared labeled section
+    // (row 159 keeps it as the encounter-level line) — so the removal of the
+    // roster reads above is not the removal of the whole feature.
+    for (const source of ['src/lib/modulePdf.ts', 'src/lib/pdfExport.ts']) {
+      expect(code(source)).toContain('data.treasure');
+    }
   });
 
   it('the shared box carries every section a PF2e-style block needs', () => {

@@ -468,6 +468,44 @@ export function rosterStatBlockFor(
   }
 }
 
+/** What ONE roster entry carries, and the ONE line a roster row prints for it. */
+export interface MonsterTreasure {
+  /**
+   * The authored items, TRIMMED — what a caller that names the carrier itself
+   * puts in its own cell (the ledger's `Treasure` column), never re-joined with
+   * anything.
+   */
+  text: string;
+  /** `text` AS ONE LABELLED LINE — the string a roster row renders. */
+  printed: string;
+}
+
+/** The label a roster row prints its carried items under. */
+const TREASURE_LABEL = 'Treasure: ';
+
+/**
+ * WHAT a roster row's TREASURE is — the ONE rule every treasure-printing surface
+ * goes through (docs/17 row 159, docs/11 §What a roster row PRINTS).
+ *
+ * The encounter's roster entry owns the text (`MonsterEntry.treasure`: what ONE
+ * instance of that entry carries, one item per line, `''` when it carries
+ * nothing), and the answer is either that text or `null`. `null` is the whole
+ * emptiness rule: a caller that gets it prints NOTHING — no line, no label with
+ * a blank value, no ledger row — so "does this mob carry anything" is decided in
+ * exactly one place and the module PDF, the single-artifact GM export, the
+ * reader's roster row and the document's treasure ledger cannot disagree about
+ * it. `printed` carries the label, so no caller composes one of its own.
+ *
+ * Nothing is written and nothing is materialized: the mob's own authored text is
+ * what every surface renders, and the treasure is never merged with the
+ * encounter-level `treasure` field, which stays a line of its own.
+ */
+export function rosterTreasureFor(entry: MonsterEntry): MonsterTreasure | null {
+  const text = entry.treasure.trim();
+  if (text === '') return null;
+  return { text, printed: `${TREASURE_LABEL}${text}` };
+}
+
 export async function resolveMonsterEntry(
   entry: MonsterEntry,
   lookups: MonsterLookups,
