@@ -189,12 +189,13 @@ export function detectCampaignEntities(
   // the map's VALUES are the strings that become detection REGEXES below, and
   // a JS regex never folds Unicode composition — a precomposed pattern does
   // not match a decomposed mention. Folding the key onto the comparable form
-  // collapsed a composed name with its decomposed alias into ONE entry and
-  // DROPPED the alias's spelling, blinding detection to prose spelled the way
-  // the alias spelled it (a Mac-authored NFD brief). Case and surrounding
-  // space fold; composition does not — exactly inverted from the identity
-  // spaces, and the pin in `tests/domain/name-key-spaces.test.ts` holds both
-  // halves.
+  // collapsed a composed name with its decomposed alias into ONE entry — and
+  // because the decomposed spelling is one code unit LONGER, the alias's
+  // spelling won the map and the NAME's own spelling was DROPPED: detection
+  // went blind to prose spelled the way the artifact's name spells it. Case
+  // and surrounding space fold; composition does not — exactly inverted from
+  // the identity spaces, and the pins in `tests/domain/name-key-spaces.test.ts`
+  // hold both halves.
   const spellings: { artifact: AnyArtifact; name: string }[] = [];
   for (const artifact of pool) {
     const forms = new Map<string, string>();

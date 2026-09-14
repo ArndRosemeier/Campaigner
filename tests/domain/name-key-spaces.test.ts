@@ -562,13 +562,29 @@ describe('ALIAS_FORM_KEY — the anti-space: a spelling pick, not an identity', 
     expect(source('llm/campaignGrounding.ts')).toContain('const key = name.toLowerCase();');
   });
 
-  it('a decomposed alias spelling still detects its prose mention', () => {
+  it('a COMPOSED prose mention is still detected when the artifact also carries the alias DECOMPOSED', () => {
     // The artifact's name is composed; one of its aliases spells the SAME
     // form DECOMPOSED. The grounding pick must keep BOTH spellings alive (the
     // map's values become detection regexes, and a regex never folds
-    // composition) — folding this key onto the comparable form dropped the
-    // alias's spelling and blinded detection to prose spelled the way the
-    // alias spells it. This is the pin that was watched RED under that fold.
+    // composition). Folding this key onto the comparable form collapsed the
+    // two into one entry — and because the decomposed spelling is one code
+    // unit LONGER, the alias won the map and the NAME's own spelling was
+    // dropped: detection went blind to prose spelled the way the name spells
+    // it. This is the pin that was watched RED under that fold (injection c).
+    const npc = anyArtifactSchema.parse(
+      createArtifact({
+        campaignId: newId(),
+        kind: 'npc',
+        name: COMPOSED,
+        aliases: [DECOMPOSED],
+        summary: 'waits.',
+      }),
+    );
+    const detected = detectCampaignEntities(`Der ${COMPOSED} steht still im Saal.`, [npc]);
+    expect(detected.map((entry) => entry.name)).toEqual([COMPOSED]);
+  });
+
+  it('and the decomposed alias spelling detects its own prose too (BOTH spellings alive, not one)', () => {
     const npc = anyArtifactSchema.parse(
       createArtifact({
         campaignId: newId(),
