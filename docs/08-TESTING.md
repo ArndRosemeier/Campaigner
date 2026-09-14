@@ -482,6 +482,7 @@ test) · ❌ gap.
 | Quick-find (Ctrl+K): scoped artifacts, Library labels, module navigation, rule preview/pin | `quickfind-modules.test`, `quickfind-topbar.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
 | Module reader as play view: battle link and encounter-row seed action | `module-reader.test`, `entity-panel.test` | ✅ |
+| **A markdown table renders as a REAL table in the app** (docs/17 row 158, docs/18 §2.3): `<table>` semantics inside its own horizontal-overflow wrapper, in a part's body on the real READER page and behind the artifact editor's Preview toggle, with the cell text in order and no pipe-mush left anywhere | `wiki-markdown-tables.test` (2 surface pins + 13 behavioural pins through the shared renderer + 2 source scans) | ✅ |
 | **An encounter's mobs are listed BELOW its entity row** with each mob's reference and numbers, while the row's jump into the workspace is unchanged (docs/17 row 146) | `reader-encounter-roster.test` (2 behaviour pins driving the real `ModuleReaderPage`) | ✅ |
 | Module reader header nav — **Board + Chat + Contents**, with exactly ONE canvas destination: the **Chat** entry (`canvasChatPath`, i.e. the canvas with `?chat=open`), the plain-canvas **Canvas** control retired by owner request and gone by test id AND by accessible name (docs/17 row 138) | `canvas-chat-thread.test` (the one-canvas-destination count pin + the live Chat routing pin) | ✅ |
 | Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset, layout-cell grid metrics | `battle-surface.test` | ✅ |
@@ -3513,15 +3514,90 @@ page break is measured by `estimateHeight`'s deliberately over-stating arithmeti
 (docs/19 §3), so its real break point and the real `headerRows: 1` repetition are
 pdfmake's behaviour, asserted here only as a definition. (3) A table written under
 a bullet prints as a block AFTER the list, which is the honest reading of a
-line-based parser but is not GFM's nested-table shape. (4) The app still
-disagrees BY DESIGN and is out of scope: `components/wiki-markdown.WikiMarkdown`
-is a different renderer (remark), no `remark-gfm` was added, and whether the app
-renders tables is the owner's decision (asked separately) — while
+line-based parser but is not GFM's nested-table shape. (4) The app DID
+not render tables when this landed, and that was recorded as the owner's decision
+to make — **docs/17 row 158 is that answer and CLOSES it**: the owner answered
+*"Yes — render tables in the app as well."*, so `components/wiki-markdown.WikiMarkdown`
+now carries `remark-gfm` and the app renders tables too (its own section below
+names where the two grammars disagree). The rest of this sentence stands as the
+state at row 157 — while
 `lib/markdown.markdownToText` keeps printing pipes as text in the single-artifact
 GM-notes export, also out of scope. (5) The `problems` surface gained NOTHING on
 purpose: every pipe line now lands somewhere (a table, or literal text at the
 shape it was written as), so there is no table failure to report — a ragged row is
 padded, not refused, and reporting it would report a non-failure as one.
+
+### The APP renders markdown tables too (docs/17 row 158, docs/18 §2.3)
+
+Row 157 made a markdown table a real table in the module PDF and recorded, in
+its own section above, that the app still showed the same text as literal
+`| … |` pipe-mush because the app's renderer is a different renderer by design.
+The owner was asked directly and answered *"Yes — render tables in the app as
+well."*, so the two surfaces disagreeing became a defect instead of a preserved
+choice. The whole change is ONE dependency wired into ONE existing component:
+`remark-gfm@4.0.1` (a direct dependency, additive in the lockfile) is prepended
+to `WikiMarkdown`'s remark pipeline, and `table` is mapped to a component that
+renders a real `<table>` inside its own horizontal-overflow wrapper — so the
+module reader, the peek modal, the editor preview and the board cards all get
+tables from one change (they are four callers, not four renderers).
+
+Where the app's GFM grammar and the PDF's line parser genuinely DIFFER, each
+difference is named and pinned rather than engineered away (row 158 lists all
+five): GFM has no headerless table at all (a delimiter-first pipe block is
+TEXT in the app, a headerless table in the PDF), GFM TRUNCATES a row wider than
+its header while the PDF widens the table, and a table under a bullet is nested
+in the list item only when the lines are INDENTED into it. What both grammars
+must agree on — and do — is the rule the row-157 arc was really about: **no pipe
+block disappears**. `lib/markdown.markdownToText` (the single-artifact GM-notes
+export's syntax stripper) and `lib/textBlocks` stay untouched.
+
+| fact pinned | where |
+|---|---|
+| **A real `<table>` with the header row and the body rows in the text's own order** — a `<thead>` from the delimiter's header, a `<tbody>` from every other row | `tests/features/wiki-markdown-tables.test.tsx` (`renders a real <table> with the header row and the body rows in the text's own order`) |
+| **The non-vacuity pin: the OLD mush cannot pass** — three shapes (plain, ragged, aligned), each asserted to be a real `<table>` whose RENDERED TEXT contains no `\|` and no `---`; a renderer that "prints the rows nicely" as text fails it | same file (`the OLD mush cannot pass: no table pin is satisfiable by the literal pipes`) |
+| **The overflow wrapper exists AND is a wrapper** — `overflow-x-auto` present, the table its first element child, exactly one wrapper, the table's parent the wrapper (a wrapper around nothing scrolls nothing) | same file (`wraps the table in its own horizontal-overflow container, and the table is its CHILD`) |
+| **GFM's own extra: the delimiter row's column alignment** reaches the cells as an inline `text-align` (the table element's own `text-left` class must not decide it) | same file (`maps the delimiter row's column ALIGNMENT onto the cells (GFM's own extra)`) |
+| **An escaped pipe is content** — `\| x \| y \| z \|` is TWO cells and the first reads `x \| y` | same file (`keeps an escaped pipe inside ONE cell, instead of splitting the row on it`) |
+| **A ragged row, both halves**: a SHORT row is padded with empty cells (the rule the PDF shares), while a row WIDER than the header has its excess cells DROPPED — GFM's spec, the PDF's recorded divergence, asserted rather than glossed | same file (`pads a short row to the header's width, and DROPS a cell beyond it — GFM's rule, the PDF's divergence recorded`) |
+| **A pipe line with NO delimiter row is text, never deleted** — including prose that merely contains pipes (`a \| b \| c`) | same file (`prints a pipe line with NO delimiter row as the text it is, never deletes it`) |
+| **A lone delimiter row is text too** (GFM has no headerless table, so a delimiter-first block renders as the literal lines) | same file (`prints a LONE delimiter row as literal text too (GFM has no headerless table at all)`) |
+| **A CHIP INSIDE A TABLE CELL — the highest-risk interaction** — a resolved `[[Ash Gate]]` in a header cell and a padded `[[ Ash Gate \|the gate]]` in a body cell both render as real chips carrying `data-wiki-name`, `data-wiki-artifact-id` and the byte-exact `data-wiki-raw` carrier (tooltip still leads with the token), and the row keeps its other cell | same file (`renders a resolved chip INSIDE a table cell — header cell and body cell — with its byte-exact token`) |
+| **An unresolved token in a cell chips as unresolved** — never rendered as its raw `[[…]]` | same file (`renders an UNRESOLVED chip inside a cell as a chip too, never as its raw token`) |
+| **THE AUTHORING RULE, pinned from BOTH sides**: a padded token in a cell must escape its pipe, because an UNESCAPED pipe splits the token across two cells (and GFM then drops the row's tail cell, `40 gp`, the row being wider than its header) — and the SAME markdown through `parseMarkdown` (the PDF seam) splits it into three cells too, so this is the two grammars' shared rule and not an app quirk | same file (`an UNESCAPED pipe in a padded token splits it across cells — and GFM then drops the row's tail cell (pinned, not glossed)`) |
+| **A table under a bullet, both directions**: INDENTED into the list item is a real table nested in the `<li>` with the bullet's own text kept; UNINDENTED is GFM's lazy continuation of the bullet's paragraph (the PDF flushes a table after the list) — a recorded divergence, and the text is there either way | same file (`reads an INDENTED table under a bullet as a real table INSIDE the list item`, `reads an UNINDENTED pipe block under a bullet as the bullet's own text …`) |
+| **The canvas preview's source map survives in a cell**: with `sourceOffsets` the table is the same real table with the same text, and each cell's text run is wrapped in its own `data-md-from`/`data-md-to` span (`Item`, `Value`, `Silver bell`, `40 gp` in order) | same file (`renders the same real table with the same cell text, with the cell runs wrapped`) |
+| **THE REAL SURFACE — the module reader**: a seeded module whose part text carries the row-157 defect's own table between two prose lines renders a real table inside the wrapper in `part-body`, cell text in order, the prose on BOTH sides intact, the chip beside it still chipping, and NOT ONE `\|` anywhere in the section's rendered text | same file (`renders a real table with an overflow wrapper in a part’s body, and no pipe-mush anywhere in the section`) — driven through `createAppRouter` + `modulePath`, not the pure component |
+| **THE REAL SURFACE — the editor preview**: `MarkdownBody` shows the markup as TEXT in edit mode (that is what an editor is for) and a real table inside the wrapper once Preview is on | same file (`renders a real table (with the wrapper) only once Preview is on`) |
+| **EXACTLY ONE app-side table renderer (AGENTS §Centralization 2)**: a source scan over `src/` with a >200-file non-vacuity check finds exactly ONE `from 'remark-gfm'` import (the shared renderer, asserted to really USE it), and a `<table>` element only in the two declared sites — `wiki-markdown.tsx` (the markdown renderer) and `lab/LabeledDungeonView.tsx` (the lab's synthetic grid) — with comment lines skipped and a rot check, so a second pipeline or a second table renderer reds | same file (`\`remark-gfm\` is wired into exactly ONE src file — the shared renderer`, `no src file renders a table element outside the declared sites`) |
+| **The pre-existing chip and source-map suites stay green**: the reader-parity pin (a table-less document's rendered HTML byte-identical with no wrapper and no attributes) and every chip pin run unchanged | `tests/features/wiki-source-map.test.tsx`, `tests/features/wiki-chip-tooltip.test.tsx`, `tests/lib/remark-wikilinks.test.tsx` (unchanged, re-run in the gate and under the injections) |
+
+| injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`, each printed back with `git diff --stat` before its run and `diff -u` against the OUT-OF-TREE copy, restored FROM that copy — never `git checkout --` — and proved by `git hash-object` identical before and after: `wiki-markdown.tsx` `53b0ff7d2fb1db2c92719d89c06ef7a05863be83`, `remark-wikilinks.ts` `d384e5a45b85d22f37582931ce36261d534215db`) | result |
+|---|---|
+| **(a) remove the table plugin** (`remarkGfm` dropped from BOTH pipeline forms) | **RED 13 failed / 5 passed (18)**, exit 1 — every table pin, both chip-in-cell pins, all three surface pins and the source-map pin red (`no <table> rendered; text was "… \| Item \| Value \| …"`), and the five GREEN are exactly the pins that must not depend on GFM: the three never-delete pins and the two source scans |
+| **(b) remove the table component mapping** (`table: WikiTable` deleted — the table still parses, it just renders bare) | **RED 3 failed / 15 passed (18)** — the wrapper pin, the reader-surface pin and the editor-preview pin, all with `expected null not to be null`, while every REAL-TABLE pin stays GREEN: the wrapper is behavioural coverage, not a restatement of `<table>` |
+| **(c) make `remarkWikiLinks` skip a `tableCell`** (the plugin stops descending into cells) | **RED 2 failed / 40 passed across three files** — exactly the two chips-in-cell pins, with the pre-existing chip suites (`wiki-chip-tooltip.test.tsx`, `tests/lib/remark-wikilinks.test.tsx`) and every table pin GREEN. **The first attempt at this injection was TOO SHALLOW and reds nothing**: skipping only the `tableCell` node's own text transform leaves the recursion into its children intact, which is why the shipped injection moves the guard onto the RECURSION — recorded because a pin only the honest injection reds is the point |
+
+**REVERT-PROVEN (one injection at a time, the RED set recorded above).** The
+table grammar is one plugin import and one component mapping: dropping either
+one reds a disjoint set of pins, so both halves are covered by behaviour rather
+than by a restatement. The chips-in-cell pin is proven load-bearing on its own
+(2 RED, 40 GREEN across three files), so it is not decoration beside the
+untouched chip pins.
+
+**UNPROVEN, stated as such.** jsdom does not lay out, so nothing here proves a
+table LOOKS right: (1) real column widths and cell WRAPPING are unverified —
+`w-full border-collapse` gives the browser's own auto layout, and whether a
+4-column table stays readable in the reader's column is a judgement on screen;
+(2) `overflow-x-auto` is asserted as a DEFINITION (the class and the nesting),
+never as a scroll that happened: whether a wide table actually scrolls inside
+the reader's column on a narrow viewport, and whether it needs a `min-w` to do
+so, is the owner's to see; (3) the borders, the shaded header and the padding
+are asserted only as class strings, so how they read against the reader's dark
+theme is unverified; (4) GFM's other extensions (strikethrough, autolink
+literals, task-list checkboxes, footnotes) are ON as a consequence of the one
+dependency, and their appearance in a real module's prose has never been read by
+the owner — the reader-parity pin only proves a document with NONE of those
+constructs renders byte-identically.
 
 ### Remaining gaps
 

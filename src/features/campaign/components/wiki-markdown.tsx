@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type { JSX, ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import type { AnyArtifact, ArtifactKind, Id } from '@/domain';
 import { ImageThumb } from '@/features/images/image-thumb';
@@ -28,6 +29,19 @@ import { cn } from '@/lib/utils';
  * reader render, and an unmemoized renderer re-parsed the whole document
  * whenever an ancestor re-rendered for any reason. `highlight` is an object
  * prop, so the canvas preview (a fresh range per render) behaves as before.
+ *
+ * GFM, so a markdown TABLE renders as a real table (owner's decision, docs/17
+ * row 158: asked directly whether the app should render tables as well as the
+ * module PDF, he answered *"Yes — render tables in the app as well."*). The
+ * grammar is `remark-gfm` — the ecosystem's one table implementation — added
+ * to THIS component's pipeline and to nobody else's, so all four surfaces (the
+ * module reader, the peek modal, the editor preview and the board cards) get
+ * tables from one change. The same dependency turns on GFM's other extensions
+ * (strikethrough, autolink literals, task-list checkboxes, footnotes); that is
+ * the cost of using the standard dialect instead of a hand-picked table-only
+ * grammar, and it is recorded rather than hidden. `lib/markdown.markdownToText`
+ * (the single-artifact GM-notes export's syntax stripper) and `lib/textBlocks`
+ * are NOT touched: one must not start rendering, the other is markdown-free.
  */
 
 export interface WikiMarkdownProps {
@@ -97,6 +111,7 @@ export const WikiMarkdown = memo(function WikiMarkdown({
   const components = useMemo(
     () => ({
       a: wikiAnchorComponent({ artifacts, moduleId, onOpenArtifact, onStub }),
+      table: WikiTable,
     }),
     [artifacts, moduleId, onOpenArtifact, onStub],
   );
@@ -112,22 +127,29 @@ export const WikiMarkdown = memo(function WikiMarkdown({
           return to > from ? { from, to } : null;
         })();
 
-  // The remark pipeline, per render. Opt-in `sourceOffsets` wraps every text
-  // run in its source range, and a `highlight` washes the last replacement
-  // inline; the wrapper MUST run BEFORE `remarkWikiLinks` (the wiki plugin
-  // splits the runs it wraps). Both ride ONE parse of ONE string — no slice
-  // is ever parsed on its own. Without either the array is exactly the
-  // historical `[remarkWikiLinks]`.
+  // The remark pipeline, per render. `remarkGfm` (docs/17 row 158) is what
+  // makes a markdown table parse as a table at all — it extends the PARSER, so
+  // it is the first plugin whatever the props; the source-span wrapper must
+  // still run BEFORE `remarkWikiLinks` (the wiki plugin splits the runs it
+  // wraps). Opt-in `sourceOffsets` wraps every text run in its source range,
+  // and a `highlight` washes the last replacement inline. Both ride ONE parse
+  // of ONE string — no slice is ever parsed on its own. Without either the
+  // array is `[remarkGfm, remarkWikiLinks]`.
   const renderPlugins = () =>
     sourceOffsets === true || highlightRange !== null
-      ? [remarkSourceSpans({ wrap: sourceOffsets === true, highlight: highlightRange }), remarkWikiLinks]
-      : [remarkWikiLinks];
+      ? [
+          remarkGfm,
+          remarkSourceSpans({ wrap: sourceOffsets === true, highlight: highlightRange }),
+          remarkWikiLinks,
+        ]
+      : [remarkGfm, remarkWikiLinks];
 
   // One parse, one string, whatever the props: the wash is a decoration
   // applied INSIDE that parse (see `remarkSourceSpans`), so the rendered text
   // is the source text character for character — with or without a highlight.
-  // Without any prop the pipeline is exactly the historical
-  // `[remarkWikiLinks]` and the output is byte-identical.
+  // Without any prop the pipeline is `[remarkGfm, remarkWikiLinks]` and, for a
+  // document with no table, the output is byte-identical to the pre-GFM one
+  // (`tests/features/wiki-source-map.test.tsx`'s reader-parity pin).
   return (
     <div className={className}>
       <Markdown
@@ -146,6 +168,34 @@ function wikiUrlTransform(url: string): string {
   if (url.startsWith('#wiki:')) return url;
   return defaultUrlTransform(url);
 }
+
+/**
+ * A markdown table (docs/17 row 158). `remark-gfm` parses it — this component
+ * only decides how it LOOKS, and the shape is two elements because the second
+ * one is load-bearing: the `<table>` is wrapped in its own horizontally
+ * scrollable container, so a wide table scrolls INSIDE the reader's column
+ * instead of blowing the column out (a table that breaks the module reader's
+ * layout is worse than the literal pipes it replaced). Both are pinned,
+ * including that the table is the wrapper's CHILD — a wrapper around nothing
+ * scrolls nothing.
+ *
+ * The styling rides the table element through Tailwind descendant variants
+ * (`[&_th]`/`[&_td]`) — the convention the other markdown surfaces already use
+ * (`components/markdown-body.tsx`, `modules/part-text-editor.tsx`) — rather
+ * than a per-element component override, so GFM's per-column `text-align`
+ * (the delimiter row's `:---`/`---:`) reaches the cell's own `style` and is
+ * not overwritten by an override's className.
+ */
+function WikiTable({ children }: { children?: ReactNode }): JSX.Element {
+  return (
+    <div data-testid="markdown-table-scroll" className="my-3 max-w-full overflow-x-auto">
+      <table className={TABLE_CLASSES}>{children}</table>
+    </div>
+  );
+}
+
+const TABLE_CLASSES =
+  'w-full border-collapse text-left text-sm [&_th]:border [&_th]:border-border [&_th]:bg-muted/50 [&_th]:px-2 [&_th]:py-1 [&_th]:align-top [&_th]:font-semibold [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_td]:align-top';
 
 function wikiAnchorComponent(context: {
   artifacts: readonly AnyArtifact[];
