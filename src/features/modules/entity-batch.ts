@@ -1,5 +1,5 @@
 import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, PersonaRun } from '@/domain';
-import { bestiarySlotForEntity, entityIntentFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
+import { bestiarySlotForEntity, entityIntentFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import {
   citationBookTitle,
@@ -177,11 +177,24 @@ async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
  * `missing ref` reporting keeps naming the pack that actually has to be
  * installed and the model's string is never trusted as a book.
  *
- * The matching rule itself is EXACT (trimmed, case-insensitive) and stays that
- * way: the same pool is now also the VOCABULARY the spine prompt carries
- * (`llm/creatorRoster`, docs/17 row 114), so the model is shown the names it
- * may copy — and a fuzzy match here would silently cast a different creature
- * than the module asked for. The suggestion half runs ONLY for the message.
+ * The matching rule itself is EXACT and stays that way: the same pool is now
+ * also the VOCABULARY the spine prompt carries (`llm/creatorRoster`, docs/17
+ * row 114), so the model is shown the names it may copy — and a fuzzy match
+ * here would silently cast a different creature than the module asked for. The
+ * suggestion half runs ONLY for the message.
+ *
+ * EXACT means the app's ONE comparable form, not a spelling of it (docs/17 row
+ * 166): the comparison is `domain/creatureName.sameCreatureName`, i.e. Unicode
+ * canonical composition (NFC) + trim + case fold — the SAME strictness the wiki
+ * resolver and the alias tier apply, so "is this the same creature name?" has
+ * one answer everywhere. It is NOT `normalizeCreatureName`, which is the LOOSE
+ * form and folds far more (diacritics, punctuation, a trailing qualifier) and
+ * must never resolve. Before row 166 this one line was the last hand-rolled
+ * `name.trim().toLowerCase() === wanted.toLowerCase()` in the app, so a
+ * DECOMPOSED slot name (a Mac-authored `Müller` written `u` + U+0308) missed a
+ * precomposed library name — the same string to a reader, different bytes — and
+ * the cast refused a creature the library holds. Row 161's exactness pins still
+ * hold through it: a one-edit near miss is still a refusal.
  *
  * Exported so the resolution rule is pinnable where it lives (docs/18 §2): this
  * is the ONE seam that answers "which library creature does the module's
@@ -196,9 +209,8 @@ export async function libraryCitationForEntity(
   const book = slot.book?.trim() ?? '';
   const named = `the entity «${entityName}» asks to borrow the stats of «${wanted}»`;
   const pool = await listLibraryCreatures();
-  const sameName = pool.filter(
-    (creature) => creature.name.trim().toLowerCase() === wanted.toLowerCase(),
-  );
+  // The ONE creature-name comparison (docs/17 row 166, never re-stated here).
+  const sameName = pool.filter((creature) => sameCreatureName(creature.name, wanted));
   // The library's own disclosure of which book each candidate comes from. Read
   // for the candidates ONLY, and only when the name is AMBIGUOUS (or a failure
   // has to name them) — never on the unique-name arm, so the common

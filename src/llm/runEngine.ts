@@ -32,6 +32,7 @@ import {
   // The ONE alias merge rule (docs/17 row 121): the three in-place writes below
   // read it directly because their alias rides a combined content patch.
   mergeAliasNames,
+  comparableName,
   sameAliasName,
   abilityScoreFromModifier,
   drawFillGrade,
@@ -1377,13 +1378,17 @@ async function materializeMonsterNpc(
   if (levelIssue !== undefined) {
     throw new Error(`finalize: refusing to materialize "${trimmedName}" — ${levelIssue}`);
   }
-  const key = trimmedName.toLowerCase();
+  // The memo key and the name lookup are the ONE comparable form (docs/17 row
+  // 166): the key is a NAME, so keying it by hand would memoize a decomposed
+  // spelling separately from a precomposed one and — worse — the lookup below
+  // would still miss the row for one of the two.
+  const key = comparableName(trimmedName);
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
 
   const placementModuleId = input.placementModuleId;
   const namedRows = (await listArtifactsByCampaign(input.campaign.id)).filter(
-    (artifact) => artifact.kind === 'npc' && artifact.name.trim().toLowerCase() === key,
+    (artifact) => artifact.kind === 'npc' && sameAliasName(artifact.name, trimmedName),
   );
   const existing =
     (placementModuleId === undefined

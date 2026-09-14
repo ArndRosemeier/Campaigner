@@ -3,6 +3,8 @@ import type { WikiLinkCreature } from '@/domain/creature';
 import type { Id } from '@/domain/entity';
 import type { Module } from '@/domain/module';
 
+import { sameAliasName } from '@/domain/artifactAlias';
+
 import type { WikiLinkResolution } from '@/lib/wikilinks';
 import { extractWikiLinks, resolveWikiLink, WIKI_LINK_PATTERN } from '@/lib/wikilinks';
 
@@ -183,7 +185,12 @@ export function buildWikiGraph(
             mentionsByDocument: new Map<string, WikiGraphMention>(),
           });
         } else {
-          if (!node.names.some((name) => name.toLowerCase() === lower)) node.names.push(link.name);
+          // The node's OWN name list is deduped through the ONE name comparison
+          // (docs/17 row 166), never `name.toLowerCase() === lower`: a link
+          // written with a decomposed umlaut and the same name precomposed are
+          // ONE name here (the `lower` NODE KEY above is a separate concern —
+          // see the key-class note in docs/18 §2.1).
+          if (!node.names.some((name) => sameAliasName(name, link.name))) node.names.push(link.name);
           // A path that resolved within-tier ambiguously marks the node ⚠ —
           // the same tooltip semantics the reader gives its chips.
           if (resolution.status === 'ambiguous') node.status = 'ambiguous';

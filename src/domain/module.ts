@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema, stampNewEntity, type BaseEntity, type Id } from '@/domain/entity';
+// The leaf primitive, imported directly rather than through
+// `@/domain/creatureName`'s `sameCreatureName` (the two are the same function):
+// `creatureName.ts` reaches `db/mobPortraitCache`, and this pure domain module
+// must not gain a domain → db edge for a comparison it can make with the leaf
+// (docs/17 row 166).
+import { comparableName, sameAliasName } from '@/domain/artifactAlias';
 import { modulePromptStyleSchema, type ModulePromptStyle } from '@/domain/promptStyle';
 
 /**
@@ -576,11 +582,17 @@ export function withEntityBestiarySlots(
   });
 }
 
-/** Two slots asking for the same creature from the same book (trimmed,
- * case-insensitive — the comparison the normalization pass itself may make). */
+/** Two slots asking for the same creature from the same book. The CREATURE half
+ * is the app's ONE comparable form — `domain/artifactAlias.comparableName`,
+ * which is `sameCreatureName`'s own primitive (docs/17 row 166) — so a slot
+ * written with a decomposed umlaut and one written precomposed are one slot.
+ * The BOOK half is deliberately a plain trim+case fold and is NOT folded onto
+ * the comparable form: a book title is not a creature/artifact NAME, and the
+ * disambiguation rule that reads it is docs/17 row 161's (this file only asks
+ * whether two slots named the same book). */
 function sameSlot(a: EntityBestiarySlot, b: EntityBestiarySlot): boolean {
   return (
-    a.creature.trim().toLowerCase() === b.creature.trim().toLowerCase() &&
+    comparableName(a.creature) === comparableName(b.creature) &&
     (a.book ?? '').trim().toLowerCase() === (b.book ?? '').trim().toLowerCase()
   );
 }
@@ -607,14 +619,16 @@ export const entityRewriteProposalSchema = z.object({
 
 export type EntityRewriteProposal = z.infer<typeof entityRewriteProposalSchema>;
 
-/** Case-insensitive lookup of a recorded entity kind (undefined = unknown). */
+/** Lookup of a recorded entity kind through the ONE name comparison
+ *  (docs/17 row 166; `target` is only the emptiness probe). Undefined =
+ *  unknown. */
 export function entityKindFor(
   entityKinds: readonly ModuleEntityKind[],
   name: string,
 ): EntityKind | undefined {
   const target = name.trim().toLowerCase();
   if (target === '') return undefined;
-  return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.kind;
+  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.kind;
 }
 
 /**
@@ -631,7 +645,7 @@ export function bestiarySlotForEntity(
 ): EntityBestiarySlot | null {
   const target = name.trim().toLowerCase();
   if (target === '') return null;
-  return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.bestiary ?? null;
+  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.bestiary ?? null;
 }
 
 /**
@@ -655,7 +669,7 @@ export function entityIntentFor(
 ): string | null {
   const target = name.trim().toLowerCase();
   if (target === '') return null;
-  const value = entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.intent?.trim();
+  const value = entityKinds.find((entry) => sameAliasName(entry.name, name))?.intent?.trim();
   return value === undefined || value === '' ? null : value;
 }
 /**

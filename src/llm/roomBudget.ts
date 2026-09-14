@@ -1,7 +1,7 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
-import { creatureRefIsEmpty, npcCreatureRef } from '@/domain';
+import { creatureRefIsEmpty, npcCreatureRef, sameAliasName } from '@/domain';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
@@ -99,7 +99,7 @@ export function partLevelForMention(
   const parts = module.parts.slice().sort((a, b) => a.planIndex - b.planIndex);
   for (const part of parts) {
     const mentioned = extractWikiLinks(part.markdown).some(
-      (link) => link.name.trim().toLowerCase() === target,
+      (link) => sameAliasName(link.name, name),
     );
     if (!mentioned) continue;
     // FIRST mention wins: the containing part decides, deterministically.

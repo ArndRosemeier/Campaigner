@@ -35,7 +35,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
-import { entityKindFor } from '@/domain';
+import { entityKindFor, sameAliasName } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -470,7 +470,11 @@ export function EntityPanel({
   }
 
   // Focused / unfocused groups (08 §M4-C), each in the current sort order.
-  // Focus matches are case-insensitive — wiki-links resolve that way.
+  // Focus matches through the ONE name comparison (docs/17 row 166) — the same
+  // canonical-composition + trim + case-fold rule wiki-links resolve by, so a
+  // stored focus and a link spelling that differ only in Unicode composition
+  // are one name (the hand-rolled `focused.trim().toLowerCase() ===
+  // name.toLowerCase()` this replaces also trimmed only the STORED side).
   const sortedEntries = useMemo(() => {
     if (module.entitySort === 'alphabetical') {
       return [...entries].sort((a, b) => a.name.localeCompare(b.name));
@@ -478,7 +482,7 @@ export function EntityPanel({
     return entries; // 'mention' = first-mention order, as extracted
   }, [entries, module.entitySort]);
   const isFocused = (name: string): boolean =>
-    module.focusedEntities.some((focused) => focused.trim().toLowerCase() === name.toLowerCase());
+    module.focusedEntities.some((focused) => sameAliasName(focused, name));
   const focusedEntries = sortedEntries.filter((entry) => isFocused(entry.name));
   const unfocusedEntries = sortedEntries.filter((entry) => !isFocused(entry.name));
 
@@ -488,7 +492,7 @@ export function EntityPanel({
   async function toggleFocus(name: string): Promise<void> {
     const next = isFocused(name)
       ? module.focusedEntities.filter(
-          (focused) => focused.trim().toLowerCase() !== name.toLowerCase(),
+          (focused) => !sameAliasName(focused, name),
         )
       : [...module.focusedEntities, name];
     try {

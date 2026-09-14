@@ -1,6 +1,7 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import {
   carriedTextOrigin,
+  comparableName,
   createModule,
   encounterCountWord,
   encounterFloorGuardrailFor,
@@ -16,6 +17,7 @@ import {
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
+  sameAliasName,
   textOriginIsMachineWritten,
   withEntityBestiarySlots,
   type EncounterFloorGuardrail,
@@ -2300,20 +2302,26 @@ async function applyNormalizationVerdict(
   verdicts: readonly NormalizationEntry[],
   mode: 'replace' | 'incremental' = 'replace',
 ): Promise<void> {
+  // Every key and comparison in this pass is a NAME, so all of them are the ONE
+  // comparable form (docs/17 row 166) — including the two map keys, because an
+  // equality moved onto the comparable form while the key it is answered
+  // through stays lowercased simply misses the entry and reads as fixed while
+  // behaving as before (the same neutralized-half-fold note as
+  // `domain/entityNormalization`'s header).
   const listedSpelling = new Map<string, string>();
-  for (const entry of verdicts) listedSpelling.set(entry.name.trim().toLowerCase(), entry.name.trim());
+  for (const entry of verdicts) listedSpelling.set(comparableName(entry.name), entry.name.trim());
   const artifactSpelling = new Map<string, string>();
-  for (const artifact of artifacts) artifactSpelling.set(artifact.name.trim().toLowerCase(), artifact.name.trim());
+  for (const artifact of artifacts) artifactSpelling.set(comparableName(artifact.name), artifact.name.trim());
 
   const rewrites: LinkRewrite[] = [];
   const aliasAdditions = new Map<string, string[]>(); // artifactId → variant names
   for (const entry of verdicts) {
-    const nameKey = entry.name.trim().toLowerCase();
-    const canonicalKey = entry.canonical.trim().toLowerCase();
+    const nameKey = comparableName(entry.name);
+    const canonicalKey = comparableName(entry.canonical);
     if (canonicalKey === nameKey) continue;
     const to = listedSpelling.get(canonicalKey) ?? artifactSpelling.get(canonicalKey) ?? entry.canonical.trim();
     rewrites.push({ from: entry.name.trim(), to });
-    const artifact = artifacts.find((candidate) => candidate.name.trim().toLowerCase() === canonicalKey);
+    const artifact = artifacts.find((candidate) => sameAliasName(candidate.name, entry.canonical));
     if (artifact !== undefined) {
       aliasAdditions.set(artifact.id, [...(aliasAdditions.get(artifact.id) ?? []), entry.name.trim()]);
     }
@@ -2436,7 +2444,7 @@ export async function classifyEntityName(
     [name],
     artifactNames,
   );
-  const match = parsed.find((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase());
+  const match = parsed.find((entry) => sameAliasName(entry.name, name));
   if (match === undefined) {
     throw new Error(`entity normalization did not answer for "${name}"`);
   }

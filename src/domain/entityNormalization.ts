@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { comparableName } from '@/domain/artifactAlias';
 import {
   ENTITY_KINDS,
   MODULE_ENTITY_KIND_CAP,
@@ -14,6 +15,20 @@ import {
  * only VALIDATES the reply's shape and post-conditions (reject, never
  * correct) and APPLIES the verdict mechanically. No similarity, suffix,
  * stop-word or edit-distance logic may enter the decision path.
+ *
+ * EVERY NAME KEY AND COMPARISON IN THIS FILE IS THE ONE COMPARABLE FORM
+ * (docs/17 row 166): `domain/artifactAlias.comparableName` — canonical
+ * composition (NFC) + trim + case fold. Every key here is a wiki-link name or
+ * an artifact name, so the hand-rolled `name.trim().toLowerCase()` spellings
+ * this file used everywhere were the same defect as the bestiary lookup's:
+ * a DECOMPOSED name (a Mac-authored umlaut) keyed differently from a
+ * precomposed one, so a name the author wrote once could be counted as
+ * UNANSWERED, proposed as a spurious rewrite to itself, or silently lose the
+ * variant it absorbed. It is folded WHOLE rather than line by line because a
+ * partial fold here NEUTRALIZES ITSELF: an equality moved onto the comparable
+ * form while the map key it is answered through stays lowercased simply misses
+ * the entry (a name keyed `müller` decomposed is not found under `müller`
+ * precomposed), which would have read as "fixed" while behaving as before.
  */
 
 /** One normalization verdict: the listed `name` refers to `canonical`. */
@@ -71,16 +86,16 @@ export function validateNormalizationReply(
 
   const listed = new Map<string, string>();
   for (const name of names) {
-    const key = name.trim().toLowerCase();
+    const key = comparableName(name);
     if (key !== '') listed.set(key, name);
   }
-  const artifactKeys = new Set(artifactNames.map((name) => name.trim().toLowerCase()));
+  const artifactKeys = new Set(artifactNames.map((name) => comparableName(name)));
   const canonicalKeys = new Set([...artifactKeys]);
-  for (const name of options.canonicalNames ?? []) canonicalKeys.add(name.trim().toLowerCase());
+  for (const name of options.canonicalNames ?? []) canonicalKeys.add(comparableName(name));
 
   const answered = new Map<string, number>();
   for (const entry of entries) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     answered.set(key, (answered.get(key) ?? 0) + 1);
     if (!listed.has(key)) {
       violations.add(`the reply invented a name that was not listed: "${entry.name}"`);
@@ -94,11 +109,11 @@ export function validateNormalizationReply(
 
   const canonicalOf = new Map<string, string>();
   for (const entry of entries) {
-    canonicalOf.set(entry.name.trim().toLowerCase(), entry.canonical.trim().toLowerCase());
+    canonicalOf.set(comparableName(entry.name), comparableName(entry.canonical));
   }
   for (const entry of entries) {
-    const nameKey = entry.name.trim().toLowerCase();
-    const canonicalKey = entry.canonical.trim().toLowerCase();
+    const nameKey = comparableName(entry.name);
+    const canonicalKey = comparableName(entry.canonical);
     if (canonicalKey === nameKey) continue;
     if (canonicalKeys.has(canonicalKey)) continue;
     const canonicalOwn = canonicalOf.get(canonicalKey);
@@ -116,8 +131,8 @@ export function validateNormalizationReply(
   }
 
   for (const entry of entries) {
-    const nameKey = entry.name.trim().toLowerCase();
-    if (artifactKeys.has(nameKey) && entry.canonical.trim().toLowerCase() !== nameKey) {
+    const nameKey = comparableName(entry.name);
+    if (artifactKeys.has(nameKey) && comparableName(entry.canonical) !== nameKey) {
       violations.add(
         `"${entry.name}" matches an existing artifact and must map to itself, never merge away`,
       );
@@ -154,18 +169,18 @@ export function unclassifiedEntityNames(input: {
   /** Held consent rewrites (the module row's `entityRewriteProposals`). */
   proposals?: readonly EntityRewriteProposal[] | null;
 }): string[] {
-  const recorded = new Set(input.entityKinds.map((entry) => entry.name.trim().toLowerCase()));
-  const resolved = new Set(input.resolvedNames.map((name) => name.trim().toLowerCase()));
+  const recorded = new Set(input.entityKinds.map((entry) => comparableName(entry.name)));
+  const resolved = new Set(input.resolvedNames.map((name) => comparableName(name)));
   const answered = new Set(
     (input.proposals ?? []).flatMap((proposal) =>
-      proposal.replacements.map((rewrite) => rewrite.from.trim().toLowerCase()),
+      proposal.replacements.map((rewrite) => comparableName(rewrite.from)),
     ),
   );
   const seen = new Set<string>();
   const names: string[] = [];
   for (const raw of input.names) {
     const name = raw.trim();
-    const key = name.toLowerCase();
+    const key = comparableName(name);
     if (key === '' || seen.has(key)) continue;
     seen.add(key);
     if (recorded.has(key) || resolved.has(key) || answered.has(key)) continue;
@@ -191,9 +206,9 @@ export function mergeNewEntityRecords(
   additions: readonly ModuleEntityKind[],
 ): ModuleEntityKind[] {
   const merged = [...existing];
-  const known = new Set(existing.map((entry) => entry.name.trim().toLowerCase()));
+  const known = new Set(existing.map((entry) => comparableName(entry.name)));
   for (const addition of additions) {
-    const key = addition.name.trim().toLowerCase();
+    const key = comparableName(addition.name);
     if (key === '' || known.has(key)) continue;
     known.add(key);
     merged.push(addition);
@@ -220,7 +235,7 @@ export function mergeEntityRewriteProposals(
 ): EntityRewriteProposal[] | null {
   const byPlan = new Map<number, EntityRewriteProposal>();
   const key = (rewrite: { from: string; to: string }): string =>
-    `${rewrite.from.trim().toLowerCase()}\u0000${rewrite.to.trim().toLowerCase()}`;
+    `${comparableName(rewrite.from)}\u0000${comparableName(rewrite.to)}`;
   const add = (proposal: EntityRewriteProposal): void => {
     const current = byPlan.get(proposal.planIndex) ?? {
       planIndex: proposal.planIndex,
@@ -254,14 +269,14 @@ export function canonicalEntityRecords(
 ): ModuleEntityKind[] {
   const entryBySelf = new Map<string, NormalizationEntry>();
   for (const entry of entries) {
-    if (entry.name.trim().toLowerCase() === entry.canonical.trim().toLowerCase()) {
-      entryBySelf.set(entry.name.trim().toLowerCase(), entry);
+    if (comparableName(entry.name) === comparableName(entry.canonical)) {
+      entryBySelf.set(comparableName(entry.name), entry);
     }
   }
 
   const records = new Map<string, ModuleEntityKind>();
   for (const entry of entries) {
-    const key = entry.canonical.trim().toLowerCase();
+    const key = comparableName(entry.canonical);
     if (key === '') continue;
     let record = records.get(key);
     if (record === undefined) {
@@ -270,7 +285,7 @@ export function canonicalEntityRecords(
     }
     const own = entryBySelf.get(key);
     if (own !== undefined) record.kind = own.kind;
-    if (entry.name.trim().toLowerCase() !== key) {
+    if (comparableName(entry.name) !== key) {
       record.absorbed = [...record.absorbed, entry.name];
     }
   }

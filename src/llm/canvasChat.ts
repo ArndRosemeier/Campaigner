@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { AnyArtifact, ArtifactKind, Id, Module, MonsterEntry, StatBlock } from '@/domain';
-import { ARTIFACT_KIND_SINGULAR } from '@/domain';
+import { ARTIFACT_KIND_SINGULAR, sameAliasName } from '@/domain';
 import { canvasPartLabel, splitModulePartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -1678,7 +1678,7 @@ export function artifactDetailLines(input: {
 }): string[] {
   const { artifact } = input;
   const lines: string[] = [];
-  if (input.requestedName.trim().toLowerCase() !== artifact.name.trim().toLowerCase()) {
+  if (!sameAliasName(input.requestedName, artifact.name)) {
     lines.push(`requested as: «${input.requestedName.trim()}»`);
   }
   if (artifact.aliases.length > 0) lines.push(`also known as: ${artifact.aliases.join(' · ')}`);

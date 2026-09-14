@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { Campaign, EntityKind, Id } from '@/domain';
-import { moduleCreationPool } from '@/domain';
+import { moduleCreationPool, sameAliasName } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -142,7 +142,7 @@ export function StubPopover({
         );
         if (!alive) return;
         const canonical = artifacts.find(
-          (artifact) => artifact.name.trim().toLowerCase() === classified.canonical.trim().toLowerCase(),
+          (artifact) => sameAliasName(artifact.name, classified.canonical),
         );
         setCanonicalArtifactName(canonical?.name ?? null);
         if (!userPickedRef.current) setKind(classified.kind);
@@ -169,7 +169,7 @@ export function StubPopover({
     try {
       const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
       const artifact = artifacts.find(
-        (candidate) => candidate.name.trim().toLowerCase() === canonicalArtifactName.trim().toLowerCase(),
+        (candidate) => sameAliasName(candidate.name, canonicalArtifactName),
       );
       if (artifact === undefined) throw new Error(`the artifact "${canonicalArtifactName}" vanished`);
       const alias = name.trim();
@@ -278,7 +278,7 @@ export function StubPopover({
               data-testid="stub-verdict"
             >
               The model resolved this to the existing entity “{canonicalArtifactName}”
-              {verdict.canonical.trim().toLowerCase() !== state.name.trim().toLowerCase()
+              {!sameAliasName(verdict.canonical, state.name)
                 ? ' — using the existing entity keeps the story consistent'
                 : ''}
               .

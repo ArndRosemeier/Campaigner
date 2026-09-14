@@ -14,6 +14,7 @@ import {
   libraryCreatureKey,
   moduleTagFor,
   npcCreatureRef,
+  sameAliasName,
 } from '@/domain';
 import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import {
@@ -565,11 +566,16 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
     );
   }
   const owned = await listArtifactsByCampaign(options.campaignId);
+  // "Is this row already the cast of THIS name?" — the ONE name comparison
+  // (docs/17 row 166), which also trims the queried side: the hand-rolled
+  // `artifact.name.trim().toLowerCase() === name.toLowerCase()` it replaces
+  // trimmed only the ROW, so a caller passing a padded name minted a twin
+  // (the untrimmed-side drift docs/17 row 121 folded elsewhere).
   const candidates = owned.filter(
     (artifact): artifact is NpcArtifact =>
       artifact.kind === 'npc' &&
       artifact.moduleId === options.moduleId &&
-      artifact.name.trim().toLowerCase() === name.toLowerCase(),
+      sameAliasName(artifact.name, name),
   );
   // Idempotency is per (campaign, module, name, IDENTITY): a second cast of the
   // SAME creature reuses its row rather than minting a twin, and a candidate

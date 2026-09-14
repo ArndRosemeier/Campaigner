@@ -4132,6 +4132,125 @@ the labels English."** The labels are therefore English DELIBERATELY, not by
 oversight; a reader who finds one inside a German document should read docs/17
 row 162, not open a slice.
 
+### The bestiary cast inherits the comparable form, and the survivor is declared (docs/17 row 166, docs/11 §Module-side cast, docs/18 §2.1)
+
+Row 162 established ONE comparable form for names and folded thirteen
+comparisons in `lib/wikilinks.ts`; it also RECORDED, without fixing, the one
+hand-rolled comparison left in `src/` — `features/modules/entity-batch.ts`'s
+`libraryCitationForEntity`, whose pool filter was
+`creature.name.trim().toLowerCase() === wanted.toLowerCase()`. That file belonged
+to row 161 in flight, so the gap was written down and lived. It was the same
+defect class as row 162's: a hand-rolled `toLowerCase` comparison does NOT fold
+Unicode canonical composition, so a DECOMPOSED creature name in a bestiary slot
+(`Wächter` typed on a Mac: `a` + U+0308) missed a COMPOSED library name (U+00E4)
+— the same string to a reader, different bytes — and the cast refused a creature
+the library holds, naming it in the refusal as the nearest creature it holds.
+
+The fix is a fold, not a mechanism: `sameCreatureName(creature.name, wanted)`,
+which is `domain/artifactAlias.comparableName` (canonical composition + trim +
+case fold). The sweep found **22 hand-rolled NAME comparisons across 11 files**
+and folded all of them; the seam's own scan now declares the population so the
+next one is born red rather than surviving unlisted. Three of them were folded
+WIDER than the comparison, because a partial fold there neutralizes itself — a
+comparable-form equality answered through a still-lowercased map key simply
+misses the entry and reads as fixed while behaving as before.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **A DECOMPOSED slot creature name resolves a COMPOSED library name** — the exact failing case, in the seam that resolves the cast | `features/creature-name-fold.test` (`a DECOMPOSED slot name resolves a COMPOSED library name (THE FAILING CASE)`) | ✅ REVERT-PROVEN (injection a) |
+| The reverse: a COMPOSED slot name resolves a DECOMPOSED library name (the bug is symmetric; a one-directional fold would look fixed from one side) | same (`and the reverse: …`) | ✅ REVERT-PROVEN (injection a) |
+| The AMBIGUOUS arm resolves across compositions too, and the slot's book still narrows to one candidate | same (`the ambiguous arm resolves across compositions too, and the book still narrows`) | ✅ REVERT-PROVEN (injection a) |
+| Trimming is part of the comparable form (a padded slot name resolves) | same (`trimming is part of the comparable form …`) | ✅ REVERT-PROVEN (injection a) |
+| **The exactness boundary: NFC yes, DIACRITIC folding NO** — `Schläger` and `Schlager` stay two names, so the fix cannot be "strip accents" | same (`a DIACRITIC difference is still two names (NFC yes, diacritic folding NO)`) | ✅ REVERT-PROVEN (injection b) |
+| The LOOSE normalization is not what resolves: a trailing `(…)` qualifier still refuses (`Zombie (variant)` vs a library holding `Zombie`) | same (`the LOOSE normalization is NOT what this resolves through: a trailing qualifier still refuses`) | ✅ REVERT-PROVEN (injection b) |
+| Row 161's exactness pin stays true: a one-edit near miss still refuses | same (`a one-edit near miss still refuses (row 161's exactness pin, unchanged)`) and `features/entity-batch-creature-book.test` | ✅ (green before and after) |
+| The new pins are NOT vacuous: the two fixture spellings really are one name in two compositions and only composition differs | same (`the fixtures really are two spellings of one name, and only composition differs`) | ✅ |
+| **EXACTLY ONE name comparison population**: every hand-rolled NAME equality in `src/` (comments skipped) is one of the declared `BOUNDARIES`, and the shape still recognises the original spelling of the defect it was written for | `features/alias-merge-seam.test` (`declares every hand-rolled NAME comparison in src/ — the population, not a sample`, `leaves the hand-rolled shapes in exactly the documented boundaries (and nowhere else)`) | ✅ REVERT-PROVEN (injection a) |
+| **The folded file is NAMED in the seam's accounting** — `entity-batch.ts` carries `sameCreatureName(` ×1, and eight more folded files carry counted needles, so reverting any single fold reds a count | `features/alias-merge-seam.test` (`routes the alias write in features/modules/entity-batch.ts through the seam`, +7 more) | ✅ REVERT-PROVEN (injections a and b) |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `a DECOMPOSED slot name resolves a COMPOSED library name (THE FAILING CASE)` | `tests/features/creature-name-fold.test.ts` | the bestiary lookup losing canonical composition again — the row-161 refusal naming the creature it refuses; **the pin watched RED against the pre-slice comparison (injection a)** |
+| `and the reverse: a COMPOSED slot name resolves a DECOMPOSED library name` | same | a one-sided normalization (folding the library side only), which would pass the pin above |
+| `a DIACRITIC difference is still two names (NFC yes, diacritic folding NO)` | same | the comparison being made LOOSER than the seam (NFKD + mark strip) — a silent WRONG CAST, not a refusal (injection b resolves `Schlager` to `Schläger`) |
+| `the LOOSE normalization is NOT what this resolves through: a trailing qualifier still refuses` | same | someone routing the lookup through `normalizeCreatureName` (the message-only loose form, which strips `(…)` and hyphens) |
+| `the fixtures really are two spellings of one name, and only composition differs` | same | a fixture that quietly became two equal strings (or two DIFFERENT names), which would leave every pin above green and meaningless |
+| `declares every hand-rolled NAME comparison in src/ — the population, not a sample` | `tests/features/alias-merge-seam.test.ts` | the shape drifting into matching nothing (a green offenders pin that proves nothing) or matching something else; a NEW hand-rolled name comparison anywhere in `src/`; a declared boundary going stale |
+| `routes the alias write in <file> through the seam` — 14 files, each with counted needles | same | reverting ONE fold, which no behavioural pin can see (the two spellings agree on every ASCII input) |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+`git diff --stat` printed back BEFORE its run, restored from an OUT-OF-TREE copy
+(`/tmp/namefold-backup/entity-batch.ts`, never `git checkout --`) and proved with
+`git hash-object` identical before and after:
+`5cfd2f60c58d38a6ac55c97fe996231474cf8655`; raw logs in `/tmp/namefold-logs/`):
+
+| injection (one file, `CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) the hand-rolled comparison restored** (`creature.name.trim().toLowerCase() === wanted.toLowerCase()` back in `src/features/modules/entity-batch.ts`) | **RED 7 / GREEN 18 (25)**: the four composition pins red, and the failure is the row-161 refusal itself — `Error: bestiary cast: the entity «Der Torwächter» asks to borrow the stats of «Wächter», but this workspace's library holds no creature of that name … — the nearest creatures this library holds: Wächter (Pathfinder Monster Core)`; plus `features/modules/entity-batch.ts: sameCreatureName( call sites: expected +0 to be 1`, the offenders pin (`expected [ 'features/modules/entity-batch.ts' ] to deeply equal []`) and the population pin. This was the new pins' own FIRST red run, so the failing case was watched failing rather than assumed |
+| **(b) the comparison made LOOSER than the seam** (`normalizeCreatureName(creature.name) === normalizeCreatureName(wanted)` — NFKD + accent strip, the loose message-only form) | **RED 3 / GREEN 22 (25)**: `a DIACRITIC difference is still two names` reds with `Error: expected a refusal for «Schlager», but it RESOLVED to chunk 73e16cdc-…` and the loose-form pin reds with `expected a refusal for «Zombie (variant)», but it RESOLVED to chunk 8450b37c-…` — a silently WRONG CAST, the defect row 114's contract exists to prevent — plus the count pin. The asymmetry with (a) is the point: (a) reds the composition pins, (b) reds the exactness pins, so neither half of the rule is proved by the other's evidence |
+
+**NUMBERS — the landing gate, `./scripts/gate.sh` (locked, chunked, watchdog;
+logs `/tmp/namefold-logs/gate-landing-6/`), printed **GATE GREEN, exit 0**.**
+Per chunk, exactly as the script printed them (disjoint chunks, and the script
+proves it: `chunk arithmetic: 329 of 329 test files covered`): `tests_lib 32
+files / 368 tests (peak 794 MB)`; `tests_llm 70 / 1146 (769 MB)`; `tests_db
+30 / 351 (599 MB)`; `tests_domain 21 / 291 (611 MB)`; `tests_features 134 /
+1324 (1113 MB)`; `tests_remainder 42 / 411 (1013 MB)` — summing to **329 files
+/ 3891 tests**, with `lint errors: 0`, typecheck clean, no `Errors:` line in any
+chunk log, and **peak RSS of any single chunk 1113 MB against the 3000 MB cap**.
+
+**The arithmetic, against the baseline the brief states — 328 files / 3875 tests
+at `16ae0d3`, RE-DERIVED from that summary rather than inherited.** This slice
+adds `+8` (`tests/features/creature-name-fold.test.ts`, NEW) and `+8`
+(`tests/features/alias-merge-seam.test.ts` 9 → 17), measured in the gate itself
+as `tests_features` moving from row 162's `133 / 1308` to `134 / 1324`:
+**+1 file / +16 tests**, with no existing assertion weakened, no test skipped and
+no `Errors:` line.
+
+**THE GATE WAITED SIX TIMES AND REAPED NOTHING, which is the rule rather than a
+detail.** Attempts 1–5 exited 9: once because `CivGlm` (the owner's other DSH
+project) was running Playwright on this box, and four times because the `mkdir`
+lock was held — by `PID 3412213`, whose owner file names
+`/home/box/Harness/Campaigner`, i.e. the SATURATING writer of docs/17 row 165
+gating in the MAIN tree, not this worktree. A foreign suite is waited for and
+never reaped (AGENTS §Host hygiene 7); attempt 6 took the lock and ran the whole
+gate under the 3000 MB cap with availability never below ~10.7 GB.
+
+**ONE EDIT AFTER THE GATE, and why it cannot invalidate it.** A double space in
+the docs/18 paragraph this slice amends was fixed after the gate summary above
+was captured. Exactly ONE test in the suite reads a doc at runtime
+(`tests/features/entity-batch-creature-book.test.ts` reads
+`docs/18-ARCHITECTURE.md` and asserts it names
+`entity-batch.libraryCitationForEntity`), and that file was re-run under the
+lock after the edit (`./scripts/gate.sh
+tests/features/entity-batch-creature-book.test.ts`, logs
+`/tmp/namefold-logs/gate-doccheck/`). This section's own prose in `docs/08` is
+read by no test at all. The rule row 162 established still holds: a docs edit is
+not assumed invisible here, it is re-gated.
+
+**WHAT NO TEST HERE CAN PROVE.** That a real Mac-authored module produces these
+bytes: every name in these pins is a string WE composed, from the same in-memory
+text, and a genuine NFD name arrives from a file an author typed on his own
+machine — no fixture can be that. What IS measured is the only thing that can
+be: that a name differing ONLY by Unicode composition resolves instead of
+refusing. If the fold regressed, the owner would see row 161's refusal sentence
+naming a creature his library plainly holds, from a module whose own text spells
+the name correctly on screen. The source scan is textual and comment-blind by
+construction (comment lines are skipped, deliberately: the seam's own doc
+comments NAME the forbidden spelling); a comparison built through an
+intermediate variable is invisible to it; and the KEY-INDEX spelling
+(`const key = name.trim().toLowerCase()` used as an index key — ~40 sites across
+15 files) stays OPEN by decision, named in docs/18 §2.1 rather than folded here,
+because those keys are not all name identities and one of them is a persisted
+portrait identity (`domain/creature.contentCreatureKey`). `db/mobPortraitCache.ts`'s
+`isCanonicalCitation` is declared in the scan as a SURVIVOR, not a boundary: it
+is the portrait path docs/17 row 165 owns, in flight in another worktree, and
+folding it here would race that landing.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
