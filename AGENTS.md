@@ -353,14 +353,17 @@ the config default, and it holds for whoever forgets. Binding rules:
      actually keeps the box alive is **one worker, one suite at a time**.
    - **A killed run's result is VOID**, never evidence: re-run it under the
      lock before claiming anything from it.
-   - **Reap by WORKTREE, never by pattern, and expect foreign suites.**
-     Another agent shares this box AND this user account (`pgrep` cannot tell
-     whose suite it is by user, and killing by pattern is how a shell kills
-     itself — row 94). Identify a suite by `/proc/<pid>/cwd` — mine live under
-     my own `/tmp/<worktree>` — reap only those, and WAIT for the rest: a live
-     foreign suite is a reason to hold the lock, not to take it. Seen for real
-     while writing this rule: the lock refused a gate while an unknown
-     six-worker suite ran, and the check was right.
+   - **Ownership is the WORKTREE PATH IN THE COMMAND LINE — not `cwd`, and
+     never a pattern kill.** Measured: `readlink /proc/<pid>/cwd` returns EMPTY
+     for processes owned by subagent sessions, so the cwd test silently matches
+     nothing (a kill attempt written that way did nothing at all while a suite
+     kept growing). What does identify a run is its argv: a writer's suite names
+     its own worktree (`… /tmp/campaigner-<slice>/node_modules/.bin/../vitest/vitest.mjs`).
+     Kill BY PID, matched on a pattern BUILT AT RUNTIME so the killer's own
+     command line cannot match it (row 94: a pattern kill SIGTERMed its own
+     shell). Foreign suites — the owner's other DSH project — are waited for, not
+     reaped. An interrupted writer's waiting loop is an ORPHAN and is the
+     dispatcher's to reap (it will otherwise start a suite nobody is watching).
 
 ## Subagent hygiene
 
