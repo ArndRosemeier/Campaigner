@@ -4321,6 +4321,78 @@ as the image ID a surface RESOLVED**, not as rendered pixels: jsdom produces no
 object URLs, so the blob plumbing below `useImageUrl` is out of reach — the
 defect lived in the resolved id, which is what the pins read.
 
+### The key-index class is classified: eight declared key spaces, not one helper (docs/17 row 167, docs/18 §2.1)
+
+Row 166 folded the last hand-rolled name COMPARISONS and named what it left: the
+KEY-INDEX spelling (`const key = name.trim().toLowerCase()` used as a map/set
+key), ~40 sites across 15 files, explicitly "its own slice" because the keys are
+not all name identities. That slice began with a death: the first writer died
+silently with the work UNCOMMITTED, the dispatcher committed the WIP verbatim
+(`19a2d35` — 17 files, no tests, no docs, unverified), and this writer continued
+from that commit under the recovered-landing rule: nothing in it was true
+because it was committed. The audit verdict, in one line each — KEPT: the fold
+of 20 sites across 13 files (verified producer/consumer agreement for every
+map) and the space declarations in `domain/artifactAlias`'s header; CORRECTED:
+`promptStyleRepo.freeCopyName`'s half-fold (set keyed comparable, lookups
+`.toLowerCase()` — a legal copy threw a spurious `already exists` clash),
+`campaignGrounding`'s fold REVERTED (its values become detection regexes;
+folding composition dropped a real spelling), and row 166's own FOLDED counts
+left red by the WIP (re-derived 5/7/5 with arithmetic); DISCARDED: the WIP's
+placement of `campaignGrounding` inside `WRITTEN_LINK_NAME_KEY`.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The eight spaces are DECLARED and COUNTED**: `PACK_POOL_NAME_KEY`, `MODULE_NAME_KEY`, `WRITTEN_LINK_NAME_KEY`, `LIBRARY_CREATURE_NAME_KEY`, `IMPORT_IDENTITY_KEY`, `PRINTED_NAME_DEDUPE_KEY`, `PROMPT_STYLE_NAME_KEY`, `CREATURE_CONTENT_IDENTITY_KEY` — each with named consumers, each held by space-specific counted needles (comment-blind; reverting one site reds) | `domain/name-key-spaces.test` (`every declared space still routes its sites through the ONE comparable form, counted`, `the accounting is NON-VACUOUS …`) | ✅ REVERT-PROVEN (injections a and b) |
+| **The hand-rolled KEY shape survives only in declared anti-spaces**: a `src/`-wide population scan for `const key = name.trim().toLowerCase()`-class lines (comments skipped), 16 declared files each with a reason, staleness-checked both ways | same (`the hand-rolled KEY spelling survives only in the declared anti-spaces, each with a reason`) | ✅ REVERT-PROVEN (injection b reds the offenders pin) |
+| **PACK_POOL**: a DECOMPOSED `sourceName` resolves a COMPOSED roster entry through the REAL level lookup (`rosterNameIndex` → `resolveBriefMonsterLevels`, the answer is the level, not `undefined`) | same (`a DECOMPOSED sourceName resolves a COMPOSED roster entry through the real level lookup`) | ✅ REVERT-PROVEN (injection a) |
+| **PACK_POOL exactness**: `Schläger` and `Schlager` stay TWO pool entries (NFC yes, diacritic folding NO — the key form of row 166's rule) | same (`two creatures that differ ONLY by diacritic stay TWO pool entries …`) | ✅ REVERT-PROVEN (injection b) |
+| **MODULE**: a room's assignment survives a recomposition of the same roster name; a DIFFERENT name never inherits the room (the remap is identity, not similarity) | same (`a room's assignment survives a recomposition …`, `a DIFFERENT name never inherits the room …`) | ✅ (green before and after; the loose-key failure mode is injection b's) |
+| **WRITTEN_LINK**: the composed and decomposed spelling of one written token are ONE phantom node, counted once per occurrence (`buildWikiGraph`: one node `name:wächter`, mention count 2) | same (`the composed and the decomposed spelling of one written token are ONE phantom node …`) | ✅ |
+| **LIBRARY_CREATURE**: two rows of the same creature collapse across a DECOMPOSED wanted name (`nearestLibraryCreatures`: two in, one out — the dedupe, not the scoring) | same (`two rows of the same creature collapse across a DECOMPOSED wanted name`) | ✅ |
+| **IMPORT_IDENTITY**: a manifest title composed against a decomposed local title is still matched, not missing (`analyzeDependencies` → `version-drift`; a hand-rolled title key would invent a `missing` dependency) | same (`a manifest title composed against a decomposed local title is still matched, not missing`) | ✅ |
+| **PRINTED_NAME_DEDUPE**: the missing-refs sentence prints one creature once across compositions (2 entries / 2 encounters, ONE `Wächter`) | same (`the missing-refs sentence prints one creature once across compositions`) | ✅ |
+| **ALIAS_FORM (the anti-space, BOTH halves)**: the declared `name.toLowerCase()` spelling is held by a direct revert pin; a COMPOSED prose mention is still detected when the alias is DECOMPOSED (THE FAILING CASE); the decomposed alias detects its own prose; the longest spelling still wins its form | same (`keeps its declared spelling …`, `a COMPOSED prose mention is still detected …`, `and the decomposed alias spelling detects its own prose too …`, `and the longest spelling still wins its form …`) | ✅ REVERT-PROVEN (injection c) |
+| **PROMPT_STYLE**: duplicating a style whose composition differs from an existing copy lands on "(copy 2)", not a spurious `already exists` clash — through the REAL Dexie-backed `duplicatePromptStyle` | same (`duplicating a style whose composition differs …`) | ✅ (the clash throw is the watched-RED behaviour of the corrected half-fold) |
+| **CREATURE_CONTENT_IDENTITY (the persisted decision, held not flipped)**: composition changes the persisted key; trim and case still fold; `undefined`/`null` stat blocks collapse | same (`composition changes the persisted key (NOT folded — the owner's migration decision) …`) | ✅ (deliberately NOT injected — the pin HOLDS the owner decision; flipping it is a migration) |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `every declared space still routes its sites through the ONE comparable form, counted` | `tests/domain/name-key-spaces.test.ts` | reverting ONE fold of ~20 — invisible to behaviour on ASCII input; also a NEW call appearing in a counted file (a new key-index copy is born red with its path named) |
+| `the hand-rolled KEY spelling survives only in the declared anti-spaces, each with a reason` | same | a new hand-rolled KEY anywhere in `src/`; a stale boundary entry that no longer carries the shape (licenses nothing); the scan going blind (shape non-vacuity + tree non-vacuity) |
+| `a DECOMPOSED sourceName resolves a COMPOSED roster entry through the real level lookup` | same | a consumer-side revert (injection a: the room reads loud-unverified for no reason) — the row-166 trap in its consumer form |
+| `two creatures that differ ONLY by diacritic stay TWO pool entries (NFC yes, diacritic folding NO)` | same | the key being made LOOSER than its space (injection b: `Schläger`/`Schlager` collapse — a silently wrong resolution) |
+| `a room's assignment survives a recomposition of the same roster name` / `a DIFFERENT name never inherits the room` | same | one side of the room reconciliation keyed by a hand-rolled fold; a similarity-based remap |
+| `the composed and the decomposed spelling of one written token are ONE phantom node, counted once per occurrence` | same | the written-token identity splitting into two to-do entries in the reader's problem list |
+| `two rows of the same creature collapse across a DECOMPOSED wanted name` | same | the suggestion dedupe re-splitting by composition (two identical suggestions) |
+| `a manifest title composed against a decomposed local title is still matched, not missing` | same | the L1 verdict inventing a `missing` dependency the library actually satisfies |
+| `the missing-refs sentence prints one creature once across compositions` | same | the banner printing the same creature twice as if it were two |
+| `keeps its declared spelling: the form key case-folds and does NOT composition-fold` | same | someone "completing" the ALIAS_FORM anti-space onto `comparableName` — the exact fold this slice reverted |
+| `a COMPOSED prose mention is still detected when the artifact also carries the alias DECOMPOSED` | same | the grounding pick losing a real spelling — detection going blind (`expected [] to deeply equal [ 'Wächter' ]`, watched RED) |
+| `duplicating a style whose composition differs from an existing copy lands on "(copy 2)", not a clash` | same | the free-copy lookups drifting back to `.toLowerCase()` — a legal copy throws a spurious clash |
+| `composition changes the persisted key (NOT folded — the owner's migration decision), while trim and case still fold` | same | the persisted identity's bytes changing by accident — that is a migration (re-keyed rows, re-stamped tokens), the owner's decision |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run — non-empty — restored from an
+OUT-OF-TREE copy (`/tmp/keys-backup/`, never `git checkout --`) and proved with
+`git hash-object` identical before and after; raw logs kept in
+`/tmp/keys-logs/`. Two process notes recorded honestly: injection (b)'s FIRST
+attempt aborted BEFORE injecting (its uniqueness assert fired — the target
+spelling appears twice in the file), so its `git diff --stat` printed empty and
+that green run was VOID as injection evidence; it was redone with a unique
+anchor. Injection (c)'s first restore reverted this writer's own uncommitted
+comment edit (the backup predated it), so (c) was redone from the committed
+state):
+
+| injection (one file, `./scripts/gate.sh tests/domain/name-key-spaces.test.ts`) | result |
+|---|---|
+| **(a) the hand-rolled key restored in the PACK_POOL consumer** (`lookups.rosterChunkByName[monster.sourceName.trim().toLowerCase()]` back in `roomBudget.resolveBriefMonsterLevels`; file hash `bf776416f1aafb3a15b73a0f1c1cf623b5a1c0dc` before/after) | **RED 2 / GREEN 15 (17)**: `a DECOMPOSED sourceName resolves a COMPOSED roster entry through the real level lookup` reds with `expected [ undefined ] to deeply equal [ '2' ]` (the room reads loud-unverified for no reason), and the accounting reds (`llm/roomBudget.ts: rosterChunkByName[comparableName(: expected +0 to be 1`) |
+| **(b) the PACK_POOL key made LOOSER than its space** (`entry.name.normalize('NFKD').replace(/\p{M}/gu, '').trim().toLowerCase()` in `encounterRoster.rosterNameIndex` — the loose accent-stripping fold; file hash `26b6f9693adb4420fdcfd88b2c95156a70d201d8`) | **RED 4 / GREEN 13 (17)**: the exactness pin reds with `expected 1 to be 2` (the two diacritic creatures collapsed to ONE pool entry), the key itself reds accent-stripped (`expected [ 'wachter' ] to deeply equal [ 'wächter' ]`), plus the accounting count and the offenders pin (the NFKD spelling itself carries the trimmed KEY shape). The asymmetry with (a) is the point: (a) reds the consumer+composition pin, (b) reds the exactness pins |
+| **(c) the WIP's ALIAS_FORM fold re-applied** (`const key = comparableName(name);` + the import back in `llm/campaignGrounding.ts`; file hash `06f6a6bb0a05b1b665d18d13b0d08bbbb92741a5`) | **RED 2 / GREEN 16 (18)**: the revert pin reds (`expected … to contain 'const key = name.toLowerCase();'`) AND the behaviour pin reds with `expected [] to deeply equal [ 'Wächter' ]` — grounding detection literally went blind to the composed prose mention. This is the evidence that the WIP's fold here was a defect, not an unfinished one |
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
