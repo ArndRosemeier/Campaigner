@@ -282,15 +282,28 @@ the config default, and it holds for whoever forgets. Binding rules:
    responsiveness.
    - **One suite at a time in the whole session.** Before any `vitest`
      invocation — a writer's gate, a dispatcher verification and an
-     injection run are all "the suite" — `pgrep -f 'vites[t]'` must be
-     EMPTY. If something is running, wait; never overlap two.
+     injection run are all "the suite" — the process table must hold no
+     other suite. **Keep the check in its OWN call:** a combined one-liner
+     self-matches, because its own command line contains the literal word
+     it greps for and then reports BUSY forever (hit for real while writing
+     this rule). `pgrep -af 'vites[t]'` → expect empty output; if it is not
+     empty, wait.
    - **Every run carries a heap ceiling**, so the kernel is never asked to
-     choose. Canonical gate form, pasted verbatim into briefs:
-     `pgrep -f 'vites[t]' >/dev/null && echo BUSY || NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1 pnpm exec vitest run`
-   - **Suites that render real PDFs** (`pdfLayout`, pdfjs, pdfmake) run in
-     the FOREGROUND in bounded chunks, file by file — never as one long
-     unattended background job. The 600 s foreground cap is a reason to
-     chunk a run, never a reason to hide one.
+     choose: `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1 pnpm exec vitest run`
+   - **Ad-hoc PDF-rendering verification** (`pdfLayout`, pdfjs, pdfmake —
+     injection runs, single-file checks) goes in the FOREGROUND in bounded
+     chunks: a `-t`-filtered run is seconds, not minutes. The 600 s
+     foreground cap is a reason to chunk such a run, never a reason to hide
+     it in a long unattended background job. **The LANDING GATE (full
+     suite) is the one exception** — it cannot fit the cap, so it runs as a
+     background job ONLY under the ceiling, ONLY holding the lock, ONLY
+     when the dispatcher stays in-session to watch it (the harm was an
+     unwatched run the dispatcher could not react to, not background jobs
+     as such).
+   - **The ceiling is the second line of defence, not the primary one.**
+     `--max-old-space-size` bounds a V8 heap, while the PDF-rendering
+     suites also hold `ArrayBuffer` memory outside it — so the bound that
+     actually keeps the box alive is **one worker, one suite at a time**.
    - **A killed run's result is VOID**, never evidence: re-run it under the
      lock before claiming anything from it.
 
