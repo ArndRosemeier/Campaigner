@@ -36,7 +36,7 @@ self=$$
 foreign() { pgrep -af 'vites[t]|playwrigh[t]' 2>/dev/null | grep -v 'bash -c' | grep -v " $self " | grep -v "^$self "; }
 
 if [ -n "$(foreign)" ]; then
-  echo "WAITING: a suite we do not own is running (foreign project):"
+  echo "WAITING: another suite is already running (ours or the peer project's):"
   foreign | head -3
   exit 9
 fi

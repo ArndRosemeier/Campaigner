@@ -3801,6 +3801,22 @@ schema change is involved at all** (the change is control flow inside one
 function), so there is nothing to migrate and nothing to verify about stored
 rows.
 
+### The gate is a script (memory is capped, not requested)
+
+Run `scripts/gate.sh` — never a hand-rolled `vitest run`. It holds the atomic
+suite lock, refuses to start while any other suite is running, runs vitest as
+sequential PATH CHUNKS, watches the run's own process group and kills it above
+3000 MB RSS or below 2500 MB available memory, and prints each chunk's PEAK RSS
+with the summed counts. `vite.config.ts` caps every worker's heap at 1536 MB,
+which binds even a bare `pnpm exec vitest run`. A chunk the watchdog killed is
+VOID, never evidence.
+
+Why both halves: the growth that fills this box is OFF-heap (`pdfjs` holds
+`ArrayBuffer`s, which no `--max-old-space-size` bounds) and 304 test files in a
+single process accumulate it. Owner directive, verbatim: *"please make sure that
+you restrict the mem use to not more than 4gb or so since you are not the only
+worker here."*
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
