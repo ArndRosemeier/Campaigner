@@ -3687,6 +3687,120 @@ play-time key card, not a ledger source. That enrichment is a separate, unbuilt
 arc the owner has declined; the help and guide sentences state the bound instead
 of implying otherwise.
 
+### The bestiary slot's book disambiguates and never vetoes (docs/17 row 161, docs/11 §Module-side cast, docs/18 §2)
+
+`entity-batch.libraryCitationForEntity` contradicted its own comment. The
+comment said the ambiguity failure was for a name two creatures share "and the
+slot named no book, or named a book that holds no such creature"; the code
+applied that rule to EVERY case. It filtered the same-named candidates by the
+named book's title and THREW `that book holds no creature of that name` when
+nothing matched — even at `sameName.length === 1`, where the library holds
+exactly one creature of that name and there is nothing to disambiguate.
+
+The owner hit it repeatedly generating a module: «Plague Zombie» from
+«Monsterkern» refused with *"the library has Plague Zombie (Pathfinder Monster
+Core)"*; «Commoner», «Mayor» and «Farmer» from «NSC-Galerie» refused against
+*"Pathfinder NPC Core"*. His modules are authored in GERMAN, so the model
+localises the pack titles it was shown ("Monsterkern" = Monster Core,
+"NSC-Galerie" = NPC Gallery) while the library's own titles are English — and
+the refusal NAMED the very creature it refused to use, which is the proof that
+the data was there and the veto was the only obstacle. The `book` value is a
+hint the prompt asks for (*"add \"book\" … only when the library holds several
+creatures of that name"*), and the code treated it as a key.
+
+The fix is the same function, four rules, no new mechanism: (1) no creature of
+that name → the EXISTING loud failure byte-identical, nearest-name suggestions
+included; (2) exactly one → RESOLVE IT, whatever book the slot named, the book
+not read at all on that arm; (3) two or more → a named book matching EXACTLY ONE
+candidate resolves it, otherwise the existing loud ambiguity failure listing
+every candidate WITH the book it really comes from — never a silent pick; (4) NO
+fuzzy matching on the name, because the same pool is the VOCABULARY the spine
+prompt carries (docs/17 row 114), so a fuzzy match would silently cast a
+different creature than the module asked for. The citation still stamps the
+LIBRARY's title (`citationBookTitleFor`), never the model's string, so `missing
+ref` reporting keeps naming a pack that exists.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| A UNIQUE creature name with a book the library does not have — including a LOCALISED title («Monsterkern», «NSC-Galerie») — resolves, and the citation records the LIBRARY's real `bookTitle` | `features/entity-batch-creature-book.test` (`the owner's case: «Plague Zombie» from «Monsterkern» …`, `the owner's second shape: «Farmer» from «NSC-Galerie» …`, `a book the library does not have AT ALL resolves too …`) | ✅ |
+| A unique name with NO book resolves exactly as before (the old behaviour is not merely preserved, it is a pinned arm) | `features/entity-batch-creature-book.test` (`a slot with NO book resolves the unique name as it always did`) | ✅ |
+| The owner's case END TO END: the spine writes the slot, the batch casts, the row is born through `castCreatureAsNpc`, and the stamped `creatureRef.bookTitle` is the LIBRARY's — never «Monsterkern» | `llm/moduleGen-cast.test` (`the owner's case: a LOCALISED book title on a UNIQUE creature RESOLVES …`) | ✅ |
+| An AMBIGUOUS name (two books hold it) with a book matching exactly one candidate resolves THAT one, and stamps that book | `features/entity-batch-creature-book.test` (`the book resolves the one candidate it matches …`) | ✅ |
+| An ambiguous name whose book matches NONE of the candidates refuses loudly, listing every candidate with its real book; the same with NO book refuses too — never a silent pick | `features/entity-batch-creature-book.test` (both ambiguity pins), `llm/moduleGen-cast.test` (`a NON-matching book on an AMBIGUOUS name is refused …`) | ✅ |
+| **NON-VACUITY: an unknown name still fails, and «nearest» never casts.** «Butcher» against a library holding Poacher/Teacher/Bounty Hunter throws with the nearest names IN THE MESSAGE; a foreign book cannot resurrect an unknown name; with nothing close the sentence is the pre-114 bytes exactly | `features/entity-batch-creature-book.test` (all three pins in `a name the library does not hold still fails …`) | ✅ |
+| The name match stays EXACT: a one-edit near miss refuses | `features/entity-batch-creature-book.test` (`the name match stays EXACT …`) | ✅ |
+| **ONE creature lookup** (AGENTS §Centralization 2): `listLibraryCreatures`'s call sites are exactly `db/creatureRepo` / `llm/creatorRoster` / `entity-batch` (real calls only, comments excluded), and `libraryCitationForEntity` is DEFINED in one file — the doc index row naming it is checked in the same pin | `features/entity-batch-creature-book.test` (both source pins) | ✅ |
+
+**Pins, by name** (13 new in `tests/features/entity-batch-creature-book.test.ts`,
+11 behavioural + 2 source; one pre-existing pin REVERSED in place and one ADDED
+in `tests/llm/moduleGen-cast.test.ts`):
+
+1. `the owner's case: «Plague Zombie» from «Monsterkern», and the citation records the LIBRARY's book`
+2. `the owner's second shape: «Farmer» from «NSC-Galerie» against «Pathfinder NPC Core»`
+3. `a book the library does not have AT ALL resolves too — the title is a hint, not a key`
+4. `a slot with NO book resolves the unique name as it always did`
+5. `the name match stays EXACT: a one-edit near miss still refuses (a fuzzy match casts another creature)`
+6. `the book resolves the one candidate it matches, and the citation names THAT book`
+7. `a book that matches NO candidate refuses LOUDLY, listing every candidate WITH its book`
+8. `an ambiguous name with NO book refuses — never a silent pick`
+9. `«Butcher» — the NON-VACUITY pin: the nearest creatures are MESSAGE ONLY and never resolve`
+10. `an unknown name with a FOREIGN book still fails — a book cannot resurrect a name`
+11. `an unknown name with nothing close stays quiet — the pre-114 sentence byte for byte`
+12. `the library pool has exactly these readers — a SECOND creature lookup goes red here`
+13. `the slot→citation resolution is defined in ONE place and named in the seam index`
+
+and in `tests/llm/moduleGen-cast.test.ts`: `a book that holds no such creature
+is refused by name, listing what the library has` is REVERSED (it asserted the
+defect) into `the owner's case: a LOCALISED book title on a UNIQUE creature
+RESOLVES, stamped with the LIBRARY's book`, plus the new
+`a NON-matching book on an AMBIGUOUS name is refused, listing the candidates and
+their real books`. No assertion was weakened, none deleted outside that one
+deliberate reversal, and none skipped.
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy —
+`/tmp/creature-injection-backup/entity-batch.ts`, never `git checkout --` — and
+proved by `git hash-object` identical before and after:
+`795f6047c0633df5b5e41c5f9e11655d231a904d`; raw logs kept at
+`/tmp/creature-logs/injection-a.txt` and `injection-b.txt`):
+
+| injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) the unconditional book filter restored** (the unique-name arm re-runs the old veto: a named book that matches no candidate throws `that book holds no creature of that name`) | **RED 4 failed / 37 passed (41)**: exactly the four resolve pins — the three «Monsterkern»/«NSC-Galerie»/unknown-book pins in the new file and the owner's case end to end in `moduleGen-cast` |
+| **(b) resolve by NEAREST instead of exact** (an empty exact match falls back to `nearestLibraryCreatures(...)[0]`) | **RED 4 failed / 37 passed (41)**: the «Butcher» non-vacuity pin (its own failure text: `expected a refusal for «Butcher», but it RESOLVED to chunk 622e0786-…`), the foreign-book unknown-name pin, the one-edit near-miss pin, and `moduleGen-cast`'s pre-existing row-114 near-miss pin |
+
+**NUMBERS** (the bounded landing gate — `NODE_OPTIONS=--max-old-space-size=2048
+CAMPAIGNER_TEST_WORKERS=1`, raw log kept at
+`/tmp/creature-logs/gate-full-final.txt`). The baseline at this slice's base
+(`6f31f7e`) is **326 files / 3838 tests**; the rebased base (`5c9c8fd`, whose two
+intervening commits touch `AGENTS.md` only, a file no test reads) is
+suite-identical. This landing gates on the frozen rebased tree at **327 files /
+3852 tests, exit 0** — **+1 file, +14 tests**: the 13 pins in the new file plus
+the one ADDED in `moduleGen-cast` (the pin reversed in place counts once). `pnpm
+lint` carries its ONE pre-existing warning at
+`src/features/campaign/components/artifact-editor.tsx:258` (not this slice's),
+`pnpm typecheck` is clean, and the run printed no `Errors:` line. The full suite
+ran ONCE on the rebased tree; the only edit afterwards is this numbers sentence,
+which no test reads.
+
+**UNPROVEN, stated as such.** (a) **No pin shows a real model writing a
+localised title.** The fixture string «Monsterkern» STANDS IN for the owner's
+report: a live provider's vocabulary is not reproducible in a test, so what is
+measured is the only thing that can be — that such a string, arriving in a
+slot, resolves instead of vetoing a cast whose answer is unique. (b) **The
+ambiguity path is exercised with a seed, not with a real two-book library**: two
+same-named chunks are inserted into fake-indexeddb by the test, so "two books
+are installed" is simulated rather than imported. (c) **A real ambiguous module
+run still refuses in practice**: the spine window lists creature NAMES only, so
+a model has no way to know the library's book titles — putting the titles into
+the window would change the emitted prompt bytes and is a separate, unratified
+decision (docs/17 row 161, §Considered and not taken). (d) **No Dexie or
+schema change is involved at all** (the change is control flow inside one
+function), so there is nothing to migrate and nothing to verify about stored
+rows.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

@@ -54,7 +54,10 @@ import { clearDatabase } from '../db/helpers';
  *    no model call at all on that entity);
  * 3. a second run REUSES that row instead of minting a twin;
  * 4. a creature the library cannot supply — or cannot disambiguate — fails
- *    LOUDLY, naming the entity and the creature, and finalizes nothing;
+ *    LOUDLY, naming the entity and the creature, and finalizes nothing. The
+ *    slot's `book` is a DISAMBIGUATOR, never a veto (docs/17 row 161): a name
+ *    with exactly ONE candidate resolves whatever book the slot named, and a
+ *    slot's title is never the citation's book — the LIBRARY's title is;
  * 5. a run that casts NOTHING composes the PRE-CHANGE prompt byte for byte
  *    (the additive discipline, docs/18 §4), measured against the golden fixture
  *    the pre-style builders were captured into.
@@ -701,11 +704,59 @@ describe('finalize: the cast path', () => {
     expect(npcCreatureRef(npc)?.chunkId).toBe(tomeChunk?.id);
   });
 
-  it('a book that holds no such creature is refused by name, listing what the library has', async () => {
-    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+  it('the owner’s case: a LOCALISED book title on a UNIQUE creature RESOLVES, stamped with the LIBRARY’s book', async () => {
+    const chunkId = await seedCreature({
+      bookTitle: 'Pathfinder Monster Core',
+      name: 'Plague Zombie',
+      hp: 22,
+    });
     const { campaign, moduleId } = await seedModule();
     await runSpineWith(moduleId, campaign, [
-      { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Tome of Horrors' } },
+      // The slot a GERMAN module's spine really wrote, from the owner's own
+      // report: the creature's name as the library spells it, and the pack title
+      // LOCALISED — "Monsterkern" is Monster Core, which is not a book that
+      // exists. Before docs/17 row 161 this refused a cast whose answer was
+      // unique, naming the very creature it refused to use.
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'Plague Zombie', book: 'Monsterkern' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+    });
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    const ref = npcCreatureRef(npc);
+    expect(ref?.chunkId).toBe(chunkId);
+    // THE STAMP IS THE LIBRARY'S TITLE, never the model's «Monsterkern»
+    // (docs/17 row 155): the `missing ref` banner has to name a pack that
+    // actually exists, so a slot's book can never become a citation's book.
+    expect(ref?.bookTitle).toBe('Pathfinder Monster Core');
+  });
+
+  it('a NON-matching book on an AMBIGUOUS name is refused, listing the candidates and their real books', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, page: 316 });
+    await seedCreature({ bookTitle: 'Tome of Horrors', name: ZOMBIE, hp: 40, page: 12 });
+    const { campaign, moduleId } = await seedModule();
+    await runSpineWith(moduleId, campaign, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Monsterkern' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
     ]);
@@ -719,9 +770,17 @@ describe('finalize: the cast path', () => {
       kind: 'npc',
       targets: [{ name: AGATHA }],
     });
+
+    // Two creatures share the name and the slot's book holds neither: the cast
+    // must NOT pick one silently (docs/17 row 161, rule 3), and the refusal
+    // lists both candidates WITH the book each really comes from — which is the
+    // whole remedy, since naming the book is what the slot is for.
+    expect(result.cast).toEqual([]);
     expect(result.failed).toHaveLength(1);
-    expect(result.failed[0]?.message).toContain('Tome of Horrors');
+    expect(result.failed[0]?.message).toContain('2 creatures of that name');
     expect(result.failed[0]?.message).toContain('Bestiary');
+    expect(result.failed[0]?.message).toContain('Tome of Horrors');
+    expect(startRunMock).not.toHaveBeenCalled();
   });
 
   it('a module with NO slot is untouched: the entity goes down the persona path', async () => {

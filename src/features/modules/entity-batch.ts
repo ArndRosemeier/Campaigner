@@ -9,7 +9,7 @@ import {
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
-import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
+import { castCreatureAsNpc, listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
 import { getRulebook } from '@/db/rulebookRepo';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
@@ -159,17 +159,36 @@ async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
  *   bestiary was imported, a typo, a creature the owner deleted) — the message
  *   also names the nearest creatures the library DOES hold, so the failure is
  *   actionable rather than a dead end;
- * - the name is ambiguous — two creatures share it, which happens the moment
- *   two books are installed — and the slot named no book, or named a book that
- *   holds no such creature.
+ * - the name is ambiguous — two or more creatures share it, which happens the
+ *   moment two books are installed — and the slot's book does not narrow the
+ *   pool to exactly one of them (no book named, a book that holds several, or
+ *   a book that holds none).
+ *
+ * **THE BOOK IS A DISAMBIGUATOR, NEVER A VETO** (docs/17 row 161). Exactly one
+ * creature of that name means there is nothing to disambiguate: the library's
+ * one candidate IS the creature the entity asked for, whatever book the slot
+ * named, and using it is not a guess — it is the only answer the library has.
+ * The check that made this refuse was self-defeating: a module is authored in
+ * the owner's own language, so a model routinely localises the pack titles it
+ * was shown ("Monsterkern" for Monster Core) and the veto rejected a cast whose
+ * answer was unique, naming the very creature it refused to use. What a slot's
+ * `book` is NEVER allowed to do is decide the citation's identity: the stamp is
+ * the LIBRARY's own title (`citationBookTitleFor`, docs/17 row 155), so
+ * `missing ref` reporting keeps naming the pack that actually has to be
+ * installed and the model's string is never trusted as a book.
  *
  * The matching rule itself is EXACT (trimmed, case-insensitive) and stays that
  * way: the same pool is now also the VOCABULARY the spine prompt carries
  * (`llm/creatorRoster`, docs/17 row 114), so the model is shown the names it
  * may copy — and a fuzzy match here would silently cast a different creature
  * than the module asked for. The suggestion half runs ONLY for the message.
+ *
+ * Exported so the resolution rule is pinnable where it lives (docs/18 §2): this
+ * is the ONE seam that answers "which library creature does the module's
+ * bestiary slot mean?", and a second implementation of it is the defect this
+ * export makes visible.
  */
-async function libraryCitationForEntity(
+export async function libraryCitationForEntity(
   entityName: string,
   slot: EntityBestiarySlot,
 ): Promise<CreatureCitation> {
@@ -181,8 +200,9 @@ async function libraryCitationForEntity(
     (creature) => creature.name.trim().toLowerCase() === wanted.toLowerCase(),
   );
   // The library's own disclosure of which book each candidate comes from. Read
-  // for the candidates ONLY, and only when a book is named or the name turns
-  // out to be ambiguous, so the common unambiguous case costs nothing.
+  // for the candidates ONLY, and only when the name is AMBIGUOUS (or a failure
+  // has to name them) — never on the unique-name arm, so the common
+  // unambiguous case costs nothing and a slot's book cannot veto it.
   const titleOf = new Map<string, string>();
   const titleFor = async (chunkId: string): Promise<string> => {
     const cached = titleOf.get(chunkId);
@@ -215,32 +235,47 @@ async function libraryCitationForEntity(
         suggestion,
     );
   }
-  let candidates = sameName;
-  if (book !== '') {
-    candidates = [];
-    for (const entry of sameName) {
-      if ((await titleFor(entry.chunkId)).toLowerCase() === book.toLowerCase()) {
-        candidates.push(entry);
+  // The candidate this slot resolves to. Every arm below either sets it or
+  // throws; the single `return` at the bottom is the ONE place a citation is
+  // built, whichever arm answered.
+  let resolved: LibraryCreature | undefined;
+  if (sameName.length === 1) {
+    // EXACTLY ONE — RESOLVE IT (docs/17 row 161, rule 2). Nothing is
+    // ambiguous here, so the slot's book has nothing to disambiguate and is
+    // not consulted at all: the library's one candidate is the creature the
+    // entity asked for. A model writing a module in another language localises
+    // the pack titles it was shown, and that string must not be able to refuse
+    // a cast whose answer is unique.
+    resolved = sameName[0];
+  } else {
+    // TWO OR MORE — the book narrows, and only a narrowing to EXACTLY ONE
+    // resolves. A book that matches no candidate is an unsolved ambiguity, not
+    // a refusal of the cast: the pool was ambiguous before the book was
+    // considered and stays ambiguous after, so the loud failure below lists
+    // every candidate WITH the book it really comes from — which is the whole
+    // remedy, since naming the book is what the slot is for.
+    let candidates = sameName;
+    if (book !== '') {
+      candidates = [];
+      for (const entry of sameName) {
+        if ((await titleFor(entry.chunkId)).toLowerCase() === book.toLowerCase()) {
+          candidates.push(entry);
+        }
       }
     }
-    if (candidates.length === 0) {
+    if (candidates.length !== 1) {
       throw new Error(
-        `bestiary cast: ${named} from the book «${book}», but that book holds no creature of that ` +
-          `name — the library has ${await describe(sameName)}`,
+        `bestiary cast: ${named}, but this workspace's library holds ${String(sameName.length)} creatures ` +
+          `of that name (${await describe(sameName)}) — name the book in the entity's bestiary slot ` +
+          '("book": the book\'s title) so the cast is unambiguous',
       );
     }
+    resolved = candidates[0];
   }
-  if (candidates.length > 1) {
-    throw new Error(
-      `bestiary cast: ${named}, but this workspace's library holds ${String(candidates.length)} creatures ` +
-        `of that name (${await describe(candidates)}) — name the book in the entity's bestiary slot ` +
-        '("book": the book\'s title) so the cast is unambiguous',
-    );
-  }
-  const resolved = candidates[0];
   if (resolved === undefined) {
-    // Unreachable: the empty case threw above and any ambiguity threw just
-    // here. Stated rather than asserted so the compiler proves it too.
+    // Unreachable: the empty case threw above and the ambiguous arm only ever
+    // assigns a proven-single candidate. Stated rather than asserted so the
+    // compiler proves it too.
     throw new Error(`bestiary cast: ${named}, and no library creature answered the name`);
   }
   // Built the way every other citation site builds one — through the ONE
