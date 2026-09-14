@@ -29,8 +29,6 @@ RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
 LOGDIR="${GATE_LOGDIR:-/tmp/gate-$$}"
 LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
-mkdir -p "$LOGDIR"
-echo "gate: cap ${RSS_CAP_MB}MB RSS / floor ${AVAIL_FLOOR_MB}MB available; logs in $LOGDIR"
 
 self=$$
 foreign() { pgrep -af 'vites[t]|playwrigh[t]' 2>/dev/null | grep -v 'bash -c' | grep -v " $self " | grep -v "^$self "; }
@@ -47,6 +45,11 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 printf '%s %s %s\n' "$self" "$(date +%s)" "$PWD" > "$LOCK/owner"
 trap 'rm -rf "$LOCK"' EXIT
+# The log dir is created only once the lock is OURS: a refused attempt (a foreign
+# suite, or the lock held by a sibling) used to leave an empty /tmp/gate-<pid>
+# behind, and retry loops accumulated them by the hundred.
+mkdir -p "$LOGDIR"
+echo "gate: cap ${RSS_CAP_MB}MB RSS / floor ${AVAIL_FLOOR_MB}MB available; logs in $LOGDIR"
 
 avail_mb() { awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo; }
 # RSS of the run's own process group: pnpm -> node -> workers all stay in it.
