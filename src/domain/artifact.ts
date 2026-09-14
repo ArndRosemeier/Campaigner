@@ -321,6 +321,15 @@ export const monsterSourceSchema = z.discriminatedUnion('type', [
      * content hash, exactly as documented in docs/11 D9).
      */
     creatureName: z.string().optional(),
+    /**
+     * The BOOK the cited chunk came from — its row's own title, stamped at
+     * citation birth (docs/17 row 155). NOT a resolution key: it is the
+     * identity a report of a STRANDED citation names, so a GM is told which
+     * pack to install. Additive + optional: a citation written before the
+     * stamp, or healed from a manifest that never resolved the book, simply
+     * carries none — and a surface that must name the pack says so.
+     */
+    bookTitle: z.string().optional(),
   }),
   z.object({ type: z.literal('none') }),
 ]);

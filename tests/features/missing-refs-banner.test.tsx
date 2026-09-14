@@ -6,12 +6,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { newId, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
 import { workspacePath } from '@/app/routes';
+import { citationBookTitle, creatureOriginLabel } from '@/domain/encounterResolve';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
+import { db } from '@/db/db';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
 import { MissingRefsBanner } from '@/features/campaign/components/missing-refs-banner';
+import {
+  MISSING_REF_NAME_CAP,
+  missingRefsSummary,
+  type MissingRefStrand,
+} from '@/features/campaign/components/missing-refs-summary';
 import { clearDatabase } from '../db/helpers';
 
 function renderBannerAt(campaignId: string): void {
@@ -226,5 +233,191 @@ describe('MissingRefsBanner', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
     });
+  });
+});
+
+/** A roster entry citing a chunk nothing in this library answers — the strand
+ * shape every pin below is about. */
+function missingEntry(name: string, source: Record<string, unknown> = {}): unknown {
+  return {
+    name,
+    count: 1,
+    notes: '',
+    treasure: '',
+    source: {
+      type: 'rulebook',
+      chunkId: '00000000-0000-4000-8000-0000000000ff',
+      ...source,
+    },
+  };
+}
+
+async function bannerFor(entries: unknown[], encounterName = 'Goblin ambush'): Promise<string> {
+  const campaign = await createCampaign({ name: 'Gappy', system: 'dnd5e' });
+  await createArtifact({
+    campaignId: campaign.id,
+    kind: 'encounter',
+    name: encounterName,
+    data: encounterData(entries) as never,
+  });
+  renderBannerAt(campaign.id);
+  const banner = await screen.findByTestId('missing-refs-banner');
+  return banner.textContent;
+}
+
+/**
+ * WHAT the banner names (docs/17 row 155): the creatures a campaign is missing
+ * — the question the count alone left unanswered — and the pack to install
+ * when the citation recorded one, or the plain statement that it did not.
+ */
+describe('the missing-refs banner names what is missing', () => {
+  it('names the creature AND the pack a citation recorded', async () => {
+    const text = await bannerFor([
+      missingEntry('Zombie', { creatureName: 'Zombie', bookTitle: 'Monster Manual' }),
+    ]);
+
+    expect(text).toContain("1 encounter entry cites a stat block missing from this library");
+    expect(text).toContain('Missing: Zombie.');
+    expect(text).toContain('The missing pack is «Monster Manual».');
+  });
+
+  it('names the creatures and INVENTS NO PACK when the citation recorded none', async () => {
+    // A citation written before the pack stamp existed — the real shape of
+    // every row older than this landing. Naming a pack here would be a guess.
+    const text = await bannerFor([missingEntry('Zombie', { creatureName: 'Zombie' })]);
+
+    expect(text).toContain('Missing: Zombie.');
+    expect(text).toContain('The pack was not recorded when this citation was written.');
+    expect(text).not.toContain('«');
+  });
+
+  it('names the packs it does know and how many strands record none', async () => {
+    const text = await bannerFor([
+      missingEntry('Zombie', { creatureName: 'Zombie', bookTitle: 'Monster Manual' }),
+      missingEntry('Ghoul', { creatureName: 'Ghoul', bookTitle: 'Monster Manual' }),
+      missingEntry('Skeleton', { creatureName: 'Skeleton' }),
+    ]);
+
+    expect(text).toContain('3 encounter entries across 1 encounter cites stat blocks');
+    expect(text).toContain('Missing: Ghoul, Skeleton, Zombie.');
+    expect(text).toContain('The missing pack is «Monster Manual».');
+    expect(text).toContain('1 of 3 citations does not record which pack it was written from.');
+  });
+
+  it('bounds the name list and states the remainder exactly (never a silent truncation)', async () => {
+    const text = await bannerFor(
+      ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'].map((creature) =>
+        missingEntry(creature, { creatureName: creature }),
+      ),
+    );
+
+    // Six strands, four names listed, and the count of what is NOT listed is
+    // the truth about how much is missing — an off-by-one here is a lie.
+    expect(text).toContain('6 encounter entries across 1 encounter cites stat blocks');
+    expect(text).toContain('Missing: Alpha, Bravo, Charlie, Delta (+2 more).');
+    expect(text).not.toContain('Echo');
+  });
+
+  it('deduplicates and orders the names deterministically', async () => {
+    const text = await bannerFor([
+      missingEntry('One', { creatureName: 'Zombie' }),
+      missingEntry('Two', { creatureName: 'zombie' }),
+      missingEntry('Three', { creatureName: 'ghoul' }),
+      missingEntry('Four', { creatureName: 'Bog Zombie' }),
+    ]);
+
+    // One creature, one name: the comparison trims and casefolds, and the
+    // printed order is the locale order of that key.
+    expect(text).toContain('4 encounter entries across 1 encounter cites stat blocks');
+    expect(text).toContain('Missing: Bog Zombie, ghoul, Zombie.');
+  });
+
+  it('never drops a strand it cannot name — the count includes it and says so', async () => {
+    const text = await bannerFor([
+      missingEntry('Zombie', { creatureName: 'Zombie' }),
+      // A roster entry that names nothing at all: the resolver's label is the
+      // bare `missing ref`, and the banner still counts it.
+      missingEntry(''),
+    ]);
+
+    expect(text).toContain('2 encounter entries across 1 encounter cites stat blocks');
+    expect(text).toContain('Missing: Zombie.');
+    expect(text).toContain('1 of them names no creature.');
+  });
+
+  it('names the SAME pack identity the origin label prints for that book', async () => {
+    // The differential this landing exists to keep: the title the banner shows
+    // and the title `creatureOriginLabel` puts in a row's badge come from the
+    // same book row, so the two can never name different packs.
+    const book = await createPackBook({
+      title: 'Monster Manual',
+      system: 'dnd5e',
+      filename: 'mm.zip',
+    });
+    const chunk = ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 44,
+      pageEnd: 44,
+      chunkType: 'statblock',
+      headingPath: ['Zombie'],
+      text: 'Zombie stat block',
+      statBlock: null,
+      contentHash: await sha256Hex('Zombie stat block'),
+    });
+    const originLabel = await creatureOriginLabel(chunk, 'Zombie', {
+      getRulebook: (bookId) => db.rulebooks.get(bookId),
+    });
+    const stampedTitle = citationBookTitle(book);
+    if (stampedTitle === undefined) throw new Error('the pack book row has no title');
+
+    expect(originLabel.startsWith(`${stampedTitle}:`)).toBe(true);
+    const text = await bannerFor([
+      missingEntry('Zombie', { creatureName: 'Zombie', bookTitle: stampedTitle }),
+    ]);
+    expect(text).toContain(`The missing pack is «${originLabel.split(':')[0] ?? ''}».`);
+  });
+});
+
+/** The sentence itself, pinned where it is composed: the cap arithmetic (an
+ * off-by-one is a lie about how much is missing) and the two pack shapes. */
+describe('missingRefsSummary', () => {
+  const strand = (creature: string, bookTitle?: string): MissingRefStrand => ({
+    encounter: 'Crypt',
+    creature,
+    ...(bookTitle === undefined ? {} : { bookTitle }),
+  });
+
+  it('prints no sentence for no strands', () => {
+    expect(missingRefsSummary([])).toBe('');
+  });
+
+  it('lists exactly MISSING_REF_NAME_CAP names with no remainder, and one more WITH it', () => {
+    const names = Array.from({ length: MISSING_REF_NAME_CAP + 1 }, (_, index) => `Mob ${String(index)}`);
+    const atCap = missingRefsSummary(names.slice(0, MISSING_REF_NAME_CAP).map((name) => strand(name)));
+    expect(atCap).toContain(`Missing: ${names.slice(0, MISSING_REF_NAME_CAP).join(', ')}.`);
+    expect(atCap).not.toContain('more');
+
+    const overCap = missingRefsSummary(names.map((name) => strand(name)));
+    expect(overCap).toContain(`Missing: ${names.slice(0, MISSING_REF_NAME_CAP).join(', ')} (+1 more).`);
+  });
+
+  it('names every pack it was given, and states the unrecorded remainder', () => {
+    const text = missingRefsSummary([
+      strand('Zombie', 'Monster Manual'),
+      strand('Ghoul', 'Monster Core'),
+      strand('Skeleton'),
+    ]);
+    expect(text).toContain('The missing packs are «Monster Core», «Monster Manual».');
+    expect(text).toContain('1 of 3 citations does not record which pack it was written from.');
+  });
+
+  it('says the pack was not recorded when NO strand knows one', () => {
+    expect(missingRefsSummary([strand('Zombie')])).toContain(
+      'The pack was not recorded when this citation was written.',
+    );
+    expect(missingRefsSummary([strand('Zombie'), strand('Ghoul')])).toContain(
+      'The packs were not recorded when these citations were written.',
+    );
   });
 });

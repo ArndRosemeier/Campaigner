@@ -4,7 +4,7 @@ import { fallbackSpawnPoint, spawnPointInStagingGround } from '@/domain/battle/b
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
 import { db } from '@/db/db';
-import { contentIdentityFor } from '@/domain/encounterResolve';
+import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { NotFoundError } from '@/lib/errors';
 
@@ -121,7 +121,15 @@ export async function buildMobPickEntry(chunkId: Id, entryName: string): Promise
       : {
         type: 'rulebook',
         chunkId,
-        ...contentIdentityFor(chunk.contentHash, chunk.headingPath[0], entryName),
+        // The book title rides along exactly like the hash and the creature
+        // name (docs/17 row 155): a pick made here names its pack if the
+        // citation is ever stranded.
+        ...contentIdentityFor(
+          chunk.contentHash,
+          chunk.headingPath[0],
+          entryName,
+          citationBookTitle(await db.rulebooks.get(chunk.bookId)),
+        ),
       },
   });
 }

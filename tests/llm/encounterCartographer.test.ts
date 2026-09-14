@@ -374,7 +374,7 @@ describe('Encounter Cartographer run', () => {
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The map finalize remapped the roster citation to the pack chunk —
     // stamped with content identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss', bookTitle: 'Dnd5e Bestiary Pack' });
   });
 
   it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
@@ -410,7 +410,7 @@ describe('Encounter Cartographer run', () => {
     // The pinned citation (persisted with the brief through the pick pause)
     // resolved in map finalize to the pinned chunk — stamped with content
     // identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss', bookTitle: 'Dnd5e Bestiary Pack' });
   });
 
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
@@ -1623,6 +1623,7 @@ describe('Encounter Cartographer run', () => {
           chunkId: goblinChunkId,
           contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
           creatureName: 'Goblin Boss',
+          bookTitle: 'Dnd5e Bestiary Pack',
         });
       }
       // packRooms may ROTATE the rooms array — resolve by name, never by position.
@@ -1917,6 +1918,7 @@ describe('Encounter Cartographer run', () => {
           chunkId: goblinChunkId,
           contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
           creatureName: 'Goblin Boss',
+          bookTitle: 'Dnd5e Bestiary Pack',
         });
       }
       // Advisory paths unchanged: the under-stocked rooms ship the LOUD

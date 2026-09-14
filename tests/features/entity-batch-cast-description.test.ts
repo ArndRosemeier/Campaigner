@@ -275,12 +275,15 @@ async function seedModule(partMarkdown: string): Promise<{
 /** The citation is IDENTITY, not content: the chunk the numbers come from and
  * the library's own spelling of the creature's name. (`contentHash` is stamped
  * at citation birth by the ONE cast function, so it is asserted as PRESENT and
- * not as a literal this file would have to re-derive.) */
+ * not as a literal this file would have to re-derive.) The BOOK is asserted by
+ * its title, because it is the identity a stranded citation is reported with
+ * (docs/17 row 155) — and it is read off the fixture's own book row. */
 function expectCitation(row: NpcArtifact): void {
   const ref = npcCreatureRef(row);
   expect(ref?.chunkId).toBe(CHUNK_ID);
   expect(ref?.creatureName).toBe(ZOMBIE);
   expect(ref?.contentHash).toBeDefined();
+  expect(ref?.bookTitle).toBe('Bestiary');
 }
 
 /** The row the batch produced for `AGATHA` — asserted to be an npc row. */

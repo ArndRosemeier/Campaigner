@@ -443,6 +443,9 @@ describe('spawn picker helpers', () => {
     expect(entry.source.chunkId).toBe(goblinChunkId);
     expect(entry.source.contentHash).toBe(await sha256Hex('Goblin Boss, a test creature of level 1.'));
     expect(entry.source.creatureName).toBe('Goblin Boss');
+    // The pack too (docs/17 row 155): a strand this pick leaves behind names
+    // the book to install, read off the chunk's own book row.
+    expect(entry.source.bookTitle).toBe('Core Bestiary');
   });
 
   it('buildMobPickEntry stays uuid-only for a vanished chunk (statless toast stays loud)', async () => {
@@ -450,5 +453,7 @@ describe('spawn picker helpers', () => {
     if (entry.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
     expect(entry.source.contentHash).toBeUndefined();
     expect(entry.source.creatureName).toBe('Ghost');
+    // Nothing is known about a chunk that is not here — not even its pack.
+    expect(entry.source.bookTitle).toBeUndefined();
   });
 });

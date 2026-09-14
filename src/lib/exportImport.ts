@@ -562,11 +562,20 @@ export async function checkImportDependencies(
 }
 
 /**
- * Content-identity healing (chunk-hash-fallback arc): citations born before
- * stamping carry no hash, but the v2 manifest does. Stamp manifest hashes
- * (plus the manifest creature name when the entry lacks one) onto matching
- * entries — matched by exporting artifact id + cited chunkId — so OLD
- * exports resolve byte-identical installs through the hash fallback too.
+ * Content-identity healing (chunk-hash-fallback arc; the book half added by
+ * docs/17 row 155): citations born before stamping carry no hash and no book,
+ * but the v2 manifest does. Stamp the manifest's hash, its creature name and
+ * its book title onto matching entries — matched by exporting artifact id +
+ * cited chunkId — so OLD exports resolve byte-identical installs through the
+ * hash fallback too, AND name the pack they came from when one is missing
+ * here. Each field heals INDEPENDENTLY and only when the entry lacks it: an
+ * entry that already carries a hash still gains a missing book title, which is
+ * what makes this the ONE healing seam rather than a second one.
+ *
+ * The manifest's own `bookTitle` is present only when the book RESOLVED at
+ * export time (it is L1 logical identity, `exportCitationSchema`), so a
+ * citation whose book was already gone at export heals nothing here and stays
+ * the honest "no pack recorded" — never a guessed one.
  * Entries with no manifest match (v1 files carry no manifest at all) land
  * unchanged and keep resolving by uuid, exactly as before.
  */
@@ -578,17 +587,21 @@ function healRulebookSources(
   return {
     ...data,
     monsters: data.monsters.map((entry) => {
-      if (entry.source.type !== 'rulebook' || entry.source.contentHash !== undefined) return entry;
+      if (entry.source.type !== 'rulebook') return entry;
       const citation = manifestByCite.get(`${exportedArtifactId}::${entry.source.chunkId}`);
-      if (citation?.contentHash === undefined) return entry;
+      if (citation === undefined) return entry;
+      const hash = entry.source.contentHash === undefined ? citation.contentHash : undefined;
+      const creature =
+        entry.source.creatureName === undefined ? citation.creatureName : undefined;
+      const book = entry.source.bookTitle === undefined ? citation.bookTitle : undefined;
+      if (hash === undefined && creature === undefined && book === undefined) return entry;
       return {
         ...entry,
         source: {
           ...entry.source,
-          contentHash: citation.contentHash,
-          ...(entry.source.creatureName !== undefined || citation.creatureName === undefined
-            ? {}
-            : { creatureName: citation.creatureName }),
+          ...(hash === undefined ? {} : { contentHash: hash }),
+          ...(creature === undefined ? {} : { creatureName: creature }),
+          ...(book === undefined ? {} : { bookTitle: book }),
         },
       };
     }),
@@ -662,14 +675,15 @@ export async function importExport(
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
 
-  // Content-identity healing (chunk-hash-fallback arc): the v2 manifest
-  // already carries per-citation contentHash — index it by exporting
-  // artifact + cited chunk so pre-stamp entries heal on the way in.
+  // Content-identity healing (chunk-hash-fallback arc; books since docs/17
+  // row 155): the v2 manifest carries per-citation contentHash, creatureName
+  // and bookTitle — index EVERY citation by exporting artifact + cited chunk
+  // so pre-stamp entries heal on the way in. A citation with no hash is still
+  // indexed: it may be the only record of which book the entry came from, and
+  // each field heals independently.
   const manifestByCite = new Map<string, ExportCitation>(
-    (parsed.dependencies?.citations ?? []).flatMap((citation) =>
-      citation.contentHash === undefined
-        ? []
-        : [[`${citation.artifactId}::${citation.citedChunkId}`, citation] as const],
+    (parsed.dependencies?.citations ?? []).map(
+      (citation) => [`${citation.artifactId}::${citation.citedChunkId}`, citation] as const,
     ),
   );
 

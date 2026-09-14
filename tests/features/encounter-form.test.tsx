@@ -334,13 +334,16 @@ describe('encounter form monster sources', () => {
     await user.type(within(dialog).getByPlaceholderText('Search stat blocks…'), 'giant');
     await user.click(await within(dialog).findByText('Hill Giant'));
 
-    // Citation birth carries content identity, not just the uuid.
+    // Citation birth carries content identity, not just the uuid — and since
+    // docs/17 row 155 the book the chunk came from, read off the library row
+    // the dialog's search hit carried.
     await waitFor(() => {
       expect(latest?.monsters[0]?.source).toEqual({
         type: 'rulebook',
         chunkId: parsed.id,
         contentHash,
         creatureName: 'Hill Giant',
+        bookTitle: 'Bestiary',
       });
     });
   });

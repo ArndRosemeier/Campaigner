@@ -558,6 +558,22 @@ lookup); the label becomes:
 The return contract (`statBlock | null` + display string) is unchanged, so
 all consumers (encounter editor stat-block cards, battle tokens) keep working.
 
+**Amended (docs/17 row 155): the pack title travels FURTHER than the label.**
+The `<bookTitle>` an origin label prints is now also STAMPED onto the citation
+at birth (`contentIdentityFor`'s optional `bookTitle` — `chunkId`,
+`contentHash`, `creatureName`, `bookTitle`), and healed from an export's
+manifest on the way in, so a citation whose chunk is NOT in this library can
+still name the pack that would satisfy it and the campaign banner can tell the
+GM which of his packs to install (`docs/18` §2, the banner's seam row). The
+title is a display/report identity, NEVER a resolution key: resolution stays the
+chunk uuid, then the exact `contentHash`. The two readings of a book's title are
+ONE pair in `domain/encounterResolve`: `rulebookDisplayTitle(book)` (the label's
+reading — the `Rulebook` stand-in when there is no row or its title is empty)
+and `citationBookTitle(book)` (the stamp's reading — `undefined` when nothing is
+known, because a stamp must never carry a placeholder). Because the banner shows
+the stamp and a badge shows the label, both are read from the same book row and
+are pinned against each other: they cannot name different packs.
+
 ## 9. Non-goals
 
 - No fetching from any network **in the import path** (unit-test asserted).

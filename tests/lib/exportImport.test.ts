@@ -916,6 +916,9 @@ describe('import content-identity healing', () => {
     const exported = await buildCampaignExport(campaign.id);
     // The manifest carries the hash even though the entry does not.
     expect(exported.dependencies?.citations[0]?.contentHash).toBe(contentHash);
+    // …and the BOOK, because the book RESOLVED at export time: that is what
+    // lets the import name the pack this citation came from (docs/17 row 155).
+    expect(exported.dependencies?.citations[0]?.bookTitle).toBe('Monster Core');
     return {
       json: JSON.parse(JSON.stringify(exported)) as unknown,
       oldChunkId: chunk.id,
@@ -976,9 +979,30 @@ describe('import content-identity healing', () => {
     expect(first.source.chunkId).toBe(oldChunkId);
     expect(first.source.contentHash).toBe(contentHash);
     expect(first.source.creatureName).toBe('Goblin Warrior');
+    // The BOOK heals from the manifest too (docs/17 row 155): an export made
+    // by a build that knew the book hands the pack name to the importing
+    // machine, so this citation can name what to install even though the
+    // exported entry itself recorded nothing.
+    expect(first.source.bookTitle).toBe('Monster Core');
     const resolved = await resolveMonsterEntryWithRepos(first);
     expect(resolved.origin).toBe('Monster Core: Goblin Warrior');
     expect(resolved.statBlock).not.toBeNull();
+  });
+
+  it('names the pack of a strand it CANNOT resolve — the healing is what the banner reads', async () => {
+    const { json } = await exportPrestampGoblinCampaign();
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
+    const first = await importedEncounter(result.campaignId);
+    if (first.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    const resolved = await resolveMonsterEntryWithRepos(first);
+    expect(resolved.origin).toBe('missing ref (Goblin Warrior)');
+    expect(resolved.missingRef).toEqual({
+      creature: 'Goblin Warrior',
+      bookTitle: 'Monster Core',
+    });
   });
 
   it('import-anyway heals the hash while content is absent; a later install clears the marker', async () => {
@@ -990,10 +1014,14 @@ describe('import content-identity healing', () => {
     const first = await importedEncounter(result.campaignId);
     if (first.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
     expect(first.source.contentHash).toBe(contentHash);
-    expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
+    const gapped = await resolveMonsterEntryWithRepos(first);
+    expect(gapped).toMatchObject({
       statBlock: null,
       origin: 'missing ref (Goblin Warrior)',
     });
+    // The strand says WHICH pack it came from even while it is unresolved —
+    // the whole point of the healing (docs/17 row 155).
+    expect(gapped.missingRef?.bookTitle).toBe('Monster Core');
 
     // Installing the byte-identical content later clears the marker with no
     // further import — the banner contract is this same resolution.

@@ -6,17 +6,32 @@ import { ROUTES, campaignIdFromPath } from '@/app/routes';
 import { db } from '@/db/db';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { isMissingRefOrigin } from '@/domain/encounterResolve';
+import {
+  missingRefsSummary,
+  type MissingRefStrand,
+} from '@/features/campaign/components/missing-refs-summary';
 
 /**
- * Missing-refs campaign banner (07-MILESTONE-3 M3-E slice B): a campaign
- * whose encounters cite rulebook chunks or NPC artifacts that are NOT in
- * this library (an import-anyway landing, a deleted book, a pruned NPC)
- * says so on every campaign route — above the routed page, below the
- * campaign bar — with the resolve path named. It derives from the SAME
- * `resolveMonsterEntry` contract the encounter rows render (`missing ref`),
- * so the banner and the badges can never disagree; it clears itself the
- * moment the content is installed (no persisted flag to go stale).
+ * Missing-refs campaign banner (07-MILESTONE-3 M3-E slice B; WHAT it names is
+ * docs/17 row 155): a campaign whose encounters cite rulebook chunks or NPC
+ * artifacts that are NOT in this library (an import-anyway landing, a deleted
+ * book, a pruned NPC) says so on every campaign route — above the routed page,
+ * below the campaign bar — with the resolve path named. It derives from the
+ * SAME `resolveMonsterEntry` contract the encounter rows render (`missing ref`),
+ * so the banner and the badges can never disagree; it clears itself the moment
+ * the content is installed (no persisted flag to go stale).
+ *
+ * It names WHAT is missing, not only how much: the creatures (the name the
+ * `missing ref (<creature>)` badge already carries) and, when the citation
+ * recorded one, the BOOK it came from — stamped at citation birth (docs/17 row
+ * 155, docs/12 §8) — so "which of the many packs do I install?" has an answer.
+ * A citation written before that stamp records no book, and the banner SAYS so
+ * rather than inventing a pack from a creature's name (AGENTS rule 1). Nothing
+ * is persisted and nothing is read from a stored gap list: both facts are
+ * re-derived from the resolver on every render, so the banner still clears
+ * itself the moment the pack is installed.
  */
+
 export function MissingRefsBanner(): JSX.Element | null {
   const { pathname } = useLocation();
   const campaignId = campaignIdFromPath(pathname);
@@ -27,20 +42,24 @@ export function MissingRefsBanner(): JSX.Element | null {
       .equals(campaignId)
       .filter((artifact) => artifact.kind === 'encounter')
       .toArray();
-    let dangling = 0;
-    const names = new Set<string>();
+    const strands: MissingRefStrand[] = [];
     for (const artifact of encounters) {
       for (const entry of artifact.data.monsters) {
         // The banner contract IS the row contract: a `missing ref` origin
         // here is a `missing ref` badge on the encounter row.
         const resolved = await resolveMonsterEntryWithRepos(entry);
-        if (isMissingRefOrigin(resolved.origin)) {
-          dangling += 1;
-          names.add(artifact.name);
-        }
+        if (!isMissingRefOrigin(resolved.origin)) continue;
+        // Every strand is REPORTED, named or not: the structured reason is
+        // what names it, and a resolution that produced none yields the honest
+        // "names no creature" clause rather than a silently dropped count.
+        strands.push({
+          encounter: artifact.name,
+          creature: resolved.missingRef?.creature ?? '',
+          bookTitle: resolved.missingRef?.bookTitle,
+        });
       }
     }
-    return dangling === 0 ? null : { dangling, encounters: names.size };
+    return strands.length === 0 ? null : strands;
   }, [campaignId]);
 
   if (state === null || state === undefined) return null;
@@ -50,9 +69,7 @@ export function MissingRefsBanner(): JSX.Element | null {
       data-testid="missing-refs-banner"
       role="note"
     >
-      {state.dangling === 1
-        ? '1 encounter entry cites a stat block missing from this library — it shows \'missing ref\'.'
-        : `${String(state.dangling)} encounter entries across ${String(state.encounters)} ${state.encounters === 1 ? 'encounter cite' : 'encounters cite'} stat blocks missing from this library — they show 'missing ref'.`}{' '}
+      {missingRefsSummary(state)}{' '}
       <Link to={ROUTES.rules} className="font-medium underline" data-testid="missing-refs-rules-link">
         Open Rules to install the pack or re-import the rulebook
       </Link>

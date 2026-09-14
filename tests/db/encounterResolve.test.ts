@@ -3,7 +3,12 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type StatBlock } from '@/domain';
-import { contentIdentityFor } from '@/domain/encounterResolve';
+import {
+  citationBookTitle,
+  contentIdentityFor,
+  missingRefReason,
+  rulebookDisplayTitle,
+} from '@/domain/encounterResolve';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -439,6 +444,41 @@ describe('resolveMonsterEntry content-hash fallback', () => {
     });
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
+  it('reports WHAT is missing structurally, not only in the label (docs/17 row 155)', async () => {
+    await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
+
+    const resolved = await resolveMonsterEntryWithRepos({
+      name: 'Goblin Warrior',
+      count: 1,
+      notes: '',
+      treasure: '',
+      source: {
+        type: 'rulebook',
+        chunkId: newId(),
+        creatureName: 'Bog Zombie',
+        bookTitle: 'Monster Manual',
+      },
+    });
+    // The label and the structured reason are ONE fact: the banner reads the
+    // field, and a strand that recorded its book names the pack to install.
+    expect(resolved.origin).toBe('missing ref (Bog Zombie)');
+    expect(resolved.missingRef).toEqual({ creature: 'Bog Zombie', bookTitle: 'Monster Manual' });
+  });
+
+  it('reports NO pack for a citation written before the stamp — and never a guessed one', async () => {
+    await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
+
+    const resolved = await resolveMonsterEntryWithRepos({
+      name: 'Goblin Warrior',
+      count: 1,
+      notes: '',
+      treasure: '',
+      source: { type: 'rulebook', chunkId: newId(), creatureName: 'Goblin Warrior' },
+    });
+    expect(resolved.origin).toBe('missing ref (Goblin Warrior)');
+    expect(resolved.missingRef).toEqual({ creature: 'Goblin Warrior' });
+    expect(resolved.missingRef !== undefined && 'bookTitle' in resolved.missingRef).toBe(false);
+  });
 });
 
 describe('contentIdentityFor', () => {
@@ -458,5 +498,77 @@ describe('contentIdentityFor', () => {
       contentHash: 'ab'.repeat(32),
       creatureName: 'Goblin',
     });
+  });
+
+  it('stamps the book title it is handed, trimmed — the citation names its pack', () => {
+    expect(contentIdentityFor('ab'.repeat(32), 'Goblin Warrior', 'Goblin', '  Monster Core  ')).toEqual(
+      {
+        contentHash: 'ab'.repeat(32),
+        creatureName: 'Goblin Warrior',
+        bookTitle: 'Monster Core',
+      },
+    );
+  });
+
+  it('OMITS the book title when none is known — never an empty placeholder', () => {
+    for (const unknown of [undefined, '', '   ']) {
+      const identity = contentIdentityFor('ab'.repeat(32), 'Goblin Warrior', 'Goblin', unknown);
+      expect('bookTitle' in identity).toBe(false);
+      expect(identity.creatureName).toBe('Goblin Warrior');
+    }
+  });
+});
+
+describe('missingRefReason', () => {
+  it('builds the label and the structured reason TOGETHER, pack included', () => {
+    expect(missingRefReason('  Zombie  ', '  Monster Manual  ')).toEqual({
+      origin: 'missing ref (Zombie)',
+      missingRef: { creature: 'Zombie', bookTitle: 'Monster Manual' },
+    });
+  });
+
+  it('omits the book when the citation records none, and says nothing it does not know', () => {
+    expect(missingRefReason('Zombie')).toEqual({
+      origin: 'missing ref (Zombie)',
+      missingRef: { creature: 'Zombie' },
+    });
+    const blank = missingRefReason('Zombie', '   ');
+    expect('bookTitle' in blank.missingRef).toBe(false);
+  });
+
+  it('names nothing rather than inventing a creature for a citation that records none', () => {
+    expect(missingRefReason('', 'Monster Manual')).toEqual({
+      origin: 'missing ref',
+      missingRef: { creature: '', bookTitle: 'Monster Manual' },
+    });
+  });
+});
+
+describe('the book title a citation STAMPS and the one an origin label PRINTS', () => {
+  it('are the same identity for a real book row — they cannot name two different books', async () => {
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    expect(citationBookTitle(book)).toBe('Monster Core');
+    expect(rulebookDisplayTitle(book)).toBe('Monster Core');
+  });
+
+  it('REFUSES to stamp a title it does not have, while a label still prints its stand-in', async () => {
+    // The two readings are deliberately different questions: a LABEL always has
+    // to print something, a STAMP must never invent one (AGENTS rule 1).
+    expect(citationBookTitle(undefined)).toBeUndefined();
+    expect(rulebookDisplayTitle(undefined)).toBe('Rulebook');
+    const blank = await createPackBook({
+      title: ' ',
+      system: 'pathfinder2e',
+      filename: 'blank.zip',
+    });
+    expect(citationBookTitle(blank)).toBeUndefined();
+    // The label's rule is byte-identical to the pre-155 reading (an EMPTY
+    // title is the only one it replaces); a whitespace title prints verbatim
+    // rather than being quietly rewritten.
+    expect(rulebookDisplayTitle(blank)).toBe(' ');
   });
 });

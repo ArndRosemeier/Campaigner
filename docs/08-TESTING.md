@@ -457,7 +457,8 @@ test) · ❌ gap.
 | Help button + dialog | `help.test` | ✅ |
 | Campaign picker: cards, create dialog, delete confirm | `campaign-picker.test` | ✅ |
 | Campaign picker: import dep-summary dialog (abort imports nothing, import-anyway lands `missing ref`) + Rules deep-link | `campaign-picker.test` (import dependencies) | ✅ |
-| Campaign banner: missing-refs banner on campaign routes (hidden when clean / off-route) | `missing-refs-banner.test` | ✅ |
+| Campaign banner: missing-refs banner on campaign routes (hidden when clean / off-route); NAMES the creatures it is missing (deduped, ordered, bounded with an exact `(+N more)`), names the pack when the citation recorded one, and states `The pack was not recorded when this citation was written.` when it did not — never a guess | `missing-refs-banner.test` (docs/17 row 155) | ✅ |
+| Encounter roster row: the rulebook stat-block search dialog writes a citation carrying the chunk, hash, creature name AND the book it came from | `monster-source-citation.test` (NEW, docs/17 row 155) | ✅ |
 | Import dependency matrix: L0 present / L1 drift / L2 fuzzy / missing, unmet refs block, pins advisory | `exportDependencies.test`, `exportImport.test` (enforcement: abort writes zero rows, anyway lands `missing ref`, L1, zip policy) | ✅ |
 | Campaign tree: rows, selection, `+` buttons, delete confirm | `workspace.test` | ✅ |
 | Ownership scopes: persisted toggles, module groups, Library group, publish/adopt confirms | `tree-scope.test`, `artifactRepo.test`, `moduleRepo.test` | ✅ |
@@ -3407,13 +3408,68 @@ pin in `modulePdf.test.ts` would catch a renderer that stamped a WRONG-but-stabl
 date — it catches a constant, a missing date and a clock that stopped being read,
 not a date computed from the wrong field.
 
+### A strand names its PACK and its creatures, and every citation records the book it came from (docs/17 row 155, docs/12 §8, docs/11 §Content identity at citation birth, docs/18 §2)
+
+The owner imported a campaign on another computer and the banner told him only
+HOW MUCH was missing (*"4 encounter entries across 2 encounters cite stat blocks
+missing from this library"*) plus a link to a generic Rules page: *"the user has
+no idea which of the many packs he needs to install."* The trace found the data
+was already there twice over — the creature name rides the `missing ref
+(<creature>)` label, and the pack title is read by `creatureOriginLabel` where
+citations are BORN — so this slice surfaces what existed and stamps the one
+field that was discarded. Two seams, both extended, neither replaced:
+
+- `domain/encounterResolve.missingRefReason(citationName, bookTitle)` builds the
+  LABEL and the structured `MissingRef {creature, bookTitle}` TOGETHER, and
+  `ResolvedMonster.missingRef` carries it, so a surface reads a field instead of
+  parsing `missing ref (Zombie)`;
+- `domain/encounterResolve.contentIdentityFor(hash, heading, entryName,
+  bookTitle?)` is THE citation-birth constructor and now stamps the book too,
+  OMITTED when unknown. All FOUR writers pass it: `runEngine.rulebookSourceFor`,
+  the editor's rulebook-link dialog, `spawn-picker-logic.buildMobPickEntry`, and
+  `entity-batch.libraryCitationForEntity`, which had been a hand-written copy of
+  the citation shape and therefore missed the stamp.
+
+| fact pinned | where |
+|---|---|
+| **The banner names the creatures it is missing, deduped and in a deterministic order** — the badge's own name, read from `missingRef.creature`, never parsed out of the label | `tests/features/missing-refs-banner.test.tsx` (`names the creature AND the pack a citation recorded`, `deduplicates and orders the names deterministically`) |
+| **A pack is named when the citation recorded one and NEVER invented when it did not** — the fallback sentence is asserted verbatim AND the absence of `«` in that shape | the same file (`names the creatures and INVENTS NO PACK when the citation recorded none`); `tests/features/missing-refs-banner.test.tsx`'s `missingRefsSummary` block (`says the pack was not recorded when NO strand knows one`) |
+| **The creature list is BOUNDED and the remainder is EXACT** — both sides of the cap (`MISSING_REF_NAME_CAP` names with no remainder, one more WITH `(+1 more)`), plus a 6-strand banner asserting `Missing: Alpha, Bravo, Charlie, Delta (+2 more).` and that the unlisted name is absent | the same file (`bounds the name list and states the remainder exactly`, `lists exactly MISSING_REF_NAME_CAP names with no remainder, and one more WITH it`) |
+| **A stranded entry is never silently dropped, named or not** — a roster entry whose name is empty is still COUNTED and stated (`1 of them names no creature.`) | the same file (`never drops a strand it cannot name — the count includes it and says so`) |
+| **The pack a strand shows is the SAME identity `creatureOriginLabel` prints** — the differential: one book row, its label as a badge, its stamp on a stranded citation, both compared through the same title | the same file (`names the SAME pack identity the origin label prints for that book`), with `citationBookTitle`/`rulebookDisplayTitle` pinned against each other in `tests/db/encounterResolve.test.ts` |
+| **A citation written through EACH birth site carries its chunk's book title** — one behavioural pin per site, the editor's driven through the real search dialog over a real ready book | `tests/llm/runEngine.test.ts` (`stamps the cited chunk hash, creature name AND the pack it came from…`), `tests/features/monster-source-citation.test.tsx` (NEW), `tests/features/spawn-picker.test.tsx` (`buildMobPickEntry stamps content identity at citation birth`), `tests/features/entity-batch-cast-description.test.ts` (`expectCitation`) |
+| **A birth site with NO book stamps nothing rather than a placeholder** — a vanished chunk stays uuid-only with no `bookTitle`; a deleted book row omits the field entirely | `tests/llm/runEngine.test.ts` (`omits the pack when the cited book row is gone`), `tests/features/spawn-picker.test.tsx` (the vanished-chunk pin), `tests/db/encounterResolve.test.ts` (`OMITS the book title when none is known`) |
+| **The import heals the book from the manifest, and the healed strand NAMES its pack while still unresolvable** — the banner's own contract read through the resolver on an imported encounter | `tests/lib/exportImport.test.ts` (`old-export import stamps manifest hashes…`, `names the pack of a strand it CANNOT resolve`) |
+| **The label and the structured reason are ONE fact** — `origin` and `missingRef` asserted together, on the resolver itself and on a citation that stamped no book | `tests/db/encounterResolve.test.ts` (`reports WHAT is missing structurally…`, `reports NO pack for a citation written before the stamp`) |
+
+| injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`, each printed back and restored byte-identical from an OUT-OF-TREE copy by `git hash-object`) | result |
+|---|---|
+| (a) drop the creature names from the sentence (`creatureSentence = ''` in `missing-refs-summary.ts`) | **RED 7 failed / 10 passed (17)**, exit 1 — the names pins, the cap pins, the dedup pin, the non-vacuity pin and both pack-shape pins that assert the name list |
+| (b) invent a pack when none is recorded (`The missing pack is «Bestiary».` in place of the fallback) | **RED 2 failed / 15 passed (17)**, exit 1 — `names the creatures and INVENTS NO PACK…` on the exact received sentence (`… Missing: Zombie. The missing pack is «Bestiary». …`) and the pure `says the pack was not recorded…` pin |
+| (c) drop the stamp from ONE call site (`buildMobPickEntry` passes no `bookTitle`) | **RED 1 failed / 49 passed (50) across 4 files**: `spawn-picker.test`'s pin fails (`expected undefined to be 'Core Bestiary'`), while `runEngine.test`, `monster-source-citation.test` and `entity-batch-cast-description.test` stay **GREEN** — the other three birth sites are covered independently |
+
+**UNPROVEN, stated as such.** That a pack FILE's published title matches the
+title of the library row it produced: nothing here compares the stamp against
+the pack source — only the library's own book rows are comparable, and the drift
+pin asserts exactly that much (`citationBookTitle(book) ===
+rulebookDisplayTitle(book)`). Whether the Rules page could serve a per-pack
+deep link: measured as ABSENT (`RulesPage` reads no query parameters and offers
+no per-pack filter seam), which is why the link stays `/rules` — the landing
+states that rather than building a filtered view. And how many stored citations
+predate the stamp is unmeasurable here: it needs the real database, so an
+already-imported campaign may read the honest `The pack was not recorded when
+this citation was written.` (the owner accepted that, docs/17 row 155).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
    combobox and inline-stats dialog are mounted (editor tests render the
    encounter form) and the resolve pipeline is repo-tested
-   (`encounterResolve.test`), but the controls themselves are not driven by a
-   test. Next task when touching M3-B: add `tests/features/monster-source.test.tsx`,
+   (`encounterResolve.test`). The rulebook stat-block search dialog IS now
+   driven end to end (`tests/features/monster-source-citation.test.tsx`, added
+   by docs/17 row 155 — real search, real book, real pick); the remaining three
+   controls are still not. Next task when touching M3-B: add
+   `tests/features/monster-source.test.tsx` for the selector/NPC/inline paths,
    then hook the surface into the sweep only if it needs a shell.
 
 ### Bugs the coverage work already caught (fixed in the same change)

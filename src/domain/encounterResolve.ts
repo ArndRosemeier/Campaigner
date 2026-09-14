@@ -23,6 +23,32 @@ import { creatureRefIsEmpty } from '@/domain/creature';
  * including the derived-stats path below.
  */
 
+/**
+ * WHAT a `missing ref` origin is made of, structurally — the companion of the
+ * display label, composed with it by `missingRefReason` so the two cannot
+ * disagree. A surface that must NAME what is missing (the campaign banner,
+ * docs/17 row 155) reads a field instead of parsing `missing ref (Zombie)`,
+ * which no label format could survive.
+ */
+export interface MissingRef {
+  /**
+   * The creature the reason names — the same name the label prints inside its
+   * parentheses, TRIMMED. `''` is the honest "this citation records no
+   * creature": the resolver's name falls back to the roster entry's own, which
+   * a hand-written row can leave empty. Never a placeholder for one.
+   */
+  creature: string;
+  /**
+   * The BOOK the citation was written from — the title stamped at citation
+   * birth (`contentIdentityFor`'s `bookTitle`, the SAME title
+   * `creatureOriginLabel` prints, docs/12 §8). Absent when the citation
+   * records none: one written before the stamp existed, or a library row with
+   * no title. Nothing is known then, and a surface that must name the pack
+   * says so instead of guessing one from the creature's name (AGENTS rule 1).
+   */
+  bookTitle?: string | undefined;
+}
+
 export interface MonsterLookups {
   /** Any scope: an encounter may cite a library-published NPC too, so the
    * lookup is the artifact repo's widest read. */
@@ -42,40 +68,86 @@ export interface ResolvedMonster {
    * "missing ref" / "missing ref (Zombie)" / "" (none).
    */
   origin: string;
+  /**
+   * Present ⇔ `origin` is the missing-ref reason (`isMissingRefOrigin`): the
+   * STRUCTURED half of the same fact, built with the label by
+   * `missingRefReason`. A surface that must list what is missing reads this —
+   * never the label's text.
+   */
+  missingRef?: MissingRef | undefined;
 }
 
 /**
  * A LIBRARY CREATURE CITATION as written on a roster entry or on an authored
  * NPC's `creatureRef` (docs/11 D3): the chunk uuid, the content hash stamped
- * at citation birth, and the creature's own name where one is known. Both
- * citation sites spell it the same way, which is why the resolver below is ONE
- * function — a second resolution order would be a second answer to "which
- * numbers is this creature?".
+ * at citation birth, the creature's own name and the BOOK it came from where
+ * one is known. Both citation sites spell it the same way, which is why the
+ * resolver below is ONE function — a second resolution order would be a second
+ * answer to "which numbers is this creature?".
  */
 export interface CreatureCitation {
   chunkId?: string | undefined;
   contentHash?: string | undefined;
   creatureName?: string | undefined;
+  /**
+   * The book the cited chunk came from, as its row's own title, stamped at
+   * citation birth (docs/17 row 155). NOT a resolution key — resolution is the
+   * uuid, then the exact content hash (above) — it is the identity a report of
+   * a STRANDED citation names, so a GM is told which pack to install instead
+   * of only how many refs dangle.
+   */
+  bookTitle?: string | undefined;
 }
 
 /**
- * Content identity stamped at citation birth (chunk-hash-fallback arc): the
- * cited chunk's SHA-256 plus the creature name
- * (`headingPath[0]`, roster entry-name fallback — the same fallback
- * `collectDependencies` uses for its manifest `creatureName`). Shared by
- * every rulebook-citation writer (runEngine finalize, the editor dialog,
- * the spawn picker) so all births agree.
+ * Content identity stamped at citation birth (chunk-hash-fallback arc; the
+ * book half added by docs/17 row 155): the cited chunk's SHA-256, the creature
+ * name (`headingPath[0]`, roster entry-name fallback — the same fallback
+ * `collectDependencies` uses for its manifest `creatureName`) and the title of
+ * the book the chunk came from. Shared by EVERY citation writer (runEngine
+ * finalize, the editor dialog, the spawn picker, the module generator's cast)
+ * so all births agree.
+ *
+ * `bookTitle` is additive and OPTIONAL, and an unknown one is OMITTED rather
+ * than stored empty: an empty string standing in for a book would be the
+ * placeholder AGENTS rule 1 forbids, and a surface that must name the pack has
+ * to be able to tell "not recorded" from a real title.
  */
 export function contentIdentityFor(
   contentHash: string,
   creatureHeading: string | undefined,
   entryName: string,
-): { contentHash: string; creatureName: string } {
+  bookTitle?: string,
+): { contentHash: string; creatureName: string; bookTitle?: string | undefined } {
   const heading = creatureHeading?.trim();
+  const book = bookTitle?.trim();
   return {
     contentHash,
     creatureName: heading === undefined || heading === '' ? entryName : heading,
+    ...(book === undefined || book === '' ? {} : { bookTitle: book }),
   };
+}
+
+/**
+ * The title a citation STAMPS for a book row — `undefined` when there is no
+ * book, or its title is blank: nothing is known then, and the honest stamp is
+ * no stamp. THE one stamping read of "which book is this chunk's".
+ */
+export function citationBookTitle(book: Rulebook | undefined): string | undefined {
+  const title = book?.title.trim() ?? '';
+  return title === '' ? undefined : title;
+}
+
+/**
+ * The title an origin LABEL prints for a book row — the row's own title, or
+ * the `Rulebook` stand-in when there is no row (or its title is blank). A
+ * LABEL always has to print something; a STAMP must not (`citationBookTitle`
+ * above), which is the whole difference between the two. THE one label read,
+ * so `creatureOriginLabel` and every other surface that names a book's title
+ * for a reader cannot drift.
+ */
+export function rulebookDisplayTitle(book: Rulebook | undefined): string {
+  return book?.title === undefined || book.title === '' ? 'Rulebook' : book.title;
 }
 
 /**
@@ -118,7 +190,7 @@ export async function creatureOriginLabel(
   lookups: Pick<MonsterLookups, 'getRulebook'>,
 ): Promise<string> {
   const book = await lookups.getRulebook(chunk.bookId);
-  const title = book?.title === undefined || book.title === '' ? 'Rulebook' : book.title;
+  const title = rulebookDisplayTitle(book);
   // Pack chunks have no page numbers (12-BESTIARY-PACKS §4/§8): the label
   // names the creature instead. PDF books keep the page label.
   if (book?.origin === 'pack') {
@@ -138,12 +210,34 @@ export function derivedStatOrigin(npcName: string, creatureOrigin: string): stri
   return `NPC: ${npcName} (stats from ${creatureOrigin})`;
 }
 
-/** The `missing ref` label of a citation the library cannot satisfy. The cited
- * creature's own name rides along when the citation stamped one — a bare
- * "missing ref" tells a GM nothing about WHAT is missing. */
+/**
+ * THE one missing-ref reason: the display label AND the structured identity
+ * behind it, built TOGETHER so a caller can never hold one without the other.
+ * The cited creature's own name rides along when the citation stamped one — a
+ * bare "missing ref" tells a GM nothing about WHAT is missing — and the book
+ * the citation was written from rides along when it recorded one, which is
+ * what lets the campaign banner name the pack to install.
+ */
+export function missingRefReason(
+  citationName: string,
+  bookTitle?: string,
+): { origin: string; missingRef: MissingRef } {
+  const creature = citationName.trim();
+  const book = bookTitle?.trim();
+  return {
+    origin: creature === '' ? 'missing ref' : `missing ref (${creature})`,
+    missingRef: {
+      creature,
+      ...(book === undefined || book === '' ? {} : { bookTitle: book }),
+    },
+  };
+}
+
+/** The `missing ref` LABEL alone, for the callers that print one and carry no
+ * resolution (`rosterReferenceFor`'s dangling `npc-ref`): the display half of
+ * the ONE reason above. */
 export function missingCreatureOrigin(citationName: string): string {
-  const named = citationName.trim();
-  return named === '' ? 'missing ref' : `missing ref (${named})`;
+  return missingRefReason(citationName).origin;
 }
 
 /**
@@ -157,10 +251,13 @@ export function isMissingRefOrigin(origin: string): boolean {
 }
 
 /** One library creature citation resolved end to end: the stats plus the
- * disclosed origin. `undefined` chunk ⇒ `missing ref` (the ONE failure mode). */
+ * disclosed origin (and, when nothing answered it, the structured reason).
+ * `undefined` chunk ⇒ `missing ref` (the ONE failure mode). */
 export interface ResolvedCreature {
   statBlock: StatBlock | null;
   origin: string;
+  /** Present ⇔ `origin` is the missing-ref reason — see `ResolvedMonster`. */
+  missingRef?: MissingRef | undefined;
 }
 
 /**
@@ -176,7 +273,7 @@ export async function resolveCreatureCitation(
 ): Promise<ResolvedCreature> {
   const chunk = await resolveCreatureChunk(citation, lookups);
   if (chunk?.statBlock == null) {
-    return { statBlock: null, origin: missingCreatureOrigin(citationName) };
+    return { statBlock: null, ...missingRefReason(citationName, citation.bookTitle) };
   }
   return {
     statBlock: chunk.statBlock,
@@ -387,7 +484,7 @@ export async function resolveMonsterEntry(
       // by the roster entry, so a reader never has to learn a second phrase to
       // find out WHAT is missing.
       if (artifact === undefined) {
-        return { statBlock: null, origin: missingCreatureOrigin(entry.name) };
+        return { statBlock: null, ...missingRefReason(entry.name) };
       }
       if (artifact.kind !== 'npc') return { statBlock: null, origin: `NPC: ${artifact.name}` };
       const creatureRef = artifact.data.creatureRef;

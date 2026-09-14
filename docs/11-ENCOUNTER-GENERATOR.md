@@ -91,7 +91,10 @@ never had (it never reads a creature chunk), and the single-artifact export prin
 the name and the notes with no reference and no numbers at all.
 
 **Storage is UNCHANGED — and that is why printing is legitimate here.** A citation
-stays a citation: `{chunkId, contentHash?, creatureName?}` on the roster entry, the
+stays a citation: `{chunkId, contentHash?, creatureName?, bookTitle?}` on the roster
+entry (`bookTitle` is the docs/17 row 155 stamp: the cited book's own title, the
+identity a STRANDED citation names as the pack to install — never a resolution
+key), the
 numbers read from the library chunk's own `statBlock` at EXPORT TIME. Nothing is
 materialized (`docs/11` D2/D3, `docs/12` §Storage): no schema change, no Dexie
 version, no migration, and no copy of library content in the campaign database — a
@@ -636,16 +639,24 @@ Rulebook citations now resolve by CONTENT identity, not just source uuid:
 
 - **Stamped at birth**: the rulebook `monsterSource` variant carries
   additive optional `contentHash` (the cited chunk's SHA-256) + `creatureName`
-  (`chunk.headingPath[0]`, roster entry-name fallback). Stamped by EVERY
+  (`chunk.headingPath[0]`, roster entry-name fallback) + `bookTitle` (the cited
+  book's own title — the pack a STRANDED citation names, docs/17 row 155; the
+  authored-npc `creatureRef` mirror carries it too). Stamped by EVERY
   citation writer through the shared pure `contentIdentityFor`
   (`src/domain/encounterResolve.ts`) so all births agree: runEngine
   finalize (both remap sites, via `rulebookSourceFor` — a chunk that
   vanished between retrieve and finalize throws LOUD instead of writing a
-  dangling citation), the editor's rulebook-link dialog (hash + heading ride
-  the search hit into `onPick`), and the spawn picker's synthetic mob entry
-  (`buildMobPickEntry`). Import heals pre-stamp entries from the v2 manifest
-  (`healRulebookSources` in `src/lib/exportImport.ts`, matched by exporting
-  artifact + cited chunkId) — old exports resolve too; the cited uuid is
+  dangling citation), the editor's rulebook-link dialog (hash + heading + book
+  title ride the search hit into `onPick`), the spawn picker's synthetic mob
+  entry (`buildMobPickEntry`) and the module generator's cast
+  (`entity-batch.libraryCitationForEntity`, which used to spell the citation
+  shape by hand and therefore missed the stamp — folded into the ONE
+  constructor). A book that cannot be read is OMITTED, never stored empty: an
+  unrecorded pack is reported as unrecorded, never guessed. Import heals
+  pre-stamp entries from the v2 manifest (`healRulebookSources` in
+  `src/lib/exportImport.ts`, matched by exporting artifact + cited chunkId,
+  each field independently and gaps only) — old exports resolve too AND name
+  the pack their citation came from; the cited uuid is
   still KEPT as-is. The bestiary spawn dialog (`mobArtifacts.ts`
   `fillCoverFromCache` source) and the seed retro-fill write NO persisted
   citation, so there is nothing to stamp — they resolve through the same

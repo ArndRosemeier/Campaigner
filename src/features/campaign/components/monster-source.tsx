@@ -36,7 +36,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
-import { contentIdentityFor } from '@/domain/encounterResolve';
+import { getRulebook } from '@/db/rulebookRepo';
+import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
 import { searchRules } from '@/search';
 
 /**
@@ -212,7 +213,12 @@ export function MonsterSourceControls({
           setSource({
             type: 'rulebook',
             chunkId: pick.chunkId,
-            ...contentIdentityFor(pick.contentHash, pick.creatureHeading, entry.name),
+            ...contentIdentityFor(
+              pick.contentHash,
+              pick.creatureHeading,
+              entry.name,
+              pick.bookTitle,
+            ),
           });
           setRulebookOpen(false);
         }}
@@ -245,11 +251,23 @@ function RulebookStatblockDialog({
   onOpenChange: (open: boolean) => void;
   /** Only books of the campaign's system are offered — no cross-system links. */
   campaignSystem: GameSystem;
-  onPick: (pick: { chunkId: Id; contentHash: string; creatureHeading: string }) => void;
+  onPick: (pick: {
+    chunkId: Id;
+    contentHash: string;
+    creatureHeading: string;
+    bookTitle: string | undefined;
+  }) => void;
 }): JSX.Element {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<
-    { chunkId: Id; label: string; snippet: string; contentHash: string; creatureHeading: string }[]
+    {
+      chunkId: Id;
+      label: string;
+      snippet: string;
+      contentHash: string;
+      creatureHeading: string;
+      bookTitle: string | undefined;
+    }[]
   >([]);
 
   async function runSearch(text: string): Promise<void> {
@@ -268,6 +286,20 @@ function RulebookStatblockDialog({
       hasStatBlock: true,
       system: campaignSystem,
     });
+    // The book each hit came from, read ONCE per distinct book: the title is
+    // stamped on the citation this pick writes (docs/17 row 155), through the
+    // same `citationBookTitle` reading every other citation writer uses.
+    const bookIds = [...new Set(hits.map((hit) => hit.chunk.bookId))];
+    const titles = new Map<string, string | undefined>(
+      await Promise.all(
+        bookIds.map(
+          async (bookId): Promise<[string, string | undefined]> => [
+            bookId,
+            citationBookTitle(await getRulebook(bookId)),
+          ],
+        ),
+      ),
+    );
     setResults(
       hits.map((hit) => ({
         chunkId: hit.chunk.id,
@@ -275,6 +307,7 @@ function RulebookStatblockDialog({
         snippet: hit.chunk.text.slice(0, 140),
         contentHash: hit.chunk.contentHash,
         creatureHeading: hit.chunk.headingPath[0] ?? '',
+        bookTitle: titles.get(hit.chunk.bookId),
       })),
     );
   }
@@ -305,6 +338,7 @@ function RulebookStatblockDialog({
                       chunkId: result.chunkId,
                       contentHash: result.contentHash,
                       creatureHeading: result.creatureHeading,
+                      bookTitle: result.bookTitle,
                     });
                   }}
                 >

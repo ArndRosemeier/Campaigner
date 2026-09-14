@@ -55,7 +55,7 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { contentIdentityFor } from '@/domain/encounterResolve';
+import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
 import { additionalInstructionSection } from '@/llm/additionalInstruction';
 import {
   backgroundActivityLabel,
@@ -104,7 +104,7 @@ import {
   roomBudgetMode,
   substitutionAdvisories,
 } from '@/llm/roomBudget';
-import { listRulebooks } from '@/db/rulebookRepo';
+import { getRulebook, listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
@@ -1297,11 +1297,18 @@ export async function rulebookSourceFor(
   return {
     // A CITATION of a read-only library creature (docs/11 D5 amendment): it
     // names the chunk, the content identity that lets a re-ingest still answer
-    // it, and the creature's own name — never a campaign row, because no such
-    // row exists.
+    // it, the creature's own name and the book it comes from — never a campaign
+    // row, because no such row exists. The book title is stamped here as well
+    // as in the other citation writers (docs/17 row 155), so a strand this run
+    // creates can name its pack.
     type: 'rulebook',
     chunkId,
-    ...contentIdentityFor(chunk.contentHash, chunk.headingPath[0], entryName),
+    ...contentIdentityFor(
+      chunk.contentHash,
+      chunk.headingPath[0],
+      entryName,
+      citationBookTitle(await getRulebook(chunk.bookId)),
+    ),
   };
 }
 

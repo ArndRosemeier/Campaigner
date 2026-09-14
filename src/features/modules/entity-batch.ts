@@ -1,10 +1,16 @@
 import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, PersonaRun } from '@/domain';
 import { bestiarySlotForEntity, entityIntentFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
+import {
+  citationBookTitle,
+  contentIdentityFor,
+  rulebookDisplayTitle,
+} from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
+import { getRulebook } from '@/db/rulebookRepo';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -113,17 +119,25 @@ export async function alignEntityName(artifactId: Id, entityName: string): Promi
 
 /** The library's OWN disclosure of where one candidate creature comes from:
  * the rulebook's title exactly as an origin label renders it (a pack's title,
- * or the 'Rulebook' placeholder when the row's own title is empty — the same
- * reading `domain/encounterResolve.creatureOriginLabel` performs). ONE reading
- * of "which book is this creature from", and the same one every creature
- * surface shows, so a slot's `book` is matched against what the owner can
- * actually read on screen. */
+ * or the 'Rulebook' placeholder when the row's own title is empty — the ONE
+ * reading, `domain/encounterResolve.rulebookDisplayTitle`, which
+ * `creatureOriginLabel` itself uses). ONE reading of "which book is this
+ * creature from", and the same one every creature surface shows, so a slot's
+ * `book` is matched against what the owner can actually read on screen. */
 async function creatureBookTitle(chunkId: Id): Promise<string> {
   const chunk = await db.chunks.get(chunkId);
   if (chunk === undefined) return 'Rulebook';
-  const book = await db.rulebooks.get(chunk.bookId);
-  const title = book?.title.trim() ?? '';
-  return title === '' ? 'Rulebook' : title;
+  return rulebookDisplayTitle(await getRulebook(chunk.bookId));
+}
+
+/** The book title a citation written here STAMPS (docs/17 row 155) —
+ * `undefined` when the chunk (or its book) is gone, the honest "not recorded"
+ * rather than a placeholder. The stamping sibling of `creatureBookTitle`
+ * above. */
+async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
+  const chunk = await db.chunks.get(chunkId);
+  if (chunk === undefined) return undefined;
+  return citationBookTitle(await getRulebook(chunk.bookId));
 }
 
 /**
@@ -229,14 +243,21 @@ async function libraryCitationForEntity(
     // here. Stated rather than asserted so the compiler proves it too.
     throw new Error(`bestiary cast: ${named}, and no library creature answered the name`);
   }
-  // Built the way every other citation site builds one: the chunk, its content
-  // hash at citation birth, and the library's own spelling of the creature's
-  // name — so a cast made here and a cast made from the bestiary browser share
-  // ONE identity and therefore one reuse rule (docs/11 D4/D9).
+  // Built the way every other citation site builds one — through the ONE
+  // `contentIdentityFor` constructor: the chunk, its content hash at citation
+  // birth, the library's own spelling of the creature's name and the book the
+  // creature comes from (docs/17 row 155) — so a cast made here and a cast
+  // made from the bestiary browser share ONE identity and therefore one reuse
+  // rule (docs/11 D4/D9). It was a hand-written copy of that shape before,
+  // which is exactly why it also missed the book stamp.
   return {
     chunkId: resolved.chunkId,
-    contentHash: resolved.contentHash,
-    creatureName: resolved.name,
+    ...contentIdentityFor(
+      resolved.contentHash,
+      resolved.name,
+      resolved.name,
+      await citationBookTitleFor(resolved.chunkId),
+    ),
   };
 }
 

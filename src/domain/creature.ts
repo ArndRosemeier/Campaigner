@@ -27,12 +27,16 @@ import { sha256HexSchema } from '@/domain/rulebook';
  * `contentHash` is the same chunk's SHA-256 at citation birth, the fallback
  * that survives a re-ingest under a new row id. `creatureName` is the
  * creature's own name (the chunk's innermost heading), where one is known —
- * display and prompt grounding only, never a resolution key.
+ * display and prompt grounding only, never a resolution key. `bookTitle` is
+ * the book the chunk came from, stamped at citation birth (docs/17 row 155):
+ * also display-only, and what a report of a STRANDED citation names as the
+ * pack to install (`domain/encounterResolve.contentIdentityFor`).
  */
 export const creatureRefSchema = z.object({
   chunkId: z.uuid().optional(),
   contentHash: sha256HexSchema.optional(),
   creatureName: z.string().optional(),
+  bookTitle: z.string().optional(),
 });
 
 export type CreatureRef = z.infer<typeof creatureRefSchema>;
