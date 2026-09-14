@@ -80,6 +80,36 @@
  * two tier-specific comparisons built on it. Returning the comparable STRING
  * rather than a boolean is what lets a caller index a pool by name without
  * spelling these three steps a fourth time.
+ *
+ * THE KEY SPACES BUILT ON IT (docs/17 row 167). The same primitive serves
+ * several DIFFERENT questions, and they must not be merged into one helper: a
+ * spelling-variant index and a creature IDENTITY are not interchangeable, so
+ * conflating them would be a worse bug than legible duplication. The spaces,
+ * declared here so a reader can tell them apart and a new copy cannot be born
+ * unnoticed — `tests/domain/name-key-spaces.test.ts` is the accounting pin that
+ * lists each one's sites and holds them in place:
+ *
+ * - `PACK_POOL_NAME_KEY` (`llm/encounterRoster`, `llm/encounterItems`,
+ *   `llm/runEngine`, `llm/roomBudget`): the pack pool's printed name ↔ the
+ *   model's `sourceName`, resolved to a chunk id.
+ * - `MODULE_NAME_KEY` (`llm/roomBudget`, `llm/runEngine`, `domain/module`): a
+ *   name of something the MODULE holds matched against another such name in the
+ *   same module.
+ * - `WRITTEN_LINK_NAME_KEY` (`domain/wikiGraph`, `llm/moduleGen`,
+ *   `features/modules/module-problems`, `db/artifactAutoPromote`,
+ *   `llm/campaignGrounding`): one WRITTEN `[[name]]` token recognised across a
+ *   prose set.
+ * - `LIBRARY_CREATURE_NAME_KEY` (`db/creatureCitations`,
+ *   `llm/creatorRoster`): one library creature prints/suggests once.
+ * - `IMPORT_IDENTITY_KEY` (`domain/exportDependencies`): an export manifest's
+ *   logical identity against a local snapshot.
+ * - `PRINTED_NAME_DEDUPE_KEY` (`features/campaign/components/missing-refs-summary`):
+ *   one displayed name, once, in the missing-refs sentence.
+ * - `PROMPT_STYLE_NAME_KEY` (`db/promptStyleRepo`): a prompt style's name is
+ *   unique across the picker.
+ * - `CREATURE_CONTENT_IDENTITY_KEY` (`domain/creature.contentCreatureKey`):
+ *   DECLARED BUT NOT FOLDED — a PERSISTED identity whose bytes are a Dexie
+ *   index value; see its own doc and docs/17 row 167.
  */
 export function comparableName(name: string): string {
   return name.normalize('NFC').trim().toLowerCase();

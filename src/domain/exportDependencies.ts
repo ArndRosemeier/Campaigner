@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { AnyArtifact, Artifact, Id, PersonaRun, Rulebook, RuleChunk } from '@/domain';
+import { comparableName } from '@/domain/artifactAlias';
 import { chunkTypeSchema } from '@/domain/rulebook';
 import { gameSystemSchema } from '@/domain/gameSystem';
 import { rulebookOriginSchema } from '@/domain/rulebook';
@@ -202,10 +203,18 @@ export interface DependencyAnalysis {
   blockingCitations: number;
 }
 
-/** Title/creature comparison: trimmed + casefolded (book titles are
- *  user-editable; a re-ingest under a new row id must still satisfy L1). */
+/**
+ * KEY SPACE `IMPORT_IDENTITY_KEY` (docs/17 row 167): an export manifest's
+ * LOGICAL identity — a cited book TITLE and a cited creature NAME — matched
+ * against a local library snapshot. It is ONE space because one consumer (the
+ * L1 `present`/`version-drift`/`missing` verdict) asks ONE question of both:
+ * is this the same logical thing, under a re-ingest that gave it a new row id?
+ * A book title and a creature name are both user-editable text here, so the
+ * benign tolerance (canonical composition, case, surrounding space) is the
+ * SAME for both halves and they must not drift apart.
+ */
 function normName(value: string): string {
-  return value.trim().toLowerCase();
+  return comparableName(value);
 }
 
 /** The L1 creature identity of a citation (the manifest's heading-fallback). */

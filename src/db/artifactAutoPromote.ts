@@ -8,6 +8,7 @@ import {
 } from '@/db/artifactRepo';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { db } from '@/db/db';
+import { comparableName } from '@/domain/artifactAlias';
 import { buildWikiGraph } from '@/domain/wikiGraph';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -148,7 +149,7 @@ export async function promoteSecondModuleUses(
   const names = new Map<string, string>();
   for (const markdown of markdowns) {
     for (const link of extractWikiLinks(markdown)) {
-      const lower = link.name.trim().toLowerCase();
+      const lower = comparableName(link.name);
       if (lower !== '' && !names.has(lower)) names.set(lower, link.name);
     }
   }

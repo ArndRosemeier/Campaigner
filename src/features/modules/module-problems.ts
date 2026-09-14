@@ -1,3 +1,4 @@
+import { comparableName } from '@/domain/artifactAlias';
 import type { AnyArtifact, Module, ModulePart, TextOrigin } from '@/domain';
 import { countModuleEncounters, floorRepairTargets } from '@/llm/moduleGen';
 import { recordedWriterLabel, recordedWritingModel } from '@/domain';
@@ -269,7 +270,7 @@ export function deriveModuleProblems(
       const resolution = resolveWikiLink(link.name, artifacts, { moduleId: module.id });
       if (resolution.status !== 'unresolved' && resolution.artifact !== undefined) continue;
       const name = link.name.trim();
-      const key = name.toLowerCase();
+      const key = comparableName(name);
       const existing = unresolved.get(key);
       if (existing === undefined) {
         unresolved.set(key, { name, where: [document.where] });

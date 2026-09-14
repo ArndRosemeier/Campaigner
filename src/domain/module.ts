@@ -523,6 +523,12 @@ export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
  * with DIFFERENT creatures — or with two different intents — is a state the
  * normalizer cannot have meant, and quietly choosing one would silently re-stat
  * or silently re-steer an entity.
+ *
+ * KEY SPACE `MODULE_NAME_KEY` (docs/17 row 167): the module's own entity-kind
+ * records answer to several names (their `absorbed` aliases, and the
+ * comma-split alternates of their own name), and every one of those is matched
+ * through `comparableName` — so a record's alias and a later lookup cannot
+ * disagree about what one name is.
  */
 export function withEntityBestiarySlots(
   records: readonly ModuleEntityKind[],
@@ -532,14 +538,14 @@ export function withEntityBestiarySlots(
   const sourceByName = new Map<string, ModuleEntityKind>();
   for (const entry of source) {
     for (const alias of [entry.name, ...entry.absorbed]) {
-      const key = alias.trim().toLowerCase();
+      const key = comparableName(alias);
       if (key !== '') sourceByName.set(key, entry);
     }
   }
   return records.map((record) => {
-    const parts = [record.name, ...record.name.split(',')].map((part) => part.trim().toLowerCase());
+    const parts = [record.name, ...record.name.split(',')].map((part) => comparableName(part));
     const contributing = [...record.absorbed, ...parts]
-      .map((alias) => sourceByName.get(alias.trim().toLowerCase()))
+      .map((alias) => sourceByName.get(comparableName(alias)))
       .filter((entry): entry is ModuleEntityKind => entry !== undefined);
     const found: EntityBestiarySlot[] = [];
     for (const entry of contributing) {

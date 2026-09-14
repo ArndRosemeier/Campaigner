@@ -1,6 +1,7 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
+import { comparableName } from '@/domain/artifactAlias';
 import { creatureRefIsEmpty, npcCreatureRef, sameAliasName } from '@/domain';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { parseLevelSort } from '@/llm/encounterRoster';
@@ -493,6 +494,13 @@ function fixedCastSummary(name: string, statBlock: StatBlock | null): string {
  * conditions: undrafted names and other kinds yield no member, ambiguity
  * follows the reader's winner — and the caller keeps today's behavior when
  * the cast is empty.
+ *
+ * KEY SPACE `MODULE_NAME_KEY` (docs/17 row 167): a name of something the MODULE
+ * itself holds — an encounter roster entry, a module entity record and its
+ * aliases — matched against another such name inside the SAME module (the
+ * `[[link]]` the module prose writes, the roster row the encounter carries).
+ * This is NOT the pack pool's key space (`PACK_POOL_NAME_KEY`): a pack
+ * creature's name is a LIBRARY lookup, a roster name is this campaign's own row.
  */
 export async function fixedCastForEncounter(
   encounterName: string,
@@ -500,11 +508,11 @@ export async function fixedCastForEncounter(
   artifacts: readonly AnyArtifact[],
   moduleId: Id | null,
 ): Promise<FixedCastMember[]> {
-  const self = encounterName.trim().toLowerCase();
+  const self = comparableName(encounterName);
   const seen = new Set<string>();
   const cast: FixedCastMember[] = [];
   for (const link of extractWikiLinks(sceneContext)) {
-    const key = link.name.trim().toLowerCase();
+    const key = comparableName(link.name);
     if (key === '' || key === self || seen.has(key)) continue;
     seen.add(key);
     const artifact = resolveWikiLink(
@@ -601,10 +609,10 @@ export function fixedCastAdvisories(
 ): string[] {
   const advisories: string[] = [];
   const rosterNames = new Set(
-    roster.map((entry) => entry.name.trim().toLowerCase()).filter((name) => name !== ''),
+    roster.map((entry) => comparableName(entry.name)).filter((name) => name !== ''),
   );
   for (const member of cast) {
-    const key = member.name.trim().toLowerCase();
+    const key = comparableName(member.name);
     if (key === '') continue;
     const fielded = rosterNames.has(key);
     if (!fielded) {
@@ -697,7 +705,7 @@ export function resolveBriefMonsterLevels(
   return monsters.map((monster) => {
     if (monster.statBlock !== undefined) return monster.statBlock.level;
     if (monster.sourceName !== undefined) {
-      const chunkId = lookups.rosterChunkByName[monster.sourceName.trim().toLowerCase()];
+      const chunkId = lookups.rosterChunkByName[comparableName(monster.sourceName)];
       const chunk = chunkId === undefined ? undefined : lookups.chunkById.get(chunkId);
       return chunk?.statBlock?.level;
     }
@@ -818,7 +826,7 @@ export function reconcileRoomAssignments(
 ): ReconciledRoomAssignment[] {
   const newIndexByName = new Map<string, number>();
   for (const [index, entry] of newRoster.entries()) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     if (!newIndexByName.has(key)) newIndexByName.set(key, index);
   }
   const claimed = new Set<number>();
@@ -828,7 +836,7 @@ export function reconcileRoomAssignments(
     for (const oldIndex of room.monsterIndexes) {
       const oldEntry = oldRoster[oldIndex];
       if (oldEntry === undefined) continue;
-      const key = oldEntry.name.trim().toLowerCase();
+      const key = comparableName(oldEntry.name);
       const newIndex = newIndexByName.get(key);
       if (newIndex === undefined || claimed.has(newIndex)) continue; // gone / already claimed
       claimed.add(newIndex);

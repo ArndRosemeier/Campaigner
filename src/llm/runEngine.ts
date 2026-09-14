@@ -953,7 +953,7 @@ function invalidCitationIssues(
       continue;
     }
     if (monster.sourceName !== undefined) {
-      const key = monster.sourceName.trim().toLowerCase();
+      const key = comparableName(monster.sourceName);
       if (rosterChunkByName[key] === undefined) {
         issues.push(
           `monsters[${String(index)}] "${monster.name}": sourceName "${monster.sourceName}" is not in the bestiary roster — cite the exact roster name`,
@@ -1162,7 +1162,7 @@ function encounterSourceIssues(
     }
     const named =
       monster.sourceName !== undefined &&
-      rosterChunkByName[monster.sourceName.trim().toLowerCase()] !== undefined;
+      rosterChunkByName[comparableName(monster.sourceName)] !== undefined;
     if (!named) {
       issues.push(
         `monsters[${String(index)}] "${monster.name}": add sourceChunkIndex citing a listed stat-block excerpt, sourceName citing a bestiary roster entry, or an inline statBlock`,
@@ -1269,7 +1269,7 @@ function resolveEncounterMonsterSource(
     if (chunkId !== undefined) return chunkId;
   }
   if (typeof monster.sourceName === 'string') {
-    const chunkId = rosterChunkByName[monster.sourceName.trim().toLowerCase()];
+    const chunkId = rosterChunkByName[comparableName(monster.sourceName)];
     if (chunkId !== undefined) return chunkId;
   }
   return undefined;
@@ -5913,7 +5913,7 @@ export class RunEngine {
         const rosterKey = (entries: readonly { name: string; count: number }[]): string =>
           JSON.stringify(
             entries
-              .map((entry) => `${entry.name.trim().toLowerCase()}|${String(entry.count)}`)
+              .map((entry) => `${comparableName(entry.name)}|${String(entry.count)}`)
               .sort(),
           );
         if (rosterKey(data.monsters) !== rosterKey(target.data.monsters)) {

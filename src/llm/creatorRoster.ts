@@ -1,4 +1,5 @@
 import type { Id } from '@/domain';
+import { comparableName } from '@/domain/artifactAlias';
 import { creatureNameSimilarity } from '@/domain/creatureName';
 import { citationBookTitle } from '@/domain/encounterResolve';
 import { listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
@@ -278,6 +279,10 @@ export async function collectCreatorRoster(
  * Casing, whitespace, umlauts/diacritics, hyphen-vs-space and a trailing
  * parenthesized qualifier are all normalized away (`domain/creatureName`) —
  * for the RANKING only; the names returned are the library's own spellings.
+ *
+ * KEY SPACE `LIBRARY_CREATURE_NAME_KEY` (docs/17 row 167), the suggestion
+ * half: one library creature is suggested ONCE, whatever the composition of the
+ * name the cast asked for (the census half is `db/creatureCitations`).
  */
 export function nearestLibraryCreatures(
   wanted: string,
@@ -293,7 +298,7 @@ export function nearestLibraryCreatures(
   const seen = new Set<string>();
   const suggestions: LibraryCreature[] = [];
   for (const candidate of scored) {
-    const key = candidate.creature.name.trim().toLowerCase();
+    const key = comparableName(candidate.creature.name);
     if (seen.has(key)) continue;
     seen.add(key);
     suggestions.push(candidate.creature);

@@ -5,6 +5,8 @@
  * it so the sentence itself can be pinned directly, shape by shape.
  */
 
+import { comparableName } from '@/domain/artifactAlias';
+
 /** One entry the library cannot satisfy: what the banner reports per strand. */
 export interface MissingRefStrand {
   /** The encounter artifact the entry belongs to (drives the "across N"). */
@@ -19,10 +21,18 @@ export interface MissingRefStrand {
  * itself is never capped. */
 export const MISSING_REF_NAME_CAP = 4;
 
-/** Normalized comparison key for a name list (the alias-merge precedent: the
- * comparison trims and casefolds, the printed name does not). */
+/**
+ * KEY SPACE `PRINTED_NAME_DEDUPE_KEY` (docs/17 row 167): the missing-refs
+ * banner prints one name ONCE, and it prints creature names and pack titles
+ * through the SAME `distinctNames` — one displayed name, one key, so a composed
+ * and a decomposed spelling cannot print as two identical-looking entries in
+ * one sentence.
+ *
+ * Normalized comparison key for a name list (the alias-merge precedent: the
+ * comparison trims and casefolds, the printed name does not).
+ */
 function nameKey(name: string): string {
-  return name.trim().toLowerCase();
+  return comparableName(name);
 }
 
 /** Deduplicated display names in a deterministic order (locale order of the

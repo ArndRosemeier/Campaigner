@@ -1,4 +1,5 @@
 import { newId, promptStyleSchema, userPromptStyleSchema, validatePromptStyleTemplate, type PromptStyle } from '@/domain';
+import { comparableName } from '@/domain/artifactAlias';
 import { getSettings, readPromptStyles, updateSettings } from '@/db/settingsRepo';
 import { BUILTIN_PROMPT_STYLES, builtinPromptStyle } from '@/llm/promptStyles';
 
@@ -90,13 +91,18 @@ function assertSavable(style: PromptStyle): void {
  * across the picker — against the built-ins AND against each other — because
  * the New Module select shows names, and two identical ones are a choice the
  * user cannot make.
+ *
+ * KEY SPACE `PROMPT_STYLE_NAME_KEY` (docs/17 row 167): both halves of the
+ * clash map — the built-ins and the stored styles — and both halves of the
+ * free-copy-name set are keyed by ONE comparable form of the name, so a
+ * composed and a decomposed spelling of one style name is one name.
  */
 async function writeStyles(styles: readonly PromptStyle[]): Promise<void> {
   for (const style of styles) assertSavable(style);
   const taken = new Map<string, string>();
-  for (const builtin of BUILTIN_PROMPT_STYLES) taken.set(builtin.name.toLowerCase(), builtin.name);
+  for (const builtin of BUILTIN_PROMPT_STYLES) taken.set(comparableName(builtin.name), builtin.name);
   for (const style of styles) {
-    const key = style.name.trim().toLowerCase();
+    const key = comparableName(style.name);
     const clash = taken.get(key);
     if (clash !== undefined) {
       throw new Error(`A prompt style called “${clash}” already exists — pick another name`);
@@ -110,8 +116,8 @@ async function writeStyles(styles: readonly PromptStyle[]): Promise<void> {
 /** A free name for a copy: "X (copy)", then "X (copy 2)", "X (copy 3)"… */
 function freeCopyName(source: PromptStyle, styles: readonly PromptStyle[]): string {
   const taken = new Set([
-    ...BUILTIN_PROMPT_STYLES.map((style) => style.name.toLowerCase()),
-    ...styles.map((style) => style.name.toLowerCase()),
+    ...BUILTIN_PROMPT_STYLES.map((style) => comparableName(style.name)),
+    ...styles.map((style) => comparableName(style.name)),
   ]);
   const base = `${source.name.trim()} (copy)`;
   if (!taken.has(base.toLowerCase())) return base;

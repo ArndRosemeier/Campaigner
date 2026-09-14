@@ -1098,7 +1098,7 @@ function encounterNamesIn(
   const names = new Set<string>();
   for (const link of extractWikiLinks(markdown)) {
     if (entityKindFor(entityKinds, link.name) !== 'encounter') continue;
-    names.add(link.name.trim().toLowerCase());
+    names.add(comparableName(link.name));
   }
   return names;
 }
@@ -2359,8 +2359,8 @@ async function applyNormalizationVerdict(
   // in that document (the stored record stays truthful for the consent UI;
   // applying a replacement whose token is gone is a harmless no-op).
   const rewritesFor = (markdown: string): LinkRewrite[] => {
-    const names = new Set(extractWikiLinks(markdown).map((link) => link.name.trim().toLowerCase()));
-    return rewrites.filter((rewrite) => names.has(rewrite.from.trim().toLowerCase()));
+    const names = new Set(extractWikiLinks(markdown).map((link) => comparableName(link.name)));
+    return rewrites.filter((rewrite) => names.has(comparableName(rewrite.from)));
   };
   const proposals: { planIndex: number; replacements: LinkRewrite[] }[] = [];
   // THE PREMISE (owner decision, verbatim: "Yes — normalize the generated

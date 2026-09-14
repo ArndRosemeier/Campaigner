@@ -1,3 +1,4 @@
+import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import { listChunksByBooks } from '@/db/chunkRepo';
@@ -38,6 +39,13 @@ export interface PackRoster {
 }
 
 /**
+ * KEY SPACE `PACK_POOL_NAME_KEY` (docs/17 row 167): the prompt roster window's
+ * printed creature name and the model's `sourceName` are ONE key — `comparableName`
+ * of the name, the pack's OWN spelling. Distinct from `MODULE_NAME_KEY` below in
+ * this file's sibling (`llm/roomBudget`), which keys a name of something the
+ * MODULE holds: these two are NOT interchangeable, and a spelling-variant index
+ * must never be conflated with a creature identity.
+ *
  * Case-insensitive exact name → chunkId index over the roster (§7). Duplicate
  * names resolve deterministically: the most recently updated pack book wins
  * (`bookRank` is 0-based by recency — `listRulebooks` returns that order),
@@ -54,7 +62,7 @@ export function rosterNameIndex(
     (a, b) => rankOf(a) - rankOf(b) || a.levelSort - b.levelSort || a.name.localeCompare(b.name),
   );
   for (const entry of sorted) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     if (!index.has(key)) index.set(key, entry.chunkId);
   }
   return index;
@@ -141,7 +149,7 @@ function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>
   const base = `${entry.name} (${entry.level}${entry.traits === '' ? '' : `, ${entry.traits}`})`;
   // fix-02 (decision 5): the " — <bookTitle>" suffix appears ONLY when the
   // name occurs in more than one ready pack book — unique names stay bare.
-  if (!duplicatedNames.has(entry.name.trim().toLowerCase())) return base;
+  if (!duplicatedNames.has(comparableName(entry.name))) return base;
   return `${base} — ${entry.bookTitle}`;
 }
 
@@ -154,7 +162,7 @@ function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>
 function duplicatedAcrossBooks(entries: readonly PackRosterEntry[]): Set<string> {
   const booksPerName = new Map<string, Set<Id>>();
   for (const entry of entries) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     const books = booksPerName.get(key) ?? new Set<Id>();
     books.add(entry.bookId);
     booksPerName.set(key, books);

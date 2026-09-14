@@ -3,7 +3,7 @@ import type { WikiLinkCreature } from '@/domain/creature';
 import type { Id } from '@/domain/entity';
 import type { Module } from '@/domain/module';
 
-import { sameAliasName } from '@/domain/artifactAlias';
+import { comparableName, sameAliasName } from '@/domain/artifactAlias';
 
 import type { WikiLinkResolution } from '@/lib/wikilinks';
 import { extractWikiLinks, resolveWikiLink, WIKI_LINK_PATTERN } from '@/lib/wikilinks';
@@ -158,7 +158,7 @@ export function buildWikiGraph(
       if (links.length === 0) continue;
       const tokenCounts = countTokens(document.markdown);
       for (const link of links) {
-        const lower = link.name.toLowerCase();
+        const lower = comparableName(link.name);
         const count = tokenCounts.get(lower);
         if (count === undefined) continue; // extractWikiLinks only returns tokened names
         const resolution = resolveOnce(resolutions, link.name, module.id, pool, filters.creatures);
@@ -285,13 +285,24 @@ function moduleDocuments(module: Module): { where: string; markdown: string }[] 
   ];
 }
 
-/** Counts wiki-link token occurrences per written name (case-insensitive). */
+/**
+ * KEY SPACE `WRITTEN_LINK_NAME_KEY` (docs/17 row 167): the same WRITTEN
+ * `[[name]]` token recognised across one module's prose — the resolution memo,
+ * the per-name token count, the phantom node's id (`name:<key>`) and the sets
+ * of written names built elsewhere from the same extractor (`llm/moduleGen`'s
+ * encounter names and rewrite targets, `module-problems`'s unresolved-chip
+ * census, `artifactAutoPromote`'s adopt set, `campaignGrounding`'s spelling
+ * pick). What it is NOT: a creature identity — two spellings of one written
+ * token are one token, and two written tokens are never one creature.
+ *
+ * Counts wiki-link token occurrences per written name (case-insensitive).
+ */
 function countTokens(markdown: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const match of markdown.matchAll(WIKI_LINK_PATTERN)) {
     const name = (match[1] ?? '').trim();
     if (name === '') continue;
-    const key = name.toLowerCase();
+    const key = comparableName(name);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
@@ -305,7 +316,7 @@ function resolveOnce(
   pool: readonly AnyArtifact[],
   creatures: readonly WikiLinkCreature[] | undefined,
 ): WikiLinkResolution {
-  const key = name.trim().toLowerCase();
+  const key = comparableName(name);
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
   const resolution = resolveWikiLink(name, pool, {

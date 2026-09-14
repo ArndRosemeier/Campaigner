@@ -132,6 +132,19 @@ export function libraryCreatureKey(chunkId: string): string {
  * `JSON.stringify` over a fixed key order is the hashing discipline (the same
  * one `encounterShapeKey`-class helpers use): `undefined` and `null` collapse
  * so an absent stat block and a null one agree.
+ *
+ * KEY SPACE `CREATURE_CONTENT_IDENTITY_KEY` (docs/17 row 167) — and the ONE key
+ * space on this list whose key is PERSISTED: it is written onto battle tokens
+ * and it is a Dexie INDEX value (`mobPortraits: 'id, &creatureKey'`,
+ * `creatureImages: '[campaignId+creatureKey]'`), so the STRING is an existing
+ * identity rather than a per-call memo. Its `name.trim().toLowerCase()` is
+ * therefore DECLARED AND LEFT UNFOLDED in this slice, deliberately: folding it
+ * would change the bytes minted for every future row, and a row already stored
+ * under the other Unicode composition would stop being found by the new derived
+ * key. docs/17 row 167 records what writes it, what reads it, and what a
+ * composed/decomposed difference costs — the fix is the owner's call, not a
+ * writer's. The source scan in `tests/domain/name-key-spaces.test.ts` holds this
+ * spelling in place so the decision cannot be made by accident.
  */
 export function contentCreatureKey(name: string, statBlock: unknown): string {
   const trimmed = name.trim().toLowerCase();

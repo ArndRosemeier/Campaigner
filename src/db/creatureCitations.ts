@@ -1,3 +1,4 @@
+import { comparableName } from '@/domain/artifactAlias';
 import type { AnyArtifact, CreatureRef, Id } from '@/domain';
 import { listArtifactsByModule } from '@/db/artifactRepo';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
@@ -38,8 +39,17 @@ interface CitedCreature {
   libraryRef: boolean;
 }
 
-/** The distinct library creatures one encounter roster cites, deduped
- * case-insensitively by the name the roster uses. */
+/**
+ * KEY SPACE `LIBRARY_CREATURE_NAME_KEY` (docs/17 row 167): ONE library
+ * creature prints ONCE — the identity of a creature this library HOLDS, keyed
+ * by its name, for the two places that dedupe such a list (this census and
+ * `llm/creatorRoster.nearestLibraryCreatures`'s suggestion list). A library
+ * creature's name is neither a written token nor a module row, so this space
+ * is neither `WRITTEN_LINK_NAME_KEY` nor `MODULE_NAME_KEY`.
+ *
+ * The distinct library creatures one encounter roster cites, deduped
+ * case-insensitively by the name the roster uses.
+ */
 function citedCreatures(
   encounter: AnyArtifact,
   byId: Map<Id, AnyArtifact>,
@@ -82,7 +92,7 @@ function citedCreatures(
       }
     }
     if (cited?.libraryRef !== true) continue;
-    const key = cited.name.trim().toLowerCase();
+    const key = comparableName(cited.name);
     if (seen.has(key)) continue;
     seen.add(key);
     found.push(cited);
@@ -105,7 +115,7 @@ export async function countCreaturesCitedByModule(
     if (cited.length === 0) continue;
     citingEncounters.push(artifact.name);
     for (const creature of cited) {
-      const key = creature.name.trim().toLowerCase();
+      const key = comparableName(creature.name);
       if (seen.has(key)) continue;
       seen.add(key);
       if (creature.citation === undefined) {

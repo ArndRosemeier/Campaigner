@@ -6,6 +6,7 @@ import {
   type WikiGraphMention,
   type WikiGraphNode,
 } from '@/domain/wikiGraph';
+import { comparableName } from '@/domain/artifactAlias';
 import {
   extractWikiLinks,
   resolveWikiLink,
@@ -188,7 +189,7 @@ export function detectCampaignEntities(
     const forms = new Map<string, string>();
     for (const candidate of [artifact.name, ...artifact.aliases]) {
       const name = candidate.trim();
-      const key = name.toLowerCase();
+      const key = comparableName(name);
       if (key === '') continue;
       const existing = forms.get(key);
       if (existing === undefined || name.length > existing.length) forms.set(key, name);

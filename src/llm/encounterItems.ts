@@ -1,3 +1,4 @@
+import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import { listChunksByBooks } from '@/db/chunkRepo';
@@ -5,6 +6,10 @@ import { listRulebooks } from '@/db/rulebookRepo';
 import { errorMessage } from '@/lib/errors';
 
 /**
+ * KEY SPACE `PACK_POOL_NAME_KEY` (docs/17 row 167), the item half: the pool
+ * window's printed item name and the model's verbatim item name are ONE key —
+ * `comparableName` of the name, the pack's OWN spelling.
+ *
  * Encounter item pool (12-BESTIARY-PACKS §13): a compact "name (category,
  * level, price)" listing of every imported pack item for the campaign's
  * system, injected into the Encounter Smith's prompt so it can reward the
@@ -74,7 +79,7 @@ export function itemPoolNameIndex(
       a.name.localeCompare(b.name),
   );
   for (const entry of sorted) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     if (!index.has(key)) index.set(key, entry.chunkId);
   }
   return index;
@@ -122,7 +127,7 @@ function itemLine(entry: ItemPoolEntry, duplicatedNames: ReadonlySet<string>): s
   const base = `${entry.name} (${details})`;
   // The " — <bookTitle>" suffix appears ONLY when the name occurs in more
   // than one ready pack book — unique names stay bare (fix-02 decision 5).
-  if (!duplicatedNames.has(entry.name.trim().toLowerCase())) return base;
+  if (!duplicatedNames.has(comparableName(entry.name))) return base;
   return `${base} — ${entry.bookTitle}`;
 }
 
@@ -134,7 +139,7 @@ function itemLine(entry: ItemPoolEntry, duplicatedNames: ReadonlySet<string>): s
 function duplicatedAcrossBooks(entries: readonly ItemPoolEntry[]): Set<string> {
   const booksPerName = new Map<string, Set<Id>>();
   for (const entry of entries) {
-    const key = entry.name.trim().toLowerCase();
+    const key = comparableName(entry.name);
     const books = booksPerName.get(key) ?? new Set<Id>();
     books.add(entry.bookId);
     booksPerName.set(key, books);
