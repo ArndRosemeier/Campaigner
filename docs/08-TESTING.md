@@ -4393,6 +4393,39 @@ state):
 | **(b) the PACK_POOL key made LOOSER than its space** (`entry.name.normalize('NFKD').replace(/\p{M}/gu, '').trim().toLowerCase()` in `encounterRoster.rosterNameIndex` — the loose accent-stripping fold; file hash `26b6f9693adb4420fdcfd88b2c95156a70d201d8`) | **RED 4 / GREEN 13 (17)**: the exactness pin reds with `expected 1 to be 2` (the two diacritic creatures collapsed to ONE pool entry), the key itself reds accent-stripped (`expected [ 'wachter' ] to deeply equal [ 'wächter' ]`), plus the accounting count and the offenders pin (the NFKD spelling itself carries the trimmed KEY shape). The asymmetry with (a) is the point: (a) reds the consumer+composition pin, (b) reds the exactness pins |
 | **(c) the WIP's ALIAS_FORM fold re-applied** (`const key = comparableName(name);` + the import back in `llm/campaignGrounding.ts`; file hash `06f6a6bb0a05b1b665d18d13b0d08bbbb92741a5`) | **RED 2 / GREEN 16 (18)**: the revert pin reds (`expected … to contain 'const key = name.toLowerCase();'`) AND the behaviour pin reds with `expected [] to deeply equal [ 'Wächter' ]` — grounding detection literally went blind to the composed prose mention. This is the evidence that the WIP's fold here was a defect, not an unfinished one |
 
+**NUMBERS — the landing gate, `./scripts/gate.sh` on the REBASED tree (row 165
+landed first; the rebase took its commits with no conflict and this slice's
+pins re-verified against the NEW code), printed **GATE GREEN, exit 0**; logs
+`/tmp/keys-logs/gate-landing.log` + `/tmp/gate-3624398/`. Per chunk, exactly as
+the script printed them: `tests_lib 32 files / 368 tests (peak 813 MB)`;
+`tests_llm 70 / 1146 (871 MB)`; `tests_db 31 / 356 (676 MB)`; `tests_domain 22
+/ 309 (684 MB)`; `tests_features 135 / 1329 (1240 MB)`; `tests_remainder 42 /
+411 (1173 MB)` — summing to **332 files / 3919 tests**, with
+`chunk arithmetic: 332 of 332 test files covered`, `lint errors: 0`, typecheck
+clean, no `Errors:` line in any chunk log, and **peak RSS of any single chunk
+1240 MB against the 3000 MB cap**.
+
+**The arithmetic, against the brief's baseline — 329 files / 3891 tests at
+`57def3f`, RE-DERIVED from the chunk numbers row 166 recorded rather than
+inherited.** Row 165's landed tests add `+2 files / +10 tests` (`tests_db` 30→31
+files, 351→356 tests — its `creature-identity-one-rule` NEW 4 plus the
+re-based `creature-identity-spelling` 3→4; `tests_features` 134→135 files,
+1324→1329 — its `creature-portrait-agreement` NEW 5), measured against THIS
+gate's own chunks. This slice adds `+1 file / +18 tests`
+(`tests/domain/name-key-spaces.test.ts`, NEW 18; `tests_domain` 21→22 files,
+291→309). **+3 files / +28 tests**, with no existing assertion weakened, no test
+skipped and no `Errors:` line.
+
+**One writer-process defect, recorded because it is the kind that misleads a
+later reader:** two gate attempts in this slice ran from the MAIN tree by
+mistake (the harness's fresh-shell cwd is the session workspace, not the
+worktree — every worktree call needs the explicit workdir or an in-command
+`cd`). Both were harmless and both are VOID as evidence: one listed this slice's
+new file as `(absent)` (it does not exist in the main tree) and one ran two
+pre-existing files against MAIN's own code. The gate's lock discipline held in
+both; no write occurred; every number quoted above comes from the worktree runs
+(`cd /tmp/campaigner-keys` inside the command or the explicit workdir).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
