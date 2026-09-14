@@ -14,6 +14,7 @@
  */
 
 import { canonicalCreatureName } from '@/db/mobPortraitCache';
+import { comparableName } from '@/domain/artifactAlias';
 
 /**
  * Letters NFKD does NOT decompose — a German bestiary heading ("Æther
@@ -38,6 +39,10 @@ const LIGATURES: ReadonlyMap<string, string> = new Map([
  * punctuation (hyphens, apostrophes, periods) and whitespace collapsed to
  * single spaces, and a trailing parenthesized alias — how a library heading
  * may carry its own qualifier, "Zombie (variant)" — removed.
+ *
+ * NFC and NFD are folded here for free: NFKD DECOMPOSES first whatever the
+ * input's composition was, so a Mac-authored umlaut and a precomposed one reach
+ * the same string (pinned in `tests/domain/creatureName.test.ts`).
  */
 export function normalizeCreatureName(name: string): string {
   const folded = name
@@ -51,9 +56,16 @@ export function normalizeCreatureName(name: string): string {
     .trim();
 }
 
-/** The strict comparison the resolution itself applies (trim + case-fold). */
+/** The strict comparison the resolution itself applies: the SAME comparable
+ *  form as the alias tier (`domain/artifactAlias.comparableName` — canonical
+ *  composition (NFC), trim, case-fold), imported rather than spelled a second
+ *  time (docs/17 row 162). Note the asymmetry with `normalizeCreatureName`
+ *  above, which is the LOOSE form and folds far more: a name that differs only
+ *  by Unicode canonical equivalence (a Mac-authored NFD `Müller` vs a
+ *  precomposed one) is the SAME name here, and a name that differs by a
+ *  diacritic is not. */
 export function sameCreatureName(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase();
+  return comparableName(left) === comparableName(right);
 }
 
 /** The library's OWN spelling of a creature a stat-block chunk holds — the

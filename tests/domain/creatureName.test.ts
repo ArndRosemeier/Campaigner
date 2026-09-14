@@ -53,7 +53,14 @@ describe('creature name normalization (docs/17 row 114)', () => {
 });
 
 describe('the strict name comparison stays the resolution rule', () => {
-  it('matches on trim + case-fold only, never on normalization', () => {
+  /* This pin's NAME changed with docs/17 row 162 ("matches on trim + case-fold
+   * only, never on normalization" → "… canonical composition, trim + case-fold
+   * only …"): the strict comparison now folds Unicode canonical equivalence —
+   * a Mac-authored NFD umlaut and a precomposed one are the same name — while
+   * still refusing every LOOSE reading. NO assertion was weakened: the four
+   * below are byte-identical to what they were, and the two new ones state the
+   * composition rule that was missing. */
+  it('matches on canonical composition, trim + case-fold only — never on the LOOSE normalization', () => {
     expect(sameCreatureName('Zombie ', 'zombie')).toBe(true);
     expect(sameCreatureName('ZOMBIE', 'zombie')).toBe(true);
     // The LOOSE reading must never answer the strict question: an umlaut
@@ -61,6 +68,10 @@ describe('the strict name comparison stays the resolution rule', () => {
     expect(sameCreatureName('Zombie-Schläger', 'Zombie Schlager')).toBe(false);
     expect(sameCreatureName('Zombie (variant)', 'Zombie')).toBe(false);
     expect(sameCreatureName('Schläger', 'Schlager')).toBe(false);
+    // The ONE thing it does fold beyond trim + case is Unicode canonical
+    // equivalence (NFC vs NFD), because those are two spellings of one name.
+    expect(sameCreatureName('Schla\u0308ger', 'Schläger')).toBe(true);
+    expect(normalizeCreatureName('Schla\u0308ger')).toBe(normalizeCreatureName('Schläger'));
   });
 
   it('tokenizes a normalized name, in order', () => {

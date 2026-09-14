@@ -141,6 +141,24 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   failure. Every caught error must be surfaced to the user through
   `lib/toast.ts`, the global error boundary, or a failed run with an
   `errorMessage` — not swallowed into partial results.
+- **Language robustness (binding)**: a rule that only holds in English is not
+  a rule — modules get authored in German on purpose, and that is free fuzzing
+  (docs/17 row 162). Three consequences. (1) **A model-authored, translatable
+  DISPLAY string is never a resolution KEY**: identity is a NAME compared
+  through the comparable-form seam (`domain/artifactAlias.comparableName` /
+  `sameAliasName`, `domain/creatureName.sameCreatureName`), never a label a
+  model or a translation can reword (docs/17 row 161 is the instance that cost
+  a cast: «Plague Zombie» from the book «Monsterkern», refused although the
+  library held it). (2) **Every regex or comparison over user or model text is
+  Unicode-aware**: `\w`, `\b` and `[a-z]` are ASCII-only in JavaScript whatever
+  the flags, so "a letter" is `[\p{L}\p{N}_]` with the `u` flag — and a NEW
+  ASCII-only text regex fails a source scan
+  (`tests/lib/unicodeTextHygiene.test.ts`) instead of waiting for a German
+  sentence to find it. (3) **Names compare in Unicode canonical form (`NFC`)**,
+  because a Mac-authored string arrives decomposed and would otherwise be a
+  different name; the case fold for matching is `toLowerCase()`, never the
+  locale-aware `toLocaleLowerCase()` (Turkish `I` folds to `ı`, so a locale
+  fold would make a name resolve on one machine only).
 - **Terminology (binding for all user-facing copy)**:
   - **Wiki-link** — the `[[Name]]` token inside module/artifact markdown.
     Renders as a chip; may carry a display alias as `[[Name|display]]`.

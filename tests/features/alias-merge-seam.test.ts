@@ -45,10 +45,18 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
   /**
    * The ONLY files allowed to carry those shapes, each for a reason stated in
    * `domain/artifactAlias`'s header or in docs/18 §2.1 (path → why):
+   *
+   * `lib/wikilinks.ts` USED to be listed here as the RESOLVER — "it answers a
+   * link against the pool, which is a different question from 'may this name
+   * join the pool'". docs/17 row 162 folded it: the QUESTION is different, the
+   * COMPARISON is not, and its THIRTEEN hand-rolled `toLowerCase` comparisons
+   * are `sameAliasName`/`comparableName` calls now (it is in `FOLDED`
+   * below, counted). The carve-out is DELETED rather than left in place, for the
+   * same reason row 122 deleted the `campaign-tree.tsx` one — an allowlist entry
+   * that exists only because something was not folded must not outlive the fold,
+   * or it silently licenses the shape it was excusing.
    */
   const BOUNDARIES: Record<string, string> = {
-    'lib/wikilinks.ts':
-      'the RESOLVER — it answers a link against the pool (name first, then aliases, then scope tiers), which is a different question from "may this name join the pool"',
     'features/campaign/components/alias-editor.tsx':
       'the FORM — it REJECTS a keystroke a person just typed (UI feedback, no row write), rather than merging a name the app decided to add',
   };
@@ -78,6 +86,16 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
       needles: [
         ['mergeAliasNames(', 1],
         ['sameAliasName(', 1],
+      ],
+    },
+    // Folded by docs/17 row 162. The counts are the point: THIRTEEN hand-rolled
+    // comparisons lived here, and reverting any one of them to
+    // `…trim().toLowerCase() === …` must fail this pin even though behaviour
+    // stays green (the two spellings agree on every ASCII input).
+    'lib/wikilinks.ts': {
+      needles: [
+        ['sameAliasName(', 4],
+        ['comparableName(', 9],
       ],
     },
   };

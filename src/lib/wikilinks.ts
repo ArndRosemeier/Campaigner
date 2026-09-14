@@ -1,4 +1,5 @@
 import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
+import { comparableName, sameAliasName } from '@/domain/artifactAlias';
 
 /**
  * Wiki-link syntax & resolution (08-MODULE-DESIGNER M4-A, pure): markdown
@@ -6,6 +7,17 @@ import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
  * IDs. Resolution is case-insensitive on artifact name first, then on any
  * alias; ambiguity resolves to the first match by `updatedAt` desc (the
  * reader marks such chips with a ⚠ tooltip listing the candidates).
+ *
+ * "IS THIS THE SAME NAME?" IS NOT ANSWERED HERE (docs/17 row 162). Every
+ * comparison in this file goes through `domain/artifactAlias`'s comparable
+ * form — `sameAliasName` for equality, `comparableName` for a key or a
+ * substring needle — because a model writing German, a Mac-authored module and
+ * a Windows-typed entity must not disagree about whether two spellings are one
+ * name. Before row 162 this file carried THIRTEEN hand-rolled `toLowerCase`
+ * comparisons (`tests/features/alias-merge-seam.test.ts` counts them now), the
+ * resolver's copy being the one the row-121 alias audit had wrongly declared a
+ * boundary: the COMPARISON is shared, only the merge rule and the resolution
+ * PRECEDENCE stay separate questions.
  */
 
 /**
@@ -47,7 +59,7 @@ export function extractWikiLinks(markdown: string): ExtractedWikiLink[] {
   for (const match of markdown.matchAll(WIKI_LINK_PATTERN)) {
     const name = (match[1] ?? '').trim();
     if (name === '') continue;
-    const key = name.toLowerCase();
+    const key = comparableName(name);
     if (seen.has(key)) continue;
     seen.add(key);
     const display = (match[2] ?? '').trim();
@@ -86,8 +98,9 @@ export function rewriteWikiLinkTargets(markdown: string, rewrites: readonly Link
   const byName = new Map<string, LinkRewrite>();
   for (const rewrite of rewrites) {
     // A self-mapping is not a rewrite — skip it rather than noise the text
-    // up with a redundant [[Seggel|Seggel]] display.
-    if (rewrite.from.trim().toLowerCase() === rewrite.to.trim().toLowerCase()) continue;
+    // up with a redundant [[Seggel|Seggel]] display. `sameAliasName` is the
+    // app's ONE "same name?" test (canonical form, trim, case-fold).
+    if (sameAliasName(rewrite.from, rewrite.to)) continue;
     byName.set(rewrite.from.trim(), rewrite);
   }
   if (byName.size === 0) return markdown;
@@ -189,14 +202,13 @@ export function resolveWikiLink(
   artifacts: readonly AnyArtifact[],
   context?: WikiLinkContext,
 ): WikiLinkResolution {
-  const target = name.trim().toLowerCase();
-  if (target === '') {
+  if (comparableName(name) === '') {
     return { status: 'unresolved', artifact: undefined, candidates: [], creature: undefined };
   }
 
-  const byName = artifacts.filter((artifact) => artifact.name.trim().toLowerCase() === target);
+  const byName = artifacts.filter((artifact) => sameAliasName(artifact.name, name));
   const byAlias = artifacts.filter((artifact) =>
-    artifact.aliases.some((alias) => alias.trim().toLowerCase() === target),
+    artifact.aliases.some((alias) => sameAliasName(alias, name)),
   );
   // An artifact can match BOTH by name and by alias (e.g. its own old name
   // kept as an alias) — dedupe by id so it is one candidate, not two.
@@ -212,8 +224,8 @@ export function resolveWikiLink(
     // (docs/11 D10) — the creature is cited, not owned, so there is no artifact
     // to win and the node is derived. The library's spelling is used verbatim,
     // so the chip's label and the creature's identity agree.
-    const creature = (context?.creatures ?? libraryCreaturePool).find(
-      (candidate) => candidate.name.trim().toLowerCase() === target,
+    const creature = (context?.creatures ?? libraryCreaturePool).find((candidate) =>
+      sameAliasName(candidate.name, name),
     );
     if (creature !== undefined) {
       return { status: 'resolved', artifact: undefined, candidates: [], creature };
@@ -257,18 +269,20 @@ export interface WikiLinkOccurrence {
   count: number;
 }
 
-/** Counts occurrences of `name` per document (case-insensitive). */
+/** Counts occurrences of `name` per document (case-insensitive). Both sides go
+ *  through the comparable form, so a name and a document that disagree only in
+ *  Unicode composition still count (docs/17 row 162). */
 export function countOccurrences(
   name: string,
   documents: readonly { where: string; markdown: string }[],
 ): WikiLinkOccurrence[] {
-  const target = name.trim().toLowerCase();
+  const target = comparableName(name);
   // A blank target would loop forever (`indexOf('', i)` never advances) and
   // matches nothing — return no occurrences instead.
   if (target === '') return [];
   const out: WikiLinkOccurrence[] = [];
   for (const document of documents) {
-    const haystack = document.markdown.toLowerCase();
+    const haystack = comparableName(document.markdown);
     let count = 0;
     let index = haystack.indexOf(target);
     while (index !== -1) {
@@ -297,10 +311,10 @@ function sentences(markdown: string): string[] {
  * wiki tokens are stripped to their display text). Empty when absent.
  */
 export function sentenceAround(markdown: string, name: string): string {
-  const target = name.trim().toLowerCase();
+  const target = comparableName(name);
   if (target === '') return '';
   return (
-    sentences(markdown).find((sentence) => sentence.toLowerCase().includes(target)) ?? ''
+    sentences(markdown).find((sentence) => comparableName(sentence).includes(target)) ?? ''
   );
 }
 
@@ -314,12 +328,11 @@ export function surroundingParagraphs(
   name: string,
   cap = 1200,
 ): string {
-  const target = name.trim().toLowerCase();
+  const target = comparableName(name);
   if (target === '') return '';
   const paragraphs = markdown.split(/\n{2,}/).filter((paragraph) => {
-    const plain = paragraph.toLowerCase().replaceAll(
-      WIKI_LINK_PATTERN,
-      (_all, n: string) => n.trim().toLowerCase(),
+    const plain = comparableName(paragraph).replaceAll(WIKI_LINK_PATTERN, (_all, n: string) =>
+      comparableName(n),
     );
     return plain.includes(target);
   });

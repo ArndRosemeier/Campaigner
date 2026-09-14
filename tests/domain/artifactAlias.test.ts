@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeAliasNames, sameAliasName } from '@/domain/artifactAlias';
+import { comparableName, mergeAliasNames, sameAliasName } from '@/domain/artifactAlias';
 
 /**
  * The ONE alias comparison and the ONE alias merge rule (docs/17 row 121,
@@ -22,6 +22,27 @@ describe('sameAliasName — the ONE alias comparison', () => {
     // No diacritic folding either: `domain/creatureName` owns that reading for
     // the creature SUGGESTION tier, and resolution itself is strict.
     expect(sameAliasName('Kâhân', 'Kahan')).toBe(false);
+  });
+
+  /**
+   * UNICODE CANONICAL EQUIVALENCE IS NOT DIACRITIC FOLDING (docs/17 row 162).
+   * `Müller` typed on a Mac is `u` + U+0308 (NFD); written by a model or a
+   * Windows editor it is U+00FC (NFC). They are the same NAME in Unicode's own
+   * equivalence relation and different STRINGS, so every `===` on names
+   * silently failed for one of the two authors — a phantom wiki chip, a
+   * duplicated alias, a creature the cast refused.
+   */
+  it('treats the same name in NFC and NFD as the same name, and nothing more', () => {
+    const nfc = 'Müller';
+    const nfd = 'Mu\u0308ller';
+    expect(nfd).not.toBe(nfc);
+    expect(sameAliasName(nfd, nfc)).toBe(true);
+    expect(sameAliasName(nfd.toUpperCase(), nfc.toUpperCase())).toBe(true);
+    expect(comparableName(nfd)).toBe(comparableName(nfc));
+    // The strictness is INTACT: composition is folded, a diacritic is not, and
+    // the stored spelling is untouched by the comparison (below).
+    expect(sameAliasName(nfc, 'Muller')).toBe(false);
+    expect(sameAliasName('Kâhân'.normalize('NFD'), 'Kahan')).toBe(false);
   });
 });
 
@@ -62,6 +83,10 @@ describe('mergeAliasNames — the ONE alias merge rule', () => {
     expect(mergeAliasNames(existing, ['the alchemist'], 'Grix')).toBe(existing);
     expect(mergeAliasNames(existing, ['Grix'], 'Grix')).toBe(existing);
     expect(mergeAliasNames(existing, [], 'Grix')).toBe(existing);
+    // A name that is the artifact's own name in the OTHER composition is not an
+    // alias either (docs/17 row 162) — this is the Mac-authored spelling of a
+    // row name arriving from a link.
+    expect(mergeAliasNames(existing, ['Mu\u0308ller'], 'Müller')).toBe(existing);
     // …and it copies when it DOES add, so a caller's snapshot is never mutated
     // behind its back (the sites patch a row from a list they already hold).
     const added = mergeAliasNames(existing, ['Kael'], 'Grix');

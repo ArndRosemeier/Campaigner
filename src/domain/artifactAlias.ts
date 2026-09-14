@@ -34,30 +34,67 @@
  * the form boundary.
  *
  * DELIBERATE BOUNDARIES (named, not oversights — docs/18 §2.1):
- * - `lib/wikilinks.resolveWikiLink` is NOT a caller: it RESOLVES a link against
- *   the pool (name first, then aliases, then scope tiers). That is a different
- *   question from "may this name join the pool", and folding it here would tie
- *   resolution precedence to the merge rule.
- * - `features/campaign/components/alias-editor.tsx` is NOT a caller either: it
+ * - `features/campaign/components/alias-editor.tsx` is NOT a caller: it
  *   validates what a person just typed into a form and REJECTS the keystroke,
  *   where this module merges a name the app already decided to add. The two
  *   rules agree today by construction of the same comparison, and the editor
  *   keeps its own copy deliberately (its rejection is UI feedback, not a
  *   write).
+ * - `lib/wikilinks.resolveWikiLink` is not a caller of the MERGE rule, and must
+ *   not become one: it RESOLVES a link against the pool (name first, then
+ *   aliases, then scope tiers), and folding the merge in would tie resolution
+ *   PRECEDENCE to it. It IS a caller of `comparableName`/`sameAliasName` since
+ *   docs/17 row 162 — the equality it applies is this module's comparison, so
+ *   "is this the same name?" has one answer in the app (row 162 folded
+ *   `resolveWikiLink`'s seven hand-rolled `…trim().toLowerCase() === …` sites,
+ *   the seventh copy the row-121 audit had left as a boundary for the wrong
+ *   reason).
  *
  * Pure: no Dexie, no React, no formatting — the row write is
  * `db/artifactRepo.addArtifactAliases`.
  */
 
 /**
- * The ONE alias-name comparison: equal after trimming surrounding whitespace
- * and case-folding. Nothing else is forgiven — no punctuation folding, no
- * diacritic folding, no prefix match. Two names that differ in their interior
- * are two names (`domain/creatureName`'s `sameCreatureName` is the sibling of
- * this function for the creature tier, with the same strictness).
+ * THE comparable form of a user-visible NAME — the ONE spelling every name
+ * comparison in the app compares through (docs/17 row 162).
+ *
+ * Three steps, and each one is a decision:
+ *
+ * - **`normalize('NFC')` — canonical equivalence, NOT diacritic folding.** The
+ *   same name typed on a Mac (`Müller` decomposed: `u` + U+0308) and written by
+ *   a model or a Windows editor (precomposed U+00FC) are the SAME NAME in
+ *   Unicode's own equivalence relation and different STRINGS — so every `===`
+ *   on names silently failed for one of the two authors. NFC makes canonically
+ *   equivalent spellings identical and changes nothing else: `Schläger` and
+ *   `Schlager` stay different names (`sameAliasName`'s no-diacritic-folding
+ *   rule is untouched, and still pinned in `tests/domain/artifactAlias.test.ts`).
+ * - **`trim()`** — surrounding whitespace is not part of a name.
+ * - **`toLowerCase()`, never `toLocaleLowerCase()`.** The locale-aware fold is
+ *   the HAZARD here, not an improvement: in a Turkish locale `I` folds to `ı`,
+ *   so `[[Ilias]]` and `[[ilias]]` would stop matching on one machine and go on
+ *   matching on another. Every `toLowerCase` site in this repo is deliberate
+ *   (docs/17 row 162 records the audit: 148 sites, ZERO locale-aware ones, and
+ *   that is correct — do not "fix" it).
+ *
+ * This function is the primitive; `sameAliasName`/`sameCreatureName` are the
+ * two tier-specific comparisons built on it. Returning the comparable STRING
+ * rather than a boolean is what lets a caller index a pool by name without
+ * spelling these three steps a fourth time.
+ */
+export function comparableName(name: string): string {
+  return name.normalize('NFC').trim().toLowerCase();
+}
+
+/**
+ * The ONE alias-name comparison: equal after canonical composition (NFC),
+ * trimming surrounding whitespace and case-folding. Nothing else is forgiven —
+ * no punctuation folding, no diacritic folding, no prefix match. Two names that
+ * differ in their interior are two names (`domain/creatureName`'s
+ * `sameCreatureName` is the sibling of this function for the creature tier,
+ * with the same strictness).
  */
 export function sameAliasName(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase();
+  return comparableName(left) === comparableName(right);
 }
 
 /**

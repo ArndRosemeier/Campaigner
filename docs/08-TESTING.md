@@ -3949,6 +3949,189 @@ was), so the per-line figure is exact while the corpus it is summed over is the
 documented one. (d) **The legend shape's cost is arithmetic, not a measurement**
 of the built alternative — it is reported as a proposal, not landed.
 
+### A rule that only holds in English is not a rule (docs/17 row 162, docs/00 §Global conventions, docs/18 §2.1)
+
+The owner authors modules in German on purpose — *"Honestly i think its good that
+i do german modules, otherwise some bugs would just not be found. This should
+really work in any language."* — and the defect class he hit is the one where
+English input hides the bug BY CONSTRUCTION. Two of this slice's three defects
+were of exactly that shape, and neither had ever been pinned:
+
+1. `src/lib/markdown.ts`'s emphasis rule was `/(?<![\w])\*([^*\n]+)\*(?![\w])/g`.
+   `\w` is ASCII-only in JavaScript, so the rule asked "is the neighbouring
+   character a LATIN-ASCII letter" where the author of the text meant "is it a
+   LETTER". A literal asterisk after a word ending in `ß` or an accented letter
+   was therefore read as an emphasis DELIMITER and the pair was eaten out of the
+   text: `Ein Gruß* aus Wien, und ein Spaß* für alle.` printed without its two
+   asterisks, `René* und André* sind da.` printed `René und André sind da.`,
+   while the English line of the same shape kept both markers all along. The
+   same function's fence rule (`^```[a-z]*`) leaked the info string of a fence
+   written any other way (`\`\`\`JS` printed the text `JS` to a reader).
+2. Nothing in the app compared two names in Unicode CANONICAL form. `Müller`
+   typed on a Mac is `u` + U+0308 (NFD); written by a model or a Windows editor
+   it is U+00FC (NFC). They are the same NAME in Unicode's equivalence relation
+   and different STRINGS, so every `===` on names — the wiki resolver, the alias
+   pool, the creature cast — silently failed for one of the two authors: a
+   phantom chip, a duplicated alias, a refused creature.
+
+The fix is ONE primitive and no new mechanism. `domain/artifactAlias.comparableName`
+is now THE comparable form of any user-visible name (`normalize('NFC')` — canonical
+equivalence, NOT diacritic folding — plus `trim()` plus `toLowerCase()`);
+`sameAliasName` and `creatureName.sameCreatureName` are built on it, and
+`lib/wikilinks.ts`'s THIRTEEN hand-rolled `toLowerCase` comparisons are seam calls
+now (resolution equality, the token-dedupe key, and the three substring readers,
+which normalize BOTH sides — a one-sided normalization would have turned a
+resolution into an empty brief context, silently). The markdown seam's emphasis
+rule is `/(?<![\p{L}\p{N}_])\*([^*\n]+)\*(?![\p{L}\p{N}_])/gu`: `\w`'s
+Unicode spelling, which picks out exactly the same characters on ASCII input.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| The German emphasis defect, with the English line of the same shape as the differential that shows the old rule was English-only | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final ß …`) | ✅ REVERT-PROVEN (injection a) |
+| The same for a word-final accented letter (`René*`) | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final accented letter too`) | ✅ REVERT-PROVEN (injection a) |
+| A real emphasis pair written in German is STILL stripped (the fix is not a disable) | `lib/unicodeTextHygiene.test` (`still strips a real emphasis pair written in German`) | ✅ |
+| **The fix cannot change English behaviour** — a bounded-exhaustive differential (alphabet `['a',' ','*','1','_']`, 3 905 strings up to length 5) plus ordinary English documents, against a verbatim copy of the pre-slice function | `lib/unicodeTextHygiene.test` (`is byte-identical to its pre-slice self on ASCII input`) | ✅ (green before and after — the claim is equivalence, not change) |
+| The ONE deliberate English-behaviour change of the slice, named rather than hidden: a fence info string is stripped however it is spelled (`\`\`\`JS` → `x`, was `JS\nx`) | `lib/unicodeTextHygiene.test` (`strips a code fence info string however it is spelled`) | ✅ REVERT-PROVEN (injection a) |
+| A German sentence with umlauts, `ß` and `« »` survives the markdown→plain-text stripper byte for byte, and a token renders its German display | `lib/unicodeTextHygiene.test` (`(a) survives …`) | ✅ |
+| Non-ASCII names and displays survive the wiki-token parse (`[[Müller\|der Müller]]`, `[[Straße]]`) | `lib/unicodeTextHygiene.test` (`(b) survives the wiki-token parse …`) | ✅ |
+| **NFC vs NFD: a DECOMPOSED token resolves against a COMPOSED artifact, and the reverse** — the Mac-authored case | `lib/unicodeTextHygiene.test` (`(c) resolves a DECOMPOSED token …`), `domain/artifactAlias.test` (`treats the same name in NFC and NFD as the same name, and nothing more`), `domain/creatureName.test` (the renamed strictness pin) | ✅ REVERT-PROVEN (injection b) |
+| The two compositions are ONE name wherever a name is a KEY — the alias merge refuses a name that is the artifact's own name in the other composition, and the counting/context readers agree with resolution in both directions | `lib/unicodeTextHygiene.test` (`(d) treats the two compositions as ONE name …`), `domain/artifactAlias.test` (`returns the SAME list (same reference) …`) | ✅ REVERT-PROVEN (injection b) |
+| **EXACTLY ONE comparable form** (AGENTS §Centralization 2): the resolver routes through the seam, counted (`sameAliasName(` ×4, `comparableName(` ×9), and it keeps neither the hand-rolled comparison nor a hand-appended pool | `features/alias-merge-seam.test` (`routes the alias write in lib/wikilinks.ts through the seam`) | ✅ |
+| **EXACTLY ONE ASCII-only text regex population**: every line in `src/` holding `\w`/`\b`/`[a-z]`/`[A-Z]`/`[0-9]`/`charCodeAt`/`fromCharCode`/`toLocaleLowerCase` (comments skipped) must be one of 17 declared files / 35 declared lines, each with a reason; the map cannot rot and neither can the reasons | `lib/unicodeTextHygiene.test` (`declares exactly the ASCII-only text regexes that exist, and no more`) | ✅ |
+| The locale-aware case fold is absent from `src/` code — the hazard, not the improvement (Turkish `I` → `ı`) | `lib/unicodeTextHygiene.test` (`never folds case with the locale …`) | ✅ (zero-tolerance: no declared site) |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `keeps a literal * after a word-final ß …` | `tests/lib/unicodeTextHygiene.test.ts` | the ASCII-only emphasis rule coming back; **the pin that was watched RED before the fix** |
+| `is byte-identical to its pre-slice self on ASCII input` | same | any loosening of the Unicode class beyond `\w` (a fix that changed English rendering would pass the German pins and fail here) |
+| `declares exactly the ASCII-only text regexes that exist, and no more` | same | a NINTH ASCII-only text regex being born anywhere in `src/`; a declared site disappearing (rot); a reason without a site or a site without a reason |
+| `never folds case with the locale …` | same | `toLocaleLowerCase` used for matching (a name that resolves on one machine only) |
+| `(c)` / `(d)` / the two domain pins | `tests/lib/unicodeTextHygiene.test.ts`, `tests/domain/artifactAlias.test.ts`, `tests/domain/creatureName.test.ts` | the comparable form losing `normalize('NFC')` (injection b reds all five) |
+| `routes the alias write in lib/wikilinks.ts through the seam` | `tests/features/alias-merge-seam.test.ts` | the resolver re-inlining one of its thirteen comparisons (behaviour stays green — this is the only pin that can see it) |
+
+**REVERT-PROVEN lines** (each injection applied to the exact executing line,
+`git diff --stat` printed back BEFORE its run, restored from an OUT-OF-TREE copy —
+`/tmp/lang-backup`, never `git checkout --` — and proved with `git hash-object`
+identical before and after: `src/lib/markdown.ts`
+`e4139409a5ad6bf880e363759c19d6248421e5c3`, `src/domain/artifactAlias.ts`
+`df2c63e2489e742178e302f5f8fc269297a9a8bd`; raw logs in `/tmp/lang-logs/`):
+
+| injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) the pre-fix file restored** (the ASCII `\w` emphasis rule and the `[a-z]` fence tag back in `src/lib/markdown.ts`) | **RED 4 / GREEN 7 (11)**: `expected 'Ein Gruß aus Wien, und ein Spaß für alle.' to be 'Ein Gruß* aus Wien, und ein Spaß* für alle.'`, `expected 'René und André sind da.' to be 'René* und André* sind da.'`, `expected 'JS\nx' to be 'x'`, and the source scan (the seam no longer holds the Unicode pattern). This run was also the pin's FIRST-EVER run — the fix was written while two foreign suites held the box, so the pin was watched RED against the pre-fix bytes |
+| **(b) the comparable form bypassed** (`comparableName` returns `name.trim().toLowerCase()`, no `normalize('NFC')`) | **RED 5 / GREEN 36 (41)** across the three touched files, every red an NFC/NFD pin: `(c) resolves a DECOMPOSED token …`, `(d) treats the two compositions as ONE name …` (`expected [ 'Siegel der Müller' ] to be []`), `treats the same name in NFC and NFD …`, `returns the SAME list (same reference) …` (`expected [ 'The Alchemist', 'Müller' ] to be [ 'The Alchemist' ]`), `matches on canonical composition, trim + case-fold only …` |
+
+**TWO OF THE SLICE'S OWN PINS WERE WRONG ON THEIR FIRST RUN, and the RED
+injection is what caught them** (recorded because a pin that cannot fail is
+worse than no pin): the ß pin's first sentence put the `*` after `Siegel`, a word
+ending in an ASCII letter, so it PASSED on the pre-fix code and proved nothing;
+and the locale pin read RAW file text, so it went red on the seam's own doc
+comment explaining why `toLocaleLowerCase` is forbidden. Both are fixed, and the
+second cost an assertion in the scan as well (`expect(seam).not.toContain('(?<!\w)')`
+→ `expect(asciiShapeLines(seam)).toEqual([])`, because the seam's comment NAMES
+the rule it replaced) — the same comment-vs-code distinction the scan declares.
+
+**NUMBERS** (bounded gate, `CAMPAIGNER_TEST_WORKERS=1`, raw log kept):
+The baseline is the one the brief states, **326 files / 3838 tests at
+`6f31f7e`**, and it was RE-DERIVED rather than inherited: the only diff between
+that commit and this slice's base `5c9c8fd` is `AGENTS.md` (30 added lines;
+`git diff --name-status 6f31f7e..HEAD` names no test and no source file), so the
+suite is unchanged between them. The delta this slice adds is measured from the
+test DECLARATIONS in the touched files, which is what it is: `+11` the new file,
+`+1` `tests/domain/artifactAlias.test.ts` (7→8), `+1` the `FOLDED` entry in
+`tests/features/alias-merge-seam.test.ts` (8→9), `0` in
+`tests/domain/creatureName.test.ts` (13→13, a renamed pin with two assertions
+added) — **+1 file / +13 tests** — with no existing assertion weakened, no test
+skipped and no `Errors:` line.
+
+**NUMBERS — the landing gate, `./scripts/gate.sh` (locked, chunked, watchdog;
+logs `/tmp/lang-logs/gate-landing2/`), on the REBASED tree and printed **GATE
+GREEN, exit 0**.** Per chunk, exactly as the script printed them (the chunks are
+DISJOINT since `5de1c36` and the script proves it: `chunk arithmetic: 328 of 328
+test files covered`): `tests_lib 32 files / 368 tests (peak 836 MB)`;
+`tests_llm 70 / 1146 (872 MB)`; `tests_db 30 / 351 (659 MB)`;
+`tests_domain 21 / 291 (667 MB)`; `tests_features 133 / 1308 (1203 MB)`;
+`tests_remainder 42 / 411 (1156 MB)` — summing to **328 files / 3875 tests**,
+with `lint errors: 0`, typecheck clean, no `Errors:` line in any chunk log, and
+**peak RSS of any single chunk 1203 MB against the 3000 MB cap** — the number
+that answers the owner's 4 GB directive ("you are not the only worker here").
+
+**The arithmetic, closed in both directions against the baseline the brief
+states — 326 files / 3838 tests at `6f31f7e`, RE-DERIVED and CONFIRMED.**
+`git diff --name-status 6f31f7e..HEAD` names only `AGENTS.md`, so the suite is
+unchanged between that commit and this slice's base. Files: `326 + 1 (row 161's
+new test file) + 0 (row 163 added none) + 1 (this slice) = 328` ✓. Tests: `3838
++ 14 (row 161's) + 10 (row 163's, its own section below) + 13 (this slice's) =
+3875` ✓. **This slice is +1 file / +13 tests** (`+11` the new file, `+1`
+`tests/domain/artifactAlias.test.ts` 7→8, `+1` the `FOLDED` entry in
+`tests/features/alias-merge-seam.test.ts` 8→9, `0` in
+`tests/domain/creatureName.test.ts` — one pin RENAMED with two assertions added,
+nothing weakened, no test skipped).
+
+**Two docs conflicts, both resolved as mechanical UNIONs, both proved.**
+`main` moved three times while this slice was in flight (row 161 `e2b9e64`, row
+163 `dcf1332`, and the two gate-script fixes `46cdd41`/`5de1c36`), so `docs/08`
+and `docs/18` conflicted. Each resolution took the OTHER landings' text
+byte-for-byte and re-inserted this row's own text beside it:
+`git diff --name-only e2b9e64 c88eaf9` and `git diff --name-only dcf1332 HEAD`
+name only `docs/08`, `docs/17` and `docs/18` — **no `src/` or `tests/` file of
+another slice, ever**. In `docs/18` the conflict block spanned two adjacent
+rows: the "creatures it may name" row is row 163's amendment (taken from theirs)
+and the "cast refusal" row was byte-identical on both sides except this row's
+addition (taken from ours). The full suite was re-run on the rebased tree
+because **the rebased tree is not the tree the previous green run covered**, and
+one test really does read a doc at runtime (`docs/18-ARCHITECTURE.md`, from
+`tests/features/entity-batch-creature-book.test.ts`) — so a docs edit is not
+assumed invisible here, it is re-gated.
+
+**A GATE DEFECT THIS SLICE FOUND AND REPORTED RATHER THAN WORKED AROUND, now
+fixed on `main`.** The first landing-gate run came back RED with every single
+TEST green: `scripts/gate.sh`'s default chunk list ended in `src`, and this repo
+has ZERO test files under `src/` (`find src -name '*.test.ts*' | wc -l` = 0), so
+that chunk exited 1 with `No test files found` and set the status for the whole
+run — every writer's gate would have read RED for a reason unrelated to their
+tree. It was reported instead of bypassed: `src` was dropped from the list
+(`46cdd41`), and the first list's OVERLAP was found and fixed too (`5de1c36`,
+"the first list ran most of the suite twice" — measured here as the `tests`
+chunk reporting all 328 files while the directory chunks reported their own
+subsets; the disjoint run above is the one quoted).
+
+**A GATE RUN THAT MEASURED THE WRONG TREE, AND ONE THE KERNEL KILLED — both
+VOID, both recorded.** One full-suite invocation of this slice ran WITHOUT its
+worktree as the working directory and therefore measured
+`/home/box/Harness/Campaigner` — the main tree, mid-flight for another writer's
+slice (docs/17 row 161) — returning `327 files / 3852 tests`. `RUN v4.1.11
+/home/box/Harness/Campaigner` in its log is the tell, and it is the same class as
+AGENTS §Parallel writers item 6 ("a worktree instruction is not self-enforcing").
+Another re-run was OOM-KILLED (`oom-kill:…task=node (vitest 3)` in `dmesg`; load
+average 22 from CivGlm's playwright + chrome-headless), and a killed run's result
+is void, never evidence (AGENTS §Host hygiene 7) — hence the chunked gate above,
+which waited for the lock and for the peer suites (measured waits: 240 s, 1420 s,
+1880 s, 920 s) rather than taking either.
+
+**WHAT NO TEST HERE CAN PROVE.** Every German sentence in these pins is authored
+by us: nothing proves that a real LLM writing German emits the strings the
+fixtures do, and the field failure this slice cannot see — a model producing a
+name in a composition or a spelling the comparable form does not fold (`ß`
+written `ss`, a name in a script with no canonical decomposition) — is beyond any
+fixture. The source scan proves a SHAPE is absent from `src/`; it can never prove
+a declared site is semantically safe, which is why each one carries a reason a
+reader must re-check when the site changes. And the language audit's findings
+stay OPEN: the module book's structural labels (24+ English literals in
+`lib/modulePdf.ts`), `domain/encounterResolve.TREASURE_LABEL = 'Treasure: '`
+composed onto model-written German prose, the blank-row name defaults
+(`DEFAULT_ARTIFACT_NAMES`, `defaultModuleTitle()`), and `runEngine`'s
+`` `roster entry ${i}` `` battle-token placeholder — all English, none of them
+fixed here, because localizing the renderer is an i18n arc of its own rather than
+a small change — **and the OWNER HAS RULED ON IT, verbatim: "Not now — leave
+the labels English."** The labels are therefore English DELIBERATELY, not by
+oversight; a reader who finds one inside a German document should read docs/17
+row 162, not open a slice.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
