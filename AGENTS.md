@@ -325,6 +325,20 @@ the config default, and it holds for whoever forgets. Binding rules:
      reports BUSY forever (hit for real while writing this rule).
    - **Every run carries a heap ceiling**, so the kernel is never asked to
      choose: `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1 pnpm exec vitest run`
+   - **The landing gate runs in CHUNKS, with a memory watchdog — the ceiling
+     alone is NOT enough** (fourth occurrence, owner-visible: a writer's full
+     suite in this repo filled ~15 GB and killed the harness again, and the
+     ceiling was in force at the time). Why it cannot be enough: 304 test files
+     in ONE process, with the PDF suites holding `ArrayBuffer` memory OFF the
+     V8 heap, so RSS outgrows any `--max-old-space-size`. Therefore: (1) run
+     vitest as SEVERAL sequential invocations, splitting the suite by path (or
+     `--project`) so each peak is bounded and attributable — one raw log per
+     chunk, counts summed and said to be summed; (2) while any run is live,
+     sample `MemAvailable` and, if it falls below ~3 GiB, KILL THAT RUN'S OWN
+     PROCESS TREE BY PID and report the chunk VOID — failing our gate is
+     acceptable, letting the kernel choose `dsh` is not; (3) a chunk killed
+     this way is not evidence and is re-run, and no pin is ever weakened to get
+     a green.
    - **Ad-hoc PDF-rendering verification** (`pdfLayout`, pdfjs, pdfmake —
      injection runs, single-file checks) goes in the FOREGROUND in bounded
      chunks: a `-t`-filtered run is seconds, not minutes. The 600 s
