@@ -3365,6 +3365,48 @@ drain is absorbed by the unmount instead of being silenced by an allowance — a
 allowance would be the forbidden move. And a green run on an idle box is not
 evidence for this class: the delay-injection pair is.
 
+### A baseline captured from a DATE-STAMPED document is a midnight time bomb (docs/17 row 154, docs/18 §4)
+
+The content-preservation differential in `tests/lib/pdfLayout.test.ts` compares
+the document's runs against `tests/lib/pdfLayoutBaseline.json` — and the cover of
+that document prints the day it was compiled (`lib/modulePdf.ts`: `Compiled with
+Campaigner · ${compiledDay}`, from `compiledAt ?? new Date()`). The baseline was
+captured from the ambient clock, so it carries the capture day and the
+differential is green on that day and RED at the next midnight — measured on an
+IDENTICAL commit: a gate at 23:43 green, the same commit's gate at 00:0x red with
+exactly two failures (`Compiled with Campaigner · 2026-09-13` missing from the
+after side, `… · 2026-09-14` added to it). No flake, no load: a clock. The class
+in one line: **a test that captures a document which stamps the time, without
+pinning the time it stamps, tests the calendar.**
+
+| fact pinned | where |
+|---|---|
+| **The compared documents are built under a PINNED clock** — the renderer's own documented input `compiledAt` (the same seam the byte-determinism pins use), fixed at the day the baseline was captured, so the differential is about the document and not about the day it ran | `tests/lib/pdfLayout.test.ts` (`BASELINE_COMPILED_AT`, passed by `documents()` to all three builds) |
+| **The comparison is UNCHANGED in strictness**: the loss side is still `missingRuns(...).toEqual([])`, the additions side still an exact `toEqual`, and the footer run stays in the baseline BY TEXT (a renderer that stopped stamping the date still fails) — no run deleted, no assertion dropped, no tolerance widened | the two differential tests, byte-identical apart from the document that is built |
+| **The product still stamps the REAL day**: with no `compiledAt`, the renderer prints the clock's date, pinned with the clock moved to a day that is not today (`vi.useFakeTimers({ toFake: ['Date'] })` + `vi.setSystemTime`, scoped to the build and restored in a `finally`, so no async work of that test runs under it) | `tests/lib/modulePdf.test.ts` (`prints cover, ToC, premise, … (GM)`, the cover assertion) |
+
+| direction (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`) | clock | result |
+|---|---|---|
+| current head, no cure | system date `2026-09-14` (baseline's day is `2026-09-13`) | **RED 2 failed / 23 passed (25)**, exit 1: `expected [ Array(1) ] to deeply equal []` → `"Compiled with Campaigner · 2026-09-13"`, and the added-runs equality gaining `"Compiled with Campaigner · 2026-09-14"` |
+| current head, no cure | system time faked to `2031-02-03` | **RED 2/23**: the same two tests, now carrying `2031-02-03` — the ambient clock IS the cause, shown independently of today's date |
+| cure in place | system time faked to `2031-02-03` | **GREEN 25/25**, exit 0 — the differential no longer reads the ambient clock |
+| cure removed again, clock still faked | `2031-02-03` | **RED 2/23** again, the same two failures: the clock read is what the cure removes |
+
+The baseline was **NOT regenerated and is byte-identical**: it is a capture of the
+PRE-layout renderer at the layout's base commit, which cannot be re-derived from
+the current tree, and the date pinned in the test is exactly the date the capture
+already carries (`2026-09-13`), so the captured runs match with no edit. Pinning
+a *different* date would have required regenerating a baseline that no longer
+exists in this tree — the record that survives is the test's own constant, and it
+names the day.
+
+**UNPROVEN, stated as such.** That no OTHER comparison in this repo is
+date-dependent: this landing cures the one that was measured red, and nothing here
+scans for the class (the sweep would be a separate slice). That the faked-clock
+pin in `modulePdf.test.ts` would catch a renderer that stamped a WRONG-but-stable
+date — it catches a constant, a missing date and a clock that stopped being read,
+not a date computed from the wrong field.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

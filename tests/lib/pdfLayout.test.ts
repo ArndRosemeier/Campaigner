@@ -120,6 +120,28 @@ function pageOf(
   return { main, sidebar };
 }
 
+/**
+ * THE DAY THE BASELINE WAS CAPTURED (docs/17 row 154).
+ *
+ * `pdfLayoutBaseline.json` is a capture of the PRE-layout renderer's runs, and
+ * that renderer prints the day it compiled the document on the cover
+ * (`src/lib/modulePdf.ts` → `Compiled with Campaigner · ${compiledDay}`), so the
+ * baseline carries the day of the capture. Building the compared documents off
+ * the ambient clock made this differential depend on WHICH DAY IT RAN: green on
+ * the capture day, red at the next midnight, deterministically, for every reader.
+ *
+ * The cure is the renderer's OWN seam, not a tolerance: `compiledAt` is the
+ * documented input for "a re-render is byte-identical" (the same one
+ * `tests/lib/modulePdfPlan.test.ts` pins), so pinning it makes the compared
+ * document a document with a KNOWN date instead of one with today's. Nothing
+ * about the comparison loosens: the loss side is still `missingRuns(...) === []`
+ * and the additions side still an exact `toEqual`, and the footer run stays in
+ * the baseline BY TEXT — a renderer that stopped stamping the date still fails
+ * this file. The product is untouched: given no `compiledAt` the renderer still
+ * stamps the real day, and `tests/lib/modulePdf.test.ts` pins exactly that.
+ */
+const BASELINE_COMPILED_AT = new Date('2026-09-13T12:00:00.000Z');
+
 async function documents(): Promise<Record<string, ReturnType<typeof buildModuleDefinition>>> {
   const large = await pdfLayoutLargeFixture();
   const small = await pdfLayoutSmallFixture();
@@ -128,18 +150,21 @@ async function documents(): Promise<Record<string, ReturnType<typeof buildModule
       module: large.module,
       artifacts: large.artifacts,
       images: large.images,
+      compiledAt: BASELINE_COMPILED_AT,
       ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
     }),
     'large-planned': buildModuleDefinition({
       module: { ...large.module, documentPlan: pdfLayoutLargePlan(large) },
       artifacts: large.artifacts,
       images: large.images,
+      compiledAt: BASELINE_COMPILED_AT,
       ...(large.rosterResolution === undefined ? {} : { rosterResolution: large.rosterResolution }),
     }),
     'small-procedural': buildModuleDefinition({
       module: small.module,
       artifacts: small.artifacts,
       images: small.images,
+      compiledAt: BASELINE_COMPILED_AT,
     }),
   };
 }

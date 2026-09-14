@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import type { TDocumentDefinitions } from 'pdfmake/interfaces';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createModule as buildModule,
@@ -400,6 +400,24 @@ describe('buildModuleDefinition — the module IS the document', () => {
     expect(text).toContain('Beneath the Docks');
     expect(text).toContain('A module for levels 1–3');
     expect(text).toContain('Compiled with Campaigner');
+    // …and the date in that line is the REAL compile day, taken from the clock
+    // (docs/17 row 154). This is the pin that keeps the layout differential's
+    // pinned `compiledAt` (tests/lib/pdfLayout.test.ts) honest: that file fixes
+    // the clock so it cannot flake at midnight, so a renderer that started
+    // printing a CONSTANT date would otherwise pass everywhere. The clock is
+    // moved to a day that is not today, and the build is synchronous, so no
+    // other work of this test runs under it.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2031-02-03T12:00:00.000Z'));
+    try {
+      const pinned = buildModuleDefinition({
+        module: seeded.module,
+        artifacts: seeded.artifacts,
+      });
+      expect(textOf(pinned)).toContain('Compiled with Campaigner · 2031-02-03');
+    } finally {
+      vi.useRealTimers();
+    }
     // Table of contents.
     expect(text).toContain('"id":"chapters"');
     // Premise + the parts, in plan order, each with its position kicker.

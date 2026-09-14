@@ -1188,6 +1188,21 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   letting the model emit the document (or a styling hint the renderer must
   interpret), which makes the same module print differently on two runs and
   leaves a bad decision with no surface to correct it.
+  (3) **The same date is PRINTED, on the cover — so any capture of a document's
+  runs off the ambient clock is a midnight time bomb** (docs/17 row 154):
+  `lib/modulePdf.ts` prints `Compiled with Campaigner · ${compiledDay}` from
+  `compiledAt ?? new Date()`, so a baseline captured against the wall clock is
+  green on the capture day and RED at the next midnight, deterministically, on
+  an unchanged commit. It is the SAME seam as (1), and both halves must go
+  through it: the byte pins pin `compiledAt` so two re-renders match, and a
+  CONTENT baseline pins it so the comparison is about the document instead of
+  about the day the suite ran. Concretely: **a date-stamped document is never
+  compared, captured or re-rendered off the ambient clock** — pass `compiledAt`
+  (the input's own documented purpose), regenerate the baseline under that same
+  fixed date so it is stable forever, and pin the REAL-clock behaviour
+  separately (`tests/lib/modulePdf.test.ts`), so pinning the clock cannot hide a
+  cover that stopped stamping the date. Normalizing the dated run away in the
+  extractor was rejected: it removes the only pin that the footer is there.
 
 - **A centralized seam that DUPLICATES a specialist is worse than none.**
   `features/modules/change-artifact.changeArtifact` composes no brief, resolves
