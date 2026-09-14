@@ -4327,6 +4327,34 @@ back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy �
 | **(b) the predicate ignores the identity key** (the module gap detector is handed an EMPTY presentation snapshot) | **RED 5 failed / 25 passed (30)** in `tests/features/creature-portrait-agreement.test.tsx` (4 of its 5) + `tests/features/mob-portrait-module-gaps.test.ts` (the pre-existing `yields no work at all once every participant is imaged (no over-offering)`); `tests/features/generate-everything.test.tsx` stayed GREEN because its fixture carries no presentation row at all. **The asymmetry is the point**: every failure is the PRESENT direction (a portrait exists ⇒ no work) — `the owner's case: …`, `a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`, `an invented mob renders the portrait keyed on its own content`, the post-fill half of `a missing portrait is WORK and the board shows initials; the batch then fills both`, and the module-level no-over-offer pin — while the MISSING direction keeps reporting work, which is exactly why a pin that only asked "does it offer work?" could not have caught the owner's case |
 >>>>>>> efc2205 (wip(portraits): one creature identity, one portrait reading (docs/17 row 165))
 
+**NUMBERS** (THE bounded landing gate — `scripts/gate.sh`, the ONE gate since the
+owner's 4 GB directive; raw log kept at `/tmp/gate-165-summary.txt`, per-chunk
+logs in `/tmp/gate-165/`). Baseline re-derived at this landing's base
+`5de1c36`: **327 files / 3862 tests**. The script's own summary, verbatim:
+
+```
+GATE-SUMMARY-PLACEHOLDER
+```
+
+**UNPROVEN, stated as such.** (a) **A real module run in the app is the owner's
+to check.** The probes exercise the real seeding, the real row reads and the
+real surface over fake-indexeddb; what no test here can show is his own German
+module on screen. What he should look for: the token on the battle map showing
+the same portrait the module surface shows for that mob, and — with a portrait
+genuinely missing — the "Generate everything" affordance counting the encounter.
+(b) **The healed-citation and chunk-less-`creatureRef` shapes are simulated**
+(by deleting the chunk a citation names while keeping its bytes under a fresh
+row, and by rewriting a cast row's `creatureRef` to its hash-only form) rather
+than produced by a real re-ingest or a real export/import round trip. (c) **The
+portrait QUEUE still grounds a healed citation's job on the CITED chunk id**
+(`MobPortraitJob.chunkId` comes from the route, which carries the citation), so
+such a job fails LOUDLY ("the creature's stat-block chunk no longer exists")
+instead of writing a portrait — pre-existing, loud, and out of this row's scope;
+named here rather than discovered later. (d) **What the board shows is asserted
+as the image ID a surface RESOLVED**, not as rendered pixels: jsdom produces no
+object URLs, so the blob plumbing below `useImageUrl` is out of reach — the
+defect lived in the resolved id, which is what the pins read.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
