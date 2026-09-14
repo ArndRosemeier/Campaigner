@@ -1,6 +1,8 @@
 import type { Id } from '@/domain';
 import { creatureNameSimilarity } from '@/domain/creatureName';
+import { citationBookTitle } from '@/domain/encounterResolve';
 import { listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
+import { getRulebook } from '@/db/rulebookRepo';
 import { libraryLevelOrder, parseLevelSort } from '@/llm/encounterRoster';
 
 /**
@@ -37,6 +39,18 @@ import { libraryLevelOrder, parseLevelSort } from '@/llm/encounterRoster';
  *   name, `—` (unparsable-to-Infinity) last, `CREATOR_ROSTER_LIMIT` lines with
  *   the `(roster truncated; N more)` note. Recomputed per run, never
  *   persisted: deterministic for an unchanged library.
+ * - **Pack titles (docs/17 row 163, the owner's decision: *"Yes — show each
+ *   creature's pack title in the vocabulary."*).** A line reads
+ *   `Name — Pack Title`. Row 161 made the slot's `book` a DISAMBIGUATOR rather
+ *   than a veto, so a unique name resolves whatever book the slot names — but
+ *   where two installed books really do hold the same creature name, a model
+ *   that cannot see a real title has to GUESS one, and a guessed title narrows
+ *   nothing. Titles were withheld before because a names-only window was the
+ *   ratified shape (row 114's own "considered and not taken"); with the
+ *   decision taken, the model can COPY the string the resolver compares
+ *   against, and `packTitle` is read with the SAME stamp reading row 155 uses
+ *   for a citation (`domain/encounterResolve.citationBookTitle`), so what the
+ *   prompt shows and what the cast matches are the same bytes.
  *
  * The window contains the library's OWN spelling of the name
  * (`canonicalCreatureName` — the innermost heading, the same one the cast
@@ -48,6 +62,21 @@ import { libraryLevelOrder, parseLevelSort } from '@/llm/encounterRoster';
 /** The window's cap — the §7 `ROSTER_LIMIT` of 300 lines, restated for this
  *  window because the two windows measure different populations. */
 export const CREATOR_ROSTER_LIMIT = 300;
+
+/**
+ * The ONE definition of a line's shape (docs/17 row 163): the creature name,
+ * then an em dash, then the pack title. Chosen over `Name (Pack Title)` because
+ * a parenthesized qualifier is a REAL part of a creature name here
+ * (`domain/creatureName` deliberately forgives a trailing `(…)`), so
+ * `Zombie (Variant) (Monster Core)` would read as two qualifiers — while the
+ * em dash is this repo's existing "aside follows" glyph (the `—` level
+ * placeholder, the message prose). Three characters is also the cheapest
+ * unambiguous inline separator, and the WINDOW IS A BUDGET: a per-book legend
+ * (`Name [1]` + a title list) would cost a fraction of this, at the price of an
+ * indirection a model can mis-map, so it is reported as the cheaper alternative
+ * rather than taken (the owner asked for each creature's title, inline).
+ */
+export const CREATOR_ROSTER_TITLE_SEPARATOR = ' \u2014 ';
 
 /** How many nearest creatures a refusal may name (bounded: a wall of
  *  suggestions is not an answer). */
@@ -64,7 +93,18 @@ export interface CreatorRosterEntry {
   /** The printed level the ordering used (`statBlock.level`, verbatim). */
   level: string;
   levelSort: number;
+  /** The book the creature's chunk belongs to — the carried row fact the
+   *  window's pack title is read from (`LibraryCreature.bookId`). */
+  bookId: Id;
 }
+
+/** The pack title of each book a window covers, keyed by the BOOK's id (one
+ *  entry per book, never per line: a window over 300 creatures from eight packs
+ *  reads eight books). A book the library has no row for, or whose own title is
+ *  blank, is simply ABSENT — the line then prints its name alone (docs/17 row
+ *  163): a placeholder would be a value a model could copy as if it were a
+ *  title. */
+export type CreatorBookTitles = ReadonlyMap<Id, string>;
 
 export interface CreatorRoster {
   /** The window's lines, in prompt order. */
@@ -79,7 +119,31 @@ export interface CreatorRoster {
  *  production default is the ONE pool the cast resolves against. */
 export type CreatorRosterDeps = () => Promise<LibraryCreature[]>;
 
+/** Reads one book row's COPYABLE title — `undefined` when this library records
+ *  none. Injected for tests; the production default is the ONE stamping read. */
+export type CreatorBookTitleDeps = (bookId: Id) => Promise<string | undefined>;
+
 const defaultDeps: CreatorRosterDeps = () => listLibraryCreatures();
+
+/**
+ * The pack title a window line may print, from the book row the chunk names:
+ * the STAMP reading `domain/encounterResolve.citationBookTitle`, which is
+ * `undefined` for a missing book or a blank title.
+ *
+ * Deliberately NOT the LABEL reading `rulebookDisplayTitle`, whose whole job is
+ * to print the `Rulebook` stand-in exactly when nothing is known — correct for
+ * a surface that MUST name a book, forbidden here: the model copies what it
+ * sees, so a stand-in becomes a fabricated book in a module (AGENTS rule 1).
+ *
+ * The two private readers in `features/modules/entity-batch` (`creatureBookTitle`
+ * → the LABEL reading, `citationBookTitleFor` → this stamp) are the same idea in
+ * the resolver's file, which this slice must not touch (docs/17 row 163); the
+ * stamp reading itself is still the ONE shared rule, so there is no second
+ * answer to "which book is this chunk's" — only a `getRulebook` + one-domain-
+ * function call site beside theirs, named here so the next reader sees it.
+ */
+const defaultBookTitleDeps: CreatorBookTitleDeps = async (bookId) =>
+  citationBookTitle(await getRulebook(bookId));
 
 /**
  * Maps the library pool into sortable entries. `listLibraryCreatures` already
@@ -101,8 +165,48 @@ export function creatorRosterEntries(
       name: creature.name,
       level,
       levelSort: parseLevelSort(level),
+      bookId: creature.bookId,
     };
   });
+}
+
+/**
+ * ONE window line (docs/17 row 163): `Name — Pack Title`, or the NAME ALONE
+ * when this library records no title for it. No trailing separator, no empty
+ * dash, no `Unknown`: the absent half is absent (AGENTS rule 1). A title is
+ * trimmed, so a whitespace-only row title prints nothing rather than a gap.
+ */
+export function creatorRosterLine(name: string, bookTitle: string | undefined): string {
+  const title = bookTitle?.trim() ?? '';
+  return title === '' ? name : `${name}${CREATOR_ROSTER_TITLE_SEPARATOR}${title}`;
+}
+
+/** The window's order (§7) and its capped slice — the ONE place the shared
+ *  comparator, the tie rules and `CREATOR_ROSTER_LIMIT` are applied, so the
+ *  lines and the titles read for them cannot describe different cuts. */
+function creatorRosterWindow(
+  entries: readonly CreatorRosterEntry[],
+  targetLevel?: number,
+): { sorted: CreatorRosterEntry[]; window: CreatorRosterEntry[] } {
+  const sorted = [...entries].sort(
+    targetLevel === undefined
+      ? (left, right) => left.levelSort - right.levelSort || left.name.localeCompare(right.name)
+      : libraryLevelOrder<CreatorRosterEntry>(targetLevel),
+  );
+  return { sorted, window: sorted.slice(0, CREATOR_ROSTER_LIMIT) };
+}
+
+function rosterFromWindow(
+  sorted: readonly CreatorRosterEntry[],
+  window: readonly CreatorRosterEntry[],
+  bookTitles: CreatorBookTitles,
+): CreatorRoster {
+  return {
+    lines: window.map((entry) => creatorRosterLine(entry.name, bookTitles.get(entry.bookId))),
+    entries: [...sorted],
+    total: sorted.length,
+    truncated: Math.max(0, sorted.length - CREATOR_ROSTER_LIMIT),
+  };
 }
 
 /**
@@ -111,30 +215,51 @@ export function creatorRosterEntries(
  * run that is `(levelMin + levelMax) / 2`), else level/name ascending exactly
  * as the pre-amendment §7 window did. Capped at `CREATOR_ROSTER_LIMIT` with
  * the truncation count the formatter renders.
+ *
+ * `bookTitles` carries the pack titles the lines print; without it (or for a
+ * book it does not cover) a line is its name alone. This is the shape a caller
+ * with no library titles builds — which is why the title pins cannot pass
+ * against it (they are read over `collectCreatorRoster`, the real path).
  */
 export function buildCreatorRoster(
   entries: readonly CreatorRosterEntry[],
   targetLevel?: number,
+  bookTitles: CreatorBookTitles = new Map<Id, string>(),
 ): CreatorRoster {
-  const sorted = [...entries].sort(
-    targetLevel === undefined
-      ? (left, right) => left.levelSort - right.levelSort || left.name.localeCompare(right.name)
-      : libraryLevelOrder<CreatorRosterEntry>(targetLevel),
+  const { sorted, window } = creatorRosterWindow(entries, targetLevel);
+  return rosterFromWindow(sorted, window, bookTitles);
+}
+
+/**
+ * Reads the pack titles for the WINDOW's books only — the lines the prompt will
+ * actually carry (the cap is the prompt budget, so a 1,000-creature library
+ * still costs at most `CREATOR_ROSTER_LIMIT` lines and the books behind them).
+ * Read concurrently; a rejection propagates (a failed read is a loud failure,
+ * never a window that silently drops its titles).
+ */
+async function windowBookTitles(
+  window: readonly CreatorRosterEntry[],
+  loadBookTitle: CreatorBookTitleDeps,
+): Promise<CreatorBookTitles> {
+  const titles = new Map<Id, string>();
+  await Promise.all(
+    [...new Set(window.map((entry) => entry.bookId))].map(async (bookId) => {
+      const title = await loadBookTitle(bookId);
+      if (title !== undefined) titles.set(bookId, title);
+    }),
   );
-  return {
-    lines: sorted.slice(0, CREATOR_ROSTER_LIMIT).map((entry) => entry.name),
-    entries: sorted,
-    total: sorted.length,
-    truncated: Math.max(0, sorted.length - CREATOR_ROSTER_LIMIT),
-  };
+  return titles;
 }
 
 /** Collects and builds the window in one call — the seam `moduleGen` uses. */
 export async function collectCreatorRoster(
   targetLevel?: number,
   load: CreatorRosterDeps = defaultDeps,
+  loadBookTitle: CreatorBookTitleDeps = defaultBookTitleDeps,
 ): Promise<CreatorRoster> {
-  return buildCreatorRoster(creatorRosterEntries(await load()), targetLevel);
+  const entries = creatorRosterEntries(await load());
+  const { sorted, window } = creatorRosterWindow(entries, targetLevel);
+  return rosterFromWindow(sorted, window, await windowBookTitles(window, loadBookTitle));
 }
 
 /**

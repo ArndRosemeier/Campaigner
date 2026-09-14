@@ -224,6 +224,13 @@ export function creatureRefIdentical(
  * block, carried because the chunk row already holds it and because a prompt
  * window that must ORDER the library by level has nowhere else to read it from
  * without a second chunk read (docs/17 row 114).
+ *
+ * `bookId` is the same kind of carried row fact (docs/17 row 163): the book a
+ * creature's chunk belongs to is ON the chunk row, so the window that prints
+ * each creature's pack title reads it here rather than re-reading the chunk it
+ * just pooled. It is an internal row pointer, never a title — the title is the
+ * book's own (and a book row can be missing), so nothing but a real read of
+ * `db/rulebookRepo.getRulebook` may produce one.
  */
 export interface LibraryCreature {
   chunkId: Id;
@@ -231,6 +238,7 @@ export interface LibraryCreature {
   contentHash: string;
   headingPath: readonly string[];
   statBlock: StatBlock | null;
+  bookId: Id;
 }
 
 /**
@@ -253,7 +261,10 @@ export interface LibraryCreature {
  * lists these names and `features/modules/entity-batch` resolves against them,
  * so the vocabulary a prompt shows and the lookup that judges the reply cannot
  * disagree. Deliberately NOT filtered by book origin — a creature imported from
- * an ordinary rulebook is as castable as a pack one.
+ * an ordinary rulebook is as castable as a pack one. Since row 163 the window
+ * also prints each creature's pack title beside its name, read from the carried
+ * `bookId` — the pool stays a pure read of the chunk table, and the title is the
+ * book's own row.
  */
 export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
   const chunks = await db.chunks.where('chunkType').equals('statblock').toArray();
@@ -268,6 +279,7 @@ export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
       contentHash: chunk.contentHash,
       headingPath: chunk.headingPath,
       statBlock: chunk.statBlock,
+      bookId: chunk.bookId,
     });
   }
   creatures.sort((left, right) => {

@@ -31,14 +31,18 @@ const SAMPLE_FLOOR_CLAUSE =
   'REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module’s range.';
 
 /**
- * The bestiary vocabulary the preview renders (docs/17 row 114): visibly SAMPLE
- * creature names, never a claim about the author's library. The preview shows
- * the clause WITH its list because that is what a run with a library receives —
- * and the list is what makes the clause actionable, so a style author who cannot
- * see it cannot judge the clause.
+ * The bestiary vocabulary the preview renders (docs/17 row 114, shape since row
+ * 163): visibly SAMPLE creature names, never a claim about the author's library.
+ * The preview shows the clause WITH its list because that is what a run with a
+ * library receives — and the list is what makes the clause actionable, so a
+ * style author who cannot see it cannot judge the clause.
+ *
+ * Both line shapes are shown on purpose: a titled line, and a line whose
+ * library records no pack title (the name alone — nothing invented to fill the
+ * gap), which is what `llm/creatorRoster` really emits for such a book.
  */
 const SAMPLE_BESTIARY_VOCABULARY = {
-  lines: ['‹Creature name›', '‹Creature name›'],
+  lines: ['‹Creature name› — ‹Pack title›', '‹Creature name›'],
   truncated: 0,
 };
 

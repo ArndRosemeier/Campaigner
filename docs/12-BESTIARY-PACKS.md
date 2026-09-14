@@ -484,10 +484,16 @@ a compact **roster index** from the pack books:
      encounter `levelHint` on a module; with no band the order is the same
      level/name ascending as (c).
   5. **What the line may contain.** The creator window prints the library’s OWN
-     spelling of the name and NOTHING else (no `(level, traits)` decoration):
-     the slot’s value must be the creature name exactly as the lookup compares
-     it, and the encounter roster’s richer line format is for a prompt that
-     CITES a chunk rather than names one.
+     spelling of the name, followed by the pack title that library records for
+     the creature where it records one — `Name — Pack Title` (added 2026-09-16,
+     docs/17 row 163: the slot’s `book` is a disambiguator, and a model cannot
+     copy a title it was never shown). Nothing else follows the name: no
+     `(level, traits)` decoration (the encounter roster’s richer line format is
+     for a prompt that CITES a chunk rather than names one). The NAME is the part
+     the lookup compares and the part that must be copied exactly; the title is
+     the string the cast compares the slot’s `book` against. A creature whose
+     library records no title — a deleted book, a citation outliving its pack —
+     prints its NAME ALONE: no separator, no empty dash, no placeholder title.
   6. **Not persisted, recomputed per run** — the same accepted behavior as
      above, and the same determinism for an unchanged library.
 - Draft contract (`/src/llm/schemas.ts`): per-monster optional

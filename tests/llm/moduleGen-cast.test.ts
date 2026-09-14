@@ -16,7 +16,7 @@ import { batchTargets } from '@/features/modules/post-generation';
 import type * as runEngineModule from '@/llm/runEngine';
 import { runSpine, spineReplySchema } from '@/llm/moduleGen';
 import { sha256Hex } from '@/lib/hash';
-import { collectCreatorRoster } from '@/llm/creatorRoster';
+import { CREATOR_ROSTER_TITLE_SEPARATOR, collectCreatorRoster } from '@/llm/creatorRoster';
 import { bestiaryVocabularyBlock, spineEntityKindsClause } from '@/llm/promptStyles';
 import { strictJsonSchema } from '@/llm/strictSchema';
 import {
@@ -928,17 +928,19 @@ describe('the creator is shown the library it may name (docs/17 row 114)', () =>
     // builds for this module — the module's own band midpoint (levels 1–1 ⇒
     // 1) is the ordering target.
     const roster = await collectCreatorRoster(1);
-    expect(roster.lines).toEqual(['Ghoul', ZOMBIE]);
+    expect(roster.lines).toEqual([`Ghoul \u2014 Tome of Horrors`, `${ZOMBIE} \u2014 Bestiary`]);
     const vocabulary = bestiaryVocabularyBlock(roster);
     if (vocabulary === null) throw new Error('the vocabulary block is missing');
 
     const prompt = spinePrompt();
     expect(prompt).toContain(vocabulary);
-    // Both real names, each on its own line, copied exactly as the library
-    // spells them — this is the whole defect: before this arc the prompt named
-    // ONE example creature and nothing this workspace actually holds.
-    expect(prompt).toContain(`\n${ZOMBIE}\n`);
-    expect(prompt).toContain('\nGhoul\n');
+    // Both real names, each on its own line WITH the pack title the library
+    // really holds for it (docs/17 row 163), copied exactly as the library
+    // spells them — this is the whole defect: before row 114 the prompt named
+    // ONE example creature and nothing this workspace actually holds, and before
+    // row 163 it named no book the model could copy.
+    expect(prompt).toContain(`\n${ZOMBIE} \u2014 Bestiary\n`);
+    expect(prompt).toContain('\nGhoul \u2014 Tome of Horrors\n');
     // The rule half: copy from the list, borrow the numbers as they are, and
     // leave the slot OFF rather than invent a name.
     expect(prompt).toContain('copied exactly as it is written there');
@@ -947,6 +949,29 @@ describe('the creator is shown the library it may name (docs/17 row 114)', () =>
     // The advisory block rides INSIDE the entity-kind clause — no new
     // placeholder, no new template line, so the built-in styles are untouched.
     expect(prompt).toContain(spineEntityKindsClause(roster));
+  });
+
+  it('the emitted clause and the window it governs agree about the pack-title shape', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const roster = await collectCreatorRoster(1);
+    const clause = spineEntityKindsClause(roster);
+
+    // A pin over the CLAUSE TEXT (docs/17 row 163): it must say where a real
+    // title comes from and that it is copied — the model-facing half of the
+    // decision, read from the clause a run composes rather than restated here.
+    expect(clause).toContain(
+      '"book" (the pack title the library list below gives for that creature, copied exactly)',
+    );
+    expect(clause).toContain('"creature" takes the name exactly as it stands before the \u2014');
+    expect(clause).toContain(
+      '"book" the pack title after it, copied as written rather than translated or remembered',
+    );
+    expect(clause).toContain('never invent one');
+    // The prose quotes the SAME shape the window renders — the window's own
+    // separator constant — so a header that stops describing the lines, or a
+    // window whose shape drifts away from the prose, goes red here.
+    expect(clause).toContain(`name${CREATOR_ROSTER_TITLE_SEPARATOR}pack title`);
+    expect(clause).toContain(`\n${ZOMBIE}${CREATOR_ROSTER_TITLE_SEPARATOR}Bestiary`);
   });
 
   it('notices a TRUNCATED window instead of silently listing 300 of 305 creatures', async () => {
@@ -978,9 +1003,13 @@ describe('the creator is shown the library it may name (docs/17 row 114)', () =>
     await runSpineWith(moduleId, campaign);
 
     const prompt = spinePrompt();
-    const header = 'Creatures this workspace’s library holds (name only — copy it exactly):';
+    const header = `Creatures this workspace\u2019s library holds, one per line as \u201Cname${CREATOR_ROSTER_TITLE_SEPARATOR}pack title\u201D (copy the name exactly; a line with no pack title means this library records none for that creature):`;
     const listed = prompt.slice(prompt.indexOf(header)).split('\n').slice(1, 4);
-    expect(listed).toEqual(['Mid Thing', 'Low Thing', 'High Thing']);
+    expect(listed).toEqual([
+      `Mid Thing \u2014 Bestiary`,
+      `Low Thing \u2014 Bestiary`,
+      `High Thing \u2014 Bestiary`,
+    ]);
   });
 
   it('offers NO slot and composes the pre-change prompt when the window is EMPTY', async () => {
@@ -1028,12 +1057,17 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     const { campaign, moduleId } = await seedModule();
     await runSpineWith(moduleId, campaign);
 
-    // What the prompt showed is what the slot answers with: the line the model
-    // copies IS a resolvable name.
+    // What the prompt showed is what the slot answers with: the NAME half of the
+    // line the model copies IS a resolvable name. Since docs/17 row 163 the line
+    // carries the pack title after the separator, and the emitted rule says the
+    // name is the part BEFORE it — so the name is what this pin feeds the cast,
+    // and the title half is what a citation stamps.
     const roster = await collectCreatorRoster(1);
-    expect(roster.lines).toContain(ZOMBIE);
-    const listed = roster.lines[0];
+    expect(roster.lines).toEqual([`${ZOMBIE}${CREATOR_ROSTER_TITLE_SEPARATOR}Bestiary`]);
+    const listed = roster.lines[0]?.split(CREATOR_ROSTER_TITLE_SEPARATOR)[0];
     if (listed === undefined) throw new Error('the window is empty');
+    const printedTitle = roster.lines[0]?.split(CREATOR_ROSTER_TITLE_SEPARATOR)[1];
+    expect(printedTitle).toBe('Bestiary');
 
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
@@ -1052,6 +1086,9 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
     expect(npcCreatureRef(npc)?.chunkId).toBe(zombieChunkId);
     expect(npcCreatureRef(npc)?.creatureName).toBe(listed);
+    // The title the window PRINTED is the title the citation RECORDS, byte for
+    // byte — which is what makes a copied title a working disambiguator.
+    expect(npcCreatureRef(npc)?.bookTitle).toBe(printedTitle);
   });
 
   it('refuses a NEAR MISS by naming the nearest creatures, and stays silent when nothing is close', async () => {

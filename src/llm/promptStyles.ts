@@ -53,10 +53,13 @@ const SPINE_ENTITY_KINDS =
  * The clause names the field, the case it is for and the one it is NOT for,
  * and the disambiguator — nothing else. It teaches a REQUEST, never a
  * statistic: the creature's numbers stay the library's, and the entity's own
- * name and prose stay the module's.
+ * name and prose stay the module's. Since row 163 the disambiguator half says
+ * where a REAL pack title comes from — the list below writes it beside each
+ * creature — because the window now carries the titles, and a model that can
+ * copy one must not be left inventing a translation of it.
  */
 const SPINE_BESTIARY =
-  ' When an NPC is a MEMORABLE CHARACTER who happens to use a common creature\u2019s numbers \u2014 the zombie is really old Aunt Agatha, the bandit captain is the miller everyone knows \u2014 give that entity a bestiary slot naming the library creature\u2019s own name ("bestiary": { "creature": "Zombie" }). The NPC keeps its OWN name and your prose about them and borrows only the creature\u2019s stats; add "book" (the book\u2019s title) only when the library holds several creatures of that name. A generic mob that is not a character gets no NPC entity and no slot \u2014 write it into the scene instead.';
+  ' When an NPC is a MEMORABLE CHARACTER who happens to use a common creature\u2019s numbers \u2014 the zombie is really old Aunt Agatha, the bandit captain is the miller everyone knows \u2014 give that entity a bestiary slot naming the library creature\u2019s own name ("bestiary": { "creature": "Zombie" }). The NPC keeps its OWN name and your prose about them and borrows only the creature\u2019s stats; add "book" (the pack title the library list below gives for that creature, copied exactly) only when the library holds several creatures of that name. A generic mob that is not a character gets no NPC entity and no slot \u2014 write it into the scene instead.';
 
 /**
  * The RULE half of the bestiary vocabulary (docs/17 row 114): what a slot may
@@ -79,21 +82,37 @@ const SPINE_BESTIARY =
  * - when the creature is in no line, the slot is LEFT OFF and the mob is
  *   written into the scene (the clause above says the same for a generic mob:
  *   a module never depends on inventing a creature).
+ *
+ * The second rule below is the SHAPE of a line (docs/17 row 163): since the
+ * window prints each creature's pack title, "copied exactly" has to say WHICH
+ * half is the name, or a model could copy the whole line into `"creature"` —
+ * and the same sentence is what tells it the title is there to be copied rather
+ * than translated, plus what a line with no title means (nothing to name, never
+ * an invented one). `llm/creatorRoster.CREATOR_ROSTER_TITLE_SEPARATOR` is that
+ * shape; a pin ties this prose to it.
  */
 const SPINE_BESTIARY_RULES = [
   ' You may name ONLY a creature from the library list below, copied exactly as it is written there \u2014 that list IS this workspace\u2019s bestiary, and a name that is not on it cannot be cast.',
+  ' Each line of that list reads \u201Cname \u2014 pack title\u201D: "creature" takes the name exactly as it stands before the \u2014, and "book" the pack title after it, copied as written rather than translated or remembered; where a line carries no pack title this library records none, so never invent one.',
   ' A cast borrows that creature\u2019s numbers exactly as the library holds them: an entity is never given a level-adapted, renamed or otherwise decorated variant of a creature, and never a translation or a remembered name \u2014 if the creature you want is not on the list, give the entity NO bestiary slot and write the mob into the scene instead.',
   ' The NPC keeps her own name, level and prose either way; the slot only says whose numbers she uses.',
 ].join('');
 
-/** The opening line of the vocabulary block; the creatures follow, one per line. */
-const SPINE_BESTIARY_HEADER = 'Creatures this workspace\u2019s library holds (name only \u2014 copy it exactly):';
+/** The opening line of the vocabulary block; the creatures follow, one per
+ *  line, each in the `name — pack title` shape `llm/creatorRoster` builds
+ *  (docs/17 row 163). A line carrying no pack title is the library recording
+ *  none — the header says so rather than leaving a dangling separator. */
+const SPINE_BESTIARY_HEADER =
+  'Creatures this workspace\u2019s library holds, one per line as \u201Cname \u2014 pack title\u201D (copy the name exactly; a line with no pack title means this library records none for that creature):';
 
 /**
  * The creatures a spine run may name, as the vocabulary half of the bestiary
  * clause (docs/17 row 114): the window `llm/creatorRoster` builds from the pool
- * the cast resolves against — the library's OWN spelling of each name, one per
- * line, in window order, with the ratified `(roster truncated; N more)` note.
+ * the cast resolves against — the library's OWN spelling of each name with the
+ * pack title that library records for it (row 163), one per line in window
+ * order, with the ratified `(roster truncated; N more)` note. The lines arrive
+ * RENDERED (the window owns the shape, `CREATOR_ROSTER_TITLE_SEPARATOR`), so
+ * this block prints them verbatim and never re-derives a title.
  *
  * `null`/empty means there is nothing to offer, and the caller must leave the
  * slot off entirely: a slot offered with no vocabulary is exactly the defect

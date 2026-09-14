@@ -3796,7 +3796,11 @@ are installed" is simulated rather than imported. (c) **A real ambiguous module
 run still refuses in practice**: the spine window lists creature NAMES only, so
 a model has no way to know the library's book titles — putting the titles into
 the window would change the emitted prompt bytes and is a separate, unratified
-decision (docs/17 row 161, §Considered and not taken). (d) **No Dexie or
+decision (docs/17 row 161, §Considered and not taken). **SUPERSEDED the same day
+by docs/17 row 163, which took that decision: the window now prints each
+creature's pack title, so the untested half is no longer "the model cannot know
+a title" but "the model copies the one it is shown" — see §What the window SHOWS
+is what the cast compares below.** (d) **No Dexie or
 schema change is involved at all** (the change is control flow inside one
 function), so there is nothing to migrate and nothing to verify about stored
 rows.
@@ -3816,6 +3820,130 @@ Why both halves: the growth that fills this box is OFF-heap (`pdfjs` holds
 single process accumulate it. Owner directive, verbatim: *"please make sure that
 you restrict the mem use to not more than 4gb or so since you are not the only
 worker here."*
+
+### What the window SHOWS is what the cast compares (docs/17 row 163, docs/12 §5, docs/18 §2/§4)
+
+Row 161 made the bestiary slot's `book` a DISAMBIGUATOR instead of a veto, which
+fixed the UNIQUE creature name. It left the genuinely ambiguous one unusable,
+because the prompt's vocabulary (`llm/creatorRoster`, row 114) listed creature
+NAMES ONLY — a model filling `"book"` had to invent a title, and a module
+authored in German invented a TRANSLATION of one («Monsterkern», «NSC-Galerie»)
+that matches no candidate in the library and therefore narrows nothing. The
+owner's decision, verbatim: *"Yes — show each creature's pack title in the
+vocabulary."*
+
+Every window line is now `Name — Pack Title` (`CREATOR_ROSTER_TITLE_SEPARATOR`,
+rendered by `creatorRosterLine` — ONE definition of the shape). The title is the
+book row's OWN title, read through the SAME stamping read a citation uses
+(`domain/encounterResolve.citationBookTitle`), one read per BOOK the window
+covers and only for the window's lines. A creature whose library records no
+title — its book row is gone — prints its NAME ALONE: no separator, no empty
+dash, no `Unknown`, and specifically NOT the LABEL reading's `Rulebook`
+stand-in, which is a value a model would copy as if it were a pack.
+
+Three rules follow, and all three are pinned. The NAME is the half the lookup
+compares, so the emitted rule says the name is the part before the separator —
+a model that copied a whole line would name nothing, which the row-114 cast pin
+demonstrates by feeding the window's own line into the cast. The TITLE is the
+half the cast compares against the slot's `book`, so a title copied out of a
+line must narrow an ambiguous name (the differential pin). And a line without a
+title is a FACT about the library, not a gap to fill.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| Every window line carries the creature's REAL pack title, in the `Name — Pack Title` shape, in window order | `llm/creatorRoster.test` (`prints "Name — Pack Title" for each creature, in window order`) | ✅ |
+| The titles add the separator plus the book's own title and NOTHING else; the name list's order and content are otherwise unchanged (nothing silently dropped to pay for the titles) | `llm/creatorRoster.test` (`adds the pack title and NOTHING else to a line — the name list is untouched`, `costs the separator plus the book's own title per line, and nothing else`) | ✅ |
+| A creature whose library records no title prints its NAME ALONE — no separator, no empty dash, no stand-in, no `Unknown`/`none`; a window mixing titled and untitled lines invents nothing | `llm/creatorRoster.test` (both pins in `a creature whose library records no pack title prints its NAME ALONE`) | ✅ |
+| The title comes from the ONE stamping read (`citationBookTitle`), never the LABEL reading's `Rulebook` stand-in, and the window does not re-read the chunk table it pooled | `llm/creatorRoster.test` (`reads the title through the ONE stamping read, never the LABEL stand-in` — a source pin over CALLS, so the doc comment naming the forbidden reader does not satisfy it) | ✅ |
+| ONE rulebook read per BOOK the window covers, never one per line | `llm/creatorRoster.test` (`reads ONE book per book, not one per line — two books behind five lines cost two reads`) | ✅ |
+| **DIFFERENTIAL: a title COPIED out of a line narrows an ambiguous name to exactly the creature that line lists, and the citation stamps that same string** | `llm/creatorRoster.test` (`a title COPIED from a line narrows an ambiguous name to the creature that line lists`) | ✅ |
+| **NON-VACUITY: a window built WITHOUT titles cannot satisfy the title pins** (the same entries, built through the titles-free arm, are bare names) | `llm/creatorRoster.test` (`a window built WITHOUT titles cannot satisfy the title pins (non-vacuity)`) | ✅ |
+| The EMITTED clause says where a real title comes from, that it is copied rather than translated, and that a line with no title records none — pinned over the clause TEXT and tied to the window's own separator constant | `llm/moduleGen-cast.test` (`the emitted clause and the window it governs agree about the pack-title shape`) | ✅ |
+| The prompt a spine run actually carries shows both creatures WITH their titles, and the row-114 cast pin reads the NAME half and finds the title half on the stamped citation | `llm/moduleGen-cast.test` (`carries the ACTUAL creature names, the rule that governs them and the truncation note`, `casts the creature the WINDOW listed, by the name the window printed`) | ✅ |
+| The settings preview renders both line shapes (a titled line and a name-alone line) through the SAME clause builder a run uses | `features/prompt-styles-section.test` (mounts the preview, which composes from `bestiaryVocabularyBlock`) | ✅ |
+| An EMPTY library still composes the pre-change prompt byte for byte — the whole change is additive | `llm/moduleGen-cast.test` (`offers NO slot and composes the pre-change prompt when the window is EMPTY` + the `spine-classic-default` golden) | ✅ |
+
+**Pins, by name** (9 new in `tests/llm/creatorRoster.test.ts`, 1 new in
+`tests/llm/moduleGen-cast.test.ts`; 12 pre-existing pins re-baselined to the new
+line shape — none deleted, none weakened, none skipped):
+
+1. `prints "Name — Pack Title" for each creature, in window order`
+2. `adds the pack title and NOTHING else to a line — the name list is untouched`
+3. `reads ONE book per book, not one per line — two books behind five lines cost two reads`
+4. `prints no separator, no empty dash and no stand-in when the book row is gone`
+5. `mixes titled and untitled lines in one window without inventing anything`
+6. `reads the title through the ONE stamping read, never the LABEL stand-in (source pin)`
+7. `costs the separator plus the book's own title per line, and nothing else` (the budget pin, measured over the owner's documented library)
+8. `a window built WITHOUT titles cannot satisfy the title pins (non-vacuity)`
+9. `a title COPIED from a line narrows an ambiguous name to the creature that line lists`
+
+and in `tests/llm/moduleGen-cast.test.ts`:
+`the emitted clause and the window it governs agree about the pack-title shape`.
+
+The re-baselined pins are the row-114 line assertions (order, ties, `—`-level
+last, fractional levels, the 300-line cap, determinism, the `processing` book,
+the nested-heading name) plus `moduleGen-cast`'s vocabulary/header/midpoint
+pins: each one now expects the line WITH its pack title, and the cast pin splits
+the line on the separator.
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy —
+`/tmp/injection-163/backup/creatorRoster.ts`, never `git checkout --` — and
+proved by `git hash-object` identical before and after:
+`730c62051d3142ddd4b9704de44f72da92fdfcdf`; raw logs kept at
+`/tmp/titles-logs/injection-a.txt` and `injection-b.txt`):
+
+| injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) the title dropped from the window** (`creatorRosterLine` returns the bare name) | **RED 16 failed / 36 passed (52)**: the four title pins, the source pin, the differential copy pin, the budget pin — whose expectation is derived from the ENTRIES and the library's titles rather than read back off the lines it measures, because that first derivation AGREED with this arm (recorded, and the reason it was fixed) — plus every re-baselined line pin (order, ties, `—` level, fractions, cap, determinism, the nested heading, the `processing` book) and `moduleGen-cast`'s vocabulary/header/midpoint/cast pins |
+| **(b) an unknown title printed as `Name — `** (`creatorRosterLine` always appends the separator) | **RED 5 failed / 47 passed (52)**: the no-placeholder pin on BOTH its arms — its own failure text is `expected [ 'Zombie — ' ] to deeply equal [ 'Zombie' ]` — the mixed-window pin, the non-vacuity pin (`expected [ 'Creature 0000 — ', …(2) ]`), `adds the pack title and NOTHING else`, and the budget pin |
+
+**NUMBERS** (THE bounded landing gate — `scripts/gate.sh`, the ONE gate since the
+owner's 4 GB directive; raw log kept at `/tmp/titles-logs/gate-final.txt`,
+per-chunk logs in `/tmp/titles-logs/gate-final/`). Base: `46cdd41` (the gate
+script, its `src`-chunk fix and the docs commits above `57dd763`; no test file is
+touched by any of them, so the suite is identical to the brief's `e2b9e64`
+baseline of **327 files / 3852 tests**). The script's own summary, verbatim:
+`tests_lib: Test Files 31 passed (31) Tests 357 passed (357) ok (peak 798MB)`,
+`tests_llm: 70 passed (70) 1146 passed (1146) ok (peak 774MB)`, `tests_db: 30 /
+351 ok (peak 567MB)`, `tests_domain: 21 / 290 ok (peak 568MB)`, `tests_features:
+133 / 1307 ok (peak 1088MB)`, `tests: 327 passed (327) 3862 passed (3862) ok
+(peak 1091MB)`, `peak RSS of any single chunk: 1091MB (cap 3000MB)`,
+`GATE GREEN`. Its `tests` chunk IS the complete suite (every test in this repo
+lives under `tests/` — `find src -name '*.test.*'` = **0**, which is why
+`46cdd41` dropped that chunk from the list): **327 files / 3862 tests** against
+the base's 327 / 3852 = **+0 files, +10 tests**, exactly the 9 new pins in
+`tests/llm/creatorRoster.test.ts` plus the 1 in
+`tests/llm/moduleGen-cast.test.ts`. `lint errors: 0` (`pnpm lint` carries its ONE
+pre-existing warning at
+`src/features/campaign/components/artifact-editor.tsx:258`, not this slice's) and
+`pnpm typecheck` is clean. No `Errors:` line, no watchdog kill, no VOID chunk,
+no chunk above 1091 MB. **One honest note about the chunk list**: the
+per-subdirectory chunks are SUBSETS of the `tests` chunk, so "summed counts"
+double-count ~285 of the 327 files — the suite's true size is the `tests` chunk's
+own, which is what is quoted as this landing's numbers. (An earlier run of the
+same gate read `GATE RED` only because its then-present `src` chunk exits 1 with
+`No test files found`; that was a bug in the script, fixed by `46cdd41`, and no
+test in this slice ever failed in it.)
+
+**UNPROVEN, stated as such.** (a) **No pin can show a real model COPYING the
+printed title instead of inventing one.** Every pin mocks the transport at the
+protocol boundary, so the INTENT ("the model copies a line's title") is not
+measurable here; what is measured is that the string the window prints is the
+string the cast accepts, end to end through `libraryCitationForEntity`. Whether
+a real German module now fills `"book"` with `Pathfinder Monster Core` rather
+than «Monsterkern» is the owner's to observe in a live run. (b) **The title read
+is exercised against fake-indexeddb**, so "the library records no title" is
+simulated by deleting a book row rather than by a real workspace whose pack was
+uninstalled — the reachable state is the same one the citation's content-hash
+fallback exists for. (c) **The MEASURED cost uses the owner's real pack TITLES
+and his documented pack COUNTS (docs/16 §4) but not his actual creature names**:
+the growth is name-length-independent (a title is appended to whatever the name
+was), so the per-line figure is exact while the corpus it is summed over is the
+documented one. (d) **The legend shape's cost is arithmetic, not a measurement**
+of the built alternative — it is reported as a proposal, not landed.
 
 ### Remaining gaps
 
