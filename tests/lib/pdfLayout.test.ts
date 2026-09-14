@@ -209,10 +209,9 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
       if (before === undefined) throw new Error(`no baseline captured for ${name}`);
       added[name] = missingRuns(contentRuns(definition), before.runs);
     }
-    // The ONLY runs the document gains over the pre-layout renderer, by name
-    // and in order, because the navigation slice (docs/17 row 151) ADDS runs
-    // and this assertion is an EQUALITY on purpose — an extra run still fails,
-    // and so does a missing one:
+    // The runs the document gains over the pre-layout renderer, by name and in
+    // order, because this assertion is an EQUALITY on purpose — an extra run
+    // still fails, and so does a missing one:
     //
     // 1. the §5 own-page pointer, one per own-page artifact, unchanged since
     //    row 148;
@@ -225,7 +224,17 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
     // 3. the two genuinely new STRINGS are `Referenced from: ` and the ` · `
     //    separator (hence the `strings` delta of +2/+2/+1 in the counts test —
     //    every place LABEL already printed as a heading, and the three
-    //    own-page pointers in `large-procedural` are row 148's).
+    //    own-page pointers in `large-procedural` are row 148's);
+    // 4. **the four cells of the small fixture's markdown table** (docs/17 row
+    //    157): `Item`, `Value`, `Silver bell`, `40 gp`, in the table's own
+    //    reading order, and ONLY in `small-procedural`, because that fixture's
+    //    part is the one that carries a table. The baseline beside this list is
+    //    a capture of the renderer that DELETED a table row, so the table's
+    //    cells are additions by construction — they are the slice's own,
+    //    measured contribution, and they sit FIRST for the part page, which the
+    //    extractor reaches before the artifact chapters' back-references. This
+    //    is the differential's table alarm: a renderer that drops a row (or
+    //    pads one away) removes a string from THIS list and reds an equality.
     //
     // and nothing else — in particular not one content run is rewritten, which
     // is what makes "the same set of content strings" a real claim.
@@ -292,6 +301,13 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
         'A Word on the Tide',
       ],
       'small-procedural': [
+        // The small fixture's markdown TABLE, cell by cell (docs/17 row 157):
+        // the part page is read before the artifact chapters, so the table's
+        // four cells lead the list.
+        'Item',
+        'Value',
+        'Silver bell',
+        '40 gp',
         'Referenced from: ',
         'Premise',
         'Referenced from: ',
@@ -308,14 +324,22 @@ describe('the page model preserves the document’s content (docs/17 row 148)', 
         return [name, { runs: runs.length, strings: contentStrings(definition).length }];
       }),
     );
-    // AFTER the navigation slice (docs/17 row 151): +24 / +18 / +4 runs against
-    // row 148's numbers (220/165/53), all of them the §7 back-reference lines
-    // itemised in the test above; +2/+2/+1 distinct strings (`Referenced from: `
-    // and the ` · ` separator — every place label already printed as a heading).
+    // AFTER the markdown-table slice (docs/17 row 157): `small-procedural`'s
+    // part carries a table, so that document gains +4 runs / +4 distinct
+    // strings — its four cells, the same four itemised as item 4 of the added
+    // list above. `large-procedural` and `large-planned` do NOT move: neither
+    // fixture carries a table, which is why the table's delta is visible in
+    // exactly one document and nothing else in the document shifted.
+    //
+    // The road here, for a reader checking the arithmetic: row 148 captured
+    // 220 / 165 / 53 runs; the navigation slice (row 151) added +24 / +18 / +4
+    // (the §7 back-reference lines) with +2 / +2 / +1 distinct strings
+    // (`Referenced from: ` and the ` · ` separator — every place label already
+    // printed as a heading); this slice adds +4 / +0 / +0 runs and strings.
     expect(counts).toEqual({
       'large-procedural': { runs: 244, strings: 161 },
       'large-planned': { runs: 183, strings: 132 },
-      'small-procedural': { runs: 57, strings: 49 },
+      'small-procedural': { runs: 61, strings: 53 },
     });
     // The BEFORE numbers, from the same extractor at the base commit.
     expect(

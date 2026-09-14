@@ -3460,6 +3460,69 @@ predate the stamp is unmeasurable here: it needs the real database, so an
 already-imported campaign may read the honest `The pack was not recorded when
 this citation was written.` (the owner accepted that, docs/17 row 155).
 
+### A markdown table is a real table, and no pipe line is deleted (docs/17 row 157)
+
+The module book's markdown renderer deleted tables instead of rendering them —
+and not by choosing to skip them: `mdToPdfmake.sanitizeLine` turned ANY line that
+opened and closed with a pipe into the EMPTY STRING, and the parser read an empty
+line as a paragraph break. Measured: a table row inside a list item printed an
+**empty bullet**, `## | a | b |` printed an **empty heading**, and the defect
+report's own reproduction (two prose lines with a three-line table between them)
+printed the prose and nothing between it — no problem, no placeholder, no toast.
+That is a `docs/07` "documented limit" REVERSED rather than a bug fixed, so the
+records change deliberately: the pin that asserted the deletion now asserts the
+row PRINTS (same input, opposite claim, and it additionally asserts the cell text
+is present so a dropping parser cannot pass), and docs/07 keeps the old sentence
+with the reversal recorded under it.
+
+The whole change is ONE seam extended — `lib/mdToPdfmake`'s `MdBlock` union gains
+a `table` kind (rows → cells → inline runs) and `mdToPdfmakeContent` renders a
+real pdfmake table. No second parser, no second renderer, and `lib/textBlocks`
+and `lib/markdown.markdownToText` are untouched (text-only surfaces: the
+single-artifact export still prints pipes as text, deliberately out of scope).
+
+| fact pinned | where |
+|---|---|
+| **The reversed pin: the same input that used to produce NO block now produces a `table` block with `c`, `d` in it** — and the cell text is asserted as a substring beside the structural `toEqual`, so neither half can pass vacuously | `tests/lib/mdToPdfmake.test.ts` (`strips HTML tags, and renders a table row instead of deleting it (the row-157 reversal)`) |
+| **Header detection and reading order** — `\| Item \| Value \|` + `\| --- \| --- \|` + two body rows parse to `header: [[Item],[Value]]` and the two rows in the text's own order; and a **delimiter-FIRST** table parses HEADERLESS (`header: null`) rather than inventing a header from its first data row | same file (`reads the header row, the delimiter row and the body rows in the text's own order`, `renders a delimiter-FIRST table without a header, never inventing one from its first row`) |
+| **A ragged row loses nothing**: fewer cells than the header → the row keeps its cells and gains an empty one (asserted at BOTH levels — the parsed block keeps `[{Silver bell}]`, and the pdfmake body is `[{Silver bell}, {text: ''}]`) | same file (`pads a ragged row with empty cells instead of dropping it`) |
+| **A row WIDER than the header widens the table**: three columns for a three-cell body row, the header padded to three, and `e` still present — a renderer sizing from the header alone would drop it | same file (`widens the table for a row carrying MORE cells than the header, keeping every cell`) |
+| **An escaped pipe is content, not a separator**: `\| 1 \\\| 2 \| Either \|` is TWO cells and the first reads `1 \| 2` | same file (`keeps an escaped pipe inside one cell`) |
+| **A pipe line with NO delimiter row prints as the text it is** — and the defect's own reproduction is asserted run by run: three paragraphs, the middle one the literal pipe line (it used to vanish) | same file (`prints a pipe line with NO delimiter row as literal text, never deletes it`, `never lets a malformed pipe block disappear: it lands in the definition as text`) |
+| **A lone delimiter row is text too** (a headerless table with no rows would render a node that prints nothing) | same file (`prints a LONE delimiter row as literal text too …`) |
+| **A table as the FIRST block and as the LAST block** both parse (the parser consumes rows by index, so the end-of-input flush cannot eat one) | same file (`reads a table as the FIRST block and as the LAST block`) |
+| **A table written under a bullet** closes the list (the bullet keeps its own text) and prints as a real table right after it — the empty bullet is gone, in BOTH directions of the old defect: a nested table, and a bullet whose whole text is a pipe line | same file (`renders a table written under a bullet as its own table, and the bullet keeps its own text`, `prints a bullet whose whole text is a pipe line, instead of the empty bullet it used to be`) |
+| **A heading written with pipes keeps them** instead of becoming an empty heading | same file (`keeps the pipes of a heading written with them, instead of emptying the heading`) |
+| **The pdfmake node itself**: `headerRows: 1` (so pdfmake repeats the header across a page break), one `'*'` width per column, the header cells bold + shaded, and a layout of FUNCTIONS (the page model's `estimateHeight` calls those paddings — a named layout would measure as padding-free) | same file (`maps a table to a REAL pdfmake table: a header row marked for repetition, equal widths, every cell`) |
+| **Every call site of the seam renders it**: one table driven through the module book's three doors — `premiseContent`, `partTextContent`, `artifactProse` — each found as a real `table` node with the exact cell objects, with the raw markup (`\| Premise label \| Value \|`) asserted ABSENT from the document's text | `tests/lib/modulePdf.test.ts` (`prints a markdown table at EVERY call site of the ONE markdown seam, as a real table (docs/17 row 157)`) |
+| **EXACTLY ONE pipe grammar and ONE renderer (AGENTS §Centralization 2)**: a source scan over `src/` with a >200-file non-vacuity check, a declared-sites map and a rot check — the escaped-pipe spelling lives in `wikilinks.ts` (its own grammar) and `mdToPdfmake.ts` (`PIPE_ROW`), and `mdToPdfmakeContent(` is reached from exactly three statements in `modulePdf.ts` and nowhere else | same file (`no second pipe-row grammar exists outside the declared sites`, `the markdown→pdfmake renderer is reached through its declared callers and no others`) |
+| **The content-preservation differential covers the new kind**: the small fixture's part carries a table, so the added-runs equality (still an exact `toEqual`) gains exactly four strings in `small-procedural` — `Item`, `Value`, `Silver bell`, `40 gp` — and the counts equality moves 57/49 → **61/53** there and NOWHERE else; the loss side is unchanged | `tests/lib/pdfLayout.test.ts` (`adds exactly the page model's own pointers and the navigation's own lines, and nothing else`, `reports the content counts on both sides, so a silent shrink is visible`) |
+
+| injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`, each printed back with `git diff --stat`, restored from an OUT-OF-TREE copy — never `git checkout --` — and proved by `git hash-object` identical before and after) | result |
+|---|---|
+| **(a) drop a cell's text** (`rowCells(row, false)` empties the first cell of every body row) | **RED 6 failed / 66 passed (72)**, exit 1, across the three suites — `pads a ragged row…` with `expected … [ { "text": "" }, { "text": "" } ]` where the cell text belonged; `widens the table…`; `maps a table to a REAL pdfmake table…`; the document call-site pin; and BOTH differential pins (the counts report falling to `"strings": 52` is the differential catching ONE lost cell) |
+| **(b) the pre-157 behaviour restored** (the pipe deletion back inside `sanitizeLine` AND `readTable` never consulted — the defect as it shipped) | **RED 18 failed / 54 passed (72)** — every table pin, the malformed pin, both source pins (the restored regex is a SECOND escaped-pipe site, so the scan catches the old shape too) and both differential pins, whose `small-procedural` numbers fall to **57 runs / 49 strings**: the pre-slice content, exactly. **The LOSS side stayed GREEN**, correctly: the baseline never contained those cells — which is why the additions side is an equality and not "at least" |
+| **(c) the loss injection** — one artifact BODY dropped (`artifactProse` returns nothing for the small fixture's location) with the page model untouched | **RED 2 failed / 23 passed (25)** in `pdfLayout.test.ts`: the LOSS side reds with `expected [ "Nothing has crossed it in years." ] to deeply equal []` plus the counts report, **while the added-runs equality stayed GREEN** — the same asymmetry docs/17 row 151's I4 recorded, and the reason the loss assertion must never be weakened |
+
+**UNPROVEN, stated as such.** jsdom asserts pdfmake DEFINITIONS, never a rendered
+page: nothing here proves a table LOOKS right. (1) Column widths and wrapping are
+unverified — every column is `'*'`, so a 9-column table and a 2-column table are
+equally "correct" at the definition level, and whether the numbers columns want
+narrower cells or right alignment is a real-PDF judgement. (2) A table crossing a
+page break is measured by `estimateHeight`'s deliberately over-stating arithmetic
+(docs/19 §3), so its real break point and the real `headerRows: 1` repetition are
+pdfmake's behaviour, asserted here only as a definition. (3) A table written under
+a bullet prints as a block AFTER the list, which is the honest reading of a
+line-based parser but is not GFM's nested-table shape. (4) The app still
+disagrees BY DESIGN and is out of scope: `components/wiki-markdown.WikiMarkdown`
+is a different renderer (remark), no `remark-gfm` was added, and whether the app
+renders tables is the owner's decision (asked separately) — while
+`lib/markdown.markdownToText` keeps printing pipes as text in the single-artifact
+GM-notes export, also out of scope. (5) The `problems` surface gained NOTHING on
+purpose: every pipe line now lands somewhere (a table, or literal text at the
+shape it was written as), so there is no table failure to report — a ragged row is
+padded, not refused, and reporting it would report a non-failure as one.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

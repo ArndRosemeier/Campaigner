@@ -528,9 +528,27 @@ PDF. They need to be included at the right places."*
 - Cover page, generated table of contents (pdfmake `toc`), chapters as H1 with
   page breaks. Part headers carry a kicker (`PART 1 OF 2 · LEVELS 1–2`).
 - Markdown → pdfmake via `/src/lib/mdToPdfmake.ts`: paragraphs, bold/italic,
-  h1–h3, bullet/numbered lists, blockquote (→ read-aloud box); html/tables are
-  ignored — that limit is the module's own vocabulary, and it stays honest
-  (docs/18 §2.3).
+  h1–h3, bullet/numbered lists, blockquote (→ read-aloud box); html is ignored,
+  and **tables render as real tables since docs/17 row 157**.
+  - **REVERSAL, recorded rather than edited away:** this line used to read
+    *"html/tables are ignored — that limit is the module's own vocabulary, and it
+    stays honest"*, and that was a DELIBERATE decision (M3-D shipped it, and
+    `tests/lib/mdToPdfmake.test.ts` pinned it in those words). It was reversed
+    because the mechanism behind it was wrong in a way the decision did not
+    intend: the limit was implemented by turning any line that opened and closed
+    with a pipe into the EMPTY STRING (`sanitizeLine`), so a table row was not
+    "ignored" — it was DELETED at parse time, with no problem, no placeholder and
+    no toast. Measured consequences: a table row inside a list item printed an
+    empty bullet, a heading written `## | a | b |` printed an empty heading, and
+    a module book's prose lost the rows between its paragraphs silently — which
+    the document's own contract (`src/lib/modulePdf.ts:87`, *"Nothing fails
+    silently … a missing row or blob is a visible defect INSIDE the document,
+    not a lost document"*) forbids. A
+    table is now a `table` block (delimiter-row header detection, escaped pipes,
+    ragged rows padded with empty cells, a pipe line with no delimiter row
+    printed as the text it is), rendered as a real pdfmake table; the HTML limit
+    stands. docs/17 row 157 records the full decision, the pins and the
+    reversal's injections.
 - **Kind data renders**: encounter `difficulty`/`levelHint` kickers, monsters
   with counts and **roster origins**, terrain/tactics/treasure; location/event
   `locationType`, `inhabitants`, `pointsOfInterest`, `hooks`; NPC appearance and

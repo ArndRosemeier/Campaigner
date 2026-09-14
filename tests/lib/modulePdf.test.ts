@@ -385,6 +385,25 @@ function textOf(definition: unknown): string {
   return JSON.stringify(definition);
 }
 
+/** Every pdfmake TABLE node of a definition, in document order (a stat box, a
+ * read-aloud box and a markdown table are all `table` nodes — a pin that wants
+ * ONE of them finds it by the cell text it carries). */
+function tableNodes(
+  node: unknown,
+  out: { headerRows?: number; widths?: unknown[]; body?: unknown[] }[] = [],
+): { headerRows?: number; widths?: unknown[]; body?: unknown[] }[] {
+  if (Array.isArray(node)) {
+    for (const child of node) tableNodes(child, out);
+    return out;
+  }
+  if (typeof node !== 'object' || node === null) return out;
+  const record = node as Record<string, unknown>;
+  const table = record.table as { headerRows?: number; widths?: unknown[]; body?: unknown[] } | undefined;
+  if (table !== undefined && Array.isArray(table.body)) out.push(table);
+  for (const value of Object.values(record)) tableNodes(value, out);
+  return out;
+}
+
 describe('buildModuleDefinition — the module IS the document', () => {
   beforeEach(clearDatabase);
 
@@ -454,6 +473,68 @@ describe('buildModuleDefinition — the module IS the document', () => {
     expect(text).not.toContain('[Part 1 of');
     expect(text).not.toContain('[part 1 of');
     expect(text).not.toContain('[Part 2 of');
+  });
+
+  it('prints a markdown table at EVERY call site of the ONE markdown seam, as a real table (docs/17 row 157)', async () => {
+    // The module book reaches `mdToPdfmakeContent` through exactly three doors —
+    // `premiseContent`, `partTextContent` and `artifactProse` (every artifact
+    // body) — so the pin drives one table through each, with a label cell that
+    // says which door it came through.
+    const seeded = await seed();
+    const location = seeded.artifacts.find((artifact) => artifact.kind === 'location');
+    if (location === undefined) throw new Error('the seed must build a location');
+    const spine = seeded.module.spine;
+    const table = (label: string): string =>
+      `\n\n| ${label} | Value |\n| --- | --- |\n| Silver bell | 40 gp |\n\nProse below.`;
+    const definition = buildModuleDefinition({
+      module: {
+        ...seeded.module,
+        spine: moduleSpineSchema.parse({
+          ...spine,
+          // The premise still NAMES the location: which rows the document
+          // prints is decided by what its own text refers to, so a premise
+          // rewritten without the wiki-link would scope the row out and this
+          // pin would be measuring the omission rule instead of the table.
+          premise: `A drowned vault beneath the [[Old Tower]].${table('Premise label')}`,
+        }),
+        parts: seeded.module.parts.map((part) =>
+          part.planIndex === 0
+            ? {
+                ...part,
+                markdown: `The party rows out at dusk. [[The Turning]] comes with the tide.${table('Part label')}`,
+              }
+            : part,
+        ),
+      },
+      artifacts: seeded.artifacts.map((artifact) =>
+        artifact.id === location.id
+          ? { ...artifact, body: `The tower watches the ford.${table('Body label')}` }
+          : artifact,
+      ),
+    });
+    for (const label of ['Premise label', 'Part label', 'Body label']) {
+      const node = tableNodes(definition).find((candidate) =>
+        JSON.stringify(candidate).includes(label),
+      );
+      if (node === undefined) throw new Error(`no pdfmake TABLE carries the cell “${label}”`);
+      expect(node.headerRows).toBe(1);
+      expect(node.widths).toEqual(['*', '*']);
+      expect(node.body).toEqual([
+        [
+          { text: [{ text: label }], bold: true, fillColor: '#f6efe2' },
+          { text: [{ text: 'Value' }], bold: true, fillColor: '#f6efe2' },
+        ],
+        [{ text: [{ text: 'Silver bell' }] }, { text: [{ text: '40 gp' }] }],
+      ]);
+    }
+    // …and the MARKUP is nowhere: the table prints as cells, and its prose
+    // around it is untouched. The pipes are gone from the document's text —
+    // which is what "a real table" means on the page.
+    const text = textOf(definition);
+    expect(text).toContain('A drowned vault beneath the');
+    expect(text).toContain('Prose below.');
+    expect(text).not.toContain('| Premise label | Value |');
+    expect(text).not.toContain('| --- | --- |');
   });
 
   it('renders the location/event structured data the audit found dropped (C4)', async () => {

@@ -328,7 +328,15 @@ export async function pdfLayoutLargeFixture(): Promise<LayoutFixture> {
   };
 }
 
-/** The SMALL fixture: premise, one part, two artifacts, no plan, no images. */
+/** The SMALL fixture: premise, one part, two artifacts, no plan, no images.
+ *
+ * The part's markdown carries a MARKDOWN TABLE (docs/17 row 157) so the
+ * content-preservation differential really exercises the new block kind: the
+ * baseline beside it was captured from the renderer that DELETED a table row,
+ * so those four cell runs (`Item`, `Value`, `Silver bell`, `40 gp`) are the
+ * table's own contribution to the differential's "added" list. A renderer that
+ * dropped a row again would red that list — it is an exact equality.
+ */
 export async function pdfLayoutSmallFixture(): Promise<LayoutFixture> {
   const campaign = await createCampaign({ name: 'Small Layout Campaign', system: 'dnd5e' });
   const npc = await createArtifact({
@@ -370,7 +378,8 @@ export async function pdfLayoutSmallFixture(): Promise<LayoutFixture> {
     parts: [
       modulePartSchema.parse({
         planIndex: 0,
-        markdown: 'The party waits for the ferry.\n\nThe water is very still.',
+        markdown:
+          'The party waits for the ferry.\n\n| Item | Value |\n| --- | --- |\n| Silver bell | 40 gp |\n\nThe water is very still.',
         status: 'ready',
         errorMessage: '',
         edited: false,

@@ -120,6 +120,21 @@ would put a clock and a layout pass into a deliberately deterministic export), s
 deliberately WIDE, so the arithmetic errs toward promotion rather than toward
 overflow, and an unknown node contributes ZERO (it can never drop content).
 
+**A markdown TABLE is FLOW content, not a detail tier (docs/17 row 157).** §3's
+parenthetical above lists "tables" among the 9.5–10 pt detail treatments, and
+that means the renderer's REFERENCE boxes (stat boxes, roster tables, the
+read-aloud box) — boxes the renderer PLACES in a column. A table the author
+wrote in the module's own prose is not one of those: it is the prose, so it
+prints at the AMBIENT tier, where the text carries it — body 11 pt in the main
+column, and 9.5 pt when the block it belongs to sits in a sidebar, because the
+detail size is applied to the COLUMN and reached through pdfmake's own style
+stack. It is measured by the same `estimateHeight` — a `table` node's layout
+paddings are READ, which is why a markdown table's layout is written as an
+object of functions rather than one of pdfmake's layout names — so the fit rule
+sees it and may MOVE the block that carries it, never clip it. Whether a wide
+table still READS well in a 104 mm column is §10.5's tuning question, and the
+owner's to judge in a real PDF.
+
 ## 4. Placement: two tiers, and locality is DERIVED (ratified)
 
 - **`beside`** — a companion (a short artifact body, a stat block, a note) that
