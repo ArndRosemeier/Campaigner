@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
-import { CANONICAL_ROOM_MARKERS, contentCreatureKey } from '@/domain';
+import { CANONICAL_ROOM_MARKERS } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
@@ -84,7 +84,7 @@ import {
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
-import { creaturePortraitArt, tokenCreature } from '@/db/creatureRepo';
+import { creaturePortraitImageIn, tokenCreature } from '@/db/creatureRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { ZoomableImage } from '@/features/images/zoomable-image';
 import {
@@ -109,6 +109,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { DiceRoller } from '@/features/dice/DiceRoller';
 import type { DiceRollResult, RollIntent } from '@/features/dice/types';
+import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { SpawnPicker } from './SpawnPicker';
@@ -272,6 +273,27 @@ export function BattleSurface(): JSX.Element {
     moduleId,
     contentSize.w,
     contentSize.h,
+  );
+
+  // THE portrait question, asked ONCE per board (docs/11 D6 / docs/17 row
+  // 165): every token's art is this campaign's presentation row for the
+  // creature identity the token carries (`token.creatureKey`, stamped by
+  // seeding through the ONE identity rule), else the artifact the token points
+  // at (a cast or hand-authored NPC keeps its own cover). This is the SAME
+  // resolution the portrait batch and the module gap detector ask, so "the
+  // board shows a portrait" and "that creature is imaged" are one statement —
+  // reading the token's artifact cover alone showed initials for every cited
+  // creature, because the creature tier gives those tokens no artifact.
+  const creaturePresentation = useCreaturePresentation(campaignId);
+  const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
+  const portraitImageIdOf = useCallback(
+    (token: BattleToken): Id | null =>
+      creaturePortraitImageIn({
+        presentationByKey: creaturePresentation ?? new Map<string, Id>(),
+        creatureKey: token.creatureKey,
+        npcArtifact: token.artifactId === null ? undefined : artifactById.get(token.artifactId),
+      }),
+    [creaturePresentation, artifactById],
   );
 
   const mapImageId = battle?.board.mapImageId ?? null;
@@ -502,26 +524,17 @@ export function BattleSurface(): JSX.Element {
     return battle.board.effects;
   }, [battle, liveDrag, effectResizePreview]);
 
-  const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
   const lightboxToken = displayedTokens.find((token) => token.id === lightboxTokenId) ?? null;
-  const lightboxArtifact = lightboxToken?.artifactId === null || lightboxToken === null
-    ? undefined
-    : artifactById.get(lightboxToken.artifactId);
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
   const selectedArtifact = selectedToken?.artifactId === null || selectedToken === null
     ? undefined
     : artifactById.get(selectedToken.artifactId);
   // The selected token's CREATURE (docs/11 D5 amendment / D10): the board
-  // resolves a token's portrait and its stat block by the creature IDENTITY the
-  // token carries (`token.creatureKey`, stamped by seeding) — never by an
-  // artifact that a creature no longer has. A cast creature npc resolves
-  // through its own `creatureRef`; a plain authored npc has no creature
-  // identity, and its own card already carries everything about it.
-  const selectedCreatureKey =
-    selectedToken?.creatureKey ??
-    (selectedArtifact?.kind === 'npc' && selectedArtifact.data.creatureRef !== undefined
-      ? contentCreatureKey(selectedArtifact.name, null)
-      : null);
+  // resolves a token's stat block by the creature IDENTITY the token carries
+  // (`token.creatureKey`, stamped by seeding) — never by an artifact that a
+  // creature no longer has. A cast creature npc resolves through its own
+  // `creatureRef`; a plain authored npc has no creature identity, and its own
+  // card already carries everything about it.
   const selectedCreature = useLiveQuery(
     async () => {
       if (selectedToken === null) return null;
@@ -548,27 +561,11 @@ export function BattleSurface(): JSX.Element {
   // everywhere), when the token stands for no creature (a PC, a plain authored
   // npc, a statless row), or for an invented token whose name is blank — those
   // portraits are managed in the editor section, never on this card.
-  const [portraitHasImage, setPortraitHasImage] = useState(false);
-  useEffect(() => {
-    if (selectedCreatureKey === null) {
-      setPortraitHasImage(false);
-      return;
-    }
-    let cancelled = false;
-    void creaturePortraitArt(campaignId, selectedCreatureKey)
-      .then((art) => {
-        if (!cancelled) setPortraitHasImage(art === 'cover');
-      })
-      .catch(() => {
-        // A campaign/creature read failure must not silently claim "no
-        // portrait" (AGENTS rule 2): the card's action reads as generate, and
-        // the enqueue's own loud failure path reports the real reason.
-        if (!cancelled) setPortraitHasImage(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [campaignId, selectedCreatureKey, selectedArtifact?.coverImageId, selectedCreature]);
+  // The selected token's portrait, resolved by the SAME reading the board
+  // renders with — so the card's action ("Generate" vs "Regenerate") states
+  // exactly what the token shows and what the queue's own skip-if-imaged check
+  // will decide (docs/17 row 165).
+  const selectedPortraitImageId = selectedToken === null ? null : portraitImageIdOf(selectedToken);
   const selectedPortrait: { target: SingleMobPortraitTarget; hasImage: boolean } | null = useMemo(() => {
     if (playerSafe || selectedToken === null || selectedCreature === null) return null;
     const name = selectedCreature.name.trim();
@@ -599,9 +596,9 @@ export function BattleSurface(): JSX.Element {
           ? { artifactId: selectedArtifact.id }
           : {}),
       },
-      hasImage: portraitHasImage,
+      hasImage: selectedPortraitImageId !== null,
     };
-  }, [playerSafe, selectedToken, selectedArtifact, selectedCreature, portraitHasImage, encounterArtifact, campaignId]);
+  }, [playerSafe, selectedToken, selectedArtifact, selectedCreature, selectedPortraitImageId, encounterArtifact, campaignId]);
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
     // Convert against the CONTENT element's post-transform rect: it bakes the
@@ -2076,7 +2073,7 @@ export function BattleSurface(): JSX.Element {
                   token={token}
                   content={contentPx}
                   tokenSize={board.tokenSize}
-                  artifact={token.artifactId === null ? undefined : artifactById.get(token.artifactId)}
+                  portraitImageId={portraitImageIdOf(token)}
                   stats={stats}
                   selected={token.id === selectedTokenId}
                   isActiveTurn={token.id === turnTokenId}
@@ -2177,6 +2174,7 @@ export function BattleSurface(): JSX.Element {
                   ? undefined
                   : artifactById.get(selectedToken.artifactId)
               }
+              portraitImageId={selectedPortraitImageId}
               stats={stats}
               statBlock={selectedStatBlock}
               playerSafe={playerSafe}
@@ -2439,7 +2437,7 @@ export function BattleSurface(): JSX.Element {
         {lightboxToken !== null && (
           <TokenLightbox
             token={lightboxToken}
-            artifact={lightboxArtifact}
+            portraitImageId={portraitImageIdOf(lightboxToken)}
             onClose={() => {
               setLightboxTokenId(null);
             }}
@@ -2520,7 +2518,8 @@ interface TokenViewProps {
   content: { w: number; h: number };
   /** The board's token size in content px (cell-filling on layout boards). */
   tokenSize: number;
-  artifact: AnyArtifact | undefined;
+  /** The token's portrait, resolved by the board's ONE portrait reading. */
+  portraitImageId: Id | null;
   stats: FighterStatsLookup;
   selected: boolean;
   isActiveTurn: boolean;
@@ -2537,15 +2536,14 @@ function TokenView({
   token,
   content,
   tokenSize,
-  artifact,
+  portraitImageId,
   stats,
   selected,
   isActiveTurn,
   dragging,
   playerSafe,
 }: TokenViewProps): JSX.Element | null {
-  const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
-  const url = useImageUrl(coverImageId);
+  const url = useImageUrl(portraitImageId);
   const resolved = combatHpForToken(token, stats);
   if (content.w === 0 || content.h === 0) return null;
   // Token size: board.tokenSize in content px scaled by token.scale — the
@@ -2846,6 +2844,8 @@ function EffectView({
 interface SelectionCardProps {
   token: BattleToken;
   artifact: AnyArtifact | undefined;
+  /** The token's portrait, resolved by the board's ONE portrait reading. */
+  portraitImageId: Id | null;
   stats: FighterStatsLookup;
   statBlock: StatBlock | null;
   playerSafe: boolean;
@@ -2906,6 +2906,7 @@ interface SelectionCardProps {
 function SelectionCard({
   token,
   artifact,
+  portraitImageId,
   stats,
   statBlock,
   playerSafe,
@@ -2921,10 +2922,10 @@ function SelectionCard({
   const [cardOpen, setCardOpen] = useState(false);
   const [portraitRegenOpen, setPortraitRegenOpen] = useState(false);
   const [portraitBusy, setPortraitBusy] = useState(false);
-  // Same art path as TokenView/the artifact cards: useImageUrl over the
-  // artifact's coverImageId — no new image plumbing.
-  const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
-  const url = useImageUrl(coverImageId);
+  // The same art the board's tokens render (the ONE portrait reading, resolved
+  // once per board): the card and the token can never disagree about which
+  // image this creature's look is.
+  const url = useImageUrl(portraitImageId);
   const resolved = combatHpForToken(token, stats);
   const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
   const initials = token.label
@@ -3162,7 +3163,8 @@ function SelectionCard({
 
 interface TokenLightboxProps {
   token: BattleToken;
-  artifact: AnyArtifact | undefined;
+  /** The token's portrait, resolved by the board's ONE portrait reading. */
+  portraitImageId: Id | null;
   onClose: () => void;
 }
 
@@ -3177,11 +3179,9 @@ interface TokenLightboxProps {
  * defaults; focus returns to the element that held it when the lightbox
  * opened.
  */
-function TokenLightbox({ token, artifact, onClose }: TokenLightboxProps): JSX.Element {
-  // Same art path as TokenView/the selection card: useImageUrl over the
-  // artifact's coverImageId — no new image plumbing.
-  const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
-  const url = useImageUrl(coverImageId);
+function TokenLightbox({ token, portraitImageId, onClose }: TokenLightboxProps): JSX.Element {
+  // The same art the token on the board renders (the ONE portrait reading).
+  const url = useImageUrl(portraitImageId);
   const restoreFocusRef = useRef<Element | null>(null);
   useEffect(() => {
     restoreFocusRef.current = document.activeElement;
@@ -3222,9 +3222,9 @@ function TokenLightbox({ token, artifact, onClose }: TokenLightboxProps): JSX.El
             box IS the viewport (h-dvh w-dvw) with object-contain — caps only
             ever shrink, so the old max-h-[70dvh] rendered generated portraits
             at natural size, half the screen. */}
-        {url !== null && coverImageId !== null ? (
+        {url !== null && portraitImageId !== null ? (
           <ZoomableImage
-            imageId={coverImageId}
+            imageId={portraitImageId}
             className="h-dvh w-dvw max-h-[100dvh] max-w-[100dvw] border-0"
             onCloseRequest={onClose}
           />

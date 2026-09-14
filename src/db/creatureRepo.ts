@@ -1,4 +1,5 @@
 import type {
+  AnyArtifact,
   CreatureIdentity,
   CreatureRef,
   Id,
@@ -36,7 +37,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByContentHash } from '@/db/chunkRepo';
 import {
-  documentCoverImageId,
+  creatureImageIdsByKey,
   getCreatureImageRow,
   insertCreatureImageRow,
 } from '@/db/creatureImages';
@@ -334,15 +335,29 @@ function requireCreatureKey(creatureKey: string): void {
 
 /**
  * THE portrait question — the only one top code asks (docs/11 D6): which image
- * is this creature's look IN THIS CAMPAIGN? Resolution order:
+ * is this creature's look IN THIS CAMPAIGN? Resolution order (AMENDED by
+ * docs/17 row 165 — the two halves SWAPPED, and why):
  *
- * 1. the campaign's presentation row for the identity (the normal case — a
- *    cited creature, an invented mob, a battle token);
- * 2. else the cover/gallery of the AUTHORED NPC the caller names (an authored
- *    NPC's portrait lives on its own row — cast or hand-made);
+ * 1. the cover/gallery of the artifact the caller names, when it has one: a
+ *    cast or hand-authored NPC's portrait lives on its OWN row, and that row's
+ *    card is what a module surface renders for it — so the board showing
+ *    anything else would be a disagreement of its own;
+ * 2. else the campaign's presentation row for the creature IDENTITY (a cited
+ *    creature has no artifact at all, and an invented mob never has one);
  * 3. else null: no art yet, which is a NORMAL state, never an error.
  *
- * No artifact has to exist for 1, and no cache row has to exist for 2.
+ * The swap is the whole point of row 165's differential: the reading has to
+ * answer with what the surface that OWNS the row shows. Both halves were
+ * already in this rule — a cited creature's token simply had no artifact to
+ * find, and the board asked only about the artifact.
+ *
+ * This is the SAME rule as `creaturePortraitImageIn` below over a live
+ * snapshot — the async shape reads the two rows, that one takes what its caller
+ * already holds — so the battle board (which renders from a snapshot), the
+ * portrait batch, the battle card and the module gap detector cannot answer
+ * "is this creature illustrated?" differently (docs/17 row 165: the board read
+ * a token's ARTIFACT cover instead, a place the creature tier left empty, and
+ * every cited mob showed initials while the batch reported it imaged).
  */
 export async function creatureCoverImageId(options: {
   campaignId: Id;
@@ -351,13 +366,43 @@ export async function creatureCoverImageId(options: {
   npcArtifactId?: Id | null | undefined;
 }): Promise<Id | null> {
   requireCreatureKey(options.creatureKey);
-  const direct = await getCreatureImageRow(options.campaignId, options.creatureKey);
-  if (direct !== undefined) return documentCoverImageId(direct);
-  if (options.npcArtifactId === undefined || options.npcArtifactId === null) return null;
-  const npc = await getAnyArtifact(options.npcArtifactId);
-  if (npc === undefined) return null;
-  if (npc.coverImageId !== null) return npc.coverImageId;
-  return npc.imageIds[0] ?? null;
+  const presentation = await creatureImageIdsByKey(options.campaignId);
+  const npc =
+    options.npcArtifactId === undefined || options.npcArtifactId === null
+      ? undefined
+      : await getAnyArtifact(options.npcArtifactId);
+  return creaturePortraitImageIn({
+    presentationByKey: presentation,
+    creatureKey: options.creatureKey,
+    npcArtifact: npc,
+  });
+}
+
+/**
+ * The SAME question over the values a caller already holds — a campaign's
+ * presentation rows as a key→image map plus the artifact a roster row points
+ * at, when it points at one. Pure and synchronous BY DESIGN: the battle board
+ * renders every token from a live presentation snapshot and the module gap
+ * detector walks an artifact snapshot, so neither may take a database read per
+ * token or per roster row.
+ *
+ * An identity that is absent (a PC, a hand-authored NPC, a token that stands
+ * for no creature) is not an error here: such a creature's portrait is its
+ * artifact's own art, which is exactly rule 1 above — the reason an empty key
+ * is answered rather than refused, while the async shape refuses one at its own
+ * door (`requireCreatureKey`).
+ */
+export function creaturePortraitImageIn(options: {
+  presentationByKey: ReadonlyMap<string, Id>;
+  creatureKey?: string | undefined;
+  npcArtifact?: AnyArtifact | undefined;
+}): Id | null {
+  const npc = options.npcArtifact;
+  const own = npc === undefined ? null : npc.coverImageId ?? npc.imageIds[0] ?? null;
+  if (own !== null) return own;
+  const key = options.creatureKey;
+  if (key === undefined || key === '') return null;
+  return options.presentationByKey.get(key) ?? null;
 }
 
 /**
@@ -430,19 +475,14 @@ export function chunkIdOfCreatureKey(creatureKey: string): Id | null {
 export type CreaturePortraitArt = 'none' | 'cover';
 
 /**
- * The ONE reading of a creature's presentation art over a campaign snapshot
- * (`creatureImageIdsByKey`) — the read-only batch count and the module-level
- * gap detector both walk this, so the offer and the work can never disagree.
- * A creature whose identity has no row has no art yet: the count's `missing`.
+ * The same question for ONE creature, straight from the DB — the presentation
+ * row's own presence, read on its own (the batch's counts and the "is this
+ * creature illustrated?" probes that already hold a key).
+ *
+ * `creaturePortraitImageIn` above is the WIDER read of the same fact: it also
+ * consults the authored NPC a roster row points at, which is why a surface that
+ * must agree with what it RENDERS asks that one, never this.
  */
-export function creaturePortraitArtIn(
-  presentationByKey: ReadonlyMap<string, Id>,
-  creatureKey: string,
-): CreaturePortraitArt {
-  return presentationByKey.has(creatureKey) ? 'cover' : 'none';
-}
-
-/** The same question for ONE creature, straight from the DB. */
 export async function creaturePortraitArt(
   campaignId: Id,
   creatureKey: string,

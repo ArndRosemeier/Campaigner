@@ -163,11 +163,27 @@ generator** and the bestiary spawn dialog and by **no encounter path at all**
 (the roster schema cannot express a cast — pinned in
 `tests/db/creatureRepo.test.ts`); portraits are **presentation**, keyed by
 creature identity in the global `mobPortraits` table plus the per-campaign
-`creatureImages` rows, read through the ONE seam `creatureCoverImageId`. The
-three roster `source` variants on disk are UNCHANGED (`rulebook` / `npc-ref` /
-`inline` / `none`, D2 stands), and the `missing ref` reason is ONE shape with an
-optional name (`missing ref (Ghost Lumberjack)`, read through
-`isMissingRefOrigin`).
+`creatureImages` rows, read through the ONE seam `creatureCoverImageId` (the
+async shape) and its pure snapshot twin `creaturePortraitImageIn` — the reading
+every surface that SHOWS a portrait asks. Its order is: the art of the artifact
+the row points at, when it has any (a cast or hand-authored npc's own cover —
+what the module surfaces render for that row), else the presentation row for the
+creature identity, else none. **AMENDED by docs/17 row 165: the
+battle board was the one surface that did not.** `BattleSurface.TokenView` drew
+each token's art from the token's ARTIFACT cover, which was the right place only
+while every cited chunk had a hidden mob artifact (row 106 retired those rows) —
+after the creature tier a cited creature's token carries no artifact at all, so
+the owner saw **initials on the battle map for a mob the module surface showed a
+portrait for**, while the portrait batch and the module gap detector correctly
+reported the creature as imaged (hence no "Generate everything": nothing was
+missing as far as the offer could see). The identity behind that reading is now
+ONE rule as well — `domain/creature.rosterEntryCreatureIdentity`, called by
+seeding (both token paths) and by the portrait router alike, so a token's
+`creatureKey` and the key the portrait row is written under cannot be two
+different creatures. The three roster `source` variants on disk are UNCHANGED
+(`rulebook` / `npc-ref` / `inline` / `none`, D2 stands), and the `missing ref`
+reason is ONE shape with an optional name (`missing ref (Ghost Lumberjack)`, read
+through `isMissingRefOrigin`).
 
 The owner's intent for this area is unchanged and is the reason the tier exists:
 *"Often modules want lets say a zombie, but its old aunt agatha. So, she will

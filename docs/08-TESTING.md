@@ -3950,13 +3950,11 @@ documented one. (d) **The legend shape's cost is arithmetic, not a measurement**
 of the built alternative — it is reported as a proposal, not landed.
 
 ### A rule that only holds in English is not a rule (docs/17 row 162, docs/00 §Global conventions, docs/18 §2.1)
-
 The owner authors modules in German on purpose — *"Honestly i think its good that
 i do german modules, otherwise some bugs would just not be found. This should
 really work in any language."* — and the defect class he hit is the one where
 English input hides the bug BY CONSTRUCTION. Two of this slice's three defects
 were of exactly that shape, and neither had ever been pinned:
-
 1. `src/lib/markdown.ts`'s emphasis rule was `/(?<![\w])\*([^*\n]+)\*(?![\w])/g`.
    `\w` is ASCII-only in JavaScript, so the rule asked "is the neighbouring
    character a LATIN-ASCII letter" where the author of the text meant "is it a
@@ -3973,7 +3971,6 @@ were of exactly that shape, and neither had ever been pinned:
    and different STRINGS, so every `===` on names — the wiki resolver, the alias
    pool, the creature cast — silently failed for one of the two authors: a
    phantom chip, a duplicated alias, a refused creature.
-
 The fix is ONE primitive and no new mechanism. `domain/artifactAlias.comparableName`
 is now THE comparable form of any user-visible name (`normalize('NFC')` — canonical
 equivalence, NOT diacritic folding — plus `trim()` plus `toLowerCase()`);
@@ -3984,11 +3981,41 @@ which normalize BOTH sides — a one-sided normalization would have turned a
 resolution into an empty brief context, silently). The markdown seam's emphasis
 rule is `/(?<![\p{L}\p{N}_])\*([^*\n]+)\*(?![\p{L}\p{N}_])/gu`: `\w`'s
 Unicode spelling, which picks out exactly the same characters on ASCII input.
+### One creature identity, one portrait reading (docs/17 row 165, docs/11 §D5 second revision, docs/18 §2/§4)
+The owner reported a mob with **no portrait on the battle map** although the same
+mob shows its portrait on the module surface — a module-level creature with core
+stats and a library portrait, "a named zombie" — and, separately, that the
+module generator's *generate encounter mob images* setting was on while the
+"generate everything" affordance was **absent** even though mobs miss images.
+**The dispatched hypothesis was tested first and falsified for his shape.** The
+brief suspected one of `db/battleSeed`'s three identity arms minting a key the
+portrait row does not sit under. A probe over the real app answers the same
+string on both sides — `token.creatureKey` and the key the campaign's
+presentation row is under are both `chunk:<the cited chunk>` — so no arm
+explains him.
+**The proven cause: the battle board never asked the portrait question at all.**
+`features/play/battle/BattleSurface.TokenView` drew its art from
+`artifactById.get(token.artifactId)?.coverImageId` — the token's ARTIFACT — and
+the creature tier (docs/17 row 106) leaves a cited creature with **no artifact**:
+its `artifactId` is the synthetic seed-row id that names nothing (pinned, in
+prose, by `tests/features/battle-token-portrait.test.tsx` while its own docblock
+claimed the board resolves the portrait "through `creatureCoverImageId`" — the
+intent was recorded and never implemented). So the three symptoms are ONE defect:
+the board asked the ARTIFACT question while the batch, the module gap detector,
+the battle card and the seeder all ask the IDENTITY question — the batch and the
+detector correctly reported the creature as imaged (nothing enqueued, no
+"Generate everything"), and the board drew initials.
+**Two key divergences were real too**, and the collapse closes them: a citation
+the library HEALED by its content hash seeded `chunk:<the resolved row>` while
+the batch's router named `chunk:<the cited uuid>`, and a `creatureRef` carrying
+only a content hash seeded `chunk:<the resolved row>` while the router named
+`content:<the cast row's name>` (both measured, both now pinned).
 
 **Matrix**
 
 | Surface | Covered by | State |
 | --- | --- | --- |
+<<<<<<< HEAD
 | The German emphasis defect, with the English line of the same shape as the differential that shows the old rule was English-only | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final ß …`) | ✅ REVERT-PROVEN (injection a) |
 | The same for a word-final accented letter (`René*`) | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final accented letter too`) | ✅ REVERT-PROVEN (injection a) |
 | A real emphasis pair written in German is STILL stripped (the fix is not a disable) | `lib/unicodeTextHygiene.test` (`still strips a real emphasis pair written in German`) | ✅ |
@@ -4250,6 +4277,55 @@ portrait identity (`domain/creature.contentCreatureKey`). `db/mobPortraitCache.t
 `isCanonicalCitation` is declared in the scan as a SURVIVOR, not a boundary: it
 is the portrait path docs/17 row 165 owns, in flight in another worktree, and
 folding it here would race that landing.
+=======
+| **DIFFERENTIAL: for the same creature, the portrait the module side resolves equals the portrait the battle token renders** — the pin that would have caught the owner's case (a "the token has a portrait" pin could not: the creature WAS imaged) | `features/creature-portrait-agreement.test` (`the owner's case: a module-level creature with core stats and a library portrait`) | ✅ |
+| A cast creature whose portrait is the campaign presentation row renders it (the `npc-ref` shape) | `features/creature-portrait-agreement.test` (`a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`) | ✅ |
+| A cast creature whose OWN cover carries the portrait still renders that cover — what its module card renders (unchanged path, pinned against regression) | `features/creature-portrait-agreement.test` (`a cast creature whose OWN cover carries the portrait renders that cover`) | ✅ |
+| An invented mob renders the campaign portrait keyed on its own content identity | `features/creature-portrait-agreement.test` (`an invented mob renders the portrait keyed on its own content`) | ✅ |
+| **The affordance and the board state the same fact, BOTH directions**: no portrait ⇒ the board shows initials AND the module-side deviation counts the encounter; the portrait lands ⇒ the token renders it AND the count returns to empty | `features/creature-portrait-agreement.test` (`a missing portrait is WORK and the board shows initials; the batch then fills both`) | ✅ |
+| Every roster shape (rulebook, invented, `none`, cast `npc-ref`, hand-authored `npc-ref`) seeds exactly the key the portrait route names | `db/creature-identity-one-rule.test` (`a library citation, an invented mob, a cast creature and an authored npc agree`) | ✅ |
+| The statless arm and the statful arm key the SAME citation identically (the arm that used to disagree) | `db/creature-identity-one-rule.test` (`a statless row carries the SAME key as the statful row of the same citation`) | ✅ |
+| A healed citation keys on the citation the roster row names — the key the batch writes the portrait under | `db/creature-identity-one-rule.test` (`a HEALED citation keys on the citation the roster row names — the same key the batch writes under`) | ✅ |
+| A `creatureRef` with only a content hash keys on its own row, on both sides | `db/creature-identity-one-rule.test` (`a cast creature whose citation carries only a content hash keys on its own row, both sides`) | ✅ |
+| **"EXACTLY ONE": no creature key is constructed outside the identity seam** — a source scan over `src/db/battleSeed.ts` and `features/campaign/mob-portrait-participants.ts` (the two files that used to spell their own rules) | `db/creature-identity-spelling.test` (`the LIVE roster-side spelling is ONE seam, and no key is born outside it`) | ✅ |
+| The retired dead reader is gone with it (`documentCoverImageId`, no caller left once the reading returns the row's `imageId`) | `db/creature-identity-spelling.test` (`the presentation-row table lost its dead reader with the same commit`) | ✅ |
+| The battle card's Generate-vs-Regenerate state reads the SAME resolution the token renders (a cast row with its own cover no longer offers "Generate" for art the queue would decline) | `features/battle-token-portrait.test` (both action pins, re-run unchanged) | ✅ |
+
+**Pins, by name** (9 new: 4 in `tests/db/creature-identity-one-rule.test.ts`,
+5 in `tests/features/creature-portrait-agreement.test.tsx`; 2 re-based in
+`tests/db/creature-identity-spelling.test.ts` — its three-arm source pin replaced
+by the ONE-seam scan, plus the dead-reader pin; NO pin deleted, none weakened,
+none skipped):
+
+1. `the owner's case: a module-level creature with core stats and a library portrait`
+2. `a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`
+3. `a cast creature whose OWN cover carries the portrait renders that cover (unchanged path)`
+4. `an invented mob renders the portrait keyed on its own content`
+5. `a missing portrait is WORK and the board shows initials; the batch then fills both`
+6. `a library citation, an invented mob, a cast creature and an authored npc agree`
+7. `a statless row carries the SAME key as the statful row of the same citation`
+8. `a HEALED citation keys on the citation the roster row names — the same key the batch writes under`
+9. `a cast creature whose citation carries only a content hash keys on its own row, both sides`
+
+The rendering pins read the IMAGE ID a surface resolved (`useImageUrl` is mapped
+to `url:<imageId>`), not a blob URL: jsdom cannot produce object URLs, and the
+defect lived in WHICH id was resolved — the fact under test — rather than in the
+plumbing that renders it.
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy —
+`/tmp/injection-165/backup/battleSeed.ts` and
+`/tmp/injection-165/backup/mob-portrait-participants.ts`, never
+`git checkout --` — and proved by `git hash-object` identical before and after:
+`04a1b033d80d501a1ebc20ea7395cd289119ed56` and
+`55b7ed5b23a6cef732044f6c812af31c04b115d9`; raw logs kept under
+`/tmp/injection-165/logs/`):
+
+| injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **(a) ONE arm computes a divergent key** (the seeder's rulebook arm stamps `…-divergent` on the identity it hands its tokens) | **RED 5 failed / 4 passed (9)** across the two pin files: the identity differential (`a library citation, an invented mob, a cast creature and an authored npc agree`), both further arm pins (`a statless row carries the SAME key…`, `a HEALED citation keys on the citation…`) and the two board pins that depend on the key finding the portrait (`the owner's case…`, `a missing portrait is WORK and the board shows initials; the batch then fills both`) |
+| **(b) the predicate ignores the identity key** (the module gap detector is handed an EMPTY presentation snapshot) | **RED 5 failed / 25 passed (30)** in `tests/features/creature-portrait-agreement.test.tsx` (4 of its 5) + `tests/features/mob-portrait-module-gaps.test.ts` (the pre-existing `yields no work at all once every participant is imaged (no over-offering)`); `tests/features/generate-everything.test.tsx` stayed GREEN because its fixture carries no presentation row at all. **The asymmetry is the point**: every failure is the PRESENT direction (a portrait exists ⇒ no work) — `the owner's case: …`, `a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`, `an invented mob renders the portrait keyed on its own content`, the post-fill half of `a missing portrait is WORK and the board shows initials; the batch then fills both`, and the module-level no-over-offer pin — while the MISSING direction keeps reporting work, which is exactly why a pin that only asked "does it offer work?" could not have caught the owner's case |
+>>>>>>> efc2205 (wip(portraits): one creature identity, one portrait reading (docs/17 row 165))
 
 ### Remaining gaps
 

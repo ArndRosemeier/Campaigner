@@ -50,11 +50,6 @@ export async function creatureImageIdsByKey(campaignId: Id): Promise<Map<string,
   return new Map(rows.map((row) => [row.creatureKey, row.imageId]));
 }
 
-/** The blob one row renders. */
-export function documentCoverImageId(row: CreatureImage): Id {
-  return row.imageId;
-}
-
 /** Stamps a brand-new presentation row (the caller has already checked that
  * none exists — `setCreatureCover` in `db/creatureRepo` owns the decision). */
 export async function insertCreatureImageRow(options: {

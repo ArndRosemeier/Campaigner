@@ -1,4 +1,4 @@
-import type { AnyArtifact, NpcArtifact } from '@/domain/artifact';
+import type { AnyArtifact, MonsterEntry, MonsterSource, NpcArtifact } from '@/domain/artifact';
 import { z } from 'zod';
 
 import { sha256HexSchema } from '@/domain/rulebook';
@@ -171,4 +171,73 @@ export function contentCreatureIdentity(name: string, statBlock: unknown): Creat
     key: contentCreatureKey(name, statBlock),
     ref: {},
   };
+}
+
+/**
+ * The library citation a roster row's own `rulebook` source spells — the ONE
+ * conversion, so the roster's citation shape and the authored NPC's
+ * `creatureRef` shape cannot drift apart (they are the same four fields, and
+ * this is where that is written down).
+ */
+export function creatureRefForRulebookSource(
+  source: Extract<MonsterSource, { type: 'rulebook' }>,
+): CreatureRef {
+  return {
+    chunkId: source.chunkId,
+    ...(source.contentHash === undefined ? {} : { contentHash: source.contentHash }),
+    ...(source.creatureName === undefined ? {} : { creatureName: source.creatureName }),
+    ...(source.bookTitle === undefined ? {} : { bookTitle: source.bookTitle }),
+  };
+}
+
+/**
+ * THE creature identity of one encounter ROSTER ENTRY (docs/11 D5 amendment /
+ * D6) — ONE rule for every shape a roster row can take, whether or not its
+ * numbers resolved:
+ *
+ * - `rulebook` (a library CITATION, docs/11 D1/D5): the identity is the chunk
+ *   the roster row cites;
+ * - `npc-ref` to an AUTHORED NPC carrying a `creatureRef` (the cast creature,
+ *   docs/11 D3/D4): the identity is the creature that row BORROWS its numbers
+ *   from — the ref's own chunk, or the row's name when the ref names no chunk
+ *   (a stranded citation has no library id to key on);
+ * - `npc-ref` to a hand-authored NPC, or to a row that is not there: NO
+ *   creature identity — the portrait belongs to that artifact's own cover;
+ * - `inline` / `none` (an uncited, invented mob): the identity is the entry's
+ *   OWN content — its name plus the stat block the roster row itself carries.
+ *
+ * WHY one function and not a rule per caller (docs/17 row 165): the creature
+ * identity IS the key of the campaign's presentation row (`db/creatureImages`),
+ * the global canonical slot (`db/mobPortraitCache`) and every battle token
+ * (`BattleToken.creatureKey`). While seeding, the portrait batch, the module
+ * gap detector and the board each derived it for themselves, one shape at a
+ * time, a citation the library healed by its content hash got two identities —
+ * the token's row and the portrait's row were different creatures as far as the
+ * app was concerned. There is now one spelling, so the token, the presentation
+ * row, the cache and the predicate agree BY CONSTRUCTION.
+ *
+ * The `statBlock` an invented entry keys on is the one ON THE ROW, never the
+ * one a resolver handed back: the roster row is what every surface reads, and
+ * a key derived from a re-parsed block would drift the moment the read path
+ * changed. `null` for `none` is the same rule — a name-only mob has no block
+ * and never gains one from a lookup.
+ */
+export function rosterEntryCreatureIdentity(
+  entry: MonsterEntry,
+  linked: AnyArtifact | undefined,
+): CreatureIdentity | null {
+  const source = entry.source;
+  if (source.type === 'rulebook') {
+    const citation = creatureRefForRulebookSource(source);
+    return creatureIdentityForCitation(citation, source.chunkId);
+  }
+  if (source.type === 'npc-ref') {
+    if (linked?.kind !== 'npc') return null;
+    const ref = npcCreatureRef(linked);
+    if (ref === undefined) return null;
+    return ref.chunkId === undefined
+      ? contentCreatureIdentity(linked.name, undefined)
+      : creatureIdentityForCitation(ref, ref.chunkId);
+  }
+  return contentCreatureIdentity(entry.name, source.type === 'inline' ? source.statBlock : null);
 }

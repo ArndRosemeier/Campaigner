@@ -1,10 +1,10 @@
 import type { AnyArtifact, Artifact, Id, MonsterEntry } from '@/domain';
 import {
-  contentCreatureKey,
-  libraryCreatureKey,
+  rosterEntryCreatureIdentity,
   type CreatureIdentity,
 } from '@/domain';
 import { db } from '@/db/db';
+import { creaturePortraitImageIn } from '@/db/creatureRepo';
 import { creatureImageIdsByKey } from '@/db/creatureImages';
 
 /**
@@ -110,55 +110,61 @@ export type CreaturePortraitRoute =
  * rows the caller already holds. `linked` is the `npc-ref`'s artifact (the
  * caller resolves it — the queue reads it from the DB, the detector from its
  * snapshot — and passes `undefined` when the row is not an `npc-ref`).
+ *
+ * The identity itself is NOT derived here: it is
+ * `domain/creature.rosterEntryCreatureIdentity`, the ONE rule the battle seed
+ * stamps its tokens with as well (docs/17 row 165), so a token's
+ * `creatureKey` and the key this route's job writes the portrait under cannot
+ * be two different creatures.
  */
 export function rosterParticipantRoute(
   entry: MonsterEntry,
   linked: AnyArtifact | undefined,
 ): CreaturePortraitRoute {
   const source = entry.source;
+  if (source.type === 'npc-ref') {
+    if (linked === undefined) return { lane: 'missing-ref' };
+    const identity = rosterEntryCreatureIdentity(entry, linked);
+    if (identity === null) {
+      // A hand-authored NPC (or a row that is not an npc at all) cites no
+      // library creature, so it keeps its own cover rather than a creature's.
+      return { lane: 'authored', artifactId: linked.id, name: entry.name };
+    }
+    // An authored NPC whose stat block is DERIVED from a library creature is
+    // that creature kind (docs/11 D3): one creature, one look, so it shares the
+    // canonical portrait instead of holding a private one.
+    return {
+      lane: 'creature',
+      creatureKey: identity.key,
+      // The citation's own chunk grounds the prompt. A `creatureRef` with no
+      // chunk at all (a content-hash-only reference) has no chunk to read, so
+      // the field is ABSENT rather than defaulted — the job is local and the
+      // caller decides that from the route, never from a placeholder id.
+      ...(identity.ref.chunkId === undefined ? {} : { chunkId: identity.ref.chunkId }),
+      name: linked.name,
+      artifactId: linked.id,
+    };
+  }
+  const identity = rosterEntryCreatureIdentity(entry, undefined);
+  if (identity === null) {
+    // Unreachable by construction: only an `npc-ref` can stand for no
+    // creature. Loud rather than a silent skip of a roster row (AGENTS rule 1).
+    throw new Error(
+      `creature portrait: the roster entry “${entry.name}” stands for no creature`,
+    );
+  }
   if (source.type === 'rulebook') {
     return {
       lane: 'creature',
-      creatureKey: libraryCreatureKey(source.chunkId),
+      creatureKey: identity.key,
       chunkId: source.chunkId,
       name: entry.name,
       artifactId: null,
     };
   }
-  if (source.type === 'npc-ref') {
-    if (linked === undefined) return { lane: 'missing-ref' };
-    // An authored NPC whose stat block is DERIVED from a library creature is
-    // that creature kind (docs/11 D3): one creature, one look, so it shares the
-    // canonical portrait instead of holding a private one. A hand-authored NPC
-    // has no creature identity and keeps its own cover.
-    if (linked.kind === 'npc' && linked.data.creatureRef !== undefined) {
-      const ref = linked.data.creatureRef;
-      const creatureKey =
-        ref.chunkId !== undefined
-          ? libraryCreatureKey(ref.chunkId)
-          : contentCreatureKey(linked.name, undefined);
-      return {
-        lane: 'creature',
-        creatureKey,
-        // The citation's own chunk grounds the prompt. A `creatureRef` with no
-        // chunk at all (a content-hash-only reference) has no chunk to read, so
-        // the field is ABSENT rather than defaulted — the job is local and the
-        // caller decides that from the route, never from a placeholder id.
-        ...(ref.chunkId === undefined ? {} : { chunkId: ref.chunkId }),
-        name: linked.name,
-        artifactId: linked.id,
-      };
-    }
-    return { lane: 'authored', artifactId: linked.id, name: entry.name };
-  }
   // `inline` / `none`: an uncited, model-invented mob — identified by content,
   // with no artifact and no library row anywhere.
-  const statBlock = source.type === 'inline' ? source.statBlock : null;
-  return {
-    lane: 'invented',
-    creatureKey: contentCreatureKey(entry.name, statBlock),
-    name: entry.name,
-  };
+  return { lane: 'invented', creatureKey: identity.key, name: entry.name };
 }
 
 /** Kind identity for ONE creature identity — thin, but the ONE spelling every
@@ -206,39 +212,40 @@ export function encounterNeedsMobPortraitWork(
    * identity set, so a second row on the same kind cannot produce a second
    * answer here either. */
   const seenKinds = new Set<string>();
-  const linkedOf = (entry: MonsterEntry): AnyArtifact | undefined =>
-    entry.source.type === 'npc-ref' ? byId.get(entry.source.artifactId) : undefined;
+  /** A caller that holds no presentation rows (the canvas page's lightweight
+   * deviation read) answers over an EMPTY one: every creature lane then answers
+   * "no art" unless the artifact the row points at carries some — the
+   * conservative direction documented above. */
+  const presentation = presentationByKey ?? new Map<string, Id>();
 
   for (const entry of encounter.data.monsters) {
-    const route = rosterParticipantRoute(entry, linkedOf(entry));
+    const linked = entry.source.type === 'npc-ref' ? byId.get(entry.source.artifactId) : undefined;
+    const route = rosterParticipantRoute(entry, linked);
     if (route.lane === 'missing-ref') return true;
-    const key = route.lane === 'authored' ? route.artifactId : route.creatureKey;
-    if (seenKinds.has(key)) continue;
-    seenKinds.add(key);
-    if (route.lane === 'authored') {
-      const artifact = byId.get(route.artifactId);
-      // A row outside the snapshot is work (the loud direction above).
-      if (artifact === undefined) return true;
-      if (artifact.coverImageId === null && artifact.imageIds.length === 0) return true;
-      continue;
+    const kind = route.lane === 'authored' ? route.artifactId : route.creatureKey;
+    if (seenKinds.has(kind)) continue;
+    seenKinds.add(kind);
+    // THE portrait question, asked over the rows this snapshot holds — the SAME
+    // function the surfaces render with (`db/creatureRepo`), so "this creature
+    // is imaged" and "the board shows its portrait" are one statement and the
+    // offer cannot describe work the board already shows (docs/17 row 165).
+    const npcArtifact =
+      route.lane === 'invented' || route.artifactId === null
+        ? undefined
+        : byId.get(route.artifactId);
+    // An `authored` row outside the snapshot is WORK (the loud direction
+    // above): this detector cannot see its art, and a row that is really gone
+    // must not read as "nothing to do".
+    if (route.lane === 'authored' && npcArtifact === undefined) return true;
+    if (
+      creaturePortraitImageIn({
+        presentationByKey: presentation,
+        ...(route.lane === 'authored' ? {} : { creatureKey: route.creatureKey }),
+        npcArtifact,
+      }) === null
+    ) {
+      return true;
     }
-    // A CAST npc (docs/11 D3) keeps its portrait on its OWN row, so the
-    // artifact snapshot this detector already holds is what answers for it
-    // (docs/11 D6 rule 2). Without this the creature lane could only ask the
-    // presentation snapshot, which cannot see an artifact's own cover — so the
-    // confirmation promised portrait work for a creature that already had art
-    // and the batch then declined it, the offer/work disagreement this
-    // predicate exists to prevent.
-    if (route.lane === 'creature' && route.artifactId !== null) {
-      const artifact = byId.get(route.artifactId);
-      if (
-        artifact !== undefined &&
-        (artifact.coverImageId !== null || artifact.imageIds.length > 0)
-      ) {
-        continue;
-      }
-    }
-    if (!presentationByKey?.has(route.creatureKey)) return true;
   }
   return false;
 }
