@@ -264,6 +264,9 @@ export function deriveModuleProblems(
 
   // The reader's detector, per document: an unresolved chip is a text problem
   // the owner already sees on the page.
+  // KEY SPACE `WRITTEN_LINK_NAME_KEY` (docs/17 row 167): one chip per DISTINCT
+  // WRITTEN token — two compositions of one written name are one problem, and
+  // the stored `name` (the chip's display text) keeps the first-seen spelling.
   const unresolved = new Map<string, { name: string; where: string[] }>();
   for (const document of documentsOf(module)) {
     for (const link of extractWikiLinks(document.markdown)) {

@@ -120,10 +120,14 @@ function freeCopyName(source: PromptStyle, styles: readonly PromptStyle[]): stri
     ...styles.map((style) => comparableName(style.name)),
   ]);
   const base = `${source.name.trim()} (copy)`;
-  if (!taken.has(base.toLowerCase())) return base;
+  // The set is keyed by the comparable form (above), so the lookups must ask in
+  // the SAME key space: a `.toLowerCase()` lookup here is row 166's trap — it
+  // misses an entry whose stored spelling differs only by Unicode composition,
+  // and the copy then collides loudly in `writeStyles` (docs/17 row 167).
+  if (!taken.has(comparableName(base))) return base;
   for (let nth = 2; nth < 100; nth += 1) {
     const candidate = `${base} ${String(nth)}`;
-    if (!taken.has(candidate.toLowerCase())) return candidate;
+    if (!taken.has(comparableName(candidate))) return candidate;
   }
   throw new Error(`Cannot find a free name for a copy of “${source.name}”`);
 }

@@ -113,10 +113,21 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
       needles: [
         ['mergeAliasNames(', 4],
         ['sameAliasName(', 3],
-        ['comparableName(', 1],
+        // docs/17 row 167: 1 was row 166's resolution-memo fold; the name-key
+        // slice added 3 `rosterChunkByName` consumers + 1 roster digest (the
+        // per-site accounting lives in tests/domain/name-key-spaces.test.ts).
+        ['comparableName(', 5],
       ],
     },
-    'llm/moduleGen.ts': { needles: [['addArtifactAliases(', 1], ['sameAliasName(', 2], ['comparableName(', 4]] },
+    'llm/moduleGen.ts': {
+      needles: [
+        ['addArtifactAliases(', 1],
+        ['sameAliasName(', 2],
+        // 4 was row 166's verdict-map fold; row 167 added the encounter-name
+        // census + the rewrite matcher's two sides.
+        ['comparableName(', 7],
+      ],
+    },
     'features/modules/stub-popover.tsx': { needles: [['addArtifactAliases(', 1], ['sameAliasName(', 3]] },
     'features/modules/ModuleReaderPage.tsx': { needles: [['addArtifactAliases(', 1]] },
     'features/modules/entity-batch.ts': {
@@ -155,7 +166,15 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     'db/creatureRepo.ts': { needles: [['sameAliasName(', 1]] },
     'features/modules/entity-panel.tsx': { needles: [['sameAliasName(', 2]] },
     'domain/wikiGraph.ts': { needles: [['sameAliasName(', 1]] },
-    'domain/module.ts': { needles: [['sameAliasName(', 3], ['comparableName(', 2]] },
+    'domain/module.ts': {
+      needles: [
+        ['sameAliasName(', 3],
+        // 2 was row 166's creature half; row 167 folded the bestiary-slot
+        // source map's three keys on the comparable form (+3 — sameSlot's
+        // creature line carries two occurrences on one line).
+        ['comparableName(', 5],
+      ],
+    },
     // Folded WHOLE, keys included: this module's every key is a name, and a
     // partial fold here neutralizes itself (a comparable-form equality answered
     // through a lowercased map key simply misses). The 23 is that whole file.

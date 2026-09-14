@@ -943,6 +943,13 @@ function invalidCitationIssues(
   rosterChunkByName: Readonly<Record<string, Id>>,
 ): string[] {
   const issues: string[] = [];
+  // KEY SPACE `PACK_POOL_NAME_KEY` (docs/17 row 167): `rosterChunkByName` is
+  // the pack pool's name→chunk index (`encounterRoster.rosterNameIndex`,
+  // keyed by the comparable form), and every consumer in this file must ASK
+  // in that key space — a hand-rolled `.toLowerCase()` lookup would miss an
+  // entry whose stored spelling differs only by Unicode composition. All
+  // three consumers (`invalidCitationIssues`, `encounterSourceIssues`,
+  // `resolveEncounterMonsterSource`) ask through `comparableName`.
   for (const [index, monster] of monsters.entries()) {
     if (monster.sourceChunkIndex !== undefined) {
       if (statblockChunkIds[monster.sourceChunkIndex] === undefined) {
@@ -5913,6 +5920,10 @@ export class RunEngine {
         const rosterKey = (entries: readonly { name: string; count: number }[]): string =>
           JSON.stringify(
             entries
+              // KEY SPACE `MODULE_NAME_KEY` (docs/17 row 167): a roster digest
+              // comparing two versions of the SAME module's roster — both
+              // sides are built by this one closure, so a digest difference
+              // can only mean the roster's names or counts differ.
               .map((entry) => `${comparableName(entry.name)}|${String(entry.count)}`)
               .sort(),
           );

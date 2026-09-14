@@ -91,25 +91,55 @@
  *
  * - `PACK_POOL_NAME_KEY` (`llm/encounterRoster`, `llm/encounterItems`,
  *   `llm/runEngine`, `llm/roomBudget`): the pack pool's printed name ↔ the
- *   model's `sourceName`, resolved to a chunk id.
+ *   model's `sourceName`, resolved to a chunk id — the creature roster AND the
+ *   item pool are the same question with two pools (`rosterNameIndex` /
+ *   `itemPoolNameIndex` mint; `runEngine`'s `rosterChunkByName` lookups and
+ *   `roomBudget.resolveBriefMonsterLevels` read).
  * - `MODULE_NAME_KEY` (`llm/roomBudget`, `llm/runEngine`, `domain/module`): a
  *   name of something the MODULE holds matched against another such name in the
- *   same module.
+ *   same module (the fixed-cast scan, the room-reconciliation remap, the
+ *   bestiary-slot source map, the run engine's roster digest). Distinct from
+ *   `PACK_POOL_NAME_KEY` even where both live in `roomBudget`: a pack
+ *   creature's name is a LIBRARY lookup, a roster name is this campaign's row.
  * - `WRITTEN_LINK_NAME_KEY` (`domain/wikiGraph`, `llm/moduleGen`,
- *   `features/modules/module-problems`, `db/artifactAutoPromote`,
- *   `llm/campaignGrounding`): one WRITTEN `[[name]]` token recognised across a
- *   prose set.
+ *   `features/modules/module-problems`, `db/artifactAutoPromote`): one WRITTEN
+ *   `[[name]]` token recognised across a prose set (the resolution memo, the
+ *   phantom node id, the rewrite-target match, the unresolved-chip census, the
+ *   adopt set, the encounter-name census).
  * - `LIBRARY_CREATURE_NAME_KEY` (`db/creatureCitations`,
  *   `llm/creatorRoster`): one library creature prints/suggests once.
  * - `IMPORT_IDENTITY_KEY` (`domain/exportDependencies`): an export manifest's
- *   logical identity against a local snapshot.
+ *   logical identity against a local snapshot — the L1 verdict asks ONE
+ *   question of BOTH its halves (a cited book TITLE and a cited creature
+ *   NAME), so they share one tolerance here deliberately, though `sameSlot`
+ *   in `domain/module` keeps its book half hand-rolled: there the book is
+ *   compared to another book of the same module, not to a library row.
  * - `PRINTED_NAME_DEDUPE_KEY` (`features/campaign/components/missing-refs-summary`):
  *   one displayed name, once, in the missing-refs sentence.
  * - `PROMPT_STYLE_NAME_KEY` (`db/promptStyleRepo`): a prompt style's name is
- *   unique across the picker.
+ *   unique across the picker — the clash map AND the free-copy-name set are
+ *   one space; keying one half by `toLowerCase()` alone misses the other
+ *   half's entries (the partial-fold trap, row 167).
  * - `CREATURE_CONTENT_IDENTITY_KEY` (`domain/creature.contentCreatureKey`):
  *   DECLARED BUT NOT FOLDED — a PERSISTED identity whose bytes are a Dexie
  *   index value; see its own doc and docs/17 row 167.
+ *
+ * DECLARED NOT-BUILT-ON-IT (the anti-spaces — each a place the primitive would
+ * be WRONG, which is why they are named rather than silently left):
+ *
+ * - `ALIAS_FORM_KEY` (`llm/campaignGrounding`): the grounding SPELLING pick.
+ *   Its map's values become detection REGEXES, and a regex never folds
+ *   composition — folding this key would DROP a real spelling and blind
+ *   detection to the prose spelled the way an alias spelled it. Case and
+ *   surrounding space fold; composition does not.
+ * - The SEARCH NEEDLES (`features/bestiary/roster`, `features/play/battle/
+ *   SpawnPicker`, `features/quickfind/*`, `features/campaign/filter`,
+ *   `help/HelpDialog`, `search/search`, `features/rules/search-browser`,
+ *   `features/modules/textMatches`): substring CONTAINS matching, fuzzy BY
+ *   CONTRACT — not identity, not keys, and deliberately not exact.
+ * - The EMPTINESS PROBES (`domain/module.entityKindFor`-class `const target =
+ *   name.trim().toLowerCase(); if (target === '')`): composition cannot
+ *   change emptiness; the real comparison beside them is a tier call.
  */
 export function comparableName(name: string): string {
   return name.normalize('NFC').trim().toLowerCase();

@@ -689,10 +689,12 @@ export interface BriefLevelLookups {
  * Level strings for a FRESH brief's monsters: inline stat block → roster
  * name citation → excerpt index citation (the M-B §7 precedence). Entries
  * with no resolvable stats yield undefined (the room becomes loud-unverified).
- * The roster-name lookup normalizes the SAME way the citation checks do
- * (`trim().toLowerCase()` — the roster index is keyed lowercase); without it
- * a sourceName-cited creature's level silently missed the index and the room
- * read loud-unverified for no reason.
+ * The roster-name lookup asks in the index's OWN key space
+ * (`PACK_POOL_NAME_KEY`, docs/17 row 167 — the index is keyed by the
+ * comparable form, `encounterRoster.rosterNameIndex`); without it a
+ * sourceName-cited creature's level silently missed the index and the room
+ * read loud-unverified for no reason — and a `.toLowerCase()`-only lookup
+ * would miss an entry whose stored spelling differs only by composition.
  */
 export function resolveBriefMonsterLevels(
   monsters: readonly {
@@ -824,6 +826,12 @@ export function reconcileRoomAssignments(
   newRoster: readonly { name: string; count?: number | undefined }[],
   options: ReconcilePackingOptions = {},
 ): ReconciledRoomAssignment[] {
+  // KEY SPACE `MODULE_NAME_KEY` (docs/17 row 167): BOTH rosters are this
+  // campaign's own rows (the encounter's old and new monster lists), and the
+  // remap must ask both sides in the SAME key space — one side keyed by a
+  // hand-rolled `.toLowerCase()` would strand a room whose creature kept its
+  // name but changed composition. Producer and consumer are the two loops
+  // below; both go through `comparableName`.
   const newIndexByName = new Map<string, number>();
   for (const [index, entry] of newRoster.entries()) {
     const key = comparableName(entry.name);

@@ -146,6 +146,10 @@ export async function promoteSecondModuleUses(
     );
   }
   const pool = await listArtifactsByCampaign(writer.campaignId);
+  // KEY SPACE `WRITTEN_LINK_NAME_KEY` (docs/17 row 167): one adopt decision per
+  // DISTINCT WRITTEN token — the map's value keeps the first-seen spelling for
+  // the resolution below, and two compositions of one token must not adopt
+  // twice.
   const names = new Map<string, string>();
   for (const markdown of markdowns) {
     for (const link of extractWikiLinks(markdown)) {

@@ -382,9 +382,9 @@ describe('resolveBriefMonsterLevels', () => {
       ],
       {
         chunkById: new Map([[chunkA.id, chunkA]]),
-        // The production roster index is keyed LOWERCASE (rosterNameIndex) —
-        // the lookup normalizes the cited name the same way the citation
-        // checks do.
+        // The production roster index is keyed by the comparable form
+        // (rosterNameIndex, docs/17 row 167) — the lookup asks in the index's
+        // OWN key space the same way the citation checks do.
         rosterChunkByName: { orc: chunkA.id },
         statblockChunkIds: [chunkA.id],
       },

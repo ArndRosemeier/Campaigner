@@ -6,7 +6,6 @@ import {
   type WikiGraphMention,
   type WikiGraphNode,
 } from '@/domain/wikiGraph';
-import { comparableName } from '@/domain/artifactAlias';
 import {
   extractWikiLinks,
   resolveWikiLink,
@@ -184,12 +183,24 @@ export function detectCampaignEntities(
   // consumes the span. One spelling per lowercase form per artifact (the
   // longest wins) so "The Alchemist" beats its own partial overlap
   // "Alchemist".
+  //
+  // KEY SPACE `ALIAS_FORM_KEY` (docs/17 row 167) — DECLARED, NOT FOLDED onto
+  // `comparableName`, deliberately. This is a SPELLING pick, not an identity:
+  // the map's VALUES are the strings that become detection REGEXES below, and
+  // a JS regex never folds Unicode composition — a precomposed pattern does
+  // not match a decomposed mention. Folding the key onto the comparable form
+  // collapsed a composed name with its decomposed alias into ONE entry and
+  // DROPPED the alias's spelling, blinding detection to prose spelled the way
+  // the alias spelled it (a Mac-authored NFD brief). Case and surrounding
+  // space fold; composition does not — exactly inverted from the identity
+  // spaces, and the pin in `tests/domain/name-key-spaces.test.ts` holds both
+  // halves.
   const spellings: { artifact: AnyArtifact; name: string }[] = [];
   for (const artifact of pool) {
     const forms = new Map<string, string>();
     for (const candidate of [artifact.name, ...artifact.aliases]) {
       const name = candidate.trim();
-      const key = comparableName(name);
+      const key = name.toLowerCase();
       if (key === '') continue;
       const existing = forms.get(key);
       if (existing === undefined || name.length > existing.length) forms.set(key, name);

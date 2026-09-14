@@ -1095,6 +1095,10 @@ function encounterNamesIn(
   markdown: string,
   entityKinds: readonly ModuleEntityKind[],
 ): Set<string> {
+  // KEY SPACE `WRITTEN_LINK_NAME_KEY` (docs/17 row 167): the set counts
+  // DISTINCT WRITTEN `[[tokens]]` of encounter-kind entities — the consumer is
+  // `.size` (the encounter floor), so two compositions of one written token
+  // must count once, and two different tokens must count twice.
   const names = new Set<string>();
   for (const link of extractWikiLinks(markdown)) {
     if (entityKindFor(entityKinds, link.name) !== 'encounter') continue;
@@ -2359,6 +2363,10 @@ async function applyNormalizationVerdict(
   // in that document (the stored record stays truthful for the consent UI;
   // applying a replacement whose token is gone is a harmless no-op).
   const rewritesFor = (markdown: string): LinkRewrite[] => {
+    // KEY SPACE `WRITTEN_LINK_NAME_KEY` (docs/17 row 167): a rewrite applies
+    // when its `from` is the SAME WRITTEN token the document carries — both
+    // sides of this comparison are written tokens, so both must ask in the
+    // same space or a proposal silently stops matching its own target.
     const names = new Set(extractWikiLinks(markdown).map((link) => comparableName(link.name)));
     return rewrites.filter((rewrite) => names.has(comparableName(rewrite.from)));
   };
