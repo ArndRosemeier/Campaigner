@@ -88,18 +88,40 @@ echo "=== lint ==="; pnpm lint > "$LOGDIR/lint.log" 2>&1 || { echo "LINT FAILED 
 grep -cE "  error  " "$LOGDIR/lint.log" | sed 's/^/  lint errors: /'
 echo "=== typecheck ==="; pnpm typecheck > "$LOGDIR/typecheck.log" 2>&1 || { echo "TYPECHECK FAILED (see $LOGDIR/typecheck.log)"; status=1; }
 
-if [ "$#" -gt 0 ]; then CHUNKS=("$@")
-else CHUNKS=(tests/lib tests/llm tests/db tests/domain tests/features tests); fi
-# Every chunk above MUST contain test files. `src` was in this list once and
-# contains none (the whole suite lives under `tests/`), so vitest exited 1 with
-# "No test files found" and EVERY writer's gate read RED for a reason unrelated
-# to their work — reported by a writer instead of worked around, which is why it
-# was found. An explicitly requested path with no tests is still a real failure.
-echo "=== vitest in ${#CHUNKS[@]} chunk(s) ==="
-for chunk in "${CHUNKS[@]}"; do
-  [ -e "$chunk" ] || { echo "$chunk: (absent, skipped)"; continue; }
-  run_chunk "$(echo "$chunk" | tr '/' '_')" "$chunk" || status=1
-done
+if [ "$#" -gt 0 ]; then
+  echo "=== vitest: ${#} caller-named chunk(s) ==="
+  for chunk in "$@"; do
+    [ -e "$chunk" ] || { echo "$chunk: (absent)"; status=1; continue; }
+    run_chunk "$(echo "$chunk" | tr '/' '_')" "$chunk" || status=1
+  done
+else
+  # DISJOINT chunks, and the arithmetic is CHECKED. A path filter matches its own
+  # subdirectories, so listing `tests` beside `tests/lib` etc. ran ~85% of the
+  # suite TWICE in every gate (found by a writer: its summed counts exceeded the
+  # suite). Every test file must run exactly once, and a file no chunk picks up
+  # is a defect, not a saving.
+  DIRS=(tests/lib tests/llm tests/db tests/domain tests/features)
+  echo "=== vitest: ${#DIRS[@]} directory chunk(s) + the remainder ==="
+  for d in "${DIRS[@]}"; do
+    [ -e "$d" ] || { echo "$d: (absent)"; status=1; continue; }
+    run_chunk "$(echo "$d" | tr '/' '_')" "$d" || status=1
+  done
+  remainder=$(find tests/misc tests/app tests/play tests/help tests/components \
+    -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null | sort)
+  remainder=$(find tests -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null \
+    | grep -vE '^tests/(lib|llm|db|domain|features)/' | sort)
+  if [ -n "$remainder" ]; then
+    # shellcheck disable=SC2086
+    run_chunk tests_remainder $remainder || status=1
+  else
+    echo "tests_remainder: (no files outside the five directories)"
+  fi
+  total=$(find tests -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null | wc -l)
+  walked=$(for d in "${DIRS[@]}"; do find "$d" -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null; done | wc -l)
+  walked=$((walked + $(printf '%s\n' "$remainder" | grep -c . || true)))
+  echo "chunk arithmetic: $walked of $total test files covered"
+  [ "$walked" -eq "$total" ] || { echo "!! CHUNK ARITHMETIC MISMATCH — a file runs twice or not at all"; status=1; }
+fi
 
 echo "=== summary ==="
 echo "peak RSS of any single chunk: ${peak_seen}MB (cap ${RSS_CAP_MB}MB)"

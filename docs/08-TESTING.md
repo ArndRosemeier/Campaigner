@@ -3807,7 +3807,11 @@ rows.
 
 ### The gate is a script (memory is capped, not requested)
 
-Run `scripts/gate.sh` — never a hand-rolled `vitest run`. It holds the atomic
+Run `scripts/gate.sh` — never a hand-rolled `vitest run`. Its chunks are DISJOINT (five test
+directories plus an explicit remainder list) and it prints `chunk arithmetic: N
+of M test files covered`, failing when they disagree: a path filter matches its
+own subdirectories, so the first version ran most of the suite twice, and a file
+that falls between chunks must be a defect rather than a saving. It holds the atomic
 suite lock, refuses to start while any other suite is running, runs vitest as
 sequential PATH CHUNKS, watches the run's own process group and kills it above
 3000 MB RSS or below 2500 MB available memory, and prints each chunk's PEAK RSS
