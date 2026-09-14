@@ -220,9 +220,14 @@ chained command, and never leave one uncommitted while a writer is gating.
 - **The owner runs ANOTHER, SEPARATE DSH project in parallel in this same
   harness** (owner-corrected: the extra agents belong to that project, NOT to
   grokbot — an earlier version of this note said otherwise and was wrong). They
-  share the box, the user account and the memory; their `vitest` runs have been
-  caught at six workers with no ceiling. So a suite you did not start is not
-  yours: identify ownership by `/proc/<pid>/cwd`, reap only your own, and WAIT
+  share the box, the user account and the memory. **Named and observed:** that
+  project is `CivGlm` (`/home/box/Harness/CivGlm`, a monorepo with
+  `packages/core` and `packages/web`), and it runs BOTH vitest (`packages/core/test/…`,
+  caught at six workers with no ceiling) and Playwright
+  (`packages/web/node_modules/.bin/../@playwright/test/cli.js test --workers=1`),
+  which is memory-heavy in its own right. So a suite you did not start is not
+  yours: decide ownership by the worktree path in its COMMAND LINE (`cwd` is
+  unreadable for subagent processes — measured), reap only your own, and WAIT
   for the rest (§Host hygiene 7) — never reap a peer project's gate.
   Their runs are outside our rules, and the OOM killer takes whatever is
   largest, which is the harness BOTH projects live in: the discipline below
