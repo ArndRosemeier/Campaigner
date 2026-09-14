@@ -89,7 +89,12 @@ grep -cE "  error  " "$LOGDIR/lint.log" | sed 's/^/  lint errors: /'
 echo "=== typecheck ==="; pnpm typecheck > "$LOGDIR/typecheck.log" 2>&1 || { echo "TYPECHECK FAILED (see $LOGDIR/typecheck.log)"; status=1; }
 
 if [ "$#" -gt 0 ]; then CHUNKS=("$@")
-else CHUNKS=(tests/lib tests/llm tests/db tests/domain tests/features tests src); fi
+else CHUNKS=(tests/lib tests/llm tests/db tests/domain tests/features tests); fi
+# Every chunk above MUST contain test files. `src` was in this list once and
+# contains none (the whole suite lives under `tests/`), so vitest exited 1 with
+# "No test files found" and EVERY writer's gate read RED for a reason unrelated
+# to their work — reported by a writer instead of worked around, which is why it
+# was found. An explicitly requested path with no tests is still a real failure.
 echo "=== vitest in ${#CHUNKS[@]} chunk(s) ==="
 for chunk in "${CHUNKS[@]}"; do
   [ -e "$chunk" ] || { echo "$chunk: (absent, skipped)"; continue; }
