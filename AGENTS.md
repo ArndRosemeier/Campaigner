@@ -310,14 +310,19 @@ the config default, and it holds for whoever forgets. Binding rules:
    report** (three writers died that way on one slice before the mechanism
    was recognised), so memory pressure destroys WORK, not merely desktop
    responsiveness.
-   - **One suite at a time in the whole session.** Before any `vitest`
-     invocation — a writer's gate, a dispatcher verification and an
-     injection run are all "the suite" — the process table must hold no
-     other suite. **Keep the check in its OWN call:** a combined one-liner
-     self-matches, because its own command line contains the literal word
-     it greps for and then reports BUSY forever (hit for real while writing
-     this rule). `pgrep -af 'vites[t]'` → expect empty output; if it is not
-     empty, wait.
+   - **One suite at a time in the whole session — and make the check a real
+     LOCK, not a snapshot.** `pgrep` is only a diagnostic: two of our agents
+     can look in the same instant, both see "free", and both start. Acquire an
+     atomic lock instead (`mkdir` succeeds or it does not), and keep `pgrep`
+     for the foreign suites we cannot lock out (the owner's other DSH project):
+     `L=/tmp/campaigner-suite.lock; mkdir "$L" 2>/dev/null || exit 9;
+     printf '%s %s %s\n' "$$" "$(date +%s)" "$PWD" > "$L/owner";
+     trap 'rm -rf "$L"' EXIT`
+     A lock whose owner file is older than 30 minutes AND with no `vites[t]`
+     process alive is STALE (a killed run): remove it and say so. Keep the
+     `pgrep` check in its OWN call — a combined one-liner self-matches, because
+     its own command line contains the literal word it greps for, and then
+     reports BUSY forever (hit for real while writing this rule).
    - **Every run carries a heap ceiling**, so the kernel is never asked to
      choose: `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1 pnpm exec vitest run`
    - **Ad-hoc PDF-rendering verification** (`pdfLayout`, pdfjs, pdfmake —
