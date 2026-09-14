@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -119,6 +119,12 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await flushAsyncUpdates(20);
+  // Settle INSIDE act: BattleSurface's portrait chain can outlive the 20 ms
+  // flush under chunk load, and an update firing outside act leaks a console
+  // warning into the NEXT test in the file, failing its console-cleanliness
+  // assertion. Wrapping the settle means late updates are wrapped, not silenced
+  // (docs/17 row 165; the row-153 console-noise family).
+  await act(async () => { await flushAsyncUpdates(20); });
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

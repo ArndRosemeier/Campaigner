@@ -4015,7 +4015,6 @@ only a content hash seeded `chunk:<the resolved row>` while the router named
 
 | Surface | Covered by | State |
 | --- | --- | --- |
-<<<<<<< HEAD
 | The German emphasis defect, with the English line of the same shape as the differential that shows the old rule was English-only | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final ß …`) | ✅ REVERT-PROVEN (injection a) |
 | The same for a word-final accented letter (`René*`) | `lib/unicodeTextHygiene.test` (`keeps a literal * after a word-final accented letter too`) | ✅ REVERT-PROVEN (injection a) |
 | A real emphasis pair written in German is STILL stripped (the fix is not a disable) | `lib/unicodeTextHygiene.test` (`still strips a real emphasis pair written in German`) | ✅ |
@@ -4028,9 +4027,7 @@ only a content hash seeded `chunk:<the resolved row>` while the router named
 | **EXACTLY ONE comparable form** (AGENTS §Centralization 2): the resolver routes through the seam, counted (`sameAliasName(` ×4, `comparableName(` ×9), and it keeps neither the hand-rolled comparison nor a hand-appended pool | `features/alias-merge-seam.test` (`routes the alias write in lib/wikilinks.ts through the seam`) | ✅ |
 | **EXACTLY ONE ASCII-only text regex population**: every line in `src/` holding `\w`/`\b`/`[a-z]`/`[A-Z]`/`[0-9]`/`charCodeAt`/`fromCharCode`/`toLocaleLowerCase` (comments skipped) must be one of 17 declared files / 35 declared lines, each with a reason; the map cannot rot and neither can the reasons | `lib/unicodeTextHygiene.test` (`declares exactly the ASCII-only text regexes that exist, and no more`) | ✅ |
 | The locale-aware case fold is absent from `src/` code — the hazard, not the improvement (Turkish `I` → `ı`) | `lib/unicodeTextHygiene.test` (`never folds case with the locale …`) | ✅ (zero-tolerance: no declared site) |
-
 **Pin table**
-
 | Pin | File | What it would catch |
 | --- | --- | --- |
 | `keeps a literal * after a word-final ß …` | `tests/lib/unicodeTextHygiene.test.ts` | the ASCII-only emphasis rule coming back; **the pin that was watched RED before the fix** |
@@ -4039,19 +4036,16 @@ only a content hash seeded `chunk:<the resolved row>` while the router named
 | `never folds case with the locale …` | same | `toLocaleLowerCase` used for matching (a name that resolves on one machine only) |
 | `(c)` / `(d)` / the two domain pins | `tests/lib/unicodeTextHygiene.test.ts`, `tests/domain/artifactAlias.test.ts`, `tests/domain/creatureName.test.ts` | the comparable form losing `normalize('NFC')` (injection b reds all five) |
 | `routes the alias write in lib/wikilinks.ts through the seam` | `tests/features/alias-merge-seam.test.ts` | the resolver re-inlining one of its thirteen comparisons (behaviour stays green — this is the only pin that can see it) |
-
 **REVERT-PROVEN lines** (each injection applied to the exact executing line,
 `git diff --stat` printed back BEFORE its run, restored from an OUT-OF-TREE copy —
 `/tmp/lang-backup`, never `git checkout --` — and proved with `git hash-object`
 identical before and after: `src/lib/markdown.ts`
 `e4139409a5ad6bf880e363759c19d6248421e5c3`, `src/domain/artifactAlias.ts`
 `df2c63e2489e742178e302f5f8fc269297a9a8bd`; raw logs in `/tmp/lang-logs/`):
-
 | injection (one file at a time, `CAMPAIGNER_TEST_WORKERS=1`) | result |
 |---|---|
 | **(a) the pre-fix file restored** (the ASCII `\w` emphasis rule and the `[a-z]` fence tag back in `src/lib/markdown.ts`) | **RED 4 / GREEN 7 (11)**: `expected 'Ein Gruß aus Wien, und ein Spaß für alle.' to be 'Ein Gruß* aus Wien, und ein Spaß* für alle.'`, `expected 'René und André sind da.' to be 'René* und André* sind da.'`, `expected 'JS\nx' to be 'x'`, and the source scan (the seam no longer holds the Unicode pattern). This run was also the pin's FIRST-EVER run — the fix was written while two foreign suites held the box, so the pin was watched RED against the pre-fix bytes |
 | **(b) the comparable form bypassed** (`comparableName` returns `name.trim().toLowerCase()`, no `normalize('NFC')`) | **RED 5 / GREEN 36 (41)** across the three touched files, every red an NFC/NFD pin: `(c) resolves a DECOMPOSED token …`, `(d) treats the two compositions as ONE name …` (`expected [ 'Siegel der Müller' ] to be []`), `treats the same name in NFC and NFD …`, `returns the SAME list (same reference) …` (`expected [ 'The Alchemist', 'Müller' ] to be [ 'The Alchemist' ]`), `matches on canonical composition, trim + case-fold only …` |
-
 **TWO OF THE SLICE'S OWN PINS WERE WRONG ON THEIR FIRST RUN, and the RED
 injection is what caught them** (recorded because a pin that cannot fail is
 worse than no pin): the ß pin's first sentence put the `*` after `Siegel`, a word
@@ -4061,7 +4055,6 @@ comment explaining why `toLocaleLowerCase` is forbidden. Both are fixed, and the
 second cost an assertion in the scan as well (`expect(seam).not.toContain('(?<!\w)')`
 → `expect(asciiShapeLines(seam)).toEqual([])`, because the seam's comment NAMES
 the rule it replaced) — the same comment-vs-code distinction the scan declares.
-
 **NUMBERS** (bounded gate, `CAMPAIGNER_TEST_WORKERS=1`, raw log kept):
 The baseline is the one the brief states, **326 files / 3838 tests at
 `6f31f7e`**, and it was RE-DERIVED rather than inherited: the only diff between
@@ -4074,7 +4067,6 @@ test DECLARATIONS in the touched files, which is what it is: `+11` the new file,
 `tests/domain/creatureName.test.ts` (13→13, a renamed pin with two assertions
 added) — **+1 file / +13 tests** — with no existing assertion weakened, no test
 skipped and no `Errors:` line.
-
 **NUMBERS — the landing gate, `./scripts/gate.sh` (locked, chunked, watchdog;
 logs `/tmp/lang-logs/gate-landing2/`), on the REBASED tree and printed **GATE
 GREEN, exit 0**.** Per chunk, exactly as the script printed them (the chunks are
@@ -4086,7 +4078,6 @@ test files covered`): `tests_lib 32 files / 368 tests (peak 836 MB)`;
 with `lint errors: 0`, typecheck clean, no `Errors:` line in any chunk log, and
 **peak RSS of any single chunk 1203 MB against the 3000 MB cap** — the number
 that answers the owner's 4 GB directive ("you are not the only worker here").
-
 **The arithmetic, closed in both directions against the baseline the brief
 states — 326 files / 3838 tests at `6f31f7e`, RE-DERIVED and CONFIRMED.**
 `git diff --name-status 6f31f7e..HEAD` names only `AGENTS.md`, so the suite is
@@ -4098,7 +4089,6 @@ new test file) + 0 (row 163 added none) + 1 (this slice) = 328` ✓. Tests: `383
 `tests/features/alias-merge-seam.test.ts` 8→9, `0` in
 `tests/domain/creatureName.test.ts` — one pin RENAMED with two assertions added,
 nothing weakened, no test skipped).
-
 **Two docs conflicts, both resolved as mechanical UNIONs, both proved.**
 `main` moved three times while this slice was in flight (row 161 `e2b9e64`, row
 163 `dcf1332`, and the two gate-script fixes `46cdd41`/`5de1c36`), so `docs/08`
@@ -4114,7 +4104,6 @@ because **the rebased tree is not the tree the previous green run covered**, and
 one test really does read a doc at runtime (`docs/18-ARCHITECTURE.md`, from
 `tests/features/entity-batch-creature-book.test.ts`) — so a docs edit is not
 assumed invisible here, it is re-gated.
-
 **A GATE DEFECT THIS SLICE FOUND AND REPORTED RATHER THAN WORKED AROUND, now
 fixed on `main`.** The first landing-gate run came back RED with every single
 TEST green: `scripts/gate.sh`'s default chunk list ended in `src`, and this repo
@@ -4126,7 +4115,6 @@ tree. It was reported instead of bypassed: `src` was dropped from the list
 "the first list ran most of the suite twice" — measured here as the `tests`
 chunk reporting all 328 files while the directory chunks reported their own
 subsets; the disjoint run above is the one quoted).
-
 **A GATE RUN THAT MEASURED THE WRONG TREE, AND ONE THE KERNEL KILLED — both
 VOID, both recorded.** One full-suite invocation of this slice ran WITHOUT its
 worktree as the working directory and therefore measured
@@ -4139,7 +4127,6 @@ average 22 from CivGlm's playwright + chrome-headless), and a killed run's resul
 is void, never evidence (AGENTS §Host hygiene 7) — hence the chunked gate above,
 which waited for the lock and for the peer suites (measured waits: 240 s, 1420 s,
 1880 s, 920 s) rather than taking either.
-
 **WHAT NO TEST HERE CAN PROVE.** Every German sentence in these pins is authored
 by us: nothing proves that a real LLM writing German emits the strings the
 fixtures do, and the field failure this slice cannot see — a model producing a
@@ -4158,9 +4145,7 @@ a small change — **and the OWNER HAS RULED ON IT, verbatim: "Not now — leave
 the labels English."** The labels are therefore English DELIBERATELY, not by
 oversight; a reader who finds one inside a German document should read docs/17
 row 162, not open a slice.
-
 ### The bestiary cast inherits the comparable form, and the survivor is declared (docs/17 row 166, docs/11 §Module-side cast, docs/18 §2.1)
-
 Row 162 established ONE comparable form for names and folded thirteen
 comparisons in `lib/wikilinks.ts`; it also RECORDED, without fixing, the one
 hand-rolled comparison left in `src/` — `features/modules/entity-batch.ts`'s
@@ -4172,7 +4157,6 @@ Unicode canonical composition, so a DECOMPOSED creature name in a bestiary slot
 (`Wächter` typed on a Mac: `a` + U+0308) missed a COMPOSED library name (U+00E4)
 — the same string to a reader, different bytes — and the cast refused a creature
 the library holds, naming it in the refusal as the nearest creature it holds.
-
 The fix is a fold, not a mechanism: `sameCreatureName(creature.name, wanted)`,
 which is `domain/artifactAlias.comparableName` (canonical composition + trim +
 case fold). The sweep found **22 hand-rolled NAME comparisons across 11 files**
@@ -4181,9 +4165,7 @@ next one is born red rather than surviving unlisted. Three of them were folded
 WIDER than the comparison, because a partial fold there neutralizes itself — a
 comparable-form equality answered through a still-lowercased map key simply
 misses the entry and reads as fixed while behaving as before.
-
 **Matrix**
-
 | Surface | Covered by | State |
 | --- | --- | --- |
 | **A DECOMPOSED slot creature name resolves a COMPOSED library name** — the exact failing case, in the seam that resolves the cast | `features/creature-name-fold.test` (`a DECOMPOSED slot name resolves a COMPOSED library name (THE FAILING CASE)`) | ✅ REVERT-PROVEN (injection a) |
@@ -4196,9 +4178,7 @@ misses the entry and reads as fixed while behaving as before.
 | The new pins are NOT vacuous: the two fixture spellings really are one name in two compositions and only composition differs | same (`the fixtures really are two spellings of one name, and only composition differs`) | ✅ |
 | **EXACTLY ONE name comparison population**: every hand-rolled NAME equality in `src/` (comments skipped) is one of the declared `BOUNDARIES`, and the shape still recognises the original spelling of the defect it was written for | `features/alias-merge-seam.test` (`declares every hand-rolled NAME comparison in src/ — the population, not a sample`, `leaves the hand-rolled shapes in exactly the documented boundaries (and nowhere else)`) | ✅ REVERT-PROVEN (injection a) |
 | **The folded file is NAMED in the seam's accounting** — `entity-batch.ts` carries `sameCreatureName(` ×1, and eight more folded files carry counted needles, so reverting any single fold reds a count | `features/alias-merge-seam.test` (`routes the alias write in features/modules/entity-batch.ts through the seam`, +7 more) | ✅ REVERT-PROVEN (injections a and b) |
-
 **Pin table**
-
 | Pin | File | What it would catch |
 | --- | --- | --- |
 | `a DECOMPOSED slot name resolves a COMPOSED library name (THE FAILING CASE)` | `tests/features/creature-name-fold.test.ts` | the bestiary lookup losing canonical composition again — the row-161 refusal naming the creature it refuses; **the pin watched RED against the pre-slice comparison (injection a)** |
@@ -4208,18 +4188,15 @@ misses the entry and reads as fixed while behaving as before.
 | `the fixtures really are two spellings of one name, and only composition differs` | same | a fixture that quietly became two equal strings (or two DIFFERENT names), which would leave every pin above green and meaningless |
 | `declares every hand-rolled NAME comparison in src/ — the population, not a sample` | `tests/features/alias-merge-seam.test.ts` | the shape drifting into matching nothing (a green offenders pin that proves nothing) or matching something else; a NEW hand-rolled name comparison anywhere in `src/`; a declared boundary going stale |
 | `routes the alias write in <file> through the seam` — 14 files, each with counted needles | same | reverting ONE fold, which no behavioural pin can see (the two spellings agree on every ASCII input) |
-
 **REVERT-PROVEN lines** (each injection applied to the exact executing line,
 `git diff --stat` printed back BEFORE its run, restored from an OUT-OF-TREE copy
 (`/tmp/namefold-backup/entity-batch.ts`, never `git checkout --`) and proved with
 `git hash-object` identical before and after:
 `5cfd2f60c58d38a6ac55c97fe996231474cf8655`; raw logs in `/tmp/namefold-logs/`):
-
 | injection (one file, `CAMPAIGNER_TEST_WORKERS=1`) | result |
 |---|---|
 | **(a) the hand-rolled comparison restored** (`creature.name.trim().toLowerCase() === wanted.toLowerCase()` back in `src/features/modules/entity-batch.ts`) | **RED 7 / GREEN 18 (25)**: the four composition pins red, and the failure is the row-161 refusal itself — `Error: bestiary cast: the entity «Der Torwächter» asks to borrow the stats of «Wächter», but this workspace's library holds no creature of that name … — the nearest creatures this library holds: Wächter (Pathfinder Monster Core)`; plus `features/modules/entity-batch.ts: sameCreatureName( call sites: expected +0 to be 1`, the offenders pin (`expected [ 'features/modules/entity-batch.ts' ] to deeply equal []`) and the population pin. This was the new pins' own FIRST red run, so the failing case was watched failing rather than assumed |
 | **(b) the comparison made LOOSER than the seam** (`normalizeCreatureName(creature.name) === normalizeCreatureName(wanted)` — NFKD + accent strip, the loose message-only form) | **RED 3 / GREEN 22 (25)**: `a DIACRITIC difference is still two names` reds with `Error: expected a refusal for «Schlager», but it RESOLVED to chunk 73e16cdc-…` and the loose-form pin reds with `expected a refusal for «Zombie (variant)», but it RESOLVED to chunk 8450b37c-…` — a silently WRONG CAST, the defect row 114's contract exists to prevent — plus the count pin. The asymmetry with (a) is the point: (a) reds the composition pins, (b) reds the exactness pins, so neither half of the rule is proved by the other's evidence |
-
 **NUMBERS — the landing gate, `./scripts/gate.sh` (locked, chunked, watchdog;
 logs `/tmp/namefold-logs/gate-landing-6/`), printed **GATE GREEN, exit 0**.**
 Per chunk, exactly as the script printed them (disjoint chunks, and the script
@@ -4229,7 +4206,6 @@ files / 368 tests (peak 794 MB)`; `tests_llm 70 / 1146 (769 MB)`; `tests_db
 1324 (1113 MB)`; `tests_remainder 42 / 411 (1013 MB)` — summing to **329 files
 / 3891 tests**, with `lint errors: 0`, typecheck clean, no `Errors:` line in any
 chunk log, and **peak RSS of any single chunk 1113 MB against the 3000 MB cap**.
-
 **The arithmetic, against the baseline the brief states — 328 files / 3875 tests
 at `16ae0d3`, RE-DERIVED from that summary rather than inherited.** This slice
 adds `+8` (`tests/features/creature-name-fold.test.ts`, NEW) and `+8`
@@ -4237,7 +4213,6 @@ adds `+8` (`tests/features/creature-name-fold.test.ts`, NEW) and `+8`
 as `tests_features` moving from row 162's `133 / 1308` to `134 / 1324`:
 **+1 file / +16 tests**, with no existing assertion weakened, no test skipped and
 no `Errors:` line.
-
 **THE GATE WAITED SIX TIMES AND REAPED NOTHING, which is the rule rather than a
 detail.** Attempts 1–5 exited 9: once because `CivGlm` (the owner's other DSH
 project) was running Playwright on this box, and four times because the `mkdir`
@@ -4246,7 +4221,6 @@ lock was held — by `PID 3412213`, whose owner file names
 gating in the MAIN tree, not this worktree. A foreign suite is waited for and
 never reaped (AGENTS §Host hygiene 7); attempt 6 took the lock and ran the whole
 gate under the 3000 MB cap with availability never below ~10.7 GB.
-
 **ONE EDIT AFTER THE GATE, and why it cannot invalidate it.** A double space in
 the docs/18 paragraph this slice amends was fixed after the gate summary above
 was captured. Exactly ONE test in the suite reads a doc at runtime
@@ -4258,7 +4232,6 @@ tests/features/entity-batch-creature-book.test.ts`, logs
 `/tmp/namefold-logs/gate-doccheck/`). This section's own prose in `docs/08` is
 read by no test at all. The rule row 162 established still holds: a docs edit is
 not assumed invisible here, it is re-gated.
-
 **WHAT NO TEST HERE CAN PROVE.** That a real Mac-authored module produces these
 bytes: every name in these pins is a string WE composed, from the same in-memory
 text, and a genuine NFD name arrives from a file an author typed on his own
@@ -4277,7 +4250,6 @@ portrait identity (`domain/creature.contentCreatureKey`). `db/mobPortraitCache.t
 `isCanonicalCitation` is declared in the scan as a SURVIVOR, not a boundary: it
 is the portrait path docs/17 row 165 owns, in flight in another worktree, and
 folding it here would race that landing.
-=======
 | **DIFFERENTIAL: for the same creature, the portrait the module side resolves equals the portrait the battle token renders** — the pin that would have caught the owner's case (a "the token has a portrait" pin could not: the creature WAS imaged) | `features/creature-portrait-agreement.test` (`the owner's case: a module-level creature with core stats and a library portrait`) | ✅ |
 | A cast creature whose portrait is the campaign presentation row renders it (the `npc-ref` shape) | `features/creature-portrait-agreement.test` (`a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`) | ✅ |
 | A cast creature whose OWN cover carries the portrait still renders that cover — what its module card renders (unchanged path, pinned against regression) | `features/creature-portrait-agreement.test` (`a cast creature whose OWN cover carries the portrait renders that cover`) | ✅ |
@@ -4290,13 +4262,11 @@ folding it here would race that landing.
 | **"EXACTLY ONE": no creature key is constructed outside the identity seam** — a source scan over `src/db/battleSeed.ts` and `features/campaign/mob-portrait-participants.ts` (the two files that used to spell their own rules) | `db/creature-identity-spelling.test` (`the LIVE roster-side spelling is ONE seam, and no key is born outside it`) | ✅ |
 | The retired dead reader is gone with it (`documentCoverImageId`, no caller left once the reading returns the row's `imageId`) | `db/creature-identity-spelling.test` (`the presentation-row table lost its dead reader with the same commit`) | ✅ |
 | The battle card's Generate-vs-Regenerate state reads the SAME resolution the token renders (a cast row with its own cover no longer offers "Generate" for art the queue would decline) | `features/battle-token-portrait.test` (both action pins, re-run unchanged) | ✅ |
-
 **Pins, by name** (9 new: 4 in `tests/db/creature-identity-one-rule.test.ts`,
 5 in `tests/features/creature-portrait-agreement.test.tsx`; 2 re-based in
 `tests/db/creature-identity-spelling.test.ts` — its three-arm source pin replaced
 by the ONE-seam scan, plus the dead-reader pin; NO pin deleted, none weakened,
 none skipped):
-
 1. `the owner's case: a module-level creature with core stats and a library portrait`
 2. `a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`
 3. `a cast creature whose OWN cover carries the portrait renders that cover (unchanged path)`
@@ -4306,12 +4276,10 @@ none skipped):
 7. `a statless row carries the SAME key as the statful row of the same citation`
 8. `a HEALED citation keys on the citation the roster row names — the same key the batch writes under`
 9. `a cast creature whose citation carries only a content hash keys on its own row, both sides`
-
 The rendering pins read the IMAGE ID a surface resolved (`useImageUrl` is mapped
 to `url:<imageId>`), not a blob URL: jsdom cannot produce object URLs, and the
 defect lived in WHICH id was resolved — the fact under test — rather than in the
 plumbing that renders it.
-
 **REVERT-PROVEN** (each injection applied to the exact executing line, printed
 back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy —
 `/tmp/injection-165/backup/battleSeed.ts` and
@@ -4320,12 +4288,10 @@ back with `git diff --stat` BEFORE its run, restored from an OUT-OF-TREE copy �
 `04a1b033d80d501a1ebc20ea7395cd289119ed56` and
 `55b7ed5b23a6cef732044f6c812af31c04b115d9`; raw logs kept under
 `/tmp/injection-165/logs/`):
-
 | injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`) | result |
 |---|---|
 | **(a) ONE arm computes a divergent key** (the seeder's rulebook arm stamps `…-divergent` on the identity it hands its tokens) | **RED 5 failed / 4 passed (9)** across the two pin files: the identity differential (`a library citation, an invented mob, a cast creature and an authored npc agree`), both further arm pins (`a statless row carries the SAME key…`, `a HEALED citation keys on the citation…`) and the two board pins that depend on the key finding the portrait (`the owner's case…`, `a missing portrait is WORK and the board shows initials; the batch then fills both`) |
 | **(b) the predicate ignores the identity key** (the module gap detector is handed an EMPTY presentation snapshot) | **RED 5 failed / 25 passed (30)** in `tests/features/creature-portrait-agreement.test.tsx` (4 of its 5) + `tests/features/mob-portrait-module-gaps.test.ts` (the pre-existing `yields no work at all once every participant is imaged (no over-offering)`); `tests/features/generate-everything.test.tsx` stayed GREEN because its fixture carries no presentation row at all. **The asymmetry is the point**: every failure is the PRESENT direction (a portrait exists ⇒ no work) — `the owner's case: …`, `a cast creature whose portrait is the campaign presentation row renders it too (npc-ref)`, `an invented mob renders the portrait keyed on its own content`, the post-fill half of `a missing portrait is WORK and the board shows initials; the batch then fills both`, and the module-level no-over-offer pin — while the MISSING direction keeps reporting work, which is exactly why a pin that only asked "does it offer work?" could not have caught the owner's case |
->>>>>>> efc2205 (wip(portraits): one creature identity, one portrait reading (docs/17 row 165))
 
 **NUMBERS** (THE bounded landing gate — `scripts/gate.sh`, the ONE gate since the
 owner's 4 GB directive; raw log kept at `/tmp/gate-165-summary.txt`, per-chunk
