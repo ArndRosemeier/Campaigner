@@ -270,6 +270,29 @@ the config default, and it holds for whoever forgets. Binding rules:
    process scan (`pgrep -af "vitest|loadgen"`) before dispatching and after
    every landing; it cleans up its own writers' leftovers and reports the
    incident to the owner.
+7. **A GATE IS A LOCK, AND EVERY RUN CARRIES A MEMORY CEILING.** Third
+   occurrence, owner-visible (the kernel OOM-killed `dsh` itself and the
+   owner had to restart the harness): the dispatcher ran the full suite
+   plus two PDF-rendering suites as an UNATTENDED background job with no
+   ceiling, and the OOM killer took the largest process on the box — which
+   is DSH. **Understand the failure mode this time: an OOM-killed `dsh`
+   process is indistinguishable from a writer dying silently with an empty
+   report** (three writers died that way on one slice before the mechanism
+   was recognised), so memory pressure destroys WORK, not merely desktop
+   responsiveness.
+   - **One suite at a time in the whole session.** Before any `vitest`
+     invocation — a writer's gate, a dispatcher verification and an
+     injection run are all "the suite" — `pgrep -f 'vites[t]'` must be
+     EMPTY. If something is running, wait; never overlap two.
+   - **Every run carries a heap ceiling**, so the kernel is never asked to
+     choose. Canonical gate form, pasted verbatim into briefs:
+     `pgrep -f 'vites[t]' >/dev/null && echo BUSY || NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1 pnpm exec vitest run`
+   - **Suites that render real PDFs** (`pdfLayout`, pdfjs, pdfmake) run in
+     the FOREGROUND in bounded chunks, file by file — never as one long
+     unattended background job. The 600 s foreground cap is a reason to
+     chunk a run, never a reason to hide one.
+   - **A killed run's result is VOID**, never evidence: re-run it under the
+     lock before claiming anything from it.
 
 ## Subagent hygiene
 
