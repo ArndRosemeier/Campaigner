@@ -358,6 +358,16 @@ the config default, and it holds for whoever forgets. Binding rules:
      actually keeps the box alive is **one worker, one suite at a time**.
    - **A killed run's result is VOID**, never evidence: re-run it under the
      lock before claiming anything from it.
+   - **An INJECTION holds the tree only while its run is LIVE, and it is restored
+     by a `trap`.** Real incident, the dispatcher's own: an injection was applied
+     in the shared main tree BEFORE waiting for the lock, so reversed code sat
+     uncommitted there for ~20 minutes while two writers gated and committed — one
+     of them found it, reported it and stayed out of it (the correct move, and the
+     only reason nothing broke); a writer that ran `git add -A` would have
+     committed the injection. So: **take the lock FIRST, then inject, then run,
+     then restore in a `trap`** so a killed job cannot leave it behind. Never wait
+     while injected, and treat a dirty shared tree observed by a writer as a
+     DISPATCHER defect, reported rather than resolved.
    - **Ownership is the WORKTREE PATH IN THE COMMAND LINE — not `cwd`, and
      never a pattern kill.** Measured: `readlink /proc/<pid>/cwd` returns EMPTY
      for processes owned by subagent sessions, so the cwd test silently matches
