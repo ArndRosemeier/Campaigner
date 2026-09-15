@@ -3078,6 +3078,68 @@ fixture carrying a `publication` block for the creature lane, so its real-data
 path rests on the transcription plus the declared prefix relation, not on a pf2e
 creature fixture.
 
+### A top-level array is a document STREAM, and the document-record rule is ONE predicate (docs/17 row 171, docs/18 §2.2/§5)
+
+The ingest document seam (`packs/text.parseJsonDocs` / `parseYamlDocs`, row 147)
+tried `JSON.parse(whole file)` FIRST, so a top-level JSON array became ONE
+document — the array itself — which every adapter skipped as a shape it did not
+know. The import then failed with a FALSE reason for a file whose documents were
+all there, wrapped: `no valid creature entries in the pack selection (1 skipped,
+0 failed)`, while the same two creatures as NDJSON imported fine.
+
+Row 171 makes a top-level array a document STREAM, unwrapped ONE level in the
+seam, for BOTH formats. YAML needed the same fix rather than a declaration:
+MEASURED with the repo's own js-yaml, `loadAll('- a\n- b\n')` returns ONE
+document, `[['a', 'b']]`. The boundaries are pinned as data: one level only (an
+array of arrays yields the inner arrays, which the predicate rejects); a
+document's own array FIELDS untouched; the NDJSON arm does not unwrap (its top
+level is the line stream). An EMPTY top-level array throws `<file>: top-level
+array holds no documents` — returning `[]` would account the file NOWHERE, which
+the seam's own invariant forbids.
+
+The RULE "this parsed value is a document" was seven byte-identical private
+`isRecord` copies; row 171 folds them into the exported
+`text.isDocumentRecord`, which all seven lanes import.
+
+| fact pinned | where |
+|---|---|
+| **THE UNWRAP RULE, directly**: a top-level JSON array yields N documents; a top-level YAML sequence yields N documents; exactly ONE level (nested arrays stay documents); a document's own array FIELD survives intact; an array line of an NDJSON stream is NOT unwrapped; an empty top-level array throws by name in both formats | `tests/ingest/packs/parse-docs.test.ts` |
+| **THE OUTCOME, through the REAL adapters** (the user-visible defect was never the parse, it was `entries: 0, skipped: 1`): `foundry-pf2e` on `encodeJson([baseNpc(), folderDoc()])` imports the creature and skips exactly the folder; the same two as NDJSON are identical; a single document is unchanged and its `items[]`-derived action is present; two wrapped folders are `skipped: 2`; an array of arrays is `skipped: 2`; `foundry-dnd5e-equipment` maps BOTH items of a top-level YAML sequence | same file, plus `pf2e-foundry.test.ts` (the network test now asserts the array parse outcome) |
+| **SCAN — the predicate and the unwrap belong to the seam ONLY**: no file but `text.ts` contains `function isRecord`, `isRecord(` or `Array.isArray`; the predicate is defined exactly once; the seam carries three `Array.isArray` sites (non-vacuity); exactly the seven lanes import `isDocumentRecord` from `./text` and call it | same file (2 SCAN pins) |
+| **The row-147 seam-import scan, amended**: it pinned `'import { htmlToText, '` as a line prefix, and row 171's added predicate pushed the JSON lanes' import past Prettier's 100-column width, so it wraps. The scan now parses the import's NAME list and requires `htmlToText` + the declared style; the claim is unchanged and the check is stronger | `tests/ingest/packs/html-to-text.test.ts` (amended, with the reason in a comment) |
+
+**INJECTIONS — three, raw logs `/tmp/arraydocs-logs/`, restored from
+out-of-tree copies with `git hash-object` identical before and after:**
+
+| injection | line it hits | measured result |
+|---|---|---|
+| **A — the JSON unwrap REVERTED**: `return whole;` → `return [whole];` | `src/ingest/packs/text.ts`, `parseJsonDocs` | **RED 6 / GREEN 35 (41)** over `parse-docs.test.ts` + `pf2e-foundry.test.ts`: the JSON seam pins, the through-adapter array pin, the network test's outcome assertions and the JSON invariant. The YAML pins stayed GREEN — the per-format isolation the mirror fix needs |
+| **B — `isRecord` copied back into one lane** (definition revived, call switched) | `src/ingest/packs/pf2e-journal.ts` | **RED 1 / GREEN 28 (29)**: ONLY the source scan, naming all three offenders (`function isRecord`, `isRecord(`, `Array.isArray`) |
+| **C — the empty-array throws made `return []`** (both arms) | `src/ingest/packs/text.ts`, `parseJsonDocs` + `parseYamlDocs` | **RED 3 / GREEN 26 (29)**: the invariant table, the loud-throw pin, and the "sits inside the invariant" pin |
+
+**GATE.** The landing gate (`bash scripts/gate.sh`, raw log
+`/tmp/arraydocs-logs/gate.log`, chunk logs `/tmp/gate-3966685/`) printed **GATE
+GREEN, exit 0: 333 files / 3955 tests** against the baseline `381aa6e` (**333
+files / 3941 tests** — this slice is **+14 tests, +0 files**),
+`chunk arithmetic: 333 of 333 test files covered`, lint 0 errors, typecheck
+clean, no `Errors:` line, peak RSS **1227 MB of the 3000 MB cap**; chunks
+`tests_lib 32/369 (858MB)`, `tests_llm 70/1152 (896MB)`, `tests_db 32/366
+(676MB)`, `tests_domain 22/309 (648MB)`, `tests_features 135/1329 (1227MB)`,
+`tests_remainder 42/430 (1150MB)`. The first twelve invocations exited **9** —
+another writer's `tests/features` chunk held the machine — so the gate WAITED
+and retried rather than reaping anything; the green run is attempt 13.
+**COPIES: 7→1 — `src/ingest/packs/text.ts` (`isDocumentRecord`).**
+
+**WHAT THESE PINS CANNOT PROVE.** The scan is textual and comment-blind: a
+predicate or unwrap composed at runtime, or reached through an intermediate
+helper in another module, is invisible to it (docs/18 §4). The seam pin states
+the rule; it cannot prove a REAL third-party pack file is array-shaped — no
+fixture corpus is, and the through-adapter pin uses the repo's own fixture
+builders. And nothing proves the dnd5e YAML corpus ever ships a top-level
+sequence: the mirror is a fix chosen because `loadAll` measurably yields one
+array document for a sequence, not because a real dnd5e file was seen in that
+shape.
+
 **What row 148's pins still cannot prove** (kept beside the other
 limitations, and stated in full in the page-model section above): the page model
 is asserted as a pdfmake DEFINITION, so the LAYOUT itself — that pdfmake keeps a

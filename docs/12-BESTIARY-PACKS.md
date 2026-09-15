@@ -84,7 +84,12 @@ model is what makes the sources usable at all:
 **pf2e** — repo default branch (`v14-dev`): `packs/pf2e/<pack>/<...>/<creature>.json`,
 **one JSON file per creature** (`type: 'npc'`); 98 packs, including the core
 bestiaries *and* every Adventure Path bestiary. Older releases ship the same
-docs as NDJSON (`.db`) files — the adapter accepts both. Relevant shape (all
+docs as NDJSON (`.db`) files — the adapter accepts both. **AMENDED (docs/17
+row 171):** a file may also wrap its documents in ONE top-level JSON array —
+the ingest seam unwraps a top-level array ONE level into N documents, and the
+dnd5e YAML family mirrors it for a top-level sequence (a document's own array
+FIELDS are untouched; before that row the whole array was ONE document and
+every lane skipped it). Relevant shape (all
 492 v14-dev documents parsed and mapped — 0 failures, 0 skips):
 `system.details.level.value` (object `{value: n}`), `system.traits.value`
 (trait strings) + `system.traits.size.value` (`'med'`…),
@@ -189,7 +194,10 @@ derives from the **persisted statBlock** (`parseLevelSort` over
 
 Files enter as a user-selected multi-file set: loose `.json` / `.db` / `.yml`
 files, and `.zip` archives (unzipped in-memory via the existing `fflate`
-dependency — a pack zip or a repo zip's pack folder both work). The runner
+dependency — a pack zip or a repo zip's pack folder both work). **AMENDED
+(docs/17 row 171):** a `.json`/`.yml` file may hold ONE document, an NDJSON
+stream, or a top-level array/sequence of documents — the seam unwraps the
+array ONE level, so all three shapes import. The runner
 recurses into zip folder structure so "select the whole bestiary folder zip"
 is one action.
 
