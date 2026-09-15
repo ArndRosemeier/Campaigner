@@ -444,6 +444,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   the merged file under ~120 tests, and leave the act()-heavy family
   (`board-*`, `canvas-*`, `chat-*`, `battle-*`, `creature-portrait-*`,
   `module-reader*`, `persona-run-ui*`) out until the rule is proven further.
+  **The sweep (docs/17 row 177) added four measured riders.** (1) A merged file
+  shares ONE mock instance per mocked module, so per-`describe` teardown is not
+  enough: a previous `describe`'s `mockImplementation` answers a later test's
+  `...Once` overflow and its call history persists — every merged file whose
+  originals mock needs a FILE-LEVEL `beforeEach(() => { vi.resetAllMocks(); })`
+  (outer hooks run before inner, so each `describe` still installs its own).
+  (2) The two `test.projects` are a HARD environment split: a `nodeTestGlobs`
+  file can never merge with a default-jsdom file, whatever the mock sets.
+  (3) A file whose tests leave async background continuations
+  (`moduleGen-auto-spine`) cannot merge with files that assert call counts —
+  it was measured changing a later describe's `chat` count from 2 to 3, and was
+  split out. (4) A `describe` that mutates process-wide globals by direct
+  assignment (`cover-art`'s `URL.createObjectURL`, `spawn-picker`'s
+  `HTMLElement.prototype.offsetWidth`) goes LAST in the merged file.
 
 - **A global regex used in a LOOP carries `lastIndex` between calls, and the
   loss is SILENT — so a caller that loops `exec` over slices must not share

@@ -4134,6 +4134,69 @@ from the 339/3978 baseline — five files became one, nothing weakened or
 skipped), lint 0 errors, typecheck clean, no `Errors:` line, combined peak
 2277 MB of the 3000 MB cap.
 
+### The sweep: mock-carrying clusters, and the stop conditions that are MEASURED (docs/17 row 177)
+
+Row 176 ran the pilot on the safest possible cluster (five files, NO `vi.mock`)
+and left the mock-carrying clusters to the sweep. The sweep merged **39 files
+into six** across `tests/llm` (2) and `tests/features` (4) — every one of them a
+group of ≥5 files with an IDENTICAL `vi.mock` target-set (or no mock at all),
+the same helper/fixture imports and the same Dexie mount, with no file-scoped
+`ALLOWED_NOISE` reliance, no act()-heavy family member, and under the
+~120-test cap. The accounting rule that makes "nothing was lost" checkable, run
+per cluster: from `git show 55be755:<original>` and from the merged file,
+extract the `it(`/`test(` names and the `expect(` site count — **both must be
+identical**. In all six clusters the test-name SET was identical and the
+`expect(` counts matched exactly (389 tests / 1728 assertion sites moved). The
+merged file keeps the originals findable: one `describe('<original
+basename>', …)` per original and a header naming every source path, so grepping
+an old filename still lands on the merged file.
+
+The pilot's rules stand. The sweep added FIVE measured stop conditions, each
+found by a red gate rather than by reasoning:
+
+- **A merged file shares ONE mock instance per mocked module, so
+  per-`describe` teardown is NOT enough.** Each original owned its own `chat` /
+  `toast` mock; in one file they share one `vi.fn()`. Two `tests/llm` tests went
+  red on call counts (5 and 3 where 2 was asserted) because a previous
+  `describe`'s `mockImplementation` answered a later test's `...Once` queue
+  overflow and because call history carried across describes. Every merged file
+  whose originals mock carries a FILE-LEVEL `beforeEach(() => {
+  vi.resetAllMocks(); })`; each `describe`'s own hooks then install what it
+  needs, because outer hooks run before inner ones.
+- **The environment split is a HARD STOP.** `vite.config.ts`'s two
+  `test.projects` (node + jsdom) are disjoint by file: a file listed in
+  `nodeTestGlobs` can never share a merged file with a default-jsdom file,
+  whatever their mock sets. This is why the brief's
+  `@/domain/artifact,@/llm/openrouter,@/search` llm cluster was not merged: its
+  fourth member `encounterRun` is node-env while the other four are jsdom (and
+  four files is below the ≥5 floor anyway).
+- **A file whose tests leave async background continuations cannot merge with
+  files that assert call counts.** `moduleGen-auto-spine` passed all its own
+  tests but, merged ahead of `moduleGen-conflict-structure`, left background
+  generation in flight that reached the later `describe`'s `chat` mock —
+  measured 3 calls where the original file counted 2. That is the sweep's own
+  stop condition (the merge CAUSED the leak), so it was SPLIT OUT and stays a
+  file of its own rather than relying on placement.
+- **A cluster the brief lists can still violate the brief's own ≥5 rule.** Two
+  of the named llm clusters (`toast+openrouter+search` and
+  `domain/artifact+openrouter+search`) have exactly 4 files; with the ≥5 floor
+  binding, they do not merge (a 4-file merge is a smaller win than the pilot,
+  not a rule-compliant one).
+- **Direct-global mutators go LAST.** `cover-art` (`URL.createObjectURL` /
+  `revokeObjectURL`) and `spawn-picker`
+  (`HTMLElement.prototype.offsetWidth/offsetHeight`) mutate process-wide state
+  that no `afterEach` restores, so their `describe`s sit at the END of their
+  merged files — every other describe runs before the stub exists.
+
+The honest limit, stated not hidden: the ~1.6 s/features and ~0.9 s/llm per-file
+figures are the framework cost a merge removes; a merge does not shorten the
+ASSERTION time (the `tests` component is unchanged), it does not prove the
+saving is linear (a bigger file has a bigger `tests` component and the framework
+share shrinks), and one cluster's green canary does not prove another cluster's
+adjacency is safe. The merged-file mapping, the accounting table, the 3×
+canary, the measured gate delta and every EXCLUDED cluster with its reason are
+docs/17 row 177.
+
 ### What the window SHOWS is what the cast compares (docs/17 row 163, docs/12 §5, docs/18 §2/§4)
 
 Row 161 made the bestiary slot's `book` a DISAMBIGUATOR instead of a veto, which
