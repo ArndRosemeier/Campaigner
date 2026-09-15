@@ -47,19 +47,24 @@ while IFS= read -r line; do
   case "$kind" in
     SESSION)
       cos="$(field "$line" cos)"
-      if [ -n "${DSH_SESSION_ID:-}" ] && [ "$cos" != "$DSH_SESSION_ID" ]; then
-        note "the board names CoS session $cos, but THIS session is $DSH_SESSION_ID — update the SESSION record"
-      else
-        echo "  CoS session: $cos (this session)"
-      fi
-      # Context budget as a MEASURED number: the predecessor's session log grew
-      # to 35MB and could no longer be compacted. Handover is cheap on purpose.
-      cur=""
-      for c in "$SESSROOT/$DSH_SESSION_ID" "$SESSROOT/session-$DSH_SESSION_ID"; do [ -d "$c" ] && cur="$c"; done
-      if [ -n "$cur" ]; then
-        sz="$(du -sm "$cur" 2>/dev/null | cut -f1)"
-        echo "  this session's log: ${sz:-?}MB (handover suggested past ~8MB — a session that cannot be compacted cannot be recovered)"
-      fi
+      # The board may name MORE THAN ONE live actor (two CoS sessions have run
+      # this project at once). Each is printed; the "am I named?" verdict is made
+      # once after the loop, so a second actor is information, not staleness.
+      case "$cos" in
+        "$DSH_SESSION_ID"|"session-$DSH_SESSION_ID")
+          echo "  CoS session: $cos (this session)"
+          # Context budget as a MEASURED number: the predecessor's session log
+          # grew to 35MB and could no longer be compacted. Handover is cheap on
+          # purpose, so the size is reported where the actor is named.
+          cur=""
+          for c in "$SESSROOT/$DSH_SESSION_ID" "$SESSROOT/session-$DSH_SESSION_ID"; do [ -d "$c" ] && cur="$c"; done
+          if [ -n "$cur" ]; then
+            sz="$(du -sm "$cur" 2>/dev/null | cut -f1)"
+            echo "  this session's log: ${sz:-?}MB (handover suggested past ~8MB — a session that cannot be compacted cannot be recovered)"
+          fi
+          ;;
+        *) echo "  CoS session: $cos";;
+      esac
       ;;
     IN-FLIGHT|UNLANDED)
       branch="$(field "$line" branch)"; wt="$(field "$line" worktree)"; writer="$(field "$line" writer)"
@@ -138,6 +143,15 @@ while IFS= read -r line; do
       ;;
   esac
 done < <(grep -E '^(SESSION|IN-FLIGHT|UNLANDED|AWAITING-OWNER|LANDED|RECOVERY|TRAP) *\|' "$BOARD")
+
+# Am I named at all? With one actor this catches a stale SESSION record; with two
+# it is satisfied by either, so a second CoS session is information, not staleness.
+if [ -n "${DSH_SESSION_ID:-}" ]; then
+  mine="$(printf '%s' "$DSH_SESSION_ID" | sed 's/^session-//')"
+  if ! grep -E '^SESSION *\|' "$BOARD" | grep -oE 'cos=[^ |]*' | cut -d= -f2- | sed 's/^session-//' | grep -qx "$mine"; then
+    note "this session ($DSH_SESSION_ID) is named in NO SESSION record — either a successor owns this board, or the record is stale"
+  fi
+fi
 
 # UNRECORDED LIVE STATE — the dispatch-window hole. A writer exists on disk (its
 # worktree, its session log) from the moment it is dispatched, while the board is
