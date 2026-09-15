@@ -421,6 +421,16 @@ the config default, and it holds for whoever forgets. Binding rules:
      then restore in a `trap`** so a killed job cannot leave it behind. Never wait
      while injected, and treat a dirty shared tree observed by a writer as a
      DISPATCHER defect, reported rather than resolved.
+   - **A DIFFERENTIAL'S ARMS MUST BE SHOWN TO DIFFER.** Print the changed file's
+     hash for EVERY arm, and treat two arms with identical output as a VOID probe
+     (the injection did not change what ran) — never as evidence against a
+     landing. Real incident, the dispatcher's own (2026-09-15, board row 178): its
+     probe script broke the cure in the SAME step as the delay, so the "cure
+     intact" arm actually measured bypassed bytes; the two arms came back
+     identical, the dispatcher read that as falsifying a writer's fix and reopened
+     a slice whose own full gate had already passed — the writer's reconciliation
+     (hash-printed arms, a 4× delay range, warnings inside the raw windows) was
+     right and the probe was void. Identical arms are the TELL, not the result.
    - **Ownership is the WORKTREE PATH IN THE COMMAND LINE — not `cwd`, and
      never a pattern kill.** Measured: `readlink /proc/<pid>/cwd` returns EMPTY
      for processes owned by subagent sessions, so the cwd test silently matches
