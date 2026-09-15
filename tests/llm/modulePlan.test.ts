@@ -19,6 +19,8 @@ import {
   planModuleDocument,
   modulePlanMessages,
   modulePlannerReplySchema,
+  MODULE_PLAN_CONTENT_BUDGET_CHARS,
+  assembleModulePlanContent,
 } from '@/llm/modulePlan';
 import { clearDatabase } from '../db/helpers';
 
@@ -388,10 +390,11 @@ describe('planAndStoreModuleDocument — the ONE plan WRITE (docs/17 row 139)', 
 });
 
 describe('modulePlanMessages — what the model is told it may decide', () => {
-  it('states the role vocabulary, the audience rule and the prohibitions', () => {
-    const messages = modulePlanMessages({
+  it('states the role vocabulary, the audience rule and the prohibitions', async () => {
+    const messages = await modulePlanMessages({
       module: world.module,
       scopedArtifacts: world.artifacts,
+      pool: world.artifacts,
       images: [{ id: newId(), where: 'the map of “Pier Ambush”' }],
     });
     const system = messageText(messages[0]);
@@ -420,14 +423,130 @@ describe('modulePlanMessages — what the model is told it may decide', () => {
     expect(user).toContain('the map of “Pier Ambush”');
   });
 
-  it('names the module when it has no artifacts and no images', () => {
-    const messages = modulePlanMessages({
+  it('names the module when it has no artifacts and no images', async () => {
+    const messages = await modulePlanMessages({
       module: world.module,
       scopedArtifacts: [],
+      pool: world.artifacts,
       images: [],
     });
     const user = messageText(messages[1]);
     expect(user).toContain('ARTIFACTS (0 of 0)');
     expect(user).toContain('(none)');
+  });
+
+  /**
+   * THE CONTENT PIN (docs/17 row 169): the planner judges real text, not one
+   * 160-char line per row. The module's OWN text arrives through the shared
+   * reader, and a row's real stored prose arrives through the chat's own
+   * renderer — INCLUDING the part a 160-char excerpt could never carry.
+   */
+  it('carries the module’s own text and a row’s real stored prose past the old 160-char excerpt', async () => {
+    const longBody = `${'The ford is watched from the tower. '.repeat(10)}THE-FAR-END-OF-THE-ROW`;
+    expect(longBody.length).toBeGreaterThan(160);
+    const row = await createArtifact({
+      campaignId: world.module.campaignId,
+      kind: 'location',
+      name: 'The Long Ford',
+      body: longBody,
+    });
+    const messages = await modulePlanMessages({
+      module: world.module,
+      scopedArtifacts: [row],
+      pool: [...world.artifacts, row],
+      images: [],
+    });
+    const user = messageText(messages[1]);
+    // The module's OWN text (premise + parts), not a premise+synopsis digest.
+    expect(user).toContain('A drowned vault beneath the [[Old Tower]].');
+    // The whole stored body, not a 160-char excerpt of it.
+    expect(user).toContain(longBody);
+    expect(user).toContain('THE-FAR-END-OF-THE-ROW');
+    // The id the plan's `source` must name, on the row's own content heading.
+    expect(user).toContain(`ARTIFACT ${row.id}`);
+  });
+
+  it('lists what each document links to from the reader’s own wiki graph', async () => {
+    const messages = await modulePlanMessages({
+      module: world.module,
+      scopedArtifacts: world.artifacts,
+      pool: world.artifacts,
+      images: [],
+    });
+    const user = messageText(messages[1]);
+    const tower = world.artifacts[0];
+    expect(tower).toBeDefined();
+    expect(user).toContain('WHAT THE MODULE LINKS TO');
+    expect(user).toContain(`premise: «Old Tower» (location ${tower?.id ?? 'missing'})`);
+  });
+
+  it('names a row whose stored fields are all empty instead of dropping it quietly', async () => {
+    const bare = await createArtifact({
+      campaignId: world.module.campaignId,
+      kind: 'location',
+      name: 'Empty Room',
+    });
+    const messages = await modulePlanMessages({
+      module: world.module,
+      scopedArtifacts: [bare],
+      pool: [bare],
+      images: [],
+    });
+    const user = messageText(messages[1]);
+    expect(user).toContain('NOT RENDERED');
+    expect(user).toContain('Empty Room');
+    expect(user).toContain(bare.id);
+  });
+
+  /**
+   * THE LOUD-CAP PIN (docs/17 row 169): over budget the block is never trimmed
+   * silently — a `[BLOCK FULL — …]` marker names every row that was not sent.
+   */
+  it('warns LOUDLY and names every row the content cap left out', async () => {
+    const huge = await createArtifact({
+      campaignId: world.module.campaignId,
+      kind: 'location',
+      name: 'Vast Halls',
+      body: 'x'.repeat(MODULE_PLAN_CONTENT_BUDGET_CHARS + 2000),
+    });
+    const later = await createArtifact({
+      campaignId: world.module.campaignId,
+      kind: 'location',
+      name: 'The Later Room',
+      body: 'A short room.',
+    });
+    const messages = await modulePlanMessages({
+      module: world.module,
+      scopedArtifacts: [huge, later],
+      pool: [...world.artifacts, huge, later],
+      images: [],
+    });
+    const user = messageText(messages[1]);
+    expect(user).toContain('[BLOCK FULL');
+    expect(user).toContain(`${String(MODULE_PLAN_CONTENT_BUDGET_CHARS)}-character`);
+    // The marker names what was cut — the row that overflowed and the one after it.
+    expect(user).toContain('Vast Halls');
+    expect(user).toContain('The Later Room');
+    expect(user).toContain('ARTIFACTS (0 of 2)');
+  });
+});
+
+describe('assembleModulePlanContent — the loud content cap', () => {
+  it('marks a single over-cap block TRUNCATED and names what it cut', () => {
+    const block = assembleModulePlanContent([
+      { label: 'HUGE', text: 'y'.repeat(MODULE_PLAN_CONTENT_BUDGET_CHARS + 1000) },
+      { label: 'AFTER', text: 'never sent' },
+    ]);
+    expect(block.text).toContain('[TRUNCATED');
+    expect(block.text).toContain('HUGE');
+    expect(block.text).toContain('[BLOCK FULL');
+    expect(block.text).toContain('AFTER');
+    expect(block.text.length).toBeLessThan(MODULE_PLAN_CONTENT_BUDGET_CHARS + 2000);
+  });
+
+  it('adds NO marker when everything fits', () => {
+    const block = assembleModulePlanContent([{ label: 'SMALL', text: 'fits' }]);
+    expect(block.text).toBe('=== SMALL ===\nfits');
+    expect(block.sections).toEqual([{ label: 'SMALL', status: 'included' }]);
   });
 });

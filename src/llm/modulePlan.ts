@@ -4,6 +4,7 @@ import {
   DOCUMENT_PLAN_ROLES,
   documentPlanIssues,
   moduleDocumentPlanReplySchema,
+  moduleDocumentText,
   type AnyArtifact,
   type Battle,
   type DocumentPlanContext,
@@ -11,10 +12,12 @@ import {
   type Module,
   type ModuleDocumentPlan,
 } from '@/domain';
+import { WIKI_GRAPH_NODE_CAP, buildWikiGraph, wikiGraphNodeLabel } from '@/domain/wikiGraph';
 import { getModule, patchModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
+import { renderStoredArtifactSection } from '@/llm/canvasChat';
 import {
   claimModuleGeneration,
   registerCanvasAbort,
@@ -55,6 +58,16 @@ import { modulePdfArtifacts, modulePdfImageRequests } from '@/lib/modulePdf';
  *   synchronously at entry (`ModuleBusyError` when another canvas generation
  *   holds the module) and the turn is registered for "Stop all" through the
  *   same abort registry every other canvas turn uses.
+ *
+ * THE PLANNER'S TOOLKIT (docs/17 row 169, docs/19 §6): the ONE call now carries
+ * real CONTENT, not one-line excerpts — the module's own text through the
+ * shared reader (`moduleDocumentText`), the part↔entity structure through the
+ * ONE graph derivation (`domain/wikiGraph.buildWikiGraph`) and each scoped
+ * row's real stored fields through the CANVAS CHAT's own renderer
+ * (`renderStoredArtifactSection` — the same one its `<request>` answer uses),
+ * so no second retrieval mechanism exists (AGENTS rule 4). The plan contract,
+ * its validation, its one write and its renderer are untouched: the content
+ * changes what the model can JUDGE, never what it may decide.
  */
 
 /** The strict structured-output contract name for the planner. */
@@ -88,8 +101,225 @@ export interface ModulePlanInput {
   turn: AbortController;
 }
 
-/** The number of parts/artifacts one prompt lists before it says how many it cut. */
-const INVENTORY_CAP = 120;
+/**
+ * The hard cap (characters) on the CONTENT the planner's ONE call may carry:
+ * the module's own text, the wiki-graph link map and each row's real stored
+ * fields, assembled in that priority order. It is LOUD (AGENTS rule 1): a
+ * section that alone exceeds the cap is included CUT, and every section that
+ * no longer fits is NAMED in a marker — never a silent trim. The shape is the
+ * canvas chat's own `MAX_DETAILS_BLOCK_CHARS` markers (`[TRUNCATED — …]` /
+ * `[BLOCK FULL — …]`), not a second convention.
+ */
+export const MODULE_PLAN_CONTENT_BUDGET_CHARS = 48000;
+
+/** Room reserved for the loud marker when a single section exceeds the cap. */
+const MODULE_PLAN_CONTENT_MARKER_ROOM = 400;
+
+/** The separator between content sections. */
+const MODULE_PLAN_CONTENT_SEPARATOR = '\n\n';
+
+/** How many dropped names the `[BLOCK FULL]` marker spells out before counting. */
+const MODULE_PLAN_DROPPED_NAMES_IN_MARKER = 20;
+
+/** One labeled block of the planner's injected content. */
+export interface ModulePlanContentSection {
+  /** The `=== … ===` heading; also the name the marker uses when it is cut. */
+  label: string;
+  /** The section body (verbatim stored content). */
+  text: string;
+}
+
+/** What the assembler decided about one section. */
+export interface ModulePlanContentSectionStatus {
+  label: string;
+  status: 'included' | 'dropped' | 'truncated';
+}
+
+export interface ModulePlanContentBlock {
+  /** The assembled content, markers included. */
+  text: string;
+  /** Per-section outcome, in input order. */
+  sections: ModulePlanContentSectionStatus[];
+}
+
+/** The rendered form of one content section (the ONE spelling). */
+function renderedContentSection(section: ModulePlanContentSection): string {
+  return `=== ${section.label} ===\n${section.text}`;
+}
+
+/**
+ * Assembles the injected content under the hard cap, mirroring the chat's
+ * `assembleRequestedDetailsBlock` exactly: sections render in priority order;
+ * the first one that does not fit ends the block and every later section is
+ * NAMED in the `[BLOCK FULL — …]` marker; a FIRST section that alone exceeds
+ * the cap is included CUT (room for the marker is reserved, so the marker is
+ * never the thing that gets cut) under the `[TRUNCATED — …]` marker; everything
+ * fits ⇒ no marker at all.
+ */
+export function assembleModulePlanContent(
+  sections: readonly ModulePlanContentSection[],
+): ModulePlanContentBlock {
+  const rendered: string[] = [];
+  const statuses: ModulePlanContentSectionStatus[] = [];
+  const dropped: string[] = [];
+  let used = 0;
+  let stopped = false;
+  let truncated: string | null = null;
+  for (const section of sections) {
+    if (stopped) {
+      statuses.push({ label: section.label, status: 'dropped' });
+      dropped.push(section.label);
+      continue;
+    }
+    const text = renderedContentSection(section);
+    const cost =
+      rendered.length === 0 ? text.length : text.length + MODULE_PLAN_CONTENT_SEPARATOR.length;
+    if (used + cost <= MODULE_PLAN_CONTENT_BUDGET_CHARS) {
+      rendered.push(text);
+      used += cost;
+      statuses.push({ label: section.label, status: 'included' });
+      continue;
+    }
+    stopped = true;
+    if (rendered.length === 0) {
+      rendered.push(
+        text.slice(
+          0,
+          Math.max(0, MODULE_PLAN_CONTENT_BUDGET_CHARS - MODULE_PLAN_CONTENT_MARKER_ROOM),
+        ),
+      );
+      truncated = section.label;
+      statuses.push({ label: section.label, status: 'truncated' });
+      continue;
+    }
+    statuses.push({ label: section.label, status: 'dropped' });
+    dropped.push(section.label);
+  }
+  const markers: string[] = [];
+  if (truncated !== null) {
+    markers.push(
+      `[TRUNCATED — «${truncated}» alone exceeds the planner's ${String(MODULE_PLAN_CONTENT_BUDGET_CHARS)}-character content cap, so that block above is CUT MID-WAY and the remainder was NOT sent. Never treat the cut block as complete and never invent its missing content.]`,
+    );
+  }
+  if (dropped.length > 0) {
+    const named = dropped.slice(0, MODULE_PLAN_DROPPED_NAMES_IN_MARKER);
+    const rest = dropped.length - named.length;
+    markers.push(
+      `[BLOCK FULL — the planner's content reached its ${String(MODULE_PLAN_CONTENT_BUDGET_CHARS)}-character cap, so these blocks were NOT sent: ${named.map((label) => `«${label}»`).join(', ')}${rest === 0 ? '' : `, and ${String(rest)} more`}. Name only a row you were shown, and never invent a row you did not receive.]`,
+    );
+  }
+  return { text: [...rendered, ...markers].join(MODULE_PLAN_CONTENT_SEPARATOR), sections: statuses };
+}
+
+/** The `=== … ===` heading of one row: the id the plan's `source` must use. */
+function artifactContentLabel(artifact: AnyArtifact): string {
+  return `${artifact.kind === 'encounter' ? 'ENCOUNTER' : 'ARTIFACT'} ${artifact.id} — «${artifact.name}» (${artifact.kind})`;
+}
+
+/** The named line for a row whose every stored field is empty (never dropped). */
+function emptyArtifactLine(artifact: AnyArtifact): string {
+  return `- ${artifact.id} · «${artifact.name}» (${artifact.kind}) — NOT RENDERED: the row stores no details at all (every stored field is empty; it is a bare stub). Never invent its content.`;
+}
+
+/**
+ * The module's links, per document, from the ONE graph derivation
+ * (`domain/wikiGraph.buildWikiGraph`) — never a second resolver. A name that
+ * resolves names its kind and id; a library creature is named as one; an
+ * unresolved link is named as having no row (the campaign's to-do list).
+ */
+function moduleLinkLines(input: { module: Module; pool: readonly AnyArtifact[] }): string[] {
+  const graph = buildWikiGraph([input.module], input.pool, { moduleId: input.module.id });
+  const titles = new Map<number, string>();
+  for (const [index, part] of (input.module.spine?.partPlan ?? []).entries()) {
+    titles.set(index, part.title);
+  }
+  const parts = input.module.parts.slice().sort((a, b) => a.planIndex - b.planIndex);
+  const places = [
+    { where: 'premise', label: 'premise' },
+    ...parts.map((part) => ({
+      where: `part-${String(part.planIndex)}`,
+      label: `part ${String(part.planIndex)} “${titles.get(part.planIndex) ?? '(untitled)'}”`,
+    })),
+  ];
+  const lines = places.map((place) => {
+    const named = graph.nodes
+      .filter((node) => node.mentionsByDocument.some((mention) => mention.where === place.where))
+      .map((node) => {
+        const label = wikiGraphNodeLabel(node);
+        if (node.artifact !== undefined) {
+          return `«${label}» (${node.artifact.kind} ${node.artifact.id})`;
+        }
+        if (node.creature !== undefined) {
+          return `«${label}» (the library creature «${node.creature.name}», not a stored row)`;
+        }
+        return `«${label}» (no row — an unresolved wiki-link)`;
+      });
+    return `${place.label}: ${named.length === 0 ? '(nothing linked)' : named.join('; ')}`;
+  });
+  if (graph.truncated > 0) {
+    lines.push(
+      `(${String(graph.truncated)} further linked entities are beyond the graph's own ${String(WIKI_GRAPH_NODE_CAP)}-node cap and are not listed here.)`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * The planner's injected content, in priority order: the module's OWN text
+ * through the shared reader (`moduleDocumentText` — premise + every part), the
+ * wiki-graph link map, then every scoped row's real stored fields through the
+ * chat's own renderer. Rows past the cap are named, never dropped quietly; a
+ * row that stores nothing is named as such. Expensive per-row resolution (an
+ * encounter's roster stats, a cited creature's stat block) stops as soon as the
+ * running cost passes the cap, so the reads a dropped row would need are never
+ * spent.
+ */
+export async function modulePlanContentSections(input: {
+  module: Module;
+  scopedArtifacts: readonly AnyArtifact[];
+  pool: readonly AnyArtifact[];
+}): Promise<ModulePlanContentSection[]> {
+  const byId = new Map(input.pool.map((candidate) => [candidate.id, candidate] as const));
+  const sections: ModulePlanContentSection[] = [
+    {
+      label: 'THE MODULE’S OWN TEXT (premise + every part, verbatim, in planIndex order)',
+      text: moduleDocumentText(input.module),
+    },
+    {
+      label: 'WHAT THE MODULE LINKS TO (from the reader’s own wiki graph)',
+      text: moduleLinkLines({ module: input.module, pool: input.pool }).join('\n'),
+    },
+  ];
+  let used = sections.reduce(
+    (sum, section) =>
+      sum + renderedContentSection(section).length + MODULE_PLAN_CONTENT_SEPARATOR.length,
+    0,
+  );
+  let stopped = used > MODULE_PLAN_CONTENT_BUDGET_CHARS;
+  for (const artifact of input.scopedArtifacts) {
+    const label = artifactContentLabel(artifact);
+    if (stopped) {
+      // Already over the cap: carry the LABEL so the marker names the row,
+      // without spending the DB reads its block would need.
+      sections.push({ label, text: '' });
+      continue;
+    }
+    const { section, lines } = await renderStoredArtifactSection({
+      artifact,
+      requestedName: artifact.name,
+      moduleId: input.module.id,
+      byId,
+    });
+    const entry: ModulePlanContentSection = {
+      label,
+      text: lines.length === 0 ? emptyArtifactLine(artifact) : section,
+    };
+    used += renderedContentSection(entry).length + MODULE_PLAN_CONTENT_SEPARATOR.length;
+    if (used > MODULE_PLAN_CONTENT_BUDGET_CHARS) stopped = true;
+    sections.push(entry);
+  }
+  return sections;
+}
 
 /**
  * Runs the planner: returns the VALIDATED plan, with provenance stamped on it
@@ -130,7 +360,12 @@ export async function planModuleDocument(
       ...(input.battles === undefined ? {} : { battles: input.battles }),
     });
     const settings = await getSettings();
-    const messages = modulePlanMessages({ module, scopedArtifacts: scoped, images });
+    const messages = await modulePlanMessages({
+      module,
+      scopedArtifacts: scoped,
+      pool: input.artifacts,
+      images,
+    });
     const { text: raw, modelUsed } = await chat(messages, {
       model: settings.defaultChatModel,
       // Structural work, not prose: a low temperature keeps a re-plan close to
@@ -233,15 +468,24 @@ export const MODULE_PLAN_PROHIBITIONS: readonly string[] = [
 ];
 
 /**
- * ONE prompt builder: the strict contract's rules, the role vocabulary and the
- * inventory of what actually exists. Exported so a test can read exactly what
- * the model is allowed to decide instead of trusting a comment.
+ * ONE prompt builder: the strict contract's rules, the role vocabulary, the
+ * part index and the real CONTENT the model judges from — the module's own
+ * text, the wiki-graph link map and every scoped row's stored fields (through
+ * the chat's own renderer), under the loud content cap. Exported so a test can
+ * read exactly what the model is allowed to decide instead of trusting a
+ * comment.
  */
-export function modulePlanMessages(input: {
+export async function modulePlanMessages(input: {
   module: Module;
   scopedArtifacts: readonly AnyArtifact[];
+  /**
+   * The reader's resolution pool (campaign artifacts + the shared library) —
+   * what the wiki graph and the row renderer resolve against, exactly as the
+   * chat's `<request>` answer does.
+   */
+  pool: readonly AnyArtifact[];
   images: readonly { id: Id; where: string }[];
-}): ChatMessage[] {
+}): Promise<ChatMessage[]> {
   const { module, scopedArtifacts, images } = input;
   const partPlan = module.spine?.partPlan ?? [];
   const rules = [
@@ -249,11 +493,13 @@ export function modulePlanMessages(input: {
     'The plan decides STRUCTURE and nothing else: which sections the document has, in which order, what each section is called, what each section is about, and which of the module’s existing images prints in which section.',
     ...MODULE_PLAN_PROHIBITIONS.map((rule) => `- ${rule}`),
     '',
-    'Every section has a "source" naming ONE thing that already exists, by the ids in the inventory below:',
+    'Every section has a "source" naming ONE thing that already exists, by the ids in THE CONTENT below:',
     '- {"type":"part","planIndex":N} — a part of the module’s own part plan (planIndex -1 is the premise).',
-    '- {"type":"artifact","artifactId":"…"} — a row listed under ARTIFACTS.',
-    '- {"type":"encounter","artifactId":"…"} — a row listed under ENCOUNTERS.',
+    '- {"type":"artifact","artifactId":"…"} — the id on an `ARTIFACT …` content heading (any row whose kind is not "encounter").',
+    '- {"type":"encounter","artifactId":"…"} — the id on an `ENCOUNTER …` content heading.',
     'An id or index that is not in the inventory fails the WHOLE plan — the app never guesses what you meant.',
+    '',
+    'THE CONTENT carries the module’s own text and each row’s real stored fields — read it before deciding what belongs together. The content has a hard character cap: a `[TRUNCATED …]` or `[BLOCK FULL …]` marker at its end names exactly what was left out. Name only a row whose block you were shown; never invent a row that was not sent.',
     '',
     'Every section has a "role", one of exactly these four (there are no others):',
     ...Object.entries({
@@ -276,13 +522,9 @@ export function modulePlanMessages(input: {
     ).join(' | ')}, "audience": "all" | "gm" | "player", "source": { … }, "images": [ string ] } ] }`,
   ];
 
-  // The premise rides the prompt at a larger cap than a summary: it is the
-  // module's own statement of what the document is about, and a plan is
-  // decided from it.
-  const premise = oneLine((module.spine?.premise ?? '').trim(), 600);
-  const parts: string[] = [
-    `Premise (planIndex -1): ${premise === '' ? '(none — the spine pass has not run)' : premise}`,
-  ];
+  // The part index: the planIndex a "part" source must name. The TITLES are the
+  // index; the content itself rides THE CONTENT below (the module's own text).
+  const parts: string[] = ['- planIndex -1: the premise'];
   for (const [index, part] of partPlan.entries()) {
     const synopsis = part.synopsis.trim() === '' ? '' : ` · ${oneLine(part.synopsis)}`;
     parts.push(
@@ -290,19 +532,19 @@ export function modulePlanMessages(input: {
     );
   }
 
-  const artifactLines = scopedArtifacts
-    .filter((artifact) => artifact.kind !== 'encounter')
-    .slice(0, INVENTORY_CAP)
-    .map((artifact) => `- ${artifact.id} · ${artifact.kind} · “${artifact.name}”${summaryTail(artifact)}`);
-  const encounterLines = scopedArtifacts
-    .filter((artifact) => artifact.kind === 'encounter')
-    .slice(0, INVENTORY_CAP)
-    .map((artifact) => {
-      const difficulty = [artifact.data.difficulty, artifact.data.levelHint]
-        .filter((part) => part !== '')
-        .join(' · ');
-      return `- ${artifact.id} · “${artifact.name}”${difficulty === '' ? '' : ` · ${difficulty}`}`;
-    });
+  const contentSections = await modulePlanContentSections({
+    module,
+    scopedArtifacts,
+    pool: input.pool,
+  });
+  const block = assembleModulePlanContent(contentSections);
+  const statusByLabel = new Map(block.sections.map((entry) => [entry.label, entry.status] as const));
+  const isSent = (artifact: AnyArtifact): boolean => {
+    const status = statusByLabel.get(artifactContentLabel(artifact));
+    return status === 'included' || status === 'truncated';
+  };
+  const artifactRows = scopedArtifacts.filter((artifact) => artifact.kind !== 'encounter');
+  const encounterRows = scopedArtifacts.filter((artifact) => artifact.kind === 'encounter');
 
   const user = [
     'THE MODULE',
@@ -310,14 +552,16 @@ export function modulePlanMessages(input: {
     `Concept: ${module.concept.trim() === '' ? '(none)' : oneLine(module.concept)}`,
     `Levels ${String(module.levelMin)}–${String(module.levelMax)}${module.tone.trim() === '' ? '' : ` · ${module.tone}`}`,
     '',
-    'ITS PARTS',
+    'ITS PART PLAN (the planIndex values a "part" source may name)',
     ...parts,
     '',
-    `ARTIFACTS (${String(artifactLines.length)} of ${String(scopedArtifacts.filter((a) => a.kind !== 'encounter').length)})`,
-    ...(artifactLines.length === 0 ? ['(none)'] : artifactLines),
+    `ARTIFACTS (${String(artifactRows.filter(isSent).length)} of ${String(artifactRows.length)})`,
+    ...(artifactRows.length === 0 ? ['(none)'] : []),
+    `ENCOUNTERS (${String(encounterRows.filter(isSent).length)} of ${String(encounterRows.length)})`,
+    ...(encounterRows.length === 0 ? ['(none)'] : []),
     '',
-    `ENCOUNTERS (${String(encounterLines.length)})`,
-    ...(encounterLines.length === 0 ? ['(none)'] : encounterLines),
+    'THE CONTENT — the module’s own text and each row’s real stored fields, verbatim. Each `=== … ===` heading names the id a "source" must use; the app prints exactly the text below it.',
+    block.text,
     '',
     'IMAGE INVENTORY (ids the document can print)',
     ...(images.length === 0 ? ['(none)'] : images.map((image) => `- ${image.id} — ${image.where}`)),
@@ -331,14 +575,8 @@ export function modulePlanMessages(input: {
   ];
 }
 
-/** A one-line excerpt for the prompt: never a wall of prose, never silent. */
+/** A one-line excerpt for an INDEX (a title or synopsis), never the content. */
 function oneLine(text: string, cap = 160): string {
   const flat = text.replaceAll(/\s+/g, ' ').trim();
   return flat.length <= cap ? flat : `${flat.slice(0, cap)}…`;
-}
-
-/** The artifact's summary as a prompt tail ('' when it has none). */
-function summaryTail(artifact: AnyArtifact): string {
-  const summary = artifact.summary.trim();
-  return summary === '' ? '' : ` · ${oneLine(summary)}`;
 }

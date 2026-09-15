@@ -1883,6 +1883,40 @@ async function creatureStatsFor(chunkId: Id): Promise<{ label: string; lines: re
 }
 
 /**
+ * The stored-row section of ONE artifact, resolved and rendered through the
+ * ONE details path — the same byId map, the same `resolveDetailsExtras` (roster
+ * stats, creature citations) and the same `artifactDetailLines` /
+ * `renderArtifactDetails` the chat's `<request>` answer uses. It exists so a
+ * SECOND caller — the document planner's content block (`llm/modulePlan`) —
+ * reads a row through that renderer instead of growing a formatter of its own
+ * (AGENTS rule 4), and it returns `lines` so a caller can tell "the row stores
+ * nothing" from "the row stores fields" without re-implementing the empty test.
+ */
+export async function renderStoredArtifactSection(input: {
+  artifact: AnyArtifact;
+  /** The name the caller asked for (the planner asks by the row's own name). */
+  requestedName: string;
+  moduleId: Id;
+  byId: ReadonlyMap<Id, AnyArtifact>;
+}): Promise<{ section: string; lines: string[] }> {
+  const extras = await resolveDetailsExtras(input.artifact, input.byId);
+  const lines = artifactDetailLines({
+    artifact: input.artifact,
+    requestedName: input.requestedName,
+    extras,
+  });
+  return {
+    section: renderArtifactDetails({
+      artifact: input.artifact,
+      requestedName: input.requestedName,
+      moduleId: input.moduleId,
+      extras,
+    }),
+    lines,
+  };
+}
+
+/**
  * Resolves ONE `<request>` into its section (or its named refusal). The name
  * goes through `resolveWikiLink` with the MODULE scope — the resolution the
  * reader's chips use, so ambiguity behaves identically — and the answer is
@@ -1910,8 +1944,12 @@ async function resolveRequestDraft(
   }
   const artifact = resolution.artifact;
   const byId = new Map(pool.map((candidate) => [candidate.id, candidate] as const));
-  const extras = await resolveDetailsExtras(artifact, byId);
-  const lines = artifactDetailLines({ artifact, requestedName: request.name, extras });
+  const { section, lines } = await renderStoredArtifactSection({
+    artifact,
+    requestedName: request.name,
+    moduleId,
+    byId,
+  });
   if (lines.length === 0) {
     const reason = noStoredDetailsReason(artifact);
     return {
@@ -1929,7 +1967,7 @@ async function resolveRequestDraft(
     reason: null,
     artifactId: artifact.id,
     candidateIds: [],
-    section: renderArtifactDetails({ artifact, requestedName: request.name, moduleId, extras }),
+    section,
   };
 }
 
