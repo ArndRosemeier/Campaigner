@@ -139,7 +139,7 @@ done < <(grep -E '^(SESSION|IN-FLIGHT|UNLANDED|AWAITING-OWNER|LANDED|RECOVERY|TR
 # anything live that the board does not name is reported as a finding.
 echo
 echo "=== unrecorded live state (git + session dirs vs the board) ==="
-recorded="$(grep -oE '(worktree|branch|writer|cos)=[^ |]*' "$BOARD" | cut -d= -f2- | sort -u)"
+recorded="$(grep -oE '(worktree|branch|writer|cos)=[^ |]*' "$BOARD" | cut -d= -f2- | sed 's/^session-//' | sort -u)"
 while read -r w; do
   [ -z "$w" ] && continue
   [ "$w" = "$PWD" ] && continue
@@ -147,7 +147,9 @@ while read -r w; do
 done < <(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}')
 recent=$(( $(date +%s) - 6*3600 ))
 while read -r d; do
-  b="$(basename "$d")"
+  # A board record may spell a session id with or without the `session-`
+  # prefix; the directory uses the bare uuid, so normalize both sides.
+  b="$(basename "$d" | sed 's/^session-//')"
   printf '%s\n' "$recorded" | grep -qx "$b" && continue
   # The LOG is the liveness signal, not the dir: a projection cache is rebuilt by
   # a mere recovery read, so a long-dead session can look freshly written.

@@ -27,18 +27,20 @@ must stay ONE SCREEN — a record that no longer describes the present belongs i
 ## Board
 
 ```
-reconciled: 730c9a7 · 2026-09-15T08:03Z
+reconciled: df104e3 · 2026-09-15T08:25Z
 
 SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | note=first session under this board; predecessor session-e5adac67 became unrecoverable (compaction of a 35MB, ~374-turn log)
 
-IN-FLIGHT | none | note=row 168 verified and landed by the CoS; its branch/worktree retire with this landing
+IN-FLIGHT | row=169 | branch=feat/planner-toolkit | worktree=/tmp/campaigner-planner | base=df104e3 | writer=session-426dfe9f-0c1b-4fbf-9b61-17c24d3317d2 | state=running | note=docs/19 §11 slice 2: the planner reads real content through existing seams (moduleDocumentText, canvasChat's stored-row renderer, the wiki graph) with a loud budget marker — no tool loop, no second retrieval mechanism
+IN-FLIGHT | row=170 | branch=feat/ingest-notation | worktree=/tmp/campaigner-notation | base=df104e3 | writer=session-247531f7-6d6c-46e6-81f2-08872387a87e | state=running | note=docs/18 §5's three notation residues in stored pack text (@Embed argument list, &Reference case, nested @Damage brackets) — rules in the ONE HtmlNotation seam
 
+TRAP | what=stale-queue | how=this board's first AWAITING-OWNER list was COPIED from the predecessor's compaction summary and three of its four items were ALREADY BUILT and deployed (claimA-pdf = docs/17 row 157, claimA-app = row 158 with the owner's verbatim "Yes — render tables in the app as well", claimB-roster = row 159); two writers were nearly dispatched to rebuild shipped work | check=re-derive the queue from the TREE at brief time — docs/18 §5 (known debt at HEAD) + the arc docs' build order — and verify each item against HEAD before writing a brief; a pending list in a summary is a HINT, never a queue
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count
 
-AWAITING-OWNER | id=claimA-pdf | cost=1 slice | question=PDF export drops markdown table rows (mdToPdfmake drops `|…|` lines) — build the table block?
-AWAITING-OWNER | id=claimA-app | cost=1 arc | question=the reader prints table pipes as text (no remark-gfm) — add a second renderer?
-AWAITING-OWNER | id=claimB-roster | cost=1 slice | question=treasureLedger never reads the roster's parsed `treasure`
-AWAITING-OWNER | id=claimB-pack | cost=1 arc, probably unwanted | question=pack items are never parsed (absent from text/contentHash/search)
+QUEUE | source=docs/18 §5 known debt, each verified at HEAD + docs/19 §11's remaining build order | note=the arc's next slice is in flight (row 169); the debted `lib/pdfExport.statBlockSection` (the third consumer of the text→blocks rule) is a slice; the array-JSON import failure reason needs a decision (below); docs/19 §11 slice 6 (print refinement / duplex pairing) is owner-DEFERRED; the Advanced floor editor's minimum and the Cartographer's brief parity are recorded debts with a stated reason not to touch them
+
+AWAITING-OWNER | id=claimB-pack | cost=1 arc, verified unwanted-until-said | question=pack ITEM entries other than feat/weapon are still dropped at ingest (absent from text/contentHash/search; verified at HEAD, `dnd5e-foundry.ts:806` / `pf2e-foundry.ts:257` try two schemas only) — the lane split (docs/17 row 14) says an arc, not a slice
+AWAITING-OWNER | id=array-json-reason | cost=1 slice | question=an array-wrapped JSON pack file yields ONE document and a FALSE failure reason ("no valid creature entries … 1 skipped, 0 failed"); unwrap top-level arrays into N documents (my recommendation — that is what the file means), or keep one document and name the wrapping in the reason?
 
 LANDED | row=168 | sha=730c9a7 | verify=my gate GREEN 333/333 files · 3930 tests · peak 1218MB of the 3000MB cap, PLUS my two injections — (1) the collision rule inverted (older row wins) RED 2/10 on `keeps the NEWER updatedAt…` + the tie-break pin; (2) the fold leaked into the `artifact:` key space RED 1/10 with the throw naming the key — each restored byte-identically (db.ts a026f437…, creature.ts a32e185a…) | retired=branch feat/persisted-key-fold + worktree /tmp/campaigner-keys-fold with this landing
 LANDED | row=167 | sha=5348293 | verify=my gate GREEN 332/332 files · 3919 tests · peak 1249MB of the 3000MB cap, PLUS my injection (hand-rolled key restored in roomBudget.resolveBriefMonsterLevels) RED 2/18 — `expected [ undefined ] to deeply equal [ '2' ]` — file hash bf776416f1aafb3a15b73a0f1c1cf623b5a1c0dc identical after restore | retired=branch feat/name-key-spaces + worktree /tmp/campaigner-keys with this landing
