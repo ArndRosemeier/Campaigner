@@ -86,7 +86,14 @@ while IFS= read -r line; do
         if [ -d "$wt" ]; then
           dirty="$(git -C "$wt" status --porcelain 2>/dev/null | wc -l)"
           echo "  worktree $wt: present, $dirty uncommitted path(s)"
-          [ "$dirty" -gt 0 ] && note "worktree $wt has UNCOMMITTED work — a death there loses it"
+          # Uncommitted work is EXPECTED between a live writer's milestones and a
+          # LOSS RISK only once nobody owns it — the same distinction the branch
+          # check makes. A board that reds on every healthy in-flight slice is a
+          # board nobody reads.
+          case "$writer" in
+            ''|none*|dead*) [ "$dirty" -gt 0 ] && note "worktree $wt has UNCOMMITTED work and NO live writer — a death there loses it";;
+            *) [ "$dirty" -gt 0 ] && echo "    (in progress — the writer commits at every green milestone)";;
+          esac
         else
           note "worktree $wt named on the board is gone"
         fi
