@@ -167,7 +167,8 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
   amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
   spec — an unamended seam is treated as missing.
 - Gate before every commit: `bash scripts/gate.sh` — the ONE way the suite runs
-  (§Host hygiene 7: atomic lock, sequential chunks, RSS/memory watchdog; it
+  (§Host hygiene 7: atomic lock, at most two concurrent chunks, combined-RSS and
+  available-memory watchdog; it
   invokes lint + typecheck + every vitest chunk and prints the summed counts).
   **Keep the
   gate's RAW output** — write it to a file and keep that file until the landing
@@ -369,15 +370,31 @@ the config default, and it holds for whoever forgets. Binding rules:
    - **THE GATE IS `scripts/gate.sh` — locked, hard-capped, chunked.** Owner
      directive (verbatim): *"please make sure that you restrict the mem use to
      not more than 4gb or so since you are not the only worker here."* The
-     script takes the atomic lock, refuses to start while ANY other suite runs
-     (ours or the peer project's), runs vitest as sequential PATH CHUNKS (a
-     fresh process each, because the growth that fills this box is OFF-heap and
-     no heap cap can stop it), samples the run's own process group every second,
-     and KILLS it at `GATE_RSS_CAP_MB` (default 3000 MB) or when available
-     memory drops below `GATE_AVAIL_FLOOR_MB` (default 2500 MB). It prints each
-     chunk's PEAK RSS and the summed counts. `vite.config.ts` caps each worker's
-     heap at 1536 MB as the structural half, which binds a bare run too. A chunk
-     killed by the watchdog is VOID, never evidence. **Do not hand-roll a gate.**
+     script takes the atomic lock and refuses to start while ANY other suite runs
+     (ours or the peer project's). It runs vitest as at most **TWO concurrent
+     path chunks** — each ONE worker in its OWN process group (`setsid`), a fresh
+     process per chunk, because the growth that fills this box is OFF-heap and no
+     heap cap can stop it. `tests/features` is split round-robin into
+     `tests_features_a` / `tests_features_b` so the two long tails overlap, and
+     `GATE_PARALLEL_CHUNKS=1 bash scripts/gate.sh` forces sequential. It samples
+     the COMBINED RSS of every live chunk group every second and kills them all at
+     `GATE_RSS_CAP_MB` (default 3000 MB) or when available memory drops below
+     `GATE_AVAIL_FLOOR_MB` (default 2500 MB); a kill is VOID, is re-run
+     sequentially and is never counted, and a combined peak that merely
+     APPROACHES the cap (`GATE_PARALLEL_FALLBACK_MB`, 90%) falls back to
+     sequential BEFORE the kill line. It prints each chunk's wall time and PEAK
+     RSS with the summed counts, and checks on every run that the union of its
+     chunk lists is exactly the test files under `tests/`, none twice. The diff
+     base is `origin/main` (three-dot) plus the working tree: the chunks a diff
+     touches run FIRST, so a red surfaces in ~1–2 minutes instead of ~12; vitest
+     is skipped ENTIRELY only for a **docs-only** diff (lint and typecheck still
+     run), and a diff touching test files ALONE runs only the chunks containing
+     them. EVERY other diff runs the full set — there is no other skipping,
+     because a gate that guesses at coverage is the failure mode this refuses.
+     `GATE_PLAN_ONLY=1` prints the plan and runs nothing (how the mapping above is
+     reviewable without a 7-minute run). `vite.config.ts` caps each worker's heap
+     at 1536 MB as the structural half, which binds a bare run too. **Do not
+     hand-roll a gate.**
    - **Ad-hoc PDF-rendering verification** (`pdfLayout`, pdfjs, pdfmake —
      injection runs, single-file checks) goes in the FOREGROUND in bounded
      chunks: a `-t`-filtered run is seconds, not minutes. The 600 s
