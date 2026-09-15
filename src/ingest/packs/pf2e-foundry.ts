@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseJsonDocs,
+  AT_BRACE_LABEL_BLOCK_AND_TABLE,
+} from './text';
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
 /**
@@ -147,11 +152,6 @@ type ParsedMelee = z.infer<typeof meleeItemSchema>;
 type ParsedAction = z.infer<typeof actionItemSchema>;
 
 // --- Helpers ---------------------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 
 function titleCase(slug: string): string {
   return slug
@@ -366,7 +366,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isRecord(doc) || doc.type !== 'npc') {
+    if (!isDocumentRecord(doc) || doc.type !== 'npc') {
       skipped += 1;
       continue;
     }

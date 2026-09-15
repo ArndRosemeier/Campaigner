@@ -24,7 +24,17 @@ describe('foundry-pf2e adapter', () => {
     });
     vi.stubGlobal('fetch', fetchSpy);
     await foundryPf2eAdapter.parseFile('goblin.json', encodeJson(baseNpc('Goblin Warrior')));
-    await foundryPf2eAdapter.parseFile('pack.db', encodeJson([baseNpc(), folderDoc()]));
+    // docs/17 row 171 — this array-shaped file used to parse as ONE document
+    // (the array itself), which the adapter skipped: `entries: [], skipped: 1`.
+    // It is unwrapped at the seam now, so the creature IMPORTS and the folder
+    // is the ONE honest skip. The outcome is asserted, not just "no network".
+    const arrayPack = await foundryPf2eAdapter.parseFile(
+      'pack.db',
+      encodeJson([baseNpc(), folderDoc()]),
+    );
+    expect(arrayPack.entries.map((entry) => entry.name)).toEqual(['Charau-ka']);
+    expect(arrayPack.skipped).toBe(1);
+    expect(arrayPack.failures).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

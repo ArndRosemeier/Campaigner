@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { formatItemText, normalizePf2ePrice, type ItemData } from '@/domain/itemData';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseJsonDocs,
+  AT_BRACE_LABEL_BLOCK_AND_TABLE,
+} from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -95,14 +100,6 @@ const pf2eEquipmentSchema = z.object({
 
 type ParsedEquipment = z.infer<typeof pf2eEquipmentSchema>;
 
-// --- Helpers (the creature adapter's exact text rules; adapters stay
-// self-contained per 12-BESTIARY-PACKS §5) -----------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-
 // --- Mapping ---------------------------------------------------------------
 
 function mapEquipment(doc: ParsedEquipment): PackItemEntry {
@@ -133,7 +130,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isRecord(doc) || typeof doc.type !== 'string' || !PF2E_ITEM_TYPES.has(doc.type)) {
+    if (!isDocumentRecord(doc) || typeof doc.type !== 'string' || !PF2E_ITEM_TYPES.has(doc.type)) {
       skipped += 1;
       continue;
     }

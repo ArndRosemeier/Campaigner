@@ -60,6 +60,8 @@ import { describe, expect, it } from 'vitest';
 import { PACK_ADAPTERS } from '@/ingest/packs/registry';
 import { parseJsonDocs, parseYamlDocs } from '@/ingest/packs/text';
 
+import { baseNpc, folderDoc } from './fixtures';
+
 const PACKS_DIR = 'src/ingest/packs';
 
 function packSources(): string[] {
@@ -96,6 +98,36 @@ const PARSER_SHAPES: readonly { readonly shape: string; readonly why: string }[]
   { shape: 'loadAll', why: 'the YAML document-stream parse' },
   { shape: "from 'js-yaml'", why: 'the YAML parser import' },
   { shape: 'function parseDocs', why: 'the retired per-adapter parser name' },
+];
+
+/**
+ * The lanes that ask "is this parsed value a document?" — the seven from which
+ * the private `isRecord` copies were folded (docs/17 row 171). This is the same
+ * seven as `CALL_SITES`, stated as its own list so the predicate scan reds when
+ * a lane stops going through the seam, not only when a parser is re-spelled.
+ */
+const DOCUMENT_RECORD_SITES: readonly string[] = [
+  'pf2e-foundry.ts',
+  'pf2e-equipment.ts',
+  'pf2e-journal.ts',
+  'pf2e-conditions.ts',
+  'pf2e-rules.ts',
+  'dnd5e-foundry.ts',
+  'dnd5e-equipment.ts',
+];
+
+/**
+ * Shapes that belong to the ONE seam: a privately-spelt predicate, a call to
+ * one, or a second top-level-array unwrap. `Array.isArray` is the load-bearing
+ * needle for the unwrap because it is the only way both halves are written —
+ * `isDocumentRecord`'s `!Array.isArray` arm and the two unwrap arms in
+ * `parseJsonDocs`/`parseYamlDocs` — so a copy of EITHER reds here wherever it
+ * appears. The non-vacuity assertion below proves the seam still carries them.
+ */
+const RECORD_SHAPES: readonly { readonly shape: string; readonly why: string }[] = [
+  { shape: 'function isRecord', why: 'a revived private copy of the predicate' },
+  { shape: 'isRecord(', why: 'a call to a privately-spelt predicate' },
+  { shape: 'Array.isArray', why: 'the predicate body or a second array unwrap' },
 ];
 
 const encoder = new TextEncoder();
@@ -150,7 +182,9 @@ describe('the ingest document-parser seam: the rule', () => {
     expect(parseJsonDocs('{"a": 1}', 'one.json')).toEqual([{ a: 1 }]);
     expect(parseJsonDocs('42\n', 'scalar.json')).toEqual([42]);
     expect(parseJsonDocs('null\n', 'null.json')).toEqual([null]);
-    expect(parseJsonDocs('[]\n', 'array.json')).toEqual([[]]);
+    // A top-level array is a STREAM: its elements are the documents (docs/17
+    // row 171), not the array itself.
+    expect(parseJsonDocs('[{ "a": 1 }]\n', 'array.json')).toEqual([{ a: 1 }]);
     expect(parseJsonDocs('{"a": 1}\n{"b": 2}\n', 'two.db')).toEqual([{ a: 1 }, { b: 2 }]);
     // Empty and whitespace-only: the loud empty-file failure.
     for (const input of ['', '   ', '\n\n']) {
@@ -197,6 +231,108 @@ describe('the ingest document-parser seam: the rule', () => {
       }
       expect(threw || (docs !== null && docs.length > 0), `input ${input}`).toBe(true);
     }
+  });
+});
+
+// --- The top-level array is a document STREAM (docs/17 row 171) ------------
+
+/**
+ * The array defect, as the brief measured it (docs/18 §5): `parseJsonDocs`
+ * tried `JSON.parse(whole file)` FIRST, so a top-level array succeeded and
+ * became ONE document. Every adapter then skipped it as "not a document I
+ * know", and the user-visible reason was FALSE — the documents were there,
+ * wrapped: `no valid creature entries in the pack selection (1 skipped, 0
+ * failed)`. The same two creatures as NDJSON imported fine.
+ *
+ * The fix unwraps in the ONE seam, for BOTH formats. YAML is not "already
+ * correct": MEASURED with the repo's own js-yaml, `loadAll('- a\n- b\n')` is
+ * ONE document, the array `[['a', 'b']]`, so the YAML family carried the SAME
+ * defect and gets the SAME fix. The rule has three boundaries, each pinned
+ * below: unwrap exactly ONE level; leave a document's own array FIELDS alone;
+ * never return zero documents for a non-empty file.
+ */
+describe('a top-level array is a document stream, unwrapped exactly once at the seam', () => {
+  it('JSON: a top-level array yields N documents, one per element', () => {
+    expect(parseJsonDocs('[{"a": 1}, {"b": 2}]', 'pack.json')).toEqual([{ a: 1 }, { b: 2 }]);
+    // A ONE-element array is still an array: one document, not the array.
+    expect(parseJsonDocs('[{"a": 1}]', 'one.json')).toEqual([{ a: 1 }]);
+  });
+
+  it('YAML: a top-level sequence yields N documents, mirroring JSON', () => {
+    // The pin that records WHY this is a fix and not a declaration: pre-171
+    // this was `[['a', 'b']]` — one document — so the mirror rule is measured,
+    // not assumed.
+    expect(parseYamlDocs('- a\n- b\n', 'seq.yml')).toEqual(['a', 'b']);
+    // A stream mixes real documents with sequences; each sequence unwraps in
+    // place and the stream ORDER survives.
+    expect(parseYamlDocs('name: Ape\n---\n- a\n- b\n', 'mixed.yml')).toEqual([
+      { name: 'Ape' },
+      'a',
+      'b',
+    ]);
+  });
+
+  it('unwraps exactly ONE level — an element that is itself an array stays a document', () => {
+    // Rule 3, pinned: NOT recursive. The seam hands back the inner arrays as
+    // documents; the shared `isDocumentRecord` rejects them and the lane counts
+    // each as ONE skip. A recursive flatten would silently invent documents.
+    expect(parseJsonDocs('[[{"a": 1}], [{"b": 2}]]', 'nested.json')).toEqual([
+      [{ a: 1 }],
+      [{ b: 2 }],
+    ]);
+    expect(parseYamlDocs('- - a\n  - b\n', 'nested.yml')).toEqual([['a', 'b']]);
+  });
+
+  it("leaves a document's OWN array FIELDS intact", () => {
+    // Only the top level of the FILE is a stream. A creature's `items[]` must
+    // survive byte-for-byte — unwrapping it would shred every real document.
+    expect(parseJsonDocs('{"name": "Ape", "items": [1, 2, 3]}', 'field.json')).toEqual([
+      { name: 'Ape', items: [1, 2, 3] },
+    ]);
+    expect(parseYamlDocs('name: Ape\nitems:\n  - 1\n  - 2\n', 'field.yml')).toEqual([
+      { name: 'Ape', items: [1, 2] },
+    ]);
+  });
+
+  it('does NOT unwrap a line of an NDJSON stream — there the top level IS the line stream', () => {
+    // The deliberate asymmetry, pinned: an array on ONE line of a multi-line
+    // `.db` file is a document (rejected by the predicate → one skip), while
+    // the same bytes as the WHOLE file are a stream. The NDJSON arm's top level
+    // is the line stream, so it has nothing to unwrap.
+    expect(parseJsonDocs('{"a": 1}\n[{"b": 2}]\n', 'lines.db')).toEqual([{ a: 1 }, [{ b: 2 }]]);
+  });
+
+  it('throws LOUDLY, by name, when a top-level array holds NO documents', () => {
+    // Rule 4 — the invariant: every non-empty input yields at least one
+    // document or throws. Returning `[]` would be a file accounted NOWHERE,
+    // exactly the hole the invariant forbids. Both formats, both named.
+    expect(() => parseJsonDocs('[]', 'empty-array.json')).toThrow(
+      'empty-array.json: top-level array holds no documents',
+    );
+    expect(() => parseJsonDocs('[]\n', 'empty-array.json')).toThrow(
+      'empty-array.json: top-level array holds no documents',
+    );
+    expect(() => parseYamlDocs('[]\n', 'empty-array.yml')).toThrow(
+      'empty-array.yml: top-level array holds no documents',
+    );
+    // A stream whose ONLY document is an empty sequence is the same file shape
+    // in the YAML family: no documents, so it fails rather than resolving `[]`.
+    expect(() => parseYamlDocs('---\n[]\n', 'empty-array.yml')).toThrow(
+      'empty-array.yml: top-level array holds no documents',
+    );
+  });
+
+  it('an empty top-level array sits INSIDE the no-empty-result invariant, not outside it', () => {
+    // The invariant table above calls `parseJsonDocs('[]')` — it must THROW,
+    // which is what "yields a document or throws" means. Asserted directly so
+    // a future `return []` cannot pass by throwing a different sentence.
+    let threw = false;
+    try {
+      parseJsonDocs('[]', 'probe');
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
   });
 });
 
@@ -272,6 +408,100 @@ describe('a comment-only YAML file is accounted as a FAILURE, never as nothing',
   });
 });
 
+// --- The array defect CURES, through the REAL adapters ----------------------
+
+/**
+ * The seam rule above is a unit pin; these are the OUTCOME pins the brief
+ * required, because the user-visible defect was never the parse itself — it was
+ * `{entries: 0, skipped: 1, failures: 0}` with a false reason. The pre-171
+ * behaviour is stated in each comment.
+ */
+describe('an array-shaped pack file IMPORTS its documents (through the REAL adapters)', () => {
+  it('foundry-pf2e: one creature + one folder as a top-level array is 1 entry and 1 TRUTHFUL skip', async () => {
+    const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === 'foundry-pf2e');
+    if (adapter === undefined) throw new Error('no adapter foundry-pf2e');
+    // BEFORE row 171 these same bytes resolved to `{entries: [], skipped: 1,
+    // failures: []}` — one document, the array — and the import failed with
+    // `no valid creature entries … (1 skipped, 0 failed)`. The count was right;
+    // the REASON was false: the creature was in the file, wrapped.
+    const parsed = await adapter.parseFile(
+      'pack.json',
+      encoder.encode(JSON.stringify([baseNpc(), folderDoc()])),
+    );
+    expect(parsed.entries.map((entry) => entry.name)).toEqual(['Charau-ka']);
+    // The skip is PER ELEMENT now: the folder document is the ONE skip — so
+    // `1 skipped` finally means one skipped DOCUMENT, not one skipped array.
+    expect(parsed.skipped).toBe(1);
+    expect(parsed.failures).toEqual([]);
+  });
+
+  it('the same two documents as NDJSON import identically — the stream shapes agree', async () => {
+    const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === 'foundry-pf2e');
+    if (adapter === undefined) throw new Error('no adapter foundry-pf2e');
+    // The docs/18 §5 measurement, re-run as a pin: NDJSON always worked, and it
+    // still does. The array form now reaches the same counter values.
+    const ndjson = `${JSON.stringify(baseNpc())}\n${JSON.stringify(folderDoc())}\n`;
+    const parsed = await adapter.parseFile('pack.db', encoder.encode(ndjson));
+    expect(parsed.entries.map((entry) => entry.name)).toEqual(['Charau-ka']);
+    expect(parsed.skipped).toBe(1);
+    expect(parsed.failures).toEqual([]);
+  });
+
+  it('a single-document file is unchanged, and its own array FIELD is consumed intact', async () => {
+    const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === 'foundry-pf2e');
+    if (adapter === undefined) throw new Error('no adapter foundry-pf2e');
+    const parsed = await adapter.parseFile('one.json', encoder.encode(JSON.stringify(baseNpc())));
+    expect(parsed.entries.map((entry) => entry.name)).toEqual(['Charau-ka']);
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.failures).toEqual([]);
+    // The document's OWN `items[]` array supplied the stat block's actions —
+    // proof the unwrap did not touch an array FIELD of a document.
+    expect(parsed.entries[0]?.statBlock.actions.map((action) => action.name)).toContain(
+      'Shrieking Frenzy',
+    );
+  });
+
+  it('N skipped finally means N: two non-document elements are TWO skips', async () => {
+    const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === 'foundry-pf2e');
+    if (adapter === undefined) throw new Error('no adapter foundry-pf2e');
+    // Before the unwrap this was `1 skipped` for the whole array; now it is the
+    // honest per-element count. No message was special-cased — the COUNT moved
+    // because the PARSE did.
+    const parsed = await adapter.parseFile(
+      'folders.json',
+      encoder.encode(JSON.stringify([folderDoc('Book 1'), folderDoc('Book 2')])),
+    );
+    expect(parsed.entries).toEqual([]);
+    expect(parsed.skipped).toBe(2);
+    expect(parsed.failures).toEqual([]);
+    // One level only: an array OF arrays yields the inner arrays, each of which
+    // is one non-document element — ONE skip, not a recursive flatten.
+    const nested = await adapter.parseFile(
+      'nested.json',
+      encoder.encode(JSON.stringify([[baseNpc()], [baseNpc('Wolf')]])),
+    );
+    expect(nested.entries).toEqual([]);
+    expect(nested.skipped).toBe(2);
+    expect(nested.failures).toEqual([]);
+  });
+
+  it('foundry-dnd5e-equipment: a top-level YAML sequence imports each item document', async () => {
+    const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === 'foundry-dnd5e-equipment');
+    if (adapter === undefined) throw new Error('no adapter foundry-dnd5e-equipment');
+    // MEASURED: `loadAll` returns ONE document (the array) for this stream, so
+    // pre-171 the same false-reason defect existed in the YAML family. The
+    // mirror fix unwraps it, and the lane maps BOTH item documents.
+    const sequence = [
+      '- {name: Longsword, type: weapon, system: {}}',
+      '- {name: Candle, type: consumable, system: {}}',
+    ].join('\n');
+    const parsed = await adapter.parseFile('items.yml', encoder.encode(`${sequence}\n`));
+    expect(parsed.items?.map((item) => item.name)).toEqual(['Longsword', 'Candle']);
+    expect(parsed.skipped).toBe(0);
+    expect(parsed.failures).toEqual([]);
+  });
+});
+
 // --- The "exactly one" source scan -----------------------------------------
 
 describe('the ingest document-parser seam is the ONLY one (SOURCE SCAN)', () => {
@@ -343,6 +573,58 @@ describe('the ingest document-parser seam is the ONLY one (SOURCE SCAN)', () => 
       (site) => site.file,
     );
     expect(declaredYaml).toEqual(['dnd5e-foundry.ts', 'dnd5e-equipment.ts']);
+  });
+});
+
+// --- The document-record predicate and the unwrap are the SEAM's (row 171) --
+
+describe('the document-record predicate is the ONLY one (SOURCE SCAN)', () => {
+  it('states "this parsed value is a document" exactly once, in the seam', () => {
+    const files = packSources();
+    // Non-vacuity: the walk must still see the whole directory (7 adapters +
+    // the seam + `registry` + `types`) or this proves nothing about it.
+    expect(files).toHaveLength(10);
+    expect(files).toContain('text.ts');
+
+    const seam = source('text.ts');
+    expect(seam.match(/export function isDocumentRecord\(/g) ?? []).toHaveLength(1);
+    // Non-vacuity for the `Array.isArray` needle: the seam really does carry
+    // the predicate body AND the two unwrap arms (JSON + YAML) — the exact
+    // three sites the ban below is measured against. If this count changes,
+    // the scan must be re-read, not relaxed.
+    expect(seam.match(/Array\.isArray\(/g) ?? []).toHaveLength(3);
+    expect(seam).toContain('isDocumentRecord(');
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      if (file === 'text.ts') continue;
+      const text = source(file);
+      for (const { shape, why } of RECORD_SHAPES) {
+        if (text.includes(shape)) offenders.push(`${file}: ${why} (\`${shape}\`)`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('has every lane ask the seam, and no file that does not', () => {
+    // Non-vacuity AGAIN, at the population level: the scan must see exactly
+    // the seven lanes it polices — a copied predicate in a NEW file would show
+    // up as an eighth user (and as an offender above).
+    expect(DOCUMENT_RECORD_SITES).toHaveLength(7);
+    const users = packSources()
+      .filter((file) => file !== 'text.ts')
+      .filter((file) => source(file).includes('isDocumentRecord'));
+    expect(users.sort()).toEqual([...DOCUMENT_RECORD_SITES].sort());
+    for (const file of DOCUMENT_RECORD_SITES) {
+      const text = source(file);
+      expect(text, `${file} does not import isDocumentRecord from ./text`).toMatch(
+        /import \{[^}]*isDocumentRecord[^}]*\} from '\.\/text';/,
+      );
+      expect(
+        (text.match(/isDocumentRecord\(/g) ?? []).length,
+        `${file} does not call isDocumentRecord`,
+      ).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseJsonDocs,
+  AT_BRACE_LABEL_BLOCK_AND_TABLE,
+} from './text';
 import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
 
 /**
@@ -87,11 +92,6 @@ type ParsedRulesDoc = z.infer<typeof pf2eRulesDocSchema>;
 
 // --- Helpers (the journal/conditions adapters' exact text rules; adapters
 // stay self-contained per 12-BESTIARY-PACKS §5's precedent) -------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 
 /** The per-entry source line — verbatim `publication`, never dropped. */
 function publicationSourceLine(
@@ -252,7 +252,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isRecord(doc) || typeof doc.type !== 'string' || !ACCEPTED_TYPES.has(doc.type)) {
+    if (!isDocumentRecord(doc) || typeof doc.type !== 'string' || !ACCEPTED_TYPES.has(doc.type)) {
       skipped += 1;
       continue;
     }

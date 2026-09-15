@@ -400,26 +400,84 @@ export function htmlToText(html: string, style: HtmlToTextStyle): string {
     .trim();
 }
 
-// --- The document stream a pack file carries (docs/17 row 147) --------------
+// --- The document stream a pack file carries (docs/17 rows 147 and 171) -----
+
+/**
+ * Is this parsed JSON/YAML value a DOCUMENT record — a plain object?
+ *
+ * THE ONE rule, at THE one seam (AGENTS §Centralization rule 4, docs/17 row
+ * 171). Seven pack adapters each carried a private `isRecord` with this exact
+ * body, so "what counts as a document" was stated seven times and would have
+ * had to be changed seven times. It is stated once, here, beside the two
+ * parsers that produce the values it judges.
+ *
+ * The `!Array.isArray` arm is the other half of the same rule the parsers
+ * state: an ARRAY at the top of a file is a document STREAM, unwrapped one
+ * level by `parseJsonDocs`/`parseYamlDocs`, so by the time an adapter sees an
+ * element it must be a record to be a document. An adapter holding a value
+ * that is not a record counts it as ONE skip — never a failure, never
+ * nothing.
+ *
+ * Callers: the seven pack lanes, on each element of the stream the parsers
+ * return. `dnd5e-foundry.ts` additionally asks the same plain-object question
+ * of a document's OWN nested item records (an equipped armor item's
+ * `item.system`), which is why the predicate is named for the shape it tests
+ * rather than only for the top-level position.
+ */
+export function isDocumentRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * A pack DATA file's documents: whole-file JSON when possible, otherwise
  * newline-delimited JSON (the older `.db` pack format, one document per line).
  *
- * An empty or whitespace-only file fails LOUDLY with that name; a line that
- * fails to parse fails the file loudly with its 1-BASED line number. The
- * invariant the JSON family has always held: **every non-empty input either
- * yields at least one document or throws** — a file can never come back
- * accounted NOWHERE. `parseYamlDocs` below now holds the same rule.
+ * ## A top-level ARRAY is a document STREAM, unwrapped exactly ONE level
+ * (docs/17 row 171)
+ *
+ * Pack files are sometimes exported as ONE top-level JSON array holding every
+ * document. Before row 171 the whole-file parse returned that array as ONE
+ * document, every adapter skipped it as a shape it did not know, and the
+ * import failed with `no valid creature entries … (1 skipped, 0 failed)` — the
+ * count right, the REASON false: the documents were there, wrapped. The array
+ * is now unwrapped HERE, in the one seam, so a lane's `N skipped` finally
+ * means N.
+ *
+ * TWO boundaries, both deliberate and pinned by `parse-docs.test.ts`:
+ *
+ * - **ONE level only.** A document's own array FIELDS are untouched (a
+ *   creature's `items[]` survives intact — only the top level of the file is a
+ *   stream), and a top-level array OF arrays yields those inner arrays as
+ *   documents, which `isDocumentRecord` rejects and the lane counts as skips.
+ * - **The NDJSON arm does NOT unwrap.** There the top level IS the line
+ *   stream, and a line is one document.
+ *
+ * An empty or whitespace-only file fails LOUDLY with that name, and so does a
+ * top-level array that holds no documents; a line that fails to parse fails
+ * the file loudly with its 1-BASED line number. The invariant the JSON family
+ * has always held: **every non-empty input either yields at least one document
+ * or throws** — a file can never come back accounted NOWHERE. `parseYamlDocs`
+ * below holds the same rule.
  */
 export function parseJsonDocs(text: string, fileName: string): unknown[] {
   const trimmed = text.trim();
   if (trimmed === '') throw new Error(`${fileName}: file is empty`);
+  let whole: unknown;
+  let wholeFileParsed = false;
   try {
-    return [JSON.parse(trimmed) as unknown];
+    whole = JSON.parse(trimmed) as unknown;
+    wholeFileParsed = true;
   } catch {
     // Fall through to NDJSON — this branch decides nothing, the loop below
     // still fails loudly per line.
+  }
+  if (wholeFileParsed) {
+    if (!Array.isArray(whole)) return [whole];
+    // An empty top-level array is a file with NO documents — exactly the
+    // "accounted nowhere" shape the invariant forbids, so it fails by name
+    // rather than returning `[]`.
+    if (whole.length === 0) throw new Error(`${fileName}: top-level array holds no documents`);
+    return whole;
   }
   const docs: unknown[] = [];
   for (const [index, line] of trimmed.split('\n').entries()) {
@@ -457,6 +515,19 @@ export function parseJsonDocs(text: string, fileName: string): unknown[] {
  *    `docs.filter((doc) => doc != null)` here — that filter IS the
  *    silent-drop defect, not a tidy-up.
  *
+ * ## A top-level SEQUENCE is unwrapped ONE level, mirroring the JSON arm
+ * (docs/17 row 171)
+ *
+ * MEASURED with the repo's own js-yaml: a top-level sequence does NOT arrive as
+ * N documents — `loadAll('- a\n- b\n')` yields ONE document, the array
+ * `[['a', 'b']]`, so YAML carried the SAME defect as JSON (one document that
+ * every adapter skipped, with the same false reason) and needs the same fix
+ * rather than a pin of already-correct behaviour. Each document that IS an
+ * array is therefore unwrapped in place, ONE level; a document's own array
+ * FIELDS are untouched. A stream whose documents unwrap to NOTHING (e.g.
+ * `'[]\n'`, the empty top-level sequence) fails loudly by name — returning
+ * `[]` would be a file accounted NOWHERE.
+ *
  * A whitespace-only file keeps the loud empty-file failure BOTH YAML bodies
  * already had, and an unparseable one keeps the foundry body's wording —
  * `invalid YAML: …`, the sentence a pre-existing test assertion already names
@@ -473,5 +544,13 @@ export function parseYamlDocs(text: string, fileName: string): unknown[] {
     throw new Error(`${fileName}: invalid YAML: ${errorMessage(error)}`, { cause: error });
   }
   if (docs.length === 0) throw new Error(`${fileName}: no YAML document`);
-  return docs;
+  const unwrapped: unknown[] = docs.flatMap((doc) =>
+    Array.isArray(doc) ? (doc as unknown[]) : [doc],
+  );
+  // A stream whose ONLY documents were empty top-level sequences is a file
+  // with no documents, not an empty result: fail by name.
+  if (unwrapped.length === 0) {
+    throw new Error(`${fileName}: top-level array holds no documents`);
+  }
+  return unwrapped;
 }

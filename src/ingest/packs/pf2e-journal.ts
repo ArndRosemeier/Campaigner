@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseJsonDocs, AT_BRACE_LABEL_BLOCK_AND_TABLE } from './text';
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseJsonDocs,
+  AT_BRACE_LABEL_BLOCK_AND_TABLE,
+} from './text';
 import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
 
 /**
@@ -62,10 +67,6 @@ type ParsedPage = z.infer<typeof journalPageSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** The page's grouping footer, verbatim from the HTML (`null` when absent). */
 function extractSection(html: string): string | null {
   const match = /<em>Section:\s*([^<>]+?)\s*<\/em>/i.exec(html);
@@ -119,7 +120,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   for (const [index, doc] of docs.entries()) {
     // A JournalEntry document is `name` + `pages`; anything else in the pack
     // (folder docs, entities) is a counted skip, never a silent drop.
-    if (!isRecord(doc) || doc.pages === undefined) {
+    if (!isDocumentRecord(doc) || doc.pages === undefined) {
       skipped += 1;
       continue;
     }
@@ -137,7 +138,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
       if (!candidate.success) {
         failures.push({
           file: fileName,
-          name: isRecord(page) && typeof page.name === 'string' ? page.name : '',
+          name: isDocumentRecord(page) && typeof page.name === 'string' ? page.name : '',
           message: `page ${String(pageIndex)}: ${errorMessage(candidate.error)}`,
         });
         continue;

@@ -4,7 +4,7 @@ import { formatItemText, normalizeDnd5ePrice, type ItemData } from '@/domain/ite
 import { DND5E_PROPERTY_LABELS } from './dnd5e-foundry';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
+import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
@@ -85,13 +85,6 @@ const dnd5eEquipmentSchema = z.object({
 
 type ParsedEquipment = z.infer<typeof dnd5eEquipmentSchema>;
 
-// --- Helpers (the creature adapter's exact text rules; the property-label
-// table is shared verbatim) ---------------------------------------------------
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 // --- Mapping ---------------------------------------------------------------
 
 function mapEquipment(doc: ParsedEquipment): PackItemEntry {
@@ -125,7 +118,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isRecord(doc) || typeof doc.type !== 'string' || !DND5E_ITEM_TYPES.has(doc.type)) {
+    if (!isDocumentRecord(doc) || typeof doc.type !== 'string' || !DND5E_ITEM_TYPES.has(doc.type)) {
       skipped += 1;
       continue;
     }

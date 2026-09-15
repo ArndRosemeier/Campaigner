@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { abilityModifier, formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
+import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
 /**
@@ -328,10 +328,6 @@ type ParsedArmorPiece = z.infer<typeof armorPieceSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function titleCase(slug: string): string {
   return slug
     .split(/[\s-]+/)
@@ -438,9 +434,9 @@ function deriveAcFromGear(
     // non-numeric armor value) must never be silently ignored: the AC would
     // silently diverge. Fail loudly instead.
     if (
-      isRecord(item) &&
+      isDocumentRecord(item) &&
       item.type === 'equipment' &&
-      isRecord(item.system) &&
+      isDocumentRecord(item.system) &&
       'armor' in item.system
     ) {
       throw new Error(
@@ -933,7 +929,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isRecord(doc) || doc.type !== 'npc') {
+    if (!isDocumentRecord(doc) || doc.type !== 'npc') {
       skipped += 1;
       continue;
     }
