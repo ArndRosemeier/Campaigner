@@ -2191,17 +2191,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   JSON at all (`tests/ingest/packs/pf2e-foundry.test.ts`, `encodeJson([baseNpc(),
   folderDoc()])`) and it asserts only that no network call happened — it says
   nothing about the parse outcome, which is why nothing has ever surfaced this.
-- **The module document's LAYOUT is v1-shaped.** Sections print linearly, in plan
-  order, and every non-aside planned section BREAKS the page
-  (`lib/modulePdf.resolveDocumentPlan` → the body builder), so the document reads
-  as a list of full-page sections — exactly the owner's report that "texts are
-  just pasted one after the other" and that the relations are unusable. The
-  ratified v2 design (page-level MAIN COLUMN + SIDEBAR, oversize artifacts on
-  their OWN pages adjacent to the first reference, detail type tiers, the overflow
-  ladder) is written in **docs/19** and **not built** — its §11 lists the slices.
-  Until a slice lands, neither the linear layout NOR a piece of the v2 design is
-  "the way"; and the planner's blindness (one-line, capped artifact excerpts —
-  docs/19 §1) is part of the same debt, not a prompt bug to fix in place.
+- **The module document's LAYOUT arc is BUILT except its last step.** What this
+  entry used to call "v1-shaped, and v2 not built" is now history: the page model
+  (MAIN COLUMN + SIDEBAR, detail tiers) with adjacency and the overflow ladder
+  (docs/17 row 148), navigation/back-references (row 151), the ToC's real page
+  numbers (row 156), automatic planning on every export (row 139) and the
+  planner's toolkit — real module text, the wiki graph and each row's stored
+  fields, under one LOUD character budget (row 169) — are all in. **docs/19 is the
+  design of record and its §11 strikes match this entry; check them before
+  believing any claim here.** What genuinely remains: §11 step 6, PRINT REFINEMENT
+  (duplex spread pairing), which the owner DEFERRED (docs/19 §10.4) — not
+  "obvious" work; plus one follow-up recorded by row 169: a module whose own text
+  alone exceeds `MODULE_PLAN_CONTENT_BUDGET_CHARS` is cut LOUDLY rather than given
+  its own budget, and a split text/detail budget is the next step if real plans
+  fight the cap.
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them
   and do not add a further one): `db/seed.ts` + `db/personaRepo.ts` →
