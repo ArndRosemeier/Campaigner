@@ -102,7 +102,7 @@ ourselves.
 Owner-ratified: *"Always try to centralize when you see distributed code pieces
 that do basically the same. KISS principle, keep it simple."* Duplication is
 invisible when a copy is BORN — nothing fails, and each copy is correct where it
-was written — so it is caught by pins, not by discipline. Three obligations:
+was written — so it is caught by pins, not by discipline. **Four obligations:**
 
 1. **A brief names the seam it extends.** Before dispatching, find how the repo
    already does the thing (grep, then `docs/18` §2) and name that ONE seam in the
@@ -124,6 +124,31 @@ was written — so it is caught by pins, not by discipline. Three obligations:
    behaviour rot, so the test is the statement instead; docs that record
    DECISIONS never rot, which is why `docs/17` works. Pointers stay honest by
    being updated, never by being remembered.
+4. **A discovery that spans more than one code piece starts with the seam
+   question, and the answer is WRITTEN DOWN** (owner-directed, verbatim:
+   *"Whenever something gets discovered where fixing it would affect more than
+   one code piece, the first examination needs to be if this can be
+   centralized. I do know that vibe coding has exactly this decentralization
+   problem and we need active measures to counter it whenever its detected."*).
+   The moment a defect, a rule or a change is found to touch more than one
+   site — or the same idea is found written twice — the FIRST examination is
+   whether ONE seam can carry it, never how to fix each copy. This binds every
+   actor: the dispatcher, every writer, and work done with no brief at all. It
+   is not a silent intention: every brief and every landing report carries ONE
+   greppable line —
+   `COPIES: n→1 — <the seam that now carries it>` when copies are folded, or
+   `COPIES: 1 — checked, no duplication (grepped: <what>)` when the change
+   really is single-site. A brief without that line is incomplete and is sent
+   back; a landing without it is not verified. Two real failures this exists
+   for: the same rule landing at three separate surfaces, one slice each, and
+   **seven identical `isRecord` helpers** (one per pack adapter) that no test
+   could see until a task happened to grep the right word.
+   The generic detector is owed as its own slice: a repo-wide **duplicate-body
+   tripwire** (normalized, name-insensitive function bodies; a declared
+   baseline of the population that exists today; a staleness check, so folding
+   a copy FORCES its baseline entry out). It catches identical copies, not
+   paraphrases — a tripwire, not a proof — and until it lands, this line plus
+   obligation 2 are the enforcement.
 
 ## Workflow
 
