@@ -49,19 +49,6 @@
       ]
     },
     {
-      "hash": "601a24cbc975d090",
-      "reason": "The seven identical isRecord helpers the owner's obligation 4 names. Folded by the peer slice (row 171, the pack-array/guard work in src/ingest/, in flight when this baseline was captured); the CoS deletes this line at landing if that slice has landed.",
-      "sites": [
-        "src/ingest/packs/dnd5e-equipment.ts:isRecord",
-        "src/ingest/packs/dnd5e-foundry.ts:isRecord",
-        "src/ingest/packs/pf2e-conditions.ts:isRecord",
-        "src/ingest/packs/pf2e-equipment.ts:isRecord",
-        "src/ingest/packs/pf2e-foundry.ts:isRecord",
-        "src/ingest/packs/pf2e-journal.ts:isRecord",
-        "src/ingest/packs/pf2e-rules.ts:isRecord"
-      ]
-    },
-    {
       "hash": "6cb7f0cd682b51d6",
       "reason": "Three runner/engine classes copy the same on() listener add/delete (the EventEmitter shape); fold onto one emitter primitive. Owed; out of this detector slice's scope.",
       "sites": [
