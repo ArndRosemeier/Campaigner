@@ -69,7 +69,10 @@ while IFS= read -r line; do
         if git show-ref --verify --quiet "refs/heads/$branch"; then
           ahead="$(git log --oneline main.."$branch" 2>/dev/null | wc -l)"
           echo "  branch $branch: exists, $ahead commit(s) not in main"
-          [ "$ahead" -eq 0 ] && note "branch $branch has nothing main lacks — its safe-delete test passes"
+          case "$writer" in
+            ''|none*|dead*) [ "$ahead" -eq 0 ] && note "branch $branch has nothing main lacks — its safe-delete test passes";;
+            *) [ "$ahead" -eq 0 ] && echo "    (no commits yet — a LIVE writer's branch, not a retirement candidate)";;
+          esac
         elif git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
           echo "  branch $branch: not local, exists on origin"
         else
@@ -125,6 +128,35 @@ while IFS= read -r line; do
       ;;
   esac
 done < <(grep -E '^(SESSION|IN-FLIGHT|UNLANDED|AWAITING-OWNER|LANDED|RECOVERY|TRAP) *\|' "$BOARD")
+
+# UNRECORDED LIVE STATE — the dispatch-window hole. A writer exists on disk (its
+# worktree, its session log) from the moment it is dispatched, while the board is
+# only written at a landing. The predecessor died in exactly that window, so the
+# board is not the source of truth here: git and the session dirs are, and
+# anything live that the board does not name is reported as a finding.
+echo
+echo "=== unrecorded live state (git + session dirs vs the board) ==="
+recorded="$(grep -oE '(worktree|branch|writer|cos)=[^ |]*' "$BOARD" | cut -d= -f2- | sort -u)"
+while read -r w; do
+  [ -z "$w" ] && continue
+  [ "$w" = "$PWD" ] && continue
+  printf '%s\n' "$recorded" | grep -qx "$w" || note "worktree not named on the board (a writer may be live): $w"
+done < <(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}')
+recent=$(( $(date +%s) - 6*3600 ))
+while read -r d; do
+  b="$(basename "$d")"
+  printf '%s\n' "$recorded" | grep -qx "$b" && continue
+  # The LOG is the liveness signal, not the dir: a projection cache is rebuilt by
+  # a mere recovery read, so a long-dead session can look freshly written.
+  if [ -e "$d/session.jsonl.zstd" ]; then
+    last="$(stat -c %Y "$d/session.jsonl.zstd")"
+  else
+    last="$(age_min "$d")"
+  fi
+  [ -n "$last" ] && [ "$last" -ge "$recent" ] || continue
+  note "session log written in the last 6h and NOT named on the board: $b (registry + its log are the authority)"
+done < <(find "$SESSROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+[ "$stale" -eq 0 ] && echo "  nothing live that the board does not name"
 
 echo
 echo "=== host ==="

@@ -31,7 +31,7 @@ reconciled: 5348293 · 2026-09-15T06:57Z
 
 SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | note=first session under this board; predecessor session-e5adac67 became unrecoverable (compaction of a 35MB, ~374-turn log)
 
-IN-FLIGHT | none | note=no writer in flight and no unlanded branch: row 167 was PUSHED to origin/main (5348293) minutes before the predecessor died, and this session verified it (below); the branch/worktree retire with this landing
+IN-FLIGHT | row=168 | branch=feat/persisted-key-fold | worktree=/tmp/campaigner-keys-fold | base=2acec2e | writer=461d22a8-b24f-4618-a7c6-12beb3d4534d | state=running | note=the persisted creature identity folds onto the comparable form + Dexie v22 migration + import fold (owner-ratified; answers the row167-persisted-key item below); the writer does NOT push — the CoS verifies with its own gate + injection, then lands
 
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count
 
