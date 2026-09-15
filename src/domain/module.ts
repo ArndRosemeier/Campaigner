@@ -7,6 +7,10 @@ import { BaseEntitySchema, stampNewEntity, type BaseEntity, type Id } from '@/do
 // must not gain a domain → db edge for a comparison it can make with the leaf
 // (docs/17 row 166).
 import { comparableName, sameAliasName } from '@/domain/artifactAlias';
+import {
+  encounterBudgetPolicySchema,
+  type EncounterBudgetPolicy,
+} from '@/domain/encounterBudget';
 import { modulePromptStyleSchema, type ModulePromptStyle } from '@/domain/promptStyle';
 
 /**
@@ -808,6 +812,20 @@ export const moduleSchema = z
      */
     encounterFloorGuardrail: encounterFloorGuardrailSchema.nullable().default(null),
     /**
+     * The module's OWN encounter budget policy (docs/17 row 180, owner
+     * request): which rule bounds a generated room's challenge. Additive
+     * optional — `null` on every row written before the field, which
+     * `resolveEncounterBudgetPolicy` reads as `'system'` (today's per-system
+     * behaviour, byte-identical). A module created after the field is STAMPED
+     * with the creation default (`defaultEncounterBudgetPolicy`: pf2e →
+     * `'pf2e-budget'`, everything else → `'system'`), so every later
+     * generation and repopulate of that module uses the same policy
+     * deterministically — a later Settings/dialog change can never drift it.
+     * Nullable rather than defaulted on purpose: the recorded value must be
+     * able to say "no explicit choice" (the legacy reading).
+     */
+    encounterBudgetPolicy: encounterBudgetPolicySchema.nullable().default(null),
+    /**
      * What the owner asked for at creation: recorded INTENT for a later
      * "Resume automatic module creation" surface (see
      * `moduleAutomationIntentSchema`). Written by `createModule` in the same
@@ -909,6 +927,15 @@ export interface NewModule {
    */
   encounterFloorGuardrail?: EncounterFloorGuardrail;
   /**
+   * The encounter budget policy this module enforces (docs/17 row 180). The
+   * CALLER resolves the default (`defaultEncounterBudgetPolicy(campaign.system)`)
+   * when the owner recorded no explicit choice; the creation path always stamps
+   * a real value, so a fresh module never relies on the legacy null reading.
+   * Omitted or undefined = not recorded (a caller that predates the field, or a
+   * direct `createModule` in a test) = `'system'`, exactly as before.
+   */
+  encounterBudgetPolicy?: EncounterBudgetPolicy;
+  /**
    * The prompt style this module is written in (docs/17 row 86). The CALLER
    * resolves it — a chosen style id or the app default — and hands the record
    * in; `createModule` stores id, name, version and template text as-is.
@@ -960,6 +987,7 @@ export function createModule(input: NewModule): Module {
     autoGenerateMobImages: automationIntent.autoGenerateMobImages,
     autoApproveSpine: input.autoApproveSpine ?? false,
     encounterFloorGuardrail: input.encounterFloorGuardrail ?? null,
+    encounterBudgetPolicy: input.encounterBudgetPolicy ?? null,
     promptStyle: input.promptStyle ?? null,
     automationIntent,
   });

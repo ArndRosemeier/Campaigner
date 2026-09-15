@@ -10,6 +10,7 @@ import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import {
+  createModule,
   createPersona,
   defaultSettings,
   newId,
@@ -20,6 +21,7 @@ import {
   type Id,
   type Persona,
 } from '@/domain';
+import { getModule, saveModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { rejectionIssues } from '@/llm/rejectionReason';
@@ -122,8 +124,10 @@ function smithPersona(): Persona {
   });
 }
 
-async function setup(): Promise<{ campaign: Awaited<ReturnType<typeof createCampaign>> }> {
-  const campaign = await createCampaign({ name: 'Regen Campaign', system: 'dnd5e' });
+async function setup(
+  system: 'dnd5e' | 'pathfinder2e' = 'dnd5e',
+): Promise<{ campaign: Awaited<ReturnType<typeof createCampaign>> }> {
+  const campaign = await createCampaign({ name: 'Regen Campaign', system });
   const { db } = await import('@/db');
   await db.personas.put(cartographerPersona());
   await db.personas.put(smithPersona());
@@ -213,10 +217,12 @@ async function seedComplexTarget(
   campaignId: Id,
   goblinChunkId: Id,
   overrides: Record<string, unknown> = {},
+  moduleId?: Id,
 ): Promise<Artifact & { kind: 'encounter' }> {
   const mapImageId = newId();
   const target = await createArtifact({
     campaignId,
+    ...(moduleId === undefined ? {} : { moduleId }),
     kind: 'encounter',
     name: 'Old Undercroft',
     summary: 'Old summary.',
@@ -438,6 +444,130 @@ describe('complex Repopulate (roster-only Cartographer pass)', () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
     expect((await getRun(runId))?.steps.map((step) => step.name)).toEqual(['brief', 'finalize']);
+  });
+});
+
+describe('encounter budget policy (docs/17 row 180 — ONE resolved policy)', () => {
+  /** A pf2e-valid repopulation reply: four inline-statblock fights, so the
+   *  roster needs no pack book and the level sum is deterministic. */
+  const pf2eBrief = {
+    ...REPOPULATE_BRIEF,
+    monsters: [
+      { name: 'Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, system: 'pathfinder2e', level: '2' } },
+      { name: 'Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, system: 'pathfinder2e', level: '2' } },
+      { name: 'Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, system: 'pathfinder2e', level: '2' } },
+      { name: 'Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, system: 'pathfinder2e', level: '2' } },
+    ],
+  };
+
+  async function cartographer(): Promise<Persona> {
+    const { db } = await import('@/db');
+    const persona = await db.personas.where('slug').equals('encounter-cartographer').first();
+    if (persona === undefined) throw new Error('cartographer missing');
+    return persona;
+  }
+
+  async function runArm(
+    campaign: Awaited<ReturnType<typeof createCampaign>>,
+    targetId: Id,
+  ): Promise<{ prompt: string; calls: number; advisory: string }> {
+    const runInput: StartRunInput = {
+      campaign,
+      persona: await cartographer(),
+      autonomy: 'manual',
+      brief: 'Repopulate',
+      pinnedChunkIds: [],
+      targetArtifactId: targetId,
+      encounterScope: 'rosterOnly',
+      encounterPreset: 'dungeon',
+    };
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    const content =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    const step = (await getRun(runId))?.steps[0];
+    const output = step?.output as { budgetAdvisory?: unknown } | null | undefined;
+    const advisory = typeof output?.budgetAdvisory === 'string' ? output.budgetAdvisory : '';
+    const calls = chatMock.mock.calls.length;
+    chatMock.mockClear();
+    return { prompt: typeof content === 'string' ? content : JSON.stringify(content), calls, advisory };
+  }
+
+  it("the SAME brief under 'verbatim' vs 'pf2e-budget' produces DIFFERENT stocking instructions and a different verdict", async () => {
+    const { campaign } = await setup('pathfinder2e');
+    const goblinChunkId = await seedPackBook();
+    const verbatimModule = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Verbatim Module', concept: '', levelMin: 4, levelMax: 5,
+      sizeDial: 'standard', encounterBudgetPolicy: 'verbatim',
+    }));
+    const budgetModule = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Budget Module', concept: '', levelMin: 4, levelMax: 5,
+      sizeDial: 'standard', encounterBudgetPolicy: 'pf2e-budget',
+    }));
+    // The layout carries each room's targetLevel, so a repopulation's brief
+    // must pass the existing names AND targets through (requirement 4).
+    const layoutWithTargets = (() => {
+      const layout = complexLayoutFixture();
+      return { ...layout, rooms: layout.rooms.map((room) => ({ ...room, targetLevel: 4 })) };
+    })();
+    const verbatimTarget = await seedComplexTarget(campaign.id, goblinChunkId, { layout: layoutWithTargets }, verbatimModule.id);
+    const budgetTarget = await seedComplexTarget(campaign.id, goblinChunkId, { layout: layoutWithTargets }, budgetModule.id);
+    chatMock.mockResolvedValue({ text: JSON.stringify(pf2eBrief), modelUsed: 'test-model', fallback: null });
+
+    const verbatim = await runArm(campaign, verbatimTarget.id);
+    const budget = await runArm(campaign, budgetTarget.id);
+
+    // 1. DIFFERENT stocking instructions for the SAME brief + same rooms.
+    expect(verbatim.prompt).not.toContain('fill grade is');
+    expect(verbatim.prompt).not.toContain('stocking every one of them');
+    expect(verbatim.prompt).toContain('Design a concrete monster roster appropriate to the requested difficulty.');
+    expect(budget.prompt).toContain('fill grade is 100%');
+    expect(budget.prompt).toContain('stocking every one of them');
+    // The repopulation receives the existing room names AND their targetLevels.
+    expect(budget.prompt).toContain('Entry (targetLevel 4)');
+    expect(budget.prompt).toContain('Sanctum (targetLevel 4)');
+    expect(budget.prompt).not.toBe(verbatim.prompt);
+
+    // 2. DIFFERENT budget verdict for the SAME under-strength reply (each room
+    //    ships 2 creature-levels against a pf2e expectation of 8).
+    //    Verbatim: one call, accepted as-is, the loud not-checked advisory.
+    expect(verbatim.calls).toBe(1);
+    expect(verbatim.advisory).toContain('not deterministically budget-checked');
+    //    pf2e-budget: the under-strength rooms are REPAIRABLE, so a second
+    //    (bounded repair) turn ran, and the shipped advisory names them plus
+    //    the approximation source — never silence.
+    expect(budget.calls).toBe(2);
+    expect(budget.advisory).toContain('ships under its expected challenge');
+    expect(budget.advisory).toContain("Campaigner's OWN documented PF2e approximation");
+    expect(budget.advisory).not.toContain('not deterministically budget-checked');
+  });
+
+  it('drives a repopulate from the MODULE ROW policy (stamping, not dialog state)', async () => {
+    const { campaign } = await setup('pathfinder2e');
+    const goblinChunkId = await seedPackBook();
+    // An explicit choice is stamped on the row; an omitted one is the legacy
+    // null (which resolves to 'system'), and the row — never the dialog or the
+    // live settings — decides what a later repopulate uses.
+    const fresh = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Fresh', concept: '', levelMin: 4, levelMax: 4,
+      sizeDial: 'standard',
+    }));
+    const chosen = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Chosen', concept: '', levelMin: 4, levelMax: 4,
+      sizeDial: 'standard', encounterBudgetPolicy: 'verbatim',
+    }));
+    expect((await getModule(fresh.id))?.encounterBudgetPolicy).toBeNull();
+    expect((await getModule(chosen.id))?.encounterBudgetPolicy).toBe('verbatim');
+
+    // A target owned by the CHOSEN (verbatim) module repopulates verbatim even
+    // though the campaign is pf2e — the module row decides, deterministically.
+    const target = await seedComplexTarget(campaign.id, goblinChunkId, {}, chosen.id);
+    chatMock.mockResolvedValue({ text: JSON.stringify(pf2eBrief), modelUsed: 'test-model', fallback: null });
+    const arm = await runArm(campaign, target.id);
+    expect(arm.prompt).not.toContain('fill grade is');
+    expect(arm.advisory).toContain('not deterministically budget-checked');
   });
 });
 

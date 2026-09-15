@@ -5036,6 +5036,51 @@ files, each with one job:
   `persona-panel.tsx`'s two folded call sites still call `copyText` — so a third
   hand-rolled clipboard write reds instead of drifting.
 
+### The encounter budget policy — one resolved value, three selectable modes (docs/17 row 180, docs/11 D12 amendment, docs/18 §2)
+
+The owner's request ("make that policy selectable during module creation with
+a sensitive default") is pinned at four levels, each with the injectable
+failure it catches:
+
+- `tests/domain/encounterBudget.test.ts` (NEW, 5): exactly three policy
+  values; `defaultEncounterBudgetPolicy` gives `pathfinder2e` →
+  `'pf2e-budget'` and every other system → `'system'`; a recorded value
+  resolves verbatim while a legacy/absent/null one reads `'system'`; the row
+  round-trips through the repo. **Injected RED:** making the resolver ignore
+  the row (always `'system'`) reds the differential pin below, not this one.
+- `tests/llm/module-gen-spine-and-styles.test.ts`: `createModuleAndRun` with
+  no explicit choice for a pf2e campaign stamps `'pf2e-budget'` on the row, an
+  explicit `'verbatim'` wins, and a dnd5e campaign records `'system'` — the
+  creation path, not the dialog's local state.
+- `tests/llm/encounterRepopulate.test.ts` (the DIFFERENTIAL): the SAME
+  repopulation brief against the SAME 4-room layout, owned by a `'verbatim'`
+  module vs a `'pf2e-budget'` module, produces DIFFERENT instruction bytes
+  (no numbers + "design a concrete monster roster" vs `fill grade is 100%` +
+  the existing room names/targetLevels) and a DIFFERENT verdict (one chat call
+  accepted with the "not deterministically budget-checked" advisory vs TWO
+  calls where the under-strength rooms are repairable and ship the under +
+  approximation advisories). A second pin drives the repopulate from the
+  module ROW (an explicit `'verbatim'` module stays verbatim on a pf2e
+  campaign). **Injected RED, watched:** forcing `resolveEncounterBudgetPolicy`
+  to `'system'` fails exactly this test (`budget.prompt` loses `fill grade is
+  100%`).
+- `tests/llm/encounterCartographer.test.ts` (the amended pin, docs/17 row 180
+  keeping its old bytes): the legacy no-module pf2e row still renders NO
+  stocking clause (byte-identical to before the policy existed), while the SAME
+  brief under a `'pf2e-budget'` module renders the append directive, the fill
+  grade numbers and the approximation clause.
+- `tests/llm/roomBudget.test.ts`: the pf2e band is Campaigner's own
+  `2 × party level`, measurably different from the dnd5e `T + 2`; an
+  under-strength complex room is repairable under `'pf2e-budget'` and
+  advisory-only under the dnd5e band; a `'verbatim'` budget computes no
+  expectation and returns the always-on advisory.
+- `tests/llm/structuredPartyLevel.test.ts`: the roster WINDOW and the
+  Cartographer's party-level resolver AGREE — a part-mentioned encounter with a
+  contradicting `levelHint` orders the bestiary window by the PART level
+  (`encounterPartyLevel`), so the two resolvers cannot diverge again.
+  **Injected RED, watched:** restoring hint-first order fails this test AND
+  the pre-existing part-level pin (2 red of 13).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

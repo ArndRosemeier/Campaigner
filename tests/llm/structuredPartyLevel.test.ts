@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { putChunks } from '@/db/chunkRepo';
 import { listModulesByCampaign, saveModule } from '@/db/moduleRepo';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import {
   createModule,
@@ -13,14 +15,21 @@ import {
   defaultSettings,
   modulePartSchema,
   moduleSpineSchema,
+  ruleChunkSchema,
+  stampNewEntity,
+  statBlockSchema,
   type Id,
   type Module,
   type Persona,
+  type RuleChunk,
 } from '@/domain';
 import { buildEntityBrief } from '@/features/modules/persona-request';
+import { sha256Hex } from '@/lib/hash';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
 import {
+  encounterBudgetFor,
+  encounterPartyLevel,
   fillGradeStockingFor,
   PARTY_SIZE,
   partLevelForMention,
@@ -160,6 +169,54 @@ async function seedEncounterTarget(
   return target.id;
 }
 
+/** A dnd5e pack book with two creatures, one level 3 and one level 5, so the
+ *  prompt window's ORDER reveals which target level the window resolved. */
+async function seedRosterBook(): Promise<void> {
+  const book = await createPackBook({ title: 'Ordering Pack', system: 'dnd5e', filename: 'pack.zip' });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-pf2e',
+    license: 'Community Use Policy',
+    entriesImported: 2,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  const chunk = async (name: string, level: string): Promise<RuleChunk> => {
+    const text = `${name}, humanoid.`;
+    return ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'statblock',
+      headingPath: [name],
+      text,
+      statBlock: statBlockSchema.parse({
+        system: 'dnd5e',
+        level,
+        size: 'Small',
+        creatureType: 'humanoid',
+        ac: 12,
+        acNote: '',
+        hp: 7,
+        hpFormula: '2d6',
+        speed: '30 ft.',
+        abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+        saves: '',
+        skills: '',
+        senses: '',
+        languages: '',
+        traits: [],
+        actions: [],
+        reactions: [],
+        legendary: [],
+        extras: {},
+      }),
+      contentHash: await sha256Hex(text),
+    });
+  };
+  await putChunks([await chunk('Near Three', '3'), await chunk('Far Five', '5')]);
+}
+
 async function briefPrompt(): Promise<string> {
   await waitFor(() => {
     expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
@@ -170,7 +227,7 @@ async function briefPrompt(): Promise<string> {
 }
 
 function stockingOrThrow(fillGrade: number, level: number): string {
-  const stocking = fillGradeStockingFor(fillGrade, level, 'dnd5e');
+  const stocking = fillGradeStockingFor(fillGrade, level, encounterBudgetFor('system', 'dnd5e'));
   if (stocking === null) throw new Error(`no stocking numbers for level ${String(level)}`);
   return stocking;
 }
@@ -366,6 +423,39 @@ describe('Cartographer brief structured level', () => {
     expect(prompt).not.toContain('Party of');
     // The parsed levelHint drives, exactly as today.
     expect(prompt).toContain(stockingOrThrow(80, 5));
+  });
+
+  it('the roster WINDOW and the brief AGREE on the party level (part level beats the hint)', async () => {
+    const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
+    const persona = cartographer();
+    const { db } = await import('@/db');
+    await db.personas.put(persona);
+    await seedRosterBook();
+    const module = await seedModule(campaign.id);
+    // Mentioned in the level-3 part, free-text hint says 5 (the divergence
+    // fixture the policy arc folded): BOTH resolvers must read 3.
+    const targetId = await seedEncounterTarget(campaign.id, module.id, 'Undercroft Feast', '5');
+    expect(encounterPartyLevel(module, 'Undercroft Feast', '5')).toBe(3);
+    const runInput: StartRunInput = {
+      campaign,
+      persona,
+      autonomy: 'manual',
+      brief: 'A feast-hall fight',
+      pinnedChunkIds: [],
+      encounterMapAspect: '4:3',
+      targetArtifactId: targetId,
+    };
+    await runEngine.startRun(runInput);
+    const prompt = await briefPrompt();
+    // The brief keys off the part level…
+    expect(prompt).toContain('Party of 4 adventurers at level 3.');
+    expect(prompt).toContain(stockingOrThrow(80, 3));
+    // …and so does the roster window: the level-3 creature is NEARER than the
+    // level-5 one. Under the old hint-first window resolver the order was the
+    // reverse, which is exactly the two-resolver divergence this pins shut.
+    expect(prompt).toContain('Near Three (3');
+    expect(prompt).toContain('Far Five (5');
+    expect(prompt.indexOf('Near Three')).toBeLessThan(prompt.indexOf('Far Five'));
   });
 
   it('both prompts build the line from the shared constant', async () => {

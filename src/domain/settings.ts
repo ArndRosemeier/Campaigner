@@ -12,6 +12,7 @@ import {
   ENTITY_KINDS,
   moduleSizeDialSchema,
 } from '@/domain/module';
+import { encounterBudgetPolicySchema } from '@/domain/encounterBudget';
 import {
   PROMPT_STYLE_FREESTYLE_ID,
   userPromptStyleSchema,
@@ -294,6 +295,16 @@ export const newModuleDraftSchema = z
      * forbids.
      */
     promptStyleId: z.string().min(1).optional(),
+    /**
+     * The encounter budget policy the owner picked for the next module
+     * (docs/17 row 180). OPTIONAL and absent by default, exactly like
+     * `promptStyleId` above: "no explicit choice made" is a real state and
+     * means the creation path applies the per-system default
+     * (`defaultEncounterBudgetPolicy`) as it stands at that moment. Freezing
+     * `'system'` here would silently pin a PF2E module to the legacy verbatim
+     * reading for anyone who created it from a stale draft.
+     */
+    encounterBudgetPolicy: encounterBudgetPolicySchema.optional(),
   })
   .refine((draft) => draft.levelMax >= draft.levelMin, {
     message: 'levelMax must be >= levelMin',

@@ -15,6 +15,7 @@ export * from '@/domain/documentPlan';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';
 export * from '@/domain/entityNormalization';
+export * from '@/domain/encounterBudget';
 export * from '@/domain/encounterMap';
 export * from '@/domain/exportDependencies';
 export * from '@/domain/gameSystem';

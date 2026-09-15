@@ -42,6 +42,7 @@ import {
   resolveEncounterMapMode,
   resolveEncounterPreset,
   recordedWritingModel,
+  resolveEncounterBudgetPolicy,
   schematicCellPx,
   type DungeonMapPath,
 } from '@/domain';
@@ -88,9 +89,11 @@ import {
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
 import {
-  PF2E_BUDGET_ADVISORY,
   ROOM_BUDGET_OVER_MARGIN,
+  budgetVerificationAdvisory,
   checkRoomBudget,
+  encounterBudgetFor,
+  encounterPartyLevel,
   expectedRoomThreat,
   fillGradeStockingFor,
   fixedCastAdvisories,
@@ -102,8 +105,8 @@ import {
   resolveBriefMonsterLevels,
   resolveEntryLevels,
   roomBudgetGuidanceFor,
-  roomBudgetMode,
   substitutionAdvisories,
+  type EncounterBudget,
 } from '@/llm/roomBudget';
 import { getRulebook, listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -2540,18 +2543,19 @@ export class RunEngine {
   }
 
   /**
-   * The roster prompt window's target level (12-BESTIARY-PACKS §7, ratified
-   * chain), resolved at the run-engine boundary from what the run carries:
-   * (a) the target encounter's free-text `levelHint` ("5", "4–6", "CR 5" —
-   * the first digit run wins); (b) else, when the run is module-scoped (the
-   * target artifact is owned by a module), that module's
+   * The roster prompt window's target level (12-BESTIARY-PACKS §7), resolved
+   * at the run-engine boundary from what the run carries: (a) for an encounter
+   * target, the SAME party-level chain the Cartographer's brief uses
+   * (`encounterPartyLevel`: the referencing part's exact level, else the
+   * free-text `levelHint` — "5", "4–6", "CR 5", the first digit run wins);
+   * (b) else, when the target is owned by a module, that module's
    * `levelMin`/`levelMax` band midpoint; (c) else undefined — the window
-   * keeps the level/name-ascending order. The chain is graceful by design:
-   * an empty/unparseable levelHint is a legitimate preference state (the
-   * hint is a user preference string, not data that failed), so it falls to
-   * the next preference. A target artifact claiming module ownership whose
-   * module row is gone is corrupt data and fails loudly instead of silently
-   * ordering without a target.
+   * keeps the level/name-ascending order. The chain is graceful by design: an
+   * empty/unparseable levelHint is a legitimate preference state (the hint is
+   * a user preference string, not data that failed), so it falls to the next
+   * preference. A target artifact claiming module ownership whose module row
+   * is gone is corrupt data and fails loudly instead of silently ordering
+   * without a target.
    */
   private async rosterTargetLevelFor(input: StartRunInput): Promise<number | undefined> {
     if (input.targetArtifactId === undefined) return undefined;
@@ -2560,15 +2564,25 @@ export class RunEngine {
     // brief validates it before this runs); without one there is no target
     // preference and the window stays ascending.
     if (target === undefined) return undefined;
-    if (target.kind === 'encounter') {
-      const fromHint = parseRosterTargetLevel(target.data.levelHint);
-      if (fromHint !== undefined) return fromHint;
+    // The encounter's party level comes from the ONE shared resolver the
+    // Cartographer's brief uses (`encounterPartyLevel`, docs/17 row 180): a
+    // part mention beats the free-text hint, so the roster WINDOW's "nearest
+    // level" and the brief's "party level" can never disagree for the same
+    // encounter (the two-resolver divergence this folded).
+    const levelHint = target.kind === 'encounter' ? target.data.levelHint : '';
+    if (target.moduleId === null) {
+      return target.kind === 'encounter' ? parseRosterTargetLevel(levelHint) : undefined;
     }
-    if (target.moduleId === null) return undefined;
     const module = await getModule(target.moduleId);
     if (module === undefined) {
       throw new Error(
         `roster target level: "${target.name}" references module ${target.moduleId}, which does not exist`,
+      );
+    }
+    if (target.kind === 'encounter') {
+      return (
+        encounterPartyLevel(module, target.name, levelHint) ??
+        (module.levelMin + module.levelMax) / 2
       );
     }
     return (module.levelMin + module.levelMax) / 2;
@@ -3733,9 +3747,20 @@ export class RunEngine {
     // Asymmetric per-room budget loop (docs/11 D12): the lookups the level
     // resolution needs — every chunk the brief could cite (stat-block pool +
     // roster name index) plus, for regenerate runs, the target's own roster
-    // sources. pf2e runs replace the numeric check with the loud verbatim
-    // advisory (no Paizo numbers ship — roomBudget.ts).
-    const budgetMode = roomBudgetMode(input.campaign.system);
+    // sources. The budget POLICY is resolved ONCE here (docs/17 row 180) and
+    // threaded to every consumer below; a 'verbatim' budget replaces the
+    // numeric check with the loud advisory (no Paizo numbers ship —
+    // roomBudget.ts).
+    // ONE module read for this run: the encounter's owning module (a
+    // regenerate target) or the module it is being created into. Its recorded
+    // `encounterBudgetPolicy` decides how a room's challenge is bounded; an
+    // absent field (legacy row) reads as 'system' — today's behaviour.
+    const owningModuleId = target?.kind === 'encounter' && target.moduleId !== null
+      ? target.moduleId
+      : (input.placementModuleId ?? null);
+    const owningModule = owningModuleId === null ? undefined : await getModule(owningModuleId);
+    const budgetPolicy = resolveEncounterBudgetPolicy(owningModule);
+    const budget: EncounterBudget = encounterBudgetFor(budgetPolicy, input.campaign.system);
     // Shape-gated restock (docs/11 D12 amendment, owner-directed): the
     // stocking/expansion contract keys on the TARGET'S ACTUAL SHAPE —
     // `encounterDataIsComplex`, the parse-normalized D11 derivation — not on
@@ -3746,30 +3771,30 @@ export class RunEngine {
     // all; the shape now carries the contract. A genuine single arena on a
     // dungeon preset keeps today's prompt byte-identical (the preset's D10
     // bias still applies — the clause gate below is an OR, never a switch).
-    // pf2e has no cap to bound an append (Paizo numbers never ship), so the
-    // machinery stays band-only and the verbatim pin holds. ONE flag drives
-    // BOTH the prompt clauses and the evaluate gate — they cannot drift
-    // apart again.
+    // The machinery follows the resolved BUDGET's mode, so a pf2e run whose
+    // policy is 'pf2e-budget' is band-authorized while 'system'/'verbatim'
+    // keep the legacy verbatim pin. ONE flag drives BOTH the prompt clauses
+    // and the evaluate gate — they cannot drift apart again.
     const targetIsComplex = target?.kind === 'encounter' && encounterDataIsComplex(target.data);
     // The stocking contract authorizes whenever the shape calls for a complex
-    // (dungeon preset OR a complex-shaped target) on a band system — the pin
-    // decides only HOW it binds: a pinned roster expands (verbatim prefix →
-    // source-cited appends → cap), an unpinned one is designed whole under
-    // the same numbers and cap.
+    // (dungeon preset OR a complex-shaped target) on a numeric-band budget —
+    // the pin decides only HOW it binds: a pinned roster expands (verbatim
+    // prefix → source-cited appends → cap), an unpinned one is designed whole
+    // under the same numbers and cap.
     const stockingAuthorized =
-      (preset === 'dungeon' || targetIsComplex) && budgetMode === 'band';
+      (preset === 'dungeon' || targetIsComplex) && budget.mode === 'band';
     // First generation stocks like regeneration (docs/11): a never-mapped
     // target (layout null — no rooms on file, nothing to preserve) carries
     // the Smith stub's one-fight roster, which must NOT pin a dungeon-intent
-    // brief (dungeon preset or complex shape, band systems): the pin exists
+    // brief (dungeon preset or complex shape, band budgets): the pin exists
     // only for mapped verbatim map regenerations with a roster on file, so
     // a never-mapped stocking-authorized target briefs unpinned — the
     // MUST-style fresh-population clause with numbers and the cap gate
     // below — exactly like a fresh regeneration. A never-mapped single
     // (standard preset, single shape) keeps its pin byte-identical: one
     // fight is the Smith's charter there, and the map run preserves it.
-    // pf2e never authorizes (no cap to bound an append), so its verbatim
-    // pin holds untouched.
+    // A verbatim budget never authorizes (no cap to bound an append), so its
+    // verbatim pin holds untouched.
     const targetNeverMapped = target?.kind === 'encounter' && target.data.layout === null;
     const rosterPin =
       rosterOnly || targetRoster === undefined || targetRoster.length === 0 ||
@@ -3796,26 +3821,23 @@ export class RunEngine {
     // in the module text (or no owning module) keeps today's behavior
     // byte-identical: the structured line stays absent and the free-text
     // chain below drives.
-    const partLevel = await (async (): Promise<number | undefined> => {
-      if (target?.kind !== 'encounter' || target.moduleId === null) return undefined;
-      const owner = await getModule(target.moduleId);
-      if (owner === undefined) return undefined;
-      return partLevelForMention(owner, target.name);
-    })();
+    const partLevel = target?.kind === 'encounter' && owningModule !== undefined
+      ? partLevelForMention(owningModule, target.name)
+      : undefined;
     // The level the rooms' targetLevels will default to (stampTargetLevels):
-    // the structured part level first, then the target's own hint on a
-    // regenerate, the run brief's text for a fresh encounter. Without a
-    // digit there is no honest number to render.
-    const promptLevel = partLevel
-      ?? (target?.kind === 'encounter'
-        ? parseRosterTargetLevel(target.data.levelHint)
-        : parseRosterTargetLevel(input.brief));
+    // the SAME ONE chain the roster window resolves (part level, then the
+    // target's own hint) so the two can never disagree for this encounter;
+    // a fresh encounter reads the run brief's text. Without a digit there is
+    // no honest number to render.
+    const promptLevel = target?.kind === 'encounter'
+      ? encounterPartyLevel(owningModule, target.name, target.data.levelHint)
+      : parseRosterTargetLevel(input.brief);
     // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
     // share as concrete creature-levels at the level the rooms default to.
-    // Null for pf2e (no Paizo numbers) or a digit-free level — the
-    // qualitative clause still applies, never an invented number. Rendered
-    // ABOVE the roster contract, which the append clauses cite.
-    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, input.campaign.system);
+    // Null for a 'verbatim' budget or a digit-free level — the qualitative
+    // clause still applies, never an invented number. Rendered ABOVE the
+    // roster contract, which the append clauses cite.
+    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, budget);
     // Fixed-cast glue for the unpinned first generation (docs/11): the map
     // brief carries no fixed-cast summaries of its own, so unpinning the
     // Smith stub's generics would drop a fixed-cast NPC (ledger row 59).
@@ -3829,14 +3851,12 @@ export class RunEngine {
     // renders nothing, so cast-less briefs stay byte-identical.
     const fixedCastSection = await (async (): Promise<string | null> => {
       if (rosterPin !== undefined || !targetNeverMapped || targetIsComplex) return null;
-      if (target.moduleId === null) return null;
-      const owner = await getModule(target.moduleId);
-      if (owner === undefined) return null;
-      const sceneContext = surroundingParagraphs(moduleDocumentText(owner), target.name);
+      if (owningModule === undefined) return null;
+      const sceneContext = surroundingParagraphs(moduleDocumentText(owningModule), target.name);
       if (sceneContext === '') return null;
       const pool = await listArtifactsByCampaign(input.campaign.id);
       return fixedCastSectionFor(
-        await fixedCastForEncounter(target.name, sceneContext, pool, owner.id),
+        await fixedCastForEncounter(target.name, sceneContext, pool, owningModule.id),
       );
     })();
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
@@ -3975,7 +3995,7 @@ export class RunEngine {
       treasureGuidanceFor(input.campaign.system),
       // Asymmetric per-room budget loop (docs/11 D12): the targetLevel
       // contract + the documented per-system band.
-      roomBudgetGuidanceFor(input.campaign.system),
+      roomBudgetGuidanceFor(budget),
       `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
@@ -4078,7 +4098,7 @@ export class RunEngine {
           creatures: creatures[roomIndex] ?? [],
           fillGrade,
           complex: isComplex,
-          system: input.campaign.system,
+          budget,
         }),
       );
     };
@@ -4282,14 +4302,19 @@ export class RunEngine {
         };
       }
       const stamped = stampTargetLevels(corrected);
-      if (budgetMode === 'verbatim') {
-        // pf2e: no numeric budget ships (Paizo licensing) — the advisory is
-        // the deterministic, always-loud replacement.
+      // The advisory every policy owes the owner (null for the dnd5e band):
+      // the 'verbatim' 'not budget-checked' notice, or the 'pf2e-budget'
+      // 'Campaigner's own approximation' notice. ONE resolver, so the
+      // licensing honesty notice cannot drift between call sites.
+      const verificationAdvisory = budgetVerificationAdvisory(budget);
+      if (budget.mode === 'verbatim') {
+        // No numeric budget ships — the advisory is the deterministic,
+        // always-loud replacement.
         return {
           brief: stamped,
           issues: [],
           reasons: [],
-          advisory: PF2E_BUDGET_ADVISORY,
+          advisory: verificationAdvisory,
           expansionActive: false,
         };
       }
@@ -4302,7 +4327,7 @@ export class RunEngine {
         // fresh populations alike.
         const expectedTotal = stamped.rooms.reduce((total, room) => {
           if (room.targetLevel === undefined) return total;
-          const expectation = expectedRoomThreat(fillGrade, room.targetLevel, input.campaign.system);
+          const expectation = expectedRoomThreat(fillGrade, room.targetLevel, budget);
           return total + (expectation?.expectedLevels ?? 0);
         }, 0);
         const cap = expectedTotal + ROOM_BUDGET_OVER_MARGIN;
@@ -4321,17 +4346,24 @@ export class RunEngine {
       }
       // The lower verdicts (fill-grade arc): 'empty' is repairable on fresh
       // complex briefs (the inverted asymmetry — complexes must stock every
-      // room), 'under' is advisory-only; single arenas keep the original
-      // asymmetric call (no lower verdicts exist for them).
+      // room). 'under' is advisory-only for the dnd5e band, and REPAIRABLE
+      // under 'pf2e-budget' (docs/17 row 180: the owner's report was rooms
+      // that were too easy, so that mode must ask for a fix rather than ship
+      // silently). Single arenas keep the original asymmetric call (no lower
+      // verdicts exist for them).
       const unverified = verdicts.filter((verdict) => verdict.status === 'unverified');
       const under = verdicts.filter((verdict) => verdict.status === 'under');
       const repairable = verdicts.filter(
-        (verdict) => verdict.status === 'over' || verdict.status === 'empty',
+        (verdict) =>
+          verdict.status === 'over' ||
+          verdict.status === 'empty' ||
+          (budget.repairUnder && verdict.status === 'under'),
       );
       if (repairable.length === 0) {
-        const advisories = [...unverified, ...under]
-          .map((verdict) => verdict.advisory)
-          .filter((advisory): advisory is string => advisory !== null);
+        const advisories = [
+          verificationAdvisory,
+          ...[...unverified, ...under].map((verdict) => verdict.advisory),
+        ].filter((advisory): advisory is string => advisory !== null);
         return {
           brief: stamped,
           issues: [],
@@ -4367,10 +4399,13 @@ export class RunEngine {
         }),
       };
       const loweredVerdicts = await budgetVerdicts(finalBrief);
-      const advisories = loweredVerdicts
-        .filter((verdict) => verdict.status !== 'ok')
-        .map((verdict) => verdict.advisory ?? '')
-        .filter((advisory) => advisory !== '');
+      const advisories = [
+        verificationAdvisory,
+        ...loweredVerdicts
+          .filter((verdict) => verdict.status !== 'ok')
+          .map((verdict) => verdict.advisory ?? '')
+          .filter((advisory) => advisory !== ''),
+      ].filter((advisory): advisory is string => advisory !== null);
       return {
         brief: finalBrief,
         issues: [],
@@ -5016,6 +5051,14 @@ export class RunEngine {
       );
     }
     const isComplex = targetLayout.rooms.length > 1;
+    // The run's ONE resolved budget (docs/17 row 180), from the target's
+    // owning module — a repopulation of a module encounter must use the same
+    // policy every other generation of that module uses.
+    const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
+    const budget = encounterBudgetFor(
+      resolveEncounterBudgetPolicy(owningModule),
+      input.campaign.system,
+    );
     // Fill grade (docs/11 D12 amendment, draw-once): the row's value always
     // wins; then the brief's stamped value (the draw the prompt was written
     // against — the same precedence the full finalize uses); a legacy
@@ -5110,7 +5153,7 @@ export class RunEngine {
         }),
         ...(fillGrade === undefined ? {} : { fillGrade }),
         complex: isComplex,
-        system: input.campaign.system,
+        budget,
       }),
     );
     const lowered = new Map<number, number>(
@@ -5132,9 +5175,8 @@ export class RunEngine {
     const advisories = verdicts
       .map((verdict) => (verdict.status === 'ok' ? '' : verdict.advisory ?? ''))
       .filter((advisory) => advisory !== '');
-    if (roomBudgetMode(input.campaign.system) === 'verbatim') {
-      advisories.push(PF2E_BUDGET_ADVISORY);
-    }
+    const verificationAdvisory = budgetVerificationAdvisory(budget);
+    if (verificationAdvisory !== null) advisories.push(verificationAdvisory);
     // Scene-assertion substitutions (docs/11 assertion rule): a roster-only
     // repopulation replaces the roster and nothing else, so the brief's own
     // declaration of what it could not honour is the one thing that must reach
@@ -5993,6 +6035,14 @@ export class RunEngine {
       let fillGradeToPersist: number | undefined = target.data.fillGrade;
       if (targetLayout !== null) {
         const isComplex = targetLayout.rooms.length > 1;
+        // The run's ONE resolved budget (docs/17 row 180), from the target's
+        // owning module — an in-place fill of a module encounter reads the
+        // same recorded policy every other generation of it uses.
+        const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
+        const budget = encounterBudgetFor(
+          resolveEncounterBudgetPolicy(owningModule),
+          input.campaign.system,
+        );
         // Fill grade (docs/11 D12 amendment): the row's value always wins;
         // a legacy complex without one draws NOW (draw-once at the refill —
         // the second ratified draw site) so the packing and the budget
@@ -6036,7 +6086,7 @@ export class RunEngine {
                     (room) =>
                       room.targetLevel === undefined
                         ? undefined
-                        : expectedRoomThreat(fillGrade, room.targetLevel, input.campaign.system)
+                        : expectedRoomThreat(fillGrade, room.targetLevel, budget)
                           ?.expectedLevels,
                   ),
                 }),
@@ -6070,7 +6120,7 @@ export class RunEngine {
             }),
             ...(fillGrade === undefined ? {} : { fillGrade }),
             complex: isComplex,
-            system: input.campaign.system,
+            budget,
           }),
         );
         const lowered = new Map<number, number>(
@@ -6092,9 +6142,8 @@ export class RunEngine {
         const advisories = verdicts
           .map((verdict) => (verdict.status === 'ok' ? '' : verdict.advisory ?? ''))
           .filter((advisory) => advisory !== '');
-        if (roomBudgetMode(input.campaign.system) === 'verbatim') {
-          advisories.push(PF2E_BUDGET_ADVISORY);
-        }
+        const verificationAdvisory = budgetVerificationAdvisory(budget);
+        if (verificationAdvisory !== null) advisories.push(verificationAdvisory);
         budgetAdvisory = advisories.join(' ');
       }
       // Fixed-cast advisories (docs/11): the same checks as fresh creations,

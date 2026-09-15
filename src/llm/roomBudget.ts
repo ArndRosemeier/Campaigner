@@ -1,10 +1,11 @@
 import type { GameSystem } from '@/domain/gameSystem';
+import type { EncounterBudgetPolicy } from '@/domain/encounterBudget';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
 import { creatureRefIsEmpty, npcCreatureRef, sameAliasName } from '@/domain';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
-import { parseLevelSort } from '@/llm/encounterRoster';
+import { parseLevelSort, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
 import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -37,21 +38,27 @@ import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
  *   on the room, visible and owner-editable.
  *
  * Licensing shape (mirrors the treasure-ladder stance, docs/12 §13.2/§14):
- * - **dnd5e** — the DMG encounter-building tables are NOT licensable, so the
- *   band below IS the shipped approximation, in our own words (no Wizards
- *   text is quoted, paraphrased or restated numerically). Recorded verbatim
- *   in docs/11.
- * - **pathfinder2e** — creature budgets are Paizo's (GM Core). Campaigner
- *   ships NO numeric pf2e budget: the prompt directs the model to the
- *   retrieved GM Core excerpts VERBATIM when present, and the deterministic
- *   check is replaced by a loud advisory. Whether an excerpt actually
- *   surfaced is not deterministically decidable from the retrieval output,
- *   so the advisory always persists for pf2e — over-loud by design, never a
- *   fabricated paraphrase (AGENTS rule 1). `expectedRoomThreat` returns
- *   null for pf2e for the same reason: the fill-grade lower bound is built
- *   on the dnd5e band constants, and reusing them for Paizo's budgets would
- *   fabricate numbers — pf2e complexes keep the always-on advisory and the
- *   verbatim roster pin (no expansion cap exists to compute).
+ * Paizo's creature budgets (GM Core) and Wizards' DMG encounter-building
+ * tables are both NOT licensable, so no licensed table is ever embedded in
+ * code. WHICH numeric stance applies is now a CHOSEN policy (docs/17 row
+ * 180, `encounterBudgetPolicy`), resolved once per run into the
+ * `EncounterBudget` below — never re-derived from the system at each call
+ * site:
+ *
+ * - **'system'** (compatibility) — dnd5e runs the documented band (our own
+ *   paraphrase-free approximation, recorded in docs/11); pathfinder2e ships
+ *   NO numbers and persists the loud verbatim advisory instead.
+ * - **'pf2e-budget'** — PF2E's own numeric stocking rule, expressed as
+ *   Campaigner's OWN documented approximation of a standard encounter budget
+ *   at the encounter's party level and size (never a Paizo table). The prompt
+ *   still directs the model to the retrieved GM Core excerpts VERBATIM when
+ *   they are present; Campaigner's approximation is what the deterministic
+ *   check uses, and the persisted advisory says so loudly.
+ * - **'verbatim'** — ship no numbers at all; the prompt directs the model to
+ *   the retrieved GM Core excerpts verbatim and the deterministic check is
+ *   replaced by the always-on loud advisory (over-loud by design: whether an
+ *   excerpt actually surfaced is not deterministically decidable from the
+ *   retrieval output, so the advisory always persists — AGENTS rule 1).
  */
 
 /** The band's headroom over the target level (our own dnd5e approximation). */
@@ -113,6 +120,25 @@ export function partLevelForMention(
 }
 
 /**
+ * The ONE party-level resolver an encounter's roster WINDOW and the
+ * Cartographer's brief share (docs/17 row 180 centralization): the referencing
+ * part's exact level when the module text mentions the encounter, else the
+ * encounter's own free-text level hint. Both callers read THIS function, so
+ * "ordered by level distance to the target" and "budgeted at the party level"
+ * cannot come to mean two different levels for the same encounter (the
+ * two-resolver divergence the policy arc folded). Undefined when neither
+ * source yields a digit — a legitimate state, never an invented level.
+ */
+export function encounterPartyLevel(
+  module: Pick<Module, 'spine' | 'parts'> | undefined,
+  encounterName: string,
+  levelHint: string,
+): number | undefined {
+  const fromParts = module === undefined ? undefined : partLevelForMention(module, encounterName);
+  return fromParts ?? parseRosterTargetLevel(levelHint);
+}
+
+/**
  * The lower verdicts' slack (fill-grade arc): a complex room ships 'under'
  * when its creature-level sum is MORE than this margin below its expected
  * share. One creature-level of slack keeps fractional levels (1/2, 1/4) and
@@ -120,6 +146,57 @@ export function partLevelForMention(
  * under is a stocking failure the owner hears about loudly.
  */
 export const ROOM_BUDGET_UNDER_MARGIN = 1;
+
+/**
+ * The ONE resolved encounter budget for a run (docs/17 row 180): the chosen
+ * policy plus the two facts every budget consumer needs, derived exactly once.
+ * It replaces the old `roomBudgetMode(system)` hard-code — callers pass THIS
+ * value, never the system, so a second `system === 'pathfinder2e'` branch
+ * cannot reappear at a call site.
+ */
+export interface EncounterBudget {
+  /** The persisted policy this run resolved (module row, else 'system'). */
+  policy: EncounterBudgetPolicy;
+  /** 'band' runs a numeric per-room check; 'verbatim' ships no numbers. */
+  mode: 'band' | 'verbatim';
+  /** WHICH numeric approximation a 'band' check uses. */
+  scale: 'dnd5e' | 'pf2e';
+  /**
+   * Whether an under-strength COMPLEX room is a repairable issue. Only
+   * `'pf2e-budget'` sets this: the owner's report was rooms that were too
+   * easy, so that mode must make the under-strength case repairable rather
+   * than shipping it silently. The dnd5e band keeps its shipped asymmetry
+   * ('empty' repairable, 'under' advisory-only) byte-identically.
+   */
+  repairUnder: boolean;
+}
+
+/**
+ * Resolves the policy into the run's ONE budget value (pure). `'system'` is
+ * the compatibility mapping: dnd5e → the numeric band, pathfinder2e →
+ * verbatim. `'pf2e-budget'` and `'verbatim'` are explicit and ignore the
+ * system, which is what makes the policy a real choice rather than a
+ * re-spelled system check.
+ */
+export function encounterBudgetFor(
+  policy: EncounterBudgetPolicy,
+  system: GameSystem,
+): EncounterBudget {
+  const pf2e = system === 'pathfinder2e';
+  switch (policy) {
+    case 'pf2e-budget':
+      return { policy, mode: 'band', scale: 'pf2e', repairUnder: true };
+    case 'verbatim':
+      return { policy, mode: 'verbatim', scale: pf2e ? 'pf2e' : 'dnd5e', repairUnder: false };
+    case 'system':
+      return {
+        policy,
+        mode: pf2e ? 'verbatim' : 'band',
+        scale: pf2e ? 'pf2e' : 'dnd5e',
+        repairUnder: false,
+      };
+  }
+}
 
 /**
  * dnd5e band (Campaigner's own documented approximation): a room tuned for
@@ -146,6 +223,62 @@ export function roomBudgetReferenceCreatureLevel(targetLevel: number): number {
   return Math.max(1, Math.ceil(Math.max(1, targetLevel) / 2));
 }
 
+/**
+ * PF2E standard-encounter budget, Campaigner's OWN documented approximation
+ * (docs/11 D12 amendment, docs/17 row 180). Paizo's encounter-building XP
+ * table is NOT licensable and is never embedded here. Our approximation, in
+ * our own words and our own units:
+ *
+ * A standard encounter for a party of four at level L is one worth
+ * `PF2E_STANDARD_ON_LEVEL_CREATURES` on-level creatures — i.e. a
+ * creature-level sum of `2 × L` — and that budget scales linearly with the
+ * party size (`× partySize / PARTY_SIZE`). A creature's contribution is its
+ * printed level, exactly like the dnd5e band's creature-level sum, so the
+ * fill grade reads as the share of one standard fight for BOTH systems.
+ *
+ * This is deliberately NOT the dnd5e `T + 2` band: PF2E's threat scale is the
+ * level DIFFERENCE between creature and party, and reusing dnd5e's CR
+ * headroom would apply D&D math to Paizo's system (the boundary docs/17 row
+ * 180 pins). The retrieved GM Core excerpts remain the authority in the
+ * prompt; this number only bounds the deterministic check, and the advisory
+ * says so.
+ */
+export const PF2E_STANDARD_ON_LEVEL_CREATURES = 2;
+
+export function pf2eStandardThreatLevels(
+  partyLevel: number,
+  partySize: number = PARTY_SIZE,
+): number {
+  const level = Math.max(1, partyLevel);
+  return PF2E_STANDARD_ON_LEVEL_CREATURES * level * (partySize / PARTY_SIZE);
+}
+
+/** The pf2e band's upper bound: the full standard encounter budget. */
+export function pf2eBandUpper(targetLevel: number): number {
+  return pf2eStandardThreatLevels(targetLevel);
+}
+
+/**
+ * The pf2e reference creature for the approximate count: an ON-LEVEL creature
+ * (level = party level), so a standard budget of `2 × L` reads as ≈2
+ * on-level creatures for a party of four.
+ */
+export function pf2eReferenceCreatureLevel(targetLevel: number): number {
+  return Math.max(1, Math.round(Math.max(1, targetLevel)));
+}
+
+/** The band upper for the budget's numeric scale. */
+export function roomBudgetBandUpperFor(budget: EncounterBudget, targetLevel: number): number {
+  return budget.scale === 'pf2e' ? pf2eBandUpper(targetLevel) : roomBudgetBandUpper(targetLevel);
+}
+
+/** The reference creature level for the budget's numeric scale. */
+export function roomBudgetReferenceLevelFor(budget: EncounterBudget, targetLevel: number): number {
+  return budget.scale === 'pf2e'
+    ? pf2eReferenceCreatureLevel(targetLevel)
+    : roomBudgetReferenceCreatureLevel(targetLevel);
+}
+
 export interface RoomThreatExpectation {
   /** The creature-level sum this room should carry. */
   expectedLevels: number;
@@ -156,14 +289,13 @@ export interface RoomThreatExpectation {
 /**
  * The deterministic per-room stocking expectation (docs/11 D12 amendment,
  * pure): a room carrying `fillGrade`% of a standard single-encounter threat
- * budget at target level T expects `fillGrade/100 × (T + 2)` creature
+ * budget at target level T expects `fillGrade/100 × bandUpper(T)` creature
  * levels — the same band constants the 'over' verdict uses, so the
  * expectation can never exceed the band and the fill grade reads as a share
- * of one fight.
+ * of one fight. `bandUpper` follows the budget's numeric scale (dnd5e's
+ * `T + 2` or Campaigner's pf2e `2 × T`).
  *
- * Returns null for systems in 'verbatim' mode (pathfinder2e): the numbers
- * above are the dnd5e-family approximation, and applying them to Paizo's
- * budgets would fabricate licensed numbers — pf2e ships no per-room
+ * Returns null in 'verbatim' mode: no numbers ship, so there is no per-room
  * expectation (docs/12 §13.2/§14 stance). Throws on an out-of-range
  * fillGrade: callers pass zod-validated rows (0–100 integer), so a violation
  * is a programming error, never a data condition.
@@ -171,16 +303,16 @@ export interface RoomThreatExpectation {
 export function expectedRoomThreat(
   fillGrade: number,
   targetLevel: number,
-  system: GameSystem,
+  budget: EncounterBudget,
 ): RoomThreatExpectation | null {
-  if (roomBudgetMode(system) === 'verbatim') return null;
+  if (budget.mode === 'verbatim') return null;
   if (!Number.isInteger(fillGrade) || fillGrade < FILL_GRADE_MIN || fillGrade > FILL_GRADE_MAX) {
     throw new Error(
       `expectedRoomThreat: fillGrade must be an integer in ${String(FILL_GRADE_MIN)}–${String(FILL_GRADE_MAX)}, got ${String(fillGrade)}`,
     );
   }
-  const expectedLevels = (fillGrade / 100) * roomBudgetBandUpper(targetLevel);
-  const reference = roomBudgetReferenceCreatureLevel(targetLevel);
+  const expectedLevels = (fillGrade / 100) * roomBudgetBandUpperFor(budget, targetLevel);
+  const reference = roomBudgetReferenceLevelFor(budget, targetLevel);
   const approximateCreatureCount = Math.max(
     fillGrade > 0 ? 1 : 0,
     Math.round(expectedLevels / reference),
@@ -228,8 +360,8 @@ export interface BudgetRoomInput {
   /**
    * The encounter's fill grade (docs/11 D12 amendment) — the per-room
    * stocking share the lower verdicts check against. Callers pass it ONLY
-   * for numeric-band systems (pf2e passes none: no Paizo numbers ship, so
-   * no expectation is computed). Inert unless `complex` is true.
+   * for numeric-band budgets (a 'verbatim' budget passes none: no numbers
+   * ship, so no expectation is computed). Inert unless `complex` is true.
    */
   fillGrade?: number | undefined;
   /**
@@ -238,8 +370,8 @@ export interface BudgetRoomInput {
    * the original asymmetric call byte-identical (a quiet room is a feature).
    */
   complex: boolean;
-  /** The campaign's game system — gates the expectation by licensing mode. */
-  system: GameSystem;
+  /** The run's ONE resolved budget (docs/17 row 180) — never re-derived. */
+  budget: EncounterBudget;
 }
 
 export interface RoomBudgetVerdict {
@@ -257,7 +389,11 @@ export interface RoomBudgetVerdict {
   expectedLevels: number | null;
   /** Approximate creature count for the expectation; null when none applies. */
   approximateCreatureCount: number | null;
-  /** Repair-turn issue text ('over' and, on complex briefs, 'empty'). */
+  /**
+   * Repair-turn issue text: 'over', and (on complex briefs) 'empty' — plus
+   * 'under' in the `'pf2e-budget'` mode, where an under-strength room is
+   * repairable rather than silent.
+   */
   issue: string | null;
   /** Loud advisory text ('over' after the final pass; 'empty'; 'under'; 'unverified'). */
   advisory: string | null;
@@ -315,12 +451,12 @@ export function checkRoomBudget(room: BudgetRoomInput): RoomBudgetVerdict {
     };
   }
   const expectation = room.complex && room.fillGrade !== undefined
-    ? expectedRoomThreat(room.fillGrade, room.targetLevel, room.system)
+    ? expectedRoomThreat(room.fillGrade, room.targetLevel, room.budget)
     : null;
   const expectedLabel = expectation === null
     ? null
     : `~${sumLabel(expectation.expectedLevels)} creature-levels (≈${String(expectation.approximateCreatureCount)} creatures)`;
-  const bandUpper = roomBudgetBandUpper(room.targetLevel);
+  const bandUpper = roomBudgetBandUpperFor(room.budget, room.targetLevel);
   if (sum > bandUpper) {
     const lowered = Math.max(1, room.targetLevel - 1);
     return {
@@ -377,6 +513,18 @@ export function checkRoomBudget(room: BudgetRoomInput): RoomBudgetVerdict {
       targetLevel: room.targetLevel,
       expectedLevels: expectation.expectedLevels,
       approximateCreatureCount: expectation.approximateCreatureCount,
+      // 'pf2e-budget' makes the under-strength case REPAIRABLE: the owner's
+      // report was rooms that were too easy, so this mode must ask for a fix
+      // in the existing bounded repair turn instead of shipping silently. The
+      // dnd5e band keeps its shipped asymmetry (issue stays null: advisory
+      // only) byte-identically.
+      issue: room.budget.repairUnder
+        ? `rooms[${String(room.roomIndex)}] ("${room.roomName}"): the assigned creatures sum to ` +
+          `${sumLabel(sum)} creature-levels, under this room's expected ${expectedLabel} ` +
+          `(fill grade ${String(room.fillGrade)}%) — the room would not challenge the party. Assign ` +
+          'stronger or more creatures to this room (move roster entries between rooms or expand the ' +
+          "roster within the complex's budget) so it reaches its share."
+        : null,
       advisory:
         `Room "${room.roomName}" ships under its expected challenge: the assigned creatures sum to ` +
         `${sumLabel(sum)} creature-levels, expected ${expectedLabel} (fill grade ${String(room.fillGrade)}%). ` +
@@ -397,31 +545,61 @@ function sumLabel(sum: number): string {
   return Number.isInteger(sum) ? String(sum) : sum.toFixed(1);
 }
 
-/** The pf2e loud advisory (deterministic replacement for the numeric check). */
+/** The loud advisory for the 'verbatim' policy (deterministic replacement for the numeric check). */
 export const PF2E_BUDGET_ADVISORY =
   'Per-room challenge was not deterministically budget-checked: pathfinder2e encounter budgets are ' +
   'Paizo\'s (GM Core) and no numeric budget ships with Campaigner. The Cartographer was directed to the ' +
   'retrieved GM Core excerpts verbatim when present; review each room\'s challenge.';
 
 /**
- * The budget-loop mode for a system: 'band' runs the documented dnd5e-style
- * numeric check; 'verbatim' ships no numbers (Paizo licensing) and persists
- * the loud pf2e advisory instead.
+ * The same loud advisory for a NON-pf2e run whose owner explicitly chose the
+ * `'verbatim'` policy: no numeric budget ships by that choice, so the stat
+ * blocks are used as written. It must not name Paizo on a system whose budgets
+ * are not Paizo's.
  */
-export function roomBudgetMode(system: GameSystem): 'band' | 'verbatim' {
-  return system === 'pathfinder2e' ? 'verbatim' : 'band';
+export const VERBATIM_BUDGET_ADVISORY =
+  'Per-room challenge was not deterministically budget-checked: the verbatim budget policy ships no ' +
+  'numeric budget, so the assigned stat blocks are used as written. Review each room\'s challenge.';
+
+/**
+ * The loud advisory for the `'pf2e-budget'` policy: the deterministic check
+ * ran, but against Campaigner's OWN documented approximation — never a Paizo
+ * table. Whether the retrieved GM Core excerpts actually surfaced is not
+ * deterministically decidable from the retrieval output, so this persists on
+ * every such run (over-loud by design, exactly like the verbatim advisory).
+ */
+export const PF2E_APPROXIMATION_ADVISORY =
+  "Room challenge was checked against Campaigner's OWN documented PF2e approximation of a standard " +
+  'encounter budget (a party of four at level T: 2 × T creature-levels, scaled by party size) — not ' +
+  "against Paizo's GM Core table, which is not licensable and never ships with Campaigner. Where the " +
+  'retrieved GM Core excerpts are in context they are the authority and were followed verbatim; review ' +
+  'the numbers by hand if they were absent.';
+
+/** The verification advisory a run's budget policy owes the owner, or null. */
+export function budgetVerificationAdvisory(budget: EncounterBudget): string | null {
+  if (budget.mode === 'verbatim') {
+    return budget.scale === 'pf2e' ? PF2E_BUDGET_ADVISORY : VERBATIM_BUDGET_ADVISORY;
+  }
+  if (budget.policy === 'pf2e-budget') return PF2E_APPROXIMATION_ADVISORY;
+  return null;
 }
 
 /** The prompt clause teaching the per-room challenge contract. */
-export function roomBudgetGuidanceFor(system: GameSystem): string {
+export function roomBudgetGuidanceFor(budget: EncounterBudget): string {
   const shared = [
     'Per-room challenge: every room must ALONE challenge the party — a complex is a sequence of fights, not one fight spread thin.',
     'Each room carries a "targetLevel": the party level this room alone should challenge. When you omit it, the encounter\'s own level is used. A DUNGEON COMPLEX requires a targetLevel on EVERY room — a complex room without one is rejected.',
   ].join('\n');
-  if (roomBudgetMode(system) === 'verbatim') {
+  if (budget.mode === 'verbatim') {
     return [
       shared,
       'pathfinder2e budget: the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When the excerpts do NOT include the encounter-budget rules, set each room\'s "targetLevel" from the party level and describe the intended difficulty without inventing XP amounts.',
+    ].join('\n');
+  }
+  if (budget.scale === 'pf2e') {
+    return [
+      shared,
+      `pathfinder2e budget (policy 'pf2e-budget'): the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When they are NOT in context, Campaigner's own documented approximation applies: a standard encounter for a party of four at level T is worth ${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} × T creature-levels, scaled by party size — a room is over budget above that and its fill-grade share is the expectation below. A DUNGEON COMPLEX must stock every room: a complex room with no creatures is a repairable defect, and a room that cannot reach its drawn share is ALSO repairable. The brief carries the exact per-room expected numbers when they apply.`,
     ].join('\n');
   }
   return [
@@ -435,24 +613,34 @@ export function roomBudgetGuidanceFor(system: GameSystem): string {
  * D12 amendment, fill-grade arc): the fill-grade share rendered as concrete
  * creature-levels and an approximate creature count at `promptLevel` — the
  * level the rooms' targetLevels will default to. Returns null when no
- * honest number exists: verbatim systems (Paizo licensing) or a level-less
+ * honest number exists: a 'verbatim' budget (licensing) or a level-less
  * brief (no digit to anchor the band to) — the qualitative clause still
  * applies, never an invented number.
  */
 export function fillGradeStockingFor(
   fillGrade: number,
   promptLevel: number | undefined,
-  system: GameSystem,
+  budget: EncounterBudget,
 ): string | null {
   if (promptLevel === undefined) return null;
-  const expectation = expectedRoomThreat(fillGrade, promptLevel, system);
+  const expectation = expectedRoomThreat(fillGrade, promptLevel, budget);
   if (expectation === null) return null;
+  const bandSentence = budget.scale === 'pf2e'
+    ? `Campaigner's PF2e approximation gives a standard encounter at party level T a budget of ` +
+      `${sumLabel(pf2eStandardThreatLevels(promptLevel))} creature-levels ` +
+      `(${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} on-level creatures for a party of four, scaled by party size), ` +
+      'so each room here should carry roughly '
+    : `a room at targetLevel T holds at most T + ${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels, ` +
+      'so each room here should carry roughly ';
+  const tail = budget.repairUnder
+    ? 'at the party level. Every room stocks a real fight: a complex room with no creatures is a repairable defect, ' +
+      'and a room that cannot reach its drawn share is ALSO repairable.'
+    : 'at the party level. Every room stocks a real fight: a complex room with no creatures is a repairable defect, ' +
+      'and a room well under its expected share ships with a loud advisory.';
   return (
-    `Stocking: this dungeon's fill grade is ${String(fillGrade)}% — a room at targetLevel T holds at most ` +
-    `T + ${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels, so each room here should carry roughly ` +
+    `Stocking: this dungeon's fill grade is ${String(fillGrade)}% — ${bandSentence}` +
     `${sumLabel(expectation.expectedLevels)} creature-levels (≈${String(expectation.approximateCreatureCount)} creatures) ` +
-    'at the party level. Every room stocks a real fight: a complex room with no creatures is a repairable defect, ' +
-    'and a room well under its expected share ships with a loud advisory.'
+    tail
   );
 }
 

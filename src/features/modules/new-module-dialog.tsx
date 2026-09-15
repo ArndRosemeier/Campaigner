@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type {
   Campaign,
+  EncounterBudgetPolicy,
   EncounterFloorGuardrail,
   EntityKind,
   ModuleSizeDial,
@@ -26,8 +27,11 @@ import type {
   NewModuleDraft,
 } from '@/domain';
 import {
+  defaultEncounterBudgetPolicy,
   defaultEncounterFloorGuardrail,
   defaultNewModuleDraft,
+  ENCOUNTER_BUDGET_POLICIES,
+  ENCOUNTER_BUDGET_POLICY_LABELS,
   ENTITY_KINDS,
   MODULE_SIZE_LABELS,
   PROMPT_STYLE_FREESTYLE_ID,
@@ -108,6 +112,7 @@ function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
     a.autoGenerateBattlemaps === b.autoGenerateBattlemaps &&
     a.autoGenerateMobImages === b.autoGenerateMobImages &&
     a.promptStyleId === b.promptStyleId &&
+    a.encounterBudgetPolicy === b.encounterBudgetPolicy &&
     a.encounterFloorGuardrail.enabled === b.encounterFloorGuardrail.enabled &&
     a.encounterFloorGuardrail.perLevel === b.encounterFloorGuardrail.perLevel
   );
@@ -190,6 +195,14 @@ function NewModuleDialogContent({
   // `null` = the user has not chosen one: the app default applies (and follows
   // a later change of the default) instead of being frozen into the draft.
   const [promptStyleId, setPromptStyleId] = useState<string | null>(null);
+  // The encounter budget policy this module will be generated with (docs/17
+  // row 180, owner request). `null` = the user has not chosen one: the
+  // per-system default applies (and stays visible), exactly like the style
+  // select above — so a later change of the default is followed rather than
+  // frozen into a stale draft.
+  const [encounterBudgetPolicy, setEncounterBudgetPolicy] = useState<EncounterBudgetPolicy | null>(
+    null,
+  );
   const [starting, setStarting] = useState(false);
 
   // The stored draft (pure read — never `getSettings`, which writes). Held in
@@ -305,6 +318,7 @@ function NewModuleDialogContent({
       // select shows the APP DEFAULT, which is resolved at render (so a default
       // changed while the dialog sits open is followed, not frozen).
       setPromptStyleId(matches ? (draft.promptStyleId ?? null) : null);
+      setEncounterBudgetPolicy(matches ? (draft.encounterBudgetPolicy ?? null) : null);
     },
     [campaign.id],
   );
@@ -394,6 +408,7 @@ function NewModuleDialogContent({
       autoGenerateMobImages,
       encounterFloorGuardrail,
       ...(promptStyleId === null ? {} : { promptStyleId }),
+      ...(encounterBudgetPolicy === null ? {} : { encounterBudgetPolicy }),
     };
     // The ref always mirrors what the form shows, so `flush` saves the CURRENT
     // values no matter when it runs.
@@ -426,6 +441,7 @@ function NewModuleDialogContent({
     autoGenerateMobImages,
     encounterFloorGuardrail,
     promptStyleId,
+    encounterBudgetPolicy,
     persist,
   ]);
 
@@ -537,6 +553,10 @@ function NewModuleDialogContent({
         // creation path resolves it against the built-ins and the user's styles
         // and REFUSES an id that does not resolve (loud, no row).
         promptStyleId: promptStyleId ?? appDefaultStyleId,
+        // The user's explicit choice, or the SENSIBLE per-system default as it
+        // stands now (docs/17 row 180) — stamped on the module row so every
+        // later generation of this module reads the same policy.
+        encounterBudgetPolicy: encounterBudgetPolicy ?? defaultEncounterBudgetPolicy(campaign.system),
       };
       const moduleId = await createModuleAndRun(campaign, input);
       onOpenChange(false);
@@ -816,6 +836,39 @@ function NewModuleDialogContent({
               Advanced — encounter guardrails
             </summary>
             <div className="flex flex-col gap-3 pt-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="module-budget-policy">Encounter difficulty policy</Label>
+                <Select
+                  value={encounterBudgetPolicy ?? defaultEncounterBudgetPolicy(campaign.system)}
+                  onValueChange={(value) => {
+                    markEdited();
+                    if (value !== null) setEncounterBudgetPolicy(value);
+                  }}
+                >
+                  <SelectTrigger
+                    id="module-budget-policy"
+                    className="w-full"
+                    data-testid="module-budget-policy"
+                  >
+                    <SelectValue placeholder="Pick an encounter policy" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ENCOUNTER_BUDGET_POLICIES.map((policy) => (
+                      <SelectItem key={policy} value={policy} data-testid={`budget-policy-${policy}`}>
+                        {ENCOUNTER_BUDGET_POLICY_LABELS[policy]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  How every encounter this module creates is sized. The default is{' '}
+                  {ENCOUNTER_BUDGET_POLICY_LABELS[defaultEncounterBudgetPolicy(campaign.system)]}:
+                  Pathfinder 2e modules get a real numeric per-room budget, other systems keep the
+                  existing band. The choice is recorded on the module, so later generations and
+                  repopulates use it too.
+                </p>
+              </div>
+
               <p className="text-xs text-muted-foreground">
                 How many encounters the generator must name per level of the module. This number is
                 written into the generation prompt AND enforced when the module is generated — it is

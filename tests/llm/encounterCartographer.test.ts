@@ -1821,9 +1821,10 @@ describe('Encounter Cartographer run', () => {
     /** The owner's OLD module row: a complex battlemap on file, ONE stale
      *  monster, remembered preset 'standard' (the D10 trap), owner-set fill
      *  grade. */
-    async function seedComplexTarget(campaignId: Id, goblinChunkId: Id): Promise<Artifact & { kind: 'encounter' }> {
+    async function seedComplexTarget(campaignId: Id, goblinChunkId: Id, moduleId?: Id): Promise<Artifact & { kind: 'encounter' }> {
       const target = await createArtifact({
         campaignId,
+        ...(moduleId === undefined ? {} : { moduleId }),
         kind: 'encounter',
         name: 'Old Undercroft',
         body: 'Existing prose.',
@@ -2024,40 +2025,66 @@ describe('Encounter Cartographer run', () => {
       expect(untouched.data.mapImageId).toBeNull();
     });
 
-    it('keeps the byte-identical verbatim pin for pf2e (no append clause, no expansion)', async () => {
+    it('keeps the byte-identical verbatim pin for a legacy pf2e row, and stocks a pf2e-budget module', async () => {
       const { campaign, cartographer } = await setup('pathfinder2e');
       const goblinChunkId = await seedPackBook();
-      const target = await seedComplexTarget(campaign.id, goblinChunkId);
-      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+      const verbatimReply = {
         ...COMPLEX_BRIEF,
         monsters: [
           { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' },
         ],
         // Coverage-coherent verbatim reply: the one pinned entry stays in the
-        // entry room; pf2e runs no numeric room check (the loud advisory).
+        // entry room.
         rooms: [
           { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
           { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
           { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
           { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
         ],
-      }), modelUsed: 'test-model', fallback: null });
-      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'dungeon' as const };
-      const runId = await runEngine.startRun(runInput);
-      const briefContent = await briefPrompt();
-      // The dungeon tier prose renders; the append machinery does NOT — pf2e
-      // has no cap to bound an append, so the verbatim pin holds and the
-      // prompt never states a contract the gate would refuse.
-      expect(briefContent).toContain('Preset: Dungeon — design a connected dungeon complex of 4–10 rooms');
-      expect(briefContent).not.toContain('append more entries');
-      expect(briefContent).not.toContain('fill grade is');
-      // The verbatim-only reply is accepted as-is (a 4-room brief over a
-      // one-entry roster is coherent on the verbatim pin).
-      await waitForRun(async () => {
-        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      };
+      // ARM 1 — the LEGACY/'system' reading (docs/17 row 180): a pf2e target
+      // with no owning module ships no numbers, byte-identically to before the
+      // policy existed. This is the pin the verbatim default must keep.
+      const legacyTarget = await seedComplexTarget(campaign.id, goblinChunkId);
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(verbatimReply), modelUsed: 'test-model', fallback: null });
+      const legacyRun = await runEngine.startRun({
+        ...input(campaign, cartographer, legacyTarget.id),
+        encounterPreset: 'dungeon' as const,
       });
-      const step = (await getRun(runId))?.steps[0];
-      expect(step?.status).toBe('done');
+      const legacyPrompt = await briefPrompt();
+      expect(legacyPrompt).toContain('Preset: Dungeon — design a connected dungeon complex of 4–10 rooms');
+      expect(legacyPrompt).not.toContain('append more entries');
+      expect(legacyPrompt).not.toContain('fill grade is');
+      await waitForRun(async () => {
+        expect((await getRun(legacyRun))?.status).toBe('awaiting_user');
+      });
+      expect((await getRun(legacyRun))?.steps[0]?.status).toBe('done');
+
+      // ARM 2 — the NEW rule: the SAME pf2e complex brief under a module whose
+      // recorded policy is 'pf2e-budget' renders the stocking contract and the
+      // numeric per-room expectation (docs/17 row 180).
+      const budgetModule = await saveModule(createModule({
+        campaignId: campaign.id, title: 'Budget Module', concept: '', levelMin: 4, levelMax: 5,
+        sizeDial: 'standard', encounterBudgetPolicy: 'pf2e-budget',
+      }));
+      const budgetTarget = await seedComplexTarget(campaign.id, goblinChunkId, budgetModule.id);
+      chatMock.mockClear();
+      chatMock.mockResolvedValue({ text: JSON.stringify(verbatimReply), modelUsed: 'test-model', fallback: null });
+      const budgetRun = await runEngine.startRun({
+        ...input(campaign, cartographer, budgetTarget.id),
+        encounterPreset: 'dungeon' as const,
+      });
+      const budgetPrompt = await briefPrompt();
+      expect(budgetPrompt).toContain('you MUST append more entries after those to stock it');
+      expect(budgetPrompt).toContain('fill grade is 100%');
+      expect(budgetPrompt).toContain("Campaigner's own documented approximation");
+      expect(budgetPrompt).not.toBe(legacyPrompt);
+      // Never a failed run: the under-strength rooms are repairable and ship
+      // with the loud advisory instead.
+      await waitForRun(async () => {
+        expect((await getRun(budgetRun))?.status).toBe('awaiting_user');
+      });
+      expect((await getRun(budgetRun))?.steps[0]?.status).toBe('done');
     });
 
     it('rejects a single-arena reply on a never-mapped dungeon-intent target (the single-room escape)', async () => {

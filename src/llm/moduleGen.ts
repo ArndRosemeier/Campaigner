@@ -3,6 +3,7 @@ import {
   carriedTextOrigin,
   comparableName,
   createModule,
+  defaultEncounterBudgetPolicy,
   encounterCountWord,
   encounterFloorGuardrailFor,
   encounterFloorPerPart,
@@ -20,6 +21,7 @@ import {
   sameAliasName,
   textOriginIsMachineWritten,
   withEntityBestiarySlots,
+  type EncounterBudgetPolicy,
   type EncounterFloorGuardrail,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
@@ -2940,12 +2942,26 @@ export async function createModuleAndRun(
      * behind (AGENTS rules 1/3).
      */
     promptStyleId?: string;
+    /**
+     * The encounter budget policy to record on the new module (docs/17 row
+     * 180). Omitted = no explicit choice = the per-system default for the
+     * campaign's system (`defaultEncounterBudgetPolicy`), stamped on the row so
+     * every later generation of this module reads the same policy.
+     */
+    encounterBudgetPolicy?: EncounterBudgetPolicy;
   },
 ): Promise<Id> {
   // Resolved and validated FIRST: a module row that cannot be written in a
   // valid voice must not exist at all.
   const promptStyle = await resolveCreationPromptStyle(input.promptStyleId);
-  const created = createModule({ ...input, promptStyle });
+  const created = createModule({
+    ...input,
+    promptStyle,
+    // The sensible default is stamped at creation (docs/17 row 180): a fresh
+    // pathfinder2e module records 'pf2e-budget', every other system 'system'.
+    // A row written before the field stays null and reads as 'system'.
+    encounterBudgetPolicy: input.encounterBudgetPolicy ?? defaultEncounterBudgetPolicy(campaign.system),
+  });
   const saved = await saveModule(created);
   void (async () => {
     const drafted = await runSpine(saved.id, campaign).catch(() => undefined);

@@ -7,30 +7,39 @@ import {
   drawFillGrade,
 } from '@/domain/artifact';
 import {
+  PF2E_APPROXIMATION_ADVISORY,
   PF2E_BUDGET_ADVISORY,
   ROOM_BUDGET_UNDER_MARGIN,
+  budgetVerificationAdvisory,
   checkRoomBudget,
+  encounterBudgetFor,
   expectedRoomThreat,
   fillGradeStockingFor,
   parseBudgetLevel,
+  pf2eStandardThreatLevels,
   reconcileRoomAssignments,
   resolveBriefMonsterLevels,
   roomBudgetBandUpper,
   roomBudgetGuidanceFor,
-  roomBudgetMode,
   roomBudgetReferenceCreatureLevel,
 } from '@/llm/roomBudget';
 
 /**
- * The per-room budget loop (docs/11 D12; amended by the fill-grade arc):
- * every layout room carries a targetLevel; assigned creature levels are
- * summed against the documented dnd5e band. SINGLE arenas keep the original
- * asymmetry — too easy ships silently, too hard lowers the target and joins
- * the brief's EXISTING repair turn. COMPLEX rooms invert it: 'empty' is a
- * repairable verdict and 'under' ships a LOUD advisory against the
- * encounter's fill-grade expectation. pf2e ships no numbers (Paizo
- * licensing) — the advisory is the replacement.
+ * The per-room budget loop (docs/11 D12; amended by the fill-grade arc and by
+ * the selectable policy, docs/17 row 180): every layout room carries a
+ * targetLevel; assigned creature levels are summed against the run's ONE
+ * resolved budget. SINGLE arenas keep the original asymmetry — too easy ships
+ * silently, too hard lowers the target and joins the brief's EXISTING repair
+ * turn. COMPLEX rooms invert it: 'empty' is a repairable verdict and 'under'
+ * ships a LOUD advisory against the encounter's fill-grade expectation. A
+ * 'verbatim' budget ships no numbers (Paizo licensing) — the advisory is the
+ * replacement; 'pf2e-budget' runs Campaigner's own PF2e approximation.
  */
+
+/** The three resolved budgets the tests exercise (ONE policy seam). */
+const DND5E = encounterBudgetFor('system', 'dnd5e');
+const PF2E_VERBATIM = encounterBudgetFor('system', 'pathfinder2e');
+const PF2E_BUDGET = encounterBudgetFor('pf2e-budget', 'pathfinder2e');
 
 /** Deterministic Math.random-compatible source (distribution tests). */
 function mulberry32(seed: number): () => number {
@@ -124,14 +133,14 @@ describe('roomBudgetBandUpper (the documented dnd5e approximation)', () => {
 describe('expectedRoomThreat (the fill-grade expectation, docs/11 D12 amendment)', () => {
   it('scales the documented band by the fill grade share', () => {
     // T=5 band = 7 creature-levels; 70% of it ≈ 4.9.
-    expect(expectedRoomThreat(70, 5, 'dnd5e')).toEqual({
+    expect(expectedRoomThreat(70, 5, DND5E)).toEqual({
       expectedLevels: 4.9,
       approximateCreatureCount: 2,
     });
     // A full-share room sits exactly at the band.
-    expect(expectedRoomThreat(100, 5, 'dnd5e')?.expectedLevels).toBe(7);
+    expect(expectedRoomThreat(100, 5, DND5E)?.expectedLevels).toBe(7);
     // A sanctioned-empty room (fill grade 0) expects nothing.
-    expect(expectedRoomThreat(0, 5, 'dnd5e')).toEqual({
+    expect(expectedRoomThreat(0, 5, DND5E)).toEqual({
       expectedLevels: 0,
       approximateCreatureCount: 0,
     });
@@ -142,15 +151,33 @@ describe('expectedRoomThreat (the fill-grade expectation, docs/11 D12 amendment)
     expect(roomBudgetReferenceCreatureLevel(5)).toBe(3);
     expect(roomBudgetReferenceCreatureLevel(10)).toBe(5);
     // A full band at T=5 (7 levels / 3 reference) rounds to ~2 creatures.
-    expect(expectedRoomThreat(100, 5, 'dnd5e')?.approximateCreatureCount).toBe(2);
+    expect(expectedRoomThreat(100, 5, DND5E)?.approximateCreatureCount).toBe(2);
     // Small positive expectations still read as at least one creature.
-    expect(expectedRoomThreat(10, 1, 'dnd5e')?.approximateCreatureCount).toBe(1);
+    expect(expectedRoomThreat(10, 1, DND5E)?.approximateCreatureCount).toBe(1);
   });
 
-  it('ships no numbers for pf2e (Paizo licensing) and rejects a malformed grade', () => {
-    expect(expectedRoomThreat(70, 5, 'pathfinder2e')).toBeNull();
-    expect(() => expectedRoomThreat(101, 5, 'dnd5e')).toThrow(/fillGrade must be an integer/);
-    expect(() => expectedRoomThreat(70.5, 5, 'dnd5e')).toThrow(/fillGrade must be an integer/);
+  it('ships no numbers for a verbatim budget and rejects a malformed grade', () => {
+    expect(expectedRoomThreat(70, 5, PF2E_VERBATIM)).toBeNull();
+    expect(() => expectedRoomThreat(101, 5, DND5E)).toThrow(/fillGrade must be an integer/);
+    expect(() => expectedRoomThreat(70.5, 5, DND5E)).toThrow(/fillGrade must be an integer/);
+  });
+
+  it("runs Campaigner's own PF2e approximation under 'pf2e-budget'", () => {
+    // The pf2e band is 2 × party level (scaled by party size), NOT the dnd5e
+    // T + 2 headroom — the licensing boundary docs/17 row 180 pins.
+    expect(pf2eStandardThreatLevels(5)).toBe(10);
+    expect(pf2eStandardThreatLevels(1)).toBe(2);
+    expect(pf2eStandardThreatLevels(5, 8)).toBe(20);
+    // A full-share level-5 room expects 10 creature-levels ≈ 2 on-level
+    // creatures — and is measurably different from the dnd5e band's 7.
+    expect(expectedRoomThreat(100, 5, PF2E_BUDGET)).toEqual({
+      expectedLevels: 10,
+      approximateCreatureCount: 2,
+    });
+    expect(expectedRoomThreat(100, 5, DND5E)?.expectedLevels).toBe(7);
+    expect(expectedRoomThreat(100, 5, DND5E)?.expectedLevels).not.toBe(
+      expectedRoomThreat(100, 5, PF2E_BUDGET)?.expectedLevels,
+    );
   });
 });
 
@@ -161,7 +188,7 @@ function room(overrides: Partial<Parameters<typeof checkRoomBudget>[0]> = {}) {
     targetLevel: 5,
     creatures: [{ name: 'Troll', count: 1, level: '5' }],
     complex: false,
-    system: 'dnd5e' as const,
+    budget: DND5E,
     ...overrides,
   };
 }
@@ -292,15 +319,49 @@ describe('checkRoomBudget', () => {
     ).toBeNull();
   });
 
-  it('computes no expectation without a fill grade (legacy complex) or for pf2e', () => {
+  it('computes no expectation without a fill grade (legacy complex) or for a verbatim budget', () => {
     expect(checkRoomBudget(room({ complex: true, creatures: [] })).status).toBe('ok');
     expect(
-      checkRoomBudget(room({ complex: true, system: 'pathfinder2e', creatures: [] })).status,
+      checkRoomBudget(room({ complex: true, budget: PF2E_VERBATIM, creatures: [] })).status,
     ).toBe('ok');
     expect(
-      checkRoomBudget(room({ complex: true, system: 'pathfinder2e', fillGrade: 70, creatures: [] }))
+      checkRoomBudget(room({ complex: true, budget: PF2E_VERBATIM, fillGrade: 70, creatures: [] }))
         .expectedLevels,
     ).toBeNull();
+  });
+
+  it("makes an under-strength complex room repairable under 'pf2e-budget' (and silent-advisory under the dnd5e band)", () => {
+    const underPf2e = checkRoomBudget(
+      room({
+        complex: true,
+        budget: PF2E_BUDGET,
+        fillGrade: 70,
+        targetLevel: 5,
+        // 70% of the pf2e band (10) = 7; two CR-1 creatures ship 2 — under.
+        creatures: [{ name: 'Rat', count: 2, level: '1' }],
+      }),
+    );
+    expect(underPf2e.status).toBe('under');
+    // The owner's report ("only 1 mob per room and they are easy mobs") must
+    // be REPAIRABLE in this mode, never a silent ship.
+    expect(underPf2e.issue).toContain('rooms[0] ("Sanctum")');
+    expect(underPf2e.issue).toContain('under this room\'s expected ~7 creature-levels');
+    expect(underPf2e.advisory).toContain('ships under its expected challenge');
+    // The dnd5e band keeps its shipped asymmetry: the same shape is
+    // advisory-only (issue null) — the byte-identical legacy behaviour.
+    const underBand = checkRoomBudget(
+      room({
+        complex: true,
+        budget: DND5E,
+        fillGrade: 70,
+        targetLevel: 5,
+        creatures: [{ name: 'Rat', count: 2, level: '1' }],
+      }),
+    );
+    expect(underBand.status).toBe('under');
+    expect(underBand.issue).toBeNull();
+    expect(budgetVerificationAdvisory(PF2E_BUDGET)).toBe(PF2E_APPROXIMATION_ADVISORY);
+    expect(budgetVerificationAdvisory(DND5E)).toBeNull();
   });
 
   it('documents the under margin as a level of slack', () => {
@@ -310,7 +371,7 @@ describe('checkRoomBudget', () => {
 
 describe('roomBudgetGuidanceFor', () => {
   it('teaches the own-words dnd5e band (never DMG text)', () => {
-    const guidance = roomBudgetGuidanceFor('dnd5e');
+    const guidance = roomBudgetGuidanceFor(DND5E);
     expect(guidance).toContain('every room must ALONE challenge the party');
     expect(guidance).toContain('targetLevel');
     expect(guidance).toContain('documented approximation');
@@ -319,7 +380,7 @@ describe('roomBudgetGuidanceFor', () => {
   });
 
   it('inverts the asymmetry for complexes while keeping singles quiet-is-a-feature', () => {
-    const guidance = roomBudgetGuidanceFor('dnd5e');
+    const guidance = roomBudgetGuidanceFor(DND5E);
     // D12 amendment: complexes stock every room; the old "under is fine"
     // clause survives for SINGLE arenas only.
     expect(guidance).toContain('A DUNGEON COMPLEX requires a targetLevel on EVERY room');
@@ -327,27 +388,61 @@ describe('roomBudgetGuidanceFor', () => {
     expect(guidance).toContain('For a SINGLE arena, under is fine (a quiet room is a feature)');
   });
 
-  it('demands verbatim GM Core grounding for pf2e and ships no numbers', () => {
-    const guidance = roomBudgetGuidanceFor('pathfinder2e');
+  it('demands verbatim GM Core grounding for a verbatim budget and ships no numbers', () => {
+    const guidance = roomBudgetGuidanceFor(PF2E_VERBATIM);
     expect(guidance).toContain('VERBATIM');
-    expect(guidance).toContain('do not' in {} ? '' : 'without inventing XP amounts');
+    expect(guidance).toContain('without inventing XP amounts');
     expect(guidance).not.toContain('+ 2');
-    expect(roomBudgetMode('pathfinder2e')).toBe('verbatim');
+    expect(PF2E_VERBATIM.mode).toBe('verbatim');
     expect(PF2E_BUDGET_ADVISORY).toContain('not deterministically budget-checked');
+    // A verbatim policy on a NON-pf2e system must not name Paizo's budgets.
+    const dnd5eVerbatim = budgetVerificationAdvisory(encounterBudgetFor('verbatim', 'dnd5e'));
+    expect(dnd5eVerbatim).toContain('verbatim budget policy');
+    expect(dnd5eVerbatim).not.toContain('Paizo');
+    expect(budgetVerificationAdvisory(PF2E_VERBATIM)).toBe(PF2E_BUDGET_ADVISORY);
+  });
+
+  it("teaches Campaigner's own PF2e approximation under 'pf2e-budget' (never a Paizo table)", () => {
+    const guidance = roomBudgetGuidanceFor(PF2E_BUDGET);
+    // The verbatim rule still leads; the approximation is the fallback.
+    expect(guidance).toContain('VERBATIM');
+    expect(guidance).toContain("Campaigner's own documented approximation");
+    expect(guidance).toContain('2 × T creature-levels');
+    expect(guidance).toContain('cannot reach its drawn share is ALSO repairable');
+    // No dnd5e CR headroom leaks into the pf2e guidance.
+    expect(guidance).not.toContain('targetLevel + 2');
+    expect(guidance).not.toContain('(CR)');
+    expect(PF2E_APPROXIMATION_ADVISORY).toContain("Campaigner's OWN documented PF2e approximation");
   });
 });
 
 describe('fillGradeStockingFor (the brief prompt numbers)', () => {
   it('renders the fill-grade share as concrete levels and a creature count', () => {
-    const line = fillGradeStockingFor(70, 5, 'dnd5e');
-    expect(line).toContain("fill grade is 70%");
+    const line = fillGradeStockingFor(70, 5, DND5E);
+    expect(line).toContain('fill grade is 70%');
     expect(line).toContain('T + 2 creature-levels');
     expect(line).toContain('roughly 4.9 creature-levels (≈2 creatures)');
   });
 
-  it('renders no numbers for pf2e or a digit-free level (never an invented number)', () => {
-    expect(fillGradeStockingFor(70, 5, 'pathfinder2e')).toBeNull();
-    expect(fillGradeStockingFor(70, undefined, 'dnd5e')).toBeNull();
+  it('renders no numbers for a verbatim budget or a digit-free level (never an invented number)', () => {
+    expect(fillGradeStockingFor(70, 5, PF2E_VERBATIM)).toBeNull();
+    expect(fillGradeStockingFor(70, undefined, DND5E)).toBeNull();
+  });
+
+  it('renders the DIFFERENT pf2e stocking instruction under pf2e-budget', () => {
+    const dnd5e = fillGradeStockingFor(100, 5, DND5E);
+    const pf2e = fillGradeStockingFor(100, 5, PF2E_BUDGET);
+    expect(pf2e).not.toBeNull();
+    // Same brief-level input, measurably different instruction bytes: the
+    // pf2e arm states its own approximation and the repairable under rule.
+    expect(pf2e).not.toBe(dnd5e);
+    expect(pf2e).toContain("Campaigner's PF2e approximation");
+    expect(pf2e).toContain('roughly 10 creature-levels (≈2 creatures)');
+    expect(pf2e).toContain('cannot reach its drawn share is ALSO repairable');
+    expect(pf2e).not.toContain('T + 2');
+    // The dnd5e arm is byte-identical to before the policy existed.
+    expect(dnd5e).toContain('T + 2 creature-levels');
+    expect(dnd5e).toContain('roughly 7 creature-levels (≈2 creatures)');
   });
 });
 

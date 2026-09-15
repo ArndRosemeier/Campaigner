@@ -61,6 +61,8 @@ import {
   defaultSettings,
   composePromptFromTemplate,
   PROMPT_STYLE_SECTION_MARKERS,
+  defaultEncounterBudgetPolicy,
+  resolveEncounterBudgetPolicy,
 } from '@/domain';
 import type {
   Campaign,
@@ -2289,6 +2291,51 @@ describe('promptStyles-composition.test.ts', () => {
   });
 
   describe('what a module records and what generation uses', () => {
+    it('stamps the SENSIBLE per-system encounter budget policy default at creation (docs/17 row 180)', async () => {
+      chatMock.mockResolvedValue({ text: SPINE_REPLY, modelUsed: 'm', fallback: null });
+      // pf2e with no explicit choice → the sensible numeric default, on the row.
+      const pf2e = await createCampaign({ name: 'Golarion', system: 'pathfinder2e' });
+      const freshId = await createModuleAndRun(pf2e, {
+        campaignId: pf2e.id,
+        title: 'New Module',
+        concept: 'A harbor bell.',
+        levelMin: 1,
+        levelMax: 1,
+        tone: '',
+        sizeDial: 'standard',
+      });
+      const fresh = await getModule(freshId);
+      expect(fresh?.encounterBudgetPolicy).toBe('pf2e-budget');
+      expect(resolveEncounterBudgetPolicy(fresh)).toBe('pf2e-budget');
+      expect(defaultEncounterBudgetPolicy('pathfinder2e')).toBe('pf2e-budget');
+
+      // An explicit choice wins over the default.
+      const chosenId = await createModuleAndRun(pf2e, {
+        campaignId: pf2e.id,
+        title: 'New Module',
+        concept: 'A harbor bell.',
+        levelMin: 1,
+        levelMax: 1,
+        tone: '',
+        sizeDial: 'standard',
+        encounterBudgetPolicy: 'verbatim',
+      });
+      expect((await getModule(chosenId))?.encounterBudgetPolicy).toBe('verbatim');
+
+      // Every other system keeps today's behaviour (the dnd5e band).
+      const dnd = await createCampaign({ name: 'Faerun', system: 'dnd5e' });
+      const dndId = await createModuleAndRun(dnd, {
+        campaignId: dnd.id,
+        title: 'New Module',
+        concept: 'A harbor bell.',
+        levelMin: 1,
+        levelMax: 1,
+        tone: '',
+        sizeDial: 'standard',
+      });
+      expect((await getModule(dndId))?.encounterBudgetPolicy).toBe('system');
+    });
+
     it('records the style id, name, version and TEXT on the module row', async () => {
       const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
       chatMock
