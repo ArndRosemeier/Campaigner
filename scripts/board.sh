@@ -47,12 +47,14 @@ while IFS= read -r line; do
   case "$kind" in
     SESSION)
       cos="$(field "$line" cos)"
+      cosmodel="$(field "$line" model)"
+      [ -n "$cosmodel" ] && suffix=" [model: $cosmodel]" || suffix=""
       # The board may name MORE THAN ONE live actor (two CoS sessions have run
       # this project at once). Each is printed; the "am I named?" verdict is made
       # once after the loop, so a second actor is information, not staleness.
       case "$cos" in
         "$DSH_SESSION_ID"|"session-$DSH_SESSION_ID")
-          echo "  CoS session: $cos (this session)"
+          echo "  CoS session: $cos (this session)${suffix}"
           # Context budget as a MEASURED number: the predecessor's session log
           # grew to 35MB and could no longer be compacted. Handover is cheap on
           # purpose, so the size is reported where the actor is named.
@@ -63,7 +65,7 @@ while IFS= read -r line; do
             echo "  this session's log: ${sz:-?}MB (handover suggested past ~8MB — a session that cannot be compacted cannot be recovered)"
           fi
           ;;
-        *) echo "  CoS session: $cos";;
+        *) echo "  CoS session: $cos${suffix}";;
       esac
       ;;
     IN-FLIGHT|UNLANDED)
@@ -73,6 +75,8 @@ while IFS= read -r line; do
         continue
       fi
       printf '%s row=%s state=%s\n' "$kind" "$(field "$line" row)" "$(field "$line" state)"
+      inmodel="$(field "$line" model)"
+      [ -n "$inmodel" ] && echo "  model: $inmodel"
       if [ -n "$branch" ]; then
         if git show-ref --verify --quiet "refs/heads/$branch"; then
           ahead="$(git log --oneline main.."$branch" 2>/dev/null | wc -l)"
