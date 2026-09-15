@@ -4085,6 +4085,55 @@ chunks alone used to take, with the summed counts UNCHANGED at **339 files /
 3000 MB cap**, which is why the soft fallback sits at 2700 MB. The per-chunk table
 and the `isolate: false` NO are in row 175.
 
+### Tests that share one background belong in one file (docs/17 row 176)
+
+Five small `tests/features` files that mount the SAME background — `fake-indexeddb`
++ `clearDatabase()` + `flushAsyncUpdates()`, and **no `vi.mock`** — now run as ONE
+file, `tests/features/workspace-artifact-surfaces.test.tsx` (32 tests, one
+`describe` per original file, every test name and all 116 `expect()` sites
+intact). Measured in one vitest process, vitest's own Duration breakdown:
+**23.80 s → 16.14 s** (import 8.45→4.75, environment 2.78→0.61, setup 0.62→0.16,
+tests 11.29→10.47, transform 2.95→2.97), i.e. **1.92 s saved per removed file**;
+the 3× sequential canary was 32/32 green each (14.55 / 14.63 / 15.34 s). The
+convention, with its hard rules:
+
+- **Same background, or don't merge.** Files belong together only when they
+  import the same helper/fixture modules and mount the same provider/Dexie
+  snapshot. A merge whose files need `vi.resetModules()` to get along is NOT a
+  shared background — the reset is the counter-example, not a fix.
+- **Mocks must MATCH.** No `vi.mock` at all is ideal; files whose mock
+  target-SETS differ must NOT merge. This is the measured failure mode: the
+  `--no-isolate` trial reddened deterministically (the same 10 of 14 act-heavy
+  files, `vi.fn()` mocks not applied) because those files shared one module
+  registry — and a merge shares one registry by construction (docs/17 row 175).
+- **The console guard's file scope moves on merge.** `tests/setup.ts` matches
+  `ALLOWED_NOISE` against `ctx.task.file.name`, so a merged file loses every
+  original's file-scoped allowance. Check before merging: a merged test that
+  starts failing on console noise is usually a file-scoped entry that no longer
+  matches.
+- **Act()-heavy files are excluded for now** — `board-*`, `canvas-*`, `chat-*`,
+  `battle-*`, `creature-portrait-*`, `module-reader*`, `persona-run-ui*`
+  (20 files in `tests/features`). That family is what the `--no-isolate` trial
+  reddened.
+- **Stop at ~120 tests per merged file.** Past that a failure can no longer be
+  found by name and the file stops being navigable; split the cluster into two
+  merges instead.
+- **Verify one-way leaks, don't hide them.** `export-dialog`'s tests mutate
+  `URL.createObjectURL` / `HTMLAnchorElement.prototype.click` directly (not
+  restorable by `vi.restoreAllMocks()`), so its `describe` sits mid-file on
+  purpose — the following describes have to survive the leak, and they do.
+
+Inventory at the pilot's base (`bbb10ea`): `tests/features` 137 files — 103 import
+`clearDatabase`, 53 import the flush helpers, 52 carry no `vi.mock`, 11 carry no
+mock AND both helpers; `tests/llm` 71 files — 23 carry no `vi.mock`. The measured
+per-file framework baselines are **1.6 s/file** (features), **0.9 s/file** (llm)
+and **1.1 s/file** (remainder). The full inventory, the pilot's numbers, the
+canary and the sweep recommendation are docs/17 row 176. The landing gate on the
+merged tree was GREEN: **335 files / 3978 tests** (the test count is UNCHANGED
+from the 339/3978 baseline — five files became one, nothing weakened or
+skipped), lint 0 errors, typecheck clean, no `Errors:` line, combined peak
+2277 MB of the 3000 MB cap.
+
 ### What the window SHOWS is what the cast compares (docs/17 row 163, docs/12 §5, docs/18 §2/§4)
 
 Row 161 made the bestiary slot's `book` a DISAMBIGUATOR instead of a veto, which

@@ -430,6 +430,21 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 ## 4. Gotchas
 
+- **Merging test files that share a background puts them in ONE module
+  registry — the `--no-isolate` failure mode, inside one file (docs/17 row 176,
+  docs/08 §Tests that share one background belong in one file).** Vitest gives
+  every test FILE a fresh module registry; a merged file does not. So two
+  originals whose `vi.mock` factories DIFFER cannot be merged (the second
+  factory never applies — the measured `--no-isolate` red was `vi.fn()` mocks
+  not applied), and a `vi.resetModules()` sprinkled in to make them get along is
+  evidence that they do NOT share a background, not a fix. A merged file also
+  loses its originals' file-scoped `ALLOWED_NOISE` allowance, because
+  `tests/setup.ts` scopes the console guard by `ctx.task.file.name`. Merge only
+  what shares ONE helper/fixture import and the same provider/Dexie mount, keep
+  the merged file under ~120 tests, and leave the act()-heavy family
+  (`board-*`, `canvas-*`, `chat-*`, `battle-*`, `creature-portrait-*`,
+  `module-reader*`, `persona-run-ui*`) out until the rule is proven further.
+
 - **A global regex used in a LOOP carries `lastIndex` between calls, and the
   loss is SILENT — so a caller that loops `exec` over slices must not share
   the `g` pattern (docs/17 row 145).** `lib/mdToPdfmake.pushWithWiki` runs
