@@ -9,29 +9,269 @@
 #     a lock: two agents can look in the same instant and both start.
 #   * Foreign suites are never reaped, only waited for — the owner runs another
 #     DSH project on this box, in the same user account.
-#   * CHUNKED runs: 304 test files in one process is what fills RAM, and the
-#     cumulative growth is OFF-heap (pdfjs ArrayBuffers), so a heap cap cannot
-#     stop it. Each chunk gets a fresh process.
-#   * A WATCHDOG samples this run's own process group every second and kills it
-#     at the RSS cap or when the box's available memory gets low. Failing our
-#     gate is acceptable; letting the kernel pick dsh as the victim is not.
+#   * CHUNKED runs in SEPARATE PROCESS GROUPS. The growth that fills this box is
+#     OFF-heap (pdfjs holds ArrayBuffers), so no heap cap can stop it; a fresh
+#     process per chunk bounds it. Each chunk is launched with `setsid`, so its
+#     own process group IS its own tree and the watchdog can address one chunk
+#     without touching its sibling.
+#   * AT MOST TWO CHUNKS CONCURRENTLY (docs/17 row 175), each with ONE worker —
+#     the same total worker budget the config default already allows. The two
+#     long poles are `tests_features_a` + `tests_features_b`: the old single
+#     137-file features chunk was 44% framework overhead and over half the gate.
+#     `GATE_PARALLEL_CHUNKS=1` forces sequential for a run that owns nothing else.
+#   * A WATCHDOG samples the COMBINED RSS of every live chunk's process group
+#     every second. At the RSS cap or below the available-memory floor it kills
+#     ALL live chunks; a killed chunk is VOID and is re-run SEQUENTIALLY, never
+#     counted. If the combined peak merely APPROACHES the cap while two chunks
+#     run, the gate falls back to sequential BEFORE the kill line, loudly.
+#   * FAIL-FAST ORDER + exactly TWO safe skips. The chunks a diff touches run
+#     FIRST (a red surfaces in ~1-2 minutes, not ~12). Vitest is skipped
+#     ENTIRELY only for a docs-only diff; only the affected chunks run for a diff
+#     that touches test files ALONE. Every other diff runs the full set — no
+#     other skipping, ever: a gate that guesses at coverage is the failure mode
+#     this script refuses.
 #
 # Usage:
-#   scripts/gate.sh                 # lint + typecheck + every chunk, summed
-#   scripts/gate.sh tests/lib       # only that chunk (still locked, still capped)
+#   scripts/gate.sh                     # lint + typecheck + every chunk, summed
+#   scripts/gate.sh tests/lib           # only that chunk (still locked, capped)
+#   GATE_PLAN_ONLY=1 scripts/gate.sh    # print the plan (mode, chunks, order), exit
 #
 # Env: GATE_RSS_CAP_MB (default 3000), GATE_AVAIL_FLOOR_MB (default 2500),
-#      GATE_LOGDIR (default /tmp/gate-<pid>)
+#      GATE_PARALLEL_CHUNKS (1|2, default 2), GATE_PARALLEL_FALLBACK_MB
+#      (default 90% of the cap), GATE_MAX_VOID_RETRIES (default 1),
+#      GATE_DIFF_BASE (default origin/main), GATE_LOGDIR (default /tmp/gate-<pid>)
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
+TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
 LOGDIR="${GATE_LOGDIR:-/tmp/gate-$$}"
 LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
+DIFF_BASE="${GATE_DIFF_BASE:-origin/main}"
+PARALLEL_REQUESTED="${GATE_PARALLEL_CHUNKS:-2}"
+case "$PARALLEL_REQUESTED" in
+  1 | 2) ;;
+  *)
+    echo "!! GATE_PARALLEL_CHUNKS must be 1 or 2 (got '$PARALLEL_REQUESTED')" >&2
+    exit 2
+    ;;
+esac
+SOFT_FALLBACK_MB="${GATE_PARALLEL_FALLBACK_MB:-$((RSS_CAP_MB * 9 / 10))}"
+MAX_VOID_RETRIES="${GATE_MAX_VOID_RETRIES:-1}"
+
+command -v setsid >/dev/null 2>&1 || {
+  echo "!! GATE: setsid is required (per-chunk process groups)" >&2
+  exit 2
+}
 
 self=$$
 foreign() { pgrep -af 'vites[t]|playwrigh[t]' 2>/dev/null | grep -v 'bash -c' | grep -v " $self " | grep -v "^$self "; }
+
+# Plan scratch. The LOCK, by contrast, is trapped only once it is OURS: a trap
+# that removed a lock we do not own would delete a sibling gate's lock.
+PLAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gate-plan-XXXXXX")" || {
+  echo "!! GATE: cannot create a plan dir" >&2
+  exit 2
+}
+JOBS_DIR="$PLAN_DIR/jobs"
+mkdir -p "$JOBS_DIR"
+trap 'rm -rf "$PLAN_DIR"' EXIT
+
+CHUNKS=()
+declare -A CHUNK_FILES=()
+register_chunk() {
+  local name="$1"
+  shift
+  local f="$JOBS_DIR/$name.files"
+  : > "$f"
+  local p
+  for p in "$@"; do printf '%s\n' "$p" >> "$f"; done
+  CHUNKS+=("$name")
+  CHUNK_FILES["$name"]="$f"
+}
+
+# ---------------------------------------------------------------------------
+# The canonical inventory: SEVEN disjoint chunks. tests/features is split
+# round-robin (not first-half/second-half) because per-file cost varies and
+# alphabetical order is arbitrary with respect to it.
+# ---------------------------------------------------------------------------
+plan_default_chunks() {
+  local -a lib llm db domain features fa fb remainder
+  mapfile -t lib < <(find tests/lib \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+  mapfile -t llm < <(find tests/llm \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+  mapfile -t db < <(find tests/db \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+  mapfile -t domain < <(find tests/domain \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+  mapfile -t features < <(find tests/features \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+  mapfile -t remainder < <(find tests \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null |
+    grep -vE '^tests/(lib|llm|db|domain|features)/' | sort)
+  local f i=0
+  fa=()
+  fb=()
+  for f in "${features[@]}"; do
+    if [ $((i % 2)) -eq 0 ]; then fa+=("$f"); else fb+=("$f"); fi
+    i=$((i + 1))
+  done
+  register_chunk tests_lib "${lib[@]}"
+  register_chunk tests_llm "${llm[@]}"
+  register_chunk tests_db "${db[@]}"
+  register_chunk tests_domain "${domain[@]}"
+  register_chunk tests_features_a "${fa[@]}"
+  register_chunk tests_features_b "${fb[@]}"
+  register_chunk tests_remainder "${remainder[@]}"
+}
+
+# Every test file in EXACTLY ONE chunk: the union must equal the walk, and no
+# path may appear twice. A file no chunk picks up is a defect, not a saving.
+check_arithmetic() {
+  local total walked dup_files
+  total=$(find tests \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | wc -l)
+  cat "${CHUNK_FILES[@]}" 2>/dev/null | sed '/^$/d' | sort > "$PLAN_DIR/covered.txt"
+  walked=$(wc -l < "$PLAN_DIR/covered.txt")
+  dup_files=$(uniq -d < "$PLAN_DIR/covered.txt" | wc -l)
+  echo "chunk arithmetic: $walked of $total test files covered"
+  if [ "$walked" -ne "$total" ] || [ "$dup_files" -ne 0 ]; then
+    echo "!! CHUNK ARITHMETIC MISMATCH — a file runs twice or not at all"
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Diff -> chunks. The only two skips are docs-only and test-files-only.
+# ---------------------------------------------------------------------------
+CHANGED=()
+ORDER=()
+MODE=""
+
+select_order() {
+  mapfile -t CHANGED < <(
+    {
+      if git rev-parse --verify --quiet "$DIFF_BASE^{commit}" >/dev/null 2>&1; then
+        git diff --name-only "$DIFF_BASE...HEAD"
+      else
+        echo "!! GATE: diff base '$DIFF_BASE' not found — cannot order or scope chunks; running the FULL set" >&2
+      fi
+      git diff --name-only HEAD
+      git ls-files --others --exclude-standard
+    } | sed '/^$/d' | sort -u
+  )
+  local f c n=0 docs_only=1 tests_only=1
+  for f in "${CHANGED[@]}"; do
+    n=$((n + 1))
+    if [[ ! "$f" =~ ^docs/ && ! "$f" =~ ^[^/]+\.md$ ]]; then docs_only=0; fi
+    if [[ ! "$f" =~ ^tests/.+\.test\.tsx?$ ]]; then tests_only=0; fi
+  done
+  if [ "$n" -eq 0 ]; then
+    docs_only=0
+    tests_only=0
+  fi
+
+  if [ "$docs_only" -eq 1 ]; then
+    MODE=docs-only
+    ORDER=()
+    return 0
+  fi
+
+  if [ "$tests_only" -eq 1 ]; then
+    for c in "${CHUNKS[@]}"; do
+      local hit=0
+      for f in "${CHANGED[@]}"; do
+        if grep -qxF -- "$f" "$JOBS_DIR/$c.files"; then
+          hit=1
+          break
+        fi
+      done
+      [ "$hit" -eq 1 ] && ORDER+=("$c")
+    done
+    if [ "${#ORDER[@]}" -eq 0 ]; then
+      echo "!! GATE: test-files-only diff but no chunk contains the changed file(s) — running the full set"
+      MODE=full
+      ORDER=("${CHUNKS[@]}")
+    else
+      MODE=tests-only
+    fi
+    return 0
+  fi
+
+  MODE=full
+  local -A touched=()
+  for f in "${CHANGED[@]}"; do
+    case "$f" in
+      tests/*.test.ts | tests/*.test.tsx)
+        for c in "${CHUNKS[@]}"; do
+          grep -qxF -- "$f" "$JOBS_DIR/$c.files" && touched[$c]=1
+        done
+        ;;
+      src/lib/*) touched[tests_lib]=1 ;;
+      src/llm/*) touched[tests_llm]=1 ;;
+      src/db/*) touched[tests_db]=1 ;;
+      src/domain/*) touched[tests_domain]=1 ;;
+      src/features/*)
+        touched[tests_features_a]=1
+        touched[tests_features_b]=1
+        ;;
+      src/*) touched[tests_remainder]=1 ;;
+    esac
+  done
+  for c in "${CHUNKS[@]}"; do [ -n "${touched[$c]:-}" ] && ORDER+=("$c"); done
+  for c in "${CHUNKS[@]}"; do [ -n "${touched[$c]:-}" ] || ORDER+=("$c"); done
+  return 0
+}
+
+print_plan() {
+  echo "gate plan: mode=$MODE diff-base=$DIFF_BASE changed=${#CHANGED[@]} file(s)"
+  local f c i=0
+  for f in "${CHANGED[@]}"; do
+    i=$((i + 1))
+    [ "$i" -le 40 ] && echo "  changed: $f"
+  done
+  [ "$i" -gt 40 ] && echo "  changed: … and $((i - 40)) more"
+  if [ "$MODE" = docs-only ]; then
+    echo "  selected chunks: (none — DOCUMENTATION-ONLY diff: vitest is skipped, lint + typecheck still run)"
+  else
+    for c in "${ORDER[@]}"; do
+      echo "  selected: $c ($(grep -c . "$JOBS_DIR/$c.files") files)"
+    done
+  fi
+}
+
+CALLER_MISSING=0
+if [ "$#" -gt 0 ]; then
+  MODE=caller
+  for chunk in "$@"; do
+    if [ -d "$chunk" ]; then
+      mapfile -t files < <(find "$chunk" \( -name '*.test.ts' -o -name '*.test.tsx' \) 2>/dev/null | sort)
+    elif [ -f "$chunk" ]; then
+      files=("$chunk")
+    else
+      echo "$chunk: (absent)"
+      CALLER_MISSING=1
+      continue
+    fi
+    name="$(printf '%s' "$chunk" | tr '/' '_')"
+    register_chunk "$name" "${files[@]}"
+    ORDER+=("$name")
+  done
+else
+  plan_default_chunks
+fi
+
+if [ "${GATE_PLAN_ONLY:-0}" = "1" ]; then
+  [ "$MODE" = caller ] || select_order
+  print_plan
+  echo "PLAN ONLY — no lint, no typecheck, no vitest ran."
+  exit 0
+fi
+
+status_arith=0
+if [ "$MODE" != caller ]; then
+  select_order
+  check_arithmetic || status_arith=1
+else
+  [ "$CALLER_MISSING" -eq 1 ] && status_arith=1
+fi
+print_plan
 
 if [ -n "$(foreign)" ]; then
   echo "WAITING: another suite is already running (ours or the peer project's):"
@@ -44,90 +284,263 @@ if ! mkdir "$LOCK" 2>/dev/null; then
   exit 9
 fi
 printf '%s %s %s\n' "$self" "$(date +%s)" "$PWD" > "$LOCK/owner"
-trap 'rm -rf "$LOCK"' EXIT
+trap 'rm -rf "$LOCK" "$PLAN_DIR"' EXIT
 # The log dir is created only once the lock is OURS: a refused attempt (a foreign
 # suite, or the lock held by a sibling) used to leave an empty /tmp/gate-<pid>
 # behind, and retry loops accumulated them by the hundred.
 mkdir -p "$LOGDIR"
-echo "gate: cap ${RSS_CAP_MB}MB RSS / floor ${AVAIL_FLOOR_MB}MB available; logs in $LOGDIR"
+echo "gate: cap ${RSS_CAP_MB}MB RSS / floor ${AVAIL_FLOOR_MB}MB available; up to ${PARALLEL_REQUESTED} chunk(s) at once (soft fallback ${SOFT_FALLBACK_MB}MB, void retries ${MAX_VOID_RETRIES}); logs in $LOGDIR"
 
-avail_mb() { awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo; }
-# RSS of the run's own process group: pnpm -> node -> workers all stay in it.
-group_rss_mb() { ps -o rss= -g "$1" 2>/dev/null | awk '{s+=$1} END{print int(s/1024)}'; }
-
+# ---------------------------------------------------------------------------
+# Execution. The watchdog sums EVERY live chunk's process group; a trip kills
+# all of them and re-queues them (void, never counted) to run sequentially.
+# ---------------------------------------------------------------------------
+status=0
+[ "$status_arith" -eq 1 ] && status=1
 peak_seen=0
-run_chunk() {
-  local name="$1"; shift
+combined_peak=0
+VOIDED_COUNT=0
+SELECTED_COUNT=${#ORDER[@]}
+RUN_LOGS=()
+FALLBACK_NOTE=""
+declare -A JOB_PID JOB_PGID JOB_START JOB_LOG_FILE JOB_PEAK JOB_VOID JOB_RC JOB_TIME JOB_VOID_COUNT
+LIVE=()
+
+finish_chunk() {
+  local name="$1" log="${JOB_LOG_FILE[$name]}" rc="${JOB_RC[$name]}" void="${JOB_VOID[$name]}" counts
+  [ "${JOB_PEAK[$name]}" -gt "$peak_seen" ] && peak_seen="${JOB_PEAK[$name]}"
+  counts=$(grep -E '^ *(Test Files|Tests) ' "$log" 2>/dev/null | tr '\n' ' ' | tr -s ' ')
+  printf '%s: ' "$name"
+  if [ "$void" = yes ]; then
+    echo "VOID (watchdog killed it after ${JOB_TIME[$name]}s, peak ${JOB_PEAK[$name]}MB — re-run, it is not evidence)"
+  elif [ "$rc" -ne 0 ]; then
+    echo "${counts}FAILED (rc=$rc, peak ${JOB_PEAK[$name]}MB, ${JOB_TIME[$name]}s) — see $log"
+    status=1
+    RUN_LOGS+=("$log")
+  else
+    echo "${counts}ok (peak ${JOB_PEAK[$name]}MB, ${JOB_TIME[$name]}s)"
+    RUN_LOGS+=("$log")
+  fi
+}
+
+start_chunk() {
+  local name="$1"
+  local -a args=()
+  mapfile -t args < "$JOBS_DIR/$name.files"
+  if [ "${#args[@]}" -eq 0 ]; then
+    echo "!! GATE: chunk $name has no files — refusing to run an empty chunk"
+    status=1
+    return 1
+  fi
   local log="$LOGDIR/$name.log"
-  ( export NODE_OPTIONS="--max-old-space-size=1536" CAMPAIGNER_TEST_WORKERS=1
-    pnpm exec vitest run "$@" ) > "$log" 2>&1 &
-  local pid=$! peak=0 voided=no pgid
-  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
-  while kill -0 "$pid" 2>/dev/null; do
-    local mb avail
-    mb="$(group_rss_mb "${pgid:-$pid}")"; avail="$(avail_mb)"
-    [ "$mb" -gt "$peak" ] && peak=$mb
-    if [ "$mb" -gt "$RSS_CAP_MB" ] || [ "$avail" -lt "$AVAIL_FLOOR_MB" ]; then
-      echo "  !! WATCHDOG: run ${mb}MB (cap ${RSS_CAP_MB}) / available ${avail}MB -> killing PID $pid"
-      pkill -TERM -g "${pgid:-$pid}" 2>/dev/null; kill -TERM "$pid" 2>/dev/null; sleep 2
-      pkill -KILL -g "${pgid:-$pid}" 2>/dev/null; kill -KILL "$pid" 2>/dev/null
-      voided=yes; break
+  setsid env NODE_OPTIONS="--max-old-space-size=1536" CAMPAIGNER_TEST_WORKERS=1 \
+    pnpm exec vitest run "${args[@]}" > "$log" 2>&1 &
+  local pid=$!
+  local pgid="" tries=0
+  while [ "$tries" -lt 25 ]; do
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    [ "$pgid" = "$pid" ] && break
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  if [ "$pgid" != "$pid" ]; then
+    # setsid forks when the child is already a process-group leader; the tracked
+    # pid would then be the short-lived parent and the chunk would run untracked.
+    echo "!! GATE: chunk $name never got its own process group (pid=$pid pgid='${pgid}') — aborting rather than running untracked"
+    kill -TERM "$pid" 2>/dev/null
+    return 2
+  fi
+  JOB_PID[$name]=$pid
+  JOB_PGID[$name]=$pid
+  JOB_LOG_FILE[$name]=$log
+  JOB_START[$name]=$(date +%s)
+  JOB_PEAK[$name]=0
+  JOB_VOID[$name]=no
+  JOB_RC[$name]=pending
+  : "${JOB_VOID_COUNT[$name]:=0}"
+  return 0
+}
+
+# Sets SAMPLE_COMBINED_MB. MUST be called directly, never inside `$( )`: the
+# per-chunk peak updates below are the point, and a command substitution runs in
+# a subshell where they would be discarded (measured: combined peak 1303MB while
+# every per-chunk peak stayed 0).
+SAMPLE_COMBINED_MB=0
+sample_combined_now() {
+  local total=0 name pgid mb
+  for name in "${LIVE[@]}"; do
+    pgid="${JOB_PGID[$name]}"
+    mb=$(ps -o rss= -g "$pgid" 2>/dev/null | awk '{s+=$1} END{print int(s/1024)}')
+    [ -n "$mb" ] || mb=0
+    [ "$mb" -gt "${JOB_PEAK[$name]}" ] && JOB_PEAK[$name]=$mb
+    total=$((total + mb))
+  done
+  SAMPLE_COMBINED_MB=$total
+}
+
+kill_live() {
+  local name pgid
+  for name in "${LIVE[@]}"; do
+    JOB_VOID[$name]=yes
+    pgid="${JOB_PGID[$name]}"
+    if [ -n "$pgid" ]; then kill -TERM "-$pgid" 2>/dev/null; fi
+    kill -TERM "${JOB_PID[$name]}" 2>/dev/null
+  done
+  sleep 2
+  for name in "${LIVE[@]}"; do
+    pgid="${JOB_PGID[$name]}"
+    if [ -n "$pgid" ]; then kill -KILL "-$pgid" 2>/dev/null; fi
+    kill -KILL "${JOB_PID[$name]}" 2>/dev/null
+  done
+  for name in "${LIVE[@]}"; do
+    wait "${JOB_PID[$name]}" 2>/dev/null
+    JOB_TIME[$name]=$(( $(date +%s) - ${JOB_START[$name]} ))
+    finish_chunk "$name"
+    JOB_VOID_COUNT[$name]=$(( ${JOB_VOID_COUNT[$name]:-0} + 1 ))
+    VOIDED_COUNT=$((VOIDED_COUNT + 1))
+  done
+  LIVE=()
+}
+
+requeue_after_void() {
+  # $1 = "soft" | "hard" (only used for the note); reads VOIDED_NOW and next.
+  local name i
+  local -a retryable=()
+  for name in "${VOIDED_NOW[@]}"; do
+    if [ "${JOB_VOID_COUNT[$name]}" -le "$MAX_VOID_RETRIES" ]; then
+      retryable+=("$name")
+    else
+      echo "!! GATE: chunk $name was VOID ${JOB_VOID_COUNT[$name]} time(s) — NOT retried; the gate cannot go green under the ${RSS_CAP_MB}MB cap"
+      status=1
+    fi
+  done
+  NEW_ORDER=()
+  for name in "${retryable[@]}"; do NEW_ORDER+=("$name"); done
+  for ((i = NEXT_IDX; i < ${#ORDER[@]}; i++)); do NEW_ORDER+=("${ORDER[$i]}"); done
+  ORDER=("${NEW_ORDER[@]}")
+}
+
+run_plan() {
+  local PARALLEL="$PARALLEL_REQUESTED"
+  local next=0 name pid combined avail st
+  local -a still voided_now
+  VITEST_WALL=0
+  local VITEST_START
+  VITEST_START=$(date +%s)
+
+  while [ "$next" -lt "${#ORDER[@]}" ] || [ "${#LIVE[@]}" -gt 0 ]; do
+    while [ "${#LIVE[@]}" -lt "$PARALLEL" ] && [ "$next" -lt "${#ORDER[@]}" ]; do
+      name="${ORDER[$next]}"
+      start_chunk "$name"
+      st=$?
+      if [ "$st" -eq 0 ]; then
+        LIVE+=("$name")
+      elif [ "$st" -eq 2 ]; then
+        kill_live
+        echo "!! GATE aborted: an untracked chunk is not acceptable"
+        return 2
+      fi
+      next=$((next + 1))
+    done
+
+    if [ "${#LIVE[@]}" -gt 0 ]; then
+      still=()
+      for name in "${LIVE[@]}"; do
+        pid="${JOB_PID[$name]}"
+        if kill -0 "$pid" 2>/dev/null; then
+          still+=("$name")
+        else
+          wait "$pid" 2>/dev/null
+          JOB_RC[$name]=$?
+          JOB_TIME[$name]=$(( $(date +%s) - ${JOB_START[$name]} ))
+          finish_chunk "$name"
+        fi
+      done
+      LIVE=()
+      [ "${#still[@]}" -gt 0 ] && LIVE=("${still[@]}")
+    fi
+
+    if [ "${#LIVE[@]}" -gt 0 ]; then
+      sample_combined_now
+      combined=$SAMPLE_COMBINED_MB
+      [ "$combined" -gt "$combined_peak" ] && combined_peak=$combined
+      avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
+      if [ "$combined" -gt "$RSS_CAP_MB" ] || [ "$avail" -lt "$AVAIL_FLOOR_MB" ]; then
+        echo "  !! WATCHDOG(hard): combined ${combined}MB (cap ${RSS_CAP_MB}MB) / available ${avail}MB (floor ${AVAIL_FLOOR_MB}MB) -> killing ${#LIVE[@]} live chunk(s)"
+        voided_now=("${LIVE[@]}")
+        kill_live
+        VOIDED_NOW=("${voided_now[@]}")
+        NEXT_IDX=$next
+        requeue_after_void
+        next=0
+        PARALLEL=1
+        continue
+      fi
+      if [ "$PARALLEL" -gt 1 ] && [ "$combined" -ge "$SOFT_FALLBACK_MB" ]; then
+        echo "  !! WATCHDOG(soft): combined ${combined}MB approaches the ${RSS_CAP_MB}MB cap (soft limit ${SOFT_FALLBACK_MB}MB) -> falling back to SEQUENTIAL before the kill line"
+        voided_now=("${LIVE[@]}")
+        kill_live
+        VOIDED_NOW=("${voided_now[@]}")
+        NEXT_IDX=$next
+        requeue_after_void
+        next=0
+        FALLBACK_NOTE="fell back to SEQUENTIAL after a ${combined}MB combined peak (soft limit ${SOFT_FALLBACK_MB}MB)"
+        PARALLEL=1
+        continue
+      fi
     fi
     sleep 1
   done
-  wait "$pid"; local rc=$?
-  [ "$peak" -gt "$peak_seen" ] && peak_seen=$peak
-  printf '%s: ' "$name"
-  grep -E "^ *(Test Files|Tests) " "$log" | tr '\n' ' ' | tr -s ' '
-  if [ "$voided" = yes ]; then echo "VOID (watchdog killed it — re-run, it is not evidence)"
-  elif [ "$rc" -ne 0 ]; then echo "FAILED (rc=$rc, peak ${peak}MB) — see $log"
-  else echo "ok (peak ${peak}MB)"; fi
-  [ "$voided" = yes ] && return 9
-  return "$rc"
+  VITEST_WALL=$(( $(date +%s) - VITEST_START ))
+  return 0
 }
 
-status=0
-echo "=== lint ==="; pnpm lint > "$LOGDIR/lint.log" 2>&1 || { echo "LINT FAILED (see $LOGDIR/lint.log)"; status=1; }
+echo "=== lint ==="
+LINT_START=$(date +%s)
+pnpm lint > "$LOGDIR/lint.log" 2>&1 || {
+  echo "LINT FAILED (see $LOGDIR/lint.log)"
+  status=1
+}
 grep -cE "  error  " "$LOGDIR/lint.log" | sed 's/^/  lint errors: /'
-echo "=== typecheck ==="; pnpm typecheck > "$LOGDIR/typecheck.log" 2>&1 || { echo "TYPECHECK FAILED (see $LOGDIR/typecheck.log)"; status=1; }
+echo "=== typecheck ==="
+pnpm typecheck > "$LOGDIR/typecheck.log" 2>&1 || {
+  echo "TYPECHECK FAILED (see $LOGDIR/typecheck.log)"
+  status=1
+}
+TOOLING_WALL=$(( $(date +%s) - LINT_START ))
 
-if [ "$#" -gt 0 ]; then
-  echo "=== vitest: ${#} caller-named chunk(s) ==="
-  for chunk in "$@"; do
-    [ -e "$chunk" ] || { echo "$chunk: (absent)"; status=1; continue; }
-    run_chunk "$(echo "$chunk" | tr '/' '_')" "$chunk" || status=1
-  done
+VITEST_WALL=0
+if [ "$MODE" = docs-only ]; then
+  echo "=== vitest: SKIPPED — DOCUMENTATION-ONLY diff (lint + typecheck still ran) ==="
+elif [ "${#ORDER[@]}" -eq 0 ]; then
+  echo "=== vitest: nothing selected — no chunk ran ==="
+  status=1
 else
-  # DISJOINT chunks, and the arithmetic is CHECKED. A path filter matches its own
-  # subdirectories, so listing `tests` beside `tests/lib` etc. ran ~85% of the
-  # suite TWICE in every gate (found by a writer: its summed counts exceeded the
-  # suite). Every test file must run exactly once, and a file no chunk picks up
-  # is a defect, not a saving.
-  DIRS=(tests/lib tests/llm tests/db tests/domain tests/features)
-  echo "=== vitest: ${#DIRS[@]} directory chunk(s) + the remainder ==="
-  for d in "${DIRS[@]}"; do
-    [ -e "$d" ] || { echo "$d: (absent)"; status=1; continue; }
-    run_chunk "$(echo "$d" | tr '/' '_')" "$d" || status=1
-  done
-  remainder=$(find tests/misc tests/app tests/play tests/help tests/components \
-    -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null | sort)
-  remainder=$(find tests -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null \
-    | grep -vE '^tests/(lib|llm|db|domain|features)/' | sort)
-  if [ -n "$remainder" ]; then
-    # shellcheck disable=SC2086
-    run_chunk tests_remainder $remainder || status=1
+  if [ "$PARALLEL_REQUESTED" -gt 1 ]; then
+    echo "=== vitest: ${#ORDER[@]} chunk(s), up to 2 concurrent ==="
   else
-    echo "tests_remainder: (no files outside the five directories)"
+    echo "=== vitest: ${#ORDER[@]} chunk(s), SEQUENTIAL ==="
   fi
-  total=$(find tests -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null | wc -l)
-  walked=$(for d in "${DIRS[@]}"; do find "$d" -name '*.test.ts' -o -name '*.test.tsx' 2>/dev/null; done | wc -l)
-  walked=$((walked + $(printf '%s\n' "$remainder" | grep -c . || true)))
-  echo "chunk arithmetic: $walked of $total test files covered"
-  [ "$walked" -eq "$total" ] || { echo "!! CHUNK ARITHMETIC MISMATCH — a file runs twice or not at all"; status=1; }
+  run_plan || status=1
 fi
 
+sum_counts() {
+  local v total=0 log
+  for log in "${RUN_LOGS[@]}"; do
+    [ -f "$log" ] || continue
+    v=$(grep -E "^ *$1 " "$log" | tail -1 | sed -nE 's/.*\(([0-9]+)\).*/\1/p')
+    [ -n "$v" ] && total=$((total + v))
+  done
+  echo "$total"
+}
+
 echo "=== summary ==="
+echo "mode: $MODE; requested parallelism: ${PARALLEL_REQUESTED} chunk(s)${FALLBACK_NOTE:+; $FALLBACK_NOTE}"
+echo "chunks completed (non-void): ${#RUN_LOGS[@]} of ${SELECTED_COUNT} selected; voided (re-run): ${VOIDED_COUNT}"
+echo "summed: $(sum_counts 'Test Files') test files / $(sum_counts 'Tests') tests"
+echo "wall: total $(( $(date +%s) - TOTAL_START ))s (tooling ${TOOLING_WALL}s, vitest ${VITEST_WALL}s)"
 echo "peak RSS of any single chunk: ${peak_seen}MB (cap ${RSS_CAP_MB}MB)"
+echo "combined peak RSS of concurrent chunks: ${combined_peak}MB (cap ${RSS_CAP_MB}MB)"
 echo "per-chunk logs: $LOGDIR"
 [ "$status" -eq 0 ] && echo "GATE GREEN" || echo "GATE RED"
 exit "$status"
