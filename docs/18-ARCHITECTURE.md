@@ -406,6 +406,21 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   the only deleter) — a guarded row is always reported with its reason,
   never silently skipped, and both sides decide "deletable" with the ONE
   `evaluateOrphanGuards` predicate.
+- **"Is this idea implemented twice?" is answered by the duplicate-body
+  tripwire** (AGENTS §Centralization obligation 4, docs/17 row 172).
+  `tests/architecture/no-duplicate-implementations.test.ts` reads every
+  `src/**/*.ts(x)` named function/method body through the TypeScript compiler
+  API, normalizes it (comments stripped, whitespace collapsed, the function's
+  own name and parameter names blanked in value position — property keys stay,
+  so `artifact.name` and `entry.title` remain different bodies), and requires
+  the population of normalized bodies at 2+ sites at or above **75 normalized
+  characters** to EQUAL the checked-in baseline
+  (`tests/architecture/duplicateImplementationsBaseline.json`) exactly. A new
+  copy reds naming every `file:function:line` and the shared body hash; a
+  baselined copy that is folded, renamed or moved reds the stale entry, so the
+  baseline is debt a fold FORCES out. It catches identical copies, not
+  paraphrases — a tripwire, not a proof. `tests/` is out of scope by design
+  (fixtures repeat legitimately); nothing under `src/` is excluded.
 
 ## 4. Gotchas
 
@@ -2353,3 +2368,24 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   queue dropped on reload leaves the old cover intact with a loud error; a
   row deleted between resolve and swap throws loudly and strands an
   unreferenced orphan (the next prune sweep owns it), never a dangling slot.
+- **The duplicate-body tripwire's FIRST capture found 16 duplicate groups /
+  46 sites in `src/` at base `7b390de` — the seven `isRecord` helpers the
+  owner named are only 7 of the 46 sites.** Every group is recorded (with a
+  reason) in `tests/architecture/duplicateImplementationsBaseline.json`, which
+  is DEBT, not a licence. The ones worth naming here so nobody "discovers"
+  them as fresh work:
+  - `parseFile` ×7 (all seven pack adapters) and `titleCase` ×3 and
+    `publicationSourceLine` ×2 — the same pack-adapter duplication family as
+    `isRecord`; row 171's landing (or its successor) owns the fold.
+  - The image-queue trio `mob-portrait-queue.ts` / `cover-image-queue.ts` /
+    `entity-image-queue.ts` copies `workerCount` ×3 — and its `settledDetail`
+    copies normalize to 74 characters, ONE character under the floor, so the
+    tripwire does not compare them (a floor decision recorded, not a silent
+    gap).
+  - The `Missing*` panels ×3 (`MissingModule` / `MissingBoard` /
+    `MissingCanvas`), the local `Field` label wrapper ×2, `getChunkByContentHash`
+    ×2, the three `on()` emitters ×3, `levelDistance`/`levelDistanceTo` ×2 and
+    `duplicatedAcrossBooks` ×2, `extensionOf` ×2, and `getArtifactStatBlock`
+    defined twice inside `runEngine.ts`.
+  Each entry's `reason` names the seam a fold should extend; the tripwire reds
+  the moment a copy moves, so a fold cannot leave a stale blessing behind.

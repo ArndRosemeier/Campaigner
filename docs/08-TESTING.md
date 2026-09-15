@@ -3316,6 +3316,118 @@ tests**, so this slice adds **+0 files / +5 tests** (`html-to-text.test.ts`
 41 → 46: four differential rows and one new fixture pin), with no existing
 assertion weakened, no test skipped, and no `Errors:` line.
 
+### The duplicate-body tripwire — ONE test answers "is this implemented twice?" (docs/17 row 172, docs/18 §3/§5)
+
+The owner's demand, verbatim: *"Whenever something gets discovered where
+fixing it would affect more than one code piece, the first examination needs
+to be if this can be centralized. I do know that vibe coding has exactly this
+decentralization problem and we need active measures to counter it whenever
+its detected."* `AGENTS.md` §Centralization obligation 4 names this generic
+detector as the measure it owed, and the real case is seven byte-identical
+`isRecord` helpers — one per pack adapter — that no test could see until a task
+happened to grep for them.
+
+**The mechanism, and why it is a test rather than a script.**
+`tests/architecture/no-duplicate-implementations.test.ts` reads every
+`src/**/*.ts` and `*.tsx` file, extracts NAMED function/method bodies through
+the TypeScript compiler API (function declarations, `const f = () => …`,
+`const f = function …`, class/object methods, class-property arrows and
+get/set accessors — a regex extractor breaks on nested braces and template
+literals, so none is used), normalizes each body, and FAILS when one normalized
+body occurs at 2+ sites — in one file or across files. Living in the suite
+means it runs in every gate; `tests/` is out of scope by design (fixtures
+repeat legitimately) and NOTHING under `src/` is excluded.
+
+**Normalization, exactly.** (1) comments are stripped — the token stream is the
+PARSER's own child tree (`node.getChildren()`), in which comments are trivia and
+never appear; (2) all formatting whitespace is collapsed — the body is
+re-emitted as its parser token stream joined with single spaces. Whitespace
+INSIDE a string/template/regex literal is data and is kept verbatim; a JSX text
+run's indentation is collapsed to single spaces. A bare `scanner.scan()` loop is
+deliberately NOT used: measured at base `7b390de`, it mis-tokenizes a template's
+`${…}` tail and a JSX text run containing a stray quote (735 of 2651 bodies hit
+an unterminated token), which silently skips comment stripping and whitespace
+collapse for the rest of the body; (3) the function's OWN name and its PARAMETER
+names are blanked to `$`, but only in value/reference position — property keys
+(`obj.name`), object-literal keys (`{ name: value }`), shorthand keys
+(`{ name }`) and declaration names are NOT blanked. So a copy that renamed the
+function and its parameters is caught, while `artifact.name` and
+`entry.title` remain two different functions.
+
+**The floor = 75 normalized characters, and the brief's one flaw.** The brief's
+starting point (about 120 characters / 4+ statements) CANNOT see the
+seven-copy `isRecord`, whose normalized body is exactly 75 characters and one
+statement — so the detector would be blind to its own motivating case, and the
+seven baseline entries the brief requires could not exist. 75 is the LARGEST
+floor that keeps the motivating case. The ladder, MEASURED at base `7b390de`
+(2651 named bodies in 390 files): **floor 75 = 16 groups / 46 sites**, floor 70
+= 19, floor 65 = 22, floor 60 = 25 (the brief's ~25 stop line), floor 40 = 29,
+floor 120 = 9 groups with `isRecord` MISSING. The test's doc comment states the
+floor, the ladder and this argument, so the next reader can argue with it. One
+known copy sits just under the floor: the three `settledDetail` image-queue
+bodies normalize to **74** characters and are therefore NOT compared — a floor
+decision for the next reader, named rather than left as a silent gap.
+
+**The captured population (16 groups / 46 sites at base `7b390de`)** — every
+group is blessed BY NAME in `tests/architecture/duplicateImplementationsBaseline.json`
+with a `file:function` site list and a written reason. The notable groups:
+
+| group | sites | baseline reason (short) |
+|---|---|---|
+| `isRecord` | 7 — one per pack adapter | the owner-named case; folded by the peer slice row 171 (in flight when captured); the CoS deletes the line if that landed |
+| `parseFile` | 7 — one per pack adapter | same family; row 171's neighbourhood owns the fold |
+| `titleCase` / `publicationSourceLine` | 3 / 2 | pack adapters copy them; fold on the pack-text seam |
+| `workerCount` | 3 | the image-queue trio (`mob-portrait-queue`, `cover-image-queue`, `entity-image-queue`) copies the settings→worker-count read; their `settledDetail` siblings normalize to 74 chars and sit just under the floor |
+| `MissingBoard` / `MissingCanvas` / `MissingModule` | 3 | one missing-entity panel written three times |
+| `Field` | 2 | local label wrapper (`kind-forms.tsx`, `stat-block.tsx`) |
+| `getChunkByContentHash` | 2 | `creatureRepo` / `monsterResolve` spell the same lookup |
+| `on` | 3 | the same emitter add/delete in three runner/engine classes |
+| `levelDistance` / `duplicatedAcrossBooks` | 2 + 2 | `encounterItems` / `encounterRoster` copies |
+| `extensionOf` | 2 | `packFetch` / `packImport` copy it |
+| same-file pairs | 4 groups | `createModule`/`saveModule`, `onFetchProgress`/`onProgress`, `captureStageSnapshot`/`cloneStageSnapshot`, and `getArtifactStatBlock` defined twice in `runEngine.ts` |
+
+| fact pinned | where |
+|---|---|
+| **Non-vacuity: a copy that renamed the function and its parameters is ONE implementation** — the pin can see the thing it polices | `tests/architecture/no-duplicate-implementations.test.ts` (`synthetic.ts` bodies) |
+| **A near miss stays two functions** — `artifact.name` vs `entry.title` is not collapsed by the name-blanking | same |
+| **The floor is real** — two identical bodies below 75 normalized characters are not compared | same |
+| **The real `src/` population EQUALS the baseline exactly** — a new duplicate reds naming every `file:function:line` and the hash; a folded/renamed/moved baselined copy reds its stale entry | same (`scanRepo`) |
+
+**REVERT-PROVEN — two injections, baseline-only, each watched RED and restored
+from an out-of-tree copy (`/tmp/dup-baseline-backup2.json`; raw logs
+`/tmp/dup-inject-new2.log`, `/tmp/dup-inject-stale2.log`).** Both branches of the
+pin are watched, not assumed:
+
+| injection | result |
+|---|---|
+| **A — the seven-site `isRecord` baseline entry deleted** | **RED 1 / GREEN 3 (4)**: `NEW DUPLICATE — shared normalized body 601a24cbc975d090 (75 chars) is implemented at 7 sites:` followed by all seven `src/ingest/packs/…:isRecord:<line>` sites |
+| **B — a synthetic stale entry (`00000000deadbeef`) appended** | **RED 1 / GREEN 3 (4)**: `STALE BASELINE ENTRY — 00000000deadbeef […] no longer matches any duplicate group` |
+
+**What the tripwire cannot see, stated plainly.** It catches identical copies,
+not paraphrases: two implementations of one idea that differ by more than names
+and token whitespace (reordered statements, a different local variable, `===`
+for `!==`, string quote style, a different helper) are NOT caught, bodies below
+the floor are not compared, and anonymous callbacks and computed/numeric-only
+names are not extracted. It is a tripwire, not a proof; the §Centralization
+line plus obligation 2 remain the enforcement for paraphrases.
+
+**GATE — RAW NUMBERS.** `bash scripts/gate.sh` from the worktree, raw log
+`/tmp/dupgateB-1.log`, chunk logs `/tmp/gate-4020602/`: **GATE GREEN, exit 0 —
+334 files / 3945 tests**, `chunk arithmetic: 334 of 334 test files covered`,
+lint **0 errors**, typecheck clean, **no `Errors:` line**, peak RSS **1230 MB of
+the 3000 MB cap**; chunks `tests_lib 32/369 (832MB)`, `tests_llm 70/1152
+(871MB)`, `tests_db 32/366 (674MB)`, `tests_domain 22/309 (723MB)`,
+`tests_features 135/1329 (1230MB)`, `tests_remainder 43/420 (1179MB)`. Baseline
+at `7b390de` was **333 files / 3941 tests**, so this slice adds **+1 file / +4
+tests**, with no existing assertion weakened, no test skipped, and no `Errors:`
+line. **ONE RED RUN IS RECORDED HONESTLY:** the FIRST full gate
+(`/tmp/dupgate-25.log`) failed
+`tests/features/creature-portrait-agreement.test.tsx` on the console-hygiene
+act() guard (an `Update to BattleSurface … was not wrapped in act(...)` under
+load) — a file this slice does not touch; it passed 5/5 in isolation
+(`/tmp/dup-flake-check.log`) and the re-gate above was green, so it is a
+load-timing flake, not this landing.
+
 ### The canvas chat's two copies become ONE applier and ONE turn controller (docs/17 row 150, docs/18 §2.3)
 
 `snapshotChat.ts` carried byte-identical copies of two neighbouring modules, measured
