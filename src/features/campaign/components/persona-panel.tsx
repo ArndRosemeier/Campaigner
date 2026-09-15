@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -1545,12 +1546,7 @@ function FailedRunDetails({ run }: { run: PersonaRun }): JSX.Element {
 
   async function handleCopy(): Promise<void> {
     try {
-      // The DOM lib types `navigator.clipboard` as always present, but at
-      // runtime it is missing in insecure contexts and test environments —
-      // the widening cast states the truth the type cannot.
-      const clipboard = navigator.clipboard as Clipboard | undefined;
-      if (clipboard === undefined) throw new Error('Clipboard API is unavailable here');
-      await clipboard.writeText(run.errorMessage);
+      await copyText(run.errorMessage);
       setCopied(true);
       toastSuccess('Error copied to clipboard');
       setTimeout(() => {
@@ -1802,7 +1798,7 @@ function RunsList({
 
   async function handleCopy(text: string): Promise<void> {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyText(text);
       setCopied(true);
       toastSuccess('Report copied to clipboard');
       setTimeout(() => {

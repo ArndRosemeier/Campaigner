@@ -27,6 +27,7 @@ export interface CampaignTab {
  */
 export function appNavItems(): readonly NavItem[] {
   return [
+    { label: 'Idea Board', to: ROUTES.ideaBoard, end: true },
     { label: 'Rules', to: ROUTES.rules, end: false },
     { label: 'Settings', to: ROUTES.settings, end: false },
   ];

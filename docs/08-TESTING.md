@@ -454,6 +454,7 @@ test) · ❌ gap.
 | Surface (05-UI §) | Covered by | State |
 |---|---|---|
 | Top bar: nav links, campaign switcher, theme/language, no retired Play action | `app-shell.test`, `ui-smoke.test` | ✅ |
+| Idea Board (`/idea-board`): app-level route needing no campaign, literal plain-text document, refinement sidebar, copy button, Previous drafts | `idea-board.test` (docs/17 row 173) | ✅ |
 | Help button + dialog | `help.test` | ✅ |
 | Campaign picker: cards, create dialog, delete confirm | `campaign-picker.test` | ✅ |
 | Campaign picker: import dep-summary dialog (abort imports nothing, import-anyway lands `missing ref`) + Rules deep-link | `campaign-picker.test` (import dependencies) | ✅ |
@@ -4843,6 +4844,46 @@ chars ≈ 12,827 tokens** and DOES hit the cap (module text `[TRUNCATED]`, rows
 `[BLOCK FULL]`ed) where the pre-slice builder measured 6,231 chars ≈ 1,558
 tokens — the old prompt could not grow because every row was a single line. No
 existing assertion was weakened, no test skipped, no `Errors:` line.
+
+### The Idea Board is a standalone surface, and its text is never taken from the owner (docs/17 row 173, docs/21, docs/18 §2.1/§2.2/§2.3)
+
+The board is the first surface whose AUTHORED text is not campaign data, so its
+pins are about ownership of the text rather than generation outcomes. Four
+files, each with one job:
+
+- `tests/features/idea-board.test.tsx` (5) drives the REAL page with the
+  CodeMirror editor replaced by a textarea through the same `value`/`onChange`
+  contract (jsdom does not render CM6's content the way a browser does, and the
+  contract under test is the page's, not the editor's). It pins the two rules
+  that protect the owner's words: **typing during a request survives and is what
+  gets snapshotted when a suggestion is accepted** (type → send → type again →
+  resolve → accept → assert the suggestion landed and `Restore this draft`
+  brings back the mid-request text), and **a stopped or failed turn keeps the
+  INSTRUCTION while applying nothing** (the user turn is recorded before the
+  call; no reply is recorded, no proposal appears). It also pins a failed SAVE
+  keeping the draft in place with `Retry saving` clearing the error, and both
+  clipboard arms — success and an unavailable clipboard — through the mocked
+  seam. Wiki-links are typed and asserted LITERAL (`Original [[literal]]`): the
+  board resolves nothing, which is the whole difference from the module canvas.
+- `tests/db/ideaBoard.test.ts` (4) is the storage boundary: ONE board across
+  concurrent `getIdeaBoard()` calls, a conflicting save refused by name (the
+  compare-and-swap), two stored rows REFUSED rather than picked or discarded, an
+  invalid write rejected with the stored text intact, and the backup round-trip
+  — including a CORRUPTED board failing the restore BEFORE the wipe (the stored
+  text survives it) and a pre-v23 zip restoring with an empty board.
+- `tests/llm/ideaBoard.test.ts` (6, node project) is the contract boundary. It
+  asserts the emitted strict schema is expressible at all (`{kind:'schema',
+  name:'idea-board'}` with exactly `reply`/`document` — a `StrictSchemaError`
+  would leave the transport uncalled and red the same assertion), that the
+  request is grounded on the owner's document and instruction under that
+  contract, that an unset board model falls back to `settings.defaultChatModel`
+  while an explicit one wins, and the three loud refusals: whitespace-only
+  replacement, escape debris (the real `Flussm?fcndung` shape), and a reply that
+  is not the contracted JSON.
+- `tests/architecture/clipboard-seam.test.ts` (1) is the exactly-one pin: the
+  ONLY file under `src/` containing `.writeText(` is `lib/clipboard.ts`, and
+  `persona-panel.tsx`'s two folded call sites still call `copyText` — so a third
+  hand-rolled clipboard write reds instead of drifting.
 
 ### Remaining gaps
 

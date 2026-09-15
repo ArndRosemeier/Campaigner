@@ -30,6 +30,7 @@ export const ROUTES = {
   module: '/c/:campaignId/m/:moduleId',
   /** Rules library (books list + browser). */
   rules: '/rules',
+  ideaBoard: '/idea-board',
   /** Settings page. */
   settings: '/settings',
   /** Experiment lab (discreet dev surface, linked from Settings only). */

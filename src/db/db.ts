@@ -8,6 +8,7 @@ import type {
   ChunkEmbedding,
   CreatureImage,
   CreatureKeyFoldDropped,
+  IdeaBoard,
   CreatureKeyFoldReport,
   Module,
   MobPortraitCacheEntry,
@@ -236,6 +237,7 @@ export class CampaignerDB extends Dexie {
   mobPortraits!: Table<MobPortraitCacheEntry, Id>;
   moduleVersions!: Table<ModuleDocumentVersion, Id>;
   creatureImages!: Table<CreatureImage, Id>;
+  ideaBoards!: Table<IdeaBoard, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -1006,6 +1008,31 @@ export class CampaignerDB extends Dexie {
           creatureKeyFold: hasWork ? report : null,
         });
       });
+    // Version 23 (Idea Board): ONE app-level plain-text writing surface
+    // (`docs/21-IDEA-BOARD.md`). Additive — a database written before this
+    // version simply has no board row, and `ideaBoardRepo.getIdeaBoard`
+    // creates the single row on first open. No upgrade body: there is
+    // nothing to convert.
+    this.version(23).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: null,
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &creatureKey',
+      moduleVersions: 'id, moduleId, createdAt',
+      creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+      ideaBoards: 'id, updatedAt',
+      settings: 'id',
+    });
   }
 }
 

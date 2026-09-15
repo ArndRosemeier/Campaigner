@@ -15,6 +15,7 @@ import { RulesPage } from '@/features/rules/RulesPage';
 import { LabPage } from '@/features/lab/LabPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { GuidePage } from '@/features/guide/GuidePage';
+import { IdeaBoardPage } from '@/features/idea-board/IdeaBoardPage';
 
 /**
  * Builds the app's route table, per 05-UI.md §Routes. All pages render inside
@@ -48,6 +49,7 @@ export function createAppRouter(): AppRouter {
           { path: ROUTES.modules, element: <ModulesListPage /> },
           { path: ROUTES.module, element: <ModuleReaderPage /> },
           { path: ROUTES.rules, element: <RulesPage /> },
+          { path: ROUTES.ideaBoard, element: <IdeaBoardPage /> },
           { path: ROUTES.settings, element: <SettingsPage /> },
           { path: ROUTES.lab, element: <LabPage /> },
           { path: ROUTES.guide, element: <GuidePage /> },

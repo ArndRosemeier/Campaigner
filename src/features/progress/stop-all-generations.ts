@@ -1,4 +1,5 @@
 import type { Id } from '@/domain';
+import { stopIdeaBoard } from '@/features/idea-board/store';
 import { listCampaigns } from '@/db/campaignRepo';
 import { listModulesByCampaign } from '@/db/moduleRepo';
 import { cancelCanvasGenerations } from '@/llm/canvasBusy';
@@ -141,6 +142,7 @@ export async function stopAllGenerations(): Promise<{ stopped: number; reconcile
     chainWasRunning && !chainRunIds.some((id) => cancelledRunIds.includes(id)) ? 1 : 0;
 
   const stopped =
+    Number(stopIdeaBoard()) +
     mobJobs +
     entityJobs +
     mapJobs +

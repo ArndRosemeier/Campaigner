@@ -104,6 +104,11 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   place, kept true in the same commit as every landing and reconciled by
   `scripts/board.sh` against git, session logs and the host. History is
   `17`, seams are `18` — the board is neither.
+- `21-IDEA-BOARD.md` — the standalone plain-text writing surface (`/idea-board`):
+  one app-level document plus its refinement conversation, ordinary text with no
+  wiki-link resolution, a left chat sidebar, a copy button and Previous drafts;
+  which seams it reuses and why the module canvas chat is deliberately NOT one of
+  them. Built (docs/17 row 173).
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard

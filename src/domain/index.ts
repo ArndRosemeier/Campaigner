@@ -19,6 +19,7 @@ export * from '@/domain/encounterMap';
 export * from '@/domain/exportDependencies';
 export * from '@/domain/gameSystem';
 export * from '@/domain/image';
+export * from '@/domain/ideaBoard';
 export * from '@/domain/itemData';
 export * from '@/domain/module';
 export * from '@/domain/modulePartsDocument';

@@ -2,6 +2,7 @@ import { unzipSync, zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
 
 import { db } from '@/db/db';
+import { parseIdeaBoards } from '@/domain/ideaBoard';
 import { writeChunks } from '@/db/chunkRepo';
 import {
   anyArtifactSchema,
@@ -155,6 +156,7 @@ const OPTIONAL_TABLES: ReadonlySet<string> = new Set([
   'pdfFiles',
   'mobPortraits',
   'moduleVersions',
+  'ideaBoards',
   // `creatureImages` (per-campaign portraits of CITED creatures, docs/11 D5
   // amendment) landed after backup v1: a pre-v20 zip carries none, and an
   // empty presentation tier is exactly what that database had — every cited
@@ -195,6 +197,7 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
   }
   // Validate current authored/play schemas up front so a pre-v11 backup with
   // retired session rows or session-anchored battles fails before the wipe.
+  parsed.data.ideaBoards = parseIdeaBoards(parsed.data.ideaBoards ?? []);
   for (const row of parsed.data.settings ?? []) settingsSchema.parse(row);
   for (const row of parsed.data.artifacts ?? []) anyArtifactSchema.parse(row);
   for (const row of parsed.data.battles ?? []) battleSchema.parse(row);

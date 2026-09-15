@@ -1,5 +1,5 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { EditorView } from '@codemirror/view';
+import { plainEditorTheme } from '@/lib/editorTheme';
 import { tags as t } from '@lezer/highlight';
 
 /**
@@ -10,34 +10,7 @@ import { tags as t } from '@lezer/highlight';
  * uses for the chips. Exported as a plain spec so tests can pin the tokens
  * (jsdom computes no styles).
  */
-export const canvasThemeSpec = {
-  '&': {
-    backgroundColor: 'var(--card)',
-    color: 'var(--card-foreground)',
-  },
-  '&.cm-focused': {
-    outline: '1px solid var(--ring)',
-  },
-  '& .cm-content': {
-    caretColor: 'var(--foreground)',
-  },
-  '& .cm-scroller': {
-    fontFamily: 'var(--font-sans, inherit)',
-    lineHeight: '1.7',
-  },
-  '& .cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'color-mix(in oklab, var(--primary) 22%, transparent)',
-  },
-  '& .cm-cursor, & .cm-dropCursor': {
-    borderLeftColor: 'var(--foreground)',
-  },
-  '& .cm-activeLine': {
-    backgroundColor: 'color-mix(in oklab, var(--muted) 45%, transparent)',
-  },
-  '& .cm-activeLineGutter': {
-    backgroundColor: 'color-mix(in oklab, var(--muted) 45%, transparent)',
-  },
-};
+export { editorThemeSpec as canvasThemeSpec } from '@/lib/editorTheme';
 
 /** Markdown highlighting on app tokens — restrained, theme-following. */
 export const canvasHighlightStyle = HighlightStyle.define([
@@ -54,6 +27,6 @@ export const canvasHighlightStyle = HighlightStyle.define([
 
 /** The full theme extension wired into the canvas editor. */
 export const canvasTheme = [
-  EditorView.theme(canvasThemeSpec),
+  plainEditorTheme,
   syntaxHighlighting(canvasHighlightStyle),
 ];

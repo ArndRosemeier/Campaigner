@@ -27,11 +27,11 @@ must stay ONE SCREEN — a record that no longer describes the present belongs i
 ## Board
 
 ```
-reconciled: 109bc9b · 2026-09-15T11:31Z
+reconciled: a5be05f · 2026-09-15T13:30Z
 
-SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | note=first session under this board; predecessor session-e5adac67 became unrecoverable (compaction of a 35MB, ~374-turn log)
+SESSION  | cos=session-f7c658e6-c56b-444f-b956-865d5803f9b0 | started=2026-09-15 | note=successor to session-93cd9c40; reconciled against origin/main + scripts/board.sh at a5be05f (no writers in flight, suite lock free, MemAvailable ~11.9GB)
 
-IN-FLIGHT | none | note=row 172 verified and landing; no writer in flight
+IN-FLIGHT | writer=session-f7c658e6 (this session, row 173 Idea Board) | tree=main (SOLE writer — no worktree, no other our-writer in flight) | note=the slice's FIRST writer (cf914bd5) died before finishing and left 16 files UNCOMMITTED with no branch and no commit; salvage-checked by reading every file, then re-verified as a fresh landing (typecheck red on IdeaBoardPatch, the typed-instruction loss, and an untested LLM boundary — all fixed) — gate + landing pending
 
 TRAP | what=stale-queue | how=this board's first AWAITING-OWNER list was COPIED from the predecessor's compaction summary and three of its four items were ALREADY BUILT and deployed (claimA-pdf = docs/17 row 157, claimA-app = row 158 with the owner's verbatim "Yes — render tables in the app as well", claimB-roster = row 159); two writers were nearly dispatched to rebuild shipped work | check=re-derive the queue from the TREE at brief time — docs/18 §5 (known debt at HEAD) + the arc docs' build order — and verify each item against HEAD before writing a brief; a pending list in a summary is a HINT, never a queue
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count
