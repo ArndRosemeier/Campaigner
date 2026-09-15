@@ -35,6 +35,20 @@ import { errorMessage } from '@/lib/errors';
  * `HardnessHPBT52010`. docs/17 row 149 carries the per-lane evidence table,
  * the rejected lanes and the re-import instruction.
  *
+ * ## Row 170 changed bytes for three more lanes, on the same accepted consequence
+ *
+ * The three notation residues row 149 found and RECORDED rather than bundled
+ * are repaired here (docs/17 row 170): `@Embed`'s space-separated option list
+ * is dropped by rule, `&Reference[…]` resolves case-insensitively, and a
+ * nested-bracket damage formula is read BALANCED instead of truncated at the
+ * first `]`. Each is a rule the shared `@`-notation (or the dnd5e prelude) did
+ * not have; the output changes for exactly three fixture entries
+ * (`dnd5e-equipment/bag-of-beans`, `dnd5e/saber-toothed-tiger`,
+ * `pf2e-rules/acid-splash`), and the re-import consequence above applies to
+ * those entries' citations unchanged. The retired `at-label-last` notation
+ * shares the `@`-rule, so it moves with it — its job is the pre-row-149 BRACE
+ * and TABLE bytes, which it still states.
+ *
  * ## The two axes
  *
  * The axes are independent dimensions of "turn this document's HTML into
@@ -91,6 +105,13 @@ import { errorMessage } from '@/lib/errors';
  *   rule above for any remaining `@`-notation `{Label}` form. The prelude stays
  *   first because `[[…]]` is not `@`-notation; the brace rule is shared, not
  *   copied, because a `{Label}` suffix means the same thing in both dialects.
+ *   **The `&reference[…]` rule is CASE-INSENSITIVE (docs/17 row 170)**: the
+ *   corpus spells the link `&amp;Reference[prone]`
+ *   (`dnd5e/saber-toothed-tiger.yml`), and a case-sensitive rule matched
+ *   neither the `R` nor left the `&`-encoded form, so a real fixture stored
+ *   `&Reference[prone]` VERBATIM. The reference KEY is not case-bearing — the
+ *   target is a lowercase condition slug — so the one `i` flag is a rule fix,
+ *   not a declaration change.
  */
 export type HtmlNotation = 'at-label-last' | 'at-brace-label' | 'bracket-links';
 
@@ -147,10 +168,11 @@ export interface HtmlToTextStyle {
  */
 
 /** dnd5e item/creature descriptions — the dialect with its own prelude: the
- *  `[[…]]{L}` / `[[…|l]]` / `&reference[…]` rules resolve first, then the
- *  shared `{Label}` rule for `@`-notation, then the target's last segment;
- *  line breaks only (`blockAware: false`, measured: no `<table>` markup exists
- *  in any dnd5e fixture, so no dnd5e lane asked for the table rule). */
+ *  `[[…]]{L}` / `[[…|l]]` / `&reference[…]` rules resolve first (the reference
+ *  rule case-INSENSITIVELY since docs/17 row 170), then the shared `{Label}`
+ *  rule for `@`-notation, then the target's last segment; line breaks only
+ *  (`blockAware: false`, measured: no `<table>` markup exists in any dnd5e
+ *  fixture, so no dnd5e lane asked for the table rule). */
 export const BRACKET_LINKS_LINE_BREAKS: HtmlToTextStyle = {
   notation: 'bracket-links',
   blockAware: false,
@@ -178,6 +200,56 @@ const ENTITIES: readonly (readonly [RegExp, string])[] = [
 /** The block closers that break a line when `blockAware` is on. */
 const BLOCK_CLOSERS = /<\/(p|h[1-6]|li|blockquote|div|caption|table)>/gi;
 
+/** The `@`-notation KINDS whose bracket content is not a dotted target. */
+const EMBED_KIND = 'Embed';
+const DAMAGE_KIND = 'Damage';
+
+/** A dotted target's LAST segment — `a.b.C` → `C`. */
+function lastDottedSegment(target: string): string {
+  return target.split('.').pop() ?? '';
+}
+
+/**
+ * The `[...]` group whose `[` sits at `open`, read to the bracket that CLOSES
+ * it — nested groups do not end the outer one. `null` when it never closes.
+ */
+function bracketGroup(
+  source: string,
+  open: number,
+): { readonly inner: string; readonly end: number } | null {
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '[') depth += 1;
+    else if (char === ']') {
+      depth -= 1;
+      if (depth === 0) return { inner: source.slice(open + 1, index), end: index + 1 };
+    }
+  }
+  return null;
+}
+
+/**
+ * What ONE `@Type[inner]` link resolves to, on the shared `@`-notation rule.
+ *
+ * The default is the target's LAST dotted segment (after the `|…` tail is
+ * dropped). Two kinds are not dotted targets and carry their own rule — read
+ * them in `resolveAtLabelLast`'s doc comment below, which is also where the
+ * examples and the reason each drop is allowed live.
+ */
+function resolveAtTarget(kind: string, inner: string): string {
+  if (kind === EMBED_KIND) {
+    const [reference = ''] = inner.trim().split(/\s+/);
+    return lastDottedSegment(reference);
+  }
+  if (kind === DAMAGE_KIND) {
+    // The bracketed damage-TYPE sets are machine descriptors; the formula
+    // between/around them is the link's display text.
+    return inner.replace(/\[[^\]]*\]/g, '').trim();
+  }
+  return lastDottedSegment(inner.split('|')[0] ?? '');
+}
+
 /**
  * `@Type[target|…]` → the target's LAST dotted segment.
  *
@@ -185,12 +257,65 @@ const BLOCK_CLOSERS = /<\/(p|h[1-6]|li|blockquote|div|caption|table)>/gi;
  * A `{Label}` suffix is deliberately NOT matched here: it is `resolveBraceLabels`
  * below that owns the brace form, so this rule and that one compose in the
  * order each notation needs.
+ *
+ * ## The brackets are read BALANCED, and two KINDS carry more than a target
+ * (docs/17 row 170)
+ *
+ * The scan below finds `@Type[` and then reads to the bracket that CLOSES that
+ * opening, honouring nested groups, instead of stopping at the first `]`. That
+ * is what makes a PF2e damage formula readable at all: the old first-`]` rule
+ * captured `@Damage[(ceil(@item.level/2)` from
+ * `@Damage[(ceil(@item.level/2))[persistent,acid]]` and then split it on the
+ * dot inside `@item.level`, storing `level/2))[persistent,acid]` — debris from
+ * the MIDDLE of the expression, which is exactly what the fixture pin for
+ * `pf2e-rules/acid-splash.json` used to assert.
+ *
+ * Two kinds are not dotted document targets, and each has its own rule here,
+ * in the ONE shared `@`-rule rather than in a dialect prelude — both are
+ * properties of the `@`-notation grammar, and `resolveAtLabelLast` is what all
+ * three declared notations call:
+ *
+ * - `@Embed[<target> <option>…]` — Foundry core's document EMBED, which the
+ *   dnd5e corpus carries (`dnd5e-equipment/bag-of-beans.yml`). Its inner text
+ *   is the document reference followed by a SPACE-separated option list
+ *   (`rollable caption=false`), so the first whitespace-delimited token is the
+ *   target and the option list is dropped **by rule**: the options configure
+ *   HOW the embed renders and carry no prose of their own. The target still
+ *   resolves by the last-dotted-segment rule, so
+ *   `Compendium.dnd5e.tables24.RollTable.dmgBagOfBeansEff rollable
+ *   caption=false` → `dmgBagOfBeansEff`.
+ * - `@Damage[<formula>[<type>,…]]` — PF2e's damage link. Its display text is
+ *   the FORMULA, and the bracketed damage-TYPE sets are machine descriptors, so
+ *   they are removed **by rule** and the formula is kept verbatim:
+ *   `@Damage[(ceil(@item.level/2))[persistent,acid]]` →
+ *   `(ceil(@item.level/2))`. A shorthand reference inside a formula
+ *   (`@item.level`) is the source's own expression and stays as it stands: this
+ *   rule unwraps the LINK, it does not evaluate arithmetic.
+ *
+ * The option-list split is scoped to `@Embed` and NOT applied to every kind,
+ * because a legitimate UUID target may itself contain spaces —
+ * `@UUID[Compendium.pf2e.spells-srd.Item.Peaceful Rest]` and
+ * `@UUID[Compendium.pf2e.other-effects.Item.Effect: Aid]` both live in the
+ * fixtures, and a generic whitespace split would store `Peaceful`/`Effect:`.
  */
 function resolveAtLabelLast(html: string): string {
-  return html.replace(/@(\w+)\[([^\]]*)\]/g, (_match, _kind: string, inner: string) => {
-    const beforePipe = inner.split('|')[0] ?? '';
-    return beforePipe.split('.').pop() ?? '';
-  });
+  const opener = /@(\w+)\[/g;
+  let out = '';
+  let cursor = 0;
+  for (let match = opener.exec(html); match !== null; match = opener.exec(html)) {
+    const open = match.index + match[0].length - 1;
+    const group = bracketGroup(html, open);
+    out += html.slice(cursor, match.index);
+    if (group === null) {
+      // Unterminated: no rule applies, so the rest is kept VERBATIM (the old
+      // regex left it untouched too).
+      return out + html.slice(match.index);
+    }
+    out += resolveAtTarget(match[1] ?? '', group.inner);
+    cursor = group.end;
+    opener.lastIndex = group.end;
+  }
+  return out + html.slice(cursor);
 }
 
 /**
@@ -230,7 +355,7 @@ function resolveNotation(html: string, notation: HtmlNotation): string {
               const segments = inner.split('|');
               return segments.length > 1 ? (segments[segments.length - 1] ?? '') : '';
             })
-            .replace(/&(amp;)?reference\[([^\]]*)\]/g, '$2'),
+            .replace(/&(amp;)?reference\[([^\]]*)\]/gi, '$2'),
         ),
       );
   }

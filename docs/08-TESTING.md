@@ -3181,6 +3181,79 @@ prove the new bytes are RIGHT for a document the fixtures do not contain (a real
 PF2e table without `<thead>`/`<tbody>`, for instance, still runs its rows
 together on one line, which the sample pin states as the measured `\s*`
 swallow).
+
+### The three notation residues drop BY RULE (docs/17 row 170, docs/18 §2.2/§5)
+
+Row 149 repaired the brace/table corruption and RECORDED three notation
+residues in the stored text of real fixtures rather than bundling them: each
+needed a rule the shared `@`-notation seam did not have. This landing adds the
+three rules — in `src/ingest/packs/text.ts`, the ONE seam — and FLIPS the pins
+that asserted the residues as current behaviour.
+
+**The three rules, each written beside the rule it changes, with its before →
+after.** Nothing is dropped silently: each drop is what the stated rule says
+it is.
+
+| residue (fixture) | rule added | stored before → after |
+|---|---|---|
+| `@Embed[Compendium.dnd5e.tables24.RollTable.dmgBagOfBeansEff rollable caption=false]` (`dnd5e-equipment/bag-of-beans.yml`) | the bracket content is read BALANCED (`bracketGroup`), and `@Embed`'s inner is `<target> <option>…`: the first whitespace-delimited token is the target, the option list is dropped **by rule** (the options configure how the embed renders and carry no prose). The split is scoped to the `@Embed` KIND | `dmgBagOfBeansEff rollable caption=false` → `dmgBagOfBeansEff` |
+| `&Reference[prone]` (`dnd5e/saber-toothed-tiger.yml`) | the dnd5e prelude's `&(amp;)?reference[…]` rule gains the `i` flag — a rule fix, not a declaration change (the reference key is not case-bearing) | `&Reference[prone]` → `prone` |
+| `@Damage[(ceil(@item.level/2))[persistent,acid]]` (`pf2e-rules/acid-splash.json`) | the same balanced scan keeps a `@Damage` formula VERBATIM and drops the damage-TYPE sets **by rule** (machine descriptors, not prose); a shorthand inside the formula (`@item.level`) stays as the source wrote it | `level/2))[persistent,acid]` → `(ceil(@item.level/2))` |
+
+The `@Embed` scoping is a pinned DECISION, not an implementation detail: two
+real UUID targets CONTAIN a space (`Item.Peaceful Rest` in `anointing-oil.json`,
+`Item.Effect: Aid` in `aid.json`), so a whitespace split applied to every
+`@`-notation would store `Peaceful` / `Effect:`. The differential row
+`space inside a uuid target` is that non-regression pin; the `anointing-oil`
+whole-`text` pin and the `foundry-pf2e-equipment` lane digest hold it too.
+
+| fact pinned | where |
+|---|---|
+| **The rules as differential rows, exact bytes** — `embed argument list`, `nested-bracket damage formula` and `space inside a uuid target` (all three behaviours agree: these are `@`-grammar rules, not a dialect), plus `uppercase reference form` (a declared divergence: the prelude is dnd5e-only). 17 → 21 cases, 10/7 → 11/10 declared-divergent/agreeing | `tests/ingest/packs/html-to-text.test.ts` (the `SHARED_SAMPLE` `it.each`) |
+| **One fixture pin per residue, through the real adapter** — `bag-of-beans.yml` asserts `…(click to expand)dmgBagOfBeansEff\n` and that `rollable caption=false` is ABSENT (the old assertion FLIPPED); `saber-toothed-tiger.yml` asserts `or be knocked prone.` and that `&Reference[prone]` is ABSENT (FLIPPED); `acid-splash.json` asserts `the target also takes (ceil(@item.level/2)) damage.` and that `level/2))[persistent,acid]` is ABSENT — this residue had NO pin before | same file (3 pins; 2 flipped, 1 NEW) |
+| **Every lane's emitted text, hashed** — the three residue carriers move ONE entry each (`foundry-dnd5e-equipment`, `foundry-dnd5e-srd` and `foundry-pf2e-rules`, the only lane row 149 declared unchanged that moves here); `foundry-pf2e`, `-journal`, `-conditions` and `-equipment` are asserted byte-identical to their pre-row-149 digest, so their bytes moved in NEITHER landing | same file (the `LANES` `it.each`) |
+
+**REVERT-PROVEN — three injections, one per rule, each on the exact executing
+line, `git diff --stat` printed back BEFORE its run, restored from an
+OUT-OF-TREE copy `/tmp/notation-logs/text.ts.orig` (NEVER `git checkout --`)
+and proved byte-identical with `git hash-object`
+`d2b9b769ab00c1b9cc6e9f840c92da67a677cd00`; raw logs in `/tmp/notation-logs/`.
+Each red set is exactly its OWN residue, so the proof is PER-RULE:**
+
+| injection | line it hits | result |
+|---|---|---|
+| **A — the `@Embed` rule disabled** (`if (false && kind === EMBED_KIND)`) | `src/ingest/packs/text.ts` (`resolveAtTarget`) | **RED 3 / GREEN 43**: `embed argument list`, the `bag-of-beans` fixture pin and the `foundry-dnd5e-equipment` lane digest |
+| **B — the `@Damage` rule disabled** (`if (false && kind === DAMAGE_KIND)`) | same | **RED 3 / GREEN 43**: `nested-bracket damage formula`, the `acid-splash` pin and the `foundry-pf2e-rules` lane digest |
+| **C — the `&reference[…]` `gi` flag reverted to `g`** | `src/ingest/packs/text.ts` (the prelude) | **RED 3 / GREEN 43**: `uppercase reference form`, the `saber-toothed-tiger` pin and the `foundry-dnd5e-srd` lane digest |
+
+**WATCHED RED BEFORE GREEN, both directions.** The two OLD residue assertions
+(`toContain('dmgBagOfBeansEff rollable caption=false')`,
+`toContain('&Reference[prone]')`) were run FIRST, against the fixed code, and
+both went RED (raw log `/tmp/notation-logs/flip-proof.log`) — "the pin flipped"
+is a watched event, not a claim. The nested-bracket residue had no old pin to
+watch; its injection (B) is the red proof.
+
+**What this landing's pins cannot prove.** The new rules are measured against
+the three REAL fixtures only; a real `@Embed`/`@Damage` document the fixtures do
+not contain (a multi-instance `@Damage[a[…],b[…]]`, for instance) is decided by
+the same rule but not measured. And the ONE survivor in this family is declared,
+not fixed: the SYNTHETIC `&reference[x]{Ruling}` differential case
+(`reference form`) still stores `x{Ruling}`, because the prelude replaces the
+link with its target before the brace rule runs — no fixture carries that shape,
+so it stays recorded (docs/18 §5).
+
+**GATE — RAW NUMBERS.** `bash scripts/gate.sh` from the worktree, raw log
+`/tmp/notation-logs/gate.log`, chunk logs `/tmp/gate-3919225/`:
+**GATE GREEN, exit 0 — 333 files / 3935 tests**, `chunk arithmetic: 333 of 333
+test files covered`, lint **0 errors**, typecheck clean, **no `Errors:` line**,
+peak RSS **1263 MB of the 3000 MB cap**; chunks `tests_lib 32/369 (859MB)`,
+`tests_llm 70/1146 (902MB)`, `tests_db 32/366 (694MB)`,
+`tests_domain 22/309 (700MB)`, `tests_features 135/1329 (1263MB)`,
+`tests_remainder 42/416 (1140MB)`. Baseline at `df104e3` was **333 files / 3930
+tests**, so this slice adds **+0 files / +5 tests** (`html-to-text.test.ts`
+41 → 46: four differential rows and one new fixture pin), with no existing
+assertion weakened, no test skipped, and no `Errors:` line.
+
 ### The canvas chat's two copies become ONE applier and ONE turn controller (docs/17 row 150, docs/18 §2.3)
 
 `snapshotChat.ts` carried byte-identical copies of two neighbouring modules, measured

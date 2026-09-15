@@ -43,6 +43,20 @@
  * retired-behaviour assertion beside them. The pins whose VALUES moved are
  * named in docs/08 §One HTML→text seam.
  *
+ * ## Row 170 flips the three notation residues row 149 RECORDED
+ *
+ * Row 149 found three more residues in the same class, pinned them as CURRENT
+ * behaviour with their fixture lines, and deliberately did not bundle them
+ * (each needed a rule the seam did not have). This is that slice (docs/17 row
+ * 170): `@Embed`'s space-separated option list, the dnd5e prelude's
+ * case-sensitive `&reference[…]`, and the first-`]` truncation of a
+ * nested-bracket `@Damage`. The pins that asserted the residues (the
+ * `bag-of-beans.yml` / `saber-toothed-tiger.yml` fragments) FLIP here, the
+ * nested-bracket residue gets the fixture pin it never had, and the rules are
+ * stated as four new `SHARED_SAMPLE` rows. The three fixture entries whose
+ * stored bytes move are the three residue carriers — every other lane's digest
+ * is unchanged and asserted as unchanged.
+ *
  * ## What this file CANNOT prove
  *
  * No test can show that a future adapter author will not write copy nine: the
@@ -254,14 +268,14 @@ const SHARED_SAMPLE: readonly SampleCase[] = [
     declaredDivergence: true,
   },
   {
-    // STILL DECLARED RESIDUE, and deliberately NOT repaired by row 149: the
-    // dnd5e dialect's `&reference[…]` rule runs in its prelude, so the target is
-    // kept and a `{Label}` written after it stays in the text. No dnd5e fixture
-    // carries this shape; the related real one is `&Reference[prone]`
-    // (`tests/fixtures/packs/dnd5e/saber-toothed-tiger.yml`), which the
-    // prelude's case-SENSITIVE rule does not match either. Both are recorded in
-    // docs/17 row 149 as open work — with the fixture line as evidence — rather
-    // than quietly fixed behind a fixture nobody has.
+    // STILL DECLARED RESIDUE (row 149), and NOT what row 170 fixed: the dnd5e
+    // dialect's `&reference[…]` rule runs in its prelude, so the target is kept
+    // and a `{Label}` written after it stays in the text. No dnd5e fixture
+    // carries THIS shape — the fixture residue was the case-SENSITIVE spelling
+    // `&Reference[prone]` (`tests/fixtures/packs/dnd5e/saber-toothed-tiger.yml`),
+    // which row 170 repaired by adding the prelude rule's `i` flag (the
+    // `uppercase reference form` case below). The `{Ruling}` tail is a
+    // different, synthetic shape with no fixture, so it stays as recorded.
     label: "reference form",
     html: "<p>&reference[Compendium.dnd5e.rules.x]{Ruling}</p>",
     expected: {
@@ -334,18 +348,83 @@ const SHARED_SAMPLE: readonly SampleCase[] = [
     },
     declaredDivergence: true,
   },
+  {
+    // ROW 170. `@Embed` is a third `@`-notation kind, not a dnd5e bracket link:
+    // its bracket content is the target followed by a SPACE-separated option
+    // list, so the shared `@`-rule resolves the first token and drops the
+    // options BY RULE. It is a property of the `@`-grammar, which is why all
+    // THREE behaviours agree here and why the rule lives in the seam rather
+    // than in a prelude (the fixture is `dnd5e-equipment/bag-of-beans.yml`, and
+    // its fragment pin below asserts the same bytes end to end).
+    label: "embed argument list",
+    html: "<p>@Embed[Compendium.dnd5e.tables24.RollTable.dmgBagOfBeansEff rollable caption=false]</p>",
+    expected: {
+      BRACKET_LINKS_LINE_BREAKS: "dmgBagOfBeansEff",
+      AT_BRACE_LABEL_BLOCK_AND_TABLE: "dmgBagOfBeansEff",
+      RETIRED_AT_LABEL_LAST_LINE_BREAKS: "dmgBagOfBeansEff",
+    },
+    declaredDivergence: false,
+  },
+  {
+    // ROW 170. The nested-bracket PF2e damage formula. The brackets are read
+    // BALANCED (the old rule stopped at the first `]` and split on the dot
+    // inside `@item.level`, storing `level/2))[persistent,acid]`), the formula
+    // is kept verbatim, and the bracketed damage-TYPE set is dropped BY RULE.
+    // The fixture is `pf2e-rules/acid-splash.json`, pinned below.
+    label: "nested-bracket damage formula",
+    html: "<p>@Damage[(ceil(@item.level/2))[persistent,acid]]</p>",
+    expected: {
+      BRACKET_LINKS_LINE_BREAKS: "(ceil(@item.level/2))",
+      AT_BRACE_LABEL_BLOCK_AND_TABLE: "(ceil(@item.level/2))",
+      RETIRED_AT_LABEL_LAST_LINE_BREAKS: "(ceil(@item.level/2))",
+    },
+    declaredDivergence: false,
+  },
+  {
+    // ROW 170. The dnd5e corpus spells the reference link `&Reference[prone]`
+    // (`dnd5e/saber-toothed-tiger.yml`); the prelude's rule now carries the `i`
+    // flag, so the uppercase spelling resolves exactly like the lowercase one.
+    // This is a PRELUDE rule, so the other two behaviours keep the text
+    // literally — a declared divergence, not a merge.
+    label: "uppercase reference form",
+    html: "<p>&Reference[prone]</p>",
+    expected: {
+      BRACKET_LINKS_LINE_BREAKS: "prone",
+      AT_BRACE_LABEL_BLOCK_AND_TABLE: "&Reference[prone]",
+      RETIRED_AT_LABEL_LAST_LINE_BREAKS: "&Reference[prone]",
+    },
+    declaredDivergence: true,
+  },
+  {
+    // ROW 170 NON-REGRESSION, and the case that would have caught the WRONG
+    // fix for `@Embed`: a UUID target may itself contain a space
+    // (`anointing-oil.json`'s `Peaceful Rest`, `aid.json`'s `Effect: Aid`), so
+    // the option-list split is scoped to `@Embed` and must NOT be applied to
+    // every `@`-notation. All three behaviours keep the whole target.
+    label: "space inside a uuid target",
+    html: "<p>casts @UUID[Compendium.pf2e.spells-srd.Item.Peaceful Rest] on it</p>",
+    expected: {
+      BRACKET_LINKS_LINE_BREAKS: "casts Peaceful Rest on it",
+      AT_BRACE_LABEL_BLOCK_AND_TABLE: "casts Peaceful Rest on it",
+      RETIRED_AT_LABEL_LAST_LINE_BREAKS: "casts Peaceful Rest on it",
+    },
+    declaredDivergence: false,
+  },
 ];
 
 describe('the shared sample table: every declared style, exact bytes', () => {
-  it('has 17 cases and every one is reachable by all three behaviours', () => {
-    expect(SHARED_SAMPLE).toHaveLength(17);
+  it('has 21 cases and every one is reachable by all three behaviours', () => {
+    expect(SHARED_SAMPLE).toHaveLength(21);
     expect(Object.keys(STYLES)).toHaveLength(2);
     expect(Object.keys(BEHAVIOURS)).toHaveLength(3);
     // Non-vacuity, both halves: the divergence half must have something to say,
     // and so must the AGREEMENT half (so a future style cannot detach a case
-    // every behaviour agrees on today and call it declared).
-    expect(SHARED_SAMPLE.filter((sample) => sample.declaredDivergence).length).toBe(10);
-    expect(SHARED_SAMPLE.filter((sample) => !sample.declaredDivergence).length).toBe(7);
+    // every behaviour agrees on today and call it declared). Row 170 added
+    // three agreement cases (`@Embed`, the damage formula, the space-in-UUID
+    // non-regression) and one declared divergence (the uppercase reference,
+    // which is a prelude rule).
+    expect(SHARED_SAMPLE.filter((sample) => sample.declaredDivergence).length).toBe(11);
+    expect(SHARED_SAMPLE.filter((sample) => !sample.declaredDivergence).length).toBe(10);
   });
 
   it.each(SHARED_SAMPLE.map((sample) => [sample.label, sample] as const))(
@@ -620,28 +699,50 @@ describe('the stored bytes of a real fixture — those bytes ARE the content has
    * fixture proves it. This is the lane whose declaration did NOT change — its
    * GRAMMAR did: `@UUID[…]{nonmagical item}` used to store the target's last
    * dotted segment followed by the residue.
+   *
+   * ROW 170 FLIPPED the last assertion: the `@Embed` option list used to be
+   * stored (`dmgBagOfBeansEff rollable caption=false` — row 149's recorded
+   * residue) and is now dropped BY RULE, leaving the target's last segment.
    */
-  it('bag-of-beans.yml (dnd5e) stores the RESOLVED brace label — the same defect, its own dialect', async () => {
+  it('bag-of-beans.yml (dnd5e) stores the RESOLVED brace label and the @Embed TARGET, not its option list', async () => {
     const items = await laneTexts('dnd5e-equipment', 'foundry-dnd5e-equipment');
     const beans = items.find((entry) => entry.name === 'Bag of Beans');
     expect(beans?.text).toContain('becomes a nonmagical item when it no longer contains any beans.');
     expect(beans?.text).not.toContain('phbagPouch000000{nonmagical item}');
-    // Deliberately STILL there, and RECORDED rather than fixed (docs/17 row
-    // 149): `@Embed[…]` is a third dnd5e notation with no rule in the seam.
-    expect(beans?.text).toContain('dmgBagOfBeansEff rollable caption=false');
+    // The ROW 170 flip, both directions: the embed target survives with its
+    // surrounding prose, and the space-separated option list is GONE.
+    expect(beans?.text).toContain('Bag of Beans Effect (click to expand)dmgBagOfBeansEff\n');
+    expect(beans?.text).not.toContain('rollable caption=false');
+    expect(beans?.text).not.toContain('dmgBagOfBeansEff rollable');
   });
 
-  it('saber-toothed-tiger.yml (dnd5e creature) stores the RESOLVED brace label', async () => {
+  it('saber-toothed-tiger.yml (dnd5e creature) stores the RESOLVED brace label and the case-insensitive reference', async () => {
     const entries = await laneTexts('dnd5e', 'foundry-dnd5e-srd');
     const tiger = entries.find((entry) => entry.name === 'Saber-Toothed Tiger');
     expect(tiger?.text).toContain('it with a claw attack on the same turn');
     expect(tiger?.text).not.toContain('7GCnVtakQo6iZyn7{claw}');
-    // …and this residue is NOT fixed here: the prelude's `&reference[…]` rule is
-    // case-SENSITIVE, so `&Reference[prone]` — the corpus' own spelling —
-    // survives. Recorded as open work in docs/17 row 149 with this fixture line
-    // as its evidence; the pin sits here so the day it is fixed, this is the
-    // assertion that changes.
-    expect(tiger?.text).toContain('&Reference[prone]');
+    // ROW 170 FLIPPED this: the prelude's `&reference[…]` rule carries the `i`
+    // flag, so the corpus' own `&amp;Reference[prone]` resolves to the bare
+    // target instead of surviving verbatim as `&Reference[prone]`.
+    expect(tiger?.text).toContain('or be knocked prone.');
+    expect(tiger?.text).not.toContain('&Reference[prone]');
+    expect(tiger?.text).not.toContain('&amp;Reference');
+  });
+
+  /**
+   * ROW 170's third residue, and it had NO fixture pin at all (docs/18 §5 said
+   * so): the nested-bracket PF2e damage formula. The old first-`]` rule stored
+   * `level/2))[persistent,acid]` — debris from the middle of the expression;
+   * the balanced scan keeps the formula and drops the damage-TYPE set by rule.
+   * The pin runs through the real `pf2e-rules` adapter, so it is the STORED
+   * bytes (and therefore the content hash) that are asserted.
+   */
+  it('acid-splash.json (pf2e rules) stores the nested damage FORMULA, not a fragment — the pin row 149 could not add', async () => {
+    const rules = await laneTexts('pf2e-rules', 'foundry-pf2e-rules');
+    const acid = rules.find((entry) => entry.name === 'Acid Splash');
+    expect(acid?.text).toContain('the target also takes (ceil(@item.level/2)) damage.');
+    expect(acid?.text).not.toContain('level/2))[persistent,acid]');
+    expect(acid?.text).not.toContain('[persistent,acid]');
   });
 
   /**
@@ -692,6 +793,23 @@ describe('the stored bytes of a real fixture — those bytes ARE the content has
  * - `foundry-dnd5e-srd`       CHANGED (1 of 13 entries: saber-toothed-tiger)
  * - `foundry-pf2e-equipment`  CHANGED (2 of 11: anointing-oil, steel-shield)
  * - `foundry-dnd5e-equipment` CHANGED (1 of 7: bag-of-beans)
+ *
+ * THE ROW-170 RECORD, the same harness, `after` moved only for the three
+ * residue carriers — one entry each, and the only lanes allowed to move here:
+ *
+ * - `foundry-pf2e-rules`      CHANGED (1 of 4: acid-splash — the nested
+ *                             `@Damage` formula; the ONE lane row 149 declared
+ *                             unchanged that moves now)
+ * - `foundry-dnd5e-srd`       CHANGED again (saber-toothed-tiger: the
+ *                             case-insensitive `&Reference[prone]` resolves)
+ * - `foundry-dnd5e-equipment` CHANGED again (bag-of-beans: the `@Embed` option
+ *                             list is dropped)
+ * - `foundry-pf2e`, `-journal`, `-conditions`, `-equipment` UNCHANGED — each
+ *   asserted as unchanged because its `before === after`
+ *
+ * `before` stays the PRE-ROW-149 digest: for an unchanged lane it is asserted
+ * equal to the running digest (so "this lane never moved, in either landing"
+ * is checkable), and for a changed lane the pin is the `after` value alone.
  */
 const LANES: readonly {
   readonly adapterId: string;
@@ -699,7 +817,7 @@ const LANES: readonly {
   readonly entries: number;
   /** The digest BEFORE row 149 — kept so the unchanged claim is checkable. */
   readonly before: string;
-  /** The digest this landing requires. */
+  /** The digest this landing (row 170) requires. */
   readonly after: string;
 }[] = [
   {
@@ -714,7 +832,7 @@ const LANES: readonly {
     dir: 'dnd5e',
     entries: 13,
     before: '37b62168a64b9cced1e766b4935e560105081a094599f892b957cabb9a2e0a62',
-    after: 'c1ac72aef95d665e76ce7ee825654b790e6f3d3ad40f33b0798b09f62d6130e0',
+    after: '7d2a3edc661efb85cc5375a7649345b60a026f804daee1f1c982baa38d8eabb1',
   },
   {
     adapterId: 'foundry-pf2e-equipment',
@@ -728,7 +846,7 @@ const LANES: readonly {
     dir: 'dnd5e-equipment',
     entries: 7,
     before: 'e9eee757148f8e2f523e9538ec25b8415ab366746773656978f6742bef5dc1da',
-    after: 'd60fc8ded36127a4594104b92a65617c259d5336ec88aa484ce9d835129b5f65',
+    after: '645871ac4d04ebbc1388104f25e93bd90abe7c6df807c37c31e1a615dd8e755e',
   },
   {
     adapterId: 'foundry-pf2e-journal',
@@ -749,7 +867,7 @@ const LANES: readonly {
     dir: 'pf2e-rules',
     entries: 4,
     before: 'c41b367a9422b0a989962f18ed51ef6bb2ea3850afd27eaa1ef3fb697a8ce954',
-    after: 'c41b367a9422b0a989962f18ed51ef6bb2ea3850afd27eaa1ef3fb697a8ce954',
+    after: '10f9460ffcd66d7b440ced8faa4d7dd93af7448b5cb22c322dd2de9087edd9f5',
   },
 ];
 
