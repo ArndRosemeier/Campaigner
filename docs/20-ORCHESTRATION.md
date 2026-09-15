@@ -27,11 +27,11 @@ must stay ONE SCREEN — a record that no longer describes the present belongs i
 ## Board
 
 ```
-reconciled: 5348293 · 2026-09-15T06:57Z
+reconciled: 730c9a7 · 2026-09-15T08:03Z
 
 SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | note=first session under this board; predecessor session-e5adac67 became unrecoverable (compaction of a 35MB, ~374-turn log)
 
-IN-FLIGHT | row=168 | branch=feat/persisted-key-fold | worktree=/tmp/campaigner-keys-fold | base=2acec2e | writer=session-461d22a8-b24f-4618-a7c6-12beb3d4534d | note=fold contentCreatureKey onto the comparable form (comparableName) + Dexie v22 migration of stored portrait/presentation/battle keys + foldCreatureKey import seam
+IN-FLIGHT | none | note=row 168 verified and landed by the CoS; its branch/worktree retire with this landing
 
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count
 
@@ -40,6 +40,7 @@ AWAITING-OWNER | id=claimA-app | cost=1 arc | question=the reader prints table p
 AWAITING-OWNER | id=claimB-roster | cost=1 slice | question=treasureLedger never reads the roster's parsed `treasure`
 AWAITING-OWNER | id=claimB-pack | cost=1 arc, probably unwanted | question=pack items are never parsed (absent from text/contentHash/search)
 
+LANDED | row=168 | sha=730c9a7 | verify=my gate GREEN 333/333 files · 3930 tests · peak 1218MB of the 3000MB cap, PLUS my two injections — (1) the collision rule inverted (older row wins) RED 2/10 on `keeps the NEWER updatedAt…` + the tie-break pin; (2) the fold leaked into the `artifact:` key space RED 1/10 with the throw naming the key — each restored byte-identically (db.ts a026f437…, creature.ts a32e185a…) | retired=branch feat/persisted-key-fold + worktree /tmp/campaigner-keys-fold with this landing
 LANDED | row=167 | sha=5348293 | verify=my gate GREEN 332/332 files · 3919 tests · peak 1249MB of the 3000MB cap, PLUS my injection (hand-rolled key restored in roomBudget.resolveBriefMonsterLevels) RED 2/18 — `expected [ undefined ] to deeply equal [ '2' ]` — file hash bf776416f1aafb3a15b73a0f1c1cf623b5a1c0dc identical after restore | retired=branch feat/name-key-spaces + worktree /tmp/campaigner-keys with this landing
 LANDED | row=165 | sha=38c8424 | verify=331/331 files · 3901 tests · peak 1219MB · injection token-stamp RED 7 | retired=yes
 LANDED | row=166 | sha=57def3f | verify=docs/17 row 166 | retired=yes

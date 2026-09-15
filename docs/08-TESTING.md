@@ -4299,8 +4299,16 @@ logs in `/tmp/gate-165/`). Baseline re-derived at this landing's base
 `5de1c36`: **327 files / 3862 tests**. The script's own summary, verbatim:
 
 ```
-GATE-SUMMARY-PLACEHOLDER
+GATE GREEN, exit 0
+chunk arithmetic: 331 of 331 test files covered
+3901 tests passed, 0 failed, no `Errors:` line
+peak RSS of any single chunk: 1219MB (cap 3000MB)
 ```
+
+*(Transcribed by the dispatcher from this landing's recorded verification on
+`38c8424` — the writer died before filling this block and the placeholder was
+left standing. The arithmetic cross-checks against the next landing: 331 + 1
+file / 3901 + 18 tests = the 332 files / 3919 tests measured at `5348293`.)*
 
 **UNPROVEN, stated as such.** (a) **A real module run in the app is the owner's
 to check.** The probes exercise the real seeding, the real row reads and the
