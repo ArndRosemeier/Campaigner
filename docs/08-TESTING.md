@@ -4521,6 +4521,82 @@ three `db.verno` assertions from 21 to 22 — a NECESSARY consequence of the
 version bump, equally exact, not a weakened assertion. No existing assertion was
 weakened, no test skipped, no `Errors:` line.
 
+### The planner's toolkit — real content under one loud cap (docs/17 row 169, docs/19 §6)
+
+The document planner (`llm/modulePlan.planModuleDocument`) stays ONE strict
+JSON-contract call. Since row 169 that call carries real CONTENT instead of one
+line per row: the module's own text through the shared
+`domain.moduleDocumentText` reader, the wiki-graph link map through the ONE
+`domain.wikiGraph.buildWikiGraph` derivation, and every scoped row's real stored
+fields through the CANVAS CHAT's own renderer — the new shared
+`canvasChat.renderStoredArtifactSection`, which `resolveRequestDraft` also now
+routes through, so ONE implementation of "render a stored row for a prompt"
+exists (AGENTS rule 4). A hard character cap
+(`MODULE_PLAN_CONTENT_BUDGET_CHARS`) with the chat's own `[TRUNCATED — …]` /
+`[BLOCK FULL — …]` markers means nothing is trimmed silently, and a row whose
+stored fields are all empty is named, never dropped. **The plan contract, its
+validation, its one write (`planAndStoreModuleDocument`) and the PDF renderer
+(`lib/modulePdf`) are untouched.**
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The module's own text reaches the one call**: the built message carries `moduleDocumentText(module)` (premise + every part), not a premise+synopsis digest | `tests/llm/modulePlan.test.ts` (`carries the module’s own text and a row’s real stored prose past the old 160-char excerpt`) | ✅ REVERT-PROVEN (injection a) |
+| **A row's REAL stored fields reach the one call**: the full stored prose, past the old 160-char excerpt, under the row's `=== ARTIFACT <id> … ===` heading | same | ✅ REVERT-PROVEN (injection a) |
+| **What a document links to comes from the ONE graph seam**: `buildWikiGraph`'s per-document mentions, a resolved name carrying its kind + id, an unresolved name named as having no row | same (`lists what each document links to from the reader’s own wiki graph`) | ✅ |
+| **A row that stores nothing is NAMED, not dropped** | same (`names a row whose stored fields are all empty instead of dropping it quietly`) | ✅ |
+| **Over budget the block is LOUD**: a `[BLOCK FULL]` marker names the overflowing row and every row after it, and the cap number | same (`warns LOUDLY and names every row the content cap left out`) | ✅ REVERT-PROVEN (injections a and b) |
+| **A single over-cap section is `[TRUNCATED]` with its name, and a fitting block carries NO marker** | same (`assembleModulePlanContent — the loud content cap`, 2 pins) | ✅ REVERT-PROVEN (injection b) |
+| **Every pre-existing planner/plan pin stays green** (the two `modulePlanMessages` calls gain `await` + the required `pool`; no assertion weakened) | `modulePlan` 14 → 20; `module-pdf-export`, `module-plan-dialog`, `campaign-tree-plan-control`, `scaffoldingEcho`, `canvasChatDetails` | ✅ |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `carries the module’s own text and a row’s real stored prose past the old 160-char excerpt` | `tests/llm/modulePlan.test.ts` | a re-capped one-line excerpt (the old defect) — injection a |
+| `lists what each document links to from the reader’s own wiki graph` | same | the link map no longer coming from `buildWikiGraph`, or naming a resolved row without its id |
+| `names a row whose stored fields are all empty instead of dropping it quietly` | same | a row silently dropped because `artifactDetailLines` was empty |
+| `warns LOUDLY and names every row the content cap left out` | same | a SILENT trim — injection b |
+| `marks a single over-cap block TRUNCATED and names what it cut` | same | a first section cut without the `[TRUNCATED]` marker — injection b |
+| `adds NO marker when everything fits` | same | a marker added to a block that fits (the marker must mean something) |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run — non-empty — restored from an
+OUT-OF-TREE copy `/tmp/plan-inject/modulePlan.ts` (never `git checkout --`) and
+proved with `git hash-object` identical before and after; raw logs
+`/tmp/plan-logs/`):
+
+| injection | result |
+|---|---|
+| **(a) the row detail re-capped to a 160-char `oneLine`** (`text: lines.length === 0 ? emptyArtifactLine(artifact) : section,` → `text: oneLine(lines.length === 0 ? emptyArtifactLine(artifact) : section, 160),`; `git diff --stat` printed back non-empty BEFORE the run — the full slice diff, `281 insertions`; file hash `4e4a11650f41dece23fb8280c96977b0fb592f72` identical before and after) | **RED 2 / GREEN 18 (20)**: the content pin reds (`expected 'THE MODULE\nTitle: Beneath the Docks\…' to contain 'The ford is watched from the tower. T…'`, i.e. `THE-FAR-END-OF-THE-ROW` is gone) AND the cap pin reds (a 160-char row fits, so `[BLOCK FULL` never fires). **The new pins' first-ever red run — the failing case was WATCHED failing, not assumed.** |
+| **(b) `assembleModulePlanContent`'s markers deleted** (the `if (truncated !== null)` and `if (dropped.length > 0)` blocks removed, so the cap trims silently; `git diff --stat` printed back non-empty BEFORE the run) | **RED 2 / GREEN 18 (20)**: the cap pin reds (`expected … to contain '[BLOCK FULL'`) and the assembler truncation pin reds (`expected '=== HUGE ===\nyyy…' to contain '[TRUNCATED'`). Lint also reports the now-unused marker constants (2 errors) — the injection is not a code shape we would ship, which is the point. |
+
+**NUMBERS — the landing gate, `bash scripts/gate.sh` on the code+tests tree,
+printed GATE GREEN, exit 0; raw log `/tmp/plan-gate.log` + per-chunk logs
+`/tmp/plan-gate/`.** Per chunk, exactly as the script printed them:
+`tests_lib 32 files / 369 tests (peak 825 MB)`; `tests_llm 70 / 1152 (873 MB)`;
+`tests_db 32 / 366 (701 MB)`; `tests_domain 22 / 309 (681 MB)`;
+`tests_features 135 / 1329 (1247 MB)`; `tests_remainder 42 / 411 (1140 MB)` —
+summing to **333 files / 3936 tests**, with `chunk arithmetic: 333 of 333 test
+files covered`, `lint errors: 0`, typecheck clean, no `Errors:` line in any
+chunk log, and **peak RSS of any single chunk 1247 MB against the 3000 MB cap**.
+
+**The arithmetic, against the brief's baseline — 333 files / 3930 tests at
+`df104e3`.** This slice adds **+0 files / +6 tests**
+(`tests/llm/modulePlan.test.ts` 14 → 20: four behaviour pins and two assembler
+pins). No existing assertion was weakened, no test skipped, no `Errors:` line.
+
+**MEASURED PROMPT COST** (method: the built message's total system+user
+characters ÷ 4, labelled rough). The representative fixture (premise + 4 parts
+× ~2,000 chars + 4 stored rows) goes from **4,638 chars ≈ 1,160 tokens**
+(pre-slice) to **17,690 chars ≈ 4,423 tokens** — **+13,052 chars ≈ +3,263
+tokens**. A large fixture (8 parts × ~4,500 chars + 10 rows) measures **51,308
+chars ≈ 12,827 tokens** and DOES hit the cap (module text `[TRUNCATED]`, rows
+`[BLOCK FULL]`ed) where the pre-slice builder measured 6,231 chars ≈ 1,558
+tokens — the old prompt could not grow because every row was a single line. No
+existing assertion was weakened, no test skipped, no `Errors:` line.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

@@ -18,7 +18,7 @@ the pins exist at HEAD, `spec only` means nothing implements it yet):**
 | §4 Two tiers, locality DERIVED from the first reference | **BUILT** — docs/17 row 148 (the `adjacent` pointer is a sentence in the sidebar, §5 step 3) |
 | §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
 | §9 "no silent fitting" (a promotion, continuation or omission is visible and diagnosable) | **BUILT** — docs/17 row 148 |
-| §6 The planner's toolkit (real content through the chat's retrieval seam) | spec only |
+| §6 The planner's toolkit (real content through the chat's retrieval seam) | **BUILT** — docs/17 row 169 |
 | §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | **BUILT** — docs/17 row 151 (bullets 1, 3 and 4) and row 156 (bullet 2: the Contents prints pdfmake's own page numbers, proved by reading the rendered pages back with pdfjs) |
 | §8 One press, every export plans | **BUILT** — docs/17 row 139 |
 | §10.4 Print refinement / duplex spread pairing | OPEN, deferred (§11 step 6) |
@@ -62,9 +62,11 @@ stricter one — a file that a stranger can open and read, on screen or on paper
   sequence of full-page sections, one thing after another.
 - Internal links already work for wiki-links in body text (`linkToDestination`),
   a chapter TOC exists, and stat blocks already print in two columns.
-- The planner (`src/llm/modulePlan.ts`) makes ONE call with NO tools and sees each
-  artifact as a single line: id, kind, name and a 160-character excerpt, capped
-  after a count it is told about.
+- The planner (`src/llm/modulePlan.ts`) makes ONE call and — until docs/17 row
+  169 — saw each artifact as a single line: id, kind, name and a 160-character
+  excerpt, capped after a count it is told about. **Since row 169 that same ONE
+  call carries real CONTENT (see §6): the module's own text, the wiki-graph
+  links and every row's stored details, under a loud cap.**
 
 **The defect is therefore twofold and neither half is the model's fault:** the
 plan cannot express "these belong together" (its vocabulary has no grouping and no
@@ -191,19 +193,40 @@ as a renderer convenience.
 
 ## 6. The model's toolkit (owner's direction: tools, not constraints)
 
-**Spec only — nothing in this section is built.** Placement is currently derived
-by the RENDERER from the module's own text (§4), which is why the planner's
-toolkit is an improvement rather than a blocker for §3–§5.
+**BUILT (docs/17 row 169) — the planner's blindness named in §1 is CLOSED.**
+The planner still makes ONE strict JSON-contract call (no agentic loop, no
+second call, no height-measuring capability — the "not required" verdict below
+stands), but that call now carries real CONTENT instead of one line per row:
 
-- **Today:** one call, no tools, one-line artifact excerpts (§1).
-- **v2:** the planner reads what it needs — the module's own text (all of it, not a
-  capped list), an artifact's full content, what a part links to (the wiki graph
-  and the recorded relations), the encounter rows. Reuse the chat's retrieval
-  capability rather than inventing a second mechanism (AGENTS rule 4).
-- A measure capability (hand the planner content, get back its rendered height)
-  would let a plan predict its own fit. It is NOT required: the renderer owns fit
-  (§2, §5). Worth having only if real plans start fighting the page.
-- The plan stays a validated, stored artifact.
+- **The module's own text, all of it** — through the shared reader
+  (`domain/moduleDocumentText`: premise + every part).
+- **Each row's real stored details** — through the CANVAS CHAT's own renderer
+  (`canvasChat.renderStoredArtifactSection` → `artifactDetailLines` /
+  `renderArtifactDetails`, the same rendering its `<request>` answer uses), so a
+  planner row sees the same bytes the chat would answer with. An encounter's
+  roster and treasure ride that same renderer.
+- **What the module links to** — through the ONE graph derivation
+  (`domain/wikiGraph.buildWikiGraph`), per document (premise and each part),
+  never a second resolver.
+- **A hard content cap with a LOUD marker** (`MODULE_PLAN_CONTENT_BUDGET_CHARS`,
+  the chat's own `[TRUNCATED — …]` / `[BLOCK FULL — …]` shape): nothing is
+  trimmed silently, and a row that stores nothing is named as such rather than
+  dropped.
+
+- **Today:** one call, no tools, one-line artifact excerpts (§1). **Superseded by
+  row 169** — the call still has no tools, but it is no longer blind.
+- **A measure capability** (hand the planner content, get back its rendered
+  height) would let a plan predict its own fit. It is NOT required: the renderer
+  owns fit (§2, §5). Worth having only if real plans start fighting the page.
+  **Still not built, deliberately.**
+
+The plan stays a validated, stored artifact; the contract, its validation, its
+one write and its renderer are untouched. **Honest limit, recorded rather than
+hidden:** the cap applies to the COMBINED content (module text → links → row
+details, in that priority order), so a module whose own text exceeds the cap is
+included CUT — loudly — and the row details past the cap are left out — also
+loudly. The planner judges the document's head and whatever details fit, never a
+silently shortened set. The measured prompt cost is recorded in docs/17 row 169.
 
 ## 7. Navigation (the main consumption is a screen)
 
@@ -302,8 +325,8 @@ call, not a spec default.** No question in this section is still open.
 
 1. **Automatic planning on export** (in flight): one press, always plans, stored as
    a record.
-2. **The planner's toolkit:** real content through the chat's retrieval seam, so
-   placement judgement has something to judge.
+2. ~~**The planner's toolkit:** real content through the chat's retrieval seam, so
+   placement judgement has something to judge.~~ **DONE** (docs/17 row 169).
 3. ~~**The page model:** flowing sections, main column + sidebar, detail tiers.~~
    **DONE** (docs/17 row 148).
 4. ~~**Adjacency and overflow:** own-page insertion after the first reference, the
