@@ -44,11 +44,10 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * a component in isolation, because the two halves being pinned are the PAGE's
  * behaviour:
  *
- * - the encounter row's JUMP into the workspace is UNCHANGED (the page's
- *   `onOpenCard` navigates for an encounter) — asserted by clicking it and
- *   reading the resulting path;
- * - the roster BELOW that row carries each mob's reference and numbers, and a
- *   citation nothing can resolve stays LOUD by name with no box.
+ * - the encounter row opens the same peek card as a prose chip, without changing
+ *   the module URL; the card keeps the explicit workspace action;
+ * - the card's shared roster panel carries each mob's reference and numbers, and
+ *   a citation nothing can resolve stays LOUD by name with no box.
  *
  * The reference itself is not composed here: it is
  * `domain/encounterResolve.rosterReferenceFor`'s own line, rendered by the ONE
@@ -212,27 +211,26 @@ function renderAppAt(path: string): void {
   render(<RouterProvider router={createAppRouter()} />);
 }
 
-/** The `li` of the encounter's own entity row — the row the mobs sit UNDER. */
-async function findEncounterRow(): Promise<{ row: HTMLElement; item: HTMLElement }> {
+/** The encounter's entity row, whose click opens the shared peek card. */
+async function openEncounterCard(): Promise<HTMLElement> {
   const rows = await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
   const row = rows.find((candidate) => candidate.textContent.includes(FORD));
   if (row === undefined) throw new Error(`${FORD} row not found in the entity panel`);
-  const item = row.closest('li');
-  if (item === null) throw new Error('the entity row is not inside a list item');
-  return { row, item };
+  await userEvent.setup().click(row);
+  const peek = await screen.findByTestId('peek-modal', {}, { timeout: 10_000 });
+  return within(peek).getByTestId('play-encounter-card');
 }
 
-/** The mobs block below that row, once the roster has resolved. */
-async function findMobs(item: HTMLElement): Promise<HTMLElement> {
-  const block = await within(item).findByTestId('entity-encounter-mobs', {}, { timeout: 10_000 });
-  await within(block).findByTestId('stat-blocks-panel', {}, { timeout: 10_000 });
+/** The shared roster panel inside EncounterCard, once roster resolution settles. */
+async function findMobs(card: HTMLElement): Promise<HTMLElement> {
+  const panel = await within(card).findByTestId('stat-blocks-panel', {}, { timeout: 10_000 });
   await waitFor(
     () => {
-      expect(within(block).getAllByTestId('roster-entry').length).toBeGreaterThan(0);
+      expect(within(panel).getAllByTestId('roster-entry').length).toBeGreaterThan(0);
     },
     { timeout: 10_000 },
   );
-  return block;
+  return panel;
 }
 
 /** Every text run of a pdfmake node, in document order. */
@@ -296,16 +294,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the module reader lists an encounter’s mobs below its row', () => {
-  it('lists every mob with its reference and numbers, and the jump still works', async () => {
-    const user = userEvent.setup();
+describe('the module reader opens the shared encounter card', () => {
+  it('lists every mob with its reference and numbers, and workspace opening stays explicit', async () => {
     const { campaignId, moduleId, encounterId } = await seedReader({
       statBlock: citedStatBlock(),
     });
     renderAppAt(modulePath(campaignId, moduleId));
 
-    const { row, item } = await findEncounterRow();
-    const mobs = await findMobs(item);
+    const card = await openEncounterCard();
+    const mobs = await findMobs(card);
 
     // EVERY mob of the roster is listed, in roster order.
     const entries = within(mobs).getAllByTestId('roster-entry');
@@ -334,17 +331,16 @@ describe('the module reader lists an encounter’s mobs below its row', () => {
       ' — no stats: this roster entry names the creature without a citation',
     );
 
-    // THE JUMP IS UNCHANGED (owner: "Keep the jump"): pressing the row still
-    // goes straight to the encounter in the workspace — the list below it is
-    // additive, and it does not swallow the click.
-    await user.click(row);
+    // The reader stays mounted and the card's explicit action owns workspace
+    // navigation.
+    expect(window.location.pathname).toBe(modulePath(campaignId, moduleId));
+    await userEvent.setup().click(screen.getByTestId('peek-open-workspace'));
     await waitFor(
       () => {
         expect(window.location.pathname).toBe(artifactPath(campaignId, encounterId));
       },
       { timeout: 10_000 },
     );
-    expect(screen.queryByTestId('peek-modal')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 
@@ -352,8 +348,8 @@ describe('the module reader lists an encounter’s mobs below its row', () => {
     const { campaignId, moduleId } = await seedReader({ statBlock: null });
     renderAppAt(modulePath(campaignId, moduleId));
 
-    const { item } = await findEncounterRow();
-    const mobs = await findMobs(item);
+    const card = await openEncounterCard();
+    const mobs = await findMobs(card);
     const citedRow = within(mobs).getAllByTestId('roster-entry')[0];
     if (citedRow === undefined) throw new Error('the cited row must be listed');
 
@@ -381,8 +377,8 @@ describe('the module reader lists an encounter’s mobs below its row', () => {
     });
     renderAppAt(modulePath(campaignId, moduleId));
 
-    const { item } = await findEncounterRow();
-    const mobs = await findMobs(item);
+    const card = await openEncounterCard();
+    const mobs = await findMobs(card);
     const entries = within(mobs).getAllByTestId('roster-entry');
     const citedRow = entries[0];
     const nameOnlyRow = entries[1];
@@ -434,19 +430,25 @@ describe('EXACTLY ONE roster reference implementation in the app', () => {
   const PANEL = 'src/features/campaign/components/monster-source.tsx';
   const READER_PANEL = 'src/features/modules/entity-panel.tsx';
 
-  it('the reader mounts the shared roster panel and composes no reference', () => {
+  it('the sidebar has no inline roster renderer or expansion block', () => {
     const reader = code(READER_PANEL);
-    // The mobs below an encounter row ARE the shared panel…
-    expect(reader).toContain('MonsterStatblocksPanel');
-    expect(reader).toContain('entity-encounter-mobs');
-    // …and the reader owns no reference vocabulary of its own: not the
-    // formatter, not its statements, not a second resolution.
+    expect(reader).not.toContain('MonsterStatblocksPanel');
+    expect(reader).not.toContain('entity-encounter-mobs');
+    // The sidebar owns no reference vocabulary or second resolution either.
     expect(reader).not.toContain('rosterReferenceFor');
     expect(reader).not.toContain('rosterStatBlockFor');
     expect(reader).not.toContain('resolveMonsterEntr');
     expect(reader).not.toContain('missing ref (');
     expect(reader).not.toContain('no stats: this roster entry names');
     expect(reader).not.toContain('see ${');
+  });
+
+  it('the reader and prose chips use the same encounter card seam', () => {
+    const page = code('src/features/modules/ModuleReaderPage.tsx');
+    const peek = code('src/features/modules/peek-modal.tsx');
+    expect(page).toContain('setPeekId(artifact.id)');
+    expect(page).not.toContain("artifact.kind === 'encounter'");
+    expect(peek).toContain('<EncounterCard encounter={artifact} artifacts={artifacts} showWriterModel />');
   });
 
   it('the shared panel renders the domain rule, not strings of its own', () => {

@@ -980,7 +980,7 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
-  it('opens the workspace directly from an encounter panel row (no peek modal)', async () => {
+  it('opens the encounter card from an encounter panel row without changing the module URL', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule({
       part0Markdown: 'The [[Ford Ambush]] waits at the ford before dawn.',
@@ -997,15 +997,18 @@ describe('ModuleReaderPage', () => {
     if (ambushRow === undefined) throw new Error('Ford Ambush row not found in the entity panel');
     await user.click(ambushRow);
 
-    // The encounter navigates straight to the workspace — the same target
-    // as the peek modal's "Open in workspace" button — without peeking.
+    const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
+    expect(within(peek).getByTestId('play-encounter-card')).toBeInTheDocument();
+    expect(window.location.pathname).toBe(modulePath(campaignId, moduleId));
+
+    // Workspace navigation remains an explicit action on the card.
+    await user.click(within(peek).getByTestId('peek-open-workspace'));
     await waitFor(
       () => {
         expect(window.location.pathname).toBe(artifactPath(campaignId, encounter.id));
       },
       { timeout: 10_000 },
     );
-    expect(screen.queryByTestId('peek-modal')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 
