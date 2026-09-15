@@ -43,6 +43,8 @@ const nodeTestGlobs = [
   'tests/features/{dice-math,mention-view,persona-request,seed-from-module}.test.ts',
   // root-level DOM-free files (walkthrough uses waitFor)
   'tests/{backup,pwa-assets,search}.test.ts',
+  // architecture scans (source-level, no DOM)
+  'tests/architecture/**/*.test.ts',
 ];
 
 /**
