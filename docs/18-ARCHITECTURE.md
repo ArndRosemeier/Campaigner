@@ -377,7 +377,16 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   (`useModule` etc.) is drained, not awaited bare** — its live-query cascade
   lands in whatever bare `await` follows, taking the open dialog's internals
   with it (`canvas-module-actions`'s stale-confirmation test, docs/08 §Race
-  cures) — and a **destructive-confirm dialog is settled (its testid
+  cures). **The window is the BODY, and an `afterEach` drain cannot close
+  it** (docs/17 row 178): the afterEach settles the TAIL, while the delivery
+  fires during the test body's own bare awaits — so the cure belongs on the
+  raw step (or the shared read helper every caller uses), never on the
+  teardown. Measured on `features/creature-portrait-agreement.test`: a 120 ms
+  delay on the board's provenance read reds it with
+  `An update to BattleSurface inside a test was not wrapped in act(...)`
+  (`useLiveQuery`'s subscriber in the stack) though every assertion passes;
+  `actDrained` on its two shared read helpers is the cure. **A
+  destructive-confirm dialog is settled (its testid
   waited out of the document) before the test navigates or does raw store
   reads**, since confirming closes it and Base UI unmounts the popup on an
   exit timer whose teardown updates otherwise land outside act under

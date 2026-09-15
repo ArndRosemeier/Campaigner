@@ -68,6 +68,33 @@ Rules:
     wizard's raw `readSettings()` calls between settings writes are wrapped,
     and the tests end with a drain so the post-act cascade tail
     (auto-open status write, dialog exit transitions) stays inside act.
+  - **A third occurrence, and the one that proves an `afterEach` drain is NOT
+    the cure (docs/17 row 178).** `creature-portrait-agreement.test.tsx`
+    reddened inside the `tests/features` chunk with
+    `An update to BattleSurface inside a test was not wrapped in act(...)`
+    and passes 5/5 isolated; a prior landing (row 165) had wrapped that file's
+    `afterEach` settle in `act`, which settles only what is still pending
+    AFTER the body — the leaking delivery fires DURING it. The captured stack
+    names the exact source: `warnIfUpdatesNotWrappedWithActDEV →
+    dispatchReducerAction → useLiveQuery`'s subscriber (`dexie-react-hooks`),
+    i.e. a Dexie liveQuery delivery to the MOUNTED board landing in a bare
+    `await` in the test body. **The reproduction is a delay injection, not
+    load:** 120 ms (and the pair repeated at 80 ms) added to
+    `db/artifactRepo.getAnyArtifact` — a read the board's provenance
+    liveQuery awaits, whose delivery the test does NOT wait for — reds the
+    file 2/5 and 3/5 respectively with the guard's exact warning, every
+    assertion still green; the recorded test is among the 80 ms reds. A delay
+    on a delivery the test DOES wait for (the portrait re-read) stayed green,
+    because RTL's `waitFor` runs with the act environment disabled and
+    absorbs it — so the window is specifically the un-awaited straggler.
+    **Cure:** the file's two SHARED read helpers (`moduleSidePortrait`,
+    `modulePortraitGaps`) wrap their bodies in `actDrained`, and its two
+    post-mount writes (`campaignImage`, `setCreatureCover`) do the same — the
+    shared-helper cure point this section already names, so every caller is
+    covered once. Cured: 5/5 green at both delay levels and 5/5 clean
+    isolated. No assertion moved, nothing is skipped, and the guard is
+    untouched; the row-165 `act`-wrapped `afterEach` drain stays as the tail
+    settle only.
 - **Base UI dialogs add timed updates of their own**: opening schedules a
   transition-reset `requestAnimationFrame` (DialogRoot's state) and closing
   unmounts the popup on a timer. Under an open dialog, raw awaited reads need

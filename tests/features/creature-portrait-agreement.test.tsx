@@ -29,7 +29,7 @@ import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { getModule } from '@/db/moduleRepo';
 import { BattleSurface } from '@/features/play/battle/BattleSurface';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * THE DIFFERENTIAL THE OWNER'S REPORT NEEDED (docs/17 row 165): the portrait a
@@ -118,12 +118,11 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // The TAIL settle (docs/17 rows 165/178). It is NOT the cure for the
+  // BattleSurface act() flake: this hook only runs AFTER the body, while the
+  // leaking liveQuery delivery fires DURING the body's bare awaits (measured,
+  // row 178). The cure is `actDrained` on the shared read helpers below.
   await flushAsyncUpdates(20);
-  // Settle INSIDE act: BattleSurface's portrait chain can outlive the 20 ms
-  // flush under chunk load, and an update firing outside act leaks a console
-  // warning into the NEXT test in the file, failing its console-cleanliness
-  // assertion. Wrapping the settle means late updates are wrapped, not silenced
-  // (docs/17 row 165; the row-153 console-noise family).
   await act(async () => { await flushAsyncUpdates(20); });
   cleanup();
   vi.unstubAllGlobals();
@@ -217,33 +216,47 @@ function tokenArt(label: string): string | null {
  * (docs/11 D6), the reading `features/campaign/mob-portrait-queue` writes
  * through and the module gap detector probes. `npcArtifactId` is the row the
  * roster entry points at, when it points at one — the same input the board
- * hands its own resolution. */
+ * hands its own resolution.
+ *
+ * Act-drained (docs/17 row 178): the board is MOUNTED while this read runs, so
+ * a Dexie liveQuery delivery to `BattleSurface` lands in whatever bare `await`
+ * follows (measured: `dexie-react-hooks` `useLiveQuery` → `dispatchReducerAction`
+ * → the console-hygiene act() guard). `actDrained` wraps the raw await and
+ * drains the cascade, so the delivery is inside act. This is the shared read
+ * helper — the cure point docs/08 §1 names (battle-surface's `currentBattle`),
+ * so every caller is covered by one seam. */
 async function moduleSidePortrait(
   creatureKey: string,
   npcArtifactId?: string,
 ): Promise<string | null> {
-  return creatureCoverImageId({
-    campaignId,
-    creatureKey,
-    ...(npcArtifactId === undefined ? {} : { npcArtifactId }),
-  });
+  return actDrained(() =>
+    creatureCoverImageId({
+      campaignId,
+      creatureKey,
+      ...(npcArtifactId === undefined ? {} : { npcArtifactId }),
+    }),
+  );
 }
 
 /** The module-level affordance's own answer for this module: the encounters the
  * "Generate everything" control counts (`mobPortraits`), read through the SAME
- * derivation the sidebar uses. */
+ * derivation the sidebar uses. Act-drained for the same reason as
+ * `moduleSidePortrait` (docs/17 row 178): it is a raw multi-read after the
+ * board is mounted. */
 async function modulePortraitGaps(moduleId: string): Promise<string[]> {
-  const moduleRow = await getModule(moduleId);
-  if (moduleRow === undefined) throw new Error('module missing');
-  const artifacts = await listArtifactsByCampaign(campaignId);
-  const presentation = await presentationArtOfCampaign(campaignId);
-  const deviation = deriveAutomationDeviation(
-    moduleRow,
-    artifacts,
-    FULL_AUTOMATION_TARGET,
-    presentation,
-  );
-  return deviation.mobPortraits.map((encounter) => encounter.name);
+  return actDrained(async () => {
+    const moduleRow = await getModule(moduleId);
+    if (moduleRow === undefined) throw new Error('module missing');
+    const artifacts = await listArtifactsByCampaign(campaignId);
+    const presentation = await presentationArtOfCampaign(campaignId);
+    const deviation = deriveAutomationDeviation(
+      moduleRow,
+      artifacts,
+      FULL_AUTOMATION_TARGET,
+      presentation,
+    );
+    return deviation.mobPortraits.map((encounter) => encounter.name);
+  });
 }
 
 describe('the token and the module side resolve ONE portrait', () => {
@@ -359,8 +372,13 @@ describe('the affordance and the board state the same fact', () => {
     expect(await modulePortraitGaps(moduleId)).toEqual(['Crypt']);
 
     // The portrait lands (what the batch's commit seam writes) …
-    const portraitId = await campaignImage();
-    await setCreatureCover({ campaignId, creatureKey: libraryCreatureKey(chunkId), imageId: portraitId });
+    // Both writes run act-drained: the board is mounted, so the presentation
+    // liveQuery they fire delivers to `BattleSurface` on the timed queue, and a
+    // bare `await` here is exactly the outside-act window (docs/17 row 178).
+    const portraitId = await actDrained(() => campaignImage());
+    await actDrained(() =>
+      setCreatureCover({ campaignId, creatureKey: libraryCreatureKey(chunkId), imageId: portraitId }),
+    );
     await flushAsyncUpdates(20);
 
     // … and BOTH sides move together: the token renders it and the gap closes.
