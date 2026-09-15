@@ -32,12 +32,13 @@ must stay ONE SCREEN — a record that no longer describes the present belongs i
 ## Board
 
 ```
-reconciled: 2083fdb · 2026-09-15T18:00Z
+reconciled: e89738d · 2026-09-15T19:55Z
 
 SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | model=deepseek-official/deepseek-flash | note=this session; the board may name more than one live actor, each IN-FLIGHT row names its dispatcher and model, and board.sh checks only that the acting session appears in SOME SESSION record
 SESSION  | cos=session-f7c658e6-c56b-444f-b956-865d5803f9b0 | started=2026-09-15 | model=unknown (the owner's experiment) | state=FINISHED (owner, 2026-09-15) | note=kept while its session log is still inside board.sh's 6h liveness window: a FINISHED actor and a STALLED one look identical from the log's mtime, which is why the registry check (`list_agents`) decides liveness, never the mtime alone
 
 
+IN-FLIGHT | row=179 | branch=feat/encounter-card-opening | worktree=/tmp/campaigner-encounter-card | base=e89738d | writer=session-edcffac6-69c0-4620-9ade-99f3b61f10d4 | dispatched_by=session-93cd9c40 | model=deepseek-official/deepseek-flash | state=running | note=COPIES 2→1: encounter sidebar and prose-chip opening converge on ModuleReaderPage.openArtifact; encounter roster renders only in EncounterCard via the shared MonsterStatblocksPanel — no sidebar-only expansion, no new renderer/route
 IN-FLIGHT | row=orphan | writer=session-c8c3921a-97a6-4f44-83b7-e3accec916b4 | model=unknown | state=finished-but-unretired — last log write 12:28, no worktree | dispatched_by=session-f7c658e6 (finished) | note=an ORPHAN of the finished actor: it never used a worktree, and the main tree is clean, so no work is at risk. Its owner is gone, so nobody will retire it; a future session may remove the dead session dir, and this row is the pointer rather than a live writer
 
 TRAP | what=two-live-actors | how=two CoS sessions ran this project at once (session-f7c658e6 landed rows 173/174 while session-93cd9c40 was still live) and the board named only one, so the other's reconciliation flagged the board stale and the two could have exceeded the writers budget or swept each other's staged work in a shared tree. As of 2026-09-15T15:20 the owner confirms the other actor is FINISHED; only session-93cd9c40 is live | check=every dispatch names `dispatched_by` and `model` in its IN-FLIGHT row; a live writer is bounded by the project rule (≤2) ACROSS actors, and the acting CoS checks `list_agents`/worktrees before dispatching; a session with no writer of its own says so instead of assuming the budget is free
