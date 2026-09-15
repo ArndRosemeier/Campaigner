@@ -7,6 +7,8 @@ import type {
   Campaign,
   ChunkEmbedding,
   CreatureImage,
+  CreatureKeyFoldDropped,
+  CreatureKeyFoldReport,
   Module,
   MobPortraitCacheEntry,
   ModuleDocumentVersion,
@@ -19,8 +21,146 @@ import type {
   StoredPdf,
 } from '@/domain';
 import type { Id } from '@/domain';
-import { LEGACY_COMPLEX_BUDGET_NOTE, normalizeEncounterShapeData } from '@/domain';
+import {
+  foldCreatureKey,
+  LEGACY_COMPLEX_BUDGET_NOTE,
+  normalizeEncounterShapeData,
+} from '@/domain';
 import { repairCreatureCitations } from '@/db/creatureRepair';
+
+/** Separator between the scope (a campaign id) and the folded key in the v22
+ * upgrade's grouping map; a UUID and a JSON key can never contain it. */
+const CREATURE_FOLD_SCOPE_SEPARATOR = '\u0000';
+
+/** How many rows the v22 fold re-keyed and merged, accumulated per table. */
+interface CreatureKeyFoldTally {
+  folded: number;
+  merged: number;
+  dropped: CreatureKeyFoldDropped[];
+}
+
+/**
+ * Group creature rows by their FOLDED key, scoped (a no-op scope for the
+ * globally unique `mobPortraits`, the campaign id for `creatureImages`), so the
+ * v22 upgrade can see a creature that exists under BOTH Unicode compositions.
+ * A row whose `creatureKey` is not a string is corrupt and throws (AGENTS rule
+ * 1): the unique/composite index means such a row cannot have been written by
+ * the app.
+ */
+function groupCreatureRowsByFoldedKey<TRow extends { id: string; creatureKey: string }>(
+  tableLabel: string,
+  rows: TRow[],
+  scopeOf: (row: TRow) => string,
+): Map<string, TRow[]> {
+  const groups = new Map<string, TRow[]>();
+  for (const row of rows) {
+    const stored = row.creatureKey as unknown;
+    if (typeof stored !== 'string' || stored === '') {
+      throw new Error(
+        `creature key fold: a ${tableLabel} row has no creatureKey (id ${row.id})`,
+      );
+    }
+    const mapKey = `${scopeOf(row)}${CREATURE_FOLD_SCOPE_SEPARATOR}${foldCreatureKey(stored)}`;
+    const group = groups.get(mapKey);
+    if (group === undefined) groups.set(mapKey, [row]);
+    else group.push(row);
+  }
+  return groups;
+}
+
+/**
+ * Pick the row a merged slot keeps: the NEWER `updatedAt` wins; on a tie the row
+ * ALREADY stored under the folded (composed) key wins. Both are deterministic —
+ * the pre-fold read path answered a dual-composition key by arbitrary UUID
+ * order (`creatureImages`), which is the defect this fixes rather than a
+ * preference (docs/17 row 168).
+ */
+function newerCreatureRow<TRow extends { creatureKey: string; updatedAt: number }>(
+  left: TRow,
+  right: TRow,
+  foldedKey: string,
+): TRow {
+  if (left.updatedAt !== right.updatedAt) return left.updatedAt > right.updatedAt ? left : right;
+  const leftCanonical = left.creatureKey === foldedKey;
+  const rightCanonical = right.creatureKey === foldedKey;
+  if (leftCanonical !== rightCanonical) return leftCanonical ? left : right;
+  return left;
+}
+
+/**
+ * Re-key one creature table's groups to their folded keys, merging any
+ * dual-composition duplicate. Losers are removed BEFORE the winner is written
+ * so a `&creatureKey` UNIQUE index is never asked to hold two rows at once.
+ */
+async function foldCreatureRowGroups<
+  TRow extends { id: string; creatureKey: string; imageId: string; updatedAt: number },
+>(
+  tableLabel: 'mobPortraits' | 'creatureImages',
+  groups: Map<string, TRow[]>,
+  write: (row: TRow) => Promise<unknown>,
+  remove: (id: string) => Promise<unknown>,
+  tally: CreatureKeyFoldTally,
+): Promise<void> {
+  for (const [mapKey, group] of groups) {
+    const foldedKey = mapKey.slice(mapKey.indexOf(CREATURE_FOLD_SCOPE_SEPARATOR) + 1);
+    const first = group[0];
+    if (first === undefined) continue;
+    let winner = first;
+    for (const row of group) winner = newerCreatureRow(winner, row, foldedKey);
+    for (const row of group) {
+      if (row === winner) continue;
+      await remove(row.id);
+      tally.merged += 1;
+      tally.dropped.push({
+        table: tableLabel,
+        creatureKey: row.creatureKey,
+        imageId: row.imageId,
+      });
+    }
+    if (winner.creatureKey !== foldedKey) {
+      await write({ ...winner, creatureKey: foldedKey });
+      tally.folded += 1;
+    }
+  }
+}
+
+/** A `creatureKey`-carrying value inside a `battles` row (a token or a frozen
+ * seed fighter), read from RAW storage — the stored row may predate the field,
+ * so `creatureKey` is genuinely optional here. */
+interface StoredCreatureKeyCarrier extends Record<string, unknown> {
+  creatureKey?: string | undefined;
+}
+
+/** A `battles` row AS STORED. TypeScript's `Battle` describes the CURRENT
+ * parsed shape; `stage` (M5-D) and `seedFighters` (M5-C) are present on every
+ * row the app wrote after those arcs, but a row written before them carries
+ * neither in IndexedDB — so the v22 walk reads the raw shape through this. */
+interface StoredBattleRow extends Record<string, unknown> {
+  board?: StoredBattleBoard | null;
+  seedFighters?: StoredCreatureKeyCarrier[];
+}
+
+interface StoredBattleBoard extends Record<string, unknown> {
+  tokens?: StoredCreatureKeyCarrier[];
+  stage?: (Record<string, unknown> & { tokens?: StoredCreatureKeyCarrier[] }) | null;
+}
+
+/** Fold every `creatureKey` in a carrier list, returning the SAME references
+ * for carriers that did not change. `chunk:`/`artifact:` keys fold to
+ * themselves, so a battle whose keys are all ids is not rewritten. */
+function foldCreatureKeyCarriers<T extends { creatureKey?: string | undefined }>(
+  carriers: T[],
+): { carriers: T[]; folded: number } {
+  let folded = 0;
+  const next = carriers.map((carrier) => {
+    if (carrier.creatureKey === undefined) return carrier;
+    const key = foldCreatureKey(carrier.creatureKey);
+    if (key === carrier.creatureKey) return carrier;
+    folded += 1;
+    return { ...carrier, creatureKey: key };
+  });
+  return { carriers: next, folded };
+}
 
 /**
  * The single Dexie database (01-DATA-MODEL §Dexie schema). All IndexedDB
@@ -71,6 +211,14 @@ import { repairCreatureCitations } from '@/db/creatureRepair';
  * reader left; the upgrade counts the rows it removed into
  * `settings.deliverablesRemoved`, which `AppShell` reports once — a table
  * drop is never silent.
+ *
+ * Version 22 (docs/17 row 168): the persisted creature identity is FOLDED onto
+ * the comparable form (NFC + trim + case-fold). No store or index changes —
+ * the version bump exists only to run the upgrade, which re-keys `mobPortraits`
+ * and `creatureImages` rows and the `creatureKey`s inside `battles` rows
+ * (board tokens, the saved stage snapshot's tokens and frozen `seedFighters`),
+ * merges a creature stored under both compositions by the newer `updatedAt`,
+ * and writes the counts into `settings.creatureKeyFold` for `AppShell`.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -727,6 +875,135 @@ export class CampaignerDB extends Dexie {
           ...(existing ?? {}),
           id: 'settings',
           deliverablesRemoved: removed,
+        });
+      });
+
+    // **The persisted creature identity is FOLDED** (owner-ratified, docs/17
+    // row 168). `contentCreatureKey` keyed a creature by
+    // `name.trim().toLowerCase()`, so a Mac-authored (NFD) and a precomposed
+    // (NFC) spelling of one name minted DIFFERENT keys — and those STRINGS are
+    // an existing identity: a UNIQUE `mobPortraits.creatureKey`, a
+    // `creatureImages` composite index, and every battle token. Two portrait
+    // slots for one creature, and "one creature, one look" (docs/11 D6) broken
+    // silently. The mint folds now (`comparableName`); this upgrade migrates the
+    // bytes already stored.
+    //
+    // NO STORE OR INDEX CHANGES: this version exists ONLY to run the upgrade.
+    //
+    // The walk, and why each half is here rather than on the read path: a lookup
+    // derives the key from a name at read time, so no read-side reconciliation
+    // can bridge two compositions once the bytes disagree.
+    // 1. `mobPortraits` — UNIQUE `&creatureKey` (delete-then-put when the key
+    //    changes; a dual-composition duplicate merges by newer `updatedAt`);
+    // 2. `creatureImages` — the per-campaign presentation rows (same merge);
+    // 3. `battles` — every `creatureKey` a battle row carries: its board tokens,
+    //    the SAVED STAGE SNAPSHOT's tokens (Reset restores those onto the board)
+    //    and its frozen `seedFighters` rows (the spawn path dedupes by this key,
+    //    so a legacy spelling would seed a duplicate fighter). The brief named
+    //    the tokens; the other two carriers hold the SAME identity and are
+    //    folded with them so the row cannot disagree with itself.
+    // `chunk:` and `artifact:` keys are ids, not names — `foldCreatureKey`
+    // returns them byte-identical.
+    //
+    // Counts and merges are written into settings once (the v21 `deliverables`
+    // pattern); a key that cannot be parsed throws out of the upgrade rather
+    // than being kept silently.
+    this.version(22)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, &moduleId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const portraitTally: CreatureKeyFoldTally = { folded: 0, merged: 0, dropped: [] };
+        const portraits = tx.table<MobPortraitCacheEntry, Id>('mobPortraits');
+        const portraitRows = await portraits.toArray();
+        await foldCreatureRowGroups(
+          'mobPortraits',
+          groupCreatureRowsByFoldedKey('mobPortraits', portraitRows, () => ''),
+          (row) => portraits.put(row),
+          (id) => portraits.delete(id),
+          portraitTally,
+        );
+
+        const imageTally: CreatureKeyFoldTally = { folded: 0, merged: 0, dropped: [] };
+        const creatureImages = tx.table<CreatureImage, Id>('creatureImages');
+        const imageRows = await creatureImages.toArray();
+        await foldCreatureRowGroups(
+          'creatureImages',
+          groupCreatureRowsByFoldedKey('creatureImages', imageRows, (row) => row.campaignId),
+          (row) => creatureImages.put(row),
+          (id) => creatureImages.delete(id),
+          imageTally,
+        );
+
+        let battleTokensFolded = 0;
+        let seedFightersFolded = 0;
+        const battles = tx.table<Battle, Id>('battles');
+        const storedBattles = (await battles.toArray()) as unknown as StoredBattleRow[];
+        for (const stored of storedBattles) {
+          const board = stored.board;
+          if (board === undefined || board === null) continue;
+          const originalTokens = board.tokens ?? [];
+          const tokens = foldCreatureKeyCarriers(originalTokens);
+          const stage = board.stage ?? null;
+          const stageTokens = stage === null ? null : foldCreatureKeyCarriers(stage.tokens ?? []);
+          const originalSeedFighters = stored.seedFighters ?? [];
+          const seedFighters = foldCreatureKeyCarriers(originalSeedFighters);
+          const folded = tokens.folded + (stageTokens?.folded ?? 0) + seedFighters.folded;
+          // A battle whose keys are all ids (`chunk:`) or already composed is
+          // left byte-identical — the migration touches only what it folds.
+          if (folded === 0) continue;
+          battleTokensFolded += tokens.folded + (stageTokens?.folded ?? 0);
+          seedFightersFolded += seedFighters.folded;
+          await battles.put({
+            ...stored,
+            board: {
+              ...board,
+              ...(Array.isArray(board.tokens) ? { tokens: tokens.carriers } : {}),
+              ...(stageTokens === null ? {} : { stage: { ...stage, tokens: stageTokens.carriers } }),
+            },
+            ...(Array.isArray(stored.seedFighters) ? { seedFighters: seedFighters.carriers } : {}),
+          } as unknown as Battle);
+        }
+
+        const report: CreatureKeyFoldReport = {
+          mobPortraitKeysFolded: portraitTally.folded,
+          creatureImageKeysFolded: imageTally.folded,
+          battleTokenKeysFolded: battleTokensFolded,
+          seedFighterKeysFolded: seedFightersFolded,
+          mergedRows: portraitTally.merged + imageTally.merged,
+          dropped: [...portraitTally.dropped, ...imageTally.dropped],
+        };
+        const hasWork =
+          report.mobPortraitKeysFolded > 0 ||
+          report.creatureImageKeysFolded > 0 ||
+          report.battleTokenKeysFolded > 0 ||
+          report.seedFighterKeysFolded > 0 ||
+          report.mergedRows > 0;
+        const settings = tx.table('settings');
+        const existing = (await settings.get('settings')) as Record<string, unknown> | undefined;
+        await settings.put({
+          ...(existing ?? {}),
+          id: 'settings',
+          // An upgrade that folded nothing reports nothing: `null` is the
+          // shell's "no toast" state, exactly like an unset field on a fresh
+          // install (a fresh database never runs an upgrade body at all).
+          creatureKeyFold: hasWork ? report : null,
         });
       });
   }

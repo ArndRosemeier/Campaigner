@@ -46,6 +46,54 @@ export const creatureCitationRepairReportSchema = z.object({
 
 export type CreatureCitationRepairReport = z.infer<typeof creatureCitationRepairReportSchema>;
 
+/**
+ * A creature row the v22 key fold had to DROP because the same creature was
+ * already stored under the other Unicode composition (docs/17 row 168). The
+ * dropped `imageId` is recorded — not deleted, and named in the one-shot
+ * report — so a merged slot is never silent loss (AGENTS rule 1).
+ */
+export const creatureKeyFoldDroppedSchema = z.object({
+  /** Which creature table the dropped row lived in. */
+  table: z.enum(['mobPortraits', 'creatureImages']),
+  /** The key the row was stored under, as it was before the fold. */
+  creatureKey: z.string(),
+  /** The image blob the dropped row pointed at. */
+  imageId: z.string(),
+});
+
+export type CreatureKeyFoldDropped = z.infer<typeof creatureKeyFoldDroppedSchema>;
+
+/**
+ * The one-shot report of the v22 persisted-creature-key fold (docs/17 row 168):
+ * how many rows in each population were re-keyed onto the comparable form, how
+ * many duplicate slots were merged, and WHICH row lost each merge. Written by
+ * the Dexie upgrade body (which runs before React exists and cannot toast) and
+ * consumed once by AppShell, which surfaces it and resets it to null.
+ *
+ * The counts are per POPULATION, never a single total, because the owner's
+ * question after a re-key is "what did that touch?" — portrait slots, campaign
+ * presentation rows, battle tokens and frozen fighter rows are four different
+ * things.
+ */
+export const creatureKeyFoldReportSchema = z.object({
+  /** `mobPortraits` rows whose stored key changed. */
+  mobPortraitKeysFolded: z.number().int().nonnegative(),
+  /** `creatureImages` rows whose stored key changed. */
+  creatureImageKeysFolded: z.number().int().nonnegative(),
+  /** Battle tokens whose stored key changed (board tokens AND the saved stage
+   * snapshot's tokens — both are live token carriers). */
+  battleTokenKeysFolded: z.number().int().nonnegative(),
+  /** `seedFighters` rows whose frozen identity key changed. */
+  seedFighterKeysFolded: z.number().int().nonnegative(),
+  /** Creature rows dropped because both compositions were present; the newer
+   * `updatedAt` won and the loser is named in `dropped`. */
+  mergedRows: z.number().int().nonnegative(),
+  /** Every merged-away row, by table, key and image blob. */
+  dropped: z.array(creatureKeyFoldDroppedSchema).default([]),
+});
+
+export type CreatureKeyFoldReport = z.infer<typeof creatureKeyFoldReportSchema>;
+
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
 
@@ -401,6 +449,14 @@ export const settingsSchema = z.object({
    */
   deliverablesRemoved: z.number().int().nonnegative().default(0),
   /**
+   * The v22 migration notice (docs/17 row 168): the persisted creature key was
+   * folded onto the comparable form (NFC + trim + case-fold), so a
+   * Mac-authored spelling and a precomposed one are one creature. The upgrade
+   * body cannot toast, so it writes what it re-keyed and merged here; AppShell
+   * reads it ONCE, says it, and resets it to null. `null` = nothing to report.
+   */
+  creatureKeyFold: creatureKeyFoldReportSchema.nullable().default(null),
+  /**
    * The one-shot core-mob citation repair report (docs/11 D7), consumed once by
    * AppShell and then reset to null. `null` = nothing to report.
    */
@@ -478,6 +534,7 @@ export function defaultSettings(): Settings {
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
     deliverablesRemoved: 0,
+    creatureKeyFold: null,
     creatureCitationRepair: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,

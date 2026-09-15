@@ -17,11 +17,14 @@ import {
   patchModule,
 } from '@/db/moduleRepo';
 import { ensureBattle, patchBattle } from '@/db/battleRepo';
+import { insertCreatureImageRow } from '@/db/creatureImages';
 import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import {
+  contentCreatureKey,
   createModule as buildModule,
   newId,
   ruleChunkSchema,
+  stageSnapshotSchema,
   statBlockSchema,
   stampNewEntity,
   type DependencyAnalysis,
@@ -602,6 +605,125 @@ describe('export v2', () => {
     const restored = await getImage(image.id);
     expect(restored?.campaignId).toBe(result.campaignId);
     expect(new TextDecoder().decode(restored?.bytes ?? new Uint8Array())).toBe('cover-bytes');
+  });
+
+  it('folds a PRE-MIGRATION export’s creature keys onto the comparable form (docs/17 row 168)', async () => {
+    // A file written before the v22 key fold carries keys minted by the OLD
+    // mint (`name.trim().toLowerCase()`, no NFC). Importing it verbatim would
+    // put legacy bytes back into a folded database and split one creature
+    // across two portrait slots again — so the import path folds through the
+    // SAME seam the Dexie upgrade uses.
+    const DECOMPOSED = 'Wa\u0308chter'; // a + combining diaeresis (U+0308)
+    const legacyKey = (name: string, statBlock: unknown): string =>
+      `content:${JSON.stringify([name.trim().toLowerCase(), statBlock ?? null])}`;
+
+    const campaign = await createCampaign({ name: 'Mac-authored', system: 'dnd5e' });
+    const module = await saveModuleRow(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Warren',
+        concept: 'goblins below',
+        levelMin: 1,
+        levelMax: 3,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+    );
+    const battle = await ensureBattle(campaign.id, module.id);
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['portrait-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 10,
+      height: 10,
+      source: 'uploaded',
+    });
+    await insertCreatureImageRow({
+      campaignId: campaign.id,
+      creatureKey: contentCreatureKey(DECOMPOSED, null),
+      imageId: image.id,
+    });
+    const token = {
+      artifactId: null,
+      label: 'Wächter',
+      x: 0.5,
+      y: 0.5,
+      visible: true,
+      scale: 1,
+      shape: 'circle' as const,
+      color: null,
+      currentHp: null,
+      initiativeRoll: null,
+      initiativeBonus: null,
+      treasure: '',
+      conditions: [],
+    };
+    await patchBattle(battle.id, {
+      board: {
+        ...battle.board,
+        tokens: [{ ...token, id: newId(), creatureKey: contentCreatureKey(DECOMPOSED, null) }],
+        stage: stageSnapshotSchema.parse({
+          tokens: [
+            { ...token, id: newId(), creatureKey: contentCreatureKey(DECOMPOSED, { ac: 9 }) },
+          ],
+        }),
+      },
+      seedFighters: [
+        {
+          id: newId(),
+          name: 'Wächter',
+          maxHp: 7,
+          initiativeBonus: 1,
+          creatureKey: contentCreatureKey(DECOMPOSED, null),
+        },
+      ],
+    });
+
+    // The export carries the FOLDED bytes; rewrite them to what a
+    // pre-migration app wrote, which is exactly the file this pin imports.
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      creatureImages?: { creatureKey: string }[];
+      battles?: {
+        board: { tokens: { creatureKey?: string }[]; stage: { tokens: { creatureKey?: string }[] } | null };
+        seedFighters: { creatureKey?: string }[];
+      }[];
+    };
+    const exportedImage = exported.creatureImages?.[0];
+    if (exportedImage === undefined) throw new Error('the export carried no creature image row');
+    exportedImage.creatureKey = legacyKey(DECOMPOSED, null);
+    const exportedBattle = exported.battles?.[0];
+    if (exportedBattle === undefined) throw new Error('the export carried no battle');
+    const exportedToken = exportedBattle.board.tokens[0];
+    if (exportedToken === undefined) throw new Error('the export carried no board token');
+    exportedToken.creatureKey = legacyKey(DECOMPOSED, null);
+    const exportedStage = exportedBattle.board.stage;
+    if (exportedStage === null) throw new Error('the export carried no saved stage');
+    const exportedStageToken = exportedStage.tokens[0];
+    if (exportedStageToken === undefined) throw new Error('the export carried no stage token');
+    exportedStageToken.creatureKey = legacyKey(DECOMPOSED, { ac: 9 });
+    const exportedFighter = exportedBattle.seedFighters[0];
+    if (exportedFighter === undefined) throw new Error('the export carried no seed fighter');
+    exportedFighter.creatureKey = legacyKey(DECOMPOSED, null);
+
+    const result = await importExport(exported);
+    const folded = contentCreatureKey(DECOMPOSED, null);
+
+    const rows = await db.creatureImages.where('campaignId').equals(result.campaignId).toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.creatureKey).toBe(folded);
+    const battles = await db.battles.where('campaignId').equals(result.campaignId).toArray();
+    expect(battles[0]?.board.tokens[0]?.creatureKey).toBe(folded);
+    expect(battles[0]?.board.stage?.tokens[0]?.creatureKey).toBe(
+      contentCreatureKey(DECOMPOSED, { ac: 9 }),
+    );
+    expect(battles[0]?.seedFighters[0]?.creatureKey).toBe(folded);
+    // Nothing in the restored campaign still answers to the legacy bytes.
+    expect([
+      ...rows.map((row) => row.creatureKey),
+      ...(battles[0]?.board.tokens ?? []).map((row) => row.creatureKey),
+      ...(battles[0]?.board.stage?.tokens ?? []).map((row) => row.creatureKey),
+      ...(battles[0]?.seedFighters ?? []).map((row) => row.creatureKey),
+    ]).not.toContain(legacyKey(DECOMPOSED, null));
   });
 
   it('THROWS when a module-owned artifact names a module outside the export (v2)', async () => {

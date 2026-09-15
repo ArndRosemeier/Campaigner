@@ -20,6 +20,7 @@ import {
   creatureImageSchema,
   exportDependenciesSchema,
   exportMissingImageSchema,
+  foldCreatureKey,
   moduleSchema,
   personaRunSchema,
   storedImageSchema,
@@ -763,14 +764,18 @@ export async function importExport(
 
       // Cited creatures' presentation rows (docs/11 D5 amendment): a fresh id
       // per row (ids are workspace-local), the campaign re-anchored, and the
-      // creature KEY kept VERBATIM — the identity is the reference, so the
-      // restored campaign's portraits still answer for the same creatures.
+      // creature KEY folded through the SAME migration seam the v22 Dexie
+      // upgrade uses (docs/17 row 168). A pre-migration export spells the key
+      // with the OLD mint (`name.trim().toLowerCase()`, no NFC), so importing
+      // it verbatim would reintroduce legacy bytes into a folded database and
+      // split one creature across two slots again.
       for (const exported of parsed.creatureImages ?? []) {
         await db.creatureImages.add(
           creatureImageSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
             campaignId: newCampaignId,
+            creatureKey: foldCreatureKey(exported.creatureKey),
             createdAt: stamp,
             updatedAt: stamp,
           }),
@@ -862,9 +867,18 @@ export async function importExport(
                   },
             board: {
               ...exported.board,
+              // Every creature key a battle row carries is folded through the
+              // v22 migration seam (docs/17 row 168): board tokens, the saved
+              // stage snapshot's tokens (Reset restores them onto the board)
+              // and the frozen `seedFighters` the spawn path dedupes by. A
+              // pre-migration export spells them with the old mint; importing
+              // it verbatim would put unfolded bytes back into a folded DB.
               tokens: exported.board.tokens.map((token) => ({
                 ...token,
                 artifactId: remapTokenArtifact(token.artifactId),
+                ...(token.creatureKey === undefined
+                  ? {}
+                  : { creatureKey: foldCreatureKey(token.creatureKey) }),
               })),
               stage:
                 exported.board.stage === null
@@ -874,9 +888,18 @@ export async function importExport(
                       tokens: exported.board.stage.tokens.map((token) => ({
                         ...token,
                         artifactId: remapTokenArtifact(token.artifactId),
+                        ...(token.creatureKey === undefined
+                          ? {}
+                          : { creatureKey: foldCreatureKey(token.creatureKey) }),
                       })),
                     },
             },
+            seedFighters: exported.seedFighters.map((fighter) => ({
+              ...fighter,
+              ...(fighter.creatureKey === undefined
+                ? {}
+                : { creatureKey: foldCreatureKey(fighter.creatureKey) }),
+            })),
             createdAt: stamp,
             updatedAt: stamp,
           }),

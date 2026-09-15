@@ -1,6 +1,7 @@
 import type { AnyArtifact, MonsterEntry, MonsterSource, NpcArtifact } from '@/domain/artifact';
 import { z } from 'zod';
 
+import { comparableName } from '@/domain/artifactAlias';
 import { sha256HexSchema } from '@/domain/rulebook';
 
 /**
@@ -133,25 +134,70 @@ export function libraryCreatureKey(chunkId: string): string {
  * one `encounterShapeKey`-class helpers use): `undefined` and `null` collapse
  * so an absent stat block and a null one agree.
  *
- * KEY SPACE `CREATURE_CONTENT_IDENTITY_KEY` (docs/17 row 167) — and the ONE key
- * space on this list whose key is PERSISTED: it is written onto battle tokens
- * and it is a Dexie INDEX value (`mobPortraits: 'id, &creatureKey'`,
+ * KEY SPACE `CREATURE_CONTENT_IDENTITY_KEY` (docs/17 rows 167 and 168) — and the
+ * ONE key space on this list whose key is PERSISTED: it is written onto battle
+ * tokens and it is a Dexie INDEX value (`mobPortraits: 'id, &creatureKey'`,
  * `creatureImages: '[campaignId+creatureKey]'`), so the STRING is an existing
- * identity rather than a per-call memo. Its `name.trim().toLowerCase()` is
- * therefore DECLARED AND LEFT UNFOLDED in this slice, deliberately: folding it
- * would change the bytes minted for every future row, and a row already stored
- * under the other Unicode composition would stop being found by the new derived
- * key. docs/17 row 167 records what writes it, what reads it, and what a
- * composed/decomposed difference costs — the fix is the owner's call, not a
- * writer's. The source scan in `tests/domain/name-key-spaces.test.ts` holds this
- * spelling in place so the decision cannot be made by accident.
+ * identity rather than a per-call memo. Its name half is therefore the
+ * comparable form (`comparableName`, docs/18 §2.1 — NFC + trim + case-fold),
+ * the owner-ratified fold of docs/17 row 168: a Mac-authored (decomposed)
+ * spelling and a precomposed one are ONE creature, so they share one portrait
+ * slot ("one creature, one look", docs/11 D6). Because the bytes are an
+ * EXISTING identity, the fold ships with a Dexie upgrade (version 22 in
+ * `src/db/db.ts`) that re-keys stored rows, and `foldCreatureKey` below is the
+ * seam that migrates and imports a pre-fold key. The source scan in
+ * `tests/domain/name-key-spaces.test.ts` holds this spelling in place.
  */
 export function contentCreatureKey(name: string, statBlock: unknown): string {
-  const trimmed = name.trim().toLowerCase();
-  if (trimmed === '') {
+  const folded = comparableName(name);
+  if (folded === '') {
     throw new Error('creature identity: a creature with no name has no content identity');
   }
-  return `content:${JSON.stringify([trimmed, statBlock ?? null])}`;
+  return `content:${JSON.stringify([folded, statBlock ?? null])}`;
+}
+
+/**
+ * Fold an ALREADY-PERSISTED creature key through the comparable form — the
+ * migration/import seam beside the mint (docs/17 row 168), and the ONE way
+ * pre-fold bytes become current bytes.
+ *
+ * A `content:` key carries a `[name, statBlock]` pair JSON-stringified exactly
+ * as `contentCreatureKey` minted it; this parses that pair, folds element 0
+ * through `comparableName`, and rebuilds the key byte-for-byte otherwise. Every
+ * other key space — `chunk:` (a library creature's cited row), `artifact:` (an
+ * authored row's own cover) and anything unrecognised — is returned UNCHANGED:
+ * those keys are ids, not names, and no composition relation exists in them.
+ *
+ * A `content:` key that does not parse as a `[string, unknown]` pair THROWS,
+ * never returns itself silently: silently keeping it would leave a legacy
+ * spelling in the schema AFTER the migration was declared to have removed it,
+ * which is exactly the silent-loss shape AGENTS rule 1 forbids. The migration
+ * that calls this fails loudly with the offending key named.
+ *
+ * HONEST LIMIT (docs/17 row 168): a stored key's name half was already
+ * lowercased when it was minted (`name.trim().toLowerCase()`, the pre-fold
+ * mint), so this folds `lowercase(name)`. That equals the new mint — which
+ * folds `NFC(name)` then lowercases — for every name whose lowercase commutes
+ * with NFC composition, which is every realistic name. A name whose lowercase
+ * does NOT commute (none is known in practice) would fold to a different key
+ * than the mint produces. This is the whole reason the migration is a no-op for
+ * typical data, and it is the limit of what the upgrade can promise.
+ */
+export function foldCreatureKey(key: string): string {
+  if (!key.startsWith('content:')) return key;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key.slice('content:'.length));
+  } catch {
+    throw new Error(`creature identity: cannot fold a content: key that is not JSON — ${key}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 2 || typeof parsed[0] !== 'string') {
+    throw new Error(
+      `creature identity: cannot fold a content: key that is not a [name, statBlock] pair — ${key}`,
+    );
+  }
+  const storedName = parsed[0];
+  return `content:${JSON.stringify([comparableName(storedName), parsed[1]])}`;
 }
 
 /**

@@ -116,15 +116,19 @@ const SPACES: Record<string, Record<string, readonly [string, number][]>> = {
   PROMPT_STYLE_NAME_KEY: {
     'db/promptStyleRepo.ts': [['comparableName(', 6]],
   },
-  // The PERSISTED creature identity — declared and held UNFOLDED: the key's
-  // bytes are a Dexie index value (`mobPortraits: 'id, &creatureKey'`,
-  // `creatureImages: '[campaignId+creatureKey]'`), so folding the name half
-  // would mint new bytes for future rows while rows already stored under the
-  // other composition stop being found. Evidence and the migration decision:
-  // docs/17 row 167. The scan HOLDS the old spelling in place — flipping it is
-  // the owner's call, never an accident.
+  // The PERSISTED creature identity — FOLDED since docs/17 row 168. This space
+  // is the one whose key bytes are an EXISTING identity: a Dexie UNIQUE index
+  // (`mobPortraits: 'id, &creatureKey'`), a `creatureImages` composite index,
+  // and every battle token's `creatureKey`. The mint folds the name through
+  // `comparableName` (the `name.trim().toLowerCase()` of row 167 is gone), and
+  // `foldCreatureKey` is the migration/import seam that folds a pre-fold key
+  // (the v22 Dexie upgrade and `lib/exportImport` both call it). Both spellings
+  // are counted here, so reverting either the mint or the seam reds.
   CREATURE_CONTENT_IDENTITY_KEY: {
-    'domain/creature.ts': [['name.trim().toLowerCase()', 1]],
+    'domain/creature.ts': [
+      ['comparableName(name)', 1],
+      ['comparableName(storedName)', 1],
+    ],
   },
 };
 
@@ -144,7 +148,6 @@ const SPACES: Record<string, Record<string, readonly [string, number][]>> = {
  * below. */
 const BOUNDARIES: Record<string, string> = {
   'domain/artifactAlias.ts': 'the primitive itself — its definition IS the fold',
-  'domain/creature.ts': 'the PERSISTED creature identity — declared NOT folded (docs/17 row 167)',
   'db/mobPortraitCache.ts': "row 165's survivor — `isCanonicalCitation`, the portrait path another slice owns",
   'db/creatureRepo.ts': 'an ORDERING comparator (localeCompare), not an identity key',
   'domain/module.ts': "sameSlot's BOOK half (a book title is not a name, row 161) + the entity lookups' emptiness probes",
@@ -643,14 +646,14 @@ describe('PROMPT_STYLE_NAME_KEY — the picker’s names are unique in ONE key s
   });
 });
 
-describe('CREATURE_CONTENT_IDENTITY_KEY — the persisted identity keeps its declared bytes', () => {
-  it('composition changes the persisted key (NOT folded — the owner’s migration decision), while trim and case still fold', () => {
-    // THE DECISION THIS PIN HOLDS: these two keys are DIFFERENT bytes today,
-    // and each is an identity a stored Dexie row answers to. Flipping this
-    // assertion = re-keying `mobPortraits`/`creatureImages` rows and every
-    // battle token stamped with the old bytes — a migration the owner has not
-    // ratified (docs/17 row 167 records the writers, readers and costs).
-    expect(contentCreatureKey(COMPOSED, null)).not.toBe(contentCreatureKey(DECOMPOSED, null));
+describe('CREATURE_CONTENT_IDENTITY_KEY — the persisted identity is FOLDED', () => {
+  it('composition no longer changes the persisted key (docs/17 row 168), while trim and case still fold', () => {
+    // THE DECISION THIS PIN HOLDS: composition is folded, so a Mac-authored
+    // (decomposed) and a precomposed spelling mint ONE key — one portrait slot,
+    // "one creature, one look" (docs/11 D6). The fold's mate is the data
+    // migration (`src/db/db.ts` version 22) plus the `foldCreatureKey` seam; the
+    // migration's own pins live in `tests/db/creature-key-fold.test.ts`.
+    expect(contentCreatureKey(COMPOSED, null)).toBe(contentCreatureKey(DECOMPOSED, null));
     // The parts that were ALWAYS folded stay folded:
     expect(contentCreatureKey(`${COMPOSED} `, null)).toBe(contentCreatureKey(COMPOSED, null));
     expect(contentCreatureKey(COMPOSED.toUpperCase(), null)).toBe(

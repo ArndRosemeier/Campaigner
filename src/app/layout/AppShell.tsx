@@ -27,6 +27,7 @@ import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
 import { useLibraryCreaturePool } from '@/app/use-library-creatures';
 import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
+import { formatCreatureKeyFold } from '@/domain/creatureKeyFold';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
@@ -134,6 +135,30 @@ export function AppShell(): JSX.Element {
       })
       .catch((error: unknown) => {
         toastError('Could not report the bestiary citation repair', error);
+      });
+  }, []);
+
+  useEffect(() => {
+    // ONE loud migration report (docs/17 row 168): the v22 Dexie upgrade FOLDED
+    // the persisted creature identity onto the comparable form (NFC + trim +
+    // case-fold), so a Mac-authored and a precomposed spelling of one name are
+    // one creature again — it re-keyed `mobPortraits`/`creatureImages` rows and
+    // every creature key inside `battles`, and merged a creature that existed
+    // under BOTH compositions (the newer row won, the dropped one is named).
+    // The upgrade body cannot toast (it runs before React, inside Dexie), so it
+    // wrote the per-population counts into settings; this reads them ONCE. A
+    // re-key the owner cannot see is silent loss, and the drop list is the
+    // imageIds a merge let go (AGENTS rules 1/2).
+    void readSettings()
+      .then(async (settings) => {
+        const report = settings.creatureKeyFold;
+        if (report === null) return;
+        const message = formatCreatureKeyFold(report);
+        if (message !== null) toastInfo(message);
+        await updateSettings({ creatureKeyFold: null });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the creature key migration', error);
       });
   }, []);
 

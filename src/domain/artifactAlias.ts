@@ -121,8 +121,12 @@
  *   one space; keying one half by `toLowerCase()` alone misses the other
  *   half's entries (the partial-fold trap, row 167).
  * - `CREATURE_CONTENT_IDENTITY_KEY` (`domain/creature.contentCreatureKey`):
- *   DECLARED BUT NOT FOLDED — a PERSISTED identity whose bytes are a Dexie
- *   index value; see its own doc and docs/17 row 167.
+ *   FOLDED since docs/17 row 168 — a PERSISTED identity whose bytes are a Dexie
+ *   index value. Because the bytes are an existing identity, the fold ships
+ *   with a Dexie upgrade that re-keys stored rows and battle keys;
+ *   `domain/creature.foldCreatureKey` is the migration/import seam that folds a
+ *   pre-fold key. See its own doc for the honest limit (a stored name half was
+ *   already lowercased, so the migration folds `lowercase(name)`).
  *
  * DECLARED NOT-BUILT-ON-IT (the anti-spaces — each a place the primitive would
  * be WRONG, which is why they are named rather than silently left):
