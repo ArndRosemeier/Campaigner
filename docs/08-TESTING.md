@@ -4055,23 +4055,35 @@ rows.
 
 ### The gate is a script (memory is capped, not requested)
 
-Run `scripts/gate.sh` — never a hand-rolled `vitest run`. Its chunks are DISJOINT (five test
-directories plus an explicit remainder list) and it prints `chunk arithmetic: N
-of M test files covered`, failing when they disagree: a path filter matches its
-own subdirectories, so the first version ran most of the suite twice, and a file
-that falls between chunks must be a defect rather than a saving. It holds the atomic
-suite lock, refuses to start while any other suite is running, runs vitest as
-sequential PATH CHUNKS, watches the run's own process group and kills it above
-3000 MB RSS or below 2500 MB available memory, and prints each chunk's PEAK RSS
-with the summed counts. `vite.config.ts` caps every worker's heap at 1536 MB,
-which binds even a bare `pnpm exec vitest run`. A chunk the watchdog killed is
-VOID, never evidence.
+Run `scripts/gate.sh` — never a hand-rolled `vitest run`. Its chunks are DISJOINT
+(six test directories plus an explicit remainder list, with `tests/features`
+split in two) and it prints `chunk arithmetic: N of M test files covered`,
+failing when they disagree: a path filter matches its own subdirectories, so the
+first version ran most of the suite twice, and a file that falls between chunks
+must be a defect rather than a saving. It holds the atomic suite lock, refuses to
+start while any other suite is running, runs vitest as at most TWO concurrent
+PATH CHUNKS — each with ONE worker, each in its OWN process group (`setsid`) —
+and samples the COMBINED RSS of every live chunk every second, killing them all
+above 3000 MB RSS or below 2500 MB available memory. It prints each chunk's wall
+time and PEAK RSS with the summed counts. `vite.config.ts` caps every worker's
+heap at 1536 MB, which binds even a bare `pnpm exec vitest run`. A chunk the
+watchdog killed is VOID, never evidence: it is re-run sequentially and never
+counted, and if the combined peak only APPROACHES the cap the gate falls back to
+sequential before the kill line (docs/17 row 175).
 
 Why both halves: the growth that fills this box is OFF-heap (`pdfjs` holds
-`ArrayBuffer`s, which no `--max-old-space-size` bounds) and 304 test files in a
+`ArrayBuffer`s, which no `--max-old-space-size` bounds) and 339 test files in a
 single process accumulate it. Owner directive, verbatim: *"please make sure that
 you restrict the mem use to not more than 4gb or so since you are not the only
 worker here."*
+
+**Measured on the `9b925e3` tree (docs/17 row 175):** the vitest chunks cost
+**706.6 s** sequentially and **397 s** two at a time; the whole gate is **473 s
+(7 m 53 s, the 76 s of lint + typecheck included)** against the ~12 min the
+chunks alone used to take, with the summed counts UNCHANGED at **339 files /
+3978 tests**. The combined peak of the two concurrent chunks is **2295 MB of the
+3000 MB cap**, which is why the soft fallback sits at 2700 MB. The per-chunk table
+and the `isolate: false` NO are in row 175.
 
 ### What the window SHOWS is what the cast compares (docs/17 row 163, docs/12 §5, docs/18 §2/§4)
 
@@ -4916,18 +4928,44 @@ exactly the class the review was after:
 
 ## Gate
 
-`pnpm lint && pnpm typecheck && pnpm test` — the test step fails on console
-noise, routes that stop mounting, and Base UI composition regressions. Vitest
-uses at most TWO workers, and the config is the bound: `vite.config.ts`
-defaults `maxWorkers` to `DEFAULT_TEST_WORKERS` (2, ledger row 94) in the file
-AND in each `test.projects` entry, so a bare `pnpm exec vitest run` cannot
-exceed it and a CLI `--maxWorkers=N` cannot raise or lower it (it lands on the
-root config, which each project's own value overrides).
-`CAMPAIGNER_TEST_WORKERS=<n> pnpm exec vitest run` is the one explicit way to
-raise it for a run that owns the machine, and a mis-set value fails loudly
-rather than silently defaulting. The default test timeout is 20 seconds.
-`b84d074` had raised the old worker count from four to six (the suite is
-file-parallel and was leaving half the machine idle); row 94 superseded that
-with the bound above, after a bare unbounded run twice outlived its writer —
+`bash scripts/gate.sh` is THE one way the suite runs (AGENTS §Host hygiene 7) —
+never a hand-rolled `vitest run`. The test step fails on console noise, routes
+that stop mounting, and Base UI composition regressions; the script takes the
+atomic suite lock, refuses to start while any other suite (ours or the owner's
+other DSH project's) is running, and prints the summed counts with each chunk's
+wall time and peak RSS.
+
+**Two chunks at once, one worker each (docs/17 row 175).** The five directory
+chunks of the old gate are now SEVEN: `tests/features` — half the gate on its own
+— is split round-robin into `tests_features_a` and `tests_features_b` so the two
+long poles overlap, and at most TWO chunks run concurrently, each in its OWN
+process group (`setsid`). The config bound is unchanged: `vite.config.ts` defaults
+`maxWorkers` to `DEFAULT_TEST_WORKERS` (2, ledger row 94) in the file AND in each
+`test.projects` entry, so a bare `pnpm exec vitest run` cannot exceed it and a CLI
+`--maxWorkers=N` cannot raise or lower it (it lands on the root config, which each
+project's own value overrides). `CAMPAIGNER_TEST_WORKERS=<n>` remains the one
+explicit way to raise it for a run that owns the machine, and a mis-set value
+fails loudly rather than silently defaulting. The default test timeout is 20
+seconds. `GATE_PARALLEL_CHUNKS=1 bash scripts/gate.sh` forces the gate back to
+sequential.
+
+**The watchdog sums every live chunk.** It samples the combined RSS of all live
+chunks' process groups every second and kills ALL of them at `GATE_RSS_CAP_MB`
+(3000) or when available memory drops below `GATE_AVAIL_FLOOR_MB` (2500); a killed
+chunk is VOID, is re-run SEQUENTIALLY and is never counted. If the combined peak
+only approaches the cap (90% of it by default) the gate falls back to sequential
+before the kill line and says so in the summary.
+
+**The diff decides the ORDER, and exactly two skips are allowed.** Every run checks
+the chunk arithmetic (the union of the chunk file lists must equal the test files
+under `tests/` with no path twice). The diff base is `origin/main` (three-dot)
+plus the working tree; the chunks a diff touches run FIRST, so a red surfaces in
+one or two minutes instead of twelve. Vitest is skipped ENTIRELY only for a
+docs-only diff (lint and typecheck still run), and a diff that touches test files
+ALONE runs only the chunks that contain them. Every other diff runs the full set —
+there is no other skipping, because a gate that guesses at coverage is the failure
+mode this refuses. `b84d074` had raised the old worker count from four to six (the
+suite is file-parallel and was leaving half the machine idle); row 94 superseded
+that with the bound above, after a bare unbounded run twice outlived its writer —
 and because jsdom plus PDF/image workers otherwise starve event loops on
 constrained CI/agent VMs.
