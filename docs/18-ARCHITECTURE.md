@@ -19,6 +19,10 @@ number; grep the symbol.
   the seam, or add one line to §5 — never document the divergence as the way.
 - Keep entries to 1–3 lines + pointer. This is a seam index, not a subroutine
   catalog; feature specs own the details — point, never duplicate.
+- **CURRENT STATE is `docs/20-ORCHESTRATION.md`** (in-flight writers, unlanded
+  branches, the owner's decision queue, the failure-mode guards) — every landing
+  updates it in the same docs commit as this doc, and it never restates a seam
+  or a decision.
 
 ## 1. Layer map (dependency direction)
 

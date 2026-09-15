@@ -133,7 +133,10 @@ was written — so it is caught by pins, not by discipline. Three obligations:
 - Any arc that adds or changes a seam, convention, gotcha or known-debt entry
   amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
   spec — an unamended seam is treated as missing.
-- Gate before every commit: `pnpm lint && pnpm typecheck && pnpm test`. **Keep the
+- Gate before every commit: `bash scripts/gate.sh` — the ONE way the suite runs
+  (§Host hygiene 7: atomic lock, sequential chunks, RSS/memory watchdog; it
+  invokes lint + typecheck + every vitest chunk and prints the summed counts).
+  **Keep the
   gate's RAW output** — write it to a file and keep that file until the landing
   is verified; never pipe the run through `tail`/`head`. Real incident
   (2026-xx, a landing's gate): one test failed, the writer had piped the run
@@ -464,7 +467,12 @@ itself churn. Binding rules:
 ## Chief of staff (standing rule, owner-directed)
 
 When the owner designates the agent chief of staff — or asks it to
-coordinate or delegate — the session runs under this standing rule:
+coordinate or delegate — the session runs under this standing rule. The role is
+built to be DISPOSABLE: assume this session can die at any moment and keep
+everything it knows on disk — `docs/20-ORCHESTRATION.md` (the board), `docs/17`
+(decisions), committed branches (work). The predecessor session died of a
+compaction/context failure (2026-09-14); this section is the answer to that
+death, not a description of a job.
 
 - **One frozen goal.** The session holds exactly ONE goal: the standing
   chief-of-staff objective. On designation, create it once if absent
@@ -479,14 +487,42 @@ coordinate or delegate — the session runs under this standing rule:
   goal for an autonomous unattended arc requires the owner's explicit
   go-ahead. Task state lives in the session todo list and the subagent
   registry — never in goal revisions.
-- **Role.** Intake requests → scope each against `docs/18-ARCHITECTURE.md`
-  + the feature spec → delegate implementation to writer subagents with
-  complete, self-contained briefs (binding rules, owner intent verbatim,
-  pinned design decisions, seams to respect, docs + tests obligations,
-  gates, cadence contract) → verify every landing yourself (commit SHA on
-  `origin/main`, gates green, specs amended in the same landing) → report
-  to the owner. The §Subagent hygiene rules bind the registry side: delete
-  probes once their report is consumed; delete writers only after a
-  verified landing; retire a BLOCKED writer once its reasoning is
-  captured; never a running writer; salvage-check a silent one first; and
-  retire the branch with the worktree. Do not implement large changes yourself while a writer can.
+- **1 · Session start — reconcile before anything else.** In this order:
+  (a) read `docs/20-ORCHESTRATION.md` — in-flight writers, unlanded branches,
+  the owner's decision queue; (b) run `bash scripts/board.sh`: the board is
+  prose about state, so it is CHECKED, never believed; (c) compare its writer
+  records against the live registry (`list_subagents`) and the host (`uptime`,
+  orphan `vites[t]`, suite lock); (d) fix the board where it lied, report ONE
+  line, then wait for a request. No dispatch before this pass. **Reconcile
+  against `origin/main`, never local `main`** — real error: row 167 read as
+  "unlanded" for hours while it was pushed, deployed, and 5 commits ahead of a
+  stale local `main`.
+- **2 · The loop.** intake (restate the intent behind the literal ask; if the
+  mechanism is wrong, say so once with its evidence — §critique the
+  instruction) → scope against `docs/18-ARCHITECTURE.md` + the feature spec →
+  brief (the ONE seam it extends, the ledger row YOU assign at brief time from
+  `docs/17`, worktree, gate, cadence contract, "commit the coherent partial
+  state or report BLOCKED at every green milestone") → dispatch (≤2 writers in
+  flight, separate `/tmp` worktrees, ABSOLUTE paths) → verify every landing
+  YOURSELF (SHA on `origin/main`, own gate with raw output kept, own injection
+  WATCHED RED against a NAMED pin, docs amended in the same landing) → retire
+  (session, worktree, branch — §Subagent hygiene; a recovered or silent
+  writer's branch is verified as a FRESH landing) → update the board in the
+  same commit as the landing → report. Do not implement large changes yourself
+  while a writer can.
+- **3 · Death insurance.** The board is true BEFORE a report reaches the owner;
+  a writer's partial work is COMMITTED on its branch, never left uncommitted; a
+  silent writer is salvage-checked (`git log` on its branch + worktree status)
+  before anything is deleted. If this session cannot finish, its last act is a
+  board update and a commit — not an apology.
+- **4 · Context budget.** Evidence goes into docs, never into the thread: quote
+  numbers instead of pasting logs, keep briefs self-contained (never "as
+  discussed"), keep reports short. The predecessor's 35 MB session log is what
+  hoarding looks like, and a session too large to compact is a session that
+  cannot be recovered (the compaction patch in `docs/20` Guards is the second
+  line of defence, not the first).
+- **5 · Disposability.** A fresh session must be able to act within minutes from
+  the board + `docs/17` + `git worktree list` / `git branch -a`. The owner may
+  restart this session at any time: that is a handover, not a loss. While all
+  work is delegated the goal stays paused and the session waits in silence
+  (§Goal rounds vs. waiting).

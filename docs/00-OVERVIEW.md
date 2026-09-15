@@ -97,6 +97,13 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   own pages ADJACENT to the reference — never an appendix), the overflow ladder,
   the planner's toolkit, what we will NOT do, the open questions, and the build
   order. **Design ratified, not built** — see docs/18 §5.
+- `20-ORCHESTRATION.md` — **the orchestration board**: the ONE place CURRENT
+  STATE lives (in-flight writers, unlanded branches, the owner's decision
+  queue, and the guards for the three proven failure modes — stale workers,
+  RAM/worker storms, context/compaction). One line per record, overwritten in
+  place, kept true in the same commit as every landing and reconciled by
+  `scripts/board.sh` against git, session logs and the host. History is
+  `17`, seams are `18` — the board is neither.
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard
