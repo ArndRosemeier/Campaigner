@@ -31,11 +31,10 @@ reconciled: 5348293 · 2026-09-15T06:57Z
 
 SESSION  | cos=session-93cd9c40-6a9a-47ee-b8c4-dfee107cc1b8 | started=2026-09-15 | note=first session under this board; predecessor session-e5adac67 became unrecoverable (compaction of a 35MB, ~374-turn log)
 
-IN-FLIGHT | row=168 | branch=feat/persisted-key-fold | worktree=/tmp/campaigner-keys-fold | base=2acec2e | writer=461d22a8-b24f-4618-a7c6-12beb3d4534d | state=running | note=the persisted creature identity folds onto the comparable form + Dexie v22 migration + import fold (owner-ratified; answers the row167-persisted-key item below); the writer does NOT push — the CoS verifies with its own gate + injection, then lands
+IN-FLIGHT | row=168 | branch=feat/persisted-key-fold | worktree=/tmp/campaigner-keys-fold | base=2acec2e | writer=session-461d22a8-b24f-4618-a7c6-12beb3d4534d | note=fold contentCreatureKey onto the comparable form (comparableName) + Dexie v22 migration of stored portrait/presentation/battle keys + foldCreatureKey import seam
 
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count
 
-AWAITING-OWNER | id=row167-persisted-key | cost=1 slice + Dexie upgrade | question=fold contentCreatureKey onto the comparable form and re-key stored rows/tokens, or keep it declared unfolded?
 AWAITING-OWNER | id=claimA-pdf | cost=1 slice | question=PDF export drops markdown table rows (mdToPdfmake drops `|…|` lines) — build the table block?
 AWAITING-OWNER | id=claimA-app | cost=1 arc | question=the reader prints table pipes as text (no remark-gfm) — add a second renderer?
 AWAITING-OWNER | id=claimB-roster | cost=1 slice | question=treasureLedger never reads the roster's parsed `treasure`

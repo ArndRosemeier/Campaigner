@@ -4426,6 +4426,93 @@ pre-existing files against MAIN's own code. The gate's lock discipline held in
 both; no write occurred; every number quoted above comes from the worktree runs
 (`cd /tmp/campaigner-keys` inside the command or the explicit workdir).
 
+### The persisted creature key is folded, and its stored bytes are migrated (docs/17 row 168, docs/18 §2.1)
+
+`contentCreatureKey` minted ``content:${JSON.stringify([name.trim().toLowerCase(), statBlock ?? null])}``
+— no Unicode canonical fold — and that STRING is an existing identity: a UNIQUE
+`mobPortraits.creatureKey`, a `creatureImages` composite index, and every battle
+key (docs/17 row 167 recorded the finding and parked the fix at the owner's
+door; the owner ratified it). A Mac-authored (NFD) spelling and a precomposed
+(NFC) one therefore minted DIFFERENT keys — two portrait slots for one creature,
+and "one creature, one look" (docs/11 D6) broken silently.
+
+The mint now folds the name through `comparableName` (NFC + trim + case-fold —
+THE comparable form, no second helper) and **the stored bytes are migrated**:
+Dexie version 22 re-keys `mobPortraits` and `creatureImages` rows and every
+`creatureKey` inside `battles` rows through `foldCreatureKey`, the ONE
+migration/import seam beside the mint. `lib/exportImport` calls the SAME seam,
+so a pre-migration export imported post-migration cannot reintroduce legacy
+bytes.
+
+**A gap in the brief, found and closed.** The brief named "battle tokens" as the
+third carrier. A `battles` row carries the same identity in THREE places —
+`board.tokens`, the SAVED STAGE SNAPSHOT's `stage.tokens` (Reset restores them
+onto the board) and `seedFighters[].creatureKey` (the spawn path dedupes by it,
+`db/battleSeed`). Folding only the board tokens would leave the row disagreeing
+with itself and let a legacy spelling seed a duplicate fighter, so all three are
+folded in BOTH the migration and the import.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The persisted identity folds**: composition no longer changes `contentCreatureKey`'s bytes, trim and case still fold, `undefined`/`null` stat blocks collapse | `tests/domain/name-key-spaces.test.ts` (`composition no longer changes the persisted key (docs/17 row 168) …`) | ✅ REVERT-PROVEN (injection a) |
+| **The accounting holds the fold**: the `CREATURE_CONTENT_IDENTITY_KEY` needles are `comparableName(name)` and `comparableName(storedName)`, ×1 each, comment-blind | same (`every declared space still routes its sites through the ONE comparable form, counted`) | ✅ REVERT-PROVEN (injection a) |
+| **The boundary list is honest**: `domain/creature.ts` left `BOUNDARIES` (its old spelling is gone), and the staleness check now runs over 15 declared files | same (`the hand-rolled KEY spelling survives only in the declared anti-spaces, each with a reason`) | ✅ REVERT-PROVEN (injection a) |
+| **The seam folds an EXISTING key**: composed and decomposed mints fold to themselves, it is idempotent, a legacy decomposed key lands on the new mint, an already-NFC legacy key is byte-identical before/after, `chunk:`/`artifact:`/other keys pass unchanged, and a `content:` key that does not parse THROWS | `tests/db/creature-key-fold.test.ts` (5 seam pins) | ✅ REVERT-PROVEN (injection a) |
+| **The migration re-keys stored bytes**: a v21 DB seeded with decomposed `mobPortraits`, `creatureImages` and battle keys opens at v22 with each found under the folded key, `chunk:` bytes untouched, the per-population counts reported, and the row still schema-valid | same (`re-keys decomposed rows and battle keys, reports the counts, and leaves chunk: bytes alone`) | ✅ REVERT-PROVEN (injection b) |
+| **A duel of compositions merges loud**: the newer `updatedAt` wins (a composed portrait over a decomposed row AND a decomposed presentation row over a composed one, in ONE fixture), the merge is counted and the dropped key + imageId recorded; an equal-`updatedAt` tie goes to the row already under the composed key | same (`keeps the NEWER updatedAt …`, `breaks an updatedAt TIE …`) | ✅ REVERT-PROVEN (injection b) |
+| **An unfoldable key fails LOUD**: an unparseable `content:` key rejects the upgrade instead of being silently kept — and the upgrade never runs part-way silently | same (`fails LOUDLY when a content: key cannot be folded — never silently kept`) | ✅ REVERT-PROVEN (injection b: with the fold skipped, no throw fired and the pin red) |
+| **A pre-migration export is folded on import**: the presentation row, BOTH token carriers and the seed fighters are re-keyed through the same seam, and no legacy byte survives in the restored campaign | `tests/lib/exportImport.test.ts` (`folds a PRE-MIGRATION export's creature keys onto the comparable form`) | ✅ REVERT-PROVEN (injections c and c2) |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `composition no longer changes the persisted key (docs/17 row 168), while trim and case still fold` | `tests/domain/name-key-spaces.test.ts` | the NFC fold being reverted from the mint — the exact state row 167 held on purpose (injection a) |
+| `every declared space still routes its sites through the ONE comparable form, counted` | same | a mint or seam site drifting back to the hand-rolled spelling (`comparableName(name): expected +0 to be 1`, injection a) |
+| `the hand-rolled KEY spelling survives only in the declared anti-spaces, each with a reason` | same | `domain/creature.ts` regaining the old shape without a declared reason (injection a: `expected [ 'domain/creature.ts' ] to deeply equal []`) |
+| `folds a key minted from composed OR decomposed input to itself` / `is idempotent, and folds a legacy decomposed key onto the new mint` | `tests/db/creature-key-fold.test.ts` | the seam disagreeing with the mint — a migration that would not be a no-op for newly minted rows (injection a) |
+| `a content: key minted from an ALREADY-NFC name is byte-identical before and after the fold` | same | a fold that changes bytes it should not — that is what makes the migration a no-op for typical data |
+| `returns chunk:, artifact: and every other key space UNCHANGED` | same | the seam rewriting an id key (`chunk:`/`artifact:`) as if it were a name |
+| `throws LOUDLY for a content: key it cannot parse — never silently keeps it` | same | a `catch`-and-continue seam leaving corrupt bytes in the index (AGENTS rule 1) |
+| `re-keys decomposed rows and battle keys, reports the counts, and leaves chunk: bytes alone` | same | the migration not running, not folding every carrier, or dropping/altering a non-content key (injection b) |
+| `keeps the NEWER updatedAt when a creature exists under BOTH compositions, and records the drop` | same | a dual-composition creature silently losing its newer portrait, or the merge going uncounted (injection b) |
+| `breaks an updatedAt TIE toward the row already stored under the folded key (deterministic)` | same | non-deterministic tie-breaking (the pre-fold `creatureImages` read used arbitrary UUID order) |
+| `fails LOUDLY when a content: key cannot be folded — never silently kept` | same | the upgrade swallowing an unparseable key and leaving legacy bytes behind (injection b) |
+| `folds a PRE-MIGRATION export's creature keys onto the comparable form (docs/17 row 168)` | `tests/lib/exportImport.test.ts` | import reintroducing legacy bytes for the presentation row, a token carrier or a seed fighter (injections c and c2) |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, printed
+back with `git diff --stat` BEFORE its run — non-empty — restored from an
+OUT-OF-TREE copy under `/tmp/fold-inject/` (never `git checkout --`) and proved
+with `git hash-object` identical before and after; raw logs kept under
+`/tmp/fold-inject/`):
+
+| injection | result |
+|---|---|
+| **(a) the unfolded mint restored** (`const folded = name.trim().toLowerCase();` in `contentCreatureKey`; `git diff --stat` `src/domain/creature.ts 1 +-`; file hash `a32e185a356f18af82579cdf95072cd5ac2417fe` before/after) | **RED 8 / GREEN 60 (68)** over `name-key-spaces` + `creature-key-fold` + `exportImport`: the FLIPPED pin reds (`expected 'content:["wächter",null]' to be 'content:["wächter",null]'`), the accounting reds (`CREATURE_CONTENT_IDENTITY_KEY: domain/creature.ts: comparableName(name): expected +0 to be 1`), the boundary scan reds (`expected [ 'domain/creature.ts' ] to deeply equal []`), and the seam, migration and import pins red |
+| **(b) the migration skips the fold** (`groupCreatureRowsByFoldedKey` keys by the raw stored key AND `foldCreatureKeyCarriers` returns the carrier's own key; `git diff --stat` `src/db/db.ts 2 +-`; file hash `a026f437906f8c2ba1c3fd21d81b9a38394f29f6` before/after) | **RED 4 / GREEN 6 (10)** in `tests/db/creature-key-fold.test.ts`: the re-key pin reds (`expected undefined to be defined`), both collision pins red (`expected [ { …(5) }, { …(5) } ] to have a length of 1 but got 2`), and the loud-failure pin reds (`expected null to be an instance of Error` — with the walk no longer folding, the unparseable key was never parsed) |
+| **(c) every import fold removed** (the presentation row, both token carriers and the seed fighters pass through verbatim; `git diff --stat` `src/lib/exportImport.ts 4 +-`; file hash `c6987e2359da0b95c4369b6d79cbc53b6ca6a47f` before/after) | **RED 1 / GREEN 39 (40)** in `tests/lib/exportImport.test.ts`: `expected 'content:["wächter",null]' to be 'content:["wächter",null]'` |
+| **(c2) ONLY the token and seed-fighter import folds removed** (the presentation-row fold left intact, so the first assertion passes and the failure moves into the battle carriers) | **RED 1 / GREEN 39 (40)** at `tests/lib/exportImport.test.ts:715` — the board-token assertion, proving the token/seed carriers are pinned independently of the presentation row |
+
+**NUMBERS — the landing gate, `bash scripts/gate.sh` on the docs-complete tree,
+printed GATE GREEN, exit 0; raw log `/tmp/fold-gate.log` + per-chunk logs
+`/tmp/gate-3814309/`.** Per chunk, exactly as the script printed them:
+`tests_lib 32 files / 369 tests (peak 838 MB)`; `tests_llm 70 / 1146 (876 MB)`;
+`tests_db 32 / 366 (666 MB)`; `tests_domain 22 / 309 (702 MB)`; `tests_features
+135 / 1329 (1245 MB)`; `tests_remainder 42 / 411 (1174 MB)` — summing to **333
+files / 3930 tests**, with `chunk arithmetic: 333 of 333 test files covered`,
+`lint errors: 0`, typecheck clean, no `Errors:` line in any chunk log, and
+**peak RSS of any single chunk 1245 MB against the 3000 MB cap**.
+
+**The arithmetic, against the brief's baseline — 332 files / 3919 tests at
+`2acec2e`.** This slice adds `+1 file / +10 tests`
+(`tests/db/creature-key-fold.test.ts`, NEW) and `+1 test`
+(`tests/lib/exportImport.test.ts` 39→40), and moves `tests/db/migration.test.ts`'s
+three `db.verno` assertions from 21 to 22 — a NECESSARY consequence of the
+version bump, equally exact, not a weakened assertion. No existing assertion was
+weakened, no test skipped, no `Errors:` line.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
