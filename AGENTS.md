@@ -143,12 +143,20 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
    for: the same rule landing at three separate surfaces, one slice each, and
    **seven identical `isRecord` helpers** (one per pack adapter) that no test
    could see until a task happened to grep the right word.
-   The generic detector is owed as its own slice: a repo-wide **duplicate-body
-   tripwire** (normalized, name-insensitive function bodies; a declared
-   baseline of the population that exists today; a staleness check, so folding
-   a copy FORCES its baseline entry out). It catches identical copies, not
-   paraphrases — a tripwire, not a proof — and until it lands, this line plus
-   obligation 2 are the enforcement.
+   The generic detector is **LANDED** (docs/17 row 172):
+   `tests/architecture/no-duplicate-implementations.test.ts` scans every
+   `src/**/*.ts(x)` named function body through the TypeScript parser, normalizes
+   it (comments stripped, formatting collapsed, the function's own and parameter
+   names blanked so a rename cannot hide a copy) and requires the 2+-site
+   population to equal `tests/architecture/duplicateImplementationsBaseline.json`
+   exactly. The floor is **75 normalized characters** — the largest floor that
+   still sees the seven-copy `isRecord` case this rule was born from, so the
+   floor is MEASURED, not guessed (a 120-char floor cannot see it). A NEW copy
+   reds naming every site; a FOLDED copy reds as a stale entry until its baseline
+   line is deleted, so a blessing cannot outlive the duplication. It catches
+   identical copies, not paraphrases, and cannot see bodies under the floor
+   (`settledDetail`, 3 sites at 74 characters, is recorded in `docs/18` §5) — a
+   tripwire, not a proof; obligation 2's per-idea pin still closes each fold.
 
 ## Workflow
 
