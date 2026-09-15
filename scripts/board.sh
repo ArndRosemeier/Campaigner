@@ -20,6 +20,9 @@ LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
 stale=0
 note() { printf '  !! %s\n' "$1"; stale=1; }
 field() { printf '%s\n' "$1" | grep -o "$2=[^ |]*" | head -1 | cut -d= -f2-; }
+# A note is free text: `field` stops at the first space, which printed
+# "IN-FLIGHT: row" for a compact record. Everything after `note=` is the note.
+noteof() { printf '%s\n' "$1" | sed 's/.*note=//'; }
 age_min() { find "$1" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1; }
 
 echo "=== git ==="
@@ -61,7 +64,7 @@ while IFS= read -r line; do
     IN-FLIGHT|UNLANDED)
       branch="$(field "$line" branch)"; wt="$(field "$line" worktree)"; writer="$(field "$line" writer)"
       if [ -z "$branch$wt$writer" ]; then
-        printf '  %s: %s\n' "$kind" "$(field "$line" note)"
+        printf '  %s: %s\n' "$kind" "$(noteof "$line")"
         continue
       fi
       printf '%s row=%s state=%s\n' "$kind" "$(field "$line" row)" "$(field "$line" state)"
