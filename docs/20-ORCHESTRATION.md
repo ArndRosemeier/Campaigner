@@ -27,11 +27,11 @@ must stay ONE SCREEN — a record that no longer describes the present belongs i
 ## Board
 
 ```
-reconciled: 4d7f528 · 2026-09-15T14:05Z
+reconciled: 1d67c6c · 2026-09-15T14:35Z
 
-SESSION  | cos=session-f7c658e6-c56b-444f-b956-865d5803f9b0 | started=2026-09-15 | note=successor to session-93cd9c40; reconciled against origin/main + scripts/board.sh before dispatching anything (no writers in flight, suite lock free, MemAvailable ~11.9GB)
+SESSION  | cos=session-f7c658e6-c56b-444f-b956-865d5803f9b0 | started=2026-09-15 | note=successor to session-93cd9c40; reconciled against origin/main + scripts/board.sh before dispatching anything (no writers in flight, suite lock free)
 
-IN-FLIGHT | none | note=row 173 verified and landed at 4d7f528; no writer in flight
+IN-FLIGHT | writer=session-f7c658e6 (this session, row 174 Idea Board layout/appearance fix) | tree=main (SOLE writer) | note=owner-reported defect on the just-landed board (white square on white page + unused vertical space); gate green, landing pending
 
 TRAP | what=stale-queue | how=this board's first AWAITING-OWNER list was COPIED from the predecessor's compaction summary and three of its four items were ALREADY BUILT and deployed (claimA-pdf = docs/17 row 157, claimA-app = row 158 with the owner's verbatim "Yes — render tables in the app as well", claimB-roster = row 159); two writers were nearly dispatched to rebuild shipped work | check=re-derive the queue from the TREE at brief time — docs/18 §5 (known debt at HEAD) + the arc docs' build order — and verify each item against HEAD before writing a brief; a pending list in a summary is a HINT, never a queue
 TRAP | what=stale-local-main | how=a successor read row 167 as "complete-unlanded" while origin/main already carried AND deployed it: the writer pushed, local main stayed 5 commits behind, and `git log main..branch` was asked instead of `HEAD..origin/main` | check=scripts/board.sh §git — it now names the behind-count

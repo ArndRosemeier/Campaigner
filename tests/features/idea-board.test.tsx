@@ -15,24 +15,40 @@ vi.mock('@/lib/clipboard', () => ({ copyText: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 // The editor is CodeMirror in the app; jsdom drives a plain textarea through
 // the same `value`/`onChange` contract, and the board's document semantics
-// (no wiki parsing, no markdown) are the thing under test here.
-vi.mock('@uiw/react-codemirror', () => ({
-  default: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-  }) => (
-    <textarea
-      aria-label="Idea Board document"
-      value={value}
-      onChange={(event) => {
-        onChange(event.target.value);
-      }}
-    />
-  ),
-}));
+// (no wiki parsing, no markdown) are the thing under test here. The theme and
+// height props ride through to the DOM so the owner-reported WHITE SLAB and
+// the collapsed-height defect stay pinned (jsdom computes no CSS, so the prop
+// IS the evidence — the `canvasThemeSpec` precedent).
+vi.mock('@uiw/react-codemirror', async () => {
+  // Imported INSIDE the factory: `vi.mock` is hoisted above the file's imports.
+  const { ideaBoardEditorExtensions } = await import('@/features/idea-board/editor');
+  return {
+    default: ({
+      value,
+      onChange,
+      theme,
+      height,
+      extensions,
+    }: {
+      value: string;
+      onChange: (value: string) => void;
+      theme?: string;
+      height?: string;
+      extensions?: unknown;
+    }) => (
+      <textarea
+        aria-label="Idea Board document"
+        data-theme={theme}
+        data-height={height}
+        data-extensions={extensions === ideaBoardEditorExtensions ? 'seam' : 'other'}
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+    ),
+  };
+});
 
 function deferredRefinement(): (value: {
   reply: string;
@@ -162,6 +178,33 @@ it('keeps the instruction and toasts loudly when the reply fails', async () => {
   expect(messages).toHaveLength(1);
   expect(messages[0]).toMatchObject({ role: 'user', text: 'Draft the letter' });
   expect(useIdeaBoard.getState().proposal).toBeNull();
+});
+
+it('mounts the editor on the app theme and fills its column (the owner-reported white slab)', () => {
+  render(<IdeaBoardPage />);
+  const editor = screen.getByLabelText('Idea Board document');
+  // `theme="none"` hands ALL colors to `plainEditorTheme` (app CSS vars); left
+  // unset, @uiw's default LIGHT chrome paints a white slab on the dark app.
+  expect(editor).toHaveAttribute('data-theme', 'none');
+  // The editor is wired to THE seam, not to a private copy of the extension
+  // list (identity, so a second set reds here rather than drifting).
+  expect(editor).toHaveAttribute('data-extensions', 'seam');
+  // The editor fills the box it is given…
+  expect(editor).toHaveAttribute('data-height', '100%');
+  // …and the box gets a real height: the page root must be `h-full`, because
+  // the shell's <main> is a plain block (a `flex-1` root resolves to nothing
+  // and the board sat at its floor height, wasting the viewport).
+  const root = screen.getByRole('main', { name: 'Idea Board' });
+  expect(root.className).toContain('h-full');
+  expect(root.className).not.toContain('flex-1');
+  // …and the surface it fills has a visible edge. `--card` and `--background`
+  // are the SAME pure white in light mode, so the app's Card ring (not the
+  // near-invisible `--border`) is what keeps it from reading as one big blank
+  // square on a blank page.
+  const surface = screen.getByTestId('idea-board-surface');
+  expect(surface.className).toContain('bg-card');
+  expect(surface.className).toContain('ring-1');
+  expect(surface.className).toContain('flex-1');
 });
 
 it('copies the document through the one clipboard seam and reports an unavailable clipboard', async () => {

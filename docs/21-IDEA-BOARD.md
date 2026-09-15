@@ -140,6 +140,52 @@ draft (the next debounce writes it).
   `PRESERVED_KEYS`. Only that explicit, confirmed wipe, a board edit, or a
   backup restore ever clears the document.
 
+## Layout and appearance — two invariants (docs/17 row 174)
+
+The owner's first look at the board: *"The board looks like a big white square.
+white on white maybe? And the vertical space is not really used."* Two
+mechanical causes, both worth stating because neither is visible to a test that
+mocks the editor:
+
+1. **The height chain must start at `h-full`.** The shell renders the page
+   inside `<main className="min-h-0 flex-1">`, which is a PLAIN BLOCK — not a
+   flex container — so a page root of `flex-1` resolves against nothing and the
+   board collapses to its floor height (`min-h-64`), leaving the viewport
+   unused. The root is therefore `flex h-full min-h-0 flex-col`, and each layer
+   down to the editor (`flex-1` body → `flex-1` section → `flex-1` surface →
+   `height="100%"` editor) carries a definite height. `CanvasPage` fills the
+   same slot the same way; the board's first version did not.
+2. **The writing surface needs a visible edge.** In LIGHT mode `--card` and
+   `--background` are both pure white, and `--border` is a 92% grey, so
+   `bg-card border` read as a featureless white block on a white page — the
+   owner's "white on white". The surface uses the app's Card convention
+   instead: `rounded-lg bg-card ring-1 ring-foreground/10`, which is
+   theme-aware (10% of the foreground: a real line in light mode, a soft one in
+   dark).
+
+The editor's own colours come from `lib/editorTheme.plainEditorTheme` — one
+layer, every value a CSS custom property — and the extension set is the named
+seam `features/idea-board/editor.ideaBoardEditorExtensions`: plain text, with
+`@uiw`'s `basicSetup` OFF and its pieces listed explicitly (`history()` and the
+keymaps are in the list because the page's Undo/Redo controls call the `undo`/
+`redo` commands against that view). No markdown language and no wiki decoration
+is installed, which is what keeps `[[…]]` literal.
+
+Two honest notes about the diagnosis:
+
+- `theme="none"` (which `canvasEditor.tsx` documents as the fix for a
+  historical white slab) is KEPT for parity, but it is **not** what caused this
+  defect. Inspected in the installed package: `@uiw/react-codemirror` uses the
+  `theme` prop only to add a CLASS NAME (`cm-theme-light` / `cm-theme-none`) —
+  it adds no extension — and no shipped CSS defines either class, while
+  `@codemirror/view`'s base theme sets no background at all. The white came
+  from the app palette plus the collapsed height, not from the wrapper's
+  default theme.
+- The extension set is mounted for REAL in
+  `tests/features/idea-board-editor.test.tsx`, because the page-level test mocks
+  CodeMirror and could never catch an extension list that throws or one that
+  lost `history()`.
+
 ## Tests
 
 | Pin | Where |
@@ -149,6 +195,8 @@ draft (the next debounce writes it).
 | a stopped turn applies nothing and records no reply, but keeps the instruction | same |
 | a failed reply keeps the instruction and toasts loudly | same |
 | copy goes through the one clipboard seam (success and unavailable-clipboard failure) | same |
+| the editor mounts on the app theme, is wired to THE extension seam, and the page root carries `h-full` with a ring-edged surface | same (the owner-reported white square / unused height, docs/17 row 174) |
+| the REAL editor builds from the seam, is labelled, and undo works — plus the seam installs no markdown language and no wiki decoration | `tests/features/idea-board-editor.test.tsx` |
 | one board across concurrent opens; a conflicting save is refused | `tests/db/ideaBoard.test.ts` |
 | two stored boards are refused rather than picked/discarded | same |
 | writes are validated; a rejected write leaves the stored text intact | same |

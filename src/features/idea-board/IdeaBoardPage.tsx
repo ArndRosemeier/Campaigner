@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
-import { EditorView } from '@codemirror/view';
+import type { EditorView } from '@codemirror/view';
 import { redo, undo } from '@codemirror/commands';
 import { CopyIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelInput } from '@/features/settings/model-input';
+import { ideaBoardEditorExtensions } from '@/features/idea-board/editor';
 import {
   discardIdeaProposal,
   editIdeaBoard,
@@ -19,12 +20,11 @@ import {
   watchIdeaBoard,
 } from '@/features/idea-board/store';
 import { copyText } from '@/lib/clipboard';
-import { plainEditorTheme } from '@/lib/editorTheme';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Idea Board (`docs/21-IDEA-BOARD.md`): ONE app-level plain-text writing
- * surface — a document on the left of nothing and a refinement chat beside it.
+ * surface — a refinement sidebar on the LEFT, the document filling the rest.
  *
  * Deliberately NOT the module canvas: no wiki-links are interpreted (a
  * `[[token]]` is the literal characters the owner typed), the document has no
@@ -33,12 +33,9 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * and accepting snapshots the draft it replaced into Previous drafts.
  */
 
-/** Plain text only — no markdown language, no wiki decorations. */
-const editorExtensions = [
-  plainEditorTheme,
-  EditorView.lineWrapping,
-  EditorView.contentAttributes.of({ 'aria-label': 'Idea Board document' }),
-];
+/** Plain text only — the extension set lives in `idea-board/editor.ts` so it
+ * can be mounted for real in a test (the page-level test mocks CodeMirror,
+ * which can never catch a broken extension list). */
 
 export function IdeaBoardPage(): JSX.Element {
   const state = useIdeaBoard();
@@ -83,8 +80,12 @@ export function IdeaBoardPage(): JSX.Element {
         : 'Unsaved changes';
 
   return (
-    <main className="flex min-h-0 flex-1 flex-col" aria-label="Idea Board">
-      <header className="flex flex-wrap items-center gap-3 border-b p-3">
+    // `h-full` (not `flex-1`): the shell's <main> is a plain block that only
+    // HAS a height — it is not a flex container — so a `flex-1` root resolved
+    // to nothing and the board sat at its floor height, leaving the viewport
+    // unused. `h-full` is the chain CanvasPage uses to fill the same slot.
+    <main className="flex h-full min-h-0 flex-col" aria-label="Idea Board">
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b p-3">
         <h1 className="font-heading text-lg font-semibold">Idea Board</h1>
         <span role="status" className="text-sm text-muted-foreground">
           {status}
@@ -134,7 +135,7 @@ export function IdeaBoardPage(): JSX.Element {
       </header>
 
       {state.error !== null && (
-        <p role="alert" className="border-b bg-destructive/5 p-3 text-sm text-destructive">
+        <p role="alert" className="shrink-0 border-b bg-destructive/5 p-3 text-sm text-destructive">
           {state.error} Your draft is still here — copy anything you need before reloading.
         </p>
       )}
@@ -244,17 +245,29 @@ export function IdeaBoardPage(): JSX.Element {
             </div>
           )}
 
-          <div className="min-h-80 flex-1 overflow-hidden rounded-lg border bg-card">
+          {/* The board fills the leftover height (`flex-1`) and scrolls its own
+              text; `min-h-64` only keeps it usable on a short viewport. The
+              edge is the app's Card convention (`ring-1 ring-foreground/10`)
+              rather than a `border`: in LIGHT mode `--card` and `--background`
+              are both pure white, and the very light `--border` left the
+              surface reading as a featureless white block (the owner's "big
+              white square, white on white"). */}
+          <div
+            className="min-h-64 flex-1 overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10"
+            data-testid="idea-board-surface"
+          >
             <CodeMirror
               value={board.document}
-              extensions={editorExtensions}
+              extensions={ideaBoardEditorExtensions}
               height="100%"
-              minHeight="320px"
-              basicSetup={{
-                lineNumbers: false,
-                foldGutter: false,
-                highlightActiveLine: false,
-              }}
+              // 'none' disables the wrapper's default light chrome — the board
+              // theme extension owns ALL colors from the app's CSS vars. This
+              // prop is THE fix for the owner-reported white slab (the same one
+              // canvasEditor carries), and the style height is what makes the
+              // editor fill the box rather than collapse to its content.
+              theme="none"
+              style={{ height: '100%', fontSize: '0.9375rem' }}
+              basicSetup={false}
               onCreateEditor={(view) => {
                 editorRef.current = view;
               }}
@@ -264,7 +277,7 @@ export function IdeaBoardPage(): JSX.Element {
             />
           </div>
 
-          <details className="rounded-lg border p-3">
+          <details className="shrink-0 rounded-lg border p-3">
             <summary className="cursor-pointer text-sm">
               Previous drafts ({board.versions.length})
             </summary>
