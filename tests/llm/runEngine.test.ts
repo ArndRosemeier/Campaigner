@@ -125,6 +125,13 @@ function deferred(): {
   return { promise, resolve };
 }
 
+/** A step output's `notice` sentence, or '' when it carries none. */
+function stepNotice(output: unknown): string {
+  if (typeof output !== 'object' || output === null) return '';
+  const notice = (output as { notice?: unknown }).notice;
+  return typeof notice === 'string' ? notice : '';
+}
+
 const INPUT = (campaignId: Id, persona: Persona) => ({
   campaign: {
     id: campaignId,
@@ -388,6 +395,80 @@ describe('runEngine', () => {
     expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
     // One repair attempt, never a loop.
     expect(chatMock).toHaveBeenCalledTimes(3);
+  }, 20000);
+
+  /**
+   * THE MODULE AUTHOR'S LEVEL, STRUCTURED (owner request, docs/17 row 197).
+   * The entity batch hands the run a recorded `levelHint`; `runStatblock` reads
+   * it EXPLICITLY, and it WINS over the `level N` sentence the brief carries —
+   * the exact fragility that lost the owner's level-7 gnome (the old path
+   * regexed `/level\\s*(\\d{1,2})/i` out of the brief).
+   *
+   * The reply prints level 3 against the hinted 7, so the same test proves the
+   * NPC lane's DEVIATION route: the step's existing `notice` names both levels.
+   */
+  it('the structured level hint WINS over a conflicting `level N` sentence in the brief', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    // AUTO autonomy, exactly like the entity batch: the stat-block step runs off
+    // the SAME input object that carried the hint, so this is the production path.
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // The brief SAYS level 3 — the regex's own food; the record says 7.
+      brief: 'Kael the Grey, a gnome for a level 3 party',
+      entityLevelHint: 7,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 7');
+    expect(statblockPrompt).toContain("the module's author fixed this entity's level");
+    expect(statblockPrompt).not.toContain('at level 3');
+
+    const run = await getRun(runId);
+    const notice = stepNotice(run?.steps[2]?.output);
+    expect(notice).toContain('fixed this entity at level 7');
+    expect(notice).toContain('written at level "3"');
+  }, 20000);
+
+  /**
+   * COMPATIBILITY (docs/17 row 197): with no hint the stat-block prompt is the
+   * one this step always built — the brief regex still supplies the level and no
+   * hint sentence appears, so every pre-hint pin's bytes are untouched.
+   */
+  it('with NO hint the stat-block prompt is byte-identical: the brief-level regex still runs', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 3, grounded in the rule excerpts.');
+    expect(statblockPrompt).not.toContain("the module's author fixed this entity's level");
+
+    const run = await getRun(runId);
+    const notice = stepNotice(run?.steps[2]?.output);
+    expect(notice).not.toContain('fixed this entity at level');
   }, 20000);
 
   it('reviews a global target with scope-gated global context and a campaign-anchored run', async () => {

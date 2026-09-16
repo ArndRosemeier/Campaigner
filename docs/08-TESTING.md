@@ -2807,6 +2807,46 @@ TODAY; it does not render the full `EntityPanel` (its row type `EntityEntry` is
 pinned to carry no note field instead), and slice B — the owner-editable field — is
 NOT built and must extend that pin when it lands.
 
+### Entity level hints — the module writer's structured level reaches the generators (docs/17 row 197, docs/08-MODULE-DESIGNER §M4-C, docs/18 §2.2)
+
+The owner introduced *"a level 7 gnome"* in his module premise and *"the NPC generator
+that then made the entity created the gnome at level 1"*, then asked for *"a hint for
+the entity generators"*. The measured cause: the NPC stat-block lane recovered a level
+only by REGEX over the brief (`runEngine.runStatblock`, `/level\s*(\d{1,2})/i`), so a
+level stated in the module's own prose was lost at the entity boundary. The channel is
+the entity RECORD (`moduleEntityKindSchema.levelHint`, beside `intent`), read by the
+batch into TWO structured places: the detail brief's own paragraph and the run's
+`entityLevelHint`.
+
+| fact pinned | where |
+|---|---|
+| **The field is as additive as `intent`**: a record written before it parses with NO `levelHint` key, and `null`/`''` read as absent; a numeric string is coerced (meaning-preserving) | `tests/domain/entity-level-hint.test.ts` (NEW) |
+| **MALFORMED is LOUD by field, never a clamp**: 0, 21, 3.5, `'seven'`, `true`, `{}` each fail the zod boundary with the path `levelHint`, and a reply value of 99 fails `parseSpineEntities` at `entities.0.levelHint` — the path a production run takes (one escalated repair, then the run fails) | `tests/domain/entity-level-hint.test.ts` (NEW) |
+| **The hint SURVIVES name normalization**, which replaces `module.entityKinds` a moment after the planner records it: a variant-keyed hint rides onto the canonical record, a no-hint source leaves the record's shape untouched, and TWO DIFFERENT levels for one canonical are refused loudly by name | `tests/domain/entity-level-hint.test.ts` (NEW) |
+| **ONE reader and ONE comparison**: `entityLevelHintFor` matches through `sameAliasName`, and a differential requires `entityKindFor`, `bestiarySlotForEntity`, `entityIntentFor` and `entityLevelHintFor` to answer for exactly the same case/composition spellings of a name | `tests/domain/entity-level-hint.test.ts` (the differential pin, NEW) |
+| **The unmatched derivation is the SAME comparison the kind lookup asks** (`unmatchedEntityLevelHints` over wiki-link mentions) | `tests/domain/entity-level-hint.test.ts` (NEW) |
+| **The WRITER is asked, and told WHY**: the spine system message contains `"levelHint"`, the 1..20 range, `"SURVIVES into the entity the generators build"` and `"levelHint": null`; the emitted strict schema carries `levelHint` REQUIRED-nullable; the style-composed user prompt contains no `"levelHint"` (so the classic fixtures are untouched) | `tests/llm/moduleGen.test.ts` (the spine-contract test, EXTENDED in place) |
+| **The brief's paragraph is the SPEC's**, renders immediately after the party-level line it overrides, and omitting the hint (or spelling it `null`) is BYTE-IDENTICAL to the pre-field brief | `tests/features/persona-request.test.ts` (EXTENDED) and `tests/llm/module-gen-and-provenance.test.ts` (the scaffolding marker pair + the no-hint absence pin) |
+| **The batch threads the hint as STRUCTURED input**: the brief carries the paragraph AND `startRun` receives `entityLevelHint: 7`; a neighbour with no hint gets NEITHER (no paragraph, no run-input key) | `tests/features/entity-level-hint-batch.test.ts` (NEW; engine faked, the brief string and the run INPUT are the assertion targets) |
+| **An UNMATCHED hint is a LOUD named issue** and never invents an entity: exactly one toast naming the recorded name and level, the pasteable `[campaigner] entity level hint unmatched` console record, and no brief built for the orphaned name | `tests/features/entity-level-hint-batch.test.ts` (NEW) |
+| **The hint's level WINS over a conflicting `level N` sentence in the brief**, read as a TYPED run input; the reply's divergent printed level produces a step notice naming BOTH levels (the NPC lane's honest-deviation route) | `tests/llm/runEngine.test.ts` (EXTENDED) |
+| **The no-hint stat-block prompt is byte-identical**: the pre-existing `at level 3, grounded in the rule excerpts.` sentence, with no hint clause and no deviation notice | `tests/llm/runEngine.test.ts` (EXTENDED) |
+| **The hint is VISIBLE read-only**: the entity panel row carries an `entity-level-hint` badge (`data-level="7"`) for the hinted record and NO badge for its neighbour | `tests/features/entity-panel.test.tsx` (EXTENDED) |
+| **The run row carries it for resume/retry**: a pre-field row parses with `entityLevelHint: null`, and `createRun`+`getRun` round-trip the value | `tests/db/runRepo.test.ts` (EXTENDED) |
+
+**INJECTION-PROVEN, every arm's file hash printed with `git hash-object`, each
+restored from HEAD inside a `trap`, one suite at a time under a single held suite
+lock (`/tmp/campaigner-entity-hints-diff.sh`, raw logs in
+`/tmp/campaigner-entity-hints-diff/`). No arm was VOID — every injected hash
+differs from its baseline and every injection reds a NAMED pin.**
+
+| arm | injected file (hash before → injected → after) | observed |
+|---|---|---|
+| **A — baseline** | `src/llm/runEngine.ts` `0447ac33e0f46251190fa853e1a2cea58a255c7d`; `src/features/modules/entity-batch.ts` `b5378a172873dfc13e477921080636afa97c6ea3` | GREEN: pin 1 (1), the batch file (5), the domain file (18) |
+| **B — the stat-block path ignores the structured hint** (`const levelHint = briefLevel`) | runEngine `0447ac33…` → `ca9f3012ce10987d80f5824e51efc4a5b5e152f4` → `0447ac33…` | **RED 1**: `the structured level hint WINS …` — `expected 'Fill the StatBlock for "Grix" at leve…' to contain 'at level 7'` |
+| **C — the unmatched-hint check removed** (`reportUnmatchedEntityLevelHints(module)` → a no-op) | entity-batch `b5378a17…` → `33cf257d1d65ec611cb449680baf6536752bf106` → `b5378a17…` | **RED 1**: `reports the recording name and level, and never invents an entity for it` — `expected "vi.fn()" to be called 1 times, but got 0 times` |
+| **D — the hint dropped before the batch** (`? entityLevelHintFor(…)` → `? null`) | entity-batch `b5378a17…` → `55cd6c5a47e28085b531d915d489c9dd5337a089` → `b5378a17…` | **RED 2**: `a target whose record carries a hint gets the paragraph AND the run input field` (`expected 'Detail the entity "Kael the Grey" …' to contain "The module fixes this entity's level…"`) and `is read per ENTITY …` (`expected undefined to be 7`) |
+
 ### Prompt scaffolding echoed back into a document (docs/17 row 142, docs/18 §2.2/§4)
 
 The owner found OUR OWN brief printed in a generated artifact — *"The artifact

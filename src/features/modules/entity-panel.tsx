@@ -35,7 +35,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
-import { entityKindFor, sameAliasName } from '@/domain';
+import { entityKindFor, entityLevelHintFor, sameAliasName } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -1378,6 +1378,12 @@ function EntityRow({
   onToggleFocus: () => void;
   onImageToggle: () => void;
 }): JSX.Element {
+  // The module author's recorded level for this name (docs/17 row 197), read
+  // read-only through the ONE reader. Shown so the generated decision is
+  // INSPECTABLE: the hint is what the detail worker and the stat-block step are
+  // handed, and a decision nobody can see is a decision nobody can correct.
+  // `null` renders no marker, so a module with no hints is unchanged.
+  const levelHint = entityLevelHintFor(module.entityKinds, entry.name);
   return (
     <li className="flex flex-wrap items-center">
       <button
@@ -1434,6 +1440,21 @@ function EntityRow({
         ) : (
           <Badge variant="outline" className="shrink-0 text-[10px]">
             {entityKindFor(module.entityKinds, entry.name) ?? 'stub'}
+          </Badge>
+        )}
+        {/* The module author's recorded level (docs/17 row 197), read-only: the
+            hint every generator for this name is handed, shown where the
+            module's other entity decisions already are. */}
+        {levelHint !== null && (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-sky-500/60 px-1 text-[10px] font-medium text-sky-700 dark:text-sky-400"
+            title={`The module fixes this entity's level at ${String(levelHint)} — its generators build it at that level`}
+            data-testid="entity-level-hint"
+            data-name={entry.name}
+            data-level={String(levelHint)}
+          >
+            level {levelHint}
           </Badge>
         )}
         <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>

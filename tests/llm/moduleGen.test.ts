@@ -380,8 +380,21 @@ describe('runSpine', () => {
     expect(messages[0]?.content).toContain('"intent"');
     expect(messages[0]?.content).toContain('400 characters');
     expect(messages[0]?.content).toContain('"intent": null');
+    // The entity LEVEL hint (owner request, docs/17 row 197) rides the SAME
+    // strict contract and the SAME app-voice system clause: the emitted schema
+    // must let a planner express it (REQUIRED-nullable, like `intent`), and the
+    // model must be TOLD what a hint is FOR — what you write about a figure is
+    // how that figure survives into the entity the generators build.
+    expect(Object.keys(entitiesSchema?.properties ?? {})).toContain('levelHint');
+    expect(entitiesSchema?.required).toContain('levelHint');
+    expect(entitiesSchema?.properties?.levelHint).toMatchObject({ type: ['integer', 'null'] });
+    expect(messages[0]?.content).toContain('"levelHint"');
+    expect(messages[0]?.content).toContain('from 1 to 20');
+    expect(messages[0]?.content).toContain('SURVIVES into the entity the generators build');
+    expect(messages[0]?.content).toContain('"levelHint": null');
     const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
     expect(userContent).not.toContain('"intent"');
+    expect(userContent).not.toContain('"levelHint"');
     expect(userContent).toContain('Module concept: A harbor bell that rings by itself beneath the water.');
     expect(userContent).toContain('Party levels 1–3');
   }, 20000);

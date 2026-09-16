@@ -104,6 +104,8 @@ import {
   ENTITY_CONTEXT_LABEL,
   ENTITY_NAME_VERBATIM_PREFIX,
   ENTITY_NAME_VERBATIM_SUFFIX,
+  ENTITY_LEVEL_HINT_HIERARCHY,
+  ENTITY_LEVEL_HINT_LABEL,
   ENTITY_SCENE_CONTEXT_LABEL,
   ENTITY_SERVE_MODULE_TEXT,
   FACTION_OWNERSHIP_BOUNDARY,
@@ -2680,6 +2682,8 @@ describe('scaffoldingEcho.test.ts', () => {
       ['the faction ownership boundary', FACTION_OWNERSHIP_BOUNDARY],
       ['the entity-intent label', INTENT_LABEL],
       ['the entity-intent hierarchy sentence', INTENT_HIERARCHY],
+      ['the entity-level-hint label', ENTITY_LEVEL_HINT_LABEL],
+      ['the entity-level-hint hierarchy sentence', ENTITY_LEVEL_HINT_HIERARCHY],
       ['the grounding section header', GROUNDING_SECTION_HEADER],
       ['the fixed-cast section header', FIXED_CAST_SECTION_HEADER],
       ['the fixed-cast section footer', FIXED_CAST_SECTION_FOOTER],
@@ -2717,6 +2721,44 @@ describe('scaffoldingEcho.test.ts', () => {
       const found = findScaffoldingEcho(brief).map((hit) => hit.label);
       expect(found).toContain('the entity-intent label');
       expect(found).toContain('the entity-intent hierarchy sentence');
+    });
+
+    it('a brief CARRYING A LEVEL HINT is detected, both of its literals included (docs/17 row 197)', () => {
+      // The level-hint paragraph is a fixed sentence the generators are handed,
+      // so the detector must read the SAME bytes the composer renders — an
+      // undetected echo would be a brief instruction written into an artifact.
+      const brief = buildEntityBrief(
+        'Kael the Grey',
+        'The party meets [[Kael the Grey]] at the gate.',
+        'A harbor town raised its bell.',
+        1,
+        [],
+        false,
+        'npc',
+        '',
+        null,
+        7,
+      );
+      const found = findScaffoldingEcho(brief).map((hit) => hit.label);
+      expect(found).toContain('the entity-level-hint label');
+      expect(found).toContain('the entity-level-hint hierarchy sentence');
+      expect(brief).toContain(`${ENTITY_LEVEL_HINT_LABEL}7.${ENTITY_LEVEL_HINT_HIERARCHY}`);
+    });
+
+    it('a brief with NO level hint carries NEITHER literal (the compatibility rule)', () => {
+      const brief = buildEntityBrief(
+        'Kael the Grey',
+        'The party meets [[Kael the Grey]] at the gate.',
+        'A harbor town raised its bell.',
+        1,
+        [],
+        false,
+        'npc',
+      );
+      const found = findScaffoldingEcho(brief).map((hit) => hit.label);
+      expect(found).not.toContain('the entity-level-hint label');
+      expect(found).not.toContain('the entity-level-hint hierarchy sentence');
+      expect(brief).not.toContain(ENTITY_LEVEL_HINT_LABEL);
     });
 
     it('…and a note containing a QUOTE is still detected — the reason the markers are literals', () => {

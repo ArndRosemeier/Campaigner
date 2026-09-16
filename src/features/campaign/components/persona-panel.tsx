@@ -1170,6 +1170,9 @@ function EncounterRunActions({
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
     ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
     ...(run.runExtras === null ? {} : { extras: run.runExtras }),
+    // The recorded level hint rides the row like the encounter options
+    // (docs/17 row 197) — a retry/resume keeps it, never the brief regex.
+    ...(run.entityLevelHint === null ? {} : { entityLevelHint: run.entityLevelHint }),
   };
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
@@ -1350,6 +1353,9 @@ function RunActions({
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
+          // The recorded level hint rides the row like the encounter options
+          // (docs/17 row 197) — a retry/resume keeps it, never the brief regex.
+          ...(run.entityLevelHint === null ? {} : { entityLevelHint: run.entityLevelHint }),
         };
   }, [
     personaRow,
@@ -1363,6 +1369,7 @@ function RunActions({
     run.dungeonMapPath,
     run.placementModuleId,
     run.runExtras,
+    run.entityLevelHint,
   ]);
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
@@ -1661,6 +1668,9 @@ function FailedRunActions({
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
+          // The recorded level hint rides the row like the encounter options
+          // (docs/17 row 197) — a retry/resume keeps it, never the brief regex.
+          ...(run.entityLevelHint === null ? {} : { entityLevelHint: run.entityLevelHint }),
         };
 
   return (

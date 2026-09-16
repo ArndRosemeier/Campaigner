@@ -5,6 +5,8 @@ import {
   ENTITY_BRIEF_INTRO_PREFIX,
   ENTITY_BRIEF_INTRO_SUFFIX,
   ENTITY_CONTEXT_LABEL,
+  ENTITY_LEVEL_HINT_HIERARCHY,
+  ENTITY_LEVEL_HINT_LABEL,
   ENTITY_NAME_VERBATIM_PREFIX,
   ENTITY_NAME_VERBATIM_SUFFIX,
   ENTITY_SCENE_CONTEXT_LABEL,
@@ -113,6 +115,20 @@ function intentParagraph(intent: string | null | undefined): string | null {
 }
 
 /**
+ * The level-hint paragraph (owner request, docs/17 row 197), or `null` when the
+ * module recorded no level for this entity — and `null`/`undefined` BOTH render
+ * nothing, so an entity without a hint produces the brief it produced before
+ * this field existed, BYTE FOR BYTE (the compatibility property this whole slice
+ * pins). Its two literals live in `llm/promptScaffolding` so the
+ * scaffolding-echo detector reads the SAME bytes the composer renders.
+ */
+function levelHintParagraph(levelHint: number | null | undefined): string | null {
+  return levelHint === null || levelHint === undefined
+    ? null
+    : `${ENTITY_LEVEL_HINT_LABEL}${String(levelHint)}.${ENTITY_LEVEL_HINT_HIERARCHY}`;
+}
+
+/**
  * The brief for "Generate with persona" (08 §M4-C): link name + the
  * paragraphs surrounding its occurrences (cap ~1200 chars) + module premise.
  * No numeric entity quotas — the persona details exactly this one entity.
@@ -161,6 +177,13 @@ function intentParagraph(intent: string | null | undefined): string | null {
  * after the ownership boundary. Absent/`null`/`''` render NOTHING and leave the
  * brief byte-identical, pinned by `tests/features/persona-request.test.ts` and
  * `tests/llm/kindOwnershipBoundary.test.ts` as they stood before this field.
+ *
+ * `levelHint` is the module author's recorded LEVEL for this entity (owner
+ * request, docs/17 row 197), read off the SAME record by the caller through
+ * `domain/module.entityLevelHintFor`. It renders its own paragraph immediately
+ * AFTER the party-level line (so its "overrides the party level above" sentence
+ * reads true) and `null`/`undefined` render NOTHING — a module with no hints
+ * produces the pre-field brief BYTE FOR BYTE, which is the compatibility pin.
  */
 export function buildEntityBrief(
   name: string,
@@ -172,6 +195,7 @@ export function buildEntityBrief(
   kind?: StubKind,
   instruction = '',
   intent: string | null | undefined = null,
+  levelHint: number | null | undefined = null,
 ): string {
   const contextLabel = encounterScene ? ENTITY_SCENE_CONTEXT_LABEL : ENTITY_CONTEXT_LABEL;
   return withAdditionalInstruction(
@@ -180,6 +204,10 @@ export function buildEntityBrief(
       contextParagraphs === '' ? null : `${contextLabel}\n\n${contextParagraphs}`,
       premise === '' ? null : `${MODULE_PREMISE_LABEL}\n\n${premise}`,
       partyLevel === undefined ? null : partyLevelLine(partyLevel),
+      // Immediately after the party level, whose override it states (docs/17
+      // row 197). Rendered for every kind that passes one; `null` renders
+      // nothing, so a no-hint brief is byte-identical to the pre-field one.
+      levelHintParagraph(levelHint),
       fixedCastSectionFor(fixedCast),
       // The artifact is linked back from the module's wiki-link, which resolves
       // by exact name — the name field must be verbatim; epithets go in the body.

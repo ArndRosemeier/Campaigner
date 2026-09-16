@@ -207,6 +207,21 @@ export const personaRunSchema = z.object({
    * Null for runs started before the field existed and for non-chain runs.
    */
   contextArtifactIds: z.array(z.string()).nullable().default(null),
+  /**
+   * The module author's structured LEVEL hint for the entity this run details
+   * (docs/17 row 197), carried from the module's entity record by the entity
+   * batch. It is INPUT, not provenance: `runEngine.runStatblock` prefers it over
+   * the `level N` sentence it used to regex out of the brief, and that regex is
+   * kept only as the no-hint fallback.
+   *
+   * Persisted so pause/resume/retry reconstructs the input exactly (like
+   * `encounterPreset`): a retried stat-block step must not silently fall back to
+   * the brief regex because the hint was not on the row. Null for runs started
+   * before the field existed and for every run with no hint (an entity whose
+   * record states no level) — parse-on-read materializes it, NO Dexie version,
+   * no index.
+   */
+  entityLevelHint: z.number().int().min(1).max(20).nullable().default(null),
   errorMessage: z.string(),
   /**
    * Why the run failed (`failureKindSchema`), null for rows written before

@@ -580,6 +580,39 @@ function contractRepairNotice(firstTryModel: string, repairTarget: string): stri
 }
 
 /**
+ * The step NOTICE for a stat block whose own printed level does not match the
+ * module author's recorded level hint (docs/17 row 197) — the NPC lane's
+ * honest-deviation route.
+ *
+ * WHY A NOTICE AND NOT A REFUSAL. The stat-block prompt states the hinted level
+ * and instructs honouring it, but a model can still print its own level. The
+ * hint steers the generator; it is not a contract the reply can be rejected
+ * against (a rejection would throw away a complete, usable block over one
+ * field), and silently keeping the divergent block is exactly the failure the
+ * owner reported. The existing step `notice` convention (the same one the
+ * escalation and unresolved-spell notes use) is where a step says what it did
+ * differently, and the run panel renders it — so the owner reads *"the module
+ * fixed level 7; this block says 1"* instead of meeting the surprise at the
+ * table.
+ *
+ * `parseLevelSort` is the app's ONE level grammar (number, fraction, "—"), so
+ * the comparison cannot drift from what the rest of the app reads; a level it
+ * cannot parse (a model slip) is reported as un-comparable rather than
+ * silently dropped. Pure, returns `null` on a match.
+ */
+function levelHintDeviationNotice(hint: number, printed: string): string | null {
+  const shown = printed.trim() === '' ? '(empty)' : printed.trim();
+  let value: number;
+  try {
+    value = parseLevelSort(printed);
+  } catch {
+    return `The module fixed this entity at level ${String(hint)}, but the stat block prints level "${shown}" — a level this app cannot compare, so review it by hand.`;
+  }
+  if (value === hint) return null;
+  return `The module fixed this entity at level ${String(hint)}, but the stat block was written at level "${shown}" — the hint was not honoured; review or regenerate the block.`;
+}
+
+/**
  * The persisted note for an image-step escalation (imageGen's
  * GeneratedImages.fallback): names the failed first-try model and the
  * fallback that actually produced the image. The reason words the trigger
@@ -673,6 +706,16 @@ export interface StartRunInput {
   autonomy: Autonomy;
   brief: string;
   pinnedChunkIds: readonly Id[];
+  /**
+   * The module author's structured LEVEL hint for the entity this run details
+   * (docs/17 row 197), carried by the entity batch from the module's entity
+   * record. `runStatblock` reads it EXPLICITLY and it WINS over the
+   * `level N` sentence the brief may carry; when it is absent the pre-existing
+   * regex over the brief is used unchanged, so a no-hint run produces the same
+   * prompt bytes it always did. Persisted on the run row so a resume/retry
+   * keeps it.
+   */
+  entityLevelHint?: number;
   /**
    * Artifacts from earlier steps of a writers'-room chain (06-MILESTONES M2:
    * persona chaining) — injected into the draft prompt as context and linked
@@ -1861,6 +1904,10 @@ export class RunEngine {
       unattended: input.unattended ?? null,
       contextArtifactIds:
         input.contextArtifactIds === undefined ? null : [...input.contextArtifactIds],
+      // The module author's structured level hint (docs/17 row 197): persisted so
+      // a resume/retry re-reads the SAME level instead of silently falling back
+      // to the brief regex (a null on every run with no hint).
+      entityLevelHint: input.entityLevelHint ?? null,
     });
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
@@ -2085,6 +2132,10 @@ export class RunEngine {
         // prompt keeps its earlier-steps context).
         ...(run.unattended === true ? { unattended: run.unattended } : {}),
         ...(run.contextArtifactIds !== null ? { contextArtifactIds: run.contextArtifactIds } : {}),
+        // The level hint rides the row like the encounter options: a resumed or
+        // retried stat-block step keeps the level the module's author fixed
+        // (docs/17 row 197) instead of falling back to the brief regex.
+        ...(run.entityLevelHint !== null ? { entityLevelHint: run.entityLevelHint } : {}),
       };
     }
 
@@ -3457,7 +3508,17 @@ export class RunEngine {
     }
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
-    const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
+    // THE MODULE AUTHOR'S LEVEL, STRUCTURED (docs/17 row 197). When the entity
+    // batch handed this run a recorded `levelHint`, THAT is the level — no
+    // prose is re-parsed. The `level N` regex below is kept ONLY as the no-hint
+    // fallback for every caller that carries none (the persona panel's one-off
+    // statblock run, a legacy run row): it is exactly the fragility that lost
+    // the owner's level-7 gnome (a level stated in the module's prose is lost
+    // unless that exact sentence happens to ride the brief), so nothing new may
+    // depend on it — and the no-hint path emits the same prompt bytes as before.
+    const briefLevel = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
+    const levelHint = input.entityLevelHint === undefined ? briefLevel : String(input.entityLevelHint);
+    const hintsStructuredLevel = input.entityLevelHint !== undefined;
     // Grounding comes from the retrieve step's stored selection — no
     // duplicate search/embedding pass (see contextFromRetrieveStep). The
     // stored campaign-grounding blocks are validated on read but NEVER
@@ -3472,8 +3533,14 @@ export class RunEngine {
       input.campaign.system,
       mobCasterLevel(levelHint),
     );
+    // The author's hint is stated AND carries its instruction; with no hint the
+    // sentence is byte-identical to the one this step always sent.
+    const levelClause = levelHint === '' ? '' : ` at level ${levelHint}`;
+    const levelInstruction = hintsStructuredLevel
+      ? " — the module's author fixed this entity's level, so build the block at exactly that level"
+      : '';
     const instruction = [
-      `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelHint === '' ? '' : ` at level ${levelHint}`}, grounded in the rule excerpts.`,
+      `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelClause}${levelInstruction}, grounded in the rule excerpts.`,
       input.brief,
       context.excerpts === ''
         ? 'No rule excerpts available.'
@@ -3615,7 +3682,14 @@ export class RunEngine {
       spellIssueList.length === 0
         ? null
         : `Unresolved mob spells — ${spellIssueList.join(' ')}`;
-    const repairNotes = [contractRepairNotice(firstTryModel, repairTarget), spellNotice]
+    // The NPC lane's deviation route (docs/17 row 197): when the module fixed a
+    // level and the block printed another, the step SAYS SO on the existing
+    // `notice` seam — never a silent ignore. `null` with no hint or on a match.
+    const levelNotice =
+      input.entityLevelHint === undefined
+        ? null
+        : levelHintDeviationNotice(input.entityLevelHint, statBlock.level);
+    const repairNotes = [contractRepairNotice(firstTryModel, repairTarget), spellNotice, levelNotice]
       .filter((note): note is string => note !== null)
       .join(' ');
     const step = this.finishStep(

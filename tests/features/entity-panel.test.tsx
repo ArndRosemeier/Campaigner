@@ -994,6 +994,43 @@ describe('EntityPanel', () => {
     });
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
+
+  it('shows a recorded level hint on the entity row, read-only (docs/17 row 197)', async () => {
+    // The visibility half of the hint channel: the level the module author
+    // fixed is a generated DECISION, so it is inspectable where the module's
+    // other entity decisions already are (the panel row). Read-only here — a
+    // human editing surface is out of scope for this slice.
+    const campaign = await createCampaign({ name: 'Hints', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: [
+        { name: 'Kael', kind: 'npc', absorbed: [], levelHint: 7 },
+        { name: 'Bram', kind: 'npc', absorbed: [] },
+      ],
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const marker = await screen.findByTestId('entity-level-hint');
+    expect(marker).toHaveAttribute('data-name', 'Kael');
+    expect(marker).toHaveAttribute('data-level', '7');
+    expect(marker).toHaveTextContent('level 7');
+    // The neighbour with no hint renders NO marker, so a module with no hints
+    // is byte-unchanged on this surface too.
+    expect(screen.getAllByTestId('entity-level-hint')).toHaveLength(1);
+    const bramRow = screen
+      .getAllByTestId('entity-row')
+      .find((row) => row.textContent.includes('Bram'));
+    expect(bramRow?.textContent).not.toContain('level ');
+  });
 });
 
 describe('EntityPanel — normalization state (fix-01)', () => {

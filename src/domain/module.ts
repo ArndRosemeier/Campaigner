@@ -418,6 +418,17 @@ export type EntityBestiarySlot = z.infer<typeof entityBestiarySlotSchema>;
 export const ENTITY_INTENT_MAX_LENGTH = 400;
 
 /**
+ * The inclusive bounds of an entity's recorded LEVEL hint (docs/17 row 197).
+ * ONE pair of constants: the record schema refuses anything outside them and the
+ * spine clause states the SAME range to the model, so the prompt can never offer
+ * a level the boundary then rejects (AGENTS rule 4). A value outside the range —
+ * or a non-integer — is a LOUD validation failure that fails the spine parse,
+ * never a silent clamp (AGENTS rules 1/3).
+ */
+export const ENTITY_LEVEL_HINT_MIN = 1;
+export const ENTITY_LEVEL_HINT_MAX = 20;
+
+/**
  * One model-recorded entity type: a wiki-link name and its kind.
  *
  * Rows written before the conflict-kind vocabulary was retired may still carry
@@ -499,6 +510,71 @@ export const moduleEntityKindSchema = z.object({
       })
       .optional(),
   ),
+  /**
+   * The LEVEL the module author fixed for this entity in the prose (owner
+   * request, docs/17 row 197) — the structured hint that survives the boundary
+   * into the generator that builds the entity.
+   *
+   * THE MEASURED GAP IT CLOSES. The encounter lane has a real structured level
+   * input (`artifact.ts` `data.levelHint`, fed to the room budget); the NPC lane
+   * had none — `statBlockSchema.level` is a bare `z.string()` and
+   * `runEngine.runStatblock` recovered a level only by REGEX over the brief text
+   * (`/level\s*(\d{1,2})/i`). A level stated in the module's own prose was
+   * therefore lost at the entity boundary unless that exact sentence happened to
+   * ride the brief, and the owner's level-7 gnome came out at level 1.
+   *
+   * WHY IT LIVES ON THE ENTITY RECORD AND NOT IN A SECOND, TOP-LEVEL
+   * `entityHints` ARRAY. The record IS the module author's per-entity channel to
+   * the generators: it already carries the author's `intent` note (row 141) and
+   * the cast `bestiary` slot (row 107), it already has ONE name comparison
+   * (`sameAliasName` through `entityKindFor` / `entityIntentFor` /
+   * `entityLevelHintFor`), ONE record cap, ONE normalization carry
+   * (`withEntityBestiarySlots`) and ONE read path into `buildEntityBrief`. A
+   * parallel array would be a SECOND name-keyed per-entity record on the module
+   * row — a second comparison, a second cap, a second carry and a second answer
+   * to "which one wins" when both carried a note (AGENTS rule 4).
+   *
+   * ADDITIVE and OPTIONAL, exactly as strictly additive as `intent` above: a
+   * record written before the field, the model's own `"levelHint": null` (the
+   * strict contract's spelling of "no level stated") and an empty/whitespace
+   * string ALL read as `undefined`, so there is ONE spelling of absence
+   * downstream, nothing is backfilled and no default is materialized onto rows
+   * that predate the question. A module with no hints therefore behaves BYTE-
+   * IDENTICALLY to before this field existed (the compatibility pin).
+   *
+   * A numeric STRING is accepted (meaning-preserving coercion, the shared
+   * `numericStat` precedent); anything else — a float, a non-numeric string, a
+   * value outside `ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX` — is a LOUD
+   * validation ERROR that fails the spine parse naming the field (AGENTS rules
+   * 1/3), never a clamp and never a partial apply.
+   */
+  levelHint: z.preprocess(
+    (value) => {
+      if (value === null) return undefined;
+      if (typeof value !== 'string') return value;
+      const trimmed = value.trim();
+      // An empty/whitespace string is the OTHER spelling of absence (the
+      // `intent` precedent): folded to `undefined`, never handed to `z.number`.
+      if (trimmed === '') return undefined;
+      if (Number.isFinite(Number(trimmed))) return Number(trimmed);
+      return value;
+    },
+    z
+      .number({
+        // The reason names the field, the range and the remedy (AGENTS 1/3).
+        error: `an entity's levelHint must be a whole number between ${String(ENTITY_LEVEL_HINT_MIN)} and ${String(ENTITY_LEVEL_HINT_MAX)}, or null when the prose states no level — it is never guessed`,
+      })
+      .int({
+        message: `an entity's levelHint must be a whole number between ${String(ENTITY_LEVEL_HINT_MIN)} and ${String(ENTITY_LEVEL_HINT_MAX)} — it is never rounded`,
+      })
+      .min(ENTITY_LEVEL_HINT_MIN, {
+        message: `an entity's levelHint must be at least ${String(ENTITY_LEVEL_HINT_MIN)}`,
+      })
+      .max(ENTITY_LEVEL_HINT_MAX, {
+        message: `an entity's levelHint must be at most ${String(ENTITY_LEVEL_HINT_MAX)}`,
+      })
+      .optional(),
+  ),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
@@ -509,15 +585,16 @@ export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
  * author's intent, docs/17 row 141).
  *
  * The name is HISTORICAL: the helper was written for the bestiary slot and now
- * carries the entity's `intent` too, because the reason is the same for both —
- * and a second carry function would be a second mechanism for one idea (AGENTS
- * rule 4). Both fields are the MODEL's own record, written on the variant-keyed
- * records the reply produced; the normalization reply answers which canonical
- * name each listed name refers to and knows nothing about either, so the
- * requests the model already made ride through the substitution rather than
- * being dropped with the records they were written on. Without this the spine
- * pass would record an intent and the very next pass (name normalization,
- * `moduleGen.normalizeAndSave`) would silently delete it.
+ * carries the entity's `intent` (row 141) and `levelHint` (row 197) too, because
+ * the reason is the same for all three — and a second carry function would be a
+ * second mechanism for one idea (AGENTS rule 4). Every field is the MODEL's own
+ * record, written on the variant-keyed records the reply produced; the
+ * normalization reply answers which canonical name each listed name refers to
+ * and knows nothing about any of them, so the requests the model already made
+ * ride through the substitution rather than being dropped with the records they
+ * were written on. Without this the spine pass would record an intent or a level
+ * hint and the very next pass (name normalization, `moduleGen.normalizeAndSave`)
+ * would silently delete it.
  *
  * Matching is exact and case-insensitive over the record's own name plus every
  * `absorbed` variant, the same comparison the normalization pass itself is
@@ -525,9 +602,9 @@ export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
  * because the variant it was written under still resolves to that canonical.
  *
  * LOUD, never a pick (AGENTS rule 1): two source records answering one canonical
- * with DIFFERENT creatures — or with two different intents — is a state the
- * normalizer cannot have meant, and quietly choosing one would silently re-stat
- * or silently re-steer an entity.
+ * with DIFFERENT creatures — or with two different intents, or two different
+ * levels — is a state the normalizer cannot have meant, and quietly choosing one
+ * would silently re-stat, silently re-steer or silently re-level an entity.
  *
  * KEY SPACE `MODULE_NAME_KEY` (docs/17 row 167): the module's own entity-kind
  * records answer to several names (their `absorbed` aliases, and the
@@ -567,7 +644,16 @@ export function withEntityBestiarySlots(
       if (note === undefined || note === '') continue;
       if (!intents.includes(note)) intents.push(note);
     }
-    if (found.length === 0 && intents.length === 0) return record;
+    // The author's LEVEL hints the same source records carry (docs/17 row 197):
+    // numeric equality — two records answering one canonical with different
+    // levels are a contradiction, not a choice to make silently.
+    const levels: number[] = [];
+    for (const entry of contributing) {
+      const level = entry.levelHint;
+      if (level === undefined) continue;
+      if (!levels.includes(level)) levels.push(level);
+    }
+    if (found.length === 0 && intents.length === 0 && levels.length === 0) return record;
     if (found.length > 1) {
       // Two source records answer ONE canonical with different creatures: the
       // normalizer cannot have meant that, and picking one would silently
@@ -585,10 +671,19 @@ export function withEntityBestiarySlots(
           `(${intents.map((note) => `«${note}»`).join(' and ')}) — one entity has one intent`,
       );
     }
+    if (levels.length > 1) {
+      // ...and for the author's level hint: silently picking one would generate
+      // the entity at a level the other record contradicts (AGENTS rule 1).
+      throw new Error(
+        `entity level hint: «${record.name}» was given two different levels ` +
+          `(${levels.map((level) => String(level)).join(' and ')}) — one entity has one level`,
+      );
+    }
     return {
       ...record,
       ...(found[0] === undefined ? {} : { bestiary: found[0] }),
       ...(intents[0] === undefined ? {} : { intent: intents[0] }),
+      ...(levels[0] === undefined ? {} : { levelHint: levels[0] }),
     };
   });
 }
@@ -683,6 +778,65 @@ export function entityIntentFor(
   const value = entityKinds.find((entry) => sameAliasName(entry.name, name))?.intent?.trim();
   return value === undefined || value === '' ? null : value;
 }
+
+/**
+ * The LEVEL the module RECORDED for one entity name (docs/17 row 197), read back
+ * at the moment its detail brief and its stat-block run are built. `null` when
+ * the name has no record or its record states no level — which is every module
+ * written before the field, every `null` the model answered, and every `''`.
+ * ONE read, so the entity batch, the post-generation automation, the stub
+ * popover's single-entity delegation and the change/refill lane can never
+ * disagree about which level an entity carries (AGENTS rule 4): they all reach
+ * the generators through the batch, which reads THIS function.
+ *
+ * Matching is the record's own `name` through the ONE comparison
+ * (`sameAliasName`, docs/17 row 166) — the exact seam `entityKindFor` and
+ * `entityIntentFor` above use; the empty-name probe is the same one, and exists
+ * only as an emptiness test (composition cannot change emptiness).
+ */
+export function entityLevelHintFor(
+  entityKinds: readonly ModuleEntityKind[],
+  name: string,
+): number | null {
+  const target = name.trim().toLowerCase();
+  if (target === '') return null;
+  return entityKinds.find((entry) => sameAliasName(entry.name, name))?.levelHint ?? null;
+}
+
+/**
+ * The recorded LEVEL hints whose NAME the module's own text never mentions — the
+ * ONE derivation of "this hint can never reach a generator" (docs/17 row 197,
+ * AGENTS rules 1/3).
+ *
+ * WHY THIS EXISTS. A hint is consumed by NAME, through the same mention rule
+ * every batch target passes (`post-generation.namesOfKind`: a wiki-link name of
+ * the module document whose recorded kind is the batch's kind). A record that
+ * carries a level hint but whose name is not a wiki-link mention is therefore
+ * never a target and never a brief: without this derivation the hint would be
+ * dropped in SILENCE, which AGENTS rule 1 forbids. It is named, not repaired:
+ * the caller reports it loudly and NEVER invents an entity for it.
+ *
+ * It is deliberately NOT a second name comparison: both sides are matched with
+ * `sameAliasName`, the module's one comparable form (docs/17 row 166), and only
+ * the record's canonical `name` is asked — exactly what `entityKindFor` (and so
+ * `batchTargets`) asks, so "the panel offers it" and "the hint is matched"
+ * cannot come to mean two different sets of names.
+ *
+ * `mentionedNames` is the module document's wiki-link names
+ * (`lib/wikilinks.extractWikiLinks` over `module.moduleDocumentText`) — the
+ * caller reads them, keeping this pure domain module free of a `lib` import.
+ */
+export function unmatchedEntityLevelHints(
+  mentionedNames: readonly string[],
+  entityKinds: readonly ModuleEntityKind[],
+): ModuleEntityKind[] {
+  return entityKinds.filter(
+    (record) =>
+      record.levelHint !== undefined &&
+      !mentionedNames.some((name) => sameAliasName(record.name, name)),
+  );
+}
+
 /**
  * The module canvas chat thread (08-MODULE-DESIGNER §Module canvas chat,
  * docs/17 row 57): the persisted conversation — user instructions plus the

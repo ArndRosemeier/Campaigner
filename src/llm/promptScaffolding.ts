@@ -108,6 +108,32 @@ export const INTENT_HIERARCHY =
   ' This steers EMPHASIS and OWNERSHIP; what the module text states is fixed, and your own charter still governs what this kind may contain.';
 
 /* -------------------------------------------------------------------------
+ * The entity LEVEL-HINT paragraph (docs/17 row 197)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The level-hint paragraph's ONE form (owner request, docs/17 row 197): the
+ * module author fixed a level for this entity in the prose, and this is how the
+ * generator that builds the entity HEARS it — a structured number, not a
+ * sentence the engine re-parses.
+ *
+ * The hierarchy sentence is load-bearing the same way the intent paragraph's is:
+ * the hint OVERRIDES the party-level context the brief may also carry (the
+ * recorded level is the author's own statement about THIS entity), and it binds
+ * the generator to surface a deviation instead of drifting silently — which is
+ * exactly the owner's symptom (a level-7 gnome generated at level 1).
+ *
+ * WHY THE TWO LITERALS LIVE HERE AND NOT IN `features/modules/persona-request`
+ * (docs/17 row 145's rule): the scaffolding-echo detector can only mark a
+ * sentence whose bytes it can READ from the composer, and the feature imports
+ * this module, so an inline literal would be an undetectable one.
+ */
+export const ENTITY_LEVEL_HINT_LABEL = "The module fixes this entity's level: ";
+
+export const ENTITY_LEVEL_HINT_HIERARCHY =
+  ' Build this entity at exactly that level; it overrides the party level above, and a description or stat block that prints another level must say so rather than drift.';
+
+/* -------------------------------------------------------------------------
  * The KIND ownership boundaries (docs/17 row 140 — moved here UNCHANGED)
  * ---------------------------------------------------------------------- */
 
@@ -278,6 +304,11 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   // premise labels already use.
   literalMarker('the entity-intent label', INTENT_LABEL),
   literalMarker('the entity-intent hierarchy sentence', INTENT_HIERARCHY),
+  // The level-hint paragraph (docs/17 row 197): TWO literal markers, one per
+  // composer constant, for the same reason the intent pair uses literals — the
+  // slot is a NUMBER, so the label sentence is the stable bytes.
+  literalMarker('the entity-level-hint label', ENTITY_LEVEL_HINT_LABEL),
+  literalMarker('the entity-level-hint hierarchy sentence', ENTITY_LEVEL_HINT_HIERARCHY),
   literalMarker('the grounding section header', GROUNDING_SECTION_HEADER),
   literalMarker('the fixed-cast section header', FIXED_CAST_SECTION_HEADER),
   literalMarker('the fixed-cast section footer', FIXED_CAST_SECTION_FOOTER),

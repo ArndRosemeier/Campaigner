@@ -171,9 +171,27 @@ describe('runRepo', () => {
     expect(run?.encounterPreset).toBeNull();
     expect(run?.placementModuleId).toBeNull();
     expect(run?.runExtras).toBeNull();
+    // docs/17 row 197: the module author's level hint is another additive
+    // option; a pre-field row reads as NULL (no hint), never as a lost value.
+    expect(run?.entityLevelHint).toBeNull();
     const listed = await listRunsByCampaign(campaignId);
     expect(listed[0]?.encounterPreset).toBeNull();
     expect(listed[0]?.runExtras).toBeNull();
+    expect(listed[0]?.entityLevelHint).toBeNull();
+  });
+
+  it('round-trips the recorded level hint so a resume/retry keeps it (docs/17 row 197)', async () => {
+    const personaId = await makePersona();
+    const campaignId = newId();
+    const created = await createRun({
+      campaignId,
+      personaId,
+      autonomy: 'auto',
+      userBrief: 'Kael the Grey, a level 7 gnome',
+      entityLevelHint: 7,
+    });
+    expect(created.entityLevelHint).toBe(7);
+    expect((await getRun(created.id))?.entityLevelHint).toBe(7);
   });
 
   /**

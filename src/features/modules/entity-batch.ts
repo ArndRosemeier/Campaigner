@@ -1,5 +1,5 @@
-import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, PersonaRun } from '@/domain';
-import { bestiarySlotForEntity, entityIntentFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName } from '@/domain';
+import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, ModuleEntityKind, PersonaRun } from '@/domain';
+import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName, unmatchedEntityLevelHints } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import {
   citationBookTitle,
@@ -23,7 +23,7 @@ import {
   type StubKind,
 } from '@/features/modules/persona-request';
 import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
-import { surroundingParagraphs } from '@/lib/wikilinks';
+import { surroundingParagraphs, extractWikiLinks } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { recordEntityBatchFailure } from '@/features/modules/entity-batch-report';
 import { toastError } from '@/lib/toast';
@@ -508,6 +508,43 @@ export interface EntityBatchResult {
 }
 
 /**
+ * The entity boundary's LOUD report for a recorded LEVEL hint whose name the
+ * module's own text never mentions (docs/17 row 197, AGENTS rules 1-3): such a
+ * hint can never reach a generator, because the mention rule is what makes a
+ * name a batch target, and without this report it would be dropped in SILENCE.
+ *
+ * It never repairs and never invents: no artifact is created for the name, no
+ * record is written, and the batch runs on — the hint is an authoring mistake,
+ * not corrupt data, so it is NAMED and the work continues. The console line is
+ * the pasteable record; the toast is the user-visible surface (AGENTS rule 2 —
+ * a console entry alone is forbidden).
+ *
+ * Exported so the ONE derivation can be pinned directly, and called once, at
+ * the batch entry point every entity-generation path shares.
+ */
+export function reportUnmatchedEntityLevelHints(module: Module): ModuleEntityKind[] {
+  const unmatched = unmatchedEntityLevelHints(
+    extractWikiLinks(moduleDocumentText(module)).map((link) => link.name),
+    module.entityKinds,
+  );
+  for (const record of unmatched) {
+    const message =
+      `The module fixes a level for «${record.name}» (level ${String(record.levelHint)}), but its text never ` +
+      `mentions that name, so the hint reached no generator. A hint is not an entity — nothing was created for ` +
+      `it. Mention the name in the module text, or remove the hint, and generate again.`;
+    console.error(
+      `[campaigner] entity level hint unmatched ${JSON.stringify({
+        moduleId: module.id,
+        name: record.name,
+        levelHint: record.levelHint,
+      })}`,
+    );
+    toastError('Entity level hint names nothing in the module text', new Error(message));
+  }
+  return unmatched;
+}
+
+/**
  * Runs one batch. Throws only on setup failures (no persona); run failures
  * are collected into `failed` — the CALLER reports them, and both callers
  * report them through the one seam (`features/modules/entity-batch-report`),
@@ -516,6 +553,10 @@ export interface EntityBatchResult {
 export async function runEntityBatch(input: RunEntityBatchInput): Promise<EntityBatchResult> {
   const { module, campaign, kind, targets } = input;
   const instruction = input.instruction ?? '';
+  // A recorded level hint the text never mentions cannot reach a generator:
+  // report it LOUDLY and by name before any work (docs/17 row 197). Never a
+  // reason to invent an entity, and never a silent drop.
+  reportUnmatchedEntityLevelHints(module);
   // The epoch this batch belongs to: consulted at every worker entry, so a
   // stop withdraws the remaining targets instead of launching them.
   const epoch = getStopEpoch();
@@ -650,6 +691,19 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // own paragraphs ride it as CONTEXT — one request to the model for one
         // entity, whichever destination it writes into.
         const contextParagraphs = surroundingParagraphs(moduleText, target.name);
+        // The module author's recorded LEVEL for this entity (docs/17 row 197),
+        // read through the ONE reader (`entityLevelHintFor`) exactly like the
+        // intent note below. READ HERE — by name off `module.entityKinds` — and
+        // not carried on `EntityBatchTarget`: the note precedent is decisive, and
+        // a target field would have to be attached by all FOUR target-building
+        // call sites (the panel, the automation sweep, the stub popover's
+        // single-entity delegation and the change/refill lane), which is the
+        // "rule enforced at three call sites" AGENTS rule 4 forbids. `null` for
+        // every entity without a hint, which leaves the brief AND the run input
+        // byte-identical to before this field existed.
+        const levelHint = stubKindCarriesPartyLevel(kind)
+          ? entityLevelHintFor(module.entityKinds, target.name)
+          : null;
         const brief = buildEntityBrief(
           target.name,
           contextParagraphs,
@@ -677,6 +731,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           // lane re-enters through `runEntityBatch` with the module row), so
           // every detail worker receives the note by construction.
           entityIntentFor(module.entityKinds, target.name),
+          // ...and the author's recorded LEVEL (docs/17 row 197), read through
+          // the sibling reader and rendered right after the party-level line.
+          // `null` renders nothing and leaves the brief byte-identical.
+          levelHint,
         );
         // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
         // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY
@@ -746,6 +804,11 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             autonomy: 'auto' as const,
             brief,
             pinnedChunkIds: [],
+            // The module author's structured level (docs/17 row 197): the
+            // stat-block step reads THIS, not a sentence re-parsed out of the
+            // brief. Omitted (not null) when there is no hint, so the no-hint
+            // run input is byte-identical to before.
+            ...(levelHint === null ? {} : { entityLevelHint: levelHint }),
             // A REFILL of the row that exists: no placement — the run fills the
             // cast row in place, exactly like the persona panel's targeted run.
             targetArtifactId: castOutcome.artifactId,
@@ -784,6 +847,11 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           autonomy: 'auto' as const,
           brief,
           pinnedChunkIds: [],
+          // The module author's structured level (docs/17 row 197): carried to
+          // the run so the stat-block step reads the RECORDED level instead of
+          // re-parsing the brief. Omitted when there is no hint, so the no-hint
+          // run input stays byte-identical.
+          ...(levelHint === null ? {} : { entityLevelHint: levelHint }),
           // Two destinations, exactly one of them per target:
           //
           // - CHANGE (the change seam): the row already exists, so the run

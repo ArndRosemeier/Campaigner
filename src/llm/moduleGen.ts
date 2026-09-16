@@ -11,6 +11,8 @@ import {
   encounterFloorTotal,
   ENTITY_KINDS,
   ENTITY_INTENT_MAX_LENGTH,
+  ENTITY_LEVEL_HINT_MAX,
+  ENTITY_LEVEL_HINT_MIN,
   entityBestiarySlotSchema,
   entityKindFor,
   moduleCreationPool,
@@ -480,12 +482,12 @@ async function runSpinePass(
         );
         // Spine-time verdicts map names only — the records are the canonical
         // form of the planner's own entity list. The planner's BESTIARY slots
-        // (docs/17 row 107) and its entity INTENT notes (docs/17 row 141) are
-        // carried onto them by name: the normalization reply answers which
-        // canonical name each listed name refers to and knows nothing about
-        // either, so what the model already recorded rides through the
-        // substitution rather than being dropped with the variant-keyed records
-        // it was written on.
+        // (docs/17 row 107), its entity INTENT notes (docs/17 row 141) and its
+        // entity LEVEL hints (docs/17 row 197) are carried onto them by name:
+        // the normalization reply answers which canonical name each listed name
+        // refers to and knows nothing about any of them, so what the model
+        // already recorded rides through the substitution rather than being
+        // dropped with the variant-keyed records it was written on.
         normalizedKinds = withEntityBestiarySlots(canonicalEntityRecords(verdicts), nextKinds);
       }
       const saved = await patchModule(moduleId, {
@@ -620,6 +622,14 @@ const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSche
  * LENGTH cap is the record schema's (`ENTITY_INTENT_MAX_LENGTH`), because the
  * strict subset strips `maxLength`; the spine clause states the same number to
  * the model, so the prompt and the boundary cannot disagree.
+ *
+ * `levelHint` (docs/17 row 197) is the additive structured LEVEL the module
+ * author fixes for an entity, spelled exactly like `intent`: `null` is the
+ * planner's "the prose states no level". Its RANGE bound lives on the record
+ * schema (`ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX`) for the same reason
+ * the intent cap does — the strict subset strips numeric bounds — and the
+ * spine clause states the same range to the model. A reply outside it fails the
+ * spine parse LOUDLY, never a clamp.
  */
 const modelEntityKindSchema = z.object({
   name: z.string().trim().min(1),
@@ -627,6 +637,9 @@ const modelEntityKindSchema = z.object({
   absorbed: z.array(z.string()).default([]),
   bestiary: absentable(entityBestiarySlotSchema),
   intent: absentable(z.string()),
+  levelHint: absentable(
+    z.number().int().min(ENTITY_LEVEL_HINT_MIN).max(ENTITY_LEVEL_HINT_MAX),
+  ),
 });
 
 /**
@@ -947,6 +960,41 @@ const SPINE_ENTITY_INTENT =
   `entity, not a substitute for the module text and never a description of what the artifact should contain ` +
   `in place of the story; it steers emphasis, it does not overrule the text. It is never shown to a reader.`;
 
+/**
+ * The spine call's own request for the entity LEVEL hint (owner request,
+ * docs/17 row 197): the level the planner fixes for a figure in the prose,
+ * asked for so the entity generator that builds that figure BUILDS IT AT THAT
+ * LEVEL instead of inventing one.
+ *
+ * WHY IT IS ASKED FOR IN THIS PASS, AND IN THE SYSTEM MESSAGE. It rides the
+ * SAME spine call as `SPINE_ENTITY_INTENT` above — the pass that writes the
+ * PREMISE, which is where a level stated in the prose appears, and the pass that
+ * emits the entity RECORD the hint is stored on. It rides the same SYSTEM
+ * MESSAGE for the identical reasons recorded on that constant: the
+ * style-composed prompt is the owner's editable layer and its classic bytes are
+ * pinned against pre-styles fixtures, so an app contract must not live in a
+ * style value. The strict emitted schema makes `levelHint` REQUIRED-nullable,
+ * so the model must be told the key exists.
+ *
+ * WHAT IT SAYS IT IS FOR — the owner's own framing, and the reason the model is
+ * asked to bother: what the writer states about a figure is how that figure
+ * survives into the entity the generators build; a level stated only in prose is
+ * lost at the entity boundary, and the generator then picks a level of its own.
+ *
+ * The RANGE comes from `ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX` — the
+ * SAME constants the record schema enforces — so the prompt can never offer a
+ * level the boundary then rejects (AGENTS rule 4).
+ */
+const SPINE_ENTITY_LEVEL_HINT =
+  ` Every entity entry ALSO carries "levelHint": the LEVEL this figure is at in your story, ` +
+  `a whole number from ${String(ENTITY_LEVEL_HINT_MIN)} to ${String(ENTITY_LEVEL_HINT_MAX)}, ` +
+  `when you fix one in the prose — an ally's, a rival's or a villain's class or character level. ` +
+  `State it so the figure SURVIVES into the entity the generators build: what you write about a figure ` +
+  `is how that figure is generated later, and a level stated only in your prose is otherwise LOST at the ` +
+  `entity boundary — the entity generator would pick a level of its own. Answer "levelHint": null for every ` +
+  `entity whose level your prose does not fix (places, factions, notes, generic opposition), and never ` +
+  `guess: the hint must agree with what your own text states. It is a generation hint, never shown to a reader.`;
+
 async function spineMessages(
   module: Module,
   campaign: Campaign,
@@ -1022,7 +1070,8 @@ async function spineMessages(
         'You are the Module Architect, an expert adventure designer for tabletop RPGs. ' +
         'You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. ' +
         'Always answer in the exact JSON format requested. Never include commentary outside the JSON.' +
-        SPINE_ENTITY_INTENT,
+        SPINE_ENTITY_INTENT +
+        SPINE_ENTITY_LEVEL_HINT,
     },
     { role: 'user', content: composed.text },
   ];

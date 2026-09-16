@@ -70,6 +70,47 @@ describe('buildEntityBrief', () => {
     expect(brief).not.toContain('The scene this encounter must stage');
     expect(brief).not.toContain('Where it is mentioned:');
   });
+
+  it('renders the module author’s level hint right after the party level, and ONLY when there is one', () => {
+    // docs/17 row 197: the hint is the author's own statement about THIS
+    // entity, so its paragraph follows the party-level line it overrides and
+    // states that hierarchy.
+    const base = buildEntityBrief('Kael the Grey', 'The gate is watched by Kael the Grey.', 'A premise.', 1);
+    const hinted = buildEntityBrief(
+      'Kael the Grey',
+      'The gate is watched by Kael the Grey.',
+      'A premise.',
+      1,
+      [],
+      false,
+      'npc',
+      '',
+      null,
+      7,
+    );
+    expect(hinted).toContain("The module fixes this entity's level: 7.");
+    expect(hinted).toContain('it overrides the party level above');
+    expect(hinted.indexOf('Party of 4 adventurers at level 1.')).toBeLessThan(
+      hinted.indexOf("The module fixes this entity's level: 7."),
+    );
+    // COMPATIBILITY: omitting the hint (and spelling it null) is byte-identical
+    // to the pre-field brief.
+    expect(base).toBe(
+      buildEntityBrief(
+        'Kael the Grey',
+        'The gate is watched by Kael the Grey.',
+        'A premise.',
+        1,
+        [],
+        false,
+        'npc',
+        '',
+        null,
+        null,
+      ),
+    );
+    expect(base).not.toContain("The module fixes this entity's level:");
+  });
 });
 
 describe('STUB_KINDS and persona slugs', () => {

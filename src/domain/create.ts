@@ -262,6 +262,10 @@ export interface NewPersonaRun {
   unattended?: boolean | null;
   /** Writers'-room chain grounding for the draft prompt; null/omitted = none. */
   contextArtifactIds?: readonly Id[] | null;
+  /** The module author's structured level hint for the entity (docs/17 row
+   * 197); null/omitted = no hint (the stat-block step falls back to the brief
+   * regex). */
+  entityLevelHint?: number | null;
 }
 
 export function createPersonaRun(input: NewPersonaRun): PersonaRun {
@@ -287,6 +291,7 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
       input.contextArtifactIds === undefined || input.contextArtifactIds === null
         ? null
         : [...input.contextArtifactIds],
+    entityLevelHint: input.entityLevelHint ?? null,
     errorMessage: '',
   });
 }

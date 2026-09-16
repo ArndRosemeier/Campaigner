@@ -1400,6 +1400,79 @@ proving a record WITH intent changes the brief, a pin proving a record WITHOUT i
 byte-identical, a loud cap refusal, and an absence pin that no reader-facing surface
 prints the intent.
 
+### Entity level hint — the structured level the generators must build at
+
+**Owner request, verbatim:** *"In my module premise i my campaign premise i introduced a
+level 7 gnome. The model that used this created text about it and the NPC generator that
+then made the entity created the gnome at level 1. This is just a symptom though. What i
+would like is to give the module writer the option to leave a hint for the entity
+generators and the module generator should be encouraged to use that hint."*
+
+The problem it answers is the same class as the intent note's, one boundary further: the
+ENCOUNTER lane has a structured level (`artifact.data.levelHint`, fed to the room budget),
+while the NPC stat-block lane recovered a level by REGEX over the brief text
+(`runEngine.runStatblock`, `/level\s*(\d{1,2})/i`). A level stated in the module's own
+prose — the owner's gnome is stated in the PREMISE, which carries no part level band at
+all — was therefore LOST at the entity boundary unless that exact sentence happened to
+ride the brief, and the generator picked a level of its own.
+
+**Where it lives: the RECORD, beside `intent`.** `moduleEntityKindSchema.levelHint`, an
+additive optional INTEGER bounded to `ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX`
+(1..20) with the same absence spelling as `intent`: an absent key, the model's own `null`
+and an empty string all read as `undefined`, nothing is backfilled and no Dexie version
+is needed. A hint past the range, a float or a non-numeric string is a LOUD validation
+failure that fails the spine parse by field (AGENTS rules 1/3), never a clamp.
+
+Why the RECORD and not a new top-level `entityHints` array: the record IS the module
+author's per-entity channel to the generators — it already carries `intent` and
+`bestiary`, and it already has ONE name comparison (`sameAliasName` through
+`entityKindFor` / `entityIntentFor` / `entityLevelHintFor`), ONE record cap, ONE
+normalization carry (`withEntityBestiarySlots`) and ONE read path into the batch. A
+parallel array would be a second name-keyed per-entity record, a second comparison and a
+second answer to "which one wins when both carry a note" (AGENTS rule 4).
+
+**Who writes it.** The module generator, in the spine call, for the figures whose level
+the prose fixes (an ally, a rival, a villain). The request rides the spine call's
+app-voice SYSTEM message (`moduleGen.SPINE_ENTITY_LEVEL_HINT`) for the reason
+`SPINE_ENTITY_INTENT` does (the style-composed prompt is the owner's editable layer and
+its classic bytes are pinned against pre-styles fixtures), and it says what the hint is
+FOR in the owner's own terms: what you write about a figure is how that figure is
+generated later, and a level stated only in prose is otherwise lost at the entity
+boundary. The PARTS pass contributes no hint — its reply is markdown, with no structured
+entity contract — so a hint exists only where the planner declared the entity; the
+normalization pass CARRIES the spine's hint onto the canonical record by name
+(`withEntityBestiarySlots`, refusing two different levels loudly) and the incremental
+classification pass leaves existing records byte-identical.
+
+**How a generator receives it.** Two structured paths, both through
+`features/modules/entity-batch.runEntityBatch` reading the record with
+`domain/module.entityLevelHintFor`:
+
+- the DETAIL brief gains a paragraph from `buildEntityBrief`'s additive `levelHint`
+  parameter, immediately after the party-level line it overrides:
+  *"The module fixes this entity's level: 7. Build this entity at exactly that level; it
+  overrides the party level above, and a description or stat block that prints another
+  level must say so rather than drift."*
+- the RUN carries `StartRunInput.entityLevelHint` (persisted on the run row so a
+  resume/retry reconstructs it), and `runEngine.runStatblock` reads it EXPLICITLY: it
+  WINS over the `level N` sentence, while that regex is kept ONLY as the no-hint
+  fallback. Where the model still prints another level, the stat-block step's existing
+  `notice` says so, naming both levels.
+
+**The byte-identical rule (binding).** An entity with NO hint produces the brief, the run
+input and the stat-block prompt it produced before this field existed, byte for byte. An
+unmatched hint — one whose name the module text never mentions — is not silently dropped:
+it is reported LOUDLY by name (toast + console record) at the entity boundary and NEVER
+becomes an entity of its own.
+
+**Visibility.** The entity panel row shows the recorded level read-only (an
+`entity-level-hint` badge), because that is where the module's other entity decisions are
+inspectable and where the generation it steers is triggered.
+
+**Non-goals (this slice).** No human editing surface for hints (slice B, exactly like the
+intent field's); no hint driving anything but the level; the encounter generator's own
+level resolution is unchanged (it keeps its part band + artifact `levelHint`).
+
 ### Names the text picks up later (the record gate is a TEXT gate)
 
 Every batch bucket is keyed by a RECORD (`module.entityKinds`) — never a
