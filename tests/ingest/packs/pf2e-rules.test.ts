@@ -13,6 +13,7 @@ import {
 } from '@/ingest/packs/pf2e-rules';
 import { getPackAdapter, PACK_ADAPTERS } from '@/ingest/packs/registry';
 import type { PackSectionEntry } from '@/ingest/packs/types';
+import { sha256Hex } from '@/lib/hash';
 
 import { baseNpc, encodeJson, folderDoc } from './fixtures';
 
@@ -37,6 +38,32 @@ const SOURCE_PATHS: Readonly<Record<string, string>> = {
 
 function docBytes(name: string): Uint8Array {
   return new TextEncoder().encode(readFileSync(join(FIXTURE_DIR, name), 'utf8'));
+}
+
+/** The fixture parsed as a raw source document (what the adapter read). */
+function fixtureSource(name: string): { system: { heightening: unknown } } {
+  return JSON.parse(readFileSync(join(FIXTURE_DIR, name), 'utf8')) as {
+    system: { heightening: unknown };
+  };
+}
+
+/** A minimal synthetic spell document, for shapes no real fixture carries. */
+function syntheticSpellBytes(description: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      name: 'Synthetic Bolt',
+      type: 'spell',
+      system: {
+        description: { value: description },
+        traits: { value: ['attack'], rarity: 'common', traditions: ['arcane'] },
+        level: { value: 2 },
+        time: { value: '2' },
+        range: { value: '60 feet' },
+        target: { value: '1 creature' },
+        duration: { value: '' },
+      },
+    }),
+  );
 }
 
 /** Paths mirror the upstream folder layout — the fetch keeps them relative to packs/pf2e. */
@@ -141,6 +168,9 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(SOURCE_PATHS['cat-fall.json']).toContain('feats/skill');
     expect(entry.categories).toEqual(['Feats — Skill', 'Level 1']);
     expect(entry.name).toBe('Cat Fall');
+    // Non-spell entries carry no structured payload: the runner keeps them
+    // `section` chunks, exactly as before the spells arc.
+    expect(entry.spell).toBeUndefined();
     expect(entry.text).toContain('Cat Fall');
     expect(entry.text).toContain('Feat 1 (general, skill)');
     expect(entry.text).toContain('Prerequisites: trained in Acrobatics');
@@ -159,7 +189,7 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(entry.text).toContain('Source: Pathfinder Player Core (ORC)');
   });
 
-  it('maps the real Acid Splash (cantrip spell) with the OGL legacy source line', async () => {
+  it('maps the real Acid Splash (cantrip spell) with the OGL legacy source line AND its structured payload', async () => {
     const entry = await parseAs('acid-splash.json', 'spells/spells/cantrip/acid-splash.json');
     expect(entry.categories).toEqual(['Spells — Cantrip']);
     expect(entry.name).toBe('Acid Splash');
@@ -168,6 +198,104 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(entry.text).toContain('You splash a glob of acid');
     // The legacy spell documents OGL + Core Rulebook — verbatim per-entry.
     expect(entry.text).toContain('Source: Pathfinder Core Rulebook (OGL)');
+    // The SAME mapping emits the structured half (the spells arc): the source
+    // stores this cantrip at level 1, so `rank: 0` is the deliberate list
+    // normalization (cantrips lead a level-sorted list); the text is untouched.
+    // `cantrip` is the TRAIT signal. Heightening is captured two ways: the
+    // source's own `system.heightening` VERBATIM (deep-equal to the fixture's)
+    // and the four notes parsed from the raw description, in document order.
+    expect(entry.spell).toEqual({
+      system: 'pathfinder2e',
+      rank: 0,
+      cantrip: true,
+      traditions: ['arcane', 'primal'],
+      traits: ['acid', 'attack', 'cantrip', 'concentrate', 'manipulate'],
+      rarity: 'common',
+      cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },
+      heightening: fixtureSource('acid-splash.json').system.heightening,
+      heighteningEntries: [
+        {
+          kind: 'fixed',
+          rank: 3,
+          text: 'The initial damage increases to 2d6, and the persistent damage increases to 2.',
+        },
+        {
+          kind: 'fixed',
+          rank: 5,
+          text: 'The initial damage increases to 3d6, the persistent damage increases to 3, and the splash damage increases to 2.',
+        },
+        {
+          kind: 'fixed',
+          rank: 7,
+          text: 'The initial damage increases to 4d6, the persistent damage increases to 4, and the splash damage increases to 3.',
+        },
+        {
+          kind: 'fixed',
+          rank: 9,
+          text: 'The initial damage increases to 5d6, the persistent damage increases to 5, and the splash damage increases to 4.',
+        },
+      ],
+      heighteningUnparsed: [],
+      publication: { title: 'Pathfinder Core Rulebook', license: 'OGL' },
+    });
+  });
+
+  it('parses an INCREMENT heightening heading into a structured note', async () => {
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes(
+        '<p>Base text.</p><p><strong>Heightened (+1)</strong> The damage increases by 1d6.</p>',
+      ),
+    );
+    expect(parsed.failures).toEqual([]);
+    const entry = (parsed.sections ?? [])[0];
+    expect(entry?.spell?.cantrip).toBe(false);
+    expect(entry?.spell?.rank).toBe(2);
+    expect(entry?.spell?.heightening).toBeNull();
+    expect(entry?.spell?.heighteningEntries).toEqual([
+      { kind: 'increment', increment: 1, text: 'The damage increases by 1d6.' },
+    ]);
+    expect(entry?.spell?.heighteningUnparsed).toEqual([]);
+  });
+
+  it('captures an unrecognized Heightened line as LOUD unparsed data (never dropped)', async () => {
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes(
+        '<p>Base text.</p>\n<p><strong>Heightened (special)</strong> Something unusual.</p>',
+      ),
+    );
+    expect(parsed.failures).toEqual([]);
+    const entry = (parsed.sections ?? [])[0];
+    expect(entry?.spell?.heighteningEntries).toEqual([]);
+    expect(entry?.spell?.heighteningUnparsed).toEqual([
+      '<p><strong>Heightened (special)</strong> Something unusual.</p>',
+    ]);
+  });
+
+  it('keeps every emitted text byte-identical to the arc base (the text IS the contentHash)', async () => {
+    // MEASURED at c07e625 (the arc's base) through this same adapter: the
+    // sha256 of each emitted text. Adding `spellData` must not move a byte —
+    // the text is the stored `contentHash` and a change would invalidate every
+    // stored citation (docs/12 §15, ledger 181).
+    const baseTextHashes: Readonly<Record<string, string>> = {
+      'cat-fall.json': '1938ab47dee67695d071142aa8317dea6f8596df5d435f287e11ea09be2fea9d',
+      'armor-proficiency.json': '24ba68157a7342411216143d8004d2523ece801ca3a50101cf2101468812d21e',
+      'acid-splash.json': 'be199c4153818e5e71ca51f06da169adf65a3635a5a433184c463175eeb57eba',
+      'aid.json': '5601cf771b0df10e515b2ce44b30e8d7bb9f22df00779a9291c0a5ea3ea6cad5',
+    };
+    const files: [string, string][] = [
+      ['cat-fall.json', 'feats/skill/level-1/cat-fall.json'],
+      ['armor-proficiency.json', 'feats/general/level-1/armor-proficiency.json'],
+      ['acid-splash.json', 'spells/spells/cantrip/acid-splash.json'],
+      ['aid.json', 'actions/basic/aid.json'],
+    ];
+    for (const [fixture, fileName] of files) {
+      const entry = await parseAs(fixture, fileName);
+      expect(await sha256Hex(entry.text), `${fixture} text drifted from the arc base`).toBe(
+        baseTextHashes[fixture],
+      );
+    }
   });
 
   it('maps the real Aid (reaction action) with the action-type summary', async () => {
@@ -222,7 +350,7 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(parsed.failures[0]?.message).toContain('document 2:');
   });
 
-  it('imports into a ready book of `section` chunks with the lanes counted in packMeta', async () => {
+  it('imports into a ready book of `section` and `spell` chunks with the lanes counted in packMeta', async () => {
     const deps = memoryDeps();
     const result = await importPack(
       FOUNDRY_PF2E_RULES_ADAPTER_ID,
@@ -238,7 +366,14 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(result.sectionsImported).toBe(4);
     expect(result.book.status).toBe('ready');
     const chunks = deps.persisted.flat();
-    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['section', 'section', 'section', 'section']);
+    // The spell document is the ONE `spell` chunk; every other rules-text
+    // entry keeps the `section` chunk it always was.
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual([
+      'section',
+      'section',
+      'spell',
+      'section',
+    ]);
     expect(chunks.map((chunk) => chunk.headingPath)).toEqual([
       ['Feats — Skill', 'Level 1', 'Cat Fall'],
       ['Feats — General', 'Level 1', 'Armor Proficiency'],
@@ -247,6 +382,9 @@ describe('foundry-pf2e-rules adapter', () => {
     ]);
     expect(chunks[0]?.statBlock).toBeNull();
     expect('itemData' in (chunks[0] ?? {})).toBe(false);
+    expect('spellData' in (chunks[0] ?? {})).toBe(false);
+    expect(chunks[2]?.spellData?.rank).toBe(0);
+    expect(chunks[2]?.spellData?.traditions).toEqual(['arcane', 'primal']);
     expect(deps.finalized[0]?.packMeta).toMatchObject({
       sourceId: FOUNDRY_PF2E_RULES_ADAPTER_ID,
       entriesImported: 4,

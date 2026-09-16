@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { BaseEntitySchema } from '@/domain/entity';
 import { gameSystemSchema } from '@/domain/gameSystem';
 import { itemDataSchema } from '@/domain/itemData';
+import { spellDataSchema } from '@/domain/spellData';
 import { statBlockSchema } from '@/domain/statblock';
 
 export const rulebookStatusSchema = z.enum(['processing', 'ready', 'error']);
@@ -38,8 +39,8 @@ export const packMetaSchema = z.object({
   /**
    * Valid rules-text entries in this book (docs/12 §15, the rules-text packs
    * arc) — journal pages, conditions, feats, spells, actions, class features
-   * landing as `section` chunks. Optional, so old rows parse unchanged;
-   * `entriesImported` counts all three lanes.
+   * landing as `section`/`spell` chunks. Optional, so old rows parse
+   * unchanged; `entriesImported` counts all three lanes.
    */
   sectionsImported: z.number().int().nonnegative().optional(),
   // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
@@ -87,7 +88,7 @@ export const rulebookSchema = z.object({
 
 export type Rulebook = z.infer<typeof rulebookSchema>;
 
-export const chunkTypeSchema = z.enum(['section', 'statblock', 'table', 'item']);
+export const chunkTypeSchema = z.enum(['section', 'statblock', 'table', 'item', 'spell']);
 
 export type ChunkType = z.infer<typeof chunkTypeSchema>;
 
@@ -114,6 +115,17 @@ export const ruleChunkSchema = z.object({
    * No migration, no Dexie index change (`chunkType` is already indexed).
    */
   itemData: itemDataSchema.nullish(),
+  /**
+   * Parsed spell payload, when chunkType === 'spell' (docs/12 §15, the spells
+   * arc) — absent/null on every other chunk. `.nullish()` (not a default) for
+   * the item lane's exact reason: chunks are read raw from Dexie in several
+   * repos, and rows written before this arc are `chunkType: 'section'` with
+   * genuinely no key — the type must say so. No migration, no Dexie index
+   * change (`chunkType` is already indexed); a library written before the arc
+   * needs a re-import of the rules pack to gain structured spells, and nothing
+   * guesses one from the prose.
+   */
+  spellData: spellDataSchema.nullish(),
   /** SHA-256 hex of `text`, for the embedding cache. */
   contentHash: sha256HexSchema,
 });

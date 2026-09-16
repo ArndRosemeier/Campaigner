@@ -111,14 +111,19 @@ type BehaviourId = keyof typeof BEHAVIOURS;
 
 /**
  * The seven adapter files and the style each DECLARES. This is the whole point
- * of the refactor stated as data: eight call sites, two styles, no site with a
+ * of the refactor stated as data: nine call sites, two styles, no site with a
  * body of its own. `callCount` is exact (2 for the creature adapter, which
- * strips both a melee item's and an action's description) so reverting ONE of
- * its two sites fails rather than hiding behind the other.
+ * strips both a melee item's and an action's description, and 2 for the rules
+ * adapter — its document strip plus the heightening-note segments, docs/12
+ * §15 / ledger 181) so reverting ONE of a file's two sites fails rather than
+ * hiding behind the other.
  *
  * AMENDED by docs/17 row 149: `pf2e-foundry` (×2) and `pf2e-equipment` (×1)
  * moved from the retired `AT_LABEL_LAST_LINE_BREAKS` to the `@`-notation
  * block-and-table style, which is why the retired name appears in NO entry.
+ * AMENDED by docs/17 row 181 (the spells arc): `pf2e-rules` gained a SECOND
+ * call to this same seam — `parseHeighteningEntries` strips each heightening
+ * note's segment; still ONE stripper, used twice.
  */
 const CALL_SITES: readonly {
   readonly file: string;
@@ -129,7 +134,7 @@ const CALL_SITES: readonly {
   { file: 'pf2e-equipment.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
   { file: 'dnd5e-foundry.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 1 },
   { file: 'dnd5e-equipment.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 1 },
-  { file: 'pf2e-rules.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
+  { file: 'pf2e-rules.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 2 },
   { file: 'pf2e-journal.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
   { file: 'pf2e-conditions.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
 ];
@@ -572,7 +577,7 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('has every one of the eight call sites routing through the seam with its declared style', () => {
+  it('has every one of the nine call sites routing through the seam with its declared style', () => {
     expect(CALL_SITES).toHaveLength(7);
     let calls = 0;
     for (const { file, style, callCount } of CALL_SITES) {
@@ -601,10 +606,10 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
       expect(styled.length, `${file}: calls passing ${style}`).toBe(callCount);
       calls += callCount;
     }
-    // Eight call sites over seven files (pf2e-foundry has two), counted as one
-    // number too, so a site that migrates to another style cannot hide in the
-    // per-file counts above.
-    expect(calls).toBe(8);
+    // Nine call sites over seven files (pf2e-foundry has two, and since
+    // ledger 181 so does pf2e-rules), counted as one number too, so a site
+    // that migrates to another style cannot hide in the per-file counts above.
+    expect(calls).toBe(9);
   });
 
   it('declares exactly two styles, and every one of them is used by a site above', () => {

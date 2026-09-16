@@ -5,6 +5,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import { itemDataSchema, type ItemData } from '@/domain/itemData';
 import type { PackMeta, PackProvenance, Rulebook } from '@/domain/rulebook';
 import { ruleChunkSchema, type RuleChunk } from '@/domain/rulebook';
+import { spellDataSchema } from '@/domain/spellData';
 import type { StatBlock } from '@/domain/statblock';
 import { statBlockSchema } from '@/domain/statblock';
 import { putChunks } from '@/db/chunkRepo';
@@ -26,12 +27,12 @@ import type {
  * Bestiary pack import runner (12-BESTIARY-PACKS §6/§13; docs/12 §15): expands
  * zip inputs, hands files to the selected adapter, validates creature entries
  * at the `statBlockSchema` boundary, item entries at the `itemDataSchema`
- * boundary and rules-text entries at the `section`-chunk boundary, persists
- * `statblock`, `item` and `section` RuleChunks in batches, and finalizes the
- * pack book with its import report. Failure policy is loud: per-entry
- * problems are collected into the report, and a selection with zero valid
- * entries fails the book (`status: 'error'`) and throws — an empty "ready"
- * book is forbidden.
+ * boundary and rules-text entries at the `section`/`spell`-chunk boundary,
+ * persists `statblock`, `item`, `section` and `spell` RuleChunks in batches,
+ * and finalizes the pack book with its import report. Failure policy is loud:
+ * per-entry problems are collected into the report, and a selection with zero
+ * valid entries fails the book (`status: 'error'`) and throws — an empty
+ * "ready" book is forbidden.
  *
  * The Dexie deps are injectable so tests run the whole flow in memory; the
  * UI integration points are `importPack(adapterId, await Promise.all(files.map
@@ -55,8 +56,8 @@ export interface PackImportResult {
   /** Valid item entries (the `item` chunk lane, 12-BESTIARY-PACKS §13). */
   itemsImported: number;
   /**
-   * Valid rules-text entries (the `section` chunk lane, docs/12 §15): journal
-   * pages, conditions, feats, spells, actions, class features.
+   * Valid rules-text entries (the `section`/`spell` chunk lane, docs/12 §15):
+   * journal pages, conditions, feats, spells, actions, class features.
    */
   sectionsImported: number;
   skipped: number;
@@ -356,6 +357,10 @@ async function itemChunk(
  * meaningless for packs, the adapter supplies the full heading path
  * (category segments first, the entry name last), `statBlock` stays null and
  * the rendered text drives search, display and the `contentHash` cache key.
+ * An entry that carries a structured `spell` payload becomes a `spell` chunk
+ * instead (the spells arc): the SAME lane, the SAME bytes, one validated
+ * payload — a non-spell entry omits the key and stays a `section` chunk, so
+ * legacy rows and all other rules text parse and behave unchanged.
  */
 async function sectionChunk(
   entry: PackSectionEntry,
@@ -363,15 +368,17 @@ async function sectionChunk(
   stampBase: number,
 ): Promise<RuleChunk> {
   const text = entry.text;
+  const spell = entry.spell === undefined ? null : spellDataSchema.parse(entry.spell);
   return ruleChunkSchema.parse({
     ...stampNewEntity(stampBase),
     bookId,
     pageStart: 1,
     pageEnd: 1,
-    chunkType: 'section',
+    chunkType: spell === null ? 'section' : 'spell',
     headingPath: [...entry.categories, entry.name],
     text,
     statBlock: null,
+    ...(spell === null ? {} : { spellData: spell }),
     contentHash: await sha256Hex(text),
   });
 }

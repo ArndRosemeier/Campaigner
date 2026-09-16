@@ -2710,8 +2710,9 @@ file and named for what they DO — at the fold, `AT_LABEL_LAST_LINE_BREAKS`
 (PF2e item/creature), `BRACKET_LINKS_LINE_BREAKS` (dnd5e item/creature),
 `AT_BRACE_LABEL_BLOCK_AND_TABLE` (PF2e rules text); **row 149 deleted the
 first and moved its two lanes onto the third, leaving TWO declared styles and
-eight call sites** (see §*Landing 2* below). A new adapter picks a declared
-style by name.
+eight call sites** (nine since the spells arc's heightening capture, ledger
+181 — a second call to the SAME seam; see §*Landing 2* below). A new adapter
+picks a declared style by name.
 
 | fact pinned | where |
 |---|---|
@@ -3243,7 +3244,8 @@ them. 41 pins now (was 28):
    styles, and every one of them is used by a site above`, with the retired name
    now asserted ABSENT from every adapter; its call-site table is unchanged in
    shape but every `pf2e-*` entry now names
-   `AT_BRACE_LABEL_BLOCK_AND_TABLE`, and the eight call sites are summed as one
+   `AT_BRACE_LABEL_BLOCK_AND_TABLE`, and the call sites (nine, after ledger
+   181's heightening capture in `pf2e-rules`) are summed as one
    number as well as per file.
 
 **REVERT-PROVEN — three injections, each on the exact executing line, printed
@@ -5080,6 +5082,68 @@ failure it catches:
   (`encounterPartyLevel`), so the two resolvers cannot diverge again.
   **Injected RED, watched:** restoring hint-first order fails this test AND
   the pre-existing part-level pin (2 red of 13).
+
+### The spells arc's structured payload — DATA only (docs/17 row 181, docs/12 §15.4, docs/18 §2.1)
+
+The PF2e rules lane already parsed spell documents as TEXT; this arc adds the
+structured `spellData` payload and a `spell` chunk type beside the identical
+bytes. The pins, and the injected failure each one catches:
+
+- `tests/ingest/packs/pf2e-rules.test.ts` (extended): the REAL Acid Splash
+  fixture through the real adapter asserts EVERY payload field (`rank: 0` —
+  the source stores the cantrip at level 1, so the trait normalization is
+  explicit; `cantrip: true` from the trait; `traditions`, `traits`, `rarity`,
+  all four cast facts, `publication` with its OGL license, the source
+  `system.heightening` object deep-equal to the fixture's, and the FOUR fixed
+  heightening notes — 3rd/5th/7th/9th — verbatim in document order). Two
+  synthetic documents pin the other heightening shapes in the same real lane:
+  `<strong>Heightened (+1)</strong>` yields ONE `increment` note, and a
+  `Heightened (special)` heading (matched by neither shape) lands VERBATIM in
+  `heighteningUnparsed` — loud data, never a silent drop. The same file's
+  import pin asserts the four documents land
+  `['section','section','spell','section']` with the lane count unchanged,
+  that non-spell chunks carry no `spellData` key, and that the feat's
+  `entry.spell` is `undefined`. **Injected RED, watched:** dropping the
+  traditions mapping (`spellTraditionSchema.array().parse([])`) reds the
+  payload pin by name (`expected [] to deeply equal [ 'arcane', 'primal' ]`)
+  in both the adapter and the DB query test.
+- `tests/ingest/packs/pf2e-rules.test.ts` — the TEXT COMPAT PIN: per-fixture
+  sha256 of the emitted text against the bytes MEASURED at the arc base
+  (`c07e625`), quoted in the test. The text IS the stored `contentHash`, so a
+  moved byte invalidates stored citations; the pre-existing all-lane digest
+  pin (`html-to-text.test.ts`) holds the same fact for the whole adapter.
+  **Injected RED, watched:** perturbing the summary line reds it.
+- `tests/domain/spellData.test.ts` (NEW): the schema round-trip, the
+  traditions enum validated against `['arcane','divine','occult','primal']`
+  (an unknown tradition THROWS), the optional-list/cast defaults, a missing or
+  negative rank refused, and the chunk contract — a pre-arc `section` row
+  without `spellData` parses to `undefined` and is NOT a spell, a `spell` row
+  round-trips its payload, and the legacy chunk types still parse.
+- `tests/db/spellChunks.test.ts` (NEW): a REAL import through the default Dexie
+  deps persists a `chunkType: 'spell'` row that the indexed
+  `where('chunkType').equals('spell')` list query finds (heading path + payload
+  asserted), while the feat stays out of that query; a hand-written pre-arc
+  `section` row (through the ONE `putChunks` door) stays readable and is NOT
+  in the spell list — the no-migration/no-guessing statement as a test.
+- `tests/llm/encounter-roster.test.ts` (extended): a structured `spell` chunk
+  in a same-system pack book is SKIPPED by `collectPackRoster` — without that
+  arm the roster's "no validated stat block" throw would fail every encounter
+  run the moment a rules pack is re-imported. **Injected RED, watched:**
+  removing `'spell'` from the skip guard reds this test.
+- `tests/ingest/packs/html-to-text.test.ts` (the pre-existing SOURCE SCAN,
+  AMENDED not weakened): the scan's exact per-file `htmlToText` call count for
+  `pf2e-rules.ts` moves 1 → 2 and the summed total 8 → 9, because
+  `parseHeighteningEntries` strips each heightening note's segment with the
+  SAME seam — still ONE stripper, used twice. A third call in that file would
+  red the scan exactly as a second one used to.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove an
+existing on-disk library gained structured spells — it cannot, because there
+is deliberately NO migration; the row stays an honest `section` until the
+rules pack is RE-IMPORTED. No test here touches UI (list/filter/chip/detail is
+a separate follow-up slice), and no test can prove a dnd5e campaign has spells:
+that adapter still skips them, which is a fact the follow-up surface must
+state per system rather than render as an empty list.
 
 ### Remaining gaps
 

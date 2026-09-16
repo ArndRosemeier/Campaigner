@@ -33,5 +33,6 @@ export * from '@/domain/provenance';
 export * from '@/domain/rulebook';
 export * from '@/domain/run';
 export * from '@/domain/settings';
+export * from '@/domain/spellData';
 export * from '@/domain/statblock';
 export * from '@/domain/wikiGraph';

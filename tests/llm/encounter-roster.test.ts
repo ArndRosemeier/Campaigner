@@ -75,6 +75,32 @@ function itemChunk(name: string): RuleChunk {
   });
 }
 
+/** A `spell` chunk fixture (docs/12 §15, the spells arc) for the roster guard. */
+function spellChunk(name: string): RuleChunk {
+  return ruleChunkSchema.parse({
+    id: crypto.randomUUID(),
+    createdAt: 1,
+    updatedAt: 1,
+    bookId: crypto.randomUUID(),
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'spell',
+    headingPath: ['Spells — Cantrip', name],
+    text: `${name}\nCantrip 1 (attack, cantrip) arcane, primal`,
+    statBlock: null,
+    spellData: {
+      system: 'pathfinder2e',
+      rank: 0,
+      cantrip: true,
+      traditions: ['arcane', 'primal'],
+      traits: ['attack', 'cantrip'],
+      rarity: 'common',
+      cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },
+    },
+    contentHash: crypto.randomUUID().replaceAll('-', '0').padEnd(64, '0'),
+  });
+}
+
 function book(overrides: Partial<Rulebook> = {}): Rulebook {
   return {
     id: 'book-1',
@@ -367,6 +393,23 @@ describe('collectPackRoster', () => {
       listChunks: () =>
         Promise.resolve([
           section('Encounter Budget'),
+          chunk({ name: 'Goblin Warrior', level: '-1' }),
+        ]),
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.entries.map((entry) => entry.name)).toEqual(['Goblin Warrior']);
+    expect(roster.lines).toEqual(['Goblin Warrior (-1)']);
+  });
+
+  it('skips structured `spell` chunks (docs/12 §15, the spells arc) — a spell import never poisons the roster', async () => {
+    // Since the spells arc a spell document lands as `chunkType: 'spell'`
+    // instead of `section`; without this arm of the same guard the throw below
+    // fails every encounter run once a rules pack is re-imported.
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book()]),
+      listChunks: () =>
+        Promise.resolve([
+          spellChunk('Acid Splash'),
           chunk({ name: 'Goblin Warrior', level: '-1' }),
         ]),
     };

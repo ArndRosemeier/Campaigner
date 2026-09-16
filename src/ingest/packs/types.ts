@@ -1,5 +1,6 @@
 import type { ItemData } from '@/domain/itemData';
 import type { GameSystem } from '@/domain/gameSystem';
+import type { SpellData } from '@/domain/spellData';
 import type { StatBlock } from '@/domain/statblock';
 
 /**
@@ -41,6 +42,12 @@ export interface PackItemEntry {
  * journal pages, conditions, feats, spells, actions, class features. The
  * full heading path is supplied by the adapter (category segments first, the
  * entry name last); `statBlock`/`itemData` stay null/absent on the chunk.
+ *
+ * `spell` is the SAME lane's structured half (the spells arc, docs/12 §15):
+ * a spell document carries its validated `SpellData` here and the runner
+ * persists it as a `spell` chunk (the text stays byte-identical); a non-spell
+ * entry omits it and stays a `section` chunk. No second lane, no second
+ * parser — the existing pf2e-rules mapping produces both halves.
  */
 export interface PackSectionEntry {
   /** Category path above the name, most general first (may be empty). */
@@ -49,6 +56,8 @@ export interface PackSectionEntry {
   name: string;
   /** Rendered plain-text block (search text, display, contentHash). */
   text: string;
+  /** Structured spell payload, when the document is a PF2e `type: 'spell'`. */
+  spell?: SpellData;
 }
 
 /** One entry that failed creature/item mapping or validation. Always surfaced. */

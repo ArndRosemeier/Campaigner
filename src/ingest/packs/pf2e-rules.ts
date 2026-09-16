@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { spellTraditionSchema, type SpellData, type SpellHeighteningEntry } from '@/domain/spellData';
 import { errorMessage } from '@/lib/errors';
 
 import {
@@ -43,6 +44,13 @@ import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
  * - `system.publication` `{license, remaster, title}` → the trailing
  *   `Source: …` line — per-entry licensing (ORC or OGL) is PRESERVED, not
  *   dropped.
+ *
+ * Since the spells arc (docs/12 §15, row 181) a `spell` document ALSO emits
+ * its structured `spellData` (rank, cantrip, traditions, traits, cast facts,
+ * the source's own heightening plus the parsed heightening notes, and
+ * publication) on the SAME entry, and the runner persists a `chunkType:
+ * 'spell'` RuleChunk. The text above is byte-identical to the pre-arc bytes —
+ * it IS the `contentHash`, so changing it would invalidate stored citations.
  */
 
 export const FOUNDRY_PF2E_RULES_ADAPTER_ID = 'foundry-pf2e-rules';
@@ -76,6 +84,10 @@ const pf2eRulesDocSchema = z.object({
     range: z.object({ value: z.string() }).nullish(),
     target: z.object({ value: z.string() }).nullish(),
     duration: z.object({ value: z.string() }).nullish(),
+    // The source's own heightening structure — consumed VERBATIM (never
+    // normalized) by the spell payload; unknown keys inside it pass through
+    // whole, which is the point.
+    heightening: z.record(z.string(), z.unknown()).nullish(),
     prerequisites: z
       .object({ value: z.array(z.object({ value: z.string() })).default([]) })
       .nullish(),
@@ -219,6 +231,97 @@ function castLine(doc: ParsedRulesDoc): string | null {
   return parts.length === 0 ? null : parts.join(' · ');
 }
 
+/**
+ * A `Heightened (Nth)` heading (an exact rank) or `Heightened (+N)` heading
+ * (an interval), as the PF2e corpus writes it. Case-insensitive and
+ * whitespace-tolerant; ordinals are `st|nd|rd|th`. Anything that mentions
+ * Heightened but does not match is captured unparsed, never dropped.
+ */
+const HEIGHTENING_HEADING =
+  /<strong>\s*Heightened\s*\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\)\s*<\/strong>/gi;
+
+/** The description mentions heightening at all (case-insensitive). */
+const HEIGHTENING_MENTION = /heightened/i;
+
+/**
+ * Parse a spell's heightening notes out of the RAW description HTML, BEFORE it
+ * is stripped (the tags are the only place the rank/interval lives). Notes are
+ * returned in document order; each note's `text` is the prose between its
+ * heading and the next one, stripped by the lane's ONE HTML→text seam. A
+ * description that mentions Heightened but matches NEITHER shape yields no
+ * entries and its offending raw line(s) in `unparsed` — loud data, not a
+ * failure and not a silent drop.
+ */
+function parseHeighteningEntries(html: string): {
+  entries: SpellHeighteningEntry[];
+  unparsed: string[];
+} {
+  const matches = [...html.matchAll(HEIGHTENING_HEADING)];
+  const entries: SpellHeighteningEntry[] = [];
+  for (const [index, match] of matches.entries()) {
+    const start = match.index + match[0].length;
+    const end = matches[index + 1]?.index ?? html.length;
+    const text = htmlToText(html.slice(start, end), AT_BRACE_LABEL_BLOCK_AND_TABLE).trim();
+    const rank = match[1];
+    const increment = match[2];
+    if (rank !== undefined) {
+      entries.push({ kind: 'fixed', rank: Number(rank), text });
+    } else if (increment !== undefined) {
+      entries.push({ kind: 'increment', increment: Number(increment), text });
+    }
+  }
+  if (entries.length === 0 && HEIGHTENING_MENTION.test(html)) {
+    return {
+      entries,
+      unparsed: html
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '' && HEIGHTENING_MENTION.test(line)),
+    };
+  }
+  return { entries, unparsed: [] };
+}
+
+/**
+ * The structured half of a spell document (docs/12 §15, the spells arc). A
+ * cantrip is rank 0 — MEASURED against `v14-dev` (2026-09-16): the corpus
+ * stores cantrips at `system.level.value: 1` (the legacy Acid Splash fixture
+ * AND the remastered Ignition), so the `cantrip` trait is the only reliable
+ * signal and normalizing it gives a list ONE order where cantrips lead. An
+ * unknown tradition or a spell with neither signal is a loud per-entry
+ * failure, never a silent zero. Heightening is captured as data here (the
+ * source's own `system.heightening` verbatim, plus the parsed notes) so a
+ * later arc can render a spell at the rank a mob casts it without a second
+ * pass over these packs.
+ */
+function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
+  if (doc.type !== 'spell') return null;
+  const cantrip = doc.system.traits.value.includes('cantrip');
+  const rank = cantrip ? 0 : doc.system.level?.value;
+  if (rank === undefined) {
+    throw new Error(`spell "${doc.name}" has neither a cantrip trait nor system.level.value`);
+  }
+  const heightening = parseHeighteningEntries(doc.system.description.value);
+  return {
+    system: 'pathfinder2e',
+    rank,
+    cantrip,
+    traditions: spellTraditionSchema.array().parse(doc.system.traits.traditions),
+    traits: doc.system.traits.value,
+    rarity: doc.system.traits.rarity,
+    cast: {
+      time: doc.system.time?.value.trim() ?? '',
+      range: doc.system.range?.value.trim() ?? '',
+      target: doc.system.target?.value.trim() ?? '',
+      duration: doc.system.duration?.value.trim() ?? '',
+    },
+    heightening: doc.system.heightening ?? null,
+    heighteningEntries: heightening.entries,
+    heighteningUnparsed: heightening.unparsed,
+    publication: doc.system.publication ?? null,
+  };
+}
+
 function mapRulesDoc(doc: ParsedRulesDoc, fileName: string): PackSectionEntry {
   const lines: string[] = [];
   const summary = summaryLine(doc);
@@ -233,10 +336,14 @@ function mapRulesDoc(doc: ParsedRulesDoc, fileName: string): PackSectionEntry {
   if (description !== '') lines.push(description);
   const source = publicationSourceLine(doc.system.publication);
   if (source !== null) lines.push(source);
+  // The structured half rides the SAME entry; non-spells omit the key so the
+  // runner persists the chunk they always got (text byte-identical).
+  const spell = spellDataFor(doc);
   return {
     categories: headingCategoriesFor(doc, fileName),
     name: doc.name,
     text: [doc.name, ...lines].join('\n'),
+    ...(spell === null ? {} : { spell }),
   };
 }
 

@@ -605,7 +605,15 @@ are pinned against each other: they cannot name different packs.
 - No changes to the PDF stat-block detector (02-INGESTION stays as is).
 - No cross-book dedup of re-imports (same policy as PDFs; the `contentHash`
   embedding cache already avoids double embedding cost).
-- No spellcasting data in v1.
+- No spellcasting data in v1. **AMENDED 2026-09-16 by the spells-data arc
+  (docs/17 row 181):** the PF2e rules-text lane now carries a structured
+  `spellData` payload on `chunkType: 'spell'` RuleChunks (§15.4) — rank,
+  traditions, traits, cast facts and per-entry publication — so a spell list
+  can be sorted by level and filtered by tradition. This is DATA only: no
+  list/filter/chip/detail UI yet (a separate follow-up slice). dnd5e spells
+  remain UNIMPORTED (`foundry-dnd5e-srd` still skips them; §5/§13), so that
+  follow-up surface must say so PER SYSTEM rather than render a silent empty
+  list for a system whose pack carries no spells.
 
 **Derived printed-convention numbers (note).** Two dnd5e mappings are
 *derived* values rather than parsed ones, both following the dnd5e system's
@@ -948,10 +956,12 @@ on the book, network-free adapters, loud per-entry failures.
   the same field into creature `statBlock.extras['Source']` and additive
   `itemData.publication` (+ its `Source:` text line) — one convention across
   lanes.
-- **The roster must skip section chunks.** Rules-text books are `origin:
-  'pack'` books of the same system; `collectPackRoster` skips `item` AND
-  `section` chunks — without the guard every encounter run after such an
-  import would die on "no validated stat block".
+- **The roster must skip rules chunks.** Rules-text books are `origin:
+  'pack'` books of the same system; `collectPackRoster` skips `item`,
+  `section` AND (since the spells arc §15.4) `spell` chunks — without the
+  guard every encounter run after such an import would die on "no validated
+  stat block". The `spell` arm is load-bearing the moment a rules pack is
+  re-imported, because spells move OUT of `section` into their own type.
 - **Volume honesty on the opt-in.** The GM Screen recipe counts PAGES (61 —
   the fetch is one document, the volume is its pages); the conditions recipe
   counts its 43 documents; the corpus source is ONE entry labelled with the
@@ -1010,10 +1020,50 @@ on the book, network-free adapters, loud per-entry failures.
 ### 15.4 Data model (delta to 01-DATA-MODEL and §4)
 
 - `packMeta.sectionsImported` (optional int, nonneg) — valid rules-text
-  entries in the book; `PackImportResult` gains `sectionsImported`.
+  entries in the book; `PackImportResult` gains `sectionsImported`. It keeps
+  counting the rules-text LANE, whose chunks are now `section` OR `spell`.
 - `itemData.publication` (additive nullish `{title, license}`) — the
   hygiene rider's stored metadata for items; rendered by `formatItemText`.
-- No new chunk type (`'section'` exists for PDFs), no Dexie index change.
+- **AMENDED 2026-09-16 (the spells arc, docs/17 row 181):** a PF2e spell
+  document lands a `chunkType: 'spell'` RuleChunk carrying a new
+  `spellData` payload (`src/domain/spellData.ts`): `system`; `rank` (a
+  cantrip is 0 — MEASURED: `v14-dev` stores cantrips at `level.value: 1`
+  with the `cantrip` trait, so the trait is normalized for a level-sorted
+  list); `cantrip` (the TRAIT signal — the same one `rank: 0` is derived
+  from); validated `traditions` (arcane/divine/occult/primal); verbatim
+  `traits`; `rarity`; the four cast facts (`time`/`range`/`target`/
+  `duration`); the per-entry `publication` (license preserved); and the
+  HEIGHTENING capture, in three parts: `heightening` (the source's own
+  `system.heightening` object VERBATIM — never normalized, `.nullish()` when
+  the document carries none); `heighteningEntries` (notes parsed out of the
+  RAW description HTML before it is stripped, in document order —
+  `{kind:'fixed', rank:N, text}` from `<strong>Heightened (3rd)</strong> …`
+  and `{kind:'increment', increment:N, text}` from
+  `<strong>Heightened (+1)</strong> …`); and `heighteningUnparsed` (the raw
+  description line(s) that mention "Heightened" but matched NEITHER shape —
+  LOUD DATA, never a run failure and never a silent drop). NO derived
+  cast-rank value is computed here: rendering a spell at the rank a mob
+  actually casts it is the next arc's policy, and this capture exists so it
+  needs no second pass over the packs.
+  `ruleChunkSchema.spellData` is `.nullish()` for the item lane's exact
+  reason — chunks are read raw from Dexie and pre-arc rows genuinely lack
+  the key — so there is NO migration, NO Dexie index change (`chunkType` is
+  already indexed) and NO guessing from prose. **A library written before
+  this arc needs a RE-IMPORT of the rules pack to gain structured spells**;
+  until then its rows stay honest `section` chunks and no spell list counts
+  them. `chunkType` gains `'spell'` alongside `section/statblock/table/item`.
+- **No new chunk type for the OTHER rules text** — conditions, feats,
+  actions, class features and journal pages stay `section` chunks with no
+  payload (`conditionData` still does not exist).
+- **A named follow-up consequence of the `spell` type:** the Rules screen's
+  existing chunk-type filter (`features/rules/search-browser.tsx`) lists
+  Sections / Stat blocks / Tables / Items and has NO `Spells` option, so after
+  a re-import a spell is no longer found under "Sections" when a type filter
+  is active (an unfiltered search still finds it). Adding that filter entry
+  belongs to the follow-up spell UI slice, which must also state per system
+  that dnd5e spells are unimported; this DATA landing deliberately renders
+  nothing. `runEngine`'s treasure-grounding search stays `['section',
+  'table']` — a spell is not treasure, so that filter is unchanged by design.
 
 ### 15.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
 
@@ -1052,6 +1102,20 @@ on the book, network-free adapters, loud per-entry failures.
   volume counts). Per-type summary lines: Feat/Spell/Cantrip + level, traits
   (+ spell traditions), Action/Reaction/Free Action, rarity when uncommon+,
   spell Cast line, Prerequisites line.
+- **The spells arc ADDS a payload to that ONE mapping, never a second
+  parser.** `pf2e-rules.ts`'s existing `mapRulesDoc` builds `spellDataFor`
+  from the SAME parsed document fields it already renders, returns it on the
+  `PackSectionEntry` as `spell`, and `packImport.sectionChunk` persists the
+  `spell` chunk (or the unchanged `section` chunk when the key is absent).
+  It also parses the heightening notes out of the RAW description HTML (the
+  `<strong>Heightened …</strong>` tags are the only place the rank/interval
+  lives) with the lane's ONE HTML→text seam, and captures the source's own
+  `system.heightening` verbatim for a later arc.
+  The emitted TEXT is byte-identical to the arc base — it IS the
+  `contentHash`, so moving it would invalidate stored citations; the
+  adapter's own compat pin (`pf2e-rules.test.ts`, per-fixture sha256 against
+  the base bytes) and the pre-existing all-lane digest pin
+  (`html-to-text.test.ts`) both hold it.
 - The Settings card, import report badge and toasts name the new counts
   ('pages', 'sections'); the report gains a sections badge like the items
   one.
@@ -1060,20 +1124,32 @@ on the book, network-free adapters, loud per-entry failures.
 
 - No PDF/scraped Paizo text: the GM Screen arrives through the SAME curated
   fetch machinery as bestiaries (docs/16 §4.2) — no HTML scraping surface.
-- No structured rules payloads (conditions/feats stay TEXT sections — no
-  `conditionData` schema), no rules-aware prompt sections beyond the
-  existing retrieve lane, no class-features-only recipe split, no per-entry
-  license ENFORCEMENT.
+- No structured rules payloads EXCEPT the spells arc's `spellData` (docs/17
+  row 181): conditions/feats/actions/class-features stay TEXT sections — no
+  `conditionData`/`featData` schema — and there are no rules-aware prompt
+  sections beyond the existing retrieve lane, no class-features-only recipe
+  split, no per-entry license ENFORCEMENT. The spell payload captures
+  heightening as DATA (the source's own structure plus the parsed notes); it
+  deliberately computes NO derived value at a cast rank — choosing the rank a
+  mob casts a spell at is the mob arc's policy, not ingest's.
 
 ### 15.7 Acceptance criteria (additive to §10)
 
-- Each import produces a section-only book: `sectionsImported` in badge/
-  toast, chunks of type `section` with adapter-supplied heading paths and
-  per-entry Source lines; encounter runs still work after such an import
-  (roster skip-guard, pinned by test).
+- Each import produces a rules-text book: `sectionsImported` in badge/
+  toast, chunks of type `section` (journal pages, conditions, feats,
+  actions, class features) or `spell` with adapter-supplied heading paths
+  and per-entry Source lines; encounter runs still work after such an import
+  (roster skip-guard, pinned by test — including the `spell` arm).
 - The GM Screen book's Encounter Budget chunk contains the table text
   ('Trivial | 40 or less | 10 or less' … 'Extreme | 160 | 40') and the
   'Source: Pathfinder GM Core pg. 75' line — the advisory-grounding pin.
 - The corpus import lands folder-derived heading paths ('Feats — Skill' …)
   and ORC/OGL Source lines on real fixtures (2 feats + 1 spell + 1 action).
+- The real Acid Splash fixture pins the structured payload field-for-field:
+  `rank: 0` + `cantrip: true` (the trait), the traditions, the four cast
+  facts, the OGL publication, the source `system.heightening` object
+  deep-equal to the fixture's, and its FOUR fixed heightening notes (3rd,
+  5th, 7th, 9th) verbatim in document order; a synthetic increment heading
+  and a synthetic unparsed `Heightened` line are pinned too, and the emitted
+  text sha256 is unchanged from the arc base.
 - Every gate passes against exactly the committed slice, per commit.
