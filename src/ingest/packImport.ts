@@ -5,7 +5,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import { itemDataSchema, type ItemData } from '@/domain/itemData';
 import type { PackMeta, PackProvenance, Rulebook } from '@/domain/rulebook';
 import { ruleChunkSchema, type RuleChunk } from '@/domain/rulebook';
-import { spellDataSchema } from '@/domain/spellData';
+import { spellCorpusEntries, spellDataSchema } from '@/domain/spellData';
 import type { StatBlock } from '@/domain/statblock';
 import { statBlockSchema } from '@/domain/statblock';
 import { putChunks } from '@/db/chunkRepo';
@@ -57,9 +57,22 @@ export interface PackImportResult {
   itemsImported: number;
   /**
    * Valid rules-text entries (the `section`/`spell` chunk lane, docs/12 §15):
-   * journal pages, conditions, feats, spells, actions, class features.
+   * journal pages, conditions, feats, spells, actions, class features. It
+   * MIXES the spell lane in, which is why the report also states
+   * `spellsImported` separately (docs/17 row 204).
    */
   sectionsImported: number;
+  /**
+   * The SPELL rows this import produced, through the SAME corpus projection
+   * the Spells page renders (`domain/spellData.spellCorpusEntries`: a `spell`
+   * chunk that carries a validated payload and a name) — docs/17 row 204. It
+   * is a SUBSET of `sectionsImported` (every spell rides the rules-text lane)
+   * and it means "the spells this book's list will actually show": the
+   * importer cannot write a payload-less `spell` chunk (`sectionChunk` parses
+   * the payload or fails loudly), and a corrupt one would be a loud data-error
+   * row on the page rather than a counted spell.
+   */
+  spellsImported: number;
   skipped: number;
   failed: PackEntryFailure[];
 }
@@ -237,6 +250,11 @@ export async function importPack(
     );
   }
 
+  // The per-lane SPELL count (docs/17 row 204): counted from the chunks this
+  // run BUILT, through the ONE seam below — never a second pass over the
+  // documents and never a re-derivation.
+  const spellsImported = spellsImportedFromChunks(chunks);
+
   let done = 0;
   for (const batch of batches(chunks, CHUNK_BATCH)) {
     await deps.persistChunks([...batch]);
@@ -281,9 +299,26 @@ export async function importPack(
     imported: entries.length + items.length + sections.length,
     itemsImported: items.length,
     sectionsImported: sections.length,
+    spellsImported,
     skipped,
     failed: failures,
   };
+}
+
+/**
+ * The spells a built chunk list will actually show (docs/17 row 204) — the ONE
+ * count the import report states, and the meaning "the spell count" has.
+ *
+ * It is the corpus's OWN projection over the chunks
+ * (`domain/spellData.spellCorpusEntries` — a `spell` chunk with a validated
+ * payload AND a name), NOT a bare `chunkType === 'spell'` tally: a `spell`
+ * chunk with no payload is a loud `data-error` row on the Spells page (or on a
+ * mob that cites it), never a spell, so this number can never be inflated by a
+ * corrupt row. The importer itself cannot write one (`sectionChunk` parses the
+ * payload or throws), which is why the two agree on imported data.
+ */
+export function spellsImportedFromChunks(chunks: readonly RuleChunk[]): number {
+  return spellCorpusEntries(chunks).length;
 }
 
 /**

@@ -23,6 +23,7 @@ import { importPack } from '@/ingest/packImport';
 import { PACK_ADAPTERS } from '@/ingest/packs/registry';
 import { fileToPackInput } from '@/ingest/packs/types';
 import type { PackImportProgress, PackImportResult } from '@/ingest/packImport';
+import { formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -68,9 +69,13 @@ export function PackImportDialog({ open, onOpenChange, onProgress }: PackImportD
       const imported = await importPack(adapterId, inputs, { onProgress });
       setResult(imported);
       onProgress(null);
+      // The per-lane breakdown (docs/17 row 204): the noun that used to stand
+      // here named ONE lane and could not say whether the import brought
+      // spells — the owner's own debugging round. The four lanes partition the
+      // chunks, so the toast states the total implicitly and the spell count
+      // explicitly.
       toastSuccess(
-        `Imported “${imported.book.title}” (${String(imported.imported)} ` +
-          `${imported.itemsImported === imported.imported ? 'items' : 'creatures'}, ` +
+        `Imported “${imported.book.title}” (${formatPackLanes(packLaneCounts(imported))}, ` +
           `${String(imported.skipped)} skipped, ${String(imported.failed.length)} failed)`,
       );
     } catch (error) {
@@ -196,20 +201,11 @@ export function PackImportReport({
       )}
       <p className="flex items-center gap-2">
         <Badge className="bg-emerald-600/15 text-emerald-500">{String(imported)} imported</Badge>
-        {/* Item-corpus arc (12-BESTIARY-PACKS §13): an item pack's imported
-            count IS its item count — named explicitly, never lumped in. */}
-        {result.itemsImported > 0 && (
-          <Badge className="bg-sky-600/15 text-sky-500" data-testid="pack-import-items">
-            {String(result.itemsImported)} items
-          </Badge>
-        )}
-        {/* Rules-text packs (docs/12 §15): journal pages, conditions, feats,
-            spells, … — a `section` chunk count, named explicitly like items. */}
-        {result.sectionsImported > 0 && (
-          <Badge className="bg-violet-600/15 text-violet-500" data-testid="pack-import-sections">
-            {String(result.sectionsImported)} sections
-          </Badge>
-        )}
+        {/* The per-lane breakdown (docs/17 row 204): SPELLS named explicitly,
+            because `sectionsImported` mixes journal pages, conditions, feats,
+            spells, actions and class features into one number. The four lanes
+            partition the chunks (the total stays on the badge beside it). */}
+        <span data-testid="pack-import-lanes">{formatPackLanes(packLaneCounts(result))}</span>
         <Badge variant="secondary">{String(skipped)} skipped</Badge>
         <Badge variant={failed.length === 0 ? 'outline' : 'destructive'}>
           {String(failed.length)} failed

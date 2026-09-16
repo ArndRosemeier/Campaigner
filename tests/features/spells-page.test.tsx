@@ -263,6 +263,44 @@ describe('spells page — empty states per system', () => {
     expect(notice).toHaveTextContent('No spells imported for Pathfinder 2e');
     expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
   });
+
+  it('names the RE-IMPORT remedy when ready books of the system carry no spell data (docs/12 §15.4)', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    const book = await readyBook('PF2e Rules', 'pathfinder2e');
+    // A pre-arc rules pack: honest `section` chunks with no `spellData` — the
+    // library that needs RE-IMPORTING, not a missing pack. The distinction is
+    // read from the ready book the page already loaded, never guessed.
+    await putChunks([chunk(book, 'Cat Fall', { chunkType: 'section' }, null)]);
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-no-spell-data');
+    expect(notice).toHaveTextContent('No spell data in your Pathfinder 2e library');
+    expect(notice).toHaveTextContent('Re-import the Pathfinder 2e rules-text pack');
+    expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
+    // It is NOT the no-material state: a ready book of this system exists.
+    expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
+  });
+
+  it('keeps the FILTERED empty state when spells exist but the filter excludes them', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    const book = await readyBook('PF2e Rules', 'pathfinder2e');
+    await putChunks([chunk(book, 'Force Barrage', {}, spellData({ traditions: ['arcane'] }))]);
+
+    renderSpells(campaign.id);
+    await screen.findByTestId('spells-page');
+    expect(await screen.findAllByTestId('spell-chip')).toHaveLength(1);
+
+    await user.click(screen.getByTestId('spell-tradition-occult'));
+
+    expect(await screen.findByTestId('spells-filter-empty')).toHaveTextContent(
+      'No spells match the selected traditions.',
+    );
+    // Neither corpus-level empty state appears while a spell list exists.
+    expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('spells-no-spell-data')).not.toBeInTheDocument();
+  });
 });
 
 describe('spells page — the dnd5e lane and its OWN filter axis (row 194)', () => {

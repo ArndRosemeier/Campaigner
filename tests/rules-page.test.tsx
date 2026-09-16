@@ -9,9 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
 import type * as IngestFiles from '@/ingest/ingestFiles';
-import { defaultSettings, newId, type RuleChunk } from '@/domain';
+import { defaultSettings, newId, ruleChunkSchema, spellDataSchema, type RuleChunk } from '@/domain';
 import { saveSettings } from '@/db/settingsRepo';
-import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
+import { createPackBook, createRulebook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { clearDatabase } from './db/helpers';
 import { expectBlockedReason, expectBlockedReasonMenuItem } from './helpers/blocked-reason';
@@ -116,6 +116,30 @@ function chunk(bookId: string): RuleChunk {
     statBlock: null,
     contentHash: hash,
   };
+}
+
+/** A valid `spell` chunk row — the card's live spell lane (docs/17 row 204). */
+function spellChunk(bookId: string, name: string): RuleChunk {
+  return ruleChunkSchema.parse({
+    ...chunk(bookId),
+    id: newId(),
+    chunkType: 'spell',
+    headingPath: ['Spells', name],
+    text: `${name}\nSpell 1\nA spell description.`,
+    spellData: spellDataSchema.parse({
+      system: 'pathfinder2e',
+      rank: 0,
+      cantrip: true,
+      traditions: ['arcane', 'primal'],
+      traits: [],
+      rarity: 'common',
+      cast: { time: '', range: '', target: '', duration: '' },
+      heightening: null,
+      heighteningEntries: [],
+      heighteningUnparsed: [],
+      publication: null,
+    }),
+  });
 }
 
 beforeEach(async () => {
@@ -243,6 +267,18 @@ describe('rules screen', () => {
     expect(report).toHaveTextContent('1 imported');
     expect(report).toHaveTextContent('1 skipped');
     expect(report).toHaveTextContent('0 failed');
+    // The per-lane breakdown (docs/17 row 204) names SPELLS explicitly — the
+    // muddled `sections`/`creatures` noun is gone from this report.
+    expect(within(report).getByTestId('pack-import-lanes')).toHaveTextContent(
+      '0 spells · 1 stat block · 0 items · 0 sections',
+    );
+
+    // The success TOAST carries the same breakdown, through the same seam.
+    expect(
+      await screen.findByText(
+        /Imported “age-of-ashes-goblin” \(0 spells · 1 stat block · 0 items · 0 sections/,
+      ),
+    ).toBeInTheDocument();
 
     // Row 149 (docs/12 §5): the re-import consequence is stated where the user
     // meets it — a saved citation is bound to the EXACT stored text, so a
@@ -266,11 +302,52 @@ describe('rules screen', () => {
     const card = (await screen.findByText('age-of-ashes-goblin')).closest('li') as HTMLElement;
     expect(within(card).getByText('Pack')).toBeInTheDocument();
     expect(within(card).getByText('1 chunk')).toBeInTheDocument();
+    // The card states the same per-lane breakdown beside the total.
+    expect(within(card).getByTestId('book-lanes')).toHaveTextContent(
+      '0 spells · 1 stat block · 0 items · 0 sections',
+    );
 
     // The license lives in the book menu, shown verbatim from the adapter.
     await user.click(within(card).getByRole('button', { name: 'Menu for age-of-ashes-goblin' }));
     await user.click(await screen.findByRole('menuitem', { name: 'License' }));
     expect(await screen.findByTestId('pack-license')).toHaveTextContent(/Pathfinder Second Edition/);
+  }, 30000);
+
+  it('partitions a pack book\'s chunks into lanes on its card, naming the spells LIVE (docs/17 row 204)', async () => {
+    const book = await createPackBook({
+      title: 'PF2e Rules Text',
+      system: 'pathfinder2e',
+      filename: 'rules.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e-rules',
+      license: 'ORC',
+      entriesImported: 4,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+      sectionsImported: 4,
+    });
+    await putChunks([
+      chunk(book.id),
+      chunk(book.id),
+      chunk(book.id),
+      spellChunk(book.id, 'Acid Splash'),
+    ]);
+
+    renderAppAt(ROUTES.rules);
+
+    const card = (await screen.findByText('PF2e Rules Text')).closest('li') as HTMLElement;
+    await waitFor(() => {
+      expect(within(card).getByText('4 chunks')).toBeInTheDocument();
+    });
+    // `sectionsImported` was 4 and MIXED the spell in; the card partitions it:
+    // the one spell is named and `sections` is the non-spell remainder. The
+    // SPELL lane is counted from the STORED chunk, so a book the spells arc
+    // (row 181) already imported — whose `packMeta` carries no spell count —
+    // still reads right instead of a false `0 spells`.
+    expect(within(card).getByTestId('book-lanes')).toHaveTextContent(
+      '1 spell · 0 stat blocks · 0 items · 3 sections',
+    );
   }, 30000);
 
   it('marks the book error and toasts when a pack selection has zero valid entries', async () => {

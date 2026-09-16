@@ -21,6 +21,7 @@ import { getPackAdapter } from '@/ingest/packs/registry';
 import { errorMessage } from '@/lib/errors';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { PackImportReport } from '@/features/rules/pack-import-dialog';
+import { formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
 
 /**
  * "Bestiary packs" settings card (16-BESTIARY-FETCH §5): per adapter the
@@ -96,17 +97,11 @@ export function BestiaryFetchSection(): JSX.Element {
       setState(adapterId, { kind: 'done', result });
       // Loud on fallback (16 §1.1 amendment): when the ref chain fired, the
       // toast names BOTH attempts via `fetchNote` — no silent degradation.
-      // Item packs (12-BESTIARY-PACKS §13) are named "items", not "creatures";
-      // rules-text packs (docs/12 §15) are "sections".
-      const noun =
-        result.sectionsImported === result.imported
-          ? 'sections'
-          : result.itemsImported === result.imported
-            ? 'items'
-            : 'creatures';
+      // The per-lane breakdown (docs/17 row 204) is the SAME wording the
+      // manual-import toast prints, so a fetched rules pack says how many
+      // SPELLS it brought instead of one mixed noun.
       toastSuccess(
-        `Fetched & imported “${result.book.title}” (${String(result.imported)} ` +
-          `${noun}, ` +
+        `Fetched & imported “${result.book.title}” (${formatPackLanes(packLaneCounts(result))}, ` +
           `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules` +
           (result.fetchNote === undefined ? '' : ` — ${result.fetchNote}`),
       );

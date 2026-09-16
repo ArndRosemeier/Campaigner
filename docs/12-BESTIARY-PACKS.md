@@ -1167,6 +1167,29 @@ on the book, network-free adapters, loud per-entry failures.
   unimported (docs/17 row 182). `runEngine`'s treasure-grounding search stays
   `['section', 'table']` — a spell is not treasure, so that filter is unchanged
   by design.
+- **AMENDED (docs/17 row 204, the per-lane import report):**
+  `PackImportResult.spellsImported` states the SPELL lane separately, because
+  `sectionsImported` MIXES journal pages, conditions, feats, spells, actions
+  and class features into one number and no surface could answer "did my
+  import actually bring spells?". It is the length of
+  `domain/spellData.spellCorpusEntries` over the chunks the import BUILT — the
+  ONE corpus projection the Spells page and the mob index read — so it means
+  exactly "the spells this book's list will show" (a `spell` chunk carrying a
+  validated payload and a name); a payload-less `spell` chunk is the page's
+  loud data-error row, never a counted spell. The import toast, the import
+  summary dialog, the fetch toast and the pack book card print the four lanes
+  (`spells · stat blocks · items · sections`) through the ONE
+  `features/rules/pack-lanes.formatPackLanes`, where `sections` is the
+  NON-spell remainder so the lanes partition the book's chunks; the card's
+  spell lane is counted LIVE from the stored chunks, because a book the spells
+  arc (row 181) already imported carries `spell` chunks with no stored count.
+  **The RE-IMPORT rule, restated where the owner meets it:** a campaign whose
+  ready books carry no `spell` chunks gets the Spells page's
+  `spells-no-spell-data` empty state, which says the library predates
+  structured spell data (or holds only a bestiary pack) and that the
+  rules-text pack must be imported AGAIN — the payload rides the same adapter
+  mapping and the same emitted text, so a re-import is the delivery mechanism,
+  and no migration or payload backfill exists by design.
 
 ### 15.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
 
@@ -1263,6 +1286,13 @@ on the book, network-free adapters, loud per-entry failures.
   entries verbatim, unparsed lines loud, and the stored `Source: …` licence
   line), pins a payload-less `spell` chunk as a loud per-row error, and states
   the per-system empty case.
+- The import report names the SPELL lane (docs/17 row 204): a real rules-text
+  fixture import states `spellsImported` beside the mixed `sectionsImported`
+  (1 vs 4) and a creature-only selection states 0; the count equals the corpus
+  projection (`spellCorpusEntries`) and the page's own entry rows, while a
+  payload-less `spell` chunk stays 0 spells + 1 loud data-error; the toast,
+  summary dialog and book card render the same four-lane breakdown; and the
+  Spells page's three empty states are each pinned on their rendered message.
 - Every gate passes against exactly the committed slice, per commit.
 
 ## 16. The D&D 5e spell lane (docs/17 row 194, 2026-09-16)

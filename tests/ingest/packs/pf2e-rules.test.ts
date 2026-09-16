@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PackMeta } from '@/domain/rulebook';
 import type { RuleChunk } from '@/domain';
-import { importPack, type PackImportDeps } from '@/ingest/packImport';
+import { importPack, spellsImportedFromChunks, type PackImportDeps } from '@/ingest/packImport';
+import { buildSpellRows } from '@/features/spells/spell-rows';
 import {
   FOUNDRY_PF2E_RULES_ADAPTER_ID,
   foundryPf2eRulesAdapter,
@@ -376,6 +377,10 @@ describe('foundry-pf2e-rules adapter', () => {
     );
     expect(result.imported).toBe(4);
     expect(result.sectionsImported).toBe(4);
+    // The SPELL lane is named separately (docs/17 row 204): ONE of the four
+    // rules-text entries is a spell, so `spellsImported` is NOT a rename of
+    // the mixed `sectionsImported`.
+    expect(result.spellsImported).toBe(1);
     expect(result.book.status).toBe('ready');
     const chunks = deps.persisted.flat();
     // The spell document is the ONE `spell` chunk; every other rules-text
@@ -403,6 +408,41 @@ describe('foundry-pf2e-rules adapter', () => {
       itemsImported: 0,
       sectionsImported: 4,
     });
+  });
+
+  it('reads the SPELL lane through the SAME corpus projection the Spells page renders (docs/17 row 204)', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      FOUNDRY_PF2E_RULES_ADAPTER_ID,
+      [
+        { name: 'feats/skill/level-1/cat-fall.json', bytes: docBytes('cat-fall.json') },
+        { name: 'feats/general/level-1/armor-proficiency.json', bytes: docBytes('armor-proficiency.json') },
+        { name: 'spells/spells/cantrip/acid-splash.json', bytes: docBytes('acid-splash.json') },
+        { name: 'actions/basic/aid.json', bytes: docBytes('aid.json') },
+      ],
+      { title: 'PF2e Rules Text (sample)', deps },
+    );
+    const chunks = deps.persisted.flat();
+
+    // DIFFERENTIAL: the reported count IS the ONE count seam's own count, and
+    // the page's OWN row builder yields exactly that many spell rows for this
+    // book. Wiring the report to the mixed `sectionsImported` (4) or to a bare
+    // `chunkType` tally would state a number the page does not have.
+    expect(result.spellsImported).toBe(spellsImportedFromChunks(chunks));
+    expect(result.spellsImported).toBe(
+      buildSpellRows([result.book], chunks).filter((row) => row.kind === 'entry').length,
+    );
+
+    // A `spell` chunk WITHOUT a payload is a LOUD data-error row on the page,
+    // never a counted spell: the count seam returns 0 for one, where a bare
+    // `chunkType === 'spell'` tally would return 1.
+    const spell = chunks.find((chunk) => chunk.chunkType === 'spell');
+    if (spell === undefined) throw new Error('the fixture must carry one spell chunk');
+    const corrupt = { ...spell, spellData: null };
+    expect(spellsImportedFromChunks([corrupt])).toBe(0);
+    expect(
+      buildSpellRows([result.book], [corrupt]).filter((row) => row.kind === 'data-error'),
+    ).toHaveLength(1);
   });
 
   it('fails the book loudly naming the rule noun when nothing validates', async () => {

@@ -6564,6 +6564,87 @@ baseline exactly):**
   module-switch-OFF arm (portraits were generated for a module that switched
   them off).
 
+### The import report names SPELLS, and the Spells page names WHICH empty it is (docs/17 row 204, docs/12 §15.4/§15.7, docs/05 §Rules/§Empty states)
+
+The owner was sure he had imported PF2e spells, yet his Spells page was empty
+and his NPCs had no spells — and nothing on screen could answer *"did my import
+actually bring spells?"*, because the import report stated only a total chunk
+count and `sectionsImported` MIXES journal pages, conditions, feats, spells,
+actions and class features. The pins below name the spell lane on every report
+surface and split the page's one generic empty state into the two corpus-level
+cases (plus the unchanged filtered one).
+
+- `tests/ingest/packs/pf2e-rules.test.ts` — the REAL rules-text fixture import
+  (4 entries: 2 feats + 1 action + 1 SPELL) states `spellsImported === 1`
+  beside `sectionsImported === 4`, so the count is not a rename of the mixed
+  lane. A second pin is the CLASSIFICATION DIFFERENTIAL: the reported number
+  equals the ONE count seam `ingest/packImport.spellsImportedFromChunks(chunks)`
+  and equals the page's OWN `buildSpellRows(...)` entry rows for that book;
+  then a payload-less `spell` chunk returns **0** from the seam (where a bare
+  `chunkType === 'spell'` tally would return 1) and renders exactly one
+  `data-error` row. That is what "the spell count" means: the rows the list
+  will show, never a corrupt row counted as a spell.
+- `tests/ingest/packs/dnd5e-foundry.test.ts` — the two REAL dnd5e spell
+  fixtures report `spellsImported === 2`; `tests/ingest/packs/pack-import.test.ts`
+  — a creature-only selection reports **0** (and `sectionsImported === 0`),
+  the "fixture with none" arm.
+- `tests/features/spells-page.test.tsx` (the existing page harness) — the THREE
+  empty states, each with its own fixture and asserted on its RENDERED message:
+  (i) no ready book of the campaign's system → `spells-no-material` + the
+  import remedy (both systems, unchanged); (ii) a ready book of the system
+  carrying only a `section` chunk (the pre-arc library) → the NEW
+  `spells-no-spell-data` state naming the RE-IMPORT remedy and NOT the
+  no-material one; (iii) one spell excluded by the tradition multi-filter →
+  the unchanged `spells-filter-empty`, with neither corpus empty state present.
+- `tests/rules-page.test.tsx` and `tests/features/bestiary-fetch-section.test.tsx`
+  (the existing UI harness) — the per-lane breakdown
+  (`0 spells · 1 stat block · 0 items · 0 sections`) is asserted in the manual
+  import TOAST, the import SUMMARY dialog, the SETTINGS fetch toast and on the
+  book CARD; a seeded pack book (packMeta `sectionsImported: 4`, 3 `section`
+  chunks + 1 `spell` chunk) reads `1 spell · 0 stat blocks · 0 items · 3
+  sections`, proving both the partition (the spell is not also counted under
+  `sections`) and the LIVE spell lane (the stored `packMeta` has no
+  `spellsImported`, so a `packMeta`-only card would have printed a false
+  `0 spells`). The card's total (`4 chunks`) is kept.
+- `tests/architecture/one-pack-lane-report.test.ts` (NEW, SOURCE SCAN) — the
+  `formatPackLanes(` call-site population is exactly the formatter plus the
+  four surfaces (`pack-import-dialog` ×2, `bestiary-fetch-section`, `RulesPage`),
+  so a fifth surface that formats its own lane line reds.
+
+**Injected RED, watched — the suite lock held from BEFORE the first injection,
+the mutated file's hash PRINTED with `git hash-object` for every arm, and the
+tree restored from out-of-tree pristine copies by a `trap` before the next arm;
+every post-arm hash printed again and MATCHING its baseline, no two arms
+identical:**
+- **A baseline** — `packImport.ts` `1ca815d2fb4989f7fd467accd64360caefb47f3b`,
+  `SpellsPage.tsx` `495fe0df764037f7758b0ebbfd468fec35794309`,
+  `RulesPage.tsx` `739ed56928df6321ba8248f1e21777fef6ca1483` → **GREEN 7 files /
+  93 tests**.
+- **B `spellsImported` wired to the mixed `sectionsImported`**
+  (`packImport.ts` `ffccffc25098fbb078feca012b1b73f926bd56c9`) → **RED 2** —
+  exactly pin 1's real-fixture lane test (`expected 4 to be 1`) and the
+  classification differential.
+- **B2 the count seam made a bare `chunkType === 'spell'` tally**
+  (`packImport.ts` `03e5718f4325b48e145686e4b0e1f7532f720573`) → **RED 1**,
+  exactly pin 2 (`expected 1 to be +0`): a payload-less `spell` chunk is not a
+  spell.
+- **C the `spells-no-spell-data` state collapsed into the generic one**
+  (`SpellsPage.tsx` `5c01e177686fb483e659ad9ab1394622a5dac8ca`) → **RED 1**,
+  exactly the re-import-remedy pin.
+- **D the book card's lane breakdown removed** (`RulesPage.tsx`
+  `6c801856d03209872e5d6497af767f523e435a07`) → **RED 2**, exactly the two
+  `book-lanes` card pins (the architecture call-site scan is textual and stays
+  green under a rendered-out block, which is why the behavioural card pin is
+  the load-bearing one).
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no pin proves the live spell
+count matches a real on-disk library beyond the seeded chunk rows, and none
+proves the empty-state copy reads well to a person — it proves which data
+branch renders which message. The import's own behaviour (what is written,
+`packMeta`, the chunk classification, the corpus read, the `ready` rule, the
+page's filtering) is deliberately UNCHANGED and is pinned by the pre-existing
+suites.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

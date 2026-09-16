@@ -727,6 +727,8 @@ describe('foundry-dnd5e-srd spell documents (row 194)', () => {
       { title: 'SRD Spells', deps },
     );
     expect(result.sectionsImported).toBe(2);
+    // Both documents are SPELLS, and the report names them (docs/17 row 204).
+    expect(result.spellsImported).toBe(2);
     expect(result.imported).toBe(2);
     const chunks = persisted.flat();
     expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['spell', 'spell']);

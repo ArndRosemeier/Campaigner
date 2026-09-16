@@ -260,6 +260,10 @@ describe('importPack (foundry-dnd5e-srd, M-C)', () => {
     expect(result.failed[0]?.file).toBe('monsters/beast/wolf.yml');
     expect(result.failed[0]?.name).toBe('Wolf');
     expect(result.failed[0]?.message).toContain('unsupported CR "0.75"');
+    // A creature-only selection reports ZERO spells: the count is the spell
+    // lane, not a rename of the mixed sections lane (docs/17 row 204).
+    expect(result.spellsImported).toBe(0);
+    expect(result.sectionsImported).toBe(0);
     expect(result.book.status).toBe('ready');
     expect(result.book.packMeta?.sourceId).toBe('foundry-dnd5e-srd');
     expect(result.book.packMeta?.license).toContain('CC-BY-4.0');

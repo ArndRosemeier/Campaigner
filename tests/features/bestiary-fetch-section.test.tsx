@@ -126,7 +126,18 @@ describe('BestiaryFetchSection', () => {
       expect(typeof book?.packMeta?.fetchedAt).toBe('number');
       expect(book?.packMeta?.license).toContain('Community Use Policy');
     });
-    expect(await screen.findByText(/Fetched & imported “NPC Gallery”/)).toBeInTheDocument();
+    // The fetch toast carries the per-lane breakdown (docs/17 row 204): the
+    // fetched creature pack names 0 spells explicitly, through the SAME
+    // formatter the manual-import toast and the book card use.
+    expect(
+      await screen.findByText(
+        /Fetched & imported “NPC Gallery” \(0 spells · 2 stat blocks · 0 items · 0 sections/,
+      ),
+    ).toBeInTheDocument();
+    // The report reuses the same breakdown element.
+    expect(screen.getByTestId('pack-import-lanes')).toHaveTextContent(
+      '0 spells · 2 stat blocks · 0 items · 0 sections',
+    );
   });
 
   it('lists every pack in the repo when the advanced toggle goes on', async () => {

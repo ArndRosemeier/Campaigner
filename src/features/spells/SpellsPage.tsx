@@ -38,11 +38,14 @@ import { buildSpellRows, filterSpellRows, type SpellRow } from '@/features/spell
  * its axis is listed with that stated plainly rather than being filtered into
  * or out of a category it does not have.
  *
- * EMPTY IS ALWAYS EXPLAINED, PER SYSTEM (docs/17 row 181's named follow-up,
- * amended by row 194 when the dnd5e lane landed): a campaign whose system has
- * no ready spell corpus gets the named absence plus the import remedy — for
- * BOTH systems now that dnd5e spells are imported too. A filter that matches
- * nothing is a third, distinct state.
+ * EMPTY IS ALWAYS EXPLAINED, AND WHICH EMPTY IT IS COMES FROM THE DATA
+ * (docs/17 row 204, amending row 181's named follow-up): a campaign with NO
+ * ready book of its system gets the import remedy; a campaign WITH ready
+ * books whose library carries no spell payload gets the RE-IMPORT remedy
+ * (docs/12 §15.4 — the spells arc had no migration, so a rules pack imported
+ * before it needs importing again); and a filter that matches nothing keeps
+ * its own distinct state. The first two are told apart by the ready books the
+ * page already read — never guessed — and neither is ever a silent blank list.
  */
 export function SpellsPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
@@ -135,16 +138,29 @@ export function SpellsPage(): JSX.Element {
       </div>
 
       {totalEntries === 0 && errorRows.length === 0 ? (
-        <EmptySpells
-          testId="spells-no-material"
-          title={`No spells imported for ${GAME_SYSTEM_LABELS[system]}`}
-          body={
-            system === 'pathfinder2e'
-              ? 'Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition.'
-              : 'Import the D&D 5e SRD spells pack on the Rules page — its spell documents appear here, ordered by level and filterable by school.'
-          }
-          remedy
-        />
+        loaded.books.length === 0 ? (
+          <EmptySpells
+            testId="spells-no-material"
+            title={`No spells imported for ${GAME_SYSTEM_LABELS[system]}`}
+            body={
+              system === 'pathfinder2e'
+                ? 'Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition.'
+                : 'Import the D&D 5e SRD spells pack on the Rules page — its spell documents appear here, ordered by level and filterable by school.'
+            }
+            remedy
+          />
+        ) : (
+          <EmptySpells
+            testId="spells-no-spell-data"
+            title={`No spell data in your ${GAME_SYSTEM_LABELS[system]} library`}
+            body={
+              system === 'pathfinder2e'
+                ? 'Your Pathfinder 2e books carry no structured spell data — a rules pack imported before the app stored spells that way looks exactly like this, and so does a library with only a bestiary pack. Re-import the Pathfinder 2e rules-text pack on the Rules page to add the spell list.'
+                : 'Your D&D 5e books carry no structured spell data — a rules pack imported before the app stored spells that way looks exactly like this, and so does a library with only a bestiary pack. Re-import the D&D 5e SRD spells pack on the Rules page to add the spell list.'
+            }
+            remedy
+          />
+        )
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div

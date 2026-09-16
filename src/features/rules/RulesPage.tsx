@@ -24,6 +24,7 @@ import { BookDialogs } from '@/features/rules/book-dialogs';
 import { PackImportDialog } from '@/features/rules/pack-import-dialog';
 import { PdfBookView } from '@/features/rules/pdf-viewer';
 import { useRulebookSummaries, type RulebookSummary } from '@/features/rules/hooks';
+import { bookPackLaneCounts, formatPackLanes } from '@/features/rules/pack-lanes';
 import { SearchBrowser } from '@/features/rules/search-browser';
 import { ingestPdf, type IngestProgress } from '@/ingest/ingestFiles';
 import type { PackImportProgress } from '@/ingest/packImport';
@@ -487,6 +488,18 @@ function BookCard({
               {chunkCount} chunk{chunkCount === 1 ? '' : 's'}
             </span>
           </div>
+          {/* The per-lane breakdown (docs/17 row 204): the chunk total above is
+              ONE number that cannot answer the owner's question — "did my
+              import actually bring spells?" — because a rules pack's spells
+              used to hide inside the section count. A pack book states its
+              lanes explicitly; the SPELL lane is counted live
+              (`summary.spellChunkCount`), so the card can never print 0 spells
+              for a book whose Spells page lists them. */}
+          {book.packMeta !== null && (
+            <p data-testid="book-lanes">
+              {formatPackLanes(bookPackLaneCounts(book.packMeta, summary.spellChunkCount))}
+            </p>
+          )}
           {book.status === 'processing' && ingest !== undefined && ingest.total > 0 && (
             <Progress value={(ingest.done / ingest.total) * 100} />
           )}
