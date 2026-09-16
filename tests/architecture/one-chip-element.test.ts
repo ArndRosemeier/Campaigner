@@ -60,7 +60,12 @@ describe('one chip element shared by wiki chips and the spell list (SOURCE SCAN)
     const wiki = readFileSync(join(process.cwd(), WIKI_MARKDOWN), 'utf8');
     const spells = readFileSync(join(process.cwd(), SPELLS_PAGE), 'utf8');
     expect(wiki).toMatch(/import \{[^}]*\bChip\b[^}]*\} from '@\/components\/chip'/);
-    expect(spells).toMatch(/import \{[^}]*\bChip\b[^}]*\} from '@\/components\/chip'/);
+    // The spell list reaches the SAME element through the ONE spell-chip
+    // renderer (docs/17 row 184) — `components/spell-chip.tsx` is the chip's
+    // only spell-shaped consumer, and `tests/architecture/one-spell-chip.test.ts`
+    // pins that it builds on `Chip` rather than re-spelling it.
+    expect(spells).toMatch(/import \{[^}]*\bSpellChip\b[^}]*\} from '@\/components\/spell-chip'/);
+    expect(spells).not.toContain(CHIP_BASE_NEEDLE);
     // The wiki renderer no longer owns a button of its own for a chip.
     expect(wiki).not.toContain(CHIP_BASE_NEEDLE);
   });

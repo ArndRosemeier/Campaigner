@@ -134,9 +134,11 @@ Nothing about the citation or the materialization changes: the panel reads the
 citation at render time, writes nothing, and a module generated before this change
 gets the reader listing on its next visit (docs/11 D2/D3 bind unchanged).
 
-**The queued mob-spells arc depends on ONE rule, named here so its spec home
-cannot re-derive it (docs/17 row 183, docs/18 §2).** When an AI-authored or
-imported mob carries spells, the chip's numbers come from
+### Mob spells on a stat block (docs/17 row 184, the AI-authored half)
+
+**The heightening dependency, named so its spec home cannot re-derive it
+(docs/17 row 183, docs/18 §2).** When an AI-authored mob carries spells, the
+chip's numbers come from
 `domain/spellHeightening.spellAtRank(spell, { castRank, casterLevel })` over the
 `spellData` payload the pf2e-rules lane already stores (docs/12 §15.4) —
 `fixed` = the HIGHEST listed layer `<=` the applied rank (base below the
@@ -145,8 +147,56 @@ lowest), `interval` = the source's own delta per whole
 add, a cantrip's rank auto-derived from the caster's level
 (`clamp(ceil(casterLevel / 2), 1, 10)`), and a prose-only spell DISPLAYED
 verbatim with a loud no-structured-values marker instead of computed numbers.
-The mob arc chooses WHICH rank a ranked spell is cast at; it never re-implements
-the layer/step selection, the cantrip rule or the formula arithmetic.
+This arc chooses WHICH spell and WHICH rank a mob is given; it never
+re-implements the layer/step selection, the cantrip rule or the formula
+arithmetic.
+
+**The contract.** `domain/statblock.ts` gains `spells`: an array of
+`{ name, castRank? }` (`domain/mobSpells.mobSpellAssignmentSchema`), `.nullish()`
+and therefore additive — a stat block written before the arc has no key, parses
+as it always did and renders exactly as it did (no chips, no error, no Dexie
+version, no index). A cantrip's entry carries nothing but its name; the
+resolver supplies `castRank: spellData.rank` when a RANKED spell omits one
+("absent means the spell's own rank" is the assignment contract), and a cantrip
+is never given a rank at all.
+
+**Grounding and the no-invention boundary (owner policy, verbatim substance:
+no invented spells — anything unresolved is LOUD).** The prompt offers the
+caster the REAL imported spells through the ONE corpus read
+(`db/spellRepo.loadSpellChunksFor` → `db/rulebookRepo.readyBookIds`
+(defined beside the rows it filters and re-exported by `@/search` since docs/17
+row 184 — its only spelling) + `chunkRepo.listChunksByType('spell')`, docs/17
+rows 182/184), windowed by
+`mobSpellVocabulary` (300 lines, rank then name, filtered to the ranks the
+hinted caster level can reach, truncation stated in the prompt) and rendered
+only when the corpus is non-empty — so a dnd5e (spell-less) prompt keeps its
+pre-arc bytes. Every returned name is then checked at the parse boundary
+through `domain/mobSpells.mobSpellChips` + `mobSpellIssues`, matched with the
+ONE comparable-name form (`domain/artifactAlias.comparableName`): the Smith's
+`runStatblock` and an encounter draft's inline monster blocks each spend ONE
+repair turn on the named offenders, and a name that survives is **stored** so
+its chip renders UNRESOLVED with the name visible, with the raw issue list and
+an amber `notice` on the step naming the spell and the mob. The mob's printed
+`level` is the caster level; a cantrip on a level-less mob is a loud issue, not
+a default.
+
+**The chips.** `components/spell-chip.SpellChip` is the ONE spell chip; it is
+mounted inside `features/campaign/components/stat-block.StatBlockCard` (the ONE
+stat-block card, so the NPC card, the module reader, the artifact editor, the
+bestiary and the battle table all gain it from one change) as
+`features/spells/mob-spell-chips.MobSpellChips`, which reads the campaign
+system's corpus live, prints the values at the cast rank through
+`mobSpellChipDetail` (the SAME bytes the PDF prints) and surfaces every issue
+loudly. The PDF routes the same detail through `lib/modulePdf.spellBoxSection`
+inside `statBoxContent` (the ONE box both exporters share) and
+`lib/pdfExport.statBlockSection`; a `buildModulePdfDocument` caller with no
+corpus prints a loud "resolved none" line rather than dropping the spells.
+
+**Not this arc.** What a LIBRARY creature's own stat block prints when it
+carries spells (the "standard mobs" half of the owner's request) is a NAMED
+FOLLOW-UP: nothing here reads a library chunk's prose for spells, and the
+importer still writes no `spells` field, so a library mob renders chips only
+once that half lands.
 
 
 

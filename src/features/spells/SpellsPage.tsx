@@ -5,9 +5,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { SparklesIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { ROUTES } from '@/app/routes';
-import { Chip } from '@/components/chip';
+import { SpellChip } from '@/components/spell-chip';
 import { Checkbox } from '@/components/ui/checkbox';
-import { listChunksByType } from '@/db/chunkRepo';
+import { loadSpellChunksFor } from '@/db/spellRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import type { Campaign, Id, SpellTradition } from '@/domain';
@@ -44,8 +44,9 @@ export function SpellsPage(): JSX.Element {
 
   /**
    * Ready books of the campaign's system (the ONE ready-book rule) plus every
-   * `spell` chunk of those books. The chunk read rides
-   * `chunkRepo.listChunksByType` — the one chunk-type read — and the
+   * `spell` chunk of those books. Both halves ride the ONE spell-corpus read
+   * (`db/spellRepo.loadSpellChunksFor`, docs/17 row 184) — the same read a
+   * mob's chips and the run engine's stat-block grounding use, and the
    * cross-system rows are dropped by the book-id intersection.
    */
   const loaded = useLiveQuery(async () => {
@@ -53,7 +54,7 @@ export function SpellsPage(): JSX.Element {
     if (campaign === null) return null;
     const readyIds = new Set(await readyBookIds(campaign.system));
     const books = (await listRulebooks()).filter((book) => readyIds.has(book.id));
-    const chunks = (await listChunksByType('spell')).filter((chunk) => readyIds.has(chunk.bookId));
+    const chunks = await loadSpellChunksFor(campaign.system);
     return { books, chunks };
   }, [campaign]);
 
@@ -162,20 +163,17 @@ export function SpellsPage(): JSX.Element {
                     .filter((row): row is Extract<SpellRow, { kind: 'entry' }> => row.kind === 'entry')
                     .map((row) => (
                       <li key={row.chunkId} className="flex items-center gap-2">
-                        <Chip
-                          tone={SPELL_CHIP_TONE}
-                          data-testid="spell-chip"
+                        <SpellChip
                           data-spell-chunk-id={row.chunkId}
                           aria-pressed={selectedId === row.chunkId}
-                          title={
+                          name={row.name}
+                          detail={
                             row.origin === '' ? row.name : `${row.rankLabel} — ${row.origin}`
                           }
                           onClick={() => {
                             setSelectedId(row.chunkId);
                           }}
-                        >
-                          {row.name}
-                        </Chip>
+                        />
                         <span className="text-xs text-muted-foreground">{row.rankLabel}</span>
                       </li>
                     ))}
@@ -209,11 +207,6 @@ export function SpellsPage(): JSX.Element {
 
 /** The traditions the filter offers — the domain enum, in its declared order. */
 const TRADITIONS: readonly SpellTradition[] = ['arcane', 'divine', 'occult', 'primal'];
-
-/** The spell chip's own tone (a spell is not an artifact, so it carries no
- *  kind): the resolved-chip shape with an arcane indigo wash. */
-const SPELL_CHIP_TONE =
-  'border-indigo-500/50 bg-indigo-500/10 text-indigo-800 dark:text-indigo-200';
 
 /**
  * A named empty state. Never a silent empty list (AGENTS rule 1, docs/17 row

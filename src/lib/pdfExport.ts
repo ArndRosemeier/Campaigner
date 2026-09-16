@@ -1,6 +1,6 @@
 import type { Content, NamedStyle, TDocumentDefinitions } from 'pdfmake/interfaces';
 
-import type { Artifact, StatBlock } from '@/domain';
+import type { Artifact, GameSystem, MobSpellIndex, StatBlock } from '@/domain';
 import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } from '@/domain';
 import {
   rosterReferenceFor,
@@ -10,7 +10,8 @@ import {
 } from '@/domain/encounterResolve';
 import { getImage } from '@/db/imageRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
-import { statBoxContent } from '@/lib/modulePdf';
+import { statBoxContent, spellBoxSection } from '@/lib/modulePdf';
+import { loadSpellIndexesFor, statBlockSystems } from '@/db/spellRepo';
 import { fileSlug } from '@/lib/fileSlug';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToDisplayText } from '@/lib/markdown';
@@ -63,7 +64,10 @@ function listItems(items: string[]): object[] {
   return items.map((item) => ({ text: item, style: 'value' }));
 }
 
-function statBlockSection(statBlock: StatBlock): object[] {
+function statBlockSection(
+  statBlock: StatBlock,
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
+): object[] {
   const named = (rows: { name: string; text: string }[]): object[] =>
     rows.map((row) => ({
       text: [{ text: `${row.name}. `, bold: true }, { text: row.text }],
@@ -109,6 +113,9 @@ function statBlockSection(statBlock: StatBlock): object[] {
     ...named(statBlock.actions),
     ...named(statBlock.reactions),
     ...named(statBlock.legendary),
+    // The mob's spells, the SAME bytes the module book and the in-app chip
+    // print (docs/17 row 184).
+    ...(spellBoxSection(statBlock, spellIndexes) as object[]),
   ];
 }
 
@@ -133,7 +140,11 @@ function statBlockSection(statBlock: StatBlock): object[] {
  * The numbers are the cited library chunk's own, read at export time; nothing is
  * copied into the database (docs/12 §Storage).
  */
-function rosterRows(artifact: Artifact, roster?: readonly ResolvedMonster[]): object[] {
+function rosterRows(
+  artifact: Artifact,
+  roster?: readonly ResolvedMonster[],
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
+): object[] {
   if (artifact.kind !== 'encounter') return [];
   return artifact.data.monsters.flatMap((monster, index): object[] => {
     const resolved = roster?.[index];
@@ -157,13 +168,18 @@ function rosterRows(artifact: Artifact, roster?: readonly ResolvedMonster[]): ob
               statBlock,
               `${monster.name} ×${monster.count}`,
               monster.source.type === 'rulebook' ? resolved?.origin : undefined,
+              spellIndexes,
             ) as object,
           ]),
     ];
   });
 }
 
-function dataSections(artifact: Artifact, roster?: readonly ResolvedMonster[]): object[] {
+function dataSections(
+  artifact: Artifact,
+  roster?: readonly ResolvedMonster[],
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
+): object[] {
   const sections: object[] = [];
   const add = (heading: string, rows: (object | null)[]): void => {
     const kept = rows.filter((row): row is object => row !== null);
@@ -183,7 +199,7 @@ function dataSections(artifact: Artifact, roster?: readonly ResolvedMonster[]): 
         labelValue('Notes', artifact.data.notes),
       ]);
       if (artifact.data.statBlock !== null) {
-        sections.push(...statBlockSection(artifact.data.statBlock));
+        sections.push(...statBlockSection(artifact.data.statBlock, spellIndexes));
       }
       break;
     }
@@ -193,7 +209,7 @@ function dataSections(artifact: Artifact, roster?: readonly ResolvedMonster[]): 
         labelValue('Personality', artifact.data.personality),
       ]);
       if (artifact.data.statBlock !== null) {
-        sections.push(...statBlockSection(artifact.data.statBlock));
+        sections.push(...statBlockSection(artifact.data.statBlock, spellIndexes));
       }
       break;
     }
@@ -243,7 +259,10 @@ function dataSections(artifact: Artifact, roster?: readonly ResolvedMonster[]): 
         labelValue('Treasure', artifact.data.treasure),
         ...(artifact.data.monsters.length === 0
           ? []
-          : [{ text: 'Monsters', style: 'subheading' }, ...rosterRows(artifact, roster)]),
+          : [
+              { text: 'Monsters', style: 'subheading' },
+              ...rosterRows(artifact, roster, spellIndexes),
+            ]),
       ]);
       break;
     }
@@ -336,6 +355,12 @@ export function buildGmNotesDefinition(
    * because its numbers live in the library.
    */
   roster?: readonly ResolvedMonster[],
+  /**
+   * The imported spell corpus per system (docs/17 row 184) — built by the
+   * async `exportArtifactPdf` pre-pass. Omitted ⇒ a block that carries spells
+   * prints the loud "not resolved for this build" line, never a silent drop.
+   */
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
 ): TDocumentDefinitions {
   const doc = baseDoc(artifact);
   const content: Content[] = [doc.content].flat();
@@ -345,7 +370,7 @@ export function buildGmNotesDefinition(
     text: artifact.body === '' ? '(no body)' : markdownToDisplayText(artifact.body),
     style: 'body',
   });
-  content.push(...(dataSections(artifact, roster) as Content[]));
+  content.push(...(dataSections(artifact, roster, spellIndexes) as Content[]));
   if (artifact.links.length > 0) {
     content.push({ text: 'Relations', style: 'heading' });
     content.push(...(listItems(artifact.links.map((link) => link.relation)) as Content[]));
@@ -489,9 +514,21 @@ export async function exportArtifactPdf(
   // cited creature's numbers and origin are resolved HERE and the render is a
   // pure function of them.
   const roster = template === 'gm' ? await resolveExportRoster(artifact) : [];
+  // The spell corpus per system this artifact's blocks carry (docs/17 row
+  // 184) — the same pre-pass `buildModulePdf` runs, through the same builder.
+  const blocks: (StatBlock | null)[] = [];
+  if (template === 'gm') {
+    if (artifact.kind === 'npc' || artifact.kind === 'pc') blocks.push(artifact.data.statBlock);
+    if (artifact.kind === 'encounter') {
+      for (const [index, monster] of artifact.data.monsters.entries()) {
+        blocks.push(rosterStatBlockFor(monster, roster[index]));
+      }
+    }
+  }
+  const spellIndexes = await loadSpellIndexesFor(statBlockSystems(blocks));
   const definition =
     template === 'gm'
-      ? buildGmNotesDefinition(artifact, cover, roster)
+      ? buildGmNotesDefinition(artifact, cover, roster, spellIndexes)
       : buildPlayerHandoutDefinition(artifact, cover);
   return generate(definition);
 }

@@ -15,6 +15,7 @@ import {
   ExtrasEditor,
   type PairRow,
 } from '@/features/campaign/components/list-editors';
+import { MobSpellChips } from '@/features/spells/mob-spell-chips';
 
 const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 const ABILITY_LABELS: Readonly<Record<(typeof ABILITIES)[number], string>> = {
@@ -195,6 +196,18 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
             </div>
           ))}
         </dl>
+      )}
+
+      {/* The mob's spells as chips (docs/17 row 184): the AI-authored half of
+          the spells arc. A legacy stat block has no `spells` key at all and
+          renders here exactly as it did — the component is not mounted. */}
+      {statBlock.spells !== null && statBlock.spells !== undefined && statBlock.spells.length > 0 && (
+        <MobSpellChips
+          spells={statBlock.spells}
+          level={statBlock.level}
+          system={statBlock.system}
+          mobName={name}
+        />
       )}
     </div>
   );

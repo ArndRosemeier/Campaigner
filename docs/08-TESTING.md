@@ -5344,6 +5344,100 @@ legal rank for the mob. And no test can prove an existing library recomputes
 heightening until its rules pack is re-imported — row 181's no-migration
 decision still stands.
 
+### Mob spells on an AI-authored stat block (docs/17 row 184, docs/11 §Mob spells, docs/18 §2.1/§2.2/§2.3)
+
+Row 183 computed the values; this arc puts them on a MOB. The pins are grouped by
+the seam they defend, and each names the injected failure it was watched against:
+
+- `tests/domain/mobSpells.test.ts` (NEW; added to `nodeTestGlobs`): the ONE
+  resolver over the REAL `v14-dev` Fireball/Ignition payloads — a lowercase
+  assignment resolving through `comparableName` (so the pin reds on a hand-rolled
+  comparison), NO cast rank meaning the spell's own rank (Fireball at rank 3,
+  `6d6`), Fireball at rank 5 = `appliedSteps: 2` and `10d6`, the cantrip
+  DIFFERENTIAL at caster levels 5 and 9 (rank 3 / `4d4` and rank 5 / `6d4`, with
+  `castRank: null` and `cantripAuto: true` asserted so a caller-side rank cannot
+  pass), a level-less cantrip as a loud issue with `result: null` and NO number,
+  an invented name as a stored unresolved chip plus the two-half
+  `mobSpellIssues` sentence, a prose-only spell returning the note verbatim behind
+  `PROSE_ONLY_MARKER` with `valuesSource: 'base'`, the interval remainder and
+  `unparsed-heightening` lines surfacing in the detail, the legacy
+  `undefined`/`null`/`[]` arms resolving to NO chips, `mobCasterLevel` over
+  `"5"`/`"12"`/`"-1"`/`"0"`/`"1/2"`/`"—"`/`"CR 5"`, and the bounded vocabulary
+  (cantrips always, ranks filtered to `maxCastableRank`, a deterministic window
+  with an honest `total`).
+- `tests/llm/mob-spells.test.ts` (NEW; jsdom, because it drives the engine through
+  `waitFor` like the other `runEngine` pins): the REAL run path with a mocked
+  chat — the statblock prompt carries the section header and `Fireball — Rank 3`
+  / `Ignition — Cantrip` (the grounding half), the stored `npc` row carries the
+  assignment verbatim, the chip model equals `spellAtRank` at the cast rank, an
+  INVENTED name spends the repair turn and then lands as a stored entry with the
+  step's raw `spellIssues` AND a `notice` naming the spell and the mob, a second
+  reply that names a real spell repairs cleanly with no issues left, and a LEGACY
+  block (`spells` absent) stores `undefined` with the rest of the block intact.
+- `tests/features/mob-spell-chips.test.tsx` (NEW; jsdom): the rendered chips
+  through the real `StatBlockCard` and a real Dexie corpus — the resolved chip's
+  `title` carrying `cast at rank 5: 10d6 fire`, the UNRESOLVED chip still showing
+  its name and `data-spell-unresolved`, the loud issue box naming spell and mob,
+  the cantrip title (`cast at rank 3`, `4d4 fire`), the prose-only title, and the
+  legacy/empty block rendering NO `mob-spells` section at all.
+- `tests/lib/mob-spells-pdf.test.ts` (NEW; added to `nodeTestGlobs`): the module
+  PDF's captured definition contains `cast at rank 5: 10d6 fire` and
+  `heightening: interval` through the shared pre-pass, and a direct
+  `buildModulePdfDocument` call with no corpus prints the loud `resolved none`
+  line — the no-silent-drop arm.
+- `tests/architecture/one-spell-chip.test.ts` (NEW; node): the resolved-tone
+  literal is declared in `components/spell-chip.tsx` and nowhere else, the chip is
+  built on the SHARED `Chip` + `CHIP_UNRESOLVED`, and both the spell list and the
+  mob chips import `SpellChip` (the stat block imports `MobSpellChips`).
+- AMENDED, not weakened: `tests/architecture/one-chip-element.test.ts`'s
+  "both consumers" arm now asserts the spell list reaches `Chip` THROUGH
+  `SpellChip` (and still forbids the base class in the page); and
+  `tests/llm/module-gen-and-provenance.test.ts`'s one-source list gains the two
+  new scaffolding literals (`MOB_SPELL_SECTION_HEADER`,
+  `MOB_SPELL_REPAIR_LEAD_IN`), each asserted to be DETECTED on its own.
+- `tests/db/spellRepo.test.ts` (NEW; node, `tests/db/**` already in
+  `nodeTestGlobs`): the corpus read's OWN scope — a ready PF2E book and a ready
+  dnd5e book that BOTH carry `spell` chunks, with `loadSpellChunksFor` required to
+  return only its own system's rows (both directions), the not-ready book's chunk
+  dropped, and the two derivations (`loadSpellIndexesFor`, `statBlockSystems`)
+  covered so a wrong system there cannot leak one layer up. Added because the
+  dispatcher's arm D (`readyBookIds(system)` → `readyBookIds()`) changed
+  `db/spellRepo.ts`'s bytes and left ALL FIVE other test files green: an unpinned
+  seam is prose, not a rule. Injected RED for all three arms: the system
+  restriction dropped (2 red), the index built from another system's corpus
+  (1 red), `statBlockSystems` collecting nothing (2 red).
+- `tests/db/ready-book-seam.test.ts` (NEW; node, `tests/db/**` already in
+  `nodeTestGlobs`): the ready-book rule's behaviour — `listReadyRulebooks()`
+  returns every ready book in `listRulebooks` order and filters by system, and
+  `readyBookIds` equals its ids (a DIFFERENTIAL, not a second filter) — plus a
+  SOURCE SCAN on the filter's own predicate (`(book) => book.status === 'ready'`),
+  which the two folded component copies spelled verbatim and which a single
+  book's status badge (the Rules page) deliberately does not match. Injected RED:
+  re-adding the filter to `SpawnPicker` reds the scan by file.
+- `vite.config.ts`: `nodeTestGlobs` gains `mobSpells` (domain) and
+  `mob-spells-pdf` (lib); the run-path and rendering pins stay jsdom on purpose.
+
+**Injected RED, watched (raw logs kept under the writer's `/tmp` worktree):**
+dropping the corpus read's system restriction, building a per-system index from another system's corpus, and emptying `statBlockSystems` each red `tests/db/spellRepo.test.ts`;
+re-spelling the ready-book filter in `SpawnPicker` reds the seam scan by file;
+returning `[]` from `statblockSpellIssues` (the library check bypassed) reds the
+invented-name pin AND the one-repair pin; withholding `casterLevel` from the rule
+reds both cantrip pins; `continue`-ing past an unresolved name reds three pins
+across two files; forcing the unresolved chip's testid to the resolved one reds
+two component pins; ignoring the assignment's cast rank reds six pins across three
+files; and removing `spells` from `statBlockSchema` reds six pins. Every arm was
+restored byte-identically (diffed against the backups) before the gate.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove a live model
+will only name imported spells — it proves the vocabulary was RENDERED, that every
+returned name is CHECKED and that an invented one is LOUD; no test can prove the
+300-line prompt window contains the spell a given mob should have (the window is
+bounded and its truncation is stated in the prompt); no test can prove an
+on-disk library holds structured spells at all — row 181's no-migration decision
+stands, and until the rules pack is re-imported every assigned name resolves to
+nothing and is loud, which is the honest outcome; and no test proves the printed
+page reads well to a person — it proves the bytes.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

@@ -7,7 +7,9 @@ import type {
   DocumentPlanAudience,
   DocumentPlanRole,
   DocumentPlanSource,
+  GameSystem,
   Id,
+  MobSpellIndex,
   Module,
   MonsterEntry,
   StatBlock,
@@ -18,6 +20,9 @@ import {
   documentPlanIssues,
   documentPlanSectionDestination,
   formatModifier,
+  mobCasterLevel,
+  mobSpellChipDetail,
+  mobSpellChips,
   printsAbilityModifiers,
   readStoredDocumentPlan,
   splitPartsDocument,
@@ -31,6 +36,7 @@ import {
 } from '@/domain/encounterResolve';
 import { getBattleByModule } from '@/db/battleRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
+import { loadSpellIndexesFor, statBlockSystems } from '@/db/spellRepo';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { mdToPdfmakeContent } from '@/lib/mdToPdfmake';
 import { blockText, textBlocks } from '@/lib/textBlocks';
@@ -155,6 +161,16 @@ export interface ModulePdfInput {
    * has; docs/17 row 108 amended by reference, row 144).
    */
   rosterResolution?: Readonly<Record<Id, readonly ResolvedMonster[]>>;
+  /**
+   * The imported spell corpus per game system, for a mob's spell CHIPS
+   * (docs/17 row 184). Built by the async `buildModulePdf` pre-pass from the
+   * systems the scoped stat blocks actually carry.
+   *
+   * OMITTED IS NOT "NO SPELLS": a stat block that carries `spells` and has no
+   * index here prints a LOUD line saying so (a direct `buildModulePdfDocument`
+   * caller never silently loses them), never an empty section.
+   */
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex> | undefined;
   /**
    * When this document was compiled. Defaults to now, and it is PRINTED (the
    * cover's "Compiled with Campaigner · <date>") and pinned into the PDF's own
@@ -288,6 +304,39 @@ function imageNode(dataUrl: string, where: string, options: ImageNodeOptions): C
 }
 
 /**
+ * A mob's spells, as the SAME bytes the in-app chip's detail shows (docs/17 row
+ * 184): every line is `domain/mobSpells.mobSpellChipDetail` over the ONE
+ * resolver, at the cast rank the heightening rule computes for this block's own
+ * level. An unresolved name prints in the alert colour with the name visible —
+ * never blank, never dropped.
+ *
+ * A block that CARRIES spells but has no index for its system (a direct
+ * `buildModulePdfDocument` caller) is not silently empty: the section states
+ * that this build resolved nothing, so the omission is visible in the book.
+ */
+export function spellBoxSection(
+  statBlock: StatBlock,
+  spellIndexes: ReadonlyMap<GameSystem, MobSpellIndex> | undefined,
+): Content[] {
+  const spells = statBlock.spells;
+  if (spells === null || spells === undefined || spells.length === 0) return [];
+  const index = spellIndexes?.get(statBlock.system);
+  if (index === undefined) {
+    return [
+      {
+        text: `Spells: this build resolved none of the ${String(spells.length)} spell(s) this creature carries — re-export from the app.`,
+        color: ALERT,
+      },
+    ];
+  }
+  return mobSpellChips(spells, mobCasterLevel(statBlock.level), index).map((chip): Content => ({
+    text: mobSpellChipDetail(chip).replace(/\n/g, ' · '),
+    ...(chip.resolved && chip.result !== null ? {} : { color: ALERT }),
+    margin: [0, 0, 0, 2],
+  }));
+}
+
+/**
  * Bordered two-column stat box (M2 export layout, module styling).
  *
  * THE box every roster surface prints — `inline` and a CITED library creature
@@ -306,7 +355,9 @@ export function statBoxContent(
   statBlock: StatBlock,
   name: string,
   source?: string,
+  spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
 ): Content {
+  const spells = spellBoxSection(statBlock, spellIndexes);
   const left: Content[] = [
     {
       text: [statBlock.size, statBlock.creatureType, statBlock.level]
@@ -397,6 +448,17 @@ export function statBoxContent(
           },
           '',
         ],
+        ...(spells.length === 0
+          ? []
+          : [
+              [
+                {
+                  colSpan: 2,
+                  stack: spells,
+                },
+                '',
+              ],
+            ]),
       ],
     },
     layout: {
@@ -800,6 +862,12 @@ interface RenderState {
    * about a stored row.
    */
   companionsPrinted: Map<Id, string>;
+  /**
+   * The imported spell corpus per game system (docs/17 row 184), for a mob's
+   * spell chips. Empty ⇒ a block that carries spells prints the loud
+   * "not resolved for this build" line.
+   */
+  spellIndexes: ReadonlyMap<GameSystem, MobSpellIndex>;
 }
 
 /**
@@ -969,7 +1037,10 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
       player ? null : labeledSection('Notes', artifact.data.notes),
     );
     if (artifact.data.statBlock !== null) {
-      pushSections(out, statBoxContent(artifact.data.statBlock, artifact.name));
+      pushSections(
+        out,
+        statBoxContent(artifact.data.statBlock, artifact.name, undefined, state.spellIndexes),
+      );
     }
   } else if (artifact.kind === 'npc') {
     pushSections(
@@ -978,7 +1049,10 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
       labeledSection('Personality', artifact.data.personality),
     );
     if (artifact.data.statBlock !== null) {
-      pushSections(out, statBoxContent(artifact.data.statBlock, artifact.name));
+      pushSections(
+        out,
+        statBoxContent(artifact.data.statBlock, artifact.name, undefined, state.spellIndexes),
+      );
     }
   } else if (artifact.kind === 'faction') {
     pushSections(
@@ -1052,6 +1126,7 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
                     statBlock,
                     `${monster.name} ×${monster.count}`,
                     cited ? resolved?.origin : undefined,
+                    state.spellIndexes,
                   ),
                 ]),
           ],
@@ -1989,6 +2064,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     // Per BUILD: "a companion prints once" is a fact about the document being
     // built now, never about a stored row (docs/19 §10.1, render-time only).
     companionsPrinted: new Map<Id, string>(),
+    spellIndexes: input.spellIndexes ?? new Map<GameSystem, MobSpellIndex>(),
   };
 
   // THE DOCUMENT IS PAGES, and this list is the whole of it: the cover, the
@@ -2345,10 +2421,24 @@ export async function buildModulePdf(
   const battles = await moduleBattles(module);
   const scoped = modulePdfArtifacts(module, artifacts);
   const rosterResolution: Record<Id, readonly ResolvedMonster[]> = {};
+  // Every block this document may print, through the SAME box rule the
+  // renderer uses (`rosterStatBlockFor`), so an inline block and a cited
+  // library block both contribute the system their spell chips resolve
+  // against (docs/17 row 184). Derived from the BLOCKS, so no caller has to
+  // know the campaign's system.
+  const blocks: (StatBlock | null)[] = [];
   for (const artifact of scoped) {
-    if (artifact.kind !== 'encounter') continue;
-    rosterResolution[artifact.id] = await resolveMonsterEntries(artifact.data.monsters);
+    if (artifact.kind === 'encounter') {
+      const resolved = await resolveMonsterEntries(artifact.data.monsters);
+      rosterResolution[artifact.id] = resolved;
+      for (const [index, monster] of artifact.data.monsters.entries()) {
+        blocks.push(rosterStatBlockFor(monster, resolved[index]));
+      }
+    } else if (artifact.kind === 'npc') {
+      blocks.push(artifact.data.statBlock);
+    }
   }
+  const spellIndexes = await loadSpellIndexesFor(statBlockSystems(blocks));
   // What to PRELOAD comes from the same plan read the renderer uses: with a
   // plan applied the document prints exactly the images the plan anchored, so
   // preloading an unanchored one would both waste the decode and report a
@@ -2379,6 +2469,7 @@ export async function buildModulePdf(
     battles,
     images,
     rosterResolution,
+    spellIndexes,
     ...(options.audience === undefined ? {} : { audience: options.audience }),
     ...(options.compiledAt === undefined ? {} : { compiledAt: options.compiledAt }),
     ...(options.planFailure === undefined ? {} : { planFailure: options.planFailure }),
