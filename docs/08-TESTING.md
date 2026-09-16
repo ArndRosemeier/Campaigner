@@ -526,6 +526,7 @@ test) · ❌ gap.
 | The module PDF's export surface: ONE control on all THREE module surfaces (canvas header, campaign tree's module group, module reader header — docs/17 row 185), GM/player as an argument, problems reported | `module-pdf-export.test`, `module-canvas.test`, `module-reader.test`, `architecture/module-pdf-seam.test` | ✅ |
 | **The module PDF's PAGE MODEL**: main column + sidebar, sections that flow, the placement ladder (beside / continued / its own page), the verbatim contract and a CONTENT-PRESERVATION differential over three real documents (docs/17 row 148) | `pdfLayout.test` (19 pins, NEW) + the 6 updated assertions in `modulePdf.test`/`modulePdfPlan.test` | ✅ |
 | **The module PDF's CONTENTS page carries REAL page numbers** (docs/17 row 156, docs/19 §7): the number printed in the Contents equals the page the section's heading really prints on, for all 21 + 7 + 7 sections of the three fixture documents — read back off the RENDERED PDF with pdfjs, not off a definition | `pdfLayout.test` (4 new pins: the rendered-page equality with a measured numbers table, the entry count/order, the PDF's own link annotations, the page-model shape and determinism under the pinned `compiledAt`) | ✅ |
+| **An artifact's own image prints WHEREVER the artifact is described** (docs/17 row 187, docs/19 §2/§4): a planned section whose artifact carries a cover prints it with the plan anchoring NOTHING, an encounter's own map plate does too, a `read-aloud`/`aside` section still prints its artifact's picture while its mechanics stay suppressed, the NPC gallery prints portraits, a plan anchor naming the artifact's own picture is not printed twice, a row with no image prints none, and an image that exists but was not preloaded is LOUD (named problem + alert box) | `modulePdfPlan.test` (`18 → 22`: 5 new pins, one of them replacing the old “prints exactly the images the plan anchored” pin), `pdfLayout.test` (`36 → 37`: the large fixture, planned with every anchor removed), `modulePdf.test` (the procedural loud placeholders and the no-map/no-schematic pins, unchanged) | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
@@ -800,6 +801,69 @@ READS well (the recorded deviation), only that the pointer is in the text column
 at the page margin. The pixmap, the colours and pdfmake's own column measurement
 remain unverified in jsdom (see the row-148 section above), so the owner's eye is
 still the last check on how the fixed pages LOOK.
+
+### An artifact's own image prints wherever the artifact is described (docs/17 row 187, docs/19 §2)
+
+The owner, reading an exported module PDF, verbatim: *"Most of the images in the
+module are not actually used. It maybe does not need to use ALL images, but i
+would at least expect NPCs and locations when they are described anyways."* —
+and, asked directly: *"yes to images where they belong"*.
+
+**THE MEASURED CAUSE.** The document has TWO block builders and they disagreed
+about images. The PROCEDURAL path printed an artifact's own cover
+(`artifactBlock` → `artifactDetail(…, { covers: true })` → `artifactCoverContent`)
+and every encounter's map plate, while the PLANNED path — every real export since
+docs/17 row 139, because the export always plans — built its companion with
+`roleDetail(role, artifact, state)`, which returned `dataSections +
+artifactLinksContent` ONLY. The section printed the images the LLM's plan
+happened to anchor and nothing else, and `hasImage` was `section.images.length >
+0`. So an NPC's or a location's own picture appeared only when the model happened
+to anchor that id in that section — a REGRESSION in behaviour introduced by the
+planned path, not a missing feature.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The regression pin**: a PLANNED section whose artifact carries a cover prints that image with the plan anchoring NO image for it. The fixture's `The Old Tower` section anchors `[coverImageId]`; re-planned with every section's `images: []`, `COVER_MARKER` is still in the definition (and the plan's own anchor, when present, is not printed twice — the artwork is the row's) | `modulePdfPlan.test` (`prints an artifact’s OWN image wherever it is described, and the plan’s anchors as EXTRAS`) | ✅ |
+| **An encounter's own map plate prints in the planned path too** — the same unanchored plan carries `MAP_MARKER` and the plate's own `"fit":[481.9,660]` (the cover art keeps `"fit":[450,320]`) | `modulePdfPlan.test` (same pin); `pdfLayout.test` (`prints the artifact’s OWN cover and map plate in a PLANNED document with no anchors at all`) | ✅ |
+| **The NPC gallery prints a portrait**: the fixture's `Unplanned Bystander` is an NPC the plan gives NO section, so the gallery is the only place she is described — and the page carrying her heading is the page carrying her `coverImageId`. The old `covers: false` (“no cover thumbnails (unchanged)”) was a FALSE claim | `modulePdfPlan.test` (`prints the NPC gallery’s portrait — the gallery is where an NPC is described`) | ✅ |
+| **A role governs the mechanics, never the picture**: a plan whose ONLY section is the location with role `read-aloud` (and, separately, `aside`) prints `COVER_MARKER`, keeps its role treatment (`"style":"readAloud"`), and still carries NONE of the location's stored fields (`Inhabitants:` absent). This is ALSO the completeness guard above the §10.1 record: a section with no mechanics must not claim the row, or a later section's mechanics would print nowhere | `modulePdfPlan.test` (`still prints the artifact’s own image in a read-aloud or aside section`) | ✅ |
+| **A plan anchor that is NOT the section's own picture still prints — the anchors stay meaningful as EXTRAS**: the NPC section deliberately anchors the LOCATION's cover, and the cover count goes 1 → 2 (and back to 1 when that one anchor is removed), so the second copy is really the anchor and not a duplicated own image | `modulePdfPlan.test` (`still prints a plan anchor the section does NOT own`) | ✅ |
+| **A row with no image prints no image and no placeholder**; an image that EXISTS but is not in the preloaded set is LOUD: the planned document carries the alert box naming the site (`has a cover image that could not be embedded` / `it was not in the preloaded image set`) and the export's `problems` names `the cover of “Old Tower”` — never a silent drop. The count of image nodes in the unanchored fixture is exactly the three rows that own an image | `modulePdfPlan.test` (`is LOUD when a planned section’s own image exists but is not in the preloaded set`) | ✅ |
+| **The preloader is the same decision as the renderer.** `buildModulePdf` used to narrow the preload to `resolveDocumentPlan`'s ANCHORED ids (plus the module cover), which is the defect's other half: the planned path preloaded exactly what it failed to print. It now preloads `imageInventories` — every scoped artifact's own images and the module cover — the set the renderer draws from in BOTH paths | `modulePdfPlan.test` (`pins the images at the budgets their own sites print at`, unchanged and green with the portrait now requested; the byte pins below) | ✅ |
+| The differential's CONTENT-PRESERVATION sides are untouched: images are not text runs, so the pre-layout baseline (`pdfLayoutBaseline.json`) stays green and its loss side is still `toEqual([])`. The large fixture's plan anchored the location's cover and the encounter's map, which the row-based rule now dedups — no text run moves in either direction | `pdfLayout.test` (`loses not one text run…`, `adds exactly the page model’s own pointers and the navigation’s own lines, and nothing else`, the counts pin) | ✅ |
+| The measured byte-determinism constants moved because the planned book now really carries the three images: definition characters 8030 → **8308** (the gallery portrait's image node, +278), rendered PDF bytes 59233 → **60505** (embedded XObjects instead of the loud “not in the preloaded set” alert). The load-bearing halves (`second === first`, `firstDiff: -1`) are UNCHANGED | `modulePdfPlan.test` (2) | ✅ |
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, the
+modified file's hash PRINTED for every arm, restored from an out-of-tree copy and
+re-hashed — the fixed tree is `modulePdf.ts`
+`11930d4cf7dda003eecb7ded95657079ff60af3a`, identical before and after every arm;
+no two arms produced the same file, so no arm is VOID):
+
+| arm | injection | red |
+| --- | --- | --- |
+| **A** | none — the fixed tree, on `modulePdfPlan.test.ts` + `pdfLayout.test.ts` | **0 — 59/59 green** |
+| **B** | the PLANNED path reverted to `roleDetail` alone (`{ artwork: [], mechanics: dataSections + artifactLinksContent }`, i.e. plan-only images; hash `b7f9fc6d…`) | **8** — the own-image pin, the extras pin, the read-aloud/aside pin, the LOUD pin, the large-fixture planned-image pin, PLUS three pins that measure the document as a whole (`renders GM and player from ONE plan`'s map assertion, and the two byte-determinism constants, whose numbers a plan-only document no longer matches) |
+| **C** | the NPC gallery back to `covers: false` (hash `0c0ac8bd…`) | **4** — the gallery-portrait pin, the own-image pin's portrait count, and the two byte-determinism constants |
+| **D** | `artifactCoverContent`'s unembeddable branch replaced by a SILENT `return []` (no problem, no alert box; hash `538b5984…`) | **1** — exactly the LOUD pin, with the alert box and the `the cover of “Old Tower”` problem gone |
+
+**WHAT THESE PINS CANNOT PROVE.** jsdom asserts DEFINITIONS, never a rendered
+page: the pins prove the right image NODE is in the document (and, for the
+gallery portrait, on the row's own page), not how the picture LOOKS or whether
+pdfmake scales a portrait inside the ≤45% column the way the eye expects (the
+rendered-image evidence in the repo remains `modulePdf.test`'s `/Subtype /Image`
+pin for the procedural path). No test proves a live model anchors sensible extras;
+and no test can prove an image that fails to DECODE for a row the plan dropped is
+a failure the owner wants reported — the preloader now loads the whole scoped set,
+so such a failure is LOUD by the same rule as every other image failure (AGENTS
+rule 2).
+
+**THE LANDING GATE** (`bash scripts/gate.sh`, one run on the REBASED tree, raw log
+kept, exit 0): GATE GREEN **319 files / 4120 tests**,
+`chunk arithmetic: 319 of 319 test files covered`, lint 0 errors, typecheck
+clean, combined peak RSS **2338 MB of the 3000 MB cap**, voided chunks 0 —
+**+5 tests** over the rebased base's 319/4115 (row 184's landing), and
+`tests/lib/mob-spells-pdf.test.ts` (row 184's PDF spell pin) stayed green
+through the mechanical union recorded in docs/17 row 187.
 
 ### §7 navigation — links everywhere, back-references, one companion with a link back (docs/17 row 151, docs/19 §7/§10)
 

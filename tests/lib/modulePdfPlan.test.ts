@@ -49,9 +49,17 @@ import { clearDatabase } from '../db/helpers';
  */
 const MAP_MARKER = 'data:image/png;base64,MAPmarkerMAPmarkerMAPmarker';
 const COVER_MARKER = 'data:image/png;base64,COVERmarkerCOVERmarker';
+const PORTRAIT_MARKER = 'data:image/png;base64,PORTRAITmarkerPORTRAITmarker';
 /** A real 1×1 PNG — the smallest image pdfmake can genuinely embed. */
 const ONE_PIXEL_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC';
+
+/** How many times `needle` occurs in `text` (non-overlapping), for the image
+ * counts below: an image node is `"image":"<data url>"`, so counting the
+ * marker counts the pictures that really printed. */
+function occurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
 
 /**
  * The top-level PAGE node (docs/19 §3: one `columns` node per page, or a
@@ -84,6 +92,7 @@ interface Seed {
   plotarcId: Id;
   mapImageId: Id;
   coverImageId: Id;
+  portraitImageId: Id;
 }
 
 async function seed(): Promise<Seed> {
@@ -102,6 +111,16 @@ async function seed(): Promise<Seed> {
     await createImage({
       campaignId: campaign.id,
       blob: new Blob(['cover-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 8,
+      height: 8,
+      source: 'generated',
+    })
+  ).id;
+  const portraitImageId = (
+    await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['portrait-bytes'], { type: 'image/png' }),
       mimeType: 'image/png',
       width: 8,
       height: 8,
@@ -176,6 +195,10 @@ async function seed(): Promise<Seed> {
     name: 'Unplanned Bystander',
     body: 'Sells eels.',
     data: { appearance: '', personality: '', statBlock: null },
+    // The gallery's portrait (docs/17 row 187): an NPC the plan gives no
+    // section, so she is described ONLY in the gallery — which is exactly where
+    // her own picture must print.
+    coverImageId: portraitImageId,
   });
 
   const module = await saveModule({
@@ -235,6 +258,7 @@ async function seed(): Promise<Seed> {
     plotarcId: plotarc.id,
     mapImageId,
     coverImageId,
+    portraitImageId,
   };
 }
 
@@ -311,7 +335,11 @@ function withPlan(seeded: Seed, plan: unknown): Module {
 /** The injected image map, keyed by the REAL ids of this fixture's rows. */
 function imagesFor(seeded: Seed): { dataUrls: Record<Id, string>; failures: never[] } {
   return {
-    dataUrls: { [seeded.mapImageId]: MAP_MARKER, [seeded.coverImageId]: COVER_MARKER },
+    dataUrls: {
+      [seeded.mapImageId]: MAP_MARKER,
+      [seeded.coverImageId]: COVER_MARKER,
+      [seeded.portraitImageId]: PORTRAIT_MARKER,
+    },
     failures: [],
   };
 }
@@ -459,7 +487,7 @@ describe('the renderer executes the plan', () => {
     );
   });
 
-  it('prints exactly the images the plan anchored — and no others', async () => {
+  it('prints an artifact’s OWN image wherever it is described, and the plan’s anchors as EXTRAS (docs/17 row 187)', async () => {
     const seeded = await seed();
     const withAnchors = textOf(
       buildModuleDefinition({
@@ -478,9 +506,20 @@ describe('the renderer executes the plan', () => {
     expect(withAnchors).toContain('"fit":[481.9,660]');
     // The cover art is inline art, not a plate.
     expect(withAnchors).toContain('"fit":[450,320]');
+    // …and the pictures that print are exactly the ones the ROWS own: the two
+    // anchors in this plan name the location's own cover and the encounter's
+    // own map, and neither prints a second time (docs/17 row 187's
+    // plan-anchor rule — an anchor naming the artifact's own art is redundant).
+    expect(occurrences(withAnchors, '"image":')).toBe(3);
+    expect(occurrences(withAnchors, COVER_MARKER)).toBe(1);
+    expect(occurrences(withAnchors, MAP_MARKER)).toBe(1);
 
-    // The same module, planned WITHOUT anchors: no image node at all, and no
-    // problem either — an unanchored image is the plan's decision, not a fault.
+    // THE REGRESSION PIN (the owner: *"i would at least expect NPCs and
+    // locations when they are described anyways"*): the same module, planned
+    // WITHOUT a single anchor. The location's cover and the encounter's map
+    // plate STILL print — they are the artifacts' own art, and the plan's
+    // `images` was never the gate for that. A planned path that went back to
+    // plan-only images loses BOTH markers here.
     const planned = planFor(seeded);
     const noAnchors = moduleDocumentPlanSchema.parse({
       ...planned,
@@ -491,10 +530,140 @@ describe('the renderer executes the plan', () => {
       artifacts: seeded.artifacts,
       images: imagesFor(seeded),
     });
-    expect(textOf(bare.definition)).not.toContain(MAP_MARKER);
-    expect(textOf(bare.definition)).not.toContain(COVER_MARKER);
+    const bareText = textOf(bare.definition);
+    expect(bareText).toContain(COVER_MARKER);
+    expect(bareText).toContain(MAP_MARKER);
+    expect(bareText).toContain('"fit":[481.9,660]');
+    expect(bareText).toContain('"fit":[450,320]');
+    // Exactly the three rows that CARRY an image print one (the location's
+    // cover, the encounter's plate, the gallery NPC's portrait) — a row with no
+    // image prints no image node and no placeholder.
+    expect(occurrences(bareText, '"image":')).toBe(3);
+    expect(occurrences(bareText, PORTRAIT_MARKER)).toBe(1);
+    // An own image needs the page (docs/19 §4), so the location gets the §5
+    // own-page treatment even with the plan anchoring nothing at all.
+    expect(bareText).toContain('“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.');
     // The ONLY problem is the empty part the plan names — never an image.
     expect(bare.problems).toEqual(EMPTY_PART_PROBLEM);
+  });
+
+  it('prints the NPC gallery’s portrait — the gallery is where an NPC is described (docs/17 row 187)', async () => {
+    const seeded = await seed();
+    const bystander = seeded.artifacts.find(
+      (artifact) => artifact.kind === 'npc' && artifact.name === 'Unplanned Bystander',
+    );
+    if (bystander === undefined) throw new Error('the fixture must build the unplanned NPC');
+    const definition = buildModuleDefinition({
+      module: withPlan(seeded, planFor(seeded)),
+      artifacts: seeded.artifacts,
+      images: imagesFor(seeded),
+    });
+    const text = textOf(definition);
+    // The gallery chapter and the row it describes.
+    expect(text).toContain('"text":"NPC Gallery","style":"chapter"');
+    expect(text).toContain('Unplanned Bystander');
+    // Her OWN picture rides her own block: the page that carries her heading is
+    // the page that carries the portrait (a marker elsewhere would pass a
+    // `toContain` while printing the wrong row's art).
+    const page = pageContaining(definition, `"id":"node-${bystander.id}"`);
+    expect(JSON.stringify(page)).toContain(PORTRAIT_MARKER);
+  });
+
+  it('still prints a plan anchor the section does NOT own — the anchors stay meaningful as EXTRAS (docs/17 row 187)', async () => {
+    const seeded = await seed();
+    const planned = planFor(seeded);
+    // The NPC section deliberately anchors the LOCATION's cover: a picture the
+    // NPC row does not own, i.e. exactly what an extra is.
+    const withExtra = moduleDocumentPlanSchema.parse({
+      ...planned,
+      sections: planned.sections.map((section) =>
+        section.source.type === 'artifact' && section.source.artifactId === seeded.npcId
+          ? { ...section, images: [seeded.coverImageId] }
+          : section,
+      ),
+    });
+    const text = (plan: ModuleDocumentPlan): string =>
+      textOf(
+        buildModuleDefinition({
+          module: withPlan(seeded, plan),
+          artifacts: seeded.artifacts,
+          images: imagesFor(seeded),
+        }),
+      );
+    // The location's own section prints its cover once, the NPC's extra once.
+    expect(occurrences(text(withExtra), COVER_MARKER)).toBe(2);
+    // Non-vacuity: with that ONE anchor removed the count drops to one, so the
+    // second copy above is really the anchor and not a duplicate own image.
+    expect(occurrences(text(planned), COVER_MARKER)).toBe(1);
+  });
+
+  it('still prints the artifact’s own image in a read-aloud or aside section — a role governs the mechanics, never the picture (docs/17 row 187)', async () => {
+    const seeded = await seed();
+    const single = (role: 'read-aloud' | 'aside'): ModuleDocumentPlan =>
+      moduleDocumentPlanSchema.parse({
+        sections: [
+          {
+            title: 'The Old Tower',
+            role,
+            audience: 'all',
+            source: { type: 'artifact', artifactId: seeded.locationId },
+            images: [],
+          },
+        ],
+      });
+
+    const readAloud = single('read-aloud');
+    const { definition, problems } = buildModulePdfDocument({
+      module: withPlan(seeded, readAloud),
+      artifacts: seeded.artifacts,
+      images: imagesFor(seeded),
+    });
+    const readAloudText = textOf(definition);
+    // The artifact's own cover prints…
+    expect(readAloudText).toContain(COVER_MARKER);
+    // …the role's prose treatment is intact…
+    expect(readAloudText).toContain('"style":"readAloud"');
+    // …and the ROLE still governs the mechanics: the location's stored fields
+    // are NOT dragged into narration.
+    expect(readAloudText).not.toContain('Inhabitants:');
+    expect(problems).toEqual([]);
+
+    const asideText = JSON.stringify(
+      buildModuleDefinition({
+        module: withPlan(seeded, single('aside')),
+        artifacts: seeded.artifacts,
+        images: imagesFor(seeded),
+      }),
+    );
+    expect(asideText).toContain(COVER_MARKER);
+    expect(asideText).not.toContain('Inhabitants:');
+  });
+
+  it('is LOUD when a planned section’s own image exists but is not in the preloaded set (docs/17 row 187)', async () => {
+    const seeded = await seed();
+    // The location's cover EXISTS on the row but is NOT in the loaded set, and
+    // no failure entry was recorded for it (the loader never saw the id). The
+    // renderer must name the site and print the alert box — never drop the
+    // picture silently (AGENTS rules 1–2).
+    const { definition, problems } = buildModulePdfDocument({
+      module: withPlan(seeded, planFor(seeded)),
+      artifacts: seeded.artifacts,
+      images: {
+        dataUrls: {
+          [seeded.mapImageId]: MAP_MARKER,
+          [seeded.portraitImageId]: PORTRAIT_MARKER,
+        },
+        failures: [],
+      },
+    });
+    const text = textOf(definition);
+    expect(text).toContain('has a cover image that could not be embedded');
+    expect(text).toContain('it was not in the preloaded image set');
+    expect(text).not.toContain(COVER_MARKER);
+    expect(problems).toContainEqual({
+      where: 'the cover of “Old Tower”',
+      reason: 'it was not in the preloaded image set',
+    });
   });
 
   it('keeps the cover page out of the plan’s hands (the document’s identity)', async () => {
@@ -813,7 +982,12 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // for, which is exactly this fixture's single chapter-plus-pointer page.
     // The MARKER BRAND itself is a Symbol, so it adds no byte: the 101-character
     // delta is the frame's, and the BYTE-IDENTITY above is still the point.
-    expect(first.length).toBe(8030);
+    // UPDATED AGAIN by docs/17 row 187 (8030 → 8308): the planned path now
+    // prints the artifact's own artwork, and this fixture gained the gallery
+    // NPC's portrait (the bystander's `coverImageId`), which is one more image
+    // node — a data URL plus its `fit`/`margin` box, +278 characters. The
+    // BYTE-IDENTITY above is untouched and is what this pin is about.
+    expect(first.length).toBe(8308);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
@@ -847,8 +1021,15 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // column instead of a two-column frame, so the text is laid out at different
     // x positions and the content streams move by 18 bytes. The pin's actual
     // claim is untouched: two builds of the same input are byte-identical
-    // (`firstDiff: -1`) and carry the same problems.
-    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 59233 });
+    // (`firstDiff: -1`) and carry the same problems. UPDATED AGAIN by docs/17
+    // row 187 (59233 → 60505): the planned book now carries the location's own
+    // cover, the encounter's own map plate and the gallery NPC's portrait
+    // through the real image pipeline, and the preloader no longer narrows the
+    // request set to the plan's anchors (the loaded set and the printed set are
+    // ONE decision) — so the embedded image XObjects are in the bytes instead of
+    // the loud "not in the preloaded image set" alert. `firstDiff: -1` is
+    // unchanged.
+    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 60505 });
     expect(first.problems).toEqual(second.problems);
   });
 

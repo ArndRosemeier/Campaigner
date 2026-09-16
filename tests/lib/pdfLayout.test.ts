@@ -571,6 +571,40 @@ describe('§4/§5 the placement rule: two tiers, one deterministic ladder', () =
     expect(json(before)).toContain('“PIER AMBUSH” HAS ITS OWN PAGE, FOLLOWING THIS ONE.');
     expect(json(before)).toContain('Encounters');
   });
+
+  it('prints the artifact’s OWN cover and map plate in a PLANNED document with no anchors at all (docs/17 row 187)', async () => {
+    const large = await pdfLayoutLargeFixture();
+    const plan = pdfLayoutLargePlan(large);
+    // Every section's anchors removed: the plan contributes NO image, so what
+    // prints is the artifact's own art or nothing.
+    const unanchored = {
+      ...plan,
+      sections: plan.sections.map((section) => ({ ...section, images: [] })),
+    };
+    const planned = buildModuleDefinition({
+      module: { ...large.module, documentPlan: unanchored },
+      artifacts: large.artifacts,
+      images: large.images,
+    });
+    const procedural = buildModuleDefinition({
+      module: { ...large.module, documentPlan: null },
+      artifacts: large.artifacts,
+      images: large.images,
+    });
+    const imageNodes = (definition: { content: unknown }): number =>
+      (json(definition).match(/"image":/g) ?? []).length;
+    // The module cover, the location's own cover art and the encounter's own
+    // map plate — the SAME three nodes the procedural outline prints, because
+    // the artifact's own image was never the plan's to gate.
+    expect(imageNodes(planned)).toBe(3);
+    expect(imageNodes(procedural)).toBe(3);
+    expect(json(planned)).toContain('"fit":[450,320]');
+    expect(json(planned)).toContain('"fit":[481.9,660]');
+    // …and the §4 full-width treatment a location with a cover needs: its own
+    // page follows the page that announces it, exactly as in the procedural
+    // document.
+    expect(json(planned)).toContain('“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.');
+  });
 });
 
 // --- 3b. docs/17 row 186: a one-sided page uses the whole sheet --------------

@@ -363,6 +363,7 @@ below).
 | Parts | `module.parts`, assembled with `spine.partPlan` through `assembleModulePartsDocument` and re-split with `splitPartsDocument` |
 | Kind chapters (locations, events, encounters, factions, party; plot arcs and notes GM-only) | the artifact pool, restricted to rows the module's own text MENTIONS (`[[…]]`) plus rows owned by the module (`moduleId`) |
 | Map plates | `encounter.data.mapImageId`, else the live battle's `board.mapImageId` |
+| An artifact's own cover art | the row's `coverImageId`, printed WHEREVER the row is described — the procedural kind chapter, the NPC gallery and a planned section alike (docs/17 row 187); a plan's `images` anchor is an EXTRA, never the gate for the row's own picture |
 | NPC gallery / Treasure ledger | the printed NPCs / the `treasure` fields of the printed encounters (ledger: GM only) |
 
 The parts are read through the **canvas's own seam** on purpose: the stored

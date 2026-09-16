@@ -14,6 +14,7 @@ the pins exist at HEAD, `spec only` means nothing implements it yet):**
 
 | § | state |
 |---|---|
+| §2 The split (the model decides what belongs with what, the renderer where it fits — and **an artifact's own image is the description's, not the plan's**, docs/17 row 187) | **BUILT** |
 | §3 The page (main column + sidebar, flowing sections, typographic tiers) | **BUILT** — docs/17 row 148; a ONE-sided page uses the whole sheet since row 186 |
 | §4 Two tiers, locality DERIVED from the first reference | **BUILT** — docs/17 row 148 (the `adjacent` pointer is a sentence in the TEXT column, §5 step 3, since row 186) |
 | §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
@@ -83,6 +84,19 @@ one after the other" the owner reported.
   than a formula.
 - The renderer's work: placement, column shape, type size, page breaks, overflow —
   arithmetic it can verify by measuring, which the model cannot.
+
+**AMENDED by docs/17 row 187 — "which images print where" is two questions, not
+one.** The model's anchors decide where an EXTRA picture is placed (a plate or a
+picture the plan deliberately puts in a section). An artifact's **own** artwork —
+its `coverImageId`, and an encounter's own map plate — is not the plan's to gate:
+it belongs to the artifact's DESCRIPTION, so it prints wherever that artifact is
+described, in a planned section exactly as in the procedural chapter and the NPC
+gallery. The rule lives in ONE seam (`lib/modulePdf.artifactDetail` /
+`companionContent`), a ROLE governs only the text/mechanics of a section (a
+`read-aloud` or `aside` section still prints its artifact's own picture), the
+placement decision counts the artifact's own image as "has an image" (docs/19 §4:
+an image needs the page), and a plan anchor that names the artifact's own picture
+is skipped rather than printing the same image twice. See §11 step 7.
 
 This is deliberately NOT a design imposed on the model. The repertoire below is
 conventional typography (the owner's own point: small type for detail is
@@ -364,3 +378,12 @@ call, not a spec default.** No question in this section is still open.
    changed a page's own SHAPE (one full-width column unless both columns carry
    real content) and not the page-level model this deferral rests on, so §10.4's
    statement that pairing can be added on top later is still true.
+7. ~~**An artifact's own image wherever the artifact is described** (§2's
+   amendment): the planned path printed the LLM's anchors and nothing else, so an
+   NPC's or a location's own cover appeared only when the model happened to
+   anchor that id — while the procedural chapter and the gallery printed every
+   `coverImageId` and every encounter map.~~ **DONE** (docs/17 row 187): ONE seam
+   (`lib/modulePdf.artifactDetail` → `companionContent`) carries the artifact's
+   artwork in the procedural chapter, the gallery and a planned section alike; the
+   plan's anchors remain EXTRAS; a role governs only the mechanics; the NPC
+   gallery prints portraits.

@@ -98,6 +98,12 @@ import {
  *    of problems rides back to the export surface, which reports them. The
  *    build itself never fails on missing data — a missing row or blob is a
  *    visible defect INSIDE the document, not a lost document.
+ * 4. **An artifact's OWN image is the description's, not the plan's** (docs/17
+ *    row 187). Its cover art and its map plate print wherever the artifact is
+ *    described — the procedural chapter, the NPC gallery and a PLANNED section
+ *    alike — through the ONE `artifactDetail`/`companionContent` seam, whatever
+ *    ROLE the plan gave the section. The plan's `images` anchors stay
+ *    meaningful as EXTRAS, never as the gate for the artifact's own artwork.
  */
 
 const ACCENT = '#9a7b4f';
@@ -546,6 +552,40 @@ export function encounterMapImageId(encounter: AnyArtifact, battles: readonly Ba
   return battle?.board.mapImageId ?? null;
 }
 
+/** One image an artifact carries OF ITS OWN, with what the image IS — which the
+ * RENDERER decides (a map prints as a plate, a cover as art), never the plan. */
+interface ArtifactOwnImage {
+  id: Id;
+  kind: 'map' | 'cover';
+  /** The addressable site, e.g. `the map of “Pier Ambush”`. */
+  where: string;
+}
+
+/**
+ * An artifact's OWN images — its cover, and (for an encounter) its map plate.
+ * THE one derivation of "which pictures does this row bring, and what are
+ * they", read by THREE callers that must agree (docs/17 row 187):
+ *
+ * - the placement decision: a non-empty answer is `hasImage` (docs/19 §4 — an
+ *   image needs the page);
+ * - the plan-anchor filter in `plannedSectionBlock`: an anchor naming one of
+ *   these is redundant, because the artwork rides the artifact's description;
+ * - `imageInventories`: this IS the artifact half of the ONE preload list, so
+ *   the loaded set, the printed set and the placement decision are one
+ *   derivation rather than three that can drift.
+ */
+function artifactOwnImages(artifact: AnyArtifact, battles: readonly Battle[]): ArtifactOwnImage[] {
+  const images: ArtifactOwnImage[] = [];
+  if (artifact.coverImageId !== null) {
+    images.push({ id: artifact.coverImageId, kind: 'cover', where: `the cover of “${artifact.name}”` });
+  }
+  const mapImageId = encounterMapImageId(artifact, battles);
+  if (mapImageId !== null) {
+    images.push({ id: mapImageId, kind: 'map', where: `the map of “${artifact.name}”` });
+  }
+  return images;
+}
+
 /**
  * Every image the document wants, with the budget each one prints at. Maps get
  * `PDF_MAP_MAX_LONG_EDGE` (a battlemap must survive print at the intake cap);
@@ -654,17 +694,13 @@ function imageInventories(input: {
     );
   }
   for (const artifact of scoped) {
-    if (artifact.coverImageId !== null) {
+    for (const image of artifactOwnImages(artifact, battles)) {
       add(
-        artifact.coverImageId,
-        'cover',
-        `the cover of “${artifact.name}”`,
-        PDF_COVER_MAX_LONG_EDGE,
+        image.id,
+        image.kind,
+        image.where,
+        image.kind === 'map' ? PDF_MAP_MAX_LONG_EDGE : PDF_COVER_MAX_LONG_EDGE,
       );
-    }
-    const mapImageId = encounterMapImageId(artifact, battles);
-    if (mapImageId !== null) {
-      add(mapImageId, 'map', `the map of “${artifact.name}”`, PDF_MAP_MAX_LONG_EDGE);
     }
   }
   return { byId, requests };
@@ -672,9 +708,10 @@ function imageInventories(input: {
 
 /**
  * Reads the module's stored plan and turns it into renderable sections — THE
- * one reader, used by the definition builder (which renders) and by the async
- * builder (which decides what to preload, from the same outcome, so the loaded
- * set and the printed set can never disagree).
+ * one reader, used by the definition builder (which renders) and by the plan
+ * INSPECTOR. It is NOT the preloader's source any more (docs/17 row 187): what
+ * the document prints is no longer a subset of what the plan anchored, so the
+ * preloader takes `imageInventories` — the SAME set the renderer draws from.
  */
 export function resolveDocumentPlan(input: {
   module: Module;
@@ -926,10 +963,10 @@ export function referenceSitesFor(
  * §7's back-reference line, as content: `Referenced from: <place> · <place>`,
  * every place an INTERNAL LINK to where it prints. It is appended to the
  * artifact section's own text column, because §7 binds the SECTION to state it
- * and NOT every artifact section has a companion to state it in — `read-aloud`
- * and `aside` sections deliberately carry no sidebar detail at all
- * (`roleDetail`), and an artifact section must not lose its back-references
- * because of the role the plan chose for it.
+ * and NOT every artifact section has a companion to state it in — a
+ * `read-aloud`/`aside` section can carry no mechanics by role (docs/17 row 187
+ * still lets it carry its artifact's own picture), and an artifact section must
+ * not lose its back-references because of the role the plan chose for it.
  *
  * A row the document's own text never names gets NO line: there is nothing to
  * state (and the procedural outline may legitimately print such a row, docs/19
@@ -950,13 +987,19 @@ function referencedFromContent(artifact: AnyArtifact, state: RenderState): Conte
  * docs/19 §10.1, the owner's own answer — *"ONCE, with a link back"*: the ONE
  * rule for a companion that would print a second time.
  *
- * The FIRST section that actually carries a companion prints it and is
- * recorded; every later one prints the §5-shaped pointer instead, LINKED to
- * where the companion printed. The record is taken only when a companion is
- * really emitted: a section whose role carries no companion (`read-aloud`,
- * `aside`) must not claim the row and then point a reader at a sidebar that
- * holds nothing — the artifact's mechanics would print NOWHERE, which §10's
- * second answer ("the document is COMPLETE") forbids.
+ * The FIRST section that actually carries the artifact's MECHANICS prints them
+ * and is recorded; every later one prints the §5-shaped pointer instead,
+ * LINKED to where they printed. The record is taken only when mechanics are
+ * really emitted: a section whose role carries none (`read-aloud`, `aside`)
+ * must not claim the row and then point a reader at a sidebar that holds
+ * nothing — the artifact's mechanics would print NOWHERE, which §10's second
+ * answer ("the document is COMPLETE") forbids.
+ *
+ * WHAT IT IS *NOT* ABOUT (docs/17 row 187): the artifact's own ARTWORK. Its
+ * cover and its map plate belong to the artifact's DESCRIPTION, so they print
+ * at EVERY place the artifact is described, whatever the role decided
+ * (`companionContent` composes the two — artwork first, then this rule's
+ * mechanics).
  */
 function companionOnce(input: {
   artifact: AnyArtifact;
@@ -971,6 +1014,36 @@ function companionOnce(input: {
     return input.detail;
   }
   return [earlierDetailMarker(input.artifact.name, earlier)];
+}
+
+/**
+ * The companion ONE artifact description emits, with BOTH rules applied in ONE
+ * place (docs/17 row 187) so the procedural chapter, the gallery and a planned
+ * section cannot disagree about what an artifact's detail is:
+ *
+ * - **`artwork` always prints** — the artifact's OWN cover and its map plate
+ *   (docs/19 §4: an image is a full-width item, which is why the caller's
+ *   `hasImage` is computed from the same fact). It is the description's, never
+ *   the plan's to gate.
+ * - **`mechanics` print through §10.1's `companionOnce`** — the half a REPEATED
+ *   description replaces with a link back, and the half a `read-aloud`/`aside`
+ *   role suppresses (`roleDetail`).
+ */
+function companionContent(input: {
+  artifact: AnyArtifact;
+  destination: string;
+  detail: { artwork: Content[]; mechanics: Content[] };
+  state: RenderState;
+}): Content[] {
+  return [
+    ...input.detail.artwork,
+    ...companionOnce({
+      artifact: input.artifact,
+      destination: input.destination,
+      detail: input.detail.mechanics,
+      state: input.state,
+    }),
+  ];
 }
 
 /**
@@ -1277,18 +1350,26 @@ function artifactProse(artifact: AnyArtifact, state: RenderState): Content[] {
  * section, and its cross-references. This is the list the page model routes to
  * a sidebar or to the artifact's own page; it is built by the SAME builders
  * that always built it, so the layout moves content and never rewrites it.
+ *
+ * It answers in its TWO halves because they are governed by DIFFERENT rules
+ * (docs/17 row 187) — `artwork` is the artifact's own described picture and
+ * prints at every description, whatever the plan and the section's ROLE say,
+ * while `mechanics` is the half §10.1's "ONCE, with a link back" and the
+ * `read-aloud`/`aside` role gate apply to. `companionContent` is the ONE place
+ * they are composed into a companion, so the printed order cannot drift.
  */
 function artifactDetail(
   artifact: AnyArtifact,
   state: RenderState,
   options: { covers: boolean },
-): Content[] {
-  const out: Content[] = [];
-  if (options.covers) out.push(...artifactCoverContent(artifact, state));
-  out.push(...encounterMapPlate(artifact, state));
-  out.push(...dataSections(artifact, state));
-  out.push(...artifactLinksContent(artifact, state));
-  return out;
+): { artwork: Content[]; mechanics: Content[] } {
+  const artwork: Content[] = [];
+  if (options.covers) artwork.push(...artifactCoverContent(artifact, state));
+  artwork.push(...encounterMapPlate(artifact, state));
+  return {
+    artwork,
+    mechanics: [...dataSections(artifact, state), ...artifactLinksContent(artifact, state)],
+  };
 }
 
 /** The chapters the document prints, in order, with audience filtering. */
@@ -1488,7 +1569,9 @@ function asideRoleContent(blocks: Content[]): Content[] {
  *
  * `read-aloud` and `aside` carry prose only — a stat block inside narration or
  * a parenthetical would be a lie about what the section is — which is why
- * `roleDetail` answers "no companion" for exactly those two roles.
+ * `roleDetail` answers "no MECHANICS" for exactly those two roles. It never
+ * answers "no companion" (docs/17 row 187): the artifact's own picture is not
+ * mechanics and prints whatever the role is.
  */
 function roleProse(role: DocumentPlanRole, blocks: Content[]): Content[] {
   switch (role) {
@@ -1504,20 +1587,31 @@ function roleProse(role: DocumentPlanRole, blocks: Content[]): Content[] {
 }
 
 /**
- * The COMPANION of a planned section: the source's own structured data (a
- * roster, a stat box, kind fields) and its outgoing cross-references. It stays
- * filtered by the DOCUMENT's audience, so the plan can never print GM mechanics
- * into the player book — and it is the SAME `dataSections` the procedural
- * document prints, so one artifact's mechanics read identically in both.
+ * The COMPANION of a planned section, split the way its two rules apply
+ * (docs/17 row 187): the artifact's own ARTWORK always prints, and its
+ * MECHANICS — the source's own structured data (a roster, a stat box, kind
+ * fields) and its outgoing cross-references — are the part a ROLE governs. It
+ * stays filtered by the DOCUMENT's audience, so the plan can never print GM
+ * mechanics into the player book — and it is the SAME `artifactDetail` the
+ * procedural document prints, so one artifact's mechanics read identically in
+ * both.
+ *
+ * `read-aloud` and `aside` carry prose only — a stat block inside narration or
+ * a parenthetical would be a lie about what the section is — which is why their
+ * MECHANICS are empty and their artwork is not: the artifact's own picture is
+ * not mechanics, and a location or NPC whose role is narration still has a
+ * picture the reader asked for.
  */
 function roleDetail(
   role: DocumentPlanRole,
-  artifact: AnyArtifact | null,
+  artifact: AnyArtifact,
   state: RenderState,
-): Content[] {
-  if (artifact === null) return [];
-  if (role === 'read-aloud' || role === 'aside') return [];
-  return [...dataSections(artifact, state), ...artifactLinksContent(artifact, state)];
+): { artwork: Content[]; mechanics: Content[] } {
+  const detail = artifactDetail(artifact, state, { covers: true });
+  if (role === 'read-aloud' || role === 'aside') {
+    return { artwork: detail.artwork, mechanics: [] };
+  }
+  return detail;
 }
 
 /** The kicker above a planned section: what the section IS, never its role. */
@@ -1596,8 +1690,15 @@ function plannedSectionAudible(
 /**
  * One planned section as a PAGE-MODEL BLOCK (docs/19 §3–§5): the heading, the
  * source-naming kicker, the images the plan anchored and the role-treated prose
- * are MAIN content ("the text"), and the source's own structured data is the
- * DETAIL companion the page model routes to a sidebar or to an own page.
+ * are MAIN content ("the text"), and the artifact's own detail is the DETAIL
+ * companion the page model routes to a sidebar or to an own page.
+ *
+ * TWO facts about the images, and they are different questions (docs/17 row
+ * 187): the artifact's OWN cover art and its map plate are part of the
+ * DESCRIPTION (`roleDetail`), so they print whether or not the plan anchored
+ * anything; the plan's `images` belong to it as EXTRAS (a plate or picture it
+ * deliberately places), and one that names the artifact's own picture is
+ * skipped rather than printing the same image twice.
  *
  * `pageBreak` is GONE from the heading. docs/19 §3: *"Sections flow. No page
  * break per section"* — a break is now the PAGE MODEL's decision (an own-page
@@ -1611,6 +1712,9 @@ function plannedSectionBlock(
   total: number,
   module: Module,
 ): PageBlock {
+  const artifact = section.artifact;
+  const ownImages =
+    artifact === null ? [] : artifactOwnImages(artifact, state.input.battles ?? []);
   const main: Content[] = [];
   const aside = section.role === 'aside';
   main.push({
@@ -1651,7 +1755,6 @@ function plannedSectionBlock(
           : partTextContent(part, total, state.problems, state);
     }
   } else {
-    const artifact = section.artifact;
     if (artifact === null) {
       blocks = [
         alertBox(`“${section.title}” — the row it names is not in this document's pool`),
@@ -1662,23 +1765,26 @@ function plannedSectionBlock(
   }
 
   // A plan-anchored image is a full-width item (a plate especially), so it
-  // rides the MAIN column of the section's own page — see `blockPlacement`.
+  // rides the MAIN column of the section's own page — see `blockPlacement`. An
+  // anchor that names the artifact's OWN picture is dropped: the artwork prints
+  // in the companion below, and the same image must not print twice for one
+  // description (docs/17 row 187).
   for (const image of section.images) {
+    if (ownImages.some((own) => own.id === image.id)) continue;
     main.push(...anchoredImageContent(image, state));
   }
   main.push(...roleProse(section.role, blocks));
   // §7's back-references: the section states where the row is referred to
   // from. It rides the MAIN column, after the section's text, so an
-  // `aside`/`read-aloud` section (which carries no companion by role) states it
-  // too.
-  if (section.artifact !== null) {
-    main.push(...referencedFromContent(section.artifact, state));
+  // `aside`/`read-aloud` section (whose role suppresses its mechanics, though
+  // not its artifact's own picture since docs/17 row 187) states it too.
+  if (artifact !== null) {
+    main.push(...referencedFromContent(artifact, state));
   }
-  const artifact = section.artifact;
   const detail =
     artifact === null
       ? []
-      : companionOnce({
+      : companionContent({
           artifact,
           destination: section.destination,
           detail: roleDetail(section.role, artifact, state),
@@ -1688,12 +1794,15 @@ function plannedSectionBlock(
     main,
     detail,
     placement: blockPlacement({
-      kind: section.artifact?.kind ?? null,
-      hasImage: section.images.length > 0,
+      kind: artifact?.kind ?? null,
+      // An image needs the page (docs/19 §4), and the artifact's OWN artwork is
+      // one whether or not the plan anchored anything — a location with a cover
+      // must get the full-width treatment its picture needs (docs/17 row 187).
+      hasImage: section.images.length > 0 || ownImages.length > 0,
       detail,
       styles: state.measureStyles,
     }),
-    name: section.artifact?.name ?? null,
+    name: artifact?.name ?? null,
   };
 }
 
@@ -1830,9 +1939,10 @@ function chapterBlock(title: string, id: string, kickerText: string | null): Pag
 /**
  * One artifact as a flow block, for the PROCEDURAL outline and the NPC
  * gallery: the chapter's kicker and the artifact's name are the block's main
- * content together with its prose, and `artifactDetail` is the companion the
- * page model places by §4/§5. The block closes with §7's back-references — the
- * places in the document's own text that name this row.
+ * content together with its prose, and `artifactDetail` — its own artwork and
+ * its mechanics — is the companion the page model places by §4/§5. The block
+ * closes with §7's back-references — the places in the document's own text that
+ * name this row.
  */
 function artifactBlock(
   artifact: AnyArtifact,
@@ -1849,7 +1959,7 @@ function artifactBlock(
   });
   main.push(...artifactProse(artifact, state));
   main.push(...referencedFromContent(artifact, state));
-  const detail = companionOnce({
+  const detail = companionContent({
     artifact,
     destination: options.destination,
     detail: artifactDetail(artifact, state, { covers: options.covers }),
@@ -1860,9 +1970,7 @@ function artifactBlock(
     detail,
     placement: blockPlacement({
       kind: artifact.kind,
-      hasImage:
-        artifact.coverImageId !== null ||
-        encounterMapImageId(artifact, state.input.battles ?? []) !== null,
+      hasImage: artifactOwnImages(artifact, state.input.battles ?? []).length > 0,
       detail,
       styles: state.measureStyles,
     }),
@@ -2270,11 +2378,17 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   if (gallery.length > 0) {
     blocks.push(chapterBlock('NPC Gallery', 'node-npcs', null));
     for (const npc of gallery) {
-      // The gallery is a reference list: no cover thumbnails (unchanged).
+      // The gallery is where an NPC is described, so an NPC's portrait prints
+      // here like any other artifact's own cover (docs/17 row 187, the owner:
+      // *"i would at least expect NPCs and locations when they are described
+      // anyways"*). This used to pass `covers: false` under a comment claiming
+      // the gallery had no cover thumbnails — the claim was false: the cover is
+      // the row's own art and `artifactDetail` prints it wherever the row is
+      // described.
       blocks.push(
         artifactBlock(npc, state, {
           chapterKicker: 'NPC Gallery',
-          covers: false,
+          covers: true,
           destination: `node-${npc.id}`,
         }),
       );
@@ -2439,27 +2553,22 @@ export async function buildModulePdf(
     }
   }
   const spellIndexes = await loadSpellIndexesFor(statBlockSystems(blocks));
-  // What to PRELOAD comes from the same plan read the renderer uses: with a
-  // plan applied the document prints exactly the images the plan anchored, so
-  // preloading an unanchored one would both waste the decode and report a
-  // failure for an image the document never wanted. A plan that cannot be
-  // applied falls back to the procedural document, which wants them all.
-  const outcome = resolveDocumentPlan({ module, scoped, battles });
-  const allRequests = imageInventories({ module, scoped, battles }).requests;
-  const wanted =
-    outcome.status === 'applied'
-      ? new Set(outcome.sections.flatMap((section) => section.images.map((image) => image.id)))
-      : null;
-  const requests =
-    wanted === null
-      ? allRequests
-      : allRequests.filter(
-          (request) =>
-            wanted.has(request.id) ||
-            // The cover page is not a planned section: it prints the module's
-            // own cover whenever the module has one.
-            request.id === module.coverImageId,
-        );
+  // What to PRELOAD is `imageInventories`: every scoped artifact's own cover,
+  // every encounter's map (its own or the live board's) and the module's cover —
+  // the SAME set the printed document draws from in BOTH paths, so the loaded
+  // set and the printed set are ONE decision (docs/17 row 187).
+  //
+  // UNTIL ROW 187 this narrowed the requests to the images the plan ANCHORED
+  // (plus the module cover), on the reasoning that a planned document "prints
+  // exactly the images the plan anchored". That reasoning was the defect's other
+  // half: an artifact's own cover is not the plan's to gate, so the narrowing
+  // made the planned path preload the very images it then failed to print — and,
+  // once the renderer printed them anyway, would have reported every one of them
+  // as "not in the preloaded image set". The narrowing is DELETED rather than
+  // extended: a second "what will print" rule beside the renderer's is exactly
+  // the drift this seam exists to prevent, and the cost of preloading the
+  // scoped set is the cost the procedural outline has always paid.
+  const requests = imageInventories({ module, scoped, battles }).requests;
   const images = await loadPdfImages(requests, {
     ...(options.codec === undefined ? {} : { codec: options.codec }),
   });
