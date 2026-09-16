@@ -16,7 +16,7 @@ import { updatePersona, resetPersonaToDefault } from '@/db/personaRepo';
 import { readSettings } from '@/db/settingsRepo';
 import { ARTIFACT_KIND_SINGULAR } from '@/domain/artifact';
 import { toastError, toastSuccess } from '@/lib/toast';
-import { ModelInput } from '@/features/settings/model-input';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { ReasoningEffortSelect } from '@/features/settings/reasoning-effort-select';
 
 /**
@@ -111,12 +111,13 @@ function PersonaFields({ persona }: { persona: Persona }): JSX.Element {
           }}
         />
       </div>
-      <ModelInput
+      <ModelWidget
+        variant="field"
         id={`persona-model-${persona.id}`}
         label="Model (blank = default)"
         value={persona.model}
         placeholder={defaultModel === '' ? 'e.g. anthropic/claude-sonnet-4.5' : defaultModel}
-        canBrowse={settings?.openRouterApiKey !== ''}
+        canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
         onChange={(value) => {
           if (value !== persona.model) {
             void updatePersona(persona.id, { model: value }).catch((error: unknown) => {

@@ -529,6 +529,7 @@ test) · ❌ gap.
 | **An artifact's own image prints WHEREVER the artifact is described** (docs/17 row 187, docs/19 §2/§4): a planned section whose artifact carries a cover prints it with the plan anchoring NOTHING, an encounter's own map plate does too, a `read-aloud`/`aside` section still prints its artifact's picture while its mechanics stay suppressed, the NPC gallery prints portraits, a plan anchor naming the artifact's own picture is not printed twice, a row with no image prints none, and an image that exists but was not preloaded is LOUD (named problem + alert box) | `modulePdfPlan.test` (`18 → 22`: 5 new pins, one of them replacing the old “prints exactly the images the plan anchored” pin), `pdfLayout.test` (`36 → 37`: the large fixture, planned with every anchor removed), `modulePdf.test` (the procedural loud placeholders and the no-map/no-schematic pins, unchanged) | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
+| **The ONE model-picking widget** (docs/17 rows 193/199) — two variants (field: label + free-form input + browse; trigger: the compact button), one shared panel; both offer the account list through the ONE option seam, honour free-form entry, and are LOUD with no key / on a failed fetch; recents render in stored order only where the instance edits the GLOBAL chat model, and a choose records through the ONE seam only there | `model-widget.test` (13 pins, NEW), `model-picker.test` (row 193's 5, unchanged), `settings-page.test` (the placement on the REAL Settings page), `feature-shell-and-editor.test` (`onboarding-wizard.test.tsx`'s key-step field writes `defaultChatModel`), `architecture/one-model-option-source.test` (the whole mount population + `recentModels` placement + `recordRecentChatModel` callers) | ✅ |
 | Top bar: the **GLOBAL chat-model picker** beside Settings (docs/17 row 193) — the current `defaultChatModel` on its trigger, the **Recently used** group in stored recency order (never re-sorted), free-form entry for an unlisted id, the ONE account model-id option source, and LOUD no-key / failed-fetch states | `model-picker.test` (5 pins), `recent-chat-models.test` (the ordering rule), `settingsRepo.test` (the recording seam, incl. concurrent recorders), `runEngine.test` (a run records the global default; a persona override does not), `architecture/one-model-option-source.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | A PERSISTENT error notice carries a real dismiss control, and dismissing it destroys no evidence (docs/05 §Error surfaces rule, docs/17 row 136) | `toast-persistent-dismiss.test.tsx` (4 pins, NEW: the real `Toaster` + the real seam, the same through `toastErrorPersistent`, the transient case unchanged, and the console record byte-identical after the click) + `toast.test.ts` (the seam's options) | ✅ |
@@ -5888,6 +5889,75 @@ it cannot drift silently); no test proves the recency list matches his memory �
 it proves the ORDER the app stored; and no test proves a real OpenRouter account
 returns any particular model list (the fetch is mocked, while its failure and
 its absence are the states that are pinned).
+
+### The ONE model-picking widget (docs/17 row 199, docs/05 §Top bar/§Settings/§Onboarding, docs/18 §2.1/§2.3)
+
+The owner asked to make the model picker "a global widget … shared across all
+model picking instances (setup too)". The measured population was NINE
+model-picking instances: `ModelInput` EIGHT times (Settings ×5 — global chat,
+fallback chat, embedding, image, fallback image — plus the persona override, the
+Idea Board's per-board model and the dense canvas-chat field) and row 193's
+top-bar `ModelPicker` once. Both components are deleted; `model-widget.tsx` now
+renders both surface shapes over one implementation, and the setup wizard's
+OpenRouter step gained the field (it had none).
+
+The pins are split by idea, each naming row 199 unless it is a row-193 pin:
+
+- `tests/features/model-widget.test.tsx` (NEW, 13 tests, the widget in
+  isolation): the field variant renders a label + free-form input + browse and
+  the trigger variant renders the compact trigger; EACH variant offers the
+  account list through `listModelIds`, honours free-form entry for a typed id
+  the account list does not contain, shows the loud no-key state with no fetch
+  attempted, and shows a failed fetch's reason in the panel AND through
+  `toastError` (never an empty list reading as "no models"); a `fetchOptions`
+  override is used without touching `listModels`; recents render in stored order
+  when passed and are absent when not; and a recents-offering instance records a
+  choose through the ONE seam while a non-recents instance does not.
+- `tests/settings-page.test.tsx` (the REAL Settings page): the chat-model
+  field's panel shows the stored recents in order while the fallback-chat and
+  first-try-image panels show none — the PLACEMENT pinned behaviourally, not
+  just by the component's props.
+- `tests/features/feature-shell-and-editor.test.tsx`
+  (`onboarding-wizard.test.tsx`'s harness): the OpenRouter step renders the
+  field with `DEFAULT_CHAT_MODEL`, and choosing through its panel writes
+  `settings.defaultChatModel` — the same setting the top bar and Settings write,
+  with no wizard-only model setting.
+- `tests/architecture/one-model-option-source.test.ts` (row 193's SOURCE SCAN,
+  extended): the whole mount population by file and count (TopBar 1,
+  settings-section 5, persona 1, IdeaBoard 1, ChatSidebar 1, SetupWizardDialog
+  1), `ModelInput`/`ModelPicker` absent from `src/` and both deleted files gone,
+  `recentModels={` at exactly the three global-chat mounts, and
+  `recordRecentChatModel(` at exactly the widget, the repo definition and the run
+  funnel. A new copy or a dropped-through inline picker reds.
+- Row 193's behavioural pins (`model-picker.test`, `recent-chat-models.test`,
+  `settingsRepo.test`, `runEngine.test`) pass UNCHANGED — recency order, cap and
+  dedupe included; the trigger's testids and their `waitFor`-on-the-asserted-field
+  discipline are kept.
+
+**Injected RED, watched (four arms, the changed file's hash PRINTED by `git
+hash-object` for every arm and the tree restored from an out-of-tree pristine
+copy by a `trap` before the next arm — no two arms identical, no VOID arm;
+baseline hashes `model-widget.tsx` `4768ffe29a720cdcc63c5b813a8978f6fdb658a9`,
+`settings-section.tsx` `c56faec9aed6c9a98b7ba423072f969409523c04`,
+`SetupWizardDialog.tsx` `49c456cb5bd1e767d594d06cd6aaaa9737f2d9e1`, all three
+re-hashed identical after the last arm):** **A** baseline → **GREEN 3 files / 28
+tests**; **B** the shared panel's free-form `Use "…"` group removed
+(`model-widget.tsx` `db363385fa161caa6db9ac0fc6074934f609fd9d`) → **RED 2** —
+BOTH variants' free-form pins; **C** `recentModels={current.recentChatModels}`
+dropped at the Settings chat-model mount (`settings-section.tsx`
+`86221c1eceb55141f79e9371447da185d3de383e`) → **RED 2** — the architecture
+placement scan AND the Settings-page placement pin; **D** the wizard field's
+`onChange` write removed (`SetupWizardDialog.tsx`
+`dda97fc3a5d4ae4fe81af731c1de63e737fc7b4f`) → **RED 1**, exactly the wizard pin.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** jsdom asserts definitions, not
+a rendered page, so no pin proves the two variants LOOK right side by side (they
+prove each renders its own shell and both share every behaviour behind it); the
+canvas-chat sidebar's "no recents" is proven by its model source being the
+session-only `useCanvasChatStore.setModelSelection`, not the global setting, and
+by the source scan that no mount outside the three passes `recentModels`; and no
+test proves a real OpenRouter account returns any particular list (the fetch is
+mocked, while its failure and its absence are the states pinned).
 
 ### The run-completion trigger for a restocked roster's portraits (docs/17 row 196, docs/11 §Module generation integration, docs/18 §2)
 

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -374,5 +374,45 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByTestId('experiments-section')).toBeInTheDocument();
     expect(screen.getByTestId('experiments-open-lab')).toHaveAttribute('href', '/lab');
+  });
+
+  it('offers the GLOBAL chat recents only in the chat-model field, never in the other tiers (docs/17 row 199)', async () => {
+    // No API key: the panels open in the loud no-key state, so this pin needs no
+    // /models fetch — it is about WHERE recents may appear.
+    await updateSettings({
+      defaultChatModel: 'a/first',
+      recentChatModels: ['a/first', 'b/second'],
+    });
+    const user = userEvent.setup();
+    renderSettingsPage();
+    await flushAsyncUpdates();
+
+    // The GLOBAL chat-model field shows the stored recents, most-recent-first.
+    await user.click(screen.getByRole('button', { name: 'Browse First-try chat models' }));
+    const recents = await screen.findByTestId('model-picker-recents');
+    expect(
+      within(recents)
+        .getAllByRole('option')
+        .map((item) => item.textContent),
+    ).toEqual(['a/first', 'b/second']);
+    // Close this panel so the next one is the only open panel.
+    await user.click(screen.getByRole('button', { name: 'Browse First-try chat models' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('model-picker-recents')).toBeNull();
+    });
+
+    // The fallback chat tier is NOT the global model: it must not display them.
+    await user.click(screen.getByRole('button', { name: 'Browse Fallback chat models' }));
+    expect(await screen.findByTestId('model-picker-no-key')).toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-recents')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Browse Fallback chat models' }));
+    await flushAsyncUpdates();
+
+    // …and neither does an image tier (its list is a different source entirely).
+    await user.click(screen.getByRole('button', { name: 'Browse First-try image models' }));
+    expect(await screen.findByTestId('model-picker-no-key')).toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-recents')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Browse First-try image models' }));
+    await flushAsyncUpdates();
   });
 });

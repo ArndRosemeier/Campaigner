@@ -6,7 +6,7 @@ import { CopyIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { ModelInput } from '@/features/settings/model-input';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { ideaBoardEditorExtensions } from '@/features/idea-board/editor';
 import {
   discardIdeaProposal,
@@ -150,12 +150,13 @@ export function IdeaBoardPage(): JSX.Element {
             Write freely. Ask for ideas, talk them through, or ask for a new draft — a
             suggested draft is never applied until you accept it.
           </p>
-          <ModelInput
+          <ModelWidget
+            variant="field"
             id="idea-board-model"
             label="Model"
             value={board.model}
             placeholder="Settings default"
-            canBrowse
+            canBrowse={true}
             onChange={(model) => {
               editIdeaBoard({ model });
             }}

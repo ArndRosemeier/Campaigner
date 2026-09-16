@@ -83,6 +83,10 @@ export const WIZARD_STEPS: readonly WizardStep[] = [
         text: 'Settings → OpenRouter → API key → Save, then press “Test key” — you should see “Key works”.',
       },
       {
+        heading: 'Pick your model',
+        text: 'The field below the links chooses the first-try chat model every run starts on — the prefilled default is a fine start, and you can change it anytime from the top bar or Settings.',
+      },
+      {
         heading: 'Privacy',
         text: 'The key is stored only in this browser and is sent only to openrouter.ai. Campaigner has no backend.',
       },

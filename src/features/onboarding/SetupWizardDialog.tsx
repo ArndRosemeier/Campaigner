@@ -15,6 +15,9 @@ import {
 import { cn } from '@/lib/utils';
 import { toastError } from '@/lib/toast';
 import { ONBOARDING_STEP_IDS, type OnboardingStepId } from '@/domain';
+import { DEFAULT_CHAT_MODEL } from '@/domain/settings';
+import { updateSettings } from '@/db/settingsRepo';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { WIZARD_STEPS, wizardStep } from '@/features/onboarding/onboardingContent';
 import {
   firstUnresolvedStepId,
@@ -277,30 +280,51 @@ export function SetupWizardDialog(): JSX.Element | null {
                           </Button>
                         </div>
                       ) : (
-                        step.effective === 'pending' && (
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              data-testid={`wizard-done-${step.id}`}
-                              onClick={() => {
-                                void resolveStep(step.id, 'done');
-                              }}
-                            >
-                              Mark done
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              data-testid={`wizard-skip-${step.id}`}
-                              onClick={() => {
-                                void resolveStep(step.id, 'skipped');
-                              }}
-                            >
-                              Skip
-                            </Button>
-                          </div>
-                        )
+                        <>
+                          {/* The key step also offers the model CHOICE through
+                              the ONE shared ModelWidget (docs/17 row 199): it
+                              writes the same `settings.defaultChatModel` the
+                              top-bar trigger and the Settings field write, so
+                              "setup too" needs no second mechanism. The step's
+                              completion signal stays the saved key — picking a
+                              model is a preference, not a requirement. */}
+                          {step.id === 'openrouter' && progress.settings !== undefined && (
+                            <ModelWidget
+                              variant="field"
+                              id="wizard-chat-model"
+                              label="First-try chat model"
+                              value={progress.settings.defaultChatModel}
+                              placeholder={DEFAULT_CHAT_MODEL}
+                              canBrowse={progress.settings.openRouterApiKey !== ''}
+                              recentModels={progress.settings.recentChatModels}
+                              onChange={(value) => updateSettings({ defaultChatModel: value })}
+                            />
+                          )}
+                          {step.effective === 'pending' && (
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid={`wizard-done-${step.id}`}
+                                onClick={() => {
+                                  void resolveStep(step.id, 'done');
+                                }}
+                              >
+                                Mark done
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                data-testid={`wizard-skip-${step.id}`}
+                                onClick={() => {
+                                  void resolveStep(step.id, 'skipped');
+                                }}
+                              >
+                                Skip
+                              </Button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

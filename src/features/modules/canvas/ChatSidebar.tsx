@@ -28,7 +28,7 @@ import {
 import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { ModelInput } from '@/features/settings/model-input';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import {
@@ -141,7 +141,6 @@ export function ChatSidebar({
   const modelSelection = state?.modelSelection ?? null;
   const inFlight = state?.inFlight ?? false;
   const effectiveModel = modelSelection ?? settings?.defaultChatModel ?? '';
-  const canBrowse = settings !== undefined && settings.openRouterApiKey !== '';
   const sendDisabled = aiBusy || inFlight || input.trim() === '';
   // WHY a chat control cannot act (null = it can), stated through the shared
   // blocked-control device. Nothing here is self-evident EXCEPT the two states
@@ -328,12 +327,13 @@ export function ChatSidebar({
         </Button>
       </div>
       <div className="border-b px-3 py-2.5">
-        <ModelInput
+        <ModelWidget
+          variant="field"
           id="canvas-chat-model"
           label="Chat model"
           value={effectiveModel}
           placeholder={settings?.defaultChatModel ?? ''}
-          canBrowse={canBrowse}
+          canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
           inputClassName="h-11"
           triggerClassName="h-11 w-11"
           onChange={(value) => {

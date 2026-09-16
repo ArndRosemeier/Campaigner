@@ -16,7 +16,7 @@ import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain/settings';
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { listImageModels, listModels } from '@/llm/openrouter';
-import { ModelInput } from '@/features/settings/model-input';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { ReasoningEffortSelect } from '@/features/settings/reasoning-effort-select';
 
 type TestState =
@@ -50,6 +50,9 @@ export function SettingsSection(): JSX.Element {
   }
 
   const keyValue = keyDraft ?? current.openRouterApiKey;
+  // The ONE key probe for this card's model fields: the shared widget takes it
+  // as one input instead of every field re-deriving it (docs/17 row 199).
+  const canBrowse = current.openRouterApiKey !== '';
 
   const saveKey = async (): Promise<void> => {
     await saveSettings({ ...current, openRouterApiKey: keyValue.trim() });
@@ -125,28 +128,27 @@ export function SettingsSection(): JSX.Element {
           )}
         </div>
 
-        <ModelInput
+        <ModelWidget
+          variant="field"
           id="chat-model"
           label="First-try chat model"
           value={current.defaultChatModel}
-          onChange={(value) => {
-            void updateSettings({ defaultChatModel: value });
-          }}
+          onChange={(value) => updateSettings({ defaultChatModel: value })}
           placeholder={DEFAULT_CHAT_MODEL}
-          canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+          canBrowse={canBrowse}
+          recentModels={current.recentChatModels}
         />
         <p className="text-xs text-muted-foreground">
           The workhorse every run starts on — a cheaper model is fine here.
         </p>
-        <ModelInput
+        <ModelWidget
+          variant="field"
           id="fallback-chat-model"
           label="Fallback chat model"
           value={current.fallbackChatModel}
-          onChange={(value) => {
-            void updateSettings({ fallbackChatModel: value });
-          }}
+          onChange={(value) => updateSettings({ fallbackChatModel: value })}
           placeholder=""
-          canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+          canBrowse={canBrowse}
         />
         <p className="text-xs text-muted-foreground">
           The escalation tier, used only when the first-try model is congested, refuses the
@@ -192,15 +194,14 @@ export function SettingsSection(): JSX.Element {
             this fine, free models cap at 20 requests/minute.
           </p>
         </div>
-        <ModelInput
+        <ModelWidget
+          variant="field"
           id="embedding-model"
           label="Embedding model"
           value={current.embeddingModel}
-          onChange={(value) => {
-            void updateSettings({ embeddingModel: value });
-          }}
+          onChange={(value) => updateSettings({ embeddingModel: value })}
           placeholder={DEFAULT_EMBEDDING_MODEL}
-          canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+          canBrowse={canBrowse}
         />
 
         <div className="flex items-center justify-between rounded-md border p-3">
@@ -290,26 +291,24 @@ export function SettingsSection(): JSX.Element {
             Lets the Illustrator persona generate images (costs money per image). Images are stored
             locally in this browser.
           </p>
-          <ModelInput
+          <ModelWidget
+            variant="field"
             id="image-model"
             label="First-try image model"
             value={current.imageModel}
-            onChange={(value) => {
-              void updateSettings({ imageModel: value });
-            }}
+            onChange={(value) => updateSettings({ imageModel: value })}
             placeholder={DEFAULT_IMAGE_MODEL}
-            canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+            canBrowse={canBrowse}
             fetchOptions={listImageModels}
           />
-          <ModelInput
+          <ModelWidget
+            variant="field"
             id="fallback-image-model"
             label="Fallback image model"
             value={current.fallbackImageModel}
-            onChange={(value) => {
-              void updateSettings({ fallbackImageModel: value });
-            }}
+            onChange={(value) => updateSettings({ fallbackImageModel: value })}
             placeholder=""
-            canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+            canBrowse={canBrowse}
             fetchOptions={listImageModels}
           />
           <p className="text-xs text-muted-foreground">

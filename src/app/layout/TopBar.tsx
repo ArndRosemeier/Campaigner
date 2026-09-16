@@ -10,10 +10,10 @@ import { ROUTES, campaignIdFromPath, modulePath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
-import { ModelPicker } from '@/features/settings/model-picker';
+import { ModelWidget } from '@/features/settings/model-widget';
 import { TopBarNewModuleButton } from '@/features/modules/top-bar-new-module';
 import { QuickFindTopBarButton } from '@/features/quickfind/quickfind-topbar-button';
-import { readSettings } from '@/db/settingsRepo';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { cn } from '@/lib/utils';
 
 /**
@@ -66,8 +66,16 @@ export function TopBar(): JSX.Element {
         {/* The GLOBAL first-try chat model picker (docs/17 row 193) sits
             immediately beside the Settings nav entry: it edits the same
             `settings.defaultChatModel` the Settings page edits, and its
-            "Recently used" list is always most-recent-first. */}
-        <ModelPicker />
+            "Recently used" list is always most-recent-first. Since docs/17 row
+            199 it is the SAME `ModelWidget` (trigger variant) every other model
+            field renders. */}
+        <ModelWidget
+          variant="trigger"
+          value={settings?.defaultChatModel ?? ''}
+          canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
+          recentModels={settings?.recentChatModels ?? []}
+          onChange={(value) => updateSettings({ defaultChatModel: value })}
+        />
         {lastModule !== null && (
           <NavLink
             to={modulePath(lastModule.campaignId, lastModule.moduleId)}

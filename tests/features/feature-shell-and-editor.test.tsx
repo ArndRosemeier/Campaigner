@@ -63,6 +63,7 @@ import type {
   OnboardingStepId,
 } from '@/domain';
 import { saveSettings, readSettings } from '@/db/settingsRepo';
+import { DEFAULT_CHAT_MODEL } from '@/domain/settings';
 import { INTERRUPTED_MODULE_GEN_MESSAGE } from '@/llm/moduleGenReconcile';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
@@ -1544,6 +1545,49 @@ describe('onboarding-wizard.test.tsx', () => {
       const step = screen.getByTestId('wizard-step-author');
       expect(within(step).getByTestId('wizard-detail-campaign')).toHaveTextContent('✓');
       expect(within(step).getByTestId('wizard-detail-module')).toHaveTextContent('·');
+      await flushAsyncUpdates();
+    }, 20000);
+  });
+
+  describe('the key step offers the model choice through the ONE widget (docs/17 row 199)', () => {
+    it('renders the field on the OpenRouter step and it writes defaultChatModel', async () => {
+      await saveSettings({
+        ...defaultSettings(),
+        onboarding: { status: 'active' as const, stepState: [{ id: 'welcome', state: 'done' }] },
+      });
+      renderAppAt(ROUTES.campaignPicker);
+      openWizard('openrouter');
+      await screen.findByTestId('setup-wizard');
+      await waitFor(() => {
+        expect(screen.getByTestId('wizard-row-openrouter')).toHaveAttribute(
+          'aria-expanded',
+          'true',
+        );
+      });
+
+      const step = screen.getByTestId('wizard-step-openrouter');
+      const field = within(step).getByLabelText('First-try chat model');
+      expect(field).toHaveValue(DEFAULT_CHAT_MODEL);
+
+      // Choose through the widget's own free-form entry (the panel's search box
+      // is local state, so this is not racing the field's live value).
+      const user = userEvent.setup();
+      await user.click(
+        within(step).getByRole('button', { name: 'Browse First-try chat models' }),
+      );
+      await user.type(screen.getByPlaceholderText(/type a model id/), 'wizard/custom-model');
+      await user.click(await screen.findByTestId('model-picker-use-custom'));
+
+      // The field writes the SAME `settings.defaultChatModel` the top-bar
+      // picker and the Settings field write — no wizard-only model setting.
+      await waitFor(async () => {
+        expect((await readSettings()).defaultChatModel).toBe('wizard/custom-model');
+      });
+      await waitFor(() => {
+        expect(within(step).getByLabelText('First-try chat model')).toHaveValue(
+          'wizard/custom-model',
+        );
+      });
       await flushAsyncUpdates();
     }, 20000);
   });
