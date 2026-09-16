@@ -2904,6 +2904,45 @@ differs from its baseline and every injection reds a NAMED pin.**
 | **C — the unmatched-hint check removed** (`reportUnmatchedEntityLevelHints(module)` → a no-op) | entity-batch `b5378a17…` → `33cf257d1d65ec611cb449680baf6536752bf106` → `b5378a17…` | **RED 1**: `reports the recording name and level, and never invents an entity for it` — `expected "vi.fn()" to be called 1 times, but got 0 times` |
 | **D — the hint dropped before the batch** (`? entityLevelHintFor(…)` → `? null`) | entity-batch `b5378a17…` → `55cd6c5a47e28085b531d915d489c9dd5337a089` → `b5378a17…` | **RED 2**: `a target whose record carries a hint gets the paragraph AND the run input field` (`expected 'Detail the entity "Kael the Grey" …' to contain "The module fixes this entity's level…"`) and `is read per ENTITY …` (`expected undefined to be 7`) |
 
+### The recorded level reaches a TARGETED refill through the engine (docs/17 row 206, docs/18 §2.2 row 193 amended)
+
+Row 197 delivered the module writer's level to the generators through the ENTITY
+RECORD, but the owner regenerated a module-owned NPC whose record says 7 and got
+level 13 with NO warning and an unfiltered spell vocabulary. The measured cause is
+a MISSING COPY, not a wrong one: the artifact editor's "Regenerate with AI"
+rebuilt `StartRunInput` from scratch, so `entityLevelHint` never reached
+`runStatblock`; the level clause came out empty, the deviation guard was keyed on
+the same absent field (hence the silence), and `mobCasterLevel('')` applied no rank
+cap. The cure is ONE engine seam, not a per-caller patch: `targetModuleGrounding`
+(already computed for every targeted generate run) now carries the record's level,
+and `runStatblock` resolves `input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint`.
+The same slice closes the fallback's second fragility (`buildEntityBrief`'s
+generated party-level line used to be regexable as the ENTITY's level) and makes a
+module-owned entity with NO recorded level LOUD on the existing `notice` seam.
+
+| fact pinned | where |
+|---|---|
+| **The regression pin**: a TARGETED refill of a module-owned npc (record 7) whose brief contains NO level and whose run input carries NO `entityLevelHint` → the stat-block prompt contains `at level 7` and the author instruction, AND the resolved level reached the vocabulary cap (`pf2eCantripRankFor(7)` = 4: the rank-3 spell is offered, the rank-6 spell is NOT) | `tests/llm/runEngine.test.ts` (NEW) |
+| **The deviation notice names BOTH levels** when that run's reply prints 13 (`fixed this entity at level 7` / `written at level "13"`) — keyed on the RESOLVED level, so a grounding-borne hint is guarded like a run-input one | `tests/llm/runEngine.test.ts` (NEW) |
+| **The party-line trap**: a brief containing only `Party of 4 adventurers at level 13.` builds NO level clause (the phrase still rides the prompt as part of the brief); the fallback reads `roomBudget.withoutPartyLevelLines(input.brief)` | `tests/llm/runEngine.test.ts` (NEW) |
+| **The loud absence**: a module-owned target whose record fixes NO level and whose run input carries none produces the named `records no level for this entity` notice AND the run completes (the block is kept, never a failed generation) | `tests/llm/runEngine.test.ts` (NEW) |
+| **Resume/compatibility**: a stored retrieve-step grounding whose `moduleGrounding` lacks the new field parses, the run completes, and the legacy brief regex supplies the level — nothing a pre-206 store never wrote is read | `tests/llm/runEngine.test.ts` (NEW) |
+| **ONE seam owns the resolution** (AGENTS rule 4): source scan — `input.entityLevelHint ?? recordedLevel` at exactly one site, `withoutPartyLevelLines` defined once (`llm/roomBudget`) and called once (the statblock fallback), and NO `.exec(input.brief)` reader anywhere in `src/` | `tests/architecture/one-level-resolution.test.ts` (NEW) |
+| **The entity-batch paths are unchanged**: their brief bytes with a hint and their `startRun` input stay exactly as row 197 pinned them (the hint is applied once; `input` wins over the grounding) | `tests/features/entity-level-hint-batch.test.ts` (5/5) + `tests/features/persona-request.test.ts`, byte-unchanged |
+
+**INJECTION-PROVEN, every arm's file hash printed with `git hash-object`, each arm
+restored from HEAD inside a `trap`, the suite lock held BEFORE injecting, one suite
+at a time (`/tmp/campaigner-level-hint-scratch/diff.sh`, raw logs in
+`/tmp/campaigner-level-hint-scratch/diff/`). No arm was VOID — every injected hash
+differs from the baseline and every injection reds a NAMED pin.**
+
+| arm | injected file (hash before → injected → after) | observed |
+|---|---|---|
+| **A — baseline** | `src/llm/runEngine.ts` `5b68a7c59a2e65b4ae64a61cedd3cfe586a4805d` | GREEN: 2 files / 39 tests |
+| **B — the grounding read removed** (`const recordedLevel = context.moduleGrounding?.entityLevelHint` → `undefined`) | runEngine `5b68a7c5…` → `6a28a148692f135d327883eb65facc80b8294e1a` → `5b68a7c5…` | **RED 1**: `a TARGETED refill of a module-owned npc resolves the recorded level …` — the prompt loses `at level 7` and the rank-6 spell is offered (the cap went null) |
+| **C — the fallback allowed to read the party line again** (`withoutPartyLevelLines(input.brief)` → `input.brief`) | runEngine `5b68a7c5…` → `5af0a2034926458ec9d36825437e698e767048e0` → `5b68a7c5…` | **RED 2**: the party-line pin (`at level 13, grounded` appears) and the source scan (the exclusion call is gone) |
+| **D — the loud-absence notice removed** (`moduleLevelHintAbsenceNotice(…)` → `null`) | runEngine `5b68a7c5…` → `9ed70f3ab505d50e5bb6136c20f094b0e2e8c379` → `5b68a7c5…` | **RED 2**: the loud-absence pin and the stored-grounding compatibility pin (which asserts the absence is now LOUD on a pre-206 store) |
+
 ### Prompt scaffolding echoed back into a document (docs/17 row 142, docs/18 §2.2/§4)
 
 The owner found OUR OWN brief printed in a generated artifact — *"The artifact

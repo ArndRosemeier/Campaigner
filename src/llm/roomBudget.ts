@@ -102,6 +102,29 @@ export function partyLevelLine(level: number): string {
 }
 
 /**
+ * The brief text with the app's generated party-level lines REMOVED — the ONE
+ * exclusion the stat-block fallback applies so a PARTY's level can never be
+ * read as an ENTITY's own level (docs/17 row 206).
+ *
+ * WHY THIS EXISTS. `buildEntityBrief` renders `partyLevelLine(partLevel)` into
+ * every encounter/npc brief ("Party of 4 adventurers at level N."), and the
+ * legacy no-hint fallback in `runEngine.runStatblock` regexes `level N` out of
+ * that same brief. The generated line is the PARTY's level — fed to the draft
+ * so it can calibrate — and the owner's report is exactly that trap: an
+ * unrelated "level 13" satisfied the entity's level with no entity
+ * discrimination and no notice. The matcher is the line's own shape (the
+ * `Party of <n> adventurers at level N.` sentence), so a write of the generated
+ * line and a read of this exclusion cannot drift; a caller's own prose that
+ * does NOT wear that shape is still the fallback's food, which is what keeps
+ * the legacy free-text path (and its byte-identical pins) working. The module's
+ * recorded level never rides this fallback either: when a record fixes one, the
+ * structured value wins before the regex is consulted.
+ */
+export function withoutPartyLevelLines(brief: string): string {
+  return brief.replace(/Party of \d+ adventurers at level \d{1,2}\./gi, '');
+}
+
+/**
  * The referencing part's EXACT level for an encounter mention (docs/11):
  * the first module part (plan order) whose markdown carries the encounter's
  * `[[Name]]` mention supplies its `levelBand` as the exact party level —

@@ -32,6 +32,10 @@ import {
   mobSpellIssues,
   mobSpellVocabulary,
   moduleDocumentText,
+  // The module entity record's ONE level reader (docs/17 row 197), reused by
+  // the targeted-run grounding so the engine needs no second name comparison
+  // (docs/17 row 206).
+  entityLevelHintFor,
   spellCorpusEntries,
   npcCreatureRef,
   spawnFirstPath,
@@ -111,6 +115,9 @@ import {
   fixedCastSectionFor,
   partLevelForMention,
   partyLevelLine,
+  // The ONE exclusion of the generated party line from the stat-block
+  // fallback (docs/17 row 206): the party's level is never an entity's level.
+  withoutPartyLevelLines,
   reconcileRoomAssignments,
   resolveBriefMonsterLevels,
   resolveEntryLevels,
@@ -237,6 +244,11 @@ const storedModuleGroundingSchema = z.object({
   moduleTitle: z.string().optional(),
   contextParagraphs: z.string().optional(),
   premise: z.string().optional(),
+  // The entity RECORD's recorded level (docs/17 row 206), additive and
+  // optional: a grounding stored before this field (or a record with no hint)
+  // parses to `undefined` and behaves exactly as it did — the compatibility
+  // promise a resume depends on.
+  entityLevelHint: z.number().int().min(1).max(20).optional(),
 });
 
 /** The persisted retrieve-step output the draft/statblock steps re-consume
@@ -286,6 +298,23 @@ export interface TargetModuleGrounding {
   contextParagraphs?: string | undefined;
   /** The module's spine premise ('' when the module has none). */
   premise?: string | undefined;
+  /**
+   * The level the module's entity RECORD fixes for the target's name — the
+   * SAME `domain/module.entityLevelHintFor` read the entity batch performs,
+   * computed here because the engine already holds the owning module (docs/17
+   * row 206). `undefined` when the record states none (or the target is not
+   * module-owned). Additive and optional, so a grounding stored before this
+   * field parses and behaves as before.
+   *
+   * WHY HERE, ONE SEAM: the artifact editor's "Regenerate with AI" rebuilt
+   * `StartRunInput` from scratch without `entityLevelHint`, so a targeted
+   * refill of a module-owned entity silently lost the level the module fixed
+   * and fell back to a brief regex (the owner's 7 → 13 regression). Reading it
+   * off the grounding the engine ALREADY computes fixes every caller — the
+   * panel's refill and the change/chain paths alike — instead of patching each
+   * `startRun` call site (AGENTS rule 4).
+   */
+  entityLevelHint?: number | undefined;
 }
 
 /** The grounding context one retrieve pass computes (and the retrieve step
@@ -619,6 +648,25 @@ function levelHintDeviationNotice(hint: number, printed: string): string | null 
 }
 
 /**
+ * The LOUD absence of a level for a module-OWNED entity (docs/17 row 206): the
+ * module never recorded one, so the generator picked it — and that pick must be
+ * visible, never a silent unconstrained choice (AGENTS rule 1). Fires only when
+ * the run HAS an owning module (`status === 'ok'`) and NEITHER the run input nor
+ * the record carried a structured level; a non-module-owned target has no record
+ * to be absent from, and a free-text brief (with its own explicit level) stands
+ * on its own. It rides the step's EXISTING `notice` seam — a named sentence, not
+ * a console line and never a failed generation, because a block without a fixed
+ * level is still a usable block, only an unjustified one.
+ */
+function moduleLevelHintAbsenceNotice(
+  grounding: TargetModuleGrounding | undefined,
+  structuredLevel: number | undefined,
+): string | null {
+  if (grounding?.status !== 'ok' || structuredLevel !== undefined) return null;
+  return `The module "${grounding.moduleTitle ?? "this entity's owning module"}" records no level for this entity, so the stat block's level was chosen by the generator rather than fixed by the module's author.`;
+}
+
+/**
  * The persisted note for an image-step escalation (imageGen's
  * GeneratedImages.fallback): names the failed first-try model and the
  * fallback that actually produced the image. The reason words the trigger
@@ -716,10 +764,11 @@ export interface StartRunInput {
    * The module author's structured LEVEL hint for the entity this run details
    * (docs/17 row 197), carried by the entity batch from the module's entity
    * record. `runStatblock` reads it EXPLICITLY and it WINS over the
-   * `level N` sentence the brief may carry; when it is absent the pre-existing
-   * regex over the brief is used unchanged, so a no-hint run produces the same
-   * prompt bytes it always did. Persisted on the run row so a resume/retry
-   * keeps it.
+   * `level N` sentence the brief may carry; when it is absent the run's STORED
+   * module grounding supplies the same record's level, so a caller that
+   * rebuilds its input without this field (the artifact editor's refill hand-off)
+   * still reaches the level its owning module fixed (docs/17 row 206). Persisted
+   * on the run row so a resume/retry keeps it.
    */
   entityLevelHint?: number;
   /**
@@ -2996,12 +3045,18 @@ export class RunEngine {
     if (module === undefined) {
       return { status: 'module-missing', moduleId: target.moduleId };
     }
+    const recordedLevel = entityLevelHintFor(module.entityKinds, target.name);
     return {
       status: 'ok',
       moduleId: module.id,
       moduleTitle: module.title,
       contextParagraphs: surroundingParagraphs(moduleDocumentText(module), target.name),
       premise: module.spine?.premise ?? '',
+      // The entity RECORD's level for this target (docs/17 row 206), read
+      // through the ONE reader the entity batch uses — no second name
+      // comparison here. Omitted (not `null`) when the record fixes none, so an
+      // old stored grounding and a hint-less record stay as they were.
+      ...(recordedLevel === null ? {} : { entityLevelHint: recordedLevel }),
     };
   }
 
@@ -3548,27 +3603,41 @@ export class RunEngine {
     }
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
-    // THE MODULE AUTHOR'S LEVEL, STRUCTURED (docs/17 row 197). When the entity
-    // batch handed this run a recorded `levelHint`, THAT is the level — no
-    // prose is re-parsed. The `level N` regex below is kept ONLY as the no-hint
-    // fallback for every caller that carries none (the persona panel's one-off
-    // statblock run, a legacy run row): it is exactly the fragility that lost
-    // the owner's level-7 gnome (a level stated in the module's prose is lost
-    // unless that exact sentence happens to ride the brief), so nothing new may
-    // depend on it — and the no-hint path emits the same prompt bytes as before.
-    const briefLevel = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
-    const levelHint = input.entityLevelHint === undefined ? briefLevel : String(input.entityLevelHint);
-    const hintsStructuredLevel = input.entityLevelHint !== undefined;
     // Grounding comes from the retrieve step's stored selection — no
     // duplicate search/embedding pass (see contextFromRetrieveStep). The
     // stored campaign-grounding blocks are validated on read but NEVER
     // rendered here: statblock filling grounds in rules, not campaign lore
     // (15-GRAPH-RETRIEVAL §3.3).
     const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
+    // THE MODULE AUTHOR'S LEVEL, STRUCTURED — ONE resolution seam (docs/17 row
+    // 197, extended by row 206). Two STRUCTURED sources carry it: the run input
+    // (the entity batch reads the record by name) and the stored module
+    // grounding (the engine already reads the target's owning module for EVERY
+    // targeted generate run, `targetModuleGrounding`). Resolving HERE instead of
+    // patching each caller that rebuilds `StartRunInput` is AGENTS rule 4: the
+    // artifact editor's "Regenerate with AI" hand-off rebuilt it from scratch
+    // without `entityLevelHint`, so the level the module fixed was lost and the
+    // prompt's level clause came out EMPTY — the owner's 7 → 13 regression, and
+    // because the deviation guard was keyed on the same absent field, it came
+    // with no notice at all.
+    const recordedLevel = context.moduleGrounding?.entityLevelHint;
+    const structuredLevel = input.entityLevelHint ?? recordedLevel;
+    // The `level N` regex survives ONLY for callers that carry no structured
+    // level at all (a one-off free-text statblock run, a legacy run row) and it
+    // reads the brief with the app's generated party-level line REMOVED: that
+    // line states the PARTY's level, and reading it as the entity's own is the
+    // second fragility this slice closes (docs/17 row 206). With no structured
+    // level and no party line the clause stays byte-identical to before.
+    const briefLevel =
+      /level\s*(\d{1,2})/i.exec(withoutPartyLevelLines(input.brief))?.[1] ?? '';
+    const levelHint = structuredLevel === undefined ? briefLevel : String(structuredLevel);
+    const hintsStructuredLevel = structuredLevel !== undefined;
     // The ONE spell library this step offers and validates against (docs/17 row
-    // 184). The brief's own level hint windows the vocabulary — the level the
-    // block is being written for — and the BLOCK's own printed level is what
-    // the cantrip rule is fed later, so nothing is assumed about the reply.
+    // 184). The resolved level windows the vocabulary — the level the block is
+    // being written for — and the BLOCK's own printed level is what the cantrip
+    // rule is fed later, so nothing is assumed about the reply. An absent level
+    // reaches `mobCasterLevel('')` → null → the whole corpus, which is exactly
+    // why the lost hint also offered high-rank spells.
     const spellLibrary = await this.spellLibraryFor(
       input.campaign.system,
       mobCasterLevel(levelHint),
@@ -3729,12 +3798,24 @@ export class RunEngine {
         : `Unresolved mob spells — ${spellIssueList.join(' ')}`;
     // The NPC lane's deviation route (docs/17 row 197): when the module fixed a
     // level and the block printed another, the step SAYS SO on the existing
-    // `notice` seam — never a silent ignore. `null` with no hint or on a match.
+    // `notice` seam — never a silent ignore. `null` on a match, and `null`
+    // without a structured level. Keyed on the RESOLVED level (row 206), so a
+    // hint that arrived through the module grounding is guarded exactly like one
+    // that rode the run input.
     const levelNotice =
-      input.entityLevelHint === undefined
+      structuredLevel === undefined
         ? null
-        : levelHintDeviationNotice(input.entityLevelHint, statBlock.level);
-    const repairNotes = [contractRepairNotice(firstTryModel, repairTarget), spellNotice, levelNotice]
+        : levelHintDeviationNotice(structuredLevel, statBlock.level);
+    // A module-owned entity the record fixes NO level for is LOUD (docs/17 row
+    // 206): the absence is the state that let the owner's regenerated gnome pick
+    // level 13 with no warning, so it now names itself on the same notice seam.
+    const levelAbsenceNotice = moduleLevelHintAbsenceNotice(context.moduleGrounding, structuredLevel);
+    const repairNotes = [
+      contractRepairNotice(firstTryModel, repairTarget),
+      spellNotice,
+      levelNotice,
+      levelAbsenceNotice,
+    ]
       .filter((note): note is string => note !== null)
       .join(' ');
     const step = this.finishStep(

@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule as createModuleSchema, newId, ruleChunkSchema, stampNewEntity, type Persona } from '@/domain';
+import { createModule as createModuleSchema, moduleSchema, newId, ruleChunkSchema, stampNewEntity, type Persona } from '@/domain';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -480,6 +480,323 @@ describe('runEngine', () => {
     const notice = stepNotice(run?.steps[2]?.output);
     expect(notice).not.toContain('fixed this entity at level');
   }, 20000);
+
+  /**
+   * The OWNER'S REGRESSION (docs/17 row 206): the artifact editor's "Regenerate
+   * with AI" rebuilds `StartRunInput` from scratch and carries NO
+   * `entityLevelHint`, and its brief has no `level N` — so a module-owned NPC
+   * whose record says 7 came back at 13 with NO notice, and the unfiltered spell
+   * vocabulary offered high-rank spells. The engine ALREADY reads the target's
+   * owning module for every targeted generate run (`targetModuleGrounding`), so
+   * the recorded level rides that grounding and `runStatblock` resolves
+   * `input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint` — ONE
+   * seam, never a per-caller patch (AGENTS rule 4).
+   */
+
+  /** A PF2e campaign + npc-smith persona (the rank cap is PF2e's rule). */
+  async function seedPf2e(): Promise<{ campaignId: Id; persona: Persona }> {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    const persona = await createPersona({
+      slug: 'npc-smith-level',
+      name: 'NPC Smith',
+      description: 'test',
+      systemPrompt: 'You are a test persona. Reply with JSON only.',
+      producesKind: 'npc',
+      builtIn: true,
+    });
+    return { campaignId: campaign.id, persona };
+  }
+
+  /** The PF2e twin of INPUT — the level-hint vocabulary cap is PF2e's. */
+  function PF2E_INPUT(campaignId: Id, persona: Persona) {
+    return {
+      ...INPUT(campaignId, persona),
+      campaign: {
+        ...INPUT(campaignId, persona).campaign,
+        name: 'Ember',
+        system: 'pathfinder2e' as const,
+      },
+    };
+  }
+
+  /**
+   * A module row with ONE entity record (`levelHint` optional) and an npc
+   * artifact it OWNS — exactly the row the artifact editor refills. The record's
+   * name matches the artifact's so `entityLevelHintFor` resolves it.
+   */
+  async function seedModuleOwnedNpc(
+    campaignId: Id,
+    name: string,
+    levelHint: number | undefined,
+  ): Promise<Id> {
+    const draft = createModuleSchema({
+      campaignId,
+      title: 'The Drowned Bell',
+      concept: 'A harbor bell that rings by itself.',
+      levelMin: 1,
+      levelMax: 1,
+      sizeDial: 'standard',
+    });
+    const module = await createModuleRow(
+      moduleSchema.parse({
+        ...draft,
+        entityKinds: [
+          { name, kind: 'npc', absorbed: [], ...(levelHint === undefined ? {} : { levelHint }) },
+        ],
+        spine: {
+          premise: `The bell rings over [[${name}]].`,
+          themes: [],
+          partPlan: [{ title: 'One', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
+          writerModel: '',
+          origin: null,
+        },
+        parts: [
+          {
+            planIndex: 0,
+            markdown: `The gate is watched by [[${name}]].`,
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+            writerModel: '',
+            origin: null,
+          },
+        ],
+      }),
+    );
+    const artifact = await createArtifact({
+      campaignId,
+      moduleId: module.id,
+      kind: 'npc',
+      name,
+      summary: '',
+      body: '',
+    });
+    return artifact.id;
+  }
+
+  /** A ready PF2e spell book with a cantrip, a rank-3 spell and a rank-6 spell. */
+  let spellSeq = 0;
+  async function seedSpellLibrary(): Promise<void> {
+    const book = await createPackBook({
+      title: 'PF2e Spells',
+      system: 'pathfinder2e',
+      filename: 'spells.json',
+    });
+    const finished = await finalizePackBook(book.id, {
+      sourceId: 'test-spells',
+      license: 'ORC',
+      entriesImported: 3,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    const chunk = (name: string, rank: number, cantrip: boolean) => {
+      spellSeq += 1;
+      return ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: finished.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'spell',
+        headingPath: ['Spells', name],
+        text: `${name}\nSource: test`,
+        statBlock: null,
+        contentHash: 'c'.repeat(63) + String(spellSeq % 10),
+        spellData: { system: 'pathfinder2e', rank, cantrip, cast: {} },
+      });
+    };
+    await putChunks([
+      chunk('Ignition', 0, true),
+      chunk('Fireball', 3, false),
+      chunk('Disintegrate', 6, false),
+    ]);
+  }
+
+  function draftReply(name: string): string {
+    return JSON.stringify({ ...VALID_DRAFT, name });
+  }
+
+  function statReply(weight: Record<string, unknown> = {}): string {
+    return JSON.stringify({ ...VALID_STATBLOCK, ...weight });
+  }
+
+  it('a TARGETED refill of a module-owned npc resolves the recorded level through the engine grounding — clause, vocabulary cap and deviation notice', async () => {
+    const { campaignId, persona } = await seedPf2e();
+    await seedSpellLibrary();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({
+        text: statReply({ system: 'pathfinder2e', level: '13' }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    const input = {
+      ...PF2E_INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // The artifact editor's refill brief — NO `level N` anywhere.
+      brief:
+        'Regenerate the full content of this npc — summary, body and details. Its name, relations and images are preserved.',
+      targetArtifactId: targetId,
+      // NO entityLevelHint: the panel rebuilt the input from scratch. The
+      // engine must read the record off the grounding it already computed.
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 7');
+    expect(statblockPrompt).toContain("the module's author fixed this entity's level");
+    expect(statblockPrompt).not.toContain('at level 13, grounded');
+    // The RESOLVED level reached the vocabulary cap: `pf2eCantripRankFor(7)` is
+    // 4, so the rank-3 spell is offered and the rank-6 spell is NOT — without
+    // the resolution the whole corpus (and a high-rank spell) is offered.
+    expect(statblockPrompt).toContain('Fireball — Rank 3');
+    expect(statblockPrompt).not.toContain('Disintegrate — Rank 6');
+
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('fixed this entity at level 7');
+    expect(notice).toContain('written at level "13"');
+    expect(notice).not.toContain('records no level');
+  }, 20000);
+
+  it('the PARTY-level line never satisfies the entity level: only it in the brief leaves the clause empty', async () => {
+    const { campaignId, persona } = await seed();
+    // A campaign-owned (NOT module-owned) npc: no grounding exists, so ONLY the
+    // brief fallback could supply a level — and it must not read the party line.
+    const target = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Grix',
+      summary: '',
+      body: '',
+    });
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Grix'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply(), modelUsed: 'test-model', fallback: null });
+
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'Party of 4 adventurers at level 13.',
+      targetArtifactId: target.id,
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    // The brief itself rides the prompt (so the phrase is present)…
+    expect(statblockPrompt).toContain('Party of 4 adventurers at level 13.');
+    // …but the LEVEL CLAUSE must not be built from it.
+    expect(statblockPrompt).not.toContain('at level 13, grounded');
+    expect(statblockPrompt).toContain(', grounded in the rule excerpts.');
+    // No structured level and no deviation guard.
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).not.toContain('fixed this entity at level');
+    expect(notice).not.toContain('records no level');
+  }, 20000);
+
+  it('a module-owned target whose record fixes NO level is LOUD, and the run still completes', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', undefined);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply({ level: '5' }), modelUsed: 'test-model', fallback: null });
+
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'Regenerate the full content of this npc — summary, body and details.',
+      targetArtifactId: targetId,
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('records no level for this entity');
+    expect(notice).toContain('chosen by the generator');
+    // The absence is a NOTICE, never a failure: the block is kept.
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).not.toContain('at level 5, grounded');
+  }, 20000);
+
+  it('a stored grounding written BEFORE the field still parses and keeps the brief-regex fallback (compatibility)', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply(), modelUsed: 'test-model', fallback: null });
+
+    const input = {
+      ...INPUT(campaignId, persona),
+      brief: 'Kael the Grey for a level 3 party',
+      targetArtifactId: targetId,
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      },
+      { timeout: 20000 },
+    );
+
+    // Simulate a grounding persisted BEFORE row 206: strip the new field. The
+    // stored schema must still parse it (an old store must keep working).
+    const run = await getRun(runId);
+    if (run === undefined) throw new Error('the run vanished before the grounding hand-edit');
+    const steps = run.steps.map((step) => {
+      if (step.name !== 'retrieve') return step;
+      const output = step.output as { moduleGrounding?: Record<string, unknown> } | null;
+      if (output?.moduleGrounding === undefined) return step;
+      const { entityLevelHint: _dropped, ...legacy } = output.moduleGrounding;
+      return { ...step, output: { ...output, moduleGrounding: legacy } };
+    });
+    await updateRun(runId, { steps });
+
+    await runEngine.approve(runId, input);
+    // Manual autonomy: approving the draft runs the statblock and pauses again.
+    await waitFor(
+      async () => {
+        const next = await getRun(runId);
+        expect(next?.steps).toHaveLength(3);
+        expect(next?.status).toBe('awaiting_user');
+      },
+      { timeout: 20000 },
+    );
+    await runEngine.approve(runId, input);
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    // Behaves as before: the legacy brief regex supplies the level, no
+    // structured instruction is emitted, and the record's 7 is NOT read from a
+    // field the old store never wrote.
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 3');
+    expect(statblockPrompt).not.toContain('at level 7');
+    expect(statblockPrompt).not.toContain("the module's author fixed this entity's level");
+    // The absence is now LOUD instead of silent (the intended new behaviour).
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('records no level for this entity');
+  }, 30000);
 
   it('reviews a global target with scope-gated global context and a campaign-anchored run', async () => {
     const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
