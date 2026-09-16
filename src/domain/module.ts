@@ -11,6 +11,7 @@ import {
   encounterBudgetPolicySchema,
   type EncounterBudgetPolicy,
 } from '@/domain/encounterBudget';
+import { moduleDifficultySchema, type ModuleDifficulty } from '@/domain/moduleDifficulty';
 import { modulePromptStyleSchema, type ModulePromptStyle } from '@/domain/promptStyle';
 
 /**
@@ -826,6 +827,22 @@ export const moduleSchema = z
      */
     encounterBudgetPolicy: encounterBudgetPolicySchema.nullable().default(null),
     /**
+     * The module's OWN difficulty (docs/17 row 190, owner request): how hard
+     * the module should be for the party — a SIBLING of
+     * `encounterBudgetPolicy` above, never a second version of it. The policy
+     * decides WHICH rule bounds a room's challenge; difficulty scales whatever
+     * numeric budget that rule produces. Additive optional — `null` on every
+     * row written before the field, which `resolveModuleDifficulty` reads as
+     * `'normal'` (multiplier 1: today's numbers, byte-identical). A module
+     * created after the field is STAMPED with the middle step
+     * (`DEFAULT_MODULE_DIFFICULTY`), so every later generation of that module
+     * reads the same difficulty deterministically. Nullable rather than
+     * defaulted on purpose (the policy field's precedent): the recorded value
+     * must be able to say "no explicit choice" — the legacy reading — rather
+     * than being indistinguishable from an owner who explicitly chose normal.
+     */
+    difficulty: moduleDifficultySchema.nullable().default(null),
+    /**
      * What the owner asked for at creation: recorded INTENT for a later
      * "Resume automatic module creation" surface (see
      * `moduleAutomationIntentSchema`). Written by `createModule` in the same
@@ -936,6 +953,16 @@ export interface NewModule {
    */
   encounterBudgetPolicy?: EncounterBudgetPolicy;
   /**
+   * The module difficulty this module is tuned for (docs/17 row 190), the
+   * sibling of the budget policy above. The CALLER resolves the default
+   * (`DEFAULT_MODULE_DIFFICULTY`, the middle step) when the owner recorded no
+   * explicit choice; the creation path always stamps a real value, so a fresh
+   * module never relies on the legacy null reading. Omitted or undefined = not
+   * recorded (a caller that predates the field, or a direct `createModule` in a
+   * test) = `'normal'`, exactly as before.
+   */
+  difficulty?: ModuleDifficulty;
+  /**
    * The prompt style this module is written in (docs/17 row 86). The CALLER
    * resolves it — a chosen style id or the app default — and hands the record
    * in; `createModule` stores id, name, version and template text as-is.
@@ -988,6 +1015,7 @@ export function createModule(input: NewModule): Module {
     autoApproveSpine: input.autoApproveSpine ?? false,
     encounterFloorGuardrail: input.encounterFloorGuardrail ?? null,
     encounterBudgetPolicy: input.encounterBudgetPolicy ?? null,
+    difficulty: input.difficulty ?? null,
     promptStyle: input.promptStyle ?? null,
     automationIntent,
   });

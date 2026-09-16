@@ -22,6 +22,7 @@ import type {
   EncounterBudgetPolicy,
   EncounterFloorGuardrail,
   EntityKind,
+  ModuleDifficulty,
   ModuleSizeDial,
   NewModule,
   NewModuleDraft,
@@ -30,9 +31,12 @@ import {
   defaultEncounterBudgetPolicy,
   defaultEncounterFloorGuardrail,
   defaultNewModuleDraft,
+  DEFAULT_MODULE_DIFFICULTY,
   ENCOUNTER_BUDGET_POLICIES,
   ENCOUNTER_BUDGET_POLICY_LABELS,
   ENTITY_KINDS,
+  MODULE_DIFFICULTIES,
+  MODULE_DIFFICULTY_LABELS,
   MODULE_SIZE_LABELS,
   PROMPT_STYLE_FREESTYLE_ID,
 } from '@/domain';
@@ -72,6 +76,13 @@ import { registerPageFlush } from '@/lib/pageFlush';
  * prompt clauses AND into the floor gate (one source of truth in the domain).
  * The value chosen here is recorded ON THE MODULE ROW at creation, so a later
  * pass, repair or retry uses the module's own rules.
+ *
+ * ADVANCED — module difficulty (owner request, docs/17 row 190): a five-step
+ * control (middle = Normal) beside the encounter budget policy. It is the
+ * SIBLING of that policy — the policy picks WHICH rule bounds a room's
+ * challenge, difficulty scales how hard the module is for the group — and it is
+ * recorded on the module row at creation exactly like the policy, so later
+ * generations and repopulates keep it.
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
@@ -113,6 +124,7 @@ function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
     a.autoGenerateMobImages === b.autoGenerateMobImages &&
     a.promptStyleId === b.promptStyleId &&
     a.encounterBudgetPolicy === b.encounterBudgetPolicy &&
+    a.difficulty === b.difficulty &&
     a.encounterFloorGuardrail.enabled === b.encounterFloorGuardrail.enabled &&
     a.encounterFloorGuardrail.perLevel === b.encounterFloorGuardrail.perLevel
   );
@@ -203,6 +215,13 @@ function NewModuleDialogContent({
   const [encounterBudgetPolicy, setEncounterBudgetPolicy] = useState<EncounterBudgetPolicy | null>(
     null,
   );
+  // The module difficulty this module will be tuned for (docs/17 row 190, the
+  // owner's request): five steps with the middle one as the default. `null` =
+  // the user has not chosen one, so the control shows the middle step and the
+  // creation path stamps `DEFAULT_MODULE_DIFFICULTY` — exactly the budget
+  // policy's `null` idiom above (a "no explicit choice" state is kept distinct
+  // from an explicit one).
+  const [difficulty, setDifficulty] = useState<ModuleDifficulty | null>(null);
   const [starting, setStarting] = useState(false);
 
   // The stored draft (pure read — never `getSettings`, which writes). Held in
@@ -319,6 +338,7 @@ function NewModuleDialogContent({
       // changed while the dialog sits open is followed, not frozen).
       setPromptStyleId(matches ? (draft.promptStyleId ?? null) : null);
       setEncounterBudgetPolicy(matches ? (draft.encounterBudgetPolicy ?? null) : null);
+      setDifficulty(matches ? (draft.difficulty ?? null) : null);
     },
     [campaign.id],
   );
@@ -409,6 +429,7 @@ function NewModuleDialogContent({
       encounterFloorGuardrail,
       ...(promptStyleId === null ? {} : { promptStyleId }),
       ...(encounterBudgetPolicy === null ? {} : { encounterBudgetPolicy }),
+      ...(difficulty === null ? {} : { difficulty }),
     };
     // The ref always mirrors what the form shows, so `flush` saves the CURRENT
     // values no matter when it runs.
@@ -442,6 +463,7 @@ function NewModuleDialogContent({
     encounterFloorGuardrail,
     promptStyleId,
     encounterBudgetPolicy,
+    difficulty,
     persist,
   ]);
 
@@ -557,6 +579,10 @@ function NewModuleDialogContent({
         // stands now (docs/17 row 180) — stamped on the module row so every
         // later generation of this module reads the same policy.
         encounterBudgetPolicy: encounterBudgetPolicy ?? defaultEncounterBudgetPolicy(campaign.system),
+        // The user's explicit choice, or the MIDDLE step (docs/17 row 190) —
+        // stamped on the module row so every later generation of this module
+        // reads the same difficulty.
+        difficulty: difficulty ?? DEFAULT_MODULE_DIFFICULTY,
       };
       const moduleId = await createModuleAndRun(campaign, input);
       onOpenChange(false);
@@ -866,6 +892,41 @@ function NewModuleDialogContent({
                   Pathfinder 2e modules get a real numeric per-room budget, other systems keep the
                   existing band. The choice is recorded on the module, so later generations and
                   repopulates use it too.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label>Module difficulty</Label>
+                <div
+                  className="flex gap-1"
+                  role="group"
+                  aria-label="Module difficulty"
+                  data-testid="module-difficulty"
+                >
+                  {MODULE_DIFFICULTIES.map((step) => (
+                    <Button
+                      key={step}
+                      type="button"
+                      variant={(difficulty ?? DEFAULT_MODULE_DIFFICULTY) === step ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1 px-1 text-xs"
+                      aria-pressed={(difficulty ?? DEFAULT_MODULE_DIFFICULTY) === step}
+                      data-testid={`module-difficulty-${step}`}
+                      onClick={() => {
+                        markEdited();
+                        setDifficulty(step);
+                      }}
+                    >
+                      {MODULE_DIFFICULTY_LABELS[step]}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  How hard this module should be for the party. Normal (the middle step) is today's
+                  numbers; the outer steps halve or double the standard encounter budget and the
+                  middle-ish ones nudge it. Recorded on the module, so its later generations,
+                  repopulates and fills keep the same difficulty. Under the verbatim budget policy
+                  no numbers are computed, so this is passed to the model as a direction only.
                 </p>
               </div>
 

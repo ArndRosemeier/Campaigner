@@ -13,6 +13,7 @@ import {
   moduleSizeDialSchema,
 } from '@/domain/module';
 import { encounterBudgetPolicySchema } from '@/domain/encounterBudget';
+import { moduleDifficultySchema } from '@/domain/moduleDifficulty';
 import {
   PROMPT_STYLE_FREESTYLE_ID,
   userPromptStyleSchema,
@@ -305,6 +306,16 @@ export const newModuleDraftSchema = z
      * reading for anyone who created it from a stale draft.
      */
     encounterBudgetPolicy: encounterBudgetPolicySchema.optional(),
+    /**
+     * The module difficulty the owner picked for the next module (docs/17 row
+     * 190), the sibling of the budget policy above. OPTIONAL and absent by
+     * default for the same reason: "no explicit choice made" is a real state,
+     * and the creation path applies `DEFAULT_MODULE_DIFFICULTY` (the middle
+     * step) as it stands at that moment. The dialog shows the middle step
+     * selected while the draft carries no choice, so an untouched dialog
+     * creates a normal module and an explicit choice is what gets stored.
+     */
+    difficulty: moduleDifficultySchema.optional(),
   })
   .refine((draft) => draft.levelMax >= draft.levelMin, {
     message: 'levelMax must be >= levelMin',

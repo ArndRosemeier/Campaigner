@@ -1040,7 +1040,13 @@ stored draft that no longer validates fails the settings read LOUDLY (no silent
 half-prefill).
 
 **Advanced — encounter guardrails**: the two floor controls (§Editable
-encounter floor above), recorded on the module row at creation.
+encounter floor above), the **Encounter difficulty policy** select (docs/17
+row 180 — which rule bounds a room's challenge) and the **Module difficulty**
+five-step control (docs/17 row 190 — `Much easier`, `Easier`, `Normal`,
+`Harder`, `Much harder`, middle selected by default; the SIBLING of the
+policy, scaling how hard the module is for the group). All four are recorded
+on the module row at creation, so the module's later generations, repopulates
+and fills read the same rules.
 
 ---
 

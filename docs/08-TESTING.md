@@ -5277,6 +5277,58 @@ failure it catches:
   **Injected RED, watched:** restoring hint-first order fails this test AND
   the pre-existing part-level pin (2 red of 13).
 
+### The module difficulty setting — a SIBLING of the budget policy (docs/17 row 190, docs/11 D12 amendment, docs/18 §2)
+
+The owner's request ("a difficulty setting in the module creation dialog, 5
+steps, middle = normal, to adjust a module for group strength") is pinned at
+five levels plus a source scan, each naming row 190:
+
+- `tests/domain/moduleDifficulty.test.ts` (NEW): exactly five steps with
+  `'normal'` the middle one; the label map covers every step; the documented
+  ladder is monotone, 1 at the middle and halving/doubling at the ends; the
+  resolver reads a recorded value verbatim and a legacy/absent/null row as
+  `'normal'`; `createModule` stamps an explicit choice and records `null` when
+  none was made; the row round-trips through the repo (no migration).
+- `tests/llm/roomBudget.test.ts` — the COMPATIBILITY pin: a legacy row resolves
+  normal and `roomBudgetBandUpperFor` returns the pre-change standard number for
+  BOTH scales (7 at T=5 dnd5e, 10 pf2e) with `expectedRoomThreat` equal to the
+  old value. The DIFFERENTIAL: the five steps produce
+  `[3.5, 5.25, 7, 10.5, 14]` (dnd5e) and `[5, 7.5, 10, 15, 20]` (pf2e) through
+  the ONE seam, `checkRoomBudget` flips ok/over with the scaled band, and the
+  fill-grade expectation scales both ways. The `'verbatim'` pin: no expectation
+  and no stocking number exist, and the clause carries a direction with NO digit
+  — the multiplier applies only where numbers are computed at all.
+- `tests/llm/structuredPartyLevel.test.ts` — the prompt the model actually sees
+  (the file's existing `briefPrompt` idiom): a `'much-harder'` module row makes
+  the real Cartographer brief carry `MODULE DIFFICULTY`, `Much harder`, the
+  scaled `(targetLevel + 2) × 2` and the SCALED stocking numbers (`roughly 8
+  creature-levels` where normal says 4.0).
+- `tests/features/new-module-draft.test.tsx` — the dialog's existing harness:
+  exactly five buttons labelled from the domain map, `Normal` `aria-pressed` by
+  default, an untouched control stores NO draft choice, the chosen step reaches
+  `createModuleAndRun`'s input (and the real `createModule` stamps the row), and
+  the choice survives a close/reopen in the draft.
+- `tests/architecture/module-difficulty-seam.test.ts` (NEW, source scan): the
+  resolver is DEFINED once and called only at runEngine's three budget sites;
+  `MODULE_DIFFICULTY_MULTIPLIERS` is declared once; `difficultyBudgetMultiplier`
+  is applied only in `roomBudget.ts` — a second resolver or a hand-spelled
+  multiplier reds by file and count.
+
+**Injected RED, watched (four arms, each file hash printed by `git
+hash-object`, no two arms identical):** B the multiplier forced to 1
+(`0.5/0.75/1/1.5/2` → all 1) reds pin 3 (the differential ladder and the
+verdict flip); C `resolveModuleDifficulty` returning the first step reds pin 2
+(the legacy row no longer reads normal and the numbers move); D the dialog's
+default step changed to the top step reds pin 4 (the default `aria-pressed` and
+the untouched-draft assertion). A baseline is green.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+sizes a room to the stated multiplier (that is judgement, and it remains the
+model's); no test proves the ladder feels right at a table (it proves the
+numbers and their monotonicity); and no test proves a stored module row gained a
+difficulty — there is deliberately no migration, and a legacy row resolving to
+normal IS the compatibility the pin asserts.
+
 ### The spells arc's structured payload — DATA only (docs/17 row 181, docs/12 §15.4, docs/18 §2.1)
 
 The PF2e rules lane already parsed spell documents as TEXT; this arc adds the

@@ -22,8 +22,11 @@ import {
 import type * as SettingsRepo from '@/db/settingsRepo';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import {
+  createModule,
   defaultEncounterFloorGuardrail,
   defaultNewModuleDraft,
+  MODULE_DIFFICULTIES,
+  MODULE_DIFFICULTY_LABELS,
   newId,
   type Campaign,
   type NewModuleDraft,
@@ -560,6 +563,82 @@ describe('the draft round-trips through the settings row', () => {
     // the mounted dialog's live query.
     const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.concept ?? '').toBe('');
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('the module difficulty control (docs/17 row 190)', () => {
+  it('offers exactly five steps with the middle one (Normal) selected by default', async () => {
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    const group = within(dialog).getByTestId('module-difficulty');
+    const buttons = within(group).getAllByRole('button');
+    // Five steps, and their text is the domain label map — the dialog never
+    // re-spells a label.
+    expect(buttons).toHaveLength(5);
+    expect(buttons.map((button) => button.textContent)).toEqual(
+      MODULE_DIFFICULTIES.map((step) => MODULE_DIFFICULTY_LABELS[step]),
+    );
+    for (const step of MODULE_DIFFICULTIES) {
+      expect(within(dialog).getByTestId(`module-difficulty-${step}`)).toHaveAttribute(
+        'aria-pressed',
+        step === 'normal' ? 'true' : 'false',
+      );
+    }
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('stamps the chosen step on the created module row through the dialog', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'Tuned hard.');
+    await user.click(within(dialog).getByTestId('module-difficulty-much-harder'));
+    await user.click(within(dialog).getByTestId('start-module'));
+
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    // The creation input carries the explicit choice; `createModule` stamps it
+    // on the row (the row-level assertion runs the real seam, not the mock).
+    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    expect(input).toMatchObject({ difficulty: 'much-harder' });
+    if (input === undefined) throw new Error('creation input missing');
+    expect(createModule(input).difficulty).toBe('much-harder');
+    // And the draft the retry would resume from holds the same choice.
+    await flushAsyncUpdates();
+    const settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.difficulty).toBe('much-harder');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('keeps an untouched control at the middle step and survives a close/reopen', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    let dialog = await openDialog(campaign);
+
+    // Untouched: the control shows Normal and NO choice is stored (the same
+    // "no explicit choice" idiom as the budget policy).
+    await user.type(within(dialog).getByLabelText('Concept'), 'Default tuning.');
+    dialog = await reopenDialog(user);
+    expect(within(dialog).getByTestId('module-difficulty-normal')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    let settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.difficulty).toBeUndefined();
+
+    // An explicit easier step survives the close/reopen (the draft carries it).
+    await user.click(within(dialog).getByTestId('module-difficulty-much-easier'));
+    dialog = await reopenDialog(user);
+    expect(within(dialog).getByTestId('module-difficulty-much-easier')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.difficulty).toBe('much-easier');
     await flushAsyncUpdates();
   }, 30_000);
 });

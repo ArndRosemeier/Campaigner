@@ -3,6 +3,7 @@ import {
   carriedTextOrigin,
   comparableName,
   createModule,
+  DEFAULT_MODULE_DIFFICULTY,
   defaultEncounterBudgetPolicy,
   encounterCountWord,
   encounterFloorGuardrailFor,
@@ -23,6 +24,7 @@ import {
   withEntityBestiarySlots,
   type EncounterBudgetPolicy,
   type EncounterFloorGuardrail,
+  type ModuleDifficulty,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import {
@@ -2949,6 +2951,13 @@ export async function createModuleAndRun(
      * every later generation of this module reads the same policy.
      */
     encounterBudgetPolicy?: EncounterBudgetPolicy;
+    /**
+     * The module difficulty to record on the new module (docs/17 row 190), the
+     * sibling of the budget policy above. Omitted = no explicit choice = the
+     * middle step (`DEFAULT_MODULE_DIFFICULTY`, 'normal'), stamped on the row so
+     * every later generation of this module reads the same difficulty.
+     */
+    difficulty?: ModuleDifficulty;
   },
 ): Promise<Id> {
   // Resolved and validated FIRST: a module row that cannot be written in a
@@ -2961,6 +2970,12 @@ export async function createModuleAndRun(
     // pathfinder2e module records 'pf2e-budget', every other system 'system'.
     // A row written before the field stays null and reads as 'system'.
     encounterBudgetPolicy: input.encounterBudgetPolicy ?? defaultEncounterBudgetPolicy(campaign.system),
+    // The middle step is stamped at creation (docs/17 row 190): a fresh module
+    // records 'normal', so an owner who never touched the control still gets a
+    // row that says so. A row written before the field stays null and also
+    // resolves to 'normal' (the legacy reading) — the two are behaviourally
+    // identical, and the row keeps the distinction.
+    difficulty: input.difficulty ?? DEFAULT_MODULE_DIFFICULTY,
   });
   const saved = await saveModule(created);
   void (async () => {

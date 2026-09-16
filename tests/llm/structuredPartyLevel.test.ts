@@ -458,6 +458,37 @@ describe('Cartographer brief structured level', () => {
     expect(prompt.indexOf('Near Three')).toBeLessThan(prompt.indexOf('Far Five'));
   });
 
+  it("states the module's recorded difficulty in the prompt the model sees (docs/17 row 190)", async () => {
+    const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
+    const persona = cartographer();
+    const { db } = await import('@/db');
+    await db.personas.put(persona);
+    const module = await seedModule(campaign.id);
+    // The module ROW carries the owner's choice; the run resolves it once from
+    // the owning module (never from the dialog, never per call site).
+    await saveModule({ ...module, difficulty: 'much-harder' });
+    const targetId = await seedEncounterTarget(campaign.id, module.id, 'Undercroft Feast', '3');
+    const runInput: StartRunInput = {
+      campaign,
+      persona,
+      autonomy: 'manual',
+      brief: 'A feast-hall fight',
+      pinnedChunkIds: [],
+      encounterMapAspect: '4:3',
+      targetArtifactId: targetId,
+    };
+    await runEngine.startRun(runInput);
+    const prompt = await briefPrompt();
+    // The clause names the owner's step AND the scaled band the deterministic
+    // check actually uses (the same multiplier, through the ONE budget seam).
+    expect(prompt).toContain('MODULE DIFFICULTY');
+    expect(prompt).toContain('Much harder');
+    expect(prompt).toContain('(targetLevel + 2) × 2');
+    // The stocking numbers the brief states are the SCALED ones: at part level
+    // 3 the standard 80% share would be 4.0 levels, doubled here to 8.
+    expect(prompt).toContain('roughly 8 creature-levels');
+  });
+
   it('both prompts build the line from the shared constant', async () => {
     const { id: campaignId } = await createCampaign({ name: 'C', system: 'dnd5e' });
     const module = await seedModule(campaignId);

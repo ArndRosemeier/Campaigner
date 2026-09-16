@@ -1,5 +1,11 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import type { EncounterBudgetPolicy } from '@/domain/encounterBudget';
+import {
+  DEFAULT_MODULE_DIFFICULTY,
+  difficultyBudgetMultiplier,
+  MODULE_DIFFICULTY_LABELS,
+  type ModuleDifficulty,
+} from '@/domain/moduleDifficulty';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
@@ -59,6 +65,18 @@ import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
  *   replaced by the always-on loud advisory (over-loud by design: whether an
  *   excerpt actually surfaced is not deterministically decidable from the
  *   retrieval output, so the advisory always persists — AGENTS rule 1).
+ *
+ * DIFFICULTY (docs/17 row 190) is a SIBLING of that policy, not a second
+ * version of it: the policy decides WHICH rule bounds a room's challenge,
+ * difficulty decides HOW HARD the module should be for this group and scales
+ * whatever numeric budget the rule produces. `EncounterBudget` carries the
+ * resolved difficulty, and `roomBudgetBandUpperFor` — the ONE seam that
+ * computes the standard-encounter number for BOTH scales — applies
+ * `difficultyBudgetMultiplier` there, so the check, the fill-grade expectation,
+ * the stocking cap and the brief's numbers all move together and no second
+ * budget formula exists. Under `'verbatim'` no number is computed at all, so
+ * the multiplier has nothing to move: difficulty is stated to the model as a
+ * DIRECTION only, and the no-numbers licensing stance is untouched.
  */
 
 /** The band's headroom over the target level (our own dnd5e approximation). */
@@ -157,6 +175,13 @@ export const ROOM_BUDGET_UNDER_MARGIN = 1;
 export interface EncounterBudget {
   /** The persisted policy this run resolved (module row, else 'system'). */
   policy: EncounterBudgetPolicy;
+  /**
+   * The persisted module difficulty this run resolved (docs/17 row 190): how
+   * hard the module should be for the party. The sibling of `policy`, not a
+   * second version of it — it does not choose a rule, it scales whatever
+   * numeric budget the rule produces (`difficultyBudgetMultiplier`).
+   */
+  difficulty: ModuleDifficulty;
   /** 'band' runs a numeric per-room check; 'verbatim' ships no numbers. */
   mode: 'band' | 'verbatim';
   /** WHICH numeric approximation a 'band' check uses. */
@@ -177,20 +202,32 @@ export interface EncounterBudget {
  * verbatim. `'pf2e-budget'` and `'verbatim'` are explicit and ignore the
  * system, which is what makes the policy a real choice rather than a
  * re-spelled system check.
+ *
+ * `difficulty` (docs/17 row 190) is the sibling seam: it defaults to the
+ * middle step, so a caller that does not pass one gets today's numbers exactly.
+ * Callers resolve it once per run through the domain resolver.
  */
 export function encounterBudgetFor(
   policy: EncounterBudgetPolicy,
   system: GameSystem,
+  difficulty: ModuleDifficulty = DEFAULT_MODULE_DIFFICULTY,
 ): EncounterBudget {
   const pf2e = system === 'pathfinder2e';
   switch (policy) {
     case 'pf2e-budget':
-      return { policy, mode: 'band', scale: 'pf2e', repairUnder: true };
+      return { policy, difficulty, mode: 'band', scale: 'pf2e', repairUnder: true };
     case 'verbatim':
-      return { policy, mode: 'verbatim', scale: pf2e ? 'pf2e' : 'dnd5e', repairUnder: false };
+      return {
+        policy,
+        difficulty,
+        mode: 'verbatim',
+        scale: pf2e ? 'pf2e' : 'dnd5e',
+        repairUnder: false,
+      };
     case 'system':
       return {
         policy,
+        difficulty,
         mode: pf2e ? 'verbatim' : 'band',
         scale: pf2e ? 'pf2e' : 'dnd5e',
         repairUnder: false,
@@ -267,9 +304,21 @@ export function pf2eReferenceCreatureLevel(targetLevel: number): number {
   return Math.max(1, Math.round(Math.max(1, targetLevel)));
 }
 
-/** The band upper for the budget's numeric scale. */
+/**
+ * The band upper for the budget's numeric scale — THE ONE SEAM that computes a
+ * room's standard-encounter number for BOTH systems, and therefore the one
+ * place the module difficulty scales it (docs/17 row 190). The base functions
+ * above are the STANDARD (multiplier 1) approximations in our own units; the
+ * resolved difficulty multiplies the result here, so the 'over' verdict, the
+ * fill-grade expectation, the stocking cap and the brief's stated numbers all
+ * move together — never a second budget formula. The reference creature level
+ * below is deliberately NOT scaled: it is a property of the target level, and
+ * scaling it would cancel the multiplier out of the approximate creature count.
+ */
 export function roomBudgetBandUpperFor(budget: EncounterBudget, targetLevel: number): number {
-  return budget.scale === 'pf2e' ? pf2eBandUpper(targetLevel) : roomBudgetBandUpper(targetLevel);
+  const standard =
+    budget.scale === 'pf2e' ? pf2eBandUpper(targetLevel) : roomBudgetBandUpper(targetLevel);
+  return standard * difficultyBudgetMultiplier(budget.difficulty);
 }
 
 /** The reference creature level for the budget's numeric scale. */
@@ -584,27 +633,75 @@ export function budgetVerificationAdvisory(budget: EncounterBudget): string | nu
   return null;
 }
 
+/**
+ * The module-difficulty clause the encounter brief carries (docs/17 row 190):
+ * the owner's five-step setting, stated where challenge is designed. In a
+ * numeric-band mode it names the multiplier so the model aims at the SAME
+ * scaled numbers the deterministic check uses; under `'verbatim'` no number is
+ * computed at all, so the clause states the DIRECTION only — the multiplier
+ * applies only where numbers are computed at all, and no numeric budget is
+ * invented (docs/11 D12 licensing stance).
+ */
+export function moduleDifficultyGuidanceFor(budget: EncounterBudget): string {
+  const label = MODULE_DIFFICULTY_LABELS[budget.difficulty];
+  const head =
+    `MODULE DIFFICULTY (the owner's setting for this whole module — NOT the per-encounter ` +
+    `"difficulty" field of your reply): ${label}.`;
+  const multiplier = difficultyBudgetMultiplier(budget.difficulty);
+  if (budget.mode === 'verbatim') {
+    const direction =
+      multiplier === 1
+        ? "This module is tuned for the party's baseline: size each room as the excerpts state."
+        : `This module is tuned ${label.toUpperCase()} than the party's baseline — design each room's challenge accordingly.`;
+    return (
+      `${head} ${direction} No numeric budget is computed under this module's policy, so this is a ` +
+      'DIRECTIONAL instruction only; where the retrieved rule excerpts are in context they remain the law.'
+    );
+  }
+  if (multiplier === 1) {
+    return `${head} Size every room exactly as the standard band below states (1× the standard encounter budget).`;
+  }
+  return (
+    `${head} This module is tuned ${label.toUpperCase()} than the party's baseline: the standard band below ` +
+    `is scaled by ×${String(multiplier)} here, and both the per-room expectation and the deterministic ` +
+    'check use the SCALED number — aim at that, not at the bare standard.'
+  );
+}
+
 /** The prompt clause teaching the per-room challenge contract. */
 export function roomBudgetGuidanceFor(budget: EncounterBudget): string {
   const shared = [
     'Per-room challenge: every room must ALONE challenge the party — a complex is a sequence of fights, not one fight spread thin.',
     'Each room carries a "targetLevel": the party level this room alone should challenge. When you omit it, the encounter\'s own level is used. A DUNGEON COMPLEX requires a targetLevel on EVERY room — a complex room without one is rejected.',
   ].join('\n');
+  const difficultyClause = moduleDifficultyGuidanceFor(budget);
+  const multiplier = difficultyBudgetMultiplier(budget.difficulty);
   if (budget.mode === 'verbatim') {
     return [
       shared,
+      difficultyClause,
       'pathfinder2e budget: the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When the excerpts do NOT include the encounter-budget rules, set each room\'s "targetLevel" from the party level and describe the intended difficulty without inventing XP amounts.',
     ].join('\n');
   }
   if (budget.scale === 'pf2e') {
+    const bandRule =
+      multiplier === 1
+        ? `a standard encounter for a party of four at level T is worth ${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} × T creature-levels, scaled by party size — a room is over budget above that and its fill-grade share is the expectation below.`
+        : `a standard encounter for a party of four at level T is worth ${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} × T creature-levels, scaled by party size; this module's difficulty scales that standard budget by ×${String(multiplier)}, so a room is over budget above ×${String(multiplier)} of that standard and its fill-grade share is the expectation below.`;
     return [
       shared,
-      `pathfinder2e budget (policy 'pf2e-budget'): the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When they are NOT in context, Campaigner's own documented approximation applies: a standard encounter for a party of four at level T is worth ${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} × T creature-levels, scaled by party size — a room is over budget above that and its fill-grade share is the expectation below. A DUNGEON COMPLEX must stock every room: a complex room with no creatures is a repairable defect, and a room that cannot reach its drawn share is ALSO repairable. The brief carries the exact per-room expected numbers when they apply.`,
+      difficultyClause,
+      `pathfinder2e budget (policy 'pf2e-budget'): the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When they are NOT in context, Campaigner's own documented approximation applies: ${bandRule} A DUNGEON COMPLEX must stock every room: a complex room with no creatures is a repairable defect, and a room that cannot reach its drawn share is ALSO repairable. The brief carries the exact per-room expected numbers when they apply.`,
     ].join('\n');
   }
+  const bandRule =
+    multiplier === 1
+      ? `a room is over budget when its assigned creatures' levels (CR) sum to more than targetLevel + ${String(ROOM_BUDGET_OVER_MARGIN)}.`
+      : `this module's difficulty scales the standard band by ×${String(multiplier)}, so a room is over budget when its assigned creatures' levels (CR) sum to more than (targetLevel + ${String(ROOM_BUDGET_OVER_MARGIN)}) × ${String(multiplier)}.`;
   return [
     shared,
-    `dnd5e band (Campaigner's own documented approximation; the DMG encounter-building tables are not licensable, so no DMG text is quoted or restated): a room is over budget when its assigned creatures' levels (CR) sum to more than targetLevel + ${String(ROOM_BUDGET_OVER_MARGIN)}. Fractional levels (1/2, 1/4) count fractionally; "—" (CR-less summons) counts as 0. Stay at or under the band. For a SINGLE arena, under is fine (a quiet room is a feature); in a DUNGEON COMPLEX every room stocks a real fight — a complex room with no creatures is a repairable defect and a room well under its expected share ships with a loud advisory. The brief carries the exact per-room expected numbers when they apply.`,
+    difficultyClause,
+    `dnd5e band (Campaigner's own documented approximation; the DMG encounter-building tables are not licensable, so no DMG text is quoted or restated): ${bandRule} Fractional levels (1/2, 1/4) count fractionally; "—" (CR-less summons) counts as 0. Stay at or under the band. For a SINGLE arena, under is fine (a quiet room is a feature); in a DUNGEON COMPLEX every room stocks a real fight — a complex room with no creatures is a repairable defect and a room well under its expected share ships with a loud advisory. The brief carries the exact per-room expected numbers when they apply.`,
   ].join('\n');
 }
 
@@ -625,13 +722,23 @@ export function fillGradeStockingFor(
   if (promptLevel === undefined) return null;
   const expectation = expectedRoomThreat(fillGrade, promptLevel, budget);
   if (expectation === null) return null;
+  // The standard-encounter number comes from the ONE budget seam
+  // (`roomBudgetBandUpperFor`), so the module's difficulty scales the number
+  // the model is told exactly as it scales the deterministic check
+  // (docs/17 row 190) — a hand-spelled `pf2eStandardThreatLevels` here would
+  // have drifted the moment difficulty existed.
+  const multiplier = difficultyBudgetMultiplier(budget.difficulty);
   const bandSentence = budget.scale === 'pf2e'
     ? `Campaigner's PF2e approximation gives a standard encounter at party level T a budget of ` +
-      `${sumLabel(pf2eStandardThreatLevels(promptLevel))} creature-levels ` +
-      `(${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} on-level creatures for a party of four, scaled by party size), ` +
+      `${sumLabel(roomBudgetBandUpperFor(budget, promptLevel))} creature-levels ` +
+      `(${String(PF2E_STANDARD_ON_LEVEL_CREATURES)} on-level creatures for a party of four, scaled by party size` +
+      `${multiplier === 1 ? '' : `, ×${String(multiplier)} for this module's difficulty`}), ` +
       'so each room here should carry roughly '
-    : `a room at targetLevel T holds at most T + ${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels, ` +
-      'so each room here should carry roughly ';
+    : multiplier === 1
+      ? `a room at targetLevel T holds at most T + ${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels, ` +
+        'so each room here should carry roughly '
+      : `a room at targetLevel T holds at most (T + ${String(ROOM_BUDGET_OVER_MARGIN)}) × ${String(multiplier)} ` +
+        "creature-levels (the standard band scaled by this module's difficulty), so each room here should carry roughly ";
   const tail = budget.repairUnder
     ? 'at the party level. Every room stocks a real fight: a complex room with no creatures is a repairable defect, ' +
       'and a room that cannot reach its drawn share is ALSO repairable.'

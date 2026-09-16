@@ -49,6 +49,7 @@ import {
   resolveEncounterPreset,
   recordedWritingModel,
   resolveEncounterBudgetPolicy,
+  resolveModuleDifficulty,
   schematicCellPx,
   type DungeonMapPath,
   type GameSystem,
@@ -3940,20 +3941,26 @@ export class RunEngine {
     // Asymmetric per-room budget loop (docs/11 D12): the lookups the level
     // resolution needs — every chunk the brief could cite (stat-block pool +
     // roster name index) plus, for regenerate runs, the target's own roster
-    // sources. The budget POLICY is resolved ONCE here (docs/17 row 180) and
-    // threaded to every consumer below; a 'verbatim' budget replaces the
-    // numeric check with the loud advisory (no Paizo numbers ship —
-    // roomBudget.ts).
+    // sources. The budget POLICY and the module DIFFICULTY are resolved ONCE
+    // here (docs/17 rows 180 and 190) and threaded to every consumer below; a
+    // 'verbatim' budget replaces the numeric check with the loud advisory (no
+    // Paizo numbers ship — roomBudget.ts), and the difficulty multiplier has
+    // nothing to move there (it applies only where numbers are computed).
     // ONE module read for this run: the encounter's owning module (a
     // regenerate target) or the module it is being created into. Its recorded
-    // `encounterBudgetPolicy` decides how a room's challenge is bounded; an
-    // absent field (legacy row) reads as 'system' — today's behaviour.
+    // `encounterBudgetPolicy` decides how a room's challenge is bounded and its
+    // `difficulty` (docs/17 row 190) scales that budget; an absent field
+    // (legacy row) reads as 'system' / 'normal' — today's behaviour.
     const owningModuleId = target?.kind === 'encounter' && target.moduleId !== null
       ? target.moduleId
       : (input.placementModuleId ?? null);
     const owningModule = owningModuleId === null ? undefined : await getModule(owningModuleId);
     const budgetPolicy = resolveEncounterBudgetPolicy(owningModule);
-    const budget: EncounterBudget = encounterBudgetFor(budgetPolicy, input.campaign.system);
+    const budget: EncounterBudget = encounterBudgetFor(
+      budgetPolicy,
+      input.campaign.system,
+      resolveModuleDifficulty(owningModule),
+    );
     // Shape-gated restock (docs/11 D12 amendment, owner-directed): the
     // stocking/expansion contract keys on the TARGET'S ACTUAL SHAPE —
     // `encounterDataIsComplex`, the parse-normalized D11 derivation — not on
@@ -5244,13 +5251,15 @@ export class RunEngine {
       );
     }
     const isComplex = targetLayout.rooms.length > 1;
-    // The run's ONE resolved budget (docs/17 row 180), from the target's
-    // owning module — a repopulation of a module encounter must use the same
-    // policy every other generation of that module uses.
+    // The run's ONE resolved budget (docs/17 rows 180 and 190), from the
+    // target's owning module — a repopulation of a module encounter must use
+    // the same policy AND difficulty every other generation of that module
+    // uses.
     const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
     const budget = encounterBudgetFor(
       resolveEncounterBudgetPolicy(owningModule),
       input.campaign.system,
+      resolveModuleDifficulty(owningModule),
     );
     // Fill grade (docs/11 D12 amendment, draw-once): the row's value always
     // wins; then the brief's stamped value (the draw the prompt was written
@@ -6228,13 +6237,15 @@ export class RunEngine {
       let fillGradeToPersist: number | undefined = target.data.fillGrade;
       if (targetLayout !== null) {
         const isComplex = targetLayout.rooms.length > 1;
-        // The run's ONE resolved budget (docs/17 row 180), from the target's
-        // owning module — an in-place fill of a module encounter reads the
-        // same recorded policy every other generation of it uses.
+        // The run's ONE resolved budget (docs/17 rows 180 and 190), from the
+        // target's owning module — an in-place fill of a module encounter reads
+        // the same recorded policy AND difficulty every other generation of it
+        // uses.
         const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
         const budget = encounterBudgetFor(
           resolveEncounterBudgetPolicy(owningModule),
           input.campaign.system,
+          resolveModuleDifficulty(owningModule),
         );
         // Fill grade (docs/11 D12 amendment): the row's value always wins;
         // a legacy complex without one draws NOW (draw-once at the refill —

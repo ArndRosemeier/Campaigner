@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { RuleChunk } from '@/domain';
-import { newId } from '@/domain';
+import { newId, resolveModuleDifficulty } from '@/domain';
 import {
   FILL_GRADE_DRAW_WEIGHTS,
   drawFillGrade,
@@ -15,11 +15,13 @@ import {
   encounterBudgetFor,
   expectedRoomThreat,
   fillGradeStockingFor,
+  moduleDifficultyGuidanceFor,
   parseBudgetLevel,
   pf2eStandardThreatLevels,
   reconcileRoomAssignments,
   resolveBriefMonsterLevels,
   roomBudgetBandUpper,
+  roomBudgetBandUpperFor,
   roomBudgetGuidanceFor,
   roomBudgetReferenceCreatureLevel,
 } from '@/llm/roomBudget';
@@ -616,5 +618,135 @@ describe('reconcileRoomAssignments packing (fill-grade arc — nearest-band fit)
       { roomId: 'room-a', monsterIndexes: [0] },
       { roomId: 'room-b', monsterIndexes: [1] },
     ]);
+  });
+});
+
+describe('module difficulty scales the ONE budget seam (docs/17 row 190)', () => {
+  it('reads a legacy module row (no field) as normal and reproduces today\'s numbers', () => {
+    // The COMPATIBILITY pin: a row written before the field resolves to the
+    // middle step for BOTH systems, and the seam returns the pre-change
+    // standard numbers exactly.
+    const legacyDnd = encounterBudgetFor('system', 'dnd5e', resolveModuleDifficulty({}));
+    expect(legacyDnd.difficulty).toBe('normal');
+    expect(roomBudgetBandUpperFor(legacyDnd, 5)).toBe(roomBudgetBandUpper(5));
+    expect(roomBudgetBandUpperFor(legacyDnd, 5)).toBe(7);
+    expect(expectedRoomThreat(70, 5, legacyDnd)).toEqual(expectedRoomThreat(70, 5, DND5E));
+    // The defaulted parameter is the same middle step, not a second default.
+    expect(encounterBudgetFor('system', 'dnd5e').difficulty).toBe('normal');
+
+    const legacyPf2e = encounterBudgetFor(
+      'pf2e-budget',
+      'pathfinder2e',
+      resolveModuleDifficulty({ difficulty: null }),
+    );
+    expect(legacyPf2e.difficulty).toBe('normal');
+    expect(roomBudgetBandUpperFor(legacyPf2e, 5)).toBe(10);
+    expect(expectedRoomThreat(100, 5, legacyPf2e)).toEqual(expectedRoomThreat(100, 5, PF2E_BUDGET));
+  });
+
+  it('moves the budget monotonically for BOTH systems through roomBudgetBandUpperFor', () => {
+    // The DIFFERENTIAL: the same target level across the five steps produces
+    // the documented monotone scale, on the dnd5e band and Campaigner's pf2e
+    // approximation alike, and every consumer's number comes from that ONE
+    // seam.
+    const steps = ['much-easier', 'easier', 'normal', 'harder', 'much-harder'] as const;
+    const dndLadder = steps.map((step) =>
+      roomBudgetBandUpperFor(encounterBudgetFor('system', 'dnd5e', step), 5),
+    );
+    expect(dndLadder).toEqual([3.5, 5.25, 7, 10.5, 14]);
+    const pf2eLadder = steps.map((step) =>
+      roomBudgetBandUpperFor(encounterBudgetFor('pf2e-budget', 'pathfinder2e', step), 5),
+    );
+    expect(pf2eLadder).toEqual([5, 7.5, 10, 15, 20]);
+    for (const ladder of [dndLadder, pf2eLadder]) {
+      for (let index = 1; index < ladder.length; index += 1) {
+        const previous = ladder[index - 1];
+        const current = ladder[index];
+        if (previous === undefined || current === undefined) {
+          throw new Error('ladder index out of range');
+        }
+        expect(current).toBeGreaterThan(previous);
+      }
+      // The extremes are exactly half / double the middle step.
+      const first = ladder[0];
+      const middle = ladder[2];
+      const last = ladder[4];
+      if (first === undefined || middle === undefined || last === undefined) {
+        throw new Error('ladder shape changed');
+      }
+      expect(first).toBe(middle * 0.5);
+      expect(last).toBe(middle * 2);
+    }
+  });
+
+  it('moves the verdict and the fill-grade expectation through the same seam', () => {
+    const creatures = [
+      { name: 'Troll', count: 1, level: '5' },
+      { name: 'Ogre', count: 2, level: '2' },
+    ]; // 9 creature-levels against a target of 5.
+    const verdictFor = (difficulty: 'much-easier' | 'normal' | 'much-harder') =>
+      checkRoomBudget({
+        roomIndex: 0,
+        roomName: 'Sanctum',
+        targetLevel: 5,
+        creatures,
+        complex: false,
+        budget: encounterBudgetFor('system', 'dnd5e', difficulty),
+      });
+    // A room one band-step over at normal is far over when easier and fine
+    // when much harder: the check reads the SCALED band, never a second one.
+    expect(verdictFor('much-easier').status).toBe('over');
+    expect(verdictFor('much-easier').bandUpper).toBe(3.5);
+    expect(verdictFor('normal').status).toBe('over');
+    expect(verdictFor('normal').bandUpper).toBe(7);
+    expect(verdictFor('much-harder').status).toBe('ok');
+    expect(verdictFor('much-harder').bandUpper).toBe(14);
+    // The fill-grade expectation scales with the same seam (both systems).
+    expect(expectedRoomThreat(100, 5, encounterBudgetFor('system', 'dnd5e', 'much-harder'))).toEqual({
+      expectedLevels: 14,
+      approximateCreatureCount: 5,
+    });
+    expect(expectedRoomThreat(100, 5, encounterBudgetFor('system', 'dnd5e', 'much-easier'))).toEqual({
+      expectedLevels: 3.5,
+      approximateCreatureCount: 1,
+    });
+    expect(expectedRoomThreat(100, 5, encounterBudgetFor('pf2e-budget', 'pathfinder2e', 'much-harder'))?.expectedLevels).toBe(20);
+  });
+
+  it('states the resolved difficulty to the model, and scales the stated band', () => {
+    // Pin 5's unit half: the prompt clause the Cartographer brief embeds names
+    // the owner's step (middle step included) and the SCALED band at anything
+    // but normal.
+    const normal = roomBudgetGuidanceFor(DND5E);
+    expect(normal).toContain('MODULE DIFFICULTY');
+    expect(normal).toContain('Normal');
+    expect(normal).toContain('targetLevel + 2');
+    const harder = roomBudgetGuidanceFor(encounterBudgetFor('system', 'dnd5e', 'much-harder'));
+    expect(harder).toContain('MODULE DIFFICULTY');
+    expect(harder).toContain('Much harder');
+    expect(harder).toContain('(targetLevel + 2) × 2');
+    const pf2eHarder = roomBudgetGuidanceFor(
+      encounterBudgetFor('pf2e-budget', 'pathfinder2e', 'harder'),
+    );
+    expect(pf2eHarder).toContain('Harder');
+    expect(pf2eHarder).toContain('scales that standard budget by ×1.5');
+  });
+
+  it('ships NO number under a verbatim policy: difficulty is a direction there', () => {
+    // The honest answer docs/17 row 190 records: the multiplier applies only
+    // where numbers are computed at all. Under 'verbatim' no budget number
+    // exists to scale, so the clause carries a direction and no digit — the
+    // licensing stance (docs/11 D12) is untouched.
+    const verbatimHard = encounterBudgetFor('verbatim', 'dnd5e', 'much-harder');
+    expect(expectedRoomThreat(70, 5, verbatimHard)).toBeNull();
+    expect(fillGradeStockingFor(70, 5, verbatimHard)).toBeNull();
+    const clause = moduleDifficultyGuidanceFor(verbatimHard);
+    expect(clause).toContain('Much harder');
+    expect(clause).toContain('DIRECTIONAL instruction only');
+    expect(clause).not.toMatch(/\d/);
+    // A normal verbatim module is byte-identical to before the field existed.
+    const verbatimNormal = encounterBudgetFor('verbatim', 'dnd5e', 'normal');
+    expect(moduleDifficultyGuidanceFor(verbatimNormal)).toContain('Normal');
+    expect(roomBudgetBandUpperFor(verbatimNormal, 5)).toBe(roomBudgetBandUpper(5));
   });
 });
