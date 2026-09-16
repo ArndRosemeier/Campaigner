@@ -68,4 +68,19 @@ describe('smoke: every LLM contract converts to the strict subset', () => {
       expect(violation).toBeNull();
     });
   }
+
+  it('the stat block carries the caster fields as required-nullable in EVERY lane that embeds it (docs/17 row 201)', () => {
+    // The caster fields live on the SHARED `statBlockSchema`, so their strict
+    // schema bytes moved for every lane — the encounter draft and the
+    // Cartographer brief included, whose PROMPT text did not. This pin is the
+    // honest half of that caveat: the keys ARE in the emitted schema, required
+    // and nullable, so a lane can always spell absence as `null`.
+    const { schema } = strictJsonSchema('statblock', statBlockSchema);
+    const properties = (schema.properties ?? {}) as Record<string, unknown>;
+    const required = (schema.required ?? []) as string[];
+    for (const key of ['spellDC', 'spellAttack', 'tradition']) {
+      expect(required).toContain(key);
+      expect(JSON.stringify(properties[key])).toContain('"null"');
+    }
+  });
 });

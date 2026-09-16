@@ -9,6 +9,7 @@ import {
   createModule as buildModule,
   moduleSpineSchema,
   ruleChunkSchema,
+  SPELL_DC_MISSING_MARKER,
   stampNewEntity,
   statBlockSchema,
   type AnyArtifact,
@@ -74,7 +75,9 @@ async function seedSpellBook(spell: SpellData): Promise<void> {
   ]);
 }
 
-async function seedModule(): Promise<{ module: Awaited<ReturnType<typeof saveModule>>; artifacts: AnyArtifact[] }> {
+async function seedModule(
+  spellFields: Record<string, unknown> = { spells: [{ name: 'Fireball', castRank: 5 }] },
+): Promise<{ module: Awaited<ReturnType<typeof saveModule>>; artifacts: AnyArtifact[] }> {
   const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
   const npc = await createArtifact({
     campaignId: campaign.id,
@@ -104,7 +107,7 @@ async function seedModule(): Promise<{ module: Awaited<ReturnType<typeof saveMod
         reactions: [],
         legendary: [],
         extras: {},
-        spells: [{ name: 'Fireball', castRank: 5 }],
+        ...spellFields,
       }),
     },
   });
@@ -154,5 +157,33 @@ describe('a mob spell reaches the printed stat box (docs/17 row 184)', () => {
     const text = JSON.stringify(definition);
     expect(text).toContain('resolved none');
     expect(text).toContain('re-export from the app');
+  });
+
+  it('prints the caster line — the SAME bytes the card shows (docs/17 row 201)', async () => {
+    await seedSpellBook(await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json'));
+    const { module, artifacts } = await seedModule({
+      spells: [{ name: 'Fireball', castRank: 5 }],
+      spellDC: 25,
+      spellAttack: 17,
+      tradition: 'arcane',
+    });
+
+    let captured: unknown = null;
+    await buildModulePdf(module, artifacts, (definition) => {
+      captured = definition;
+      return Promise.resolve(new Blob(['pdf']));
+    });
+
+    expect(JSON.stringify(captured)).toContain('Spell DC 25 · spell attack +17 · tradition arcane');
+  });
+
+  it('prints the LOUD marker — never a computed DC — for a caster that states none', async () => {
+    const { module, artifacts } = await seedModule({ spells: [{ name: 'Fireball', castRank: 5 }] });
+
+    const { definition } = buildModulePdfDocument({ module, artifacts });
+    const text = JSON.stringify(definition);
+    expect(text).toContain(SPELL_DC_MISSING_MARKER);
+    // The level-5 block would suggest a DC, and none may be printed for it.
+    expect(text).not.toContain('Spell DC');
   });
 });

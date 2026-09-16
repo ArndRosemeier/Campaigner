@@ -245,6 +245,35 @@ describe('an AI-authored mob carries spells (docs/17 row 184)', () => {
     expect(mobSpellChipDetail(ignitionChip)).toContain('4d4 fire');
   }, 30000);
 
+  it('stores the caster fields the model stated — spell DC, spell attack and tradition (docs/17 row 201)', async () => {
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+    await seedSpellLibrary(fireball, ignition);
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(
+          statBlockReply({
+            spells: [{ name: 'Fireball', castRank: 5 }, { name: 'Ignition' }],
+            spellDC: 25,
+            spellAttack: 17,
+            tradition: 'arcane',
+          }),
+        ),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    const { artifact } = await runToArtifact(campaignId, persona);
+
+    // The numbers the model stated survive the parse and the row — nothing is
+    // derived, and nothing is dropped.
+    expect(artifact.data.statBlock?.spellDC).toBe(25);
+    expect(artifact.data.statBlock?.spellAttack).toBe(17);
+    expect(artifact.data.statBlock?.tradition).toBe('arcane');
+  }, 30000);
+
   it('keeps an INVENTED spell name as a loud issue and an unresolved entry, never as text', async () => {
     const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
     const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');

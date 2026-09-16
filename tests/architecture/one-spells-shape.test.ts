@@ -71,13 +71,27 @@ describe('one spells-shape composer (SOURCE SCAN, docs/17 row 200)', () => {
     expect(composer).toContain('MOB_SPELL_ENTRY_SHAPE');
   });
 
-  it('gates both halves on the SAME corpus predicate, declared once', () => {
+  it('gates every half on the SAME corpus predicate, declared once', () => {
     const composer = read(COMPOSER);
     expect(composer.match(/function mobSpellVocabularyRenders\(/g) ?? []).toHaveLength(1);
-    // The section AND the contract clause each read the one gate.
+    // The section, the contract clause AND (docs/17 row 201) the caster clause
+    // each read the one gate, so no half can render where another is withheld.
     expect(
       composer.match(/if \(!mobSpellVocabularyRenders\(vocabulary\)\) return null;/g) ?? [],
-    ).toHaveLength(2);
+    ).toHaveLength(3);
+  });
+
+  it('the caster clause is declared once and reaches BOTH NPC steps (docs/17 row 201)', () => {
+    const scaffolding = read(SCAFFOLDING);
+    expect(scaffolding.match(/export const MOB_SPELL_CASTER_CLAUSE =/g) ?? []).toHaveLength(1);
+    // No call site re-spells the clause: the literal the model reads is the
+    // composer's own constant, so it cannot drift from the pinned bytes.
+    const engine = stripComments(read(ENGINE));
+    expect(engine).not.toContain('Caster awareness');
+    // The NPC DRAFT (identity/prose) and the NPC STAT-BLOCK step (spells/DC)
+    // are the ONLY two call sites; the encounter draft and the Cartographer
+    // keep their optional invitation and never call it.
+    expect(engine.match(/formatMobSpellCasterClause\(/g) ?? []).toHaveLength(2);
   });
 
   it('never hand-writes the spells clause or shape at a call site', () => {

@@ -5989,6 +5989,70 @@ name is LOUD; and no test can prove a pre-arc rules pack holds structured spells
 at all — row 181's no-migration decision stands, so the rules pack must be
 RE-IMPORTED before an assigned name can resolve (docs/12 §15.4).
 
+### Caster-aware NPC generation — the clause at BOTH steps, and the caster's own numbers (docs/17 row 201, docs/11 §Mob spells, docs/08-MODULE-DESIGNER §M4-C, docs/18 §2.2/§2.3)
+
+The owner's report ("the NPC smith just needs to be explicitely caster aware …
+a GM needs spell DCs to actually play the spell") has two halves: a
+caster-aware PROMPT and a place for the caster's numbers. Row 200 made every mob
+lane OFFER the library; this slice makes a module-described caster come out AS
+one. The pins:
+
+- `tests/llm/mob-spells-lanes.test.ts` (EXTENDED): `MOB_SPELL_CASTER_CLAUSE` is
+  present in BOTH NPC prompts with a corpus — the NPC DRAFT prompt (identity and
+  prose) and the NPC stat-block prompt (spells and numbers) — and the stat-block
+  arm still carries the vocabulary and the `"spells": [` contract. The NPC DRAFT
+  prompt WITHOUT a corpus is compared BYTE-FOR-BYTE against the NEW pre-arc
+  golden `tests/fixtures/mobSpells/npc-draft-no-corpus.txt` (captured at HEAD
+  before this slice), and the encounter-draft and Cartographer prompts WITH a
+  corpus are compared byte-for-byte against their own NEW pre-arc goldens
+  (`encounter-draft-with-corpus.txt`, `cartographer-brief-with-corpus.txt`) —
+  those two lanes keep the existing OPTIONAL invitation and never render the
+  clause. (The NPC draft is handed the clause but NOT the vocabulary list: it
+  authors no stat block.)
+- `tests/domain/statblock-caster.test.ts` (NEW): the three caster fields are
+  additive/nullable (a pre-arc block parses with none of them and
+  `casterStatLine` is `null`); a stated `spellDC: "25"` / `spellAttack: "+17"` /
+  `tradition: "arcane"` coerces and renders as ONE line; a malformed DC fails the
+  parse NAMING `spellDC`; a caster that states NO DC yields the LOUD
+  `SPELL_DC_MISSING_MARKER` with no digit in it (a level-7 block would suggest
+  25 — the invented number this pin forbids); and the CANTRIP confirmation the
+  owner asked about: a level-7 caster's Ignition is rank 4 / `5d4` with
+  `cantrip-auto` provenance, while a caster whose level is unknown is a loud
+  `casterLevel` issue with no formula and no rank.
+- `tests/features/statblock-caster.test.tsx` (NEW): the ONE `StatBlockCard`
+  renders the stated line (`data-state="stated"`), renders the LOUD marker
+  (`data-state="missing-spell-dc"`, no digit) for a caster that states none, and
+  renders NO caster line for a mundane or legacy block (the legacy block also
+  mounts no spell section).
+- `tests/lib/mob-spells-pdf.test.ts` (EXTENDED): the module PDF prints the SAME
+  `Spell DC 25 · spell attack +17 · tradition arcane` bytes the card shows, and
+  prints the LOUD marker (and no `Spell DC`) for a caster that states none.
+- `tests/llm/mob-spells.test.ts` (EXTENDED): through the REAL run path a
+  stat-block reply that states the three fields stores them on the artifact row,
+  unchanged and underived.
+- `tests/architecture/one-spells-shape.test.ts` (EXTENDED): the shared corpus
+  gate is now read by THREE composers (vocabulary section, contract clause,
+  caster clause); `MOB_SPELL_CASTER_CLAUSE` is declared once, `Caster awareness`
+  is spelled nowhere in `runEngine.ts`, and `runEngine.ts` reaches the clause
+  exactly TWICE (the two NPC steps).
+- AMENDED, not weakened: `tests/llm/module-gen-and-provenance.test.ts` detects
+  the new literal on its own (the one-source marker set);
+  `tests/llm/strictSchemaSmoke.test.ts` still converts `statBlockSchema` — its
+  new required-nullable keys reach EVERY lane's strict schema, the bounded and
+  documented consequence of the shared shape (the encounter/Cartographer PROMPT
+  bytes are unchanged; their `response_format` gained the fields).
+
+**Injected RED, watched (raw logs kept under the writer's `/tmp` worktree; every arm's file hash printed, identical arms labelled VOID):** dropped the caster clause from the stat-block composer → the two stat-block clause pins red; dropped the clause from the NPC draft arm → the draft pin red; replaced the loud DC marker with a computed number → the domain, card and PDF `not.toMatch(/\d/)` pins red; removed the empty-corpus guard → the byte-identity goldens red.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+actually assigns spells and a DC to a caster the module's prose implies — it
+proves the clause and the list reached the prompt and that a stated DC survives to
+every surface; and the module text reaches the stat-block step through
+`input.brief` (measured: the step reads `input.brief` plus the draft's `name`, not
+the draft body), so a caster the DRAFT invents without the module stating it is
+carried only by the draft's name and the clause — closing that would need a
+draft-level caster field, deliberately not added (docs/17 row 201).
+
 ### The dnd5e spell lane (docs/17 row 194, docs/12 §3/§5/§16, docs/11 §Mob spells, docs/18 §2.1/§2.3)
 
 The owner's go-ahead ("d&d spell lane is a go") puts the SAME `spell` chunk lane

@@ -114,6 +114,7 @@ import {
   INTENT_HIERARCHY,
   INTENT_LABEL,
   MODULE_PREMISE_LABEL,
+  MOB_SPELL_CASTER_CLAUSE,
   MOB_SPELL_REPAIR_LEAD_IN,
   MOB_SPELL_SECTION_HEADER,
   PART_TOO_SHORT_REPAIR_SENTENCE,
@@ -2692,6 +2693,7 @@ describe('scaffoldingEcho.test.ts', () => {
       ['the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE],
       ['the mob-spells section header', MOB_SPELL_SECTION_HEADER],
       ['the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN],
+      ['the caster-awareness clause', MOB_SPELL_CASTER_CLAUSE],
     ])('every shared literal is DETECTED on its own, as %s', (label, literal) => {
       // A marker that cannot fire is a marker nobody would notice going dead —
       // and this is also the shortest statement of the one-source rule: the

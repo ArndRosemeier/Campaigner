@@ -176,6 +176,7 @@ import {
   SCHEMA_REPAIR_LEAD_IN,
 } from '@/llm/promptScaffolding';
 import {
+  formatMobSpellCasterClause,
   formatMobSpellContractClause,
   formatMobSpellRepair,
   formatMobSpellSection,
@@ -3193,8 +3194,17 @@ export class RunEngine {
     // row 184). Encounter drafts author INLINE monster stat blocks, so they are
     // the other AI-authored mob path; every other kind's draft authors no block
     // and pays for no spell read (its prompt stays byte-identical).
+    //
+    // The NPC draft (docs/17 row 201) authors no stat block either, so it is not
+    // offered the vocabulary — but it IS the step that writes the NPC's identity
+    // and prose, so it reads the SAME corpus (the ONE `spellLibraryFor` seam) to
+    // decide whether the caster clause renders at all. Without a corpus there is
+    // no clause and this prompt keeps its pre-arc bytes, exactly like the
+    // stat-block step.
     const spellLibrary =
-      kind === 'encounter' ? await this.spellLibraryFor(input.campaign.system, null) : null;
+      kind === 'encounter' || kind === 'npc'
+        ? await this.spellLibraryFor(input.campaign.system, null)
+        : null;
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
@@ -3217,8 +3227,12 @@ export class RunEngine {
       // The mob-spells vocabulary (docs/17 row 184): encounter drafts author
       // inline monster stat blocks, so a caster among them may be given spells.
       // Null without an imported spell corpus, so those prompts keep their
-      // pre-arc bytes.
-      spellLibrary === null ? null : formatMobSpellSection(spellLibrary.vocabulary),
+      // pre-arc bytes. Deliberately ENCOUNTER-ONLY: the NPC draft authors no
+      // stat block and so is never handed the list — it gets the caster CLAUSE
+      // alone (docs/17 row 201), which is the identity half, not the vocabulary.
+      kind === 'encounter' && spellLibrary !== null
+        ? formatMobSpellSection(spellLibrary.vocabulary)
+        : null,
       // fix-02 (decision 1): with neither excerpts nor a roster there is
       // nothing to cite — the draft must inline a complete block per monster,
       // which finalize then materializes into a real NPC artifact.
@@ -3234,6 +3248,15 @@ export class RunEngine {
             'Field guidance for this NPC:',
             '- "needsStatBlock": true only when the character is likely to fight or their stats matter at the table (adversaries, rivals, guards, bosses); false for contacts, merchants, innkeepers, informants, quest-givers.',
           ].join('\n')
+        : null,
+      // THE CASTER CLAUSE at the DRAFT step (docs/17 row 201). Caster-awareness
+      // only at the stat block yields a mundane necromancer with a list bolted
+      // on, so the step that writes the NPC's identity and prose is told the
+      // same rule — through the ONE composer, gated on the SAME corpus as the
+      // vocabulary. `null` without a corpus, so this prompt keeps its pre-arc
+      // bytes (pinned against the captured golden).
+      kind === 'npc' && spellLibrary !== null
+        ? formatMobSpellCasterClause(spellLibrary.vocabulary)
         : null,
       // Mob treasure (owner-ratified): structure + per-system budget. Renders
       // for encounter drafts only; coheres with the item-pool section above
@@ -3565,6 +3588,11 @@ export class RunEngine {
       // Null when the campaign's system has no imported spells at all, so a
       // dnd5e prompt keeps its pre-arc bytes (the validation below still runs).
       formatMobSpellSection(spellLibrary.vocabulary),
+      // THE CASTER CLAUSE at the STAT-BLOCK step (docs/17 row 201): the step
+      // that writes the spells AND the DC, through the SAME composer and the
+      // SAME corpus gate as the vocabulary just above. Rendered only for this
+      // NPC lane — the encounter draft and the Cartographer never call it.
+      formatMobSpellCasterClause(spellLibrary.vocabulary),
       `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system, spellLibrary.vocabulary)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       additionalInstructionSection(extraInstruction),
     ]

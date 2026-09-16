@@ -77,6 +77,24 @@ export const statBlockSchema = z.object({
    * the mob that names it.
    */
   spells: z.array(mobSpellAssignmentSchema).nullish(),
+  /**
+   * The caster's printed spell save DC (docs/17 row 201) — the owner's "must":
+   * a GM plays the spell from this number, so if the block is a caster and the
+   * model states none, the surface prints a LOUD marker instead of a value
+   * derived from the level (a plausible-looking guess is forbidden by AGENTS
+   * rule 1). `.nullish()` and additive exactly like `spells`: a block written
+   * before this arc has no key, parses as it always did and renders unchanged.
+   */
+  spellDC: numericStat().nullish(),
+  /** The caster's printed spell attack bonus. Stored as the d20 MODIFIER (a
+   *  signed value is legitimate here, unlike an ability score), printed through
+   *  `formatModifier`. `.nullish()`, never invented. */
+  spellAttack: numericStat().nullish(),
+  /** The caster's magical tradition as the model stated it (`arcane`, `divine`,
+   *  … — a free string, never an enum: a dnd5e caster has no PF2e tradition and
+   *  a homebrew role is not the app's to reject). `.nullish()`, never invented;
+   *  `domain/statblock.casterStatLine` is the ONE renderer. */
+  tradition: z.string().nullish(),
 });
 
 export type StatBlock = z.infer<typeof statBlockSchema>;
@@ -89,6 +107,64 @@ export function abilityModifier(score: number): number {
 /** Formats a modifier for display: 3 → '+3', -1 → '-1'. */
 export function formatModifier(value: number): string {
   return value >= 0 ? `+${value}` : String(value);
+}
+
+/**
+ * The LOUD marker a caster that states no spell DC prints (docs/17 row 201) —
+ * the owner's own words: a GM needs the DC to play the spell, and the app must
+ * never derive a plausible-looking one from the level. The exact bytes are
+ * pinned; the card and both PDF boxes render this SAME string.
+ */
+export const SPELL_DC_MISSING_MARKER = 'this caster states no spell DC';
+
+/**
+ * Whether a stat block presents itself as a CASTER (docs/17 row 201). The
+ * signal is the block's own stated evidence — assigned spells, a spell DC, a
+ * spell attack bonus or a tradition — because the app has no caster flag and
+ * inventing one from a creature's name would be exactly the guess this arc
+ * refuses. A legacy block with none of them is NOT a caster and renders exactly
+ * as it did (no caster line, no marker).
+ */
+export function statBlockIsCaster(statBlock: StatBlock): boolean {
+  return (
+    (statBlock.spells !== null && statBlock.spells !== undefined && statBlock.spells.length > 0) ||
+    (statBlock.spellDC !== null && statBlock.spellDC !== undefined) ||
+    (statBlock.spellAttack !== null && statBlock.spellAttack !== undefined) ||
+    (statBlock.tradition !== null &&
+      statBlock.tradition !== undefined &&
+      statBlock.tradition.trim() !== '')
+  );
+}
+
+/**
+ * Whether a caster's block states NO spell DC — the loud case. `false` for a
+ * non-caster, so a mundane creature never shows a marker about a spell DC it
+ * does not need.
+ */
+export function statBlockStatesNoSpellDc(statBlock: StatBlock): boolean {
+  return statBlockIsCaster(statBlock) && (statBlock.spellDC === null || statBlock.spellDC === undefined);
+}
+
+/**
+ * THE caster line a stat block renders (docs/17 row 201): the stated numbers,
+ * or the LOUD marker when the caster stated no DC. `null` for a non-caster, so
+ * every surface is unchanged for a mundane or legacy block. ONE composer — the
+ * card and both PDF stat boxes render exactly these bytes, so the screen and
+ * the printed book cannot disagree about a mob's spell DC.
+ */
+export function casterStatLine(statBlock: StatBlock): string | null {
+  if (!statBlockIsCaster(statBlock)) return null;
+  const parts: string[] = [
+    statBlock.spellDC === null || statBlock.spellDC === undefined
+      ? SPELL_DC_MISSING_MARKER
+      : `Spell DC ${String(statBlock.spellDC)}`,
+  ];
+  if (statBlock.spellAttack !== null && statBlock.spellAttack !== undefined) {
+    parts.push(`spell attack ${formatModifier(statBlock.spellAttack)}`);
+  }
+  const tradition = statBlock.tradition?.trim() ?? '';
+  if (tradition !== '') parts.push(`tradition ${tradition}`);
+  return parts.join(' · ');
 }
 
 /**

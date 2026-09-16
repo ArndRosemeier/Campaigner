@@ -5,8 +5,10 @@ import { TextBlocks } from '@/components/text-blocks';
 import {
   abilityModifier,
   abilityScoreFromModifier,
+  casterStatLine,
   formatAbilityValue,
   printsAbilityModifiers,
+  statBlockStatesNoSpellDc,
   type NamedText,
   type StatBlock,
 } from '@/domain';
@@ -105,6 +107,12 @@ function NumberField({
  */
 export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name: string }) {
   const headlineParts = [statBlock.size, statBlock.creatureType].filter((part) => part !== '');
+  // THE caster line (docs/17 row 201): the stated spell DC / attack / tradition,
+  // or the LOUD marker when a caster states no DC. `null` for a mundane or
+  // legacy block, so those render exactly as they did. The bytes come from the
+  // ONE `domain/statblock.casterStatLine`, the SAME ones both PDF boxes print.
+  const casterLine = casterStatLine(statBlock);
+  const spellDcMissing = statBlockStatesNoSpellDc(statBlock);
 
   return (
     <div className="rounded-lg border bg-card p-3 text-sm">
@@ -196,6 +204,23 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
             </div>
           ))}
         </dl>
+      )}
+
+      {/* The caster line (docs/17 row 201): the numbers a GM plays the spell
+          from. A caster that states no spell DC is LOUD (destructive styling +
+          the marker text) — never a computed number (AGENTS rule 1). */}
+      {casterLine !== null && (
+        <p
+          className={
+            spellDcMissing
+              ? 'mt-2 rounded-md border border-destructive/50 bg-destructive/5 p-1.5 text-xs font-medium text-destructive'
+              : 'mt-2 text-xs'
+          }
+          data-testid="stat-block-caster"
+          data-state={spellDcMissing ? 'missing-spell-dc' : 'stated'}
+        >
+          {casterLine}
+        </p>
       )}
 
       {/* The mob's spells as chips (docs/17 row 184): the AI-authored half of

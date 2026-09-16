@@ -1,0 +1,40 @@
+A temple gate encounter
+
+THE SCENE IS THE TRUTH FOR THIS FIGHT.
+The brief above is the scene this encounter must stage. Whatever it states about the opposition — what the creatures are, roughly how many, what they carry, what they are doing — and about the place — its terrain and the conditions the party will fight in — is FIXED: the roster AND the map must match it.
+A stated creature you cannot honour as written is never silently swapped: either build it as a complete inline "statBlock" for exactly the creature the scene describes, or declare the deviation in "substitutions" as { "asserted": what the scene states, "used": what you fielded instead, "reason": why } — an undeclared swap is the failure this rule exists to prevent, and a declared one is reported to the GM.
+Where the scene states nothing you design freely: silence is not a constraint, and the roster, the map, the tactics, the treasure and the difficulty are yours. A vague scene is never a reason to invent an assertion the text does not make.
+
+Campaign: Ember (Pathfinder 2e)
+
+Map aspect: 4:3
+
+Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party's way in.
+
+Environment: set "environment" honestly from the site's own nature — "outdoor" when the encounter plays in the open (forest, swamp, coast, road, cavern mouth), "dungeon" only when it plays inside an enclosed built complex of halls and corridors.
+
+Design a concrete monster roster appropriate to the requested difficulty.
+
+Spells (optional): to give this creature spells, add a "spells" array to its stat block. Each entry is { "name": <copied EXACTLY from this prompt's spell list>, "castRank": <the rank it is cast at, or null for the spell's own rank; a cantrip ignores it — a cantrip's rank is derived from the creature's level> }. Assign ONLY names from this list of the campaign's imported spells: the app checks every name against the library and reports any spell it cannot find.
+Ignition — Cantrip
+Fireball — Rank 3
+
+No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: { "system": "pathfinder2e", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), "size": string, "creatureType": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "abilities": d20 ability SCORES — in EVERY system, Pathfinder 2e included: write the SCORE, never the printed modifier, so a Pathfinder 2e "Str +2" is written 14 (score = 10 + 2 × the printed modifier) and an ability value NEVER carries a sign — the keys are { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "saves": string, "skills": string, "senses": string, "languages": string, "traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], "reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], "extras": Record<string,string>, "spells": [{ "name": <copied EXACTLY from this prompt's spell list>, "castRank": <the rank it is cast at, or null for the spell's own rank; a cantrip ignores it — a cantrip's rank is derived from the creature's level> }] }. A partial stat block is rejected.
+
+Room keys: every room carries a "key" — 1–3 sentences of GM-only room information the GM reads when the party first enters (what the room looks like, who or what is here, anything interactable) — and a "keyTreasure" checklist of the treasure hidden in THAT room (one item per line; "" when none). Hoards live in "keyTreasure"; monsters only carry pocket-level "treasure".
+Outdoor encounters get room keys too: each staging area carries "key"/"keyTreasure" exactly like dungeon rooms (the key marker renders at the room's mob area).
+Room keys regenerate together with the map: rewriting them on a regeneration is expected, not a loss to avoid.
+
+Treasure structure (owner-ratified): treasure text is a GM checklist — one item per line, item name + amount or hiding spot, never item stat blocks or rules text.
+Every monster entry carries a "treasure" string: what ONE instance of that creature carries (an empty string when it carries nothing). Encounter-scoped: what THESE creatures have here, never the species' typical hoard.
+Hoards and hidden stashes do NOT go on monsters — they belong to the place. Coins, gems and trade goods are free to name; permanent/magic items come ONLY from the item pool by exact name (see the item-pool section), never invented.
+Treasure budget (pathfinder2e): the GM Core treasure rules are the law — when the retrieved rule excerpts include the treasure chapter, follow its budgets VERBATIM (exact amounts, never a paraphrase of a Paizo number).
+When the excerpts do NOT include the treasure rules, do not invent amounts: describe what treasure exists and where, without numbers.
+Individual creature carries follow the creature-coin guidance in the excerpts; the party-facing hoard (a room's "keyTreasure", or the top-level "treasure" field) follows the party treasure by level.
+
+Per-room challenge: every room must ALONE challenge the party — a complex is a sequence of fights, not one fight spread thin.
+Each room carries a "targetLevel": the party level this room alone should challenge. When you omit it, the encounter's own level is used. A DUNGEON COMPLEX requires a targetLevel on EVERY room — a complex room without one is rejected.
+MODULE DIFFICULTY (the owner's setting for this whole module — NOT the per-encounter "difficulty" field of your reply): Normal. This module is tuned for the party's baseline: size each room as the excerpts state. No numeric budget is computed under this module's policy, so this is a DIRECTIONAL instruction only; where the retrieved rule excerpts are in context they remain the law.
+pathfinder2e budget: the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When the excerpts do NOT include the encounter-budget rules, set each room's "targetLevel" from the party level and describe the intended difficulty without inventing XP amounts.
+
+Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}], substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.

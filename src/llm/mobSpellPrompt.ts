@@ -1,5 +1,6 @@
 import type { MobSpellVocabulary } from '@/domain';
 import {
+  MOB_SPELL_CASTER_CLAUSE,
   MOB_SPELL_ENTRY_SHAPE,
   MOB_SPELL_REPAIR_LEAD_IN,
   MOB_SPELL_SECTION_HEADER,
@@ -61,4 +62,26 @@ export function formatMobSpellContractClause(vocabulary: MobSpellVocabulary): st
 /** The spell half of a repair turn: the named offenders, one per line. */
 export function formatMobSpellRepair(issues: readonly string[]): string {
   return `${MOB_SPELL_REPAIR_LEAD_IN}\n- ${issues.join('\n- ')}`;
+}
+
+/**
+ * THE caster-awareness clause (docs/17 row 201). The other half of row 200's
+ * offer: the vocabulary tells the model WHICH spells exist; this tells it that a
+ * creature the module presents as a caster MUST be given them. It lives in the
+ * SAME composer as the vocabulary and the contract clause and reads the SAME
+ * `mobSpellVocabularyRenders` corpus gate — so the rule and the list can never
+ * be gated differently (a no-corpus prompt gets NEITHER), and the ONE literal is
+ * declared once in `llm/promptScaffolding`.
+ *
+ * It is rendered by the NPC lane's TWO steps only — `runDraft`'s npc arm (where
+ * the identity and prose are written) and `runStatblock` (where the spells and
+ * the DC are written) — because a caster-awareness pass at the stat block alone
+ * yields a mundane necromancer with a list bolted on. The Encounter Smith and
+ * the Cartographer keep their existing OPTIONAL invitation and do NOT call this
+ * (owner's scope). It names no theme and adds no filter: the owner's call is
+ * that a spell which merely SOUNDS necromantic is fine.
+ */
+export function formatMobSpellCasterClause(vocabulary: MobSpellVocabulary): string | null {
+  if (!mobSpellVocabularyRenders(vocabulary)) return null;
+  return MOB_SPELL_CASTER_CLAUSE;
 }

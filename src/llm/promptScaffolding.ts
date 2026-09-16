@@ -238,6 +238,29 @@ export const MOB_SPELL_TRUNCATION_SUFFIX =
 export const MOB_SPELL_REPAIR_LEAD_IN =
   'Your previous reply assigned spells that are not in this campaign\'s imported spell library:';
 
+/**
+ * THE caster-awareness clause (docs/17 row 201). Row 200 made every mob lane
+ * OFFER the library; this is the other half — the instruction that a creature
+ * the module presents as a caster actually comes out as one, so a level-7
+ * necromancer is not a mundane smith with a spell list bolted on.
+ *
+ * It is ONE literal rendered by ONE composer (`llm/mobSpellPrompt`,
+ * `formatMobSpellCasterClause`) through the SAME corpus gate as the vocabulary,
+ * so the rule and the list are never gated differently, and it reaches BOTH NPC
+ * steps — the DRAFT (where the identity is written) and the STAT-BLOCK step
+ * (where the numbers are). The ENCOUNTER lanes keep their existing OPTIONAL
+ * invitation and never render it (owner's scope).
+ *
+ * NO THEME FILTERING (owner: *"Its ok if the model takes spells that just
+ * sound necromantic, thats not a problem"*) — the clause tells the model to use
+ * its own knowledge of the role, never to filter the imported list by school or
+ * theme. The field names it states are the EXACT keys the shared
+ * `domain/statblock` schema carries; the numbers themselves are only ever the
+ * model's own (a caster that states none is a LOUD render, never a computed DC).
+ */
+export const MOB_SPELL_CASTER_CLAUSE =
+  'Caster awareness: when this creature\'s concept, name or intent implies a spellcaster — a wizard, priest, necromancer, druid, witch, shaman or any other spellcasting role — it MUST be given spells: cantrips plus the spells its level allows, chosen for the role from your own knowledge of what that role means (never narrow them by theme or school). A spellcaster also needs a stat block that states its spell save DC ("spellDC"), its spell attack bonus ("spellAttack") and its magical tradition ("tradition") where the system has one — the GM plays the spell from those numbers, and the app never invents them. Never present a spellcaster as a mundane creature.';
+
 /* -------------------------------------------------------------------------
  * The detector
  * ---------------------------------------------------------------------- */
@@ -328,6 +351,7 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   literalMarker('the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE),
   literalMarker('the mob-spells section header', MOB_SPELL_SECTION_HEADER),
   literalMarker('the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN),
+  literalMarker('the caster-awareness clause', MOB_SPELL_CASTER_CLAUSE),
 ];
 
 /** One echo of our own scaffolding found in generated text. */

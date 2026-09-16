@@ -12,7 +12,7 @@ import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { getRun } from '@/db/runRepo';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
-import { MOB_SPELL_SECTION_HEADER } from '@/llm/promptScaffolding';
+import { MOB_SPELL_CASTER_CLAUSE, MOB_SPELL_SECTION_HEADER } from '@/llm/promptScaffolding';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import {
   ruleChunkSchema,
@@ -68,13 +68,12 @@ function waitForRun(assertion: () => void | Promise<void>) {
 }
 
 const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
-const NPC_GOLDEN = join(
-  import.meta.dirname,
-  '..',
-  'fixtures',
-  'mobSpells',
-  'statblock-no-corpus.txt',
-);
+const MOB_SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'mobSpells');
+const NPC_GOLDEN = join(MOB_SPELL_FIXTURES, 'statblock-no-corpus.txt');
+/** Pre-arc goldens, captured at HEAD before the caster-awareness slice. */
+const NPC_DRAFT_GOLDEN = join(MOB_SPELL_FIXTURES, 'npc-draft-no-corpus.txt');
+const ENCOUNTER_DRAFT_GOLDEN = join(MOB_SPELL_FIXTURES, 'encounter-draft-with-corpus.txt');
+const CARTOGRAPHER_BRIEF_GOLDEN = join(MOB_SPELL_FIXTURES, 'cartographer-brief-with-corpus.txt');
 
 async function realSpell(file: string, packRelative: string): Promise<SpellData> {
   const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
@@ -198,6 +197,32 @@ async function npcStatblockPrompt(withCorpus: boolean): Promise<string> {
     expect((await getRun(runId))?.steps.find((step) => step.name === 'statblock')?.status).toBe('done');
   });
   return lastPrompt(1);
+}
+
+/** Drives the NPC smith to its DRAFT step and returns that step's prompt. */
+async function npcDraftPrompt(withCorpus: boolean): Promise<string> {
+  const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+  if (withCorpus) await seedCorpus('pathfinder2e');
+  const persona = await seedPersona('npc');
+  const input: StartRunInput = {
+    campaign,
+    persona,
+    autonomy: 'manual',
+    brief: NPC_BRIEF,
+    pinnedChunkIds: [],
+  };
+  chatMock.mockResolvedValueOnce({
+    text: JSON.stringify(NPC_DRAFT),
+    modelUsed: 'test-model',
+    fallback: null,
+  });
+  const runId = await runEngine.startRun(input);
+  await waitForRun(async () => {
+    expect((await getRun(runId))?.steps.find((step) => step.name === 'draft')?.status).toBe('done');
+  });
+  // The LAST call: a mocked reply can ride a repair turn, and the draft prompt
+  // is the one this helper is asked for.
+  return lastPrompt(chatMock.mock.calls.length - 1);
 }
 
 function encounterDraftReply(withCorpus: boolean): Record<string, unknown> {
@@ -335,6 +360,11 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
   it('the NPC stat-block step carries the clause and the vocabulary with a corpus', async () => {
     const present = await npcStatblockPrompt(true);
     expect(present).toContain(MOB_SPELL_SECTION_HEADER);
+    // The caster-awareness clause (docs/17 row 201) rides the SAME prompt the
+    // vocabulary does, so the rule and the list cannot drift.
+    expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
+    expect(present).toContain('MUST be given spells');
+    expect(present).toContain('necromancer');
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('Ignition — Cantrip');
     // The contract line offers the field the vocabulary invites: row 184's defect.
@@ -342,11 +372,29 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(present).toContain('matching this COMPLETE schema');
   }, 60000);
 
+  it('the NPC DRAFT step carries the clause with a corpus', async () => {
+    const present = await npcDraftPrompt(true);
+    expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
+    expect(present).toContain('MUST be given spells');
+    // The draft authors no stat block, so it is offered the RULE, not the list.
+    expect(present).not.toContain(MOB_SPELL_SECTION_HEADER);
+  }, 60000);
+
+  it('the NPC DRAFT step keeps its PRE-ARC bytes without a corpus', async () => {
+    // BYTE-IDENTITY: the pre-arc draft prompt, captured at HEAD before the
+    // caster clause existed. A corpus-less system pays nothing. Separate test
+    // from the one above because the corpus is per-DATABASE, not per-run.
+    const absent = await npcDraftPrompt(false);
+    expect(absent).toBe(readFileSync(NPC_DRAFT_GOLDEN, 'utf8'));
+    expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
+  }, 60000);
+
   it('the NPC stat-block step keeps its PRE-ARC bytes without a corpus', async () => {
     const absent = await npcStatblockPrompt(false);
     // BYTE-IDENTITY: the pre-arc prompt, captured at the pre-fix tree.
     expect(absent).toBe(readFileSync(NPC_GOLDEN, 'utf8'));
     expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);
 
@@ -355,11 +403,18 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(present).toContain(MOB_SPELL_SECTION_HEADER);
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('"spells": [');
+    // The owner's scope: the Encounter Smith keeps its existing OPTIONAL
+    // invitation — the caster clause is the NPC lane's alone (docs/17 row 201).
+    expect(present).not.toContain(MOB_SPELL_CASTER_CLAUSE);
+    // BYTE-IDENTITY with the pre-arc prompt captured at HEAD: the shared
+    // composer gained a third function, and this lane's bytes did not move.
+    expect(present).toBe(readFileSync(ENCOUNTER_DRAFT_GOLDEN, 'utf8'));
   }, 60000);
 
   it('the encounter draft carries neither without a corpus', async () => {
     const absent = await encounterDraftPrompt(false);
     expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);
 
@@ -368,11 +423,15 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(present).toContain(MOB_SPELL_SECTION_HEADER);
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('"spells": [');
+    expect(present).not.toContain(MOB_SPELL_CASTER_CLAUSE);
+    // BYTE-IDENTITY with the pre-arc brief captured at HEAD.
+    expect(present).toBe(readFileSync(CARTOGRAPHER_BRIEF_GOLDEN, 'utf8'));
   }, 60000);
 
   it('the Cartographer lane carries neither without a corpus', async () => {
     const absent = await cartographerBriefPrompt(false);
     expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);
 

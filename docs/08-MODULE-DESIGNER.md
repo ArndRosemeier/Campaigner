@@ -1507,6 +1507,61 @@ inspectable and where the generation it steers is triggered.
 intent field's); no hint driving anything but the level; the encounter generator's own
 level resolution is unchanged (it keeps its part band + artifact `levelHint`).
 
+### Caster-aware NPC generation (docs/17 row 201)
+
+The owner's report: *"I guess the NPC smith just needs to be explicitely caster aware.
+I do not really want to each time explain what a necromancer is. Models should know that.
+Maybe its just a matter of making prompts caster aware?"* — plus his answers: spells that
+merely SOUND necromantic are fine (no theme filtering, no overengineering), a GM needs the
+spell DC to actually play the spell, tradition "if we get it cheaply", and cantrips need
+auto-heightened numbers.
+
+**The ONE clause, at BOTH NPC steps.** `llm/promptScaffolding.MOB_SPELL_CASTER_CLAUSE`
+(rendered by `llm/mobSpellPrompt.formatMobSpellCasterClause` through the SAME corpus gate
+as the vocabulary) states that when a creature's concept, name or intent implies a
+spellcaster — a wizard, priest, necromancer, druid, witch, shaman — it MUST be given
+spells: cantrips plus the spells its level allows, chosen for the role from the model's own
+knowledge. It is rendered by `runDraft`'s npc arm (where the NPC's identity and prose are
+written) AND by the stat-block step (where the spells and the numbers are) — caster
+awareness only at the stat block would produce a mundane necromancer with a list bolted on.
+With no imported spell corpus neither step renders it and both keep their pre-arc prompt
+bytes. The Encounter Smith and the Cartographer keep their existing OPTIONAL invitation and
+are untouched (owner's scope).
+
+**How the caster decision reaches the stat-block step (MEASURED, not assumed).** The
+stat-block step does NOT receive the draft's body: it reads `input.brief` plus the draft's
+`name`. The brief is the module carrier — `buildEntityBrief` renders the module's own
+surrounding paragraphs, the premise and the entity `intent` — so a caster the module text
+describes (the owner's level-7 necromancer) reaches both steps through it, and the clause
+tells each model how to act on it. This slice therefore adds NO caster flag to
+`npcDraftSchema`: a draft-level flag would change the NPC draft prompt for EVERY campaign —
+spell-less ones included — to buy a signal the brief already carries. That is recorded as a
+possible follow-up, not silently omitted.
+
+**The caster's own numbers.** The stat block gains three additive nullable fields —
+`spellDC`, `spellAttack` (stored as the d20 MODIFIER, printed `+17`) and `tradition` (a
+free string, never an enum: a dnd5e caster has no PF2e tradition). They are NEVER derived:
+`domain/statblock.casterStatLine` prints the stated numbers, and a caster that states no DC
+prints the LOUD marker `this caster states no spell DC` — never a plausible-looking number
+computed from its level (AGENTS rule 1). The line renders on the ONE `StatBlockCard` (the
+NPC card every surface mounts) and in the PDF stat box through
+`lib/modulePdf.casterBoxSection`. A mundane or legacy block returns `null`/`[]` and renders
+exactly as it did.
+
+**Caveat: the schema is shared.** `statBlockSchema`'s new keys reach the strict
+`response_format` of EVERY lane that embeds an inline stat block (the encounter draft and
+the Cartographer brief included), even though those lanes' prompt text is unchanged and they
+never render the caster clause. The byte-identity pins for those lanes are therefore about
+their PROMPT bytes; the response schema bytes moved and are re-derived, not claimed
+identical.
+
+**The cantrip confirmation.** Nothing was needed: `domain/spellHeightening.spellAtRank`
+already derives a cantrip's rank through the ONE
+`domain/spellHeightening.pf2eCantripRankFor` (the row-194 fold) from the block's
+printed level, and `domain/mobSpells.mobSpellChips` feeds it the mob's level — for a level-7
+caster that is rank 4 with `cantrip-auto` provenance. A caster whose level is unknown stays a
+LOUD named issue, never an invented rank.
+
 ### Names the text picks up later (the record gate is a TEXT gate)
 
 Every batch bucket is keyed by a RECORD (`module.entityKinds`) — never a

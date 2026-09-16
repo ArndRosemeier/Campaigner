@@ -10,7 +10,7 @@ import {
 } from '@/domain/encounterResolve';
 import { getImage } from '@/db/imageRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
-import { statBoxContent, spellBoxSection } from '@/lib/modulePdf';
+import { casterBoxSection, statBoxContent, spellBoxSection } from '@/lib/modulePdf';
 import { loadSpellIndexesFor, statBlockSystems } from '@/db/spellRepo';
 import { fileSlug } from '@/lib/fileSlug';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
@@ -113,6 +113,9 @@ function statBlockSection(
     ...named(statBlock.actions),
     ...named(statBlock.reactions),
     ...named(statBlock.legendary),
+    // The caster line (docs/17 row 201) — the SAME `casterBoxSection` bytes the
+    // module book prints, above the spell chips a GM plays from.
+    ...(casterBoxSection(statBlock) as object[]),
     // The mob's spells, the SAME bytes the module book and the in-app chip
     // print (docs/17 row 184).
     ...(spellBoxSection(statBlock, spellIndexes) as object[]),

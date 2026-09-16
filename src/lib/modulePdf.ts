@@ -17,6 +17,7 @@ import type {
 import {
   abilityModifier,
   assembleModulePartsDocument,
+  casterStatLine,
   documentPlanIssues,
   documentPlanSectionDestination,
   formatModifier,
@@ -26,6 +27,7 @@ import {
   printsAbilityModifiers,
   readStoredDocumentPlan,
   splitPartsDocument,
+  statBlockStatesNoSpellDc,
 } from '@/domain';
 import {
   missingCreatureOrigin,
@@ -350,6 +352,25 @@ export function spellBoxSection(
 }
 
 /**
+ * The caster line a PRINTED stat box carries (docs/17 row 201) — the SAME bytes
+ * `domain/statblock.casterStatLine` gives the in-app card, so the book and the
+ * screen cannot disagree about a mob's spell DC. A caster that states no DC
+ * prints the LOUD marker in the alert colour (never a computed number); a
+ * mundane or legacy block returns `[]` and its box is unchanged.
+ */
+export function casterBoxSection(statBlock: StatBlock): Content[] {
+  const line = casterStatLine(statBlock);
+  if (line === null) return [];
+  return [
+    {
+      text: line,
+      ...(statBlockStatesNoSpellDc(statBlock) ? { color: ALERT, bold: true } : {}),
+      margin: [0, 0, 0, 2],
+    },
+  ];
+}
+
+/**
  * Bordered two-column stat box (M2 export layout, module styling).
  *
  * THE box every roster surface prints — `inline` and a CITED library creature
@@ -371,6 +392,9 @@ export function statBoxContent(
   spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
 ): Content {
   const spells = spellBoxSection(statBlock, spellIndexes);
+  // The caster line (docs/17 row 201) prints ABOVE the spell chips: the GM
+  // needs the DC before the spell descriptions. Empty for a non-caster.
+  const caster = casterBoxSection(statBlock);
   const left: Content[] = [
     {
       text: [statBlock.size, statBlock.creatureType, statBlock.level]
@@ -461,6 +485,17 @@ export function statBoxContent(
           },
           '',
         ],
+        ...(caster.length === 0
+          ? []
+          : [
+              [
+                {
+                  colSpan: 2,
+                  stack: caster,
+                },
+                '',
+              ],
+            ]),
         ...(spells.length === 0
           ? []
           : [

@@ -1,0 +1,28 @@
+Campaign: Ember (Pathfinder 2e)
+
+Task: A cultist ambush at the ford
+
+THE SCENE IS THE TRUTH FOR THIS FIGHT.
+The brief above is the scene this encounter must stage. Whatever it states about the opposition — what the creatures are, roughly how many, what they carry, what they are doing — and about the place — its terrain and the conditions the party will fight in — is FIXED: the roster AND the map must match it.
+A stated creature you cannot honour as written is never silently swapped: either build it as a complete inline "statBlock" for exactly the creature the scene describes, or declare the deviation in "substitutions" as { "asserted": what the scene states, "used": what you fielded instead, "reason": why } — an undeclared swap is the failure this rule exists to prevent, and a declared one is reported to the GM.
+Where the scene states nothing you design freely: silence is not a constraint, and the roster, the map, the tactics, the treasure and the difficulty are yours. A vague scene is never a reason to invent an assertion the text does not make.
+
+No rule excerpts available.
+
+Spells (optional): to give this creature spells, add a "spells" array to its stat block. Each entry is { "name": <copied EXACTLY from this prompt's spell list>, "castRank": <the rank it is cast at, or null for the spell's own rank; a cantrip ignores it — a cantrip's rank is derived from the creature's level> }. Assign ONLY names from this list of the campaign's imported spells: the app checks every name against the library and reports any spell it cannot find.
+Ignition — Cantrip
+Fireball — Rank 3
+
+No stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: { "system": "pathfinder2e", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), "size": string, "creatureType": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "abilities": d20 ability SCORES — in EVERY system, Pathfinder 2e included: write the SCORE, never the printed modifier, so a Pathfinder 2e "Str +2" is written 14 (score = 10 + 2 × the printed modifier) and an ability value NEVER carries a sign — the keys are { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "saves": string, "skills": string, "senses": string, "languages": string, "traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], "reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], "extras": Record<string,string>, "spells": [{ "name": <copied EXACTLY from this prompt's spell list>, "castRank": <the rank it is cast at, or null for the spell's own rank; a cantrip ignores it — a cantrip's rank is derived from the creature's level> }] }. A partial stat block is rejected.
+
+Treasure structure (owner-ratified): treasure text is a GM checklist — one item per line, item name + amount or hiding spot, never item stat blocks or rules text.
+Every monster entry carries a "treasure" string: what ONE instance of that creature carries (an empty string when it carries nothing). Encounter-scoped: what THESE creatures have here, never the species' typical hoard.
+Hoards and hidden stashes do NOT go on monsters — they belong to the place. Coins, gems and trade goods are free to name; permanent/magic items come ONLY from the item pool by exact name (see the item-pool section), never invented.
+Treasure budget (pathfinder2e): the GM Core treasure rules are the law — when the retrieved rule excerpts include the treasure chapter, follow its budgets VERBATIM (exact amounts, never a paraphrase of a Paizo number).
+When the excerpts do NOT include the treasure rules, do not invent amounts: describe what treasure exists and where, without numbers.
+Individual creature carries follow the creature-coin guidance in the excerpts; the party-facing hoard (a room's "keyTreasure", or the top-level "treasure" field) follows the party treasure by level.
+
+Field guidance for this encounter:
+- "locationKind": where the encounter takes place — "dungeon" (underground/ruin complex), "building" (indoor structure), "wilderness" (open terrain), or "other" when nothing fits.
+
+Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","difficulty","levelHint","monsters","terrain","tactics","treasure","substitutions","locationKind"]

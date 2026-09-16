@@ -214,6 +214,37 @@ UNRESOLVED). Before row 200 this lane — the one that stocks a dungeon — neit
 offered the vocabulary nor validated a returned name, which is the felt gap
 behind the owner's "NPC casters were not created" report.
 
+**The caster rule, and the caster's own numbers (docs/17 row 201).** Offering a
+library is not the same as asking for a caster: a module that presents a level-7
+necromancer must come out AS a caster, with a spell list AND the numbers a GM
+plays the spell from. `llm/promptScaffolding.MOB_SPELL_CASTER_CLAUSE` is the ONE
+clause — *when this creature's concept, name or intent implies a spellcaster it
+MUST be given spells: cantrips plus the spells its level allows, chosen for the
+role from the model's own knowledge* — and `llm/mobSpellPrompt.formatMobSpellCasterClause`
+renders it through the SAME corpus gate as the vocabulary, so a system with no
+imported spells gets neither. It reaches BOTH NPC steps: `runDraft`'s npc arm
+(where the identity and prose are written) and `runStatblock` (where the spells
+and the DC are written). The ENCOUNTER draft and the Cartographer keep their
+existing OPTIONAL invitation and never render it (owner's scope). There is NO
+theme or school filter: a spell that merely SOUNDS necromantic is acceptable
+(owner, verbatim: *"Its ok if the model takes spells that just sound
+necromantic, thats not a problem"*).
+
+`domain/statblock.ts` gains three additive nullable fields — `spellDC`,
+`spellAttack` (stored as the d20 MODIFIER, printed `+17`) and `tradition` (a free
+string, never an enum: a dnd5e caster has no PF2e tradition). They are NEVER
+invented: `casterStatLine` renders the stated numbers, and a caster that states
+no DC renders the LOUD `SPELL_DC_MISSING_MARKER` (*"this caster states no spell
+DC"*) instead of a number derived from the level. The ONE line is mounted on the
+ONE `StatBlockCard` and, through `lib/modulePdf.casterBoxSection`, in BOTH PDF
+stat boxes. The shared `statBlockSchema` means the new keys appear in every
+lane's strict response schema (the encounter and Cartographer prompts' own bytes
+are unchanged, but their `response_format` gains the fields — recorded, not
+claimed byte-identical). A caster's cantrip needs no change: `spellAtRank` still
+derives the rank through the ONE `domain/spellHeightening.pf2eCantripRankFor`
+(the row-194 fold) from the block's printed level (a
+level-7 caster's cantrip is rank 4), and an unknown level stays a loud issue.
+
 **The chips.** `components/spell-chip.SpellChip` is the ONE spell chip; it is
 mounted inside `features/campaign/components/stat-block.StatBlockCard` (the ONE
 stat-block card, so the NPC card, the module reader, the artifact editor, the
