@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { SpellData } from '@/domain/spellData';
 import {
   combineDamageFormula,
+  DND5E_PROSE_ONLY_MARKER,
   PROSE_ONLY_MARKER,
   spellAtRank,
   UNPARSED_HEIGHTENING_PREFIX,
@@ -22,6 +23,10 @@ function makeSpell(overrides: Partial<SpellData>): SpellData {
     rank: 3,
     cantrip: false,
     traditions: [],
+    // Row 194's axis fields (a PF2e payload's axis is its traditions).
+    filterAxis: 'tradition',
+    school: '',
+    properties: [],
     traits: [],
     rarity: 'common',
     cast: { time: '', range: '', target: '', duration: '' },
@@ -451,5 +456,246 @@ describe('combineDamageFormula — symbolic, deterministic, never evaluated', ()
   it('refuses a formula it cannot read instead of guessing', () => {
     expect(() => combineDamageFormula('@item.level', '1d6', 1)).toThrow(/cannot read the formula term/);
     expect(() => combineDamageFormula('1d6', '2d6', -1)).toThrow(/non-negative integer/);
+  });
+});
+
+/**
+ * dnd5e upcasting (docs/17 row 194) — the SECOND system's mechanism, answered
+ * by the SAME `spellAtRank` seam and NEVER by a PF2e arm. The payload shape
+ * below mirrors the REAL corpus documents mapped by
+ * `ingest/packs/dnd5e-foundry.ts` (Fire Bolt's whole-die cantrip scaling,
+ * Fireball's whole-die slot scaling, Magic Missile's empty scaling mode).
+ */
+function makeDnd5eSpell(overrides: Partial<SpellData>): SpellData {
+  return {
+    system: 'dnd5e',
+    rank: 0,
+    cantrip: true,
+    traditions: [],
+    school: 'evo',
+    filterAxis: 'school',
+    properties: [],
+    traits: [],
+    rarity: 'common',
+    cast: { time: '', range: '', target: '', duration: '' },
+    damage: { 0: { formula: '1d10', type: 'fire', category: null, materials: [] } },
+    area: null,
+    heightening: null,
+    upcast: {
+      baseLevel: 0,
+      sentence: '',
+      parts: [
+        {
+          index: 0,
+          formula: '1d10',
+          number: 1,
+          denomination: 10,
+          bonus: '',
+          types: ['fire'],
+          scaling: { mode: 'whole', number: 1, formula: '' },
+        },
+      ],
+    },
+    heighteningEntries: [],
+    heighteningUnparsed: [],
+    publication: null,
+    ...overrides,
+  };
+}
+
+describe('spellAtRank — dnd5e upcasting (row 194, NOT PF2e heightening)', () => {
+  it('scales a levelled spell by the SLOT it is cast in, from the source own dice count', () => {
+    const fireball = makeDnd5eSpell({
+      rank: 3,
+      cantrip: false,
+      damage: { 0: { formula: '8d6', type: 'fire', category: null, materials: [] } },
+      upcast: {
+        baseLevel: 3,
+        sentence: 'the damage increases by 1d6 for each slot level above 3rd.',
+        parts: [
+          {
+            index: 0,
+            formula: '8d6',
+            number: 8,
+            denomination: 6,
+            bonus: '',
+            types: ['fire'],
+            scaling: { mode: 'whole', number: 1, formula: '' },
+          },
+        ],
+      },
+    });
+
+    const atBase = spellAtRank(fireball, { castRank: 3 });
+    expect(atBase.source).toBe('upcast');
+    expect(atBase.valuesSource).toBe('base');
+    expect(atBase.appliedRank).toBe(3);
+    expect(atBase.appliedSteps).toBe(0);
+    expect(atBase.values.damage.map((entry) => entry.formula)).toEqual(['8d6']);
+
+    const atFifth = spellAtRank(fireball, { castRank: 5 });
+    expect(atFifth.source).toBe('upcast');
+    expect(atFifth.valuesSource).toBe('scaling');
+    expect(atFifth.appliedSteps).toBe(2);
+    expect(atFifth.values.damage.map((entry) => entry.formula)).toEqual(['10d6']);
+    // The source's own sentence rides beside the numbers it produced.
+    expect(atFifth.upcastProse).toBe('the damage increases by 1d6 for each slot level above 3rd.');
+    expect(atFifth.warnings).toEqual([]);
+  });
+
+  it('adds the delta to a part whose formula carries a flat bonus, keeping the printed convention', () => {
+    const spell = makeDnd5eSpell({
+      rank: 1,
+      cantrip: false,
+      damage: { 0: { formula: '1d4+1', type: 'force', category: null, materials: [] } },
+      upcast: {
+        baseLevel: 1,
+        sentence: 'When you cast this spell using a spell slot of 2nd level or higher, the spell creates one more dart for each slot level above 1st.',
+        parts: [
+          {
+            index: 0,
+            formula: '1d4+1',
+            number: 1,
+            denomination: 4,
+            bonus: '1',
+            types: ['force'],
+            // The REAL Magic Missile document: no structured increase.
+            scaling: { mode: '', number: null, formula: '' },
+          },
+        ],
+      },
+    });
+    // PROSE ONLY: the source states no scaling mode, so the sentence is
+    // returned VERBATIM behind the loud marker and NO number is computed.
+    const result = spellAtRank(spell, { castRank: 4 });
+    expect(result.source).toBe('prose-only');
+    expect(result.valuesSource).toBe('base');
+    expect(result.values.damage.map((entry) => entry.formula)).toEqual(['1d4+1']);
+    expect(result.upcastProse).toBe(spell.upcast?.sentence);
+    expect(result.warnings).toContain(DND5E_PROSE_ONLY_MARKER);
+  });
+
+  it('THE CANTRIP TRAP: a 5e cantrip is NEVER given the PF2e clamp(ceil(level/2),1,10) rank (differential, level 5 vs 11)', () => {
+    const fireBolt = makeDnd5eSpell({});
+    const atFive = spellAtRank(fireBolt, { characterLevel: 5 });
+    const atEleven = spellAtRank(fireBolt, { characterLevel: 11 });
+
+    // The PF2e rule would print rank 3 and rank 6. A 5e cantrip has NO slot
+    // level at all: it stays rank 0 and its DICE follow the character level.
+    expect([atFive.appliedRank, atEleven.appliedRank]).toEqual([0, 0]);
+    expect(atFive.cantripAuto).toBe(false);
+    expect(atEleven.cantripAuto).toBe(false);
+    expect(atFive.cantripScaling).toBe(true);
+    expect(atEleven.cantripScaling).toBe(true);
+    expect(atFive.source).toBe('upcast');
+    expect(atFive.valuesSource).toBe('scaling');
+    expect(atFive.values.damage.map((entry) => entry.formula)).toEqual(['2d10']);
+    expect(atEleven.values.damage.map((entry) => entry.formula)).toEqual(['3d10']);
+    // The system's OWN tier expression: floor((level + 1) / 6).
+    expect([atFive.appliedSteps, atEleven.appliedSteps]).toEqual([1, 2]);
+  });
+
+  it('a PF2e cantrip on the SAME levels keeps its byte-identical PF2e progression', () => {
+    const pf2eCantrip = makeSpell({
+      rank: 0,
+      cantrip: true,
+      damage: { a: { formula: '1d6', type: 'fire', category: null, materials: [] } },
+      heightening: { type: 'interval', interval: 1, area: 0, damage: { a: '1d6' } },
+    });
+    const atFive = spellAtRank(pf2eCantrip, { casterLevel: 5 });
+    const atEleven = spellAtRank(pf2eCantrip, { casterLevel: 11 });
+    expect([atFive.appliedRank, atEleven.appliedRank]).toEqual([3, 6]);
+    expect(atFive.cantripAuto).toBe(true);
+    expect(atFive.cantripScaling).toBe(false);
+    // Cantrip RULES base rank 1 (never the list rank 0): two whole
+    // increments at derived rank 3, five at derived rank 6.
+    expect(atFive.values.damage.map((entry) => entry.formula)).toEqual(['3d6']);
+    expect(atEleven.values.damage.map((entry) => entry.formula)).toEqual(['6d6']);
+  });
+
+  it('prints the structured per-tier values WITHOUT choosing a tier when the creature states no character level', () => {
+    const fireBolt = makeDnd5eSpell({});
+    const result = spellAtRank(fireBolt, {});
+    expect(result.cantripScaling).toBe(false);
+    expect(result.values.damage.map((entry) => entry.formula)).toEqual(['1d10']);
+    expect(result.warnings.join('\n')).toContain('states no character level');
+  });
+
+  it('refuses a scaling mode this build does not compute instead of guessing (NO invented number)', () => {
+    const halfDice = makeDnd5eSpell({
+      upcast: {
+        baseLevel: 0,
+        sentence: '',
+        parts: [
+          {
+            index: 0,
+            formula: '1d10',
+            number: 1,
+            denomination: 10,
+            bonus: '',
+            types: ['fire'],
+            scaling: { mode: 'half', number: 1, formula: '' },
+          },
+        ],
+      },
+    });
+    expect(() => spellAtRank(halfDice, { characterLevel: 11 })).toThrow(
+      'unsupported dnd5e damage scaling mode "half"',
+    );
+  });
+
+  it('refuses a spell cast below its own source level', () => {
+    const fireball = makeDnd5eSpell({
+      rank: 3,
+      cantrip: false,
+      upcast: { baseLevel: 3, sentence: '', parts: [] },
+    });
+    expect(() => spellAtRank(fireball, { castRank: 2 })).toThrow(
+      'cannot be cast at level 2',
+    );
+  });
+});
+
+describe('spellAtRank — the system dispatch (row 194)', () => {
+  it('chooses the arm from the PAYLOAD system, never from the caller', () => {
+    // A dnd5e payload can never reach a PF2e arm: no PF2e provenance
+    // (`cantrip-auto` / `focus-auto`), no PF2e values source, even given the
+    // traits and levels a PF2e spell would need.
+    const fiveE = makeDnd5eSpell({
+      traits: ['focus'],
+      heightening: { type: 'interval', interval: 1, area: 0, damage: { 0: '1d10' } },
+    });
+    const fiveEResult = spellAtRank(fiveE, { characterLevel: 11, casterLevel: 11 });
+    expect(fiveEResult.source).toBe('upcast');
+    expect(fiveEResult.cantripAuto).toBe(false);
+    expect(fiveEResult.focusAuto).toBe(false);
+    expect(fiveEResult.valuesSource).not.toBe('interval');
+
+    // …and a PF2e payload can never reach the 5e arm, even carrying an
+    // `upcast` block (a corrupt shape): the PF2e path is the else branch.
+    const pf2e = makeSpell({
+      rank: 3,
+      cantrip: false,
+      damage: { a: { formula: '6d6', type: 'fire', category: null, materials: [] } },
+      upcast: {
+        baseLevel: 3,
+        sentence: 'ignored',
+        parts: [
+          {
+            index: 0,
+            formula: '6d6',
+            number: 6,
+            denomination: 6,
+            bonus: '',
+            types: ['fire'],
+            scaling: { mode: 'whole', number: 1, formula: '' },
+          },
+        ],
+      },
+    });
+    const pf2eResult = spellAtRank(pf2e, { castRank: 5, casterLevel: 5 });
+    expect(pf2eResult.source).toBe('base');
+    expect(pf2eResult.upcastProse).toBeNull();
+    expect(pf2eResult.values.damage.map((entry) => entry.formula)).toEqual(['6d6']);
   });
 });

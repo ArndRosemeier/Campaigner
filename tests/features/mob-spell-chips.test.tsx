@@ -19,6 +19,7 @@ import {
   type StatBlock,
 } from '@/domain';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
+import { foundryDnd5eSrdAdapter } from '@/ingest/packs/dnd5e-foundry';
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import { clearDatabase } from '../db/helpers';
@@ -51,10 +52,13 @@ async function realSpell(file: string, packRelative: string): Promise<SpellData>
 }
 
 let seq = 0;
-async function seedSpells(spells: readonly { name: string; data: SpellData }[]): Promise<Id> {
+async function seedSpells(
+  spells: readonly { name: string; data: SpellData }[],
+  system: 'pathfinder2e' | 'dnd5e' = 'pathfinder2e',
+): Promise<Id> {
   const book = await createPackBook({
-    title: 'PF2e Spells',
-    system: 'pathfinder2e',
+    title: system === 'dnd5e' ? 'SRD Spells' : 'PF2e Spells',
+    system,
     filename: 'spells.json',
   });
   const finished = await finalizePackBook(book.id, {
@@ -304,5 +308,125 @@ describe('a mob stat block renders its spells as chips (docs/17 row 184)', () =>
     expect(title).toContain('cast at rank 3 (focus spell, auto-heightened)');
     expect(title).toContain('heightening: focus-auto');
     expect(title).not.toContain('cantrip-auto');
+  });
+});
+
+/**
+ * The dnd5e library-mob half (docs/17 row 194). The CREATURE fixture is a real
+ * carve of the upstream `6.0.x` Mage (two embedded spell items at levels 0 and
+ * 3 — see its header comment), and the library spells are the REAL Fire Bolt
+ * and Fireball documents, so the per-level mapping, the rank and the chips all
+ * come from upstream bytes rather than from a synthesised shape.
+ */
+describe('a dnd5e library creature renders its OWN spells as chips (row 194)', () => {
+  const DND5E_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'packs', 'dnd5e');
+
+  async function realDnd5eSpell(file: string, packRelative: string): Promise<SpellData> {
+    const bytes = new TextEncoder().encode(readFileSync(join(DND5E_FIXTURES, file), 'utf8'));
+    const parsed = await foundryDnd5eSrdAdapter.parseFile(packRelative, bytes);
+    expect(parsed.failures).toEqual([]);
+    const spell = parsed.sections?.[0]?.spell;
+    if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
+    return spell;
+  }
+
+  /**
+   * A dnd5e creature at a stated character level (row 194's cantrip tier
+   * input). The underlying stat block fields are the PF2e-shaped shared
+   * `statBlockSchema` — this test drives the dnd5e CHIP path, and the creature
+   * document's own mapping is pinned in
+   * `tests/ingest/packs/dnd5e-foundry.test.ts`.
+   */
+  function dnd5eBlock(over: Record<string, unknown> = {}): StatBlock {
+    return statBlockSchema.parse({
+      system: 'dnd5e',
+      level: '9',
+      size: 'Medium',
+      creatureType: 'humanoid',
+      ac: 12,
+      acNote: '',
+      hp: 40,
+      hpFormula: '9d8',
+      speed: '30 feet',
+      abilities: { str: 9, dex: 14, con: 11, int: 17, wis: 12, cha: 11 },
+      saves: 'Int +6, Wis +4',
+      skills: 'Arcana +6, History +6',
+      senses: 'passive Perception 11',
+      languages: 'Common plus three more',
+      traits: [],
+      actions: [],
+      reactions: [],
+      legendary: [],
+      extras: {},
+      ...over,
+    });
+  }
+
+  it('maps a real caster creature own spell items to per-level chips, resolving through the 5e corpus', async () => {
+    const fireBolt = await realDnd5eSpell('spells/cantrip-fire-bolt.yml', 'spells/cantrip/fire-bolt.yml');
+    const fireball = await realDnd5eSpell('spells/3rd-level-fireball.yml', 'spells/3rd-level/fireball.yml');
+    await seedSpells(
+      [
+        { name: 'Fire Bolt', data: fireBolt },
+        { name: 'Fireball', data: fireball },
+      ],
+      'dnd5e',
+    );
+
+    // The importer's real assignments for the Mage carves two spell items,
+    // with the creature's caster level riding them.
+    const assignments = [
+      { name: 'Fire Bolt', casterLevel: 9, characterLevel: 9 },
+      { name: 'Fireball', castRank: 3, casterLevel: 9, characterLevel: 9 },
+    ];
+    render(<StatBlockCard name="Cult Mage" statBlock={dnd5eBlock({ spells: assignments })} />);
+
+    const section = await screen.findByTestId('mob-spells');
+    const chips = await within(section).findAllByTestId('spell-chip');
+    expect(chips.map((chip) => chip.textContent)).toEqual(['Fire Bolt', 'Fireball']);
+
+    // The 5e cantrip: LEVEL 0 and the system's OWN tier dice (character level
+    // 9 → one tier applied → 2d10), never a PF2e rank.
+    const cantripTitle = chips[0]?.getAttribute('title') ?? '';
+    expect(cantripTitle).toContain('cast at level 0');
+    expect(cantripTitle).toContain('2d10 fire');
+    expect(cantripTitle).toContain('cantrip, scaled by the caster');
+    expect(cantripTitle).toContain('upcasting: upcast');
+    expect(cantripTitle).not.toContain('cast at rank');
+
+    // The levelled spell: level 3 is the cast rank, the source's own 8d6.
+    const fireballTitle = chips[1]?.getAttribute('title') ?? '';
+    expect(fireballTitle).toContain('cast at level 3: 8d6 fire');
+    expect(fireballTitle).toContain('the damage increases by 1d6');
+  });
+
+  it('a name the 5e corpus lacks is a LOUD unresolved chip, and a spell-less creature omits the key', async () => {
+    const fireBolt = await realDnd5eSpell('spells/cantrip-fire-bolt.yml', 'spells/cantrip/fire-bolt.yml');
+    await seedSpells([{ name: 'Fire Bolt', data: fireBolt }], 'dnd5e');
+
+    render(
+      <StatBlockCard
+        name="Cult Mage"
+        statBlock={dnd5eBlock({
+          spells: [
+            { name: 'Fire Bolt', casterLevel: 9, characterLevel: 9 },
+            { name: 'Eldritch Blast' },
+          ],
+        })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const unresolved = await within(section).findByTestId('spell-chip-unresolved');
+    expect(unresolved).toHaveTextContent('Eldritch Blast');
+    expect(within(section).getByTestId('mob-spell-issues')).toHaveTextContent(
+      'Eldritch Blast',
+    );
+
+    // A creature with NO spells carries no `spells` key at all → no section.
+    cleanup();
+    render(<StatBlockCard name="Cult Mage" statBlock={dnd5eBlock()} />);
+    expect(await screen.findByText('Level 9')).toBeInTheDocument();
+    expect(screen.queryByTestId('mob-spells')).not.toBeInTheDocument();
   });
 });

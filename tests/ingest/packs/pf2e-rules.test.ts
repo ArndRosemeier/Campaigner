@@ -209,6 +209,11 @@ describe('foundry-pf2e-rules adapter', () => {
       rank: 0,
       cantrip: true,
       traditions: ['arcane', 'primal'],
+      // Row 194: the PF2e lane stamps its OWN list axis (traditions) and
+      // carries no dnd5e school/properties.
+      filterAxis: 'tradition',
+      school: '',
+      properties: [],
       traits: ['acid', 'attack', 'cantrip', 'concentrate', 'manipulate'],
       rarity: 'common',
       cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },

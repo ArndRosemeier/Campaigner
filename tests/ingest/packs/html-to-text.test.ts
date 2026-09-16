@@ -111,12 +111,14 @@ type BehaviourId = keyof typeof BEHAVIOURS;
 
 /**
  * The seven adapter files and the style each DECLARES. This is the whole point
- * of the refactor stated as data: nine call sites, two styles, no site with a
- * body of its own. `callCount` is exact (2 for the creature adapter, which
- * strips both a melee item's and an action's description, and 2 for the rules
+ * of the refactor stated as data: eleven call sites, two styles, no site with
+ * a body of its own. `callCount` is exact (2 for the creature adapter, which
+ * strips both a melee item's and an action's description, 2 for the rules
  * adapter — its document strip plus the heightening-note segments, docs/12
- * §15 / ledger 181) so reverting ONE of a file's two sites fails rather than
- * hiding behind the other.
+ * §15 / ledger 181 — and 3 for the dnd5e creature+spell adapter: a feature's
+ * description, a spell's description and a spell's "At Higher Levels"
+ * paragraph, row 194) so reverting ONE of a file's sites fails rather than
+ * hiding behind the others.
  *
  * AMENDED by docs/17 row 149: `pf2e-foundry` (×2) and `pf2e-equipment` (×1)
  * moved from the retired `AT_LABEL_LAST_LINE_BREAKS` to the `@`-notation
@@ -124,6 +126,11 @@ type BehaviourId = keyof typeof BEHAVIOURS;
  * AMENDED by docs/17 row 181 (the spells arc): `pf2e-rules` gained a SECOND
  * call to this same seam — `parseHeighteningEntries` strips each heightening
  * note's segment; still ONE stripper, used twice.
+ *
+ * AMENDED by docs/17 row 194 (the dnd5e spell lane): `dnd5e-foundry` gained
+ * TWO more calls to the SAME seam — `higherLevelSentence` strips the source's
+ * own "At Higher Levels" paragraph, and `mapSpellDocument` strips the spell
+ * description. Its declared style is unchanged; the count is 3.
  */
 const CALL_SITES: readonly {
   readonly file: string;
@@ -132,7 +139,7 @@ const CALL_SITES: readonly {
 }[] = [
   { file: 'pf2e-foundry.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 2 },
   { file: 'pf2e-equipment.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
-  { file: 'dnd5e-foundry.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 1 },
+  { file: 'dnd5e-foundry.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 3 },
   { file: 'dnd5e-equipment.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 1 },
   { file: 'pf2e-rules.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 2 },
   { file: 'pf2e-journal.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
@@ -577,7 +584,7 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('has every one of the nine call sites routing through the seam with its declared style', () => {
+  it('has every one of the eleven call sites routing through the seam with its declared style', () => {
     expect(CALL_SITES).toHaveLength(7);
     let calls = 0;
     for (const { file, style, callCount } of CALL_SITES) {
@@ -606,10 +613,11 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
       expect(styled.length, `${file}: calls passing ${style}`).toBe(callCount);
       calls += callCount;
     }
-    // Nine call sites over seven files (pf2e-foundry has two, and since
-    // ledger 181 so does pf2e-rules), counted as one number too, so a site
-    // that migrates to another style cannot hide in the per-file counts above.
-    expect(calls).toBe(9);
+    // Eleven call sites over seven files (pf2e-foundry has two, pf2e-rules
+    // two since ledger 181, dnd5e-foundry three since row 194), counted as one
+    // number too, so a site that migrates to another style cannot hide in the
+    // per-file counts above.
+    expect(calls).toBe(11);
   });
 
   it('declares exactly two styles, and every one of them is used by a site above', () => {
@@ -654,7 +662,14 @@ async function laneTexts(dir: string, adapterId: string): Promise<{ name: string
   const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === adapterId);
   if (adapter === undefined) throw new Error(`no adapter ${adapterId}`);
   const out: { name: string; text: string }[] = [];
-  for (const file of readdirSync(join(FIXTURES, dir)).sort()) {
+  for (const entry of readdirSync(join(FIXTURES, dir), { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    // Subdirectories are the SPELL lane's own fixtures (row 194); this lane
+    // digest covers the adapter's flat creature/item fixtures exactly as
+    // before, and a DIRECTORY is not a document.
+    if (!entry.isFile()) continue;
+    const file = entry.name;
     const bytes = new Uint8Array(readFileSync(join(FIXTURES, dir, file)));
     const parsed = await adapter.parseFile(file, bytes);
     expect(parsed.failures, `${adapterId}/${file}`).toEqual([]);
@@ -862,9 +877,15 @@ const LANES: readonly {
   {
     adapterId: 'foundry-dnd5e-srd',
     dir: 'dnd5e',
-    entries: 13,
+    // ROW 194 (the dnd5e spell lane) adds the real `mage-caster.yml` carve as
+    // the fourteenth FLAT fixture. The three spell documents live in the
+    // `dnd5e/spells/` subdirectory, which this FLAT lane walk does not enter —
+    // their emitted text is pinned by `dnd5e-foundry.test.ts` instead. No byte
+    // of an existing fixture moved, so `before` still describes the pre-row-149
+    // bytes and the digest moves for the same reason the count does.
+    entries: 14,
     before: '37b62168a64b9cced1e766b4935e560105081a094599f892b957cabb9a2e0a62',
-    after: '7d2a3edc661efb85cc5375a7649345b60a026f804daee1f1c982baa38d8eabb1',
+    after: '4e6779ff4e59ec9fa6d5f1476924e533d28d00037942b36c3895f48a169d546f',
   },
   {
     adapterId: 'foundry-pf2e-equipment',

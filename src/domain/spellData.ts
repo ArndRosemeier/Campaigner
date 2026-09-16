@@ -30,6 +30,110 @@ export const spellTraditionSchema = z.enum(['arcane', 'divine', 'occult', 'prima
 export type SpellTradition = z.infer<typeof spellTraditionSchema>;
 
 /**
+ * A dnd5e spell's SCHOOL, validated against the system's OWN `CONFIG.DND5E
+ * .spellSchools` keys (foundryvtt/dnd5e @ `6.0.x`, `module/config.mjs` — the
+ * eight schools below, each with its `fullKey`). Stored as the SOURCE's own
+ * abbreviation and rendered through `DND5E_SPELL_SCHOOL_LABELS`: an unknown
+ * code fails that entry loudly at import rather than reaching a stored row
+ * unvalidated (AGENTS rule 3).
+ */
+export const dnd5eSpellSchoolSchema = z.enum([
+  'abj',
+  'con',
+  'div',
+  'enc',
+  'evo',
+  'ill',
+  'nec',
+  'trs',
+]);
+
+export type Dnd5eSpellSchool = z.infer<typeof dnd5eSpellSchoolSchema>;
+
+/** The system's own school codes → the printed school names (`fullKey`). */
+export const DND5E_SPELL_SCHOOL_LABELS: Readonly<Record<Dnd5eSpellSchool, string>> = {
+  abj: 'Abjuration',
+  con: 'Conjuration',
+  div: 'Divination',
+  enc: 'Enchantment',
+  evo: 'Evocation',
+  ill: 'Illusion',
+  nec: 'Necromancy',
+  trs: 'Transmutation',
+};
+
+/**
+ * WHICH LIST AXIS A PAYLOAD'S SPELLS CAN BE FILTERED BY (docs/12 §15, row
+ * 194). The axis is a property of the SOURCE DOCUMENT, not of the UI: PF2e
+ * spells carry `traits.traditions` (4 values), a dnd5e spell carries a
+ * `school` (8 values), and only the adapter that read the document can know
+ * which. Stamping it here is what stops the Spells page from inventing a
+ * PF2e tradition for a dnd5e spell — the failure this field exists to make
+ * impossible. A payload with NO axis states none (a dnd5e spell whose source
+ * carries no school) and the list says so honestly instead of faking one.
+ */
+export const spellFilterAxisSchema = z.enum(['tradition', 'school']);
+
+export type SpellFilterAxis = z.infer<typeof spellFilterAxisSchema>;
+
+/**
+ * One dnd5e damage PART's `scaling` block, captured VERBATIM (row 194). The
+ * system's `damageScalingModes` are `whole` (add `number` dice per step) and
+ * `half` (`number / 2` per step); an unstated mode (`''`, the real Magic
+ * Missile document) is NO structured scaling — the entry is prose-only and
+ * the heightening rule computes nothing from it.
+ */
+export const dnd5eDamageScalingSchema = z
+  .object({
+    mode: z.string().default(''),
+    number: z.number().nullish(),
+    formula: z.string().default(''),
+  })
+  .nullish();
+
+export type Dnd5eDamageScaling = z.infer<typeof dnd5eDamageScalingSchema>;
+
+/**
+ * One dnd5e damage part (`activities.<id>.damage.parts[]`) as this payload
+ * carries it. `number`/`denomination`/`bonus`/`types` are the source's own
+ * fields; `formula` is the part RENDERED in the printed `NdM±K` convention
+ * (the same convention the dnd5e attack lines use) so the shared spell card
+ * and the resolver's `values.damage` can show it without a second renderer.
+ */
+export const dnd5eDamagePartSchema = z.object({
+  index: z.number().int().nonnegative(),
+  formula: z.string(),
+  number: z.number().nullish(),
+  denomination: z.number().nullish(),
+  bonus: z.string().default(''),
+  types: z.array(z.string()).default([]),
+  scaling: dnd5eDamageScalingSchema,
+});
+
+export type Dnd5eDamagePart = z.infer<typeof dnd5eDamagePartSchema>;
+
+/**
+ * dnd5e's "At Higher Levels" / cantrip progression, captured as DATA (row
+ * 194) — the dnd5e counterpart of PF2e's `heightening`, and deliberately a
+ * SEPARATE field: the two systems scale on different axes (a slot level vs a
+ * character level) and reusing one shape for both is exactly how a PF2e rule
+ * leaks into a 5e spell.
+ *
+ * `baseLevel` is the source's own `system.level` (0 for a cantrip); `sentence`
+ * is the document's OWN "At Higher Levels" prose, stored VERBATIM (the loud
+ * `prose-only` fallback prints exactly these bytes when the structure carries
+ * no numbers); `parts` are the source's damage parts with their own
+ * `scaling` blocks.
+ */
+export const spellUpcastSchema = z.object({
+  baseLevel: z.number().int().nonnegative().default(0),
+  sentence: z.string().default(''),
+  parts: z.array(dnd5eDamagePartSchema).default([]),
+});
+
+export type SpellUpcast = z.infer<typeof spellUpcastSchema>;
+
+/**
  * The cast facts the pf2e-rules lane already extracts (docs/12 §15.3):
  * verbatim trimmed source strings, `''` when the document states none.
  */
@@ -101,7 +205,7 @@ export const spellHeighteningEntrySchema = z.discriminatedUnion('kind', [
 
 export type SpellHeighteningEntry = z.infer<typeof spellHeighteningEntrySchema>;
 
-export const spellDataSchema = z.object({
+const spellDataObjectSchema = z.object({
   system: gameSystemSchema,
   /**
    * LIST-ORDER rank: a cantrip is 0, a ranked/ritual spell is the source's
@@ -118,6 +222,25 @@ export const spellDataSchema = z.object({
   cantrip: z.boolean(),
   /** Validated traditions; source order preserved. */
   traditions: z.array(spellTraditionSchema).default([]),
+  /**
+   * The dnd5e `system.school` code, verbatim (row 194). `''` when the source
+   * states none — the list then says it has no school rather than guessing
+   * one. ALWAYS `''` for a PF2e spell, whose schools the system does not have.
+   */
+  school: z.union([dnd5eSpellSchoolSchema, z.literal('')]).default(''),
+  /**
+   * Which list axis this payload's spells support (row 194) — stamped by the
+   * adapter that READ the document, so the Spells page never has to infer it.
+   * `null` for a legacy/payload-less row written before this arc, which the
+   * list renders as "no filter axis" without inventing one.
+   */
+  filterAxis: spellFilterAxisSchema.nullish(),
+  /**
+   * The dnd5e `system.properties` (casting components, verbatim: `vocal`,
+   * `somatic`, `material`, `concentration`, `ritual`). PF2e carries its own
+   * vocabulary in `traits`; these are the same kind of source-stated facts.
+   */
+  properties: z.array(z.string()).default([]),
   /** Verbatim `system.traits.value` (includes `cantrip` when it is one). */
   traits: z.array(z.string()).default([]),
   /** Verbatim `system.traits.rarity` ('common'…'unique'). */
@@ -143,6 +266,13 @@ export const spellDataSchema = z.object({
    * Foundry system's). Nullish when the document carries none.
    */
   heightening: z.record(z.string(), z.unknown()).nullish(),
+  /**
+   * The dnd5e "At Higher Levels" / cantrip progression, captured as data (row
+   * 194). Nullish for a PF2e spell (which carries `heightening` instead) and
+   * for any row written before this arc — the resolver then refuses to
+   * compute a 5e upcast rather than inventing one.
+   */
+  upcast: spellUpcastSchema.nullish(),
   /** Parsed heightening notes, document order; `[]` when the spell has none. */
   heighteningEntries: z.array(spellHeighteningEntrySchema).default([]),
   /**
@@ -164,7 +294,37 @@ export const spellDataSchema = z.object({
     .nullish(),
 });
 
-export type SpellData = z.infer<typeof spellDataSchema>;
+/**
+ * THE axis on a payload that predates the field (row 194). The ADAPTER stamps
+ * the real axis it read (`tradition` for the PF2e rules lane, `school` for the
+ * dnd5e lane); this default only keeps a pre-arc row parseable without
+ * inventing anything at READ time — PF2e was the only spell system before row
+ * 194, so `tradition` is what such a row meant. A malformed payload claiming to
+ * be dnd5e without the field is stamped below by the schema's own check
+ * (`dnd5e` ⇒ `school`), so a 5e row can never silently wear the PF2e axis.
+ */
+function defaultFilterAxis(data: {
+  system: string;
+  filterAxis?: 'tradition' | 'school' | null | undefined;
+}):
+  | 'tradition'
+  | 'school'
+  | null {
+  if (data.filterAxis !== undefined) return data.filterAxis;
+  return data.system === 'dnd5e' ? 'school' : 'tradition';
+}
+
+const spellDataSchemaBase = spellDataObjectSchema.transform((data) => ({
+  ...data,
+  filterAxis: defaultFilterAxis(data),
+}));
+
+export const spellDataSchema = spellDataSchemaBase;
+
+/** The schema's INPUT type — `filterAxis` optional, so a document that omits it
+ *  parses (the transform above stamps the system's own axis). */
+export type SpellDataInput = z.input<typeof spellDataSchema>;
+export type SpellData = z.output<typeof spellDataSchema>;
 
 /**
  * THE cantrip signal of a PF2e spell: the source's own `cantrip` TRAIT.
@@ -210,6 +370,39 @@ export function spellTraitsAreFocus(traits: readonly string[]): boolean {
  */
 export function spellChunkName(chunk: RuleChunk): string {
   return chunk.headingPath[chunk.headingPath.length - 1]?.trim() ?? '';
+}
+
+/**
+ * How a payload's OWN system prints a spell's rank (row 194): `Cantrip` when
+ * the cantrip flag is set, `Level N` for dnd5e and `Rank N` for PF2e. The two
+ * systems number their spells the same way but NAME the number differently,
+ * and the label is part of the payload's own system rather than a page
+ * preference — a dnd5e spell must never print "Rank N" (the PF2e vocabulary)
+ * after this arc wires both systems into ONE list.
+ *
+ * `axis === 'school'` is the dnd5e signal; the local `spellRankLabel(rank,
+ * cantrip)` re-export keeps every PF2e caller's bytes unchanged.
+ */
+export function spellRankLabelFor(
+  rank: number,
+  cantrip: boolean,
+  axis?: SpellFilterAxis | null,
+): string {
+  if (cantrip) return 'Cantrip';
+  return axis === 'school' ? `Level ${String(rank)}` : `Rank ${String(rank)}`;
+}
+
+/**
+ * The values a spell row can be filtered by on its OWN axis (row 194): the
+ * PF2e traditions, or the dnd5e school as a single value, or `[]` when the
+ * source states none. The list's filter compares against THIS — never
+ * against a cross-system guess — so a dnd5e spell is never matched by (or
+ * given) a PF2e tradition.
+ */
+export function spellFilterValues(data: SpellData): string[] {
+  if (data.filterAxis === 'tradition') return [...data.traditions];
+  if (data.filterAxis === 'school') return data.school === '' ? [] : [data.school];
+  return [];
 }
 
 /**

@@ -3,10 +3,16 @@ import type {
   RuleChunk,
   Rulebook,
   SpellData,
+  SpellFilterAxis,
   SpellHeighteningEntry,
-  SpellTradition,
 } from '@/domain';
-import { spellChunkName, spellCorpusEntries, type SpellCorpusEntry } from '@/domain';
+import {
+  spellChunkName,
+  spellCorpusEntries,
+  spellFilterValues,
+  spellRankLabelFor,
+  type SpellCorpusEntry,
+} from '@/domain';
 
 /**
  * The spell-corpus projection MOVED to `domain/spellData.ts` (docs/17 row 184,
@@ -43,10 +49,18 @@ export interface SpellEntry {
   name: string;
   /** List order: a cantrip is 0 (docs/12 §15). */
   rank: number;
-  /** `Cantrip` or `Rank N` — the ONE display spelling. */
+  /** The OWN system's display spelling: `Cantrip`, `Rank N` (PF2e) or
+   *  `Level N` (dnd5e) — row 194. */
   rankLabel: string;
   cantrip: boolean;
-  traditions: readonly SpellTradition[];
+  /** The source's own dnd5e school code (`''` when it states none). */
+  school: string;
+  /** Which axis this row can be filtered by, from the payload (row 194);
+   *  `null` = the row states none and the list says so. */
+  filterAxis: SpellFilterAxis | null;
+  /** The values on that axis (traditions, or the one school) — `[]` when the
+   *  source states none. */
+  filterValues: readonly string[];
   /** The validated payload, carried whole so the card renders from data. */
   data: SpellData;
   /** Human origin label: the book's own title. */
@@ -62,9 +76,14 @@ export interface SpellDataError {
 
 export type SpellRow = SpellEntry | SpellDataError;
 
-/** `Cantrip` or `Rank N` — the page's ONE rank wording. */
+/**
+ * `Cantrip` or `Rank N` — the PF2e wording the pre-row-194 page used, kept as
+ * the PF2e spelling of ONE system-aware rule (`domain/spellData
+ * .spellRankLabelFor`); a dnd5e row goes through `spellRankLabelFor` and
+ * prints `Level N`.
+ */
 export function spellRankLabel(rank: number, cantrip: boolean): string {
-  return cantrip ? 'Cantrip' : `Rank ${String(rank)}`;
+  return spellRankLabelFor(rank, cantrip, 'tradition');
 }
 
 /** One-based English ordinal for a fixed heightening rank (`3rd`, `11th`). */
@@ -130,9 +149,11 @@ export function buildSpellRows(
       bookId: chunk.bookId,
       name,
       rank: data.rank,
-      rankLabel: spellRankLabel(data.rank, data.cantrip),
+      rankLabel: spellRankLabelFor(data.rank, data.cantrip, data.filterAxis),
       cantrip: data.cantrip,
-      traditions: data.traditions,
+      school: data.school,
+      filterAxis: data.filterAxis ?? null,
+      filterValues: spellFilterValues(data),
       data,
       origin: titleById.get(chunk.bookId) ?? '',
     });
@@ -144,21 +165,25 @@ export function buildSpellRows(
 
 
 /**
- * Tradition multi-filter (a spell carries 0..n traditions). An EMPTY selection
- * is "no filter" — every entry stays; a non-empty selection keeps entries
- * carrying at least one of the chosen traditions (a union, never an
- * intersection — the owner filters by "these traditions", not "all of them").
- * A spell with no traditions is kept by no selection, which is honest: it is
- * not of any tradition the user asked for. Data errors always stay visible.
+ * Axis multi-filter (row 194) — the ONE filter rule for BOTH systems. A row
+ * contributes `filterValues` from its OWN payload (PF2e traditions, or the one
+ * dnd5e school), so a dnd5e spell can never be matched by a PF2e tradition and
+ * vice versa. An EMPTY selection is "no filter" — every entry stays; a
+ * non-empty selection keeps entries carrying at least one of the chosen values
+ * (a union, never an intersection — the owner filters by "these values", not
+ * "all of them"). A spell with NO value on its axis is kept by no selection,
+ * which is honest: the row states no school/tradition, so it is not of any the
+ * user asked for, and the page labels such rows as having no filter axis.
+ * Data errors always stay visible.
  */
 export function filterSpellRows(
   rows: readonly SpellRow[],
-  traditions: readonly SpellTradition[],
+  selected: readonly string[],
 ): SpellRow[] {
-  if (traditions.length === 0) return [...rows];
+  if (selected.length === 0) return [...rows];
   return rows.filter(
     (row) =>
       row.kind === 'data-error' ||
-      row.traditions.some((tradition) => traditions.includes(tradition)),
+      row.filterValues.some((value) => selected.includes(value)),
   );
 }

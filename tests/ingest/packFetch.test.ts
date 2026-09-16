@@ -211,9 +211,20 @@ describe('pack fetch sources (ratified pins)', () => {
       { id: 'packs/pf2e/menace-under-otari-bestiary', label: 'Menace under Otari (free starter bestiary)', creatures: 93 },
     ]);
     expect(dnd5e?.ref).toBe('6.0.x');
-    expect(dnd5e?.packRoot).toBe('packs/_source/monsters');
+    // Row 194 widened the creature source to the broad `_source` root so its
+    // OWN adapter can also fetch the spell level folders; packDirs keeps the
+    // advanced listing to exactly the folders that adapter parses.
+    expect(dnd5e?.packRoot).toBe('packs/_source');
+    // `listPackRecipes` groups by the FIRST segment under packRoot, so the
+    // listing granularity is these two folders — the spell LEVEL folders are
+    // reached through the curated `spells` recipe and by the adapter's own
+    // recursive file selection.
+    expect(dnd5e?.packDirs).toEqual(['monsters', 'spells']);
+    // Verified against 6.0.x (trees API, 2026-09-16 sweep): the ten spell
+    // level folders carry 25/50/55/43/32/38/32/21/17/16 = 329 documents.
     expect(dnd5e?.curated).toEqual([
       { id: 'packs/_source/monsters', label: 'D&D 5e SRD Monsters', creatures: 337 },
+      { id: 'packs/_source/spells', label: 'D&D 5e SRD Spells', creatures: 329, unit: 'spells' },
     ]);
   });
 
@@ -1352,13 +1363,33 @@ describe('item fetch source foundry-dnd5e-equipment (12-BESTIARY-PACKS §13)', (
     ]);
   });
 
-  it('keeps the dnd5e creature source unrestricted (monsters folders still listed)', async () => {
+  it('restricts the dnd5e creature source listing to the monster and spell folders (row 194)', async () => {
+    // The creature source now shares the broad `_source` root with the item
+    // and spell folders: packDirs keeps the advanced listing to `monsters` and
+    // `spells` only, so the equipment/item folders are never offered to an
+    // adapter that cannot parse them, while the spells folder IS offered.
+    const mixedTree = {
+      sha: 'tree-sha',
+      truncated: false,
+      tree: [
+        { path: 'packs/_source/monsters/aberration/gibbering-mouther.yml', type: 'blob' },
+        { path: 'packs/_source/spells/cantrip/fire-bolt.yml', type: 'blob' },
+        { path: 'packs/_source/spells/3rd-level/fireball.yml', type: 'blob' },
+        { path: 'packs/_source/equipment24/adventuring-gear/candle.yml', type: 'blob' },
+        { path: 'packs/_source/tradegoods/chicken.yml', type: 'blob' },
+      ],
+    };
     const fetchFn = mockFetch({
-      [DND5E_HEAD_LIST_URL]: listingResponse(D5_ITEM_TREE),
-      [DND5E_PINNED_LIST_URL]: listingResponse(D5_ITEM_TREE),
+      [DND5E_HEAD_LIST_URL]: listingResponse(mixedTree),
+      [DND5E_PINNED_LIST_URL]: listingResponse(mixedTree),
     });
     clearPackTreeCache();
     const recipes = await listPackRecipes('foundry-dnd5e-srd', { full: true, fetchDeps: { fetchFn } });
-    expect(recipes.map((recipe) => recipe.id)).toEqual(['packs/_source/monsters/aberration']);
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/_source/monsters',
+      'packs/_source/spells',
+    ]);
+    // The equipment folders are the item adapter's, not this one's.
+    expect(recipes.map((recipe) => recipe.id)).not.toContain('packs/_source/equipment24');
   });
 });

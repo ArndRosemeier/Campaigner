@@ -344,3 +344,155 @@ describe('the ONE comparable-name form decides what a name means', () => {
     expect(chips[0]?.resolved).toBe(true);
   });
 });
+
+/**
+ * The dnd5e half of the mob-spell resolver (docs/17 row 194). The payload
+ * shape mirrors the REAL corpus documents the dnd5e importer maps (Fire Bolt's
+ * whole-die cantrip scaling, Fireball's whole-die slot scaling, Magic Missile's
+ * prose-only empty scaling mode) and the ASSIGNMENT shape the importer stamps
+ * onto a caster creature's stat block (level as the cast rank, cantrips
+ * rankless, the creature's own character/caster level).
+ */
+function dnd5eSpell(over: Partial<SpellData> = {}): SpellData {
+  return spellDataSchema.parse({
+    system: 'dnd5e',
+    rank: 0,
+    cantrip: true,
+    traditions: [],
+    school: 'evo',
+    filterAxis: 'school',
+    properties: ['vocal', 'somatic'],
+    traits: [],
+    rarity: 'common',
+    cast: { time: '1 action', range: '120 ft.', target: '1 creature', duration: 'Instantaneous' },
+    damage: { 0: { formula: '1d10', type: 'fire', category: null, materials: [] } },
+    upcast: {
+      baseLevel: 0,
+      sentence: '',
+      parts: [
+        {
+          index: 0,
+          formula: '1d10',
+          number: 1,
+          denomination: 10,
+          bonus: '',
+          types: ['fire'],
+          scaling: { mode: 'whole', number: 1, formula: '' },
+        },
+      ],
+    },
+    ...over,
+  });
+}
+
+function dnd5eFireball(): SpellData {
+  return dnd5eSpell({
+    rank: 3,
+    cantrip: false,
+    upcast: {
+      baseLevel: 3,
+      sentence:
+        'When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd.',
+      parts: [
+        {
+          index: 0,
+          formula: '8d6',
+          number: 8,
+          denomination: 6,
+          bonus: '',
+          types: ['fire'],
+          scaling: { mode: 'whole', number: 1, formula: '' },
+        },
+      ],
+    },
+    damage: { 0: { formula: '8d6', type: 'fire', category: null, materials: [] } },
+  });
+}
+
+/** The one chip a single-assignment resolver call must produce. */
+function onlyChip(chips: ReturnType<typeof mobSpellChips>): NonNullable<ReturnType<typeof mobSpellChips>[number]> {
+  const chip = chips[0];
+  if (chip === undefined) throw new Error('expected one chip');
+  return chip;
+}
+
+describe('the dnd5e arm of the ONE resolver (row 194)', () => {
+  it('THE CANTRIP TRAP: a 5e cantrip on a level-5 and a level-11 creature NEVER shows the PF2e rank/damage progression', () => {
+    const index = mobSpellIndex([{ name: 'Fire Bolt', spellData: dnd5eSpell() }]);
+
+    const atFive = mobSpellChips(
+      [{ name: 'Fire Bolt', casterLevel: 5 }],
+      null,
+      index,
+    );
+    const atEleven = mobSpellChips(
+      [{ name: 'Fire Bolt', casterLevel: 11 }],
+      null,
+      index,
+    );
+
+    // PF2E'S RULE WOULD PRINT rank 3 / rank 6. The 5e cantrip stays at level 0
+    // (`appliedRank`) and its dice follow the SYSTEM'S OWN tier expression.
+    expect(atFive[0]?.result?.appliedRank).toBe(0);
+    expect(atEleven[0]?.result?.appliedRank).toBe(0);
+    expect(atFive[0]?.result?.cantripAuto).toBe(false);
+    expect(atFive[0]?.result?.cantripScaling).toBe(true);
+    expect(atFive[0]?.result?.values.damage.map((entry) => entry.formula)).toEqual(['2d10']);
+    expect(atEleven[0]?.result?.values.damage.map((entry) => entry.formula)).toEqual(['3d10']);
+    // The chip's OWN noun is dnd5e's: a level, never a PF2e rank.
+    const detail = mobSpellChipDetail(onlyChip(atFive));
+    expect(detail).toContain('cast at level 0');
+    expect(detail).toContain('upcasting: upcast');
+    expect(detail).not.toContain('cast at rank');
+    expect(detail).not.toContain('cantrip-auto');
+  });
+
+  it('a PF2e cantrip beside it keeps the byte-identical PF2e behaviour', async () => {
+    const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+    const index = mobSpellIndex([{ name: 'Ignition', spellData: ignition }]);
+    const atFive = mobSpellChips([{ name: 'Ignition' }], 5, index);
+    expect(atFive[0]?.result?.appliedRank).toBe(3);
+    expect(atFive[0]?.result?.cantripAuto).toBe(true);
+    expect(atFive[0]?.result?.cantripScaling).toBe(false);
+    expect(mobSpellChipDetail(onlyChip(atFive))).toContain('cast at rank 3');
+  });
+
+  it('a caster creature assigns a levelled spell at its SOURCE level and the resolver scales it there', () => {
+    const index = mobSpellIndex([{ name: 'Fireball', spellData: dnd5eFireball() }]);
+    // The importer's assignment: level 3 = the cast rank.
+    const chips = mobSpellChips([{ name: 'Fireball', castRank: 3 }], 6, index);
+    expect(chips[0]?.resolved).toBe(true);
+    expect(chips[0]?.system).toBe('dnd5e');
+    expect(chips[0]?.result?.appliedRank).toBe(3);
+    expect(chips[0]?.result?.values.damage.map((entry) => entry.formula)).toEqual(['8d6']);
+    const detail = mobSpellChipDetail(onlyChip(chips));
+    expect(detail).toContain('cast at level 3');
+    expect(detail).toContain('8d6 fire');
+    // The source's own sentence rides the chip, whether or not the structured
+    // scaling answered.
+    expect(detail).toContain('the damage increases by 1d6 for each slot level above 3rd');
+  });
+
+  it('a name the corpus lacks stays a LOUD unresolved chip, never dropped and never prose', () => {
+    const index = mobSpellIndex([{ name: 'Fire Bolt', spellData: dnd5eSpell() }]);
+    const chips = mobSpellChips([{ name: 'Eldritch Blast' }], 5, index);
+    expect(chips[0]?.resolved).toBe(false);
+    expect(chips[0]?.result).toBeNull();
+    expect(chips[0]?.system).toBeNull();
+    const detail = mobSpellChipDetail(onlyChip(chips));
+    expect(detail).toContain('Eldritch Blast');
+    expect(detail).toContain('not in this campaign');
+    expect(mobSpellIssues(chips, 'Cult Mage')).toEqual([
+      'the mob «Cult Mage» assigns a spell it cannot use: the spell «Eldritch Blast» is not in this campaign\'s imported spell library',
+    ]);
+  });
+
+  it('a dnd5e assignment level is never applied to a PF2e spell (loud, not ignored)', async () => {
+    const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+    const index = mobSpellIndex([{ name: 'Ignition', spellData: ignition }]);
+    const chips = mobSpellChips([{ name: 'Ignition', casterLevel: 9 }], 5, index);
+    expect(chips[0]?.resolved).toBe(true);
+    expect(chips[0]?.result).toBeNull();
+    expect(chips[0]?.issues[0]).toContain('caster/character level cannot apply');
+  });
+});

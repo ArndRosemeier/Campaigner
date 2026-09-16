@@ -16,6 +16,10 @@ const acidSplash: SpellData = {
   rank: 0,
   cantrip: true,
   traditions: ['arcane', 'primal'],
+  // Row 194's axis fields: the PF2e lane's own axis is its traditions.
+  filterAxis: 'tradition',
+  school: '',
+  properties: [],
   traits: ['acid', 'attack', 'cantrip', 'concentrate', 'manipulate'],
   rarity: 'common',
   cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },
@@ -52,6 +56,10 @@ describe('spellDataSchema (docs/12 §15)', () => {
       rank: 3,
       cantrip: false,
       traditions: [],
+      // Row 194's axis fields, defaulted for a payload that omits them.
+      filterAxis: 'tradition',
+      school: '',
+      properties: [],
       traits: [],
       rarity: 'common',
       cast: { time: '', range: '', target: '', duration: '' },

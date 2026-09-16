@@ -102,7 +102,10 @@ describe('buildSpellRows', () => {
       kind: 'entry',
       name: 'Blur',
       origin: 'PF2e Rules',
-      traditions: ['arcane', 'occult'],
+      // The row's OWN axis and its values (row 194): a PF2e payload's axis is
+      // its traditions, and `filterValues` is what the ONE filter compares.
+      filterAxis: 'tradition',
+      filterValues: ['arcane', 'occult'],
     });
     if (rows[0]?.kind !== 'entry') throw new Error('expected an entry');
     expect(rows[0].data.rank).toBe(2);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -10,7 +10,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { loadSpellChunksFor } from '@/db/spellRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import type { Campaign, Id, SpellTradition } from '@/domain';
+import { DND5E_SPELL_SCHOOL_LABELS } from '@/domain/spellData';
+import type { Campaign, Dnd5eSpellSchool, Id, SpellFilterAxis, SpellTradition } from '@/domain';
 import { useCampaign } from '@/features/campaign/hooks';
 import { readyBookIds } from '@/search';
 import { SpellCard } from '@/features/spells/spell-card';
@@ -19,8 +20,8 @@ import { buildSpellRows, filterSpellRows, type SpellRow } from '@/features/spell
 /**
  * The campaign's spell list (docs/17 row 182, docs/12 §15): every imported
  * `spell` chunk of the campaign's OWN game system, ordered by rank with
- * cantrips first and filterable by tradition (multi-select — a spell carries
- * 0..n), with the selected spell's details in the right-hand pane.
+ * cantrips first and filterable on that system's OWN axis (multi-select),
+ * with the selected spell's details in the right-hand pane.
  *
  * WHY THIS IS CAMPAIGN-SCOPED. A spell's game system is a property of the
  * imported material, and the library is global, so "which spells" has no
@@ -29,18 +30,32 @@ import { buildSpellRows, filterSpellRows, type SpellRow } from '@/features/spell
  * retrieval pool uses) and drops a cross-system chunk rather than merging it:
  * a Pathfinder 2e campaign must never surface a dnd5e row.
  *
- * EMPTY IS ALWAYS EXPLAINED, PER SYSTEM (docs/17 row 181's named follow-up):
- * a dnd5e campaign has no imported spells at all — that adapter skips spell
- * documents — so the page says so instead of rendering an empty list; a
- * Pathfinder 2e campaign with no ready rules-text pack gets the named absence
- * plus the import remedy. A filter that matches nothing is a third, distinct
- * state.
+ * THE FILTER AXIS IS THE PAYLOAD'S OWN, NEVER INVENTED (row 194). A PF2e
+ * spell is filtered by its traditions; a dnd5e spell by its SCHOOL — the
+ * payload's own `filterAxis` (stamped by the adapter that read the document)
+ * says which, and the strip's label says which it is. A 5e spell is therefore
+ * NEVER given a PF2e tradition, and a spell whose source states no value on
+ * its axis is listed with that stated plainly rather than being filtered into
+ * or out of a category it does not have.
+ *
+ * EMPTY IS ALWAYS EXPLAINED, PER SYSTEM (docs/17 row 181's named follow-up,
+ * amended by row 194 when the dnd5e lane landed): a campaign whose system has
+ * no ready spell corpus gets the named absence plus the import remedy — for
+ * BOTH systems now that dnd5e spells are imported too. A filter that matches
+ * nothing is a third, distinct state.
  */
 export function SpellsPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
   const campaign = useCampaign(campaignId === '' ? undefined : campaignId);
   const [selectedId, setSelectedId] = useState<Id | null>(null);
-  const [traditions, setTraditions] = useState<SpellTradition[]>([]);
+  // ONE selection for whichever axis the corpus carries (a campaign is one
+  // system, so rows cannot mix axes); switching axis cannot inherit a stale
+  // selection; changing campaign resets it (a selection of `evo` means
+  // nothing in a PF2e campaign).
+  const [selectedAxis, setSelectedAxis] = useState<string[]>([]);
+  useEffect(() => {
+    setSelectedAxis([]);
+  }, [campaignId]);
 
   /**
    * Ready books of the campaign's system (the ONE ready-book rule) plus every
@@ -62,11 +77,30 @@ export function SpellsPage(): JSX.Element {
     () => (loaded === undefined || loaded === null ? [] : buildSpellRows(loaded.books, loaded.chunks)),
     [loaded],
   );
-  const rows = useMemo(() => filterSpellRows(allRows, traditions), [allRows, traditions]);
+  const rows = useMemo(() => filterSpellRows(allRows, selectedAxis), [allRows, selectedAxis]);
 
   const errorRows = rows.filter((row) => row.kind === 'data-error');
   const entryCount = rows.filter((row) => row.kind === 'entry').length;
   const totalEntries = allRows.filter((row) => row.kind === 'entry').length;
+
+  /**
+   * The corpus's OWN filter axis (row 194), taken from the rows' payloads —
+   * NOT from the campaign system, so the strip can only label an axis the
+   * documents actually state. A corpus with no axis at all (a pre-arc payload,
+   * or 5e spells whose source states no school) offers no filter and says so.
+   */
+  const filterAxis: SpellFilterAxis | null = useMemo(() => {
+    for (const row of allRows) {
+      if (row.kind === 'entry' && row.filterAxis !== null) return row.filterAxis;
+    }
+    return null;
+  }, [allRows]);
+  const axisOptions: readonly { value: string; label: string }[] =
+    filterAxis === 'tradition'
+      ? TRADITIONS.map((tradition) => ({ value: tradition, label: tradition }))
+      : filterAxis === 'school'
+        ? SCHOOLS.map((school) => ({ value: school, label: DND5E_SPELL_SCHOOL_LABELS[school] }))
+        : [];
 
   const selected = useMemo(() => {
     if (selectedId === null || loaded === undefined || loaded === null) return null;
@@ -100,42 +134,51 @@ export function SpellsPage(): JSX.Element {
         </span>
       </div>
 
-      {system !== 'pathfinder2e' ? (
-        <EmptySpells
-          testId="spells-not-imported"
-          title={`Spells are not imported for ${GAME_SYSTEM_LABELS[system]}`}
-          body="Campaigner imports spells from the Pathfinder 2e rules-text pack only; this campaign's system has no spell corpus to show."
-        />
-      ) : totalEntries === 0 && errorRows.length === 0 ? (
+      {totalEntries === 0 && errorRows.length === 0 ? (
         <EmptySpells
           testId="spells-no-material"
-          title="No spells imported for Pathfinder 2e"
-          body="Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition."
+          title={`No spells imported for ${GAME_SYSTEM_LABELS[system]}`}
+          body={
+            system === 'pathfinder2e'
+              ? 'Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition.'
+              : 'Import the D&D 5e SRD spells pack on the Rules page — its spell documents appear here, ordered by level and filterable by school.'
+          }
           remedy
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div
             className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border p-2 text-xs"
-            data-testid="spell-tradition-filter"
+            data-testid="spell-filter"
           >
-            <span className="font-semibold">Traditions</span>
-            {TRADITIONS.map((tradition) => (
-              <label key={tradition} className="flex items-center gap-1.5">
-                <Checkbox
-                  checked={traditions.includes(tradition)}
-                  data-testid={`spell-tradition-${tradition}`}
-                  onCheckedChange={(checked) => {
-                    setTraditions((previous) =>
-                      checked
-                        ? [...previous, tradition]
-                        : previous.filter((entry) => entry !== tradition),
-                    );
-                  }}
-                />
-                {tradition}
-              </label>
-            ))}
+            {filterAxis === null ? (
+              <span className="text-muted-foreground" data-testid="spell-filter-none">
+                These spells state no {system === 'dnd5e' ? 'school' : 'tradition'} in their
+                source, so there is nothing to filter by.
+              </span>
+            ) : (
+              <>
+                <span className="font-semibold" data-testid="spell-filter-axis">
+                  {filterAxis === 'school' ? 'Schools' : 'Traditions'}
+                </span>
+                {axisOptions.map((option) => (
+                  <label key={option.value} className="flex items-center gap-1.5">
+                    <Checkbox
+                      checked={selectedAxis.includes(option.value)}
+                      data-testid={`spell-${filterAxis}-${option.value}`}
+                      onCheckedChange={(checked) => {
+                        setSelectedAxis((previous) =>
+                          checked
+                            ? [...previous, option.value]
+                            : previous.filter((entry) => entry !== option.value),
+                        );
+                      }}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </>
+            )}
           </div>
           <div className="flex min-h-0 flex-1">
             <div className="min-w-0 flex-1 overflow-auto" data-testid="spell-list">
@@ -155,7 +198,9 @@ export function SpellsPage(): JSX.Element {
               )}
               {entryCount === 0 ? (
                 <p className="p-4 text-sm text-muted-foreground" data-testid="spells-filter-empty">
-                  No spells match the selected traditions.
+                  {filterAxis === 'school'
+                    ? 'No spells match the selected schools.'
+                    : 'No spells match the selected traditions.'}
                 </p>
               ) : (
                 <ul className="flex flex-col gap-1">
@@ -175,6 +220,14 @@ export function SpellsPage(): JSX.Element {
                           }}
                         />
                         <span className="text-xs text-muted-foreground">{row.rankLabel}</span>
+                        {filterAxis !== null && row.filterValues.length === 0 && (
+                          <span
+                            className="text-xs text-muted-foreground"
+                            data-testid="spell-no-axis-value"
+                          >
+                            no {filterAxis === 'school' ? 'school' : 'tradition'}
+                          </span>
+                        )}
                       </li>
                     ))}
                 </ul>
@@ -207,6 +260,10 @@ export function SpellsPage(): JSX.Element {
 
 /** The traditions the filter offers — the domain enum, in its declared order. */
 const TRADITIONS: readonly SpellTradition[] = ['arcane', 'divine', 'occult', 'primal'];
+
+/** The dnd5e schools the filter offers — the system's own keys, in the order
+ *  its `CONFIG.DND5E.spellSchools` declares them. */
+const SCHOOLS: readonly Dnd5eSpellSchool[] = ['abj', 'con', 'div', 'enc', 'evo', 'ill', 'nec', 'trs'];
 
 /**
  * A named empty state. Never a silent empty list (AGENTS rule 1, docs/17 row

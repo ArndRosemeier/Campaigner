@@ -226,9 +226,10 @@ inside `statBoxContent` (the ONE box both exporters share) and
 `lib/pdfExport.statBlockSection`; a `buildModulePdfDocument` caller with no
 corpus prints a loud "resolved none" line rather than dropping the spells.
 
-**The LIBRARY half is LANDED (docs/17 rows 189/191).** What a LIBRARY creature's
-own stat block prints when it carries spells (the "standard mobs" half of the
-owner's request) is no longer a follow-up: the `foundry-pf2e` bestiary adapter
+**The LIBRARY half is LANDED for BOTH systems (docs/17 rows 189/191 for PF2e,
+row 194 for dnd5e).** What a LIBRARY creature's own stat block prints when it
+carries spells (the "standard mobs" half of the owner's request) is no longer a
+follow-up: the `foundry-pf2e` bestiary adapter
 stamps the creature's own `items[]` of type `spell` onto `statBlock.spells`
 (source order; source name verbatim; a `cantrip`-trait item with NO cast rank,
 and — docs/17 row 191 — a `focus`-trait item with NO cast rank plus, when the
@@ -240,7 +241,48 @@ so a name's resolution and its loud unresolved report stay with
 `domain/mobSpells.mobSpellChips` + `mobSpellIssues` at render/export time. The
 old caveat that "the importer still writes no `spells` field" applied to the
 pre-189 shape only: a creature whose document carries no `spell` items still
-omits the key and renders exactly as before.
+omits the key and renders exactly as before. **AMENDED by docs/17 row 194: the
+dnd5e lane is the SAME shape in the SAME field.** The `foundry-dnd5e-srd`
+adapter stamps a caster creature's OWN embedded `type: 'spell'` items onto
+`statBlock.spells` (source order; the source's own spelling; **the source's own
+`system.level` IS the assignment's `castRank`**, and a cantrip — `level === 0`,
+the system's own signal — carries no cast rank), and the creature document's
+own character/caster level rides the assignment as `casterLevel`/
+`characterLevel` for the 5e cantrip progression. A creature with no spell items
+still OMITS the key. Nothing about the renderer changed: the SAME resolver, the
+SAME chip.
+
+**THE 5e ARM OF THE HEIGHTENING RULE, AND THE CANTRIP TRAP (docs/17 row 194).**
+`spellAtRank` dispatches on the payload's OWN `system` BEFORE any PF2e arm, so
+the rules above — `fixed`/`interval` selection, the `clamp(ceil(casterLevel /
+2), 1, 10)` cantrip rank, the focus order — are PF2e's ALONE. A 5e payload goes
+to `spellAtRankDnd5e` and reads a SEPARATE additive `spellData.upcast`
+(`{baseLevel, sentence, parts[]}` — the source's own damage `scaling` blocks
+plus its own "At Higher Levels" sentence verbatim):
+
+- a levelled 5e spell scales by the SPELL SLOT it is cast in,
+  `steps = castRank - baseLevel`, gaining `scaling.number * steps` dice on every
+  part whose `scaling.mode` is `'whole'`;
+- a part whose mode is empty (the real Magic Missile) gets NO number — the
+  source's sentence is printed VERBATIM behind the loud
+  `DND5E_PROSE_ONLY_MARKER`; `'half'` is a loud refusal, never a guessed
+  rounding;
+- **a 5e cantrip is NOT given the PF2e `ceil(casterLevel / 2)` rank.** It has
+  no slot level (`appliedRank` stays 0, and the chip prints `cast at level 0`),
+  it scales at the system's own CHARACTER-level tiers
+  (`floor((characterLevel + 1) / 6)` — 1 tier at level 5, 2 at 11, 3 at 17),
+  and its provenance flag is the new `cantripScaling`, never `cantripAuto`.
+  Fire Bolt at character level 5 vs 11 prints 2d10 vs 3d10, where the PF2e
+  formula would have printed rank 3 vs rank 6 — wrong values with confident
+  provenance. A creature whose document states no character level gets the
+  source's per-tier scaling with the tier UNCHOSEN (loud) rather than a number
+  derived from its printed CR (a challenge rating is not a character level).
+- A dnd5e `casterLevel`/`characterLevel` handed to a PF2e spell is a LOUD
+  error, not a silently ignored field — the two systems' levels never mix.
+
+The prompt-side consequence is unchanged in this slice: a system with no
+imported spells still renders a spell-less prompt byte-for-byte, and the
+vocabulary/repair/boundary behaviour is docs/17 row 184's.
 
 
 

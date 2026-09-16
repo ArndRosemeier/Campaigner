@@ -1,10 +1,17 @@
 import { z } from 'zod';
 
+import type { MobSpellAssignment } from '@/domain/mobSpells';
 import { abilityModifier, formatModifier, type StatBlock } from '@/domain/statblock';
+import {
+  dnd5eSpellSchoolSchema,
+  DND5E_SPELL_SCHOOL_LABELS,
+  type Dnd5eSpellSchool,
+  type SpellArea,
+} from '@/domain/spellData';
 import { errorMessage } from '@/lib/errors';
 
 import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
-import type { PackAdapter, PackEntry, PackFileParse } from './types';
+import type { PackAdapter, PackEntry, PackFileParse, PackSectionEntry } from './types';
 
 /**
  * `foundry-dnd5e-srd` pack adapter (12-BESTIARY-PACKS §2/§5/§11): creature
@@ -684,6 +691,37 @@ function mapWeapon(
   };
 }
 
+/**
+ * One of a caster creature's OWN embedded `spell` items as a mob-spell
+ * assignment (row 194). dnd5e embeds the WHOLE spell document in `items[]`
+ * (verified byte-for-byte against the real Mage), so the SAME import schema
+ * reads it; the item's own `system.level` IS the cast rank (0 = cantrip), the
+ * name is the source's own spelling (never normalized here — the render/export
+ * boundary matches it), and the creature's character level rides the
+ * assignment because the rules-pack `SpellData` never holds it.
+ *
+ * A cantrip carries NO cast rank: a 5e cantrip has no slot level, and its
+ * damage scales at the system's character-level tiers, which
+ * `domain/spellHeightening.spellAtRankDnd5e` computes — never PF2e's
+ * `ceil(casterLevel / 2)` rank rule.
+ *
+ * An item that STATES `type: 'spell'` but cannot be read fails the creature
+ * LOUDLY (the item walk below parses strictly): a malformed embedded document
+ * is never silently skipped as if it were carried equipment.
+ */
+function mapCreatureSpell(
+  item: unknown,
+  characterLevel: number | null,
+  casterLevel: number | null,
+): MobSpellAssignment {
+  const spell = dnd5eSpellImportSchema.parse(item);
+  const cantrip = dnd5eSpellIsCantrip(spell.system.level);
+  const level = characterLevel ?? casterLevel;
+  const levelFields = level === null ? {} : { characterLevel: level, casterLevel: level };
+  if (cantrip) return { name: spell.name, ...levelFields };
+  return { name: spell.name, castRank: spell.system.level, ...levelFields };
+}
+
 function mapNpc(doc: ParsedNpc): PackEntry {
   const system = doc.system;
   const details = system.details;
@@ -799,7 +837,23 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   const featActions: { name: string; text: string }[] = [];
   const passiveTraits: StatBlock['traits'] = [];
   const reactions: StatBlock['reactions'] = [];
+  // The creature's OWN spell items, in the SOURCE's own item order (the
+  // document's order is the only ordering the source states). The creature's
+  // character level is resolved ONCE, from the same raw document the walk
+  // reads, and rides every assignment because the rules-pack payload never
+  // holds it. A creature with no spell items OMITS `statBlock.spells`
+  // entirely (never `[]`), so "no field" stays distinguishable from
+  // "authored, no spells" — row 184's `.nullish()` contract.
+  const creatureLevel = dnd5eCharacterLevelFor(
+    doc as unknown as z.infer<typeof dnd5eSpellImportSchema>,
+    true,
+  );
+  const spells: MobSpellAssignment[] = [];
   for (const item of doc.items) {
+    if (isDocumentRecord(item) && item.type === 'spell') {
+      spells.push(mapCreatureSpell(item, creatureLevel, null));
+      continue;
+    }
     const feat = featItemSchema.safeParse(item);
     if (feat.success) {
       const mapped = mapFeat(feat.data);
@@ -819,8 +873,8 @@ function mapNpc(doc: ParsedNpc): PackEntry {
       );
       continue;
     }
-    // Equipment, spells and other non-stat-block items are not represented
-    // (12-BESTIARY-PACKS §9: no spell data in v1).
+    // Equipment and other non-stat-block items are not represented. The
+    // creature's own `spell` items ARE (row 194) — handled above.
   }
 
   const modifiers = ABILITY_ORDER.map(
@@ -872,6 +926,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     reactions,
     legendary: [],
     extras,
+    ...(spells.length === 0 ? {} : { spells }),
   };
 
   const lines: string[] = [
@@ -919,6 +974,470 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   };
 }
 
+// --- dnd5e spell documents (rules-text + spell-data lane, docs/12 §15, row 194)
+
+/**
+ * One dnd5e damage part (`activities.<id>.damage.parts[]`). `number` /
+ * `denomination` / `bonus` / `types` are the source's own fields; `scaling` is
+ * the source's OWN scaling block, captured verbatim (mode `''` = no structured
+ * increase). The whole part set is parsed strictly: a part whose `scaling.mode`
+ * states a structured increase but whose `number` is missing FAILS the document
+ * loudly (`scalingNumber` below), never silently.
+ */
+const dnd5eDamagePartSchemaForImport = z.object({
+  number: z.number().nullish(),
+  denomination: z.number().nullish(),
+  bonus: z.union([z.string(), z.number()]).default(''),
+  types: z.array(z.string()).default([]),
+  scaling: z
+    .object({
+      mode: z.string().default(''),
+      number: z.number().nullish(),
+      formula: z.string().default(''),
+    })
+    .nullish(),
+});
+
+/**
+ * dnd5e's damage scaling modes (`CONFIG.DND5E.damageScalingModes` at `6.0.x`).
+ * A mode this build does not compute is REPORTED by the heightening rule, not
+ * here — the payload stores the source verbatim; the importer only guarantees
+ * that a part which CLAIMS a structured increase carries one.
+ */
+const DND5E_SCALING_MODES: ReadonlySet<string> = new Set(['whole', 'half']);
+
+/** The dice count a structured scaling block states, or a LOUD failure. */
+function scalingNumber(
+  scaling: { mode: string; number?: number | null | undefined } | null | undefined,
+  spellName: string,
+  index: number,
+): number | null {
+  const mode = scaling?.mode ?? '';
+  if (mode === '') return null;
+  if (!DND5E_SCALING_MODES.has(mode)) {
+    throw new Error(
+      `spell "${spellName}" damage part ${String(index)} states unknown scaling mode "${mode}"`,
+    );
+  }
+  const number = scaling?.number;
+  if (number === undefined || number === null || !Number.isInteger(number) || number < 1) {
+    throw new Error(
+      `spell "${spellName}" damage part ${String(index)} states scaling mode "${mode}" without a positive dice count`,
+    );
+  }
+  return number;
+}
+
+/**
+ * One damage part rendered in the printed `NdM±K` convention — the SAME
+ * convention the weapon attack lines use (`formatModifier`), so the shared
+ * spell card and the heightening rule read one spelling. A part with no
+ * dice and no custom formula is a damage-less descriptor; its `custom.formula`
+ * is carried VERBATIM rather than parsed (the heightening rule refuses a
+ * formula it cannot read, which is the honest outcome).
+ */
+function damagePartFormula(part: z.infer<typeof dnd5eDamagePartSchemaForImport>): string {
+  const bonus = numericBonus(part.bonus, 'spell damage bonus');
+  if (part.number !== null && part.number !== undefined && part.denomination !== null && part.denomination !== undefined) {
+    return `${String(part.number)}d${String(part.denomination)}${bonus === 0 ? '' : formatModifier(bonus)}`;
+  }
+  return bonus === 0 ? '' : String(bonus);
+}
+
+/**
+ * The character level the dnd5e cantrip progression reads for a CREATURE's
+ * spells — upstream's `cantripLevel(spell)` (foundryvtt/dnd5e @ `6.0.x`,
+ * `module/data/actor/npc.mjs`): an `innate` spell uses the challenge rating,
+ * otherwise the creature's own character level (`details.level`, a
+ * character-class NPC), else its spellcasting level
+ * (`attributes.spell.level`). `null` when the document states none — the
+ * heightening rule then prints the source's per-tier scaling WITHOUT choosing
+ * a tier, never a guessed one. A creature's printed stat-block level is a
+ * CHALLENGE RATING, so this is read from the document's own fields only and is
+ * never substituted with the CR (`mobCasterLevel`'s value).
+ */
+function dnd5eCharacterLevelFor(
+  doc: z.infer<typeof dnd5eSpellImportSchema>,
+  isNpc: boolean,
+): number | null {
+  if (isNpc && doc.system.method === 'innate') {
+    const cr = doc.system.details?.cr;
+    const numeric = typeof cr === 'number' ? cr : cr === undefined || cr === null ? null : Number(cr);
+    return numeric !== null && Number.isFinite(numeric) && numeric >= 1 ? numeric : null;
+  }
+  const level = doc.system.details?.level;
+  if (typeof level === 'number' && Number.isInteger(level) && level >= 1) return level;
+  if (typeof level === 'string' && /^\d+$/.test(level.trim())) {
+    const parsed = Number(level.trim());
+    if (parsed >= 1) return parsed;
+  }
+  const spellLevel = doc.system.attributes?.spell?.level;
+  if (typeof spellLevel === 'number' && Number.isInteger(spellLevel) && spellLevel >= 1) {
+    return spellLevel;
+  }
+  if (typeof spellLevel === 'string' && /^\d+$/.test(spellLevel.trim())) {
+    const parsed = Number(spellLevel.trim());
+    if (parsed >= 1) return parsed;
+  }
+  return null;
+}
+
+const dnd5eSourceSchema = z
+  .object({
+    license: z.string().default(''),
+    rules: z.string().default(''),
+    book: z.string().default(''),
+    page: z.string().default(''),
+    custom: z.string().default(''),
+  })
+  .nullish();
+
+const dnd5eActivationSchema = z
+  .object({
+    type: z.string().default(''),
+    value: z.union([z.number(), z.string()]).nullish(),
+    condition: z.string().default(''),
+  })
+  .default({ type: '', value: null, condition: '' });
+
+const dnd5eTemplateSchema = z
+  .object({
+    size: z.union([z.number(), z.string()]).nullish(),
+    units: z.string().default('ft'),
+    type: z.string().default(''),
+  })
+  .default({ size: null, units: 'ft', type: '' });
+
+const dnd5eActivitySchema = z
+  .object({
+    type: z.string().default(''),
+    damage: z
+      .object({ parts: z.array(dnd5eDamagePartSchemaForImport).default([]) })
+      .nullish(),
+  })
+  .loose();
+
+/**
+ * One dnd5e spell document (`packs/_source/spells/<level-folder>/<slug>.yml`)
+ * and the SAME shape a caster creature embeds in `items[]` (`type: 'spell'`,
+ * byte-identical to the standalone document — verified against the real
+ * `6.0.x` corpus). Consumed subset only; the document is never re-serialized.
+ */
+const dnd5eSpellImportSchema = z.object({
+  name: z.string().min(1),
+  type: z.literal('spell'),
+  system: z.object({
+    description: z
+      .object({ value: z.string().default('') })
+      .default({ value: '' }),
+    source: dnd5eSourceSchema,
+    // The spell's OWN level: 0 for a cantrip (the real Fire Bolt document),
+    // 1..9 for a ranked spell. THIS IS THE CANTRIP SIGNAL for dnd5e — the
+    // source has no `cantrip` trait (a PF2e mechanism), which is why the
+    // 5e lane reads the level through `dnd5eSpellIsCantrip` and never
+    // through `spellTraitsAreCantrip`.
+    level: z.number().int().min(0).max(9),
+    // The source's school code; kept as free string here so an UNKNOWN code is
+    // a loud per-entry failure in the mapper (against the system's own eight
+    // keys), not a schema default.
+    school: z.string().default(''),
+    properties: z.array(z.string()).default([]),
+    materials: z.object({ value: z.string().default('') }).default({ value: '' }),
+    activation: dnd5eActivationSchema,
+    duration: z
+      .object({ value: z.union([z.number(), z.string()]).default(''), units: z.string().default('') })
+      .default({ value: '', units: '' }),
+    range: z
+      .object({
+        value: z.union([z.number(), z.string()]).nullish(),
+        units: z.string().default(''),
+        special: z.string().default(''),
+      })
+      .default({ value: null, units: '', special: '' }),
+    target: z
+      .object({
+        affects: z
+          .object({
+            type: z.string().default(''),
+            count: z.union([z.number(), z.string()]).nullish(),
+            special: z.string().default(''),
+          })
+          .default({ type: '', count: null, special: '' }),
+        template: dnd5eTemplateSchema,
+      })
+      .default({
+        affects: { type: '', count: null, special: '' },
+        template: { size: null, units: 'ft', type: '' },
+      }),
+    activities: z.record(z.string(), dnd5eActivitySchema).default({}),
+    // Present on a creature's embedded spell item (its `method` distinguishes
+    // innate casting) and absent on a standalone spell document.
+    method: z.string().default(''),
+    // The CREATURE document's own fields; present only when this schema is
+    // applied to an embedded item's parent (see `dnd5eCreatureCasting`).
+    details: z
+      .object({
+        cr: z.union([z.number(), z.string()]).nullish(),
+        level: z.union([z.number(), z.string()]).nullish(),
+      })
+      .nullish(),
+    attributes: z
+      .object({
+        spell: z.object({ level: z.union([z.number(), z.string()]).nullish() }).nullish(),
+      })
+      .nullish(),
+  }),
+});
+
+const ACTIVATION_LABELS: Readonly<Record<string, string>> = {
+  action: 'action',
+  bonus: 'bonus action',
+  reaction: 'reaction',
+  minute: 'minute',
+  hour: 'hour',
+  day: 'day',
+  legendary: 'legendary action',
+  lair: 'lair action',
+  crew: 'crew action',
+  special: 'special',
+  none: '',
+  passive: '',
+};
+
+/** The printed cast time (`1 action`, `1 bonus action`, `1 reaction`). */
+function activationTime(system: z.infer<typeof dnd5eSpellImportSchema>['system']): string {
+  const type = system.activation.type;
+  const label = ACTIVATION_LABELS[type] ?? titleCase(type);
+  if (label === '') return '';
+  const value = system.activation.value;
+  const count = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : 1;
+  if (!Number.isFinite(count) || count <= 1) return `1 ${label}`;
+  return `${String(count)} ${label}s`;
+}
+
+/** The printed duration (`Instantaneous`, `1 minute`, `Concentration, …`). */
+function durationText(system: z.infer<typeof dnd5eSpellImportSchema>['system']): string {
+  const value = system.duration.value;
+  const units = system.duration.units;
+  const prefix =
+    units === 'inst'
+      ? 'Instantaneous'
+      : units === 'perm'
+        ? 'Permanent'
+        : units === 'spec' || units === ''
+          ? ''
+          : `${String(value)} ${units}`;
+  return prefix.trim();
+}
+
+/** The printed range (`120 ft.`, `Self`, `Touch`, the source's own special). */
+function rangeText(system: z.infer<typeof dnd5eSpellImportSchema>['system']): string {
+  const special = system.range.special.trim();
+  if (special !== '') return special;
+  const units = system.range.units;
+  if (units === 'self') return 'Self';
+  if (units === 'touch') return 'Touch';
+  const stored = system.range.value;
+  const value = typeof stored === 'number' ? String(stored) : (stored ?? '').trim();
+  if (value === '') return '';
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  if (units === 'ft' || units === '') return `${value} ft.`;
+  if (units === 'mi') return `${value} mi.`;
+  return `${value} ${units}`;
+}
+
+/** The printed target (`1 creature`, `Self`, the source's own special). */
+function targetText(system: z.infer<typeof dnd5eSpellImportSchema>['system']): string {
+  const affects = system.target.affects;
+  const special = affects.special.trim();
+  if (special !== '') return special;
+  const type = affects.type.trim();
+  const count = affects.count;
+  if (type === '') return count === null || count === undefined ? '' : String(count);
+  return count === null || count === undefined || String(count).trim() === ''
+    ? type
+    : `${String(count)} ${type}`;
+}
+
+/**
+ * The spell's `system.target.template` as the shared area shape. `size` is the
+ * template's own number in ITS units; this build converts FEET only (`ft` /
+ * `''`) and fails loudly on any other unit rather than printing a wrong one.
+ * The shape's `value` is a RADIUS for a sphere/burst in both systems (the real
+ * Fireball stores `20` and PF2e's burst 20 is the same 20-foot radius).
+ */
+function areaFromTemplate(
+  template: z.infer<typeof dnd5eSpellImportSchema>['system']['target']['template'],
+  spellName: string,
+): SpellArea | null {
+  const type = template.type.trim();
+  if (type === '') return null;
+  const units = template.units.trim();
+  if (units !== '' && units !== 'ft') {
+    throw new Error(`spell "${spellName}" states area units "${units}" — ft is the only unit this adapter maps`);
+  }
+  const size = template.size;
+  const stored = typeof size === 'number' ? String(size) : (size ?? '').trim();
+  const value = stored === '' ? null : Number(stored);
+  if (value === null || !Number.isFinite(value)) {
+    throw new Error(`spell "${spellName}" states area type "${type}" without a numeric size`);
+  }
+  return { type, value, details: null };
+}
+
+/** The FIRST activity that states damage parts, in the document's own key
+ *  order (a spell's damaging activity is the one that carries its damage). */
+function damageActivity(
+  activities: Record<string, z.infer<typeof dnd5eActivitySchema>>,
+): z.infer<typeof dnd5eActivitySchema> | null {
+  for (const activity of Object.values(activities)) {
+    if ((activity.damage?.parts.length ?? 0) > 0) return activity;
+  }
+  return null;
+}
+
+/** The document's OWN "At Higher Levels" sentence, VERBATIM plain text — the
+ *  prose-only fallback (`<strong>At Higher Levels.</strong>` and the older
+ *  `<strong>Higher Levels.</strong>` spelling, both real in the corpus). A
+ *  document that mentions neither returns `''`; the paragraph is never
+ *  paraphrased or recomputed. */
+function higherLevelSentence(html: string): string {
+  const match = /<strong>\s*(?:at\s+)?higher\s+levels?\.?\s*<\/strong>([\s\S]*?)(?:<\/p>|$)/i.exec(html);
+  if (match === null) return '';
+  const stripped = htmlToText(match[1] ?? '', BRACKET_LINKS_LINE_BREAKS);
+  return stripped.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * One dnd5e spell as a rules-text entry carrying its structured `spellData`
+ * (row 194) — the SAME third lane the PF2e rules adapter uses, so the runner
+ * persists a `spell` chunk with no new machinery.
+ *
+ * NO INVENTED FILTER AXIS: the axis is `school` and the school is the source's
+ * own code; `filterAxis` is stamped `'school'` even when the code is empty,
+ * because the AXIS is a property of the edition while the VALUE is missing —
+ * the row then lists honestly as having no school.
+ */
+function mapSpellDocument(
+  doc: z.infer<typeof dnd5eSpellImportSchema>,
+  fileName: string,
+): PackSectionEntry {
+  const system = doc.system;
+  const cantrip = dnd5eSpellIsCantrip(system.level);
+  const school = system.school.trim();
+  if (school !== '' && !dnd5eSpellSchoolSchema.safeParse(school).success) {
+    throw new Error(
+      `spell "${doc.name}" states unknown school "${school}" (the dnd5e system's own eight codes: ${dnd5eSpellSchoolSchema.options.join(', ')})`,
+    );
+  }
+  const activity = damageActivity(system.activities);
+  const parts = (activity?.damage?.parts ?? []).map((part, index) => {
+    const scaling = part.scaling ?? null;
+    const number = scalingNumber(scaling, doc.name, index);
+    return {
+      index,
+      formula: damagePartFormula(part),
+      number: part.number ?? null,
+      denomination: part.denomination ?? null,
+      bonus: String(part.bonus),
+      types: part.types,
+      scaling: {
+        mode: scaling?.mode ?? '',
+        number,
+        formula: scaling?.formula ?? '',
+      },
+    };
+  });
+  const description = htmlToText(system.description.value, BRACKET_LINKS_LINE_BREAKS);
+  const sentence = higherLevelSentence(system.description.value);
+  const levelLabel = cantrip ? 'Cantrip' : `Level ${String(system.level)}`;
+  const schoolName = school === '' ? '' : DND5E_SPELL_SCHOOL_LABELS[school as Dnd5eSpellSchool];
+  const castFacts = [
+    ['Cast', activationTime(system)],
+    ['Range', rangeText(system)],
+    ['Target', targetText(system)],
+    ['Duration', durationText(system)],
+  ].filter((entry) => entry[1] !== '');
+  const source = system.source ?? null;
+  const sourceLine =
+    source === null
+      ? ''
+      : [source.book.trim(), source.page.trim() === '' ? '' : `p. ${source.page.trim()}`, source.license.trim(), source.rules.trim() === '' ? '' : `rules ${source.rules.trim()}`]
+          .filter((part) => part !== '')
+          .join(', ');
+  const materials = system.materials.value.trim();
+
+  const lines: string[] = [`${doc.name} — ${levelLabel}${schoolName === '' ? '' : ` ${schoolName.toLowerCase()}`}`];
+  if (castFacts.length > 0) {
+    lines.push(castFacts.map(([label, value]) => `${label ?? ''} ${value}`).join(' · '));
+  }
+  if (materials !== '') lines.push(`Materials: ${materials}`);
+  if (description !== '') lines.push(description);
+  if (sourceLine !== '') lines.push(`Source: ${sourceLine}`);
+
+  return {
+    categories: spellHeadingCategories(fileName),
+    name: doc.name,
+    text: [doc.name, ...lines].join('\n'),
+    spell: {
+      system: 'dnd5e',
+      rank: cantrip ? 0 : system.level,
+      cantrip,
+      traditions: [],
+      school: school as '' | Dnd5eSpellSchool,
+      filterAxis: 'school',
+      properties: system.properties,
+      traits: [],
+      rarity: 'common',
+      cast: {
+        time: activationTime(system),
+        range: rangeText(system),
+        target: targetText(system),
+        duration: durationText(system),
+      },
+      damage: Object.fromEntries(
+        parts.map((part) => [String(part.index), { formula: part.formula, type: part.types.join(', '), category: null, materials: [] }]),
+      ),
+      area: areaFromTemplate(system.target.template, doc.name),
+      heightening: null,
+      upcast: { baseLevel: system.level, sentence, parts },
+      heighteningEntries: [],
+      heighteningUnparsed: [],
+      publication:
+        source === null || (source.license.trim() === '' && source.rules.trim() === '')
+          ? null
+          : { title: source.book.trim(), license: source.license.trim() },
+    },
+  };
+}
+
+/** The category path a dnd5e spell file's folders state: the level folder
+ *  (`cantrip`, `3rd-level`) labels the spell's own rank, so the heading reads
+ *  like the PF2e lane's (`Spells — Cantrip`, `Spells — Rank 3`). */
+function spellHeadingCategories(fileName: string): string[] {
+  const segments = fileName.split('/').filter((segment) => segment !== '');
+  const folder = segments.length >= 3 ? (segments[1] ?? '') : '';
+  if (folder === '') return ['Spells'];
+  return [`Spells — ${spellFolderLabel(folder)}`];
+}
+
+/** `cantrip` → `Cantrip`; `3rd-level` → `Rank 3`; anything else titled. */
+function spellFolderLabel(slug: string): string {
+  if (slug === 'cantrip') return 'Cantrip';
+  const level = /^(\d+)(?:st|nd|rd|th)-level$/.exec(slug);
+  if (level !== null) return `Rank ${level[1] ?? ''}`.trim();
+  return titleCase(slug);
+}
+
+/** The dnd5e cantrip signal: `system.level === 0`. Deliberately NOT
+ *  `spellTraitsAreCantrip` — the `cantrip` TRAIT is PF2e's mechanism and a
+ *  dnd5e document has no traits at all; the system's own level field is the
+ *  authoritative signal here. */
+export function dnd5eSpellIsCantrip(level: number): boolean {
+  return level === 0;
+}
+
 // --- Adapter ---------------------------------------------------------------
 
 /** Synchronous parse body — wrapped into a promise by `parseFile`. */
@@ -926,14 +1445,35 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
   const docs = parseYamlDocs(text, fileName);
   const entries: PackEntry[] = [];
+  const sections: PackSectionEntry[] = [];
   const failures: PackFileParse['failures'] = [];
   let skipped = 0;
   for (const [index, doc] of docs.entries()) {
-    if (!isDocumentRecord(doc) || doc.type !== 'npc') {
+    if (!isDocumentRecord(doc)) {
       skipped += 1;
       continue;
     }
     const name = typeof doc.name === 'string' ? doc.name : '';
+    // A `spell` document is the spells arc's rules-text lane (row 194) — the
+    // SAME third lane the PF2e rules adapter feeds, so it lands a `spell` chunk
+    // with its structured payload and no new machinery. A document whose spell
+    // mapping fails is a LOUD per-entry failure, never a partial row.
+    if (doc.type === 'spell') {
+      try {
+        sections.push(mapSpellDocument(dnd5eSpellImportSchema.parse(doc), fileName));
+      } catch (error) {
+        failures.push({
+          file: fileName,
+          name,
+          message: `document ${String(index)}: ${errorMessage(error)}`,
+        });
+      }
+      continue;
+    }
+    if (doc.type !== 'npc') {
+      skipped += 1;
+      continue;
+    }
     try {
       entries.push(mapNpc(dnd5eNpcSchema.parse(doc)));
     } catch (error) {
@@ -944,7 +1484,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
       });
     }
   }
-  return { entries, skipped, failures };
+  return { entries, sections, skipped, failures };
 }
 
 function parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse> {
@@ -962,5 +1502,8 @@ export const foundryDnd5eSrdAdapter: PackAdapter = {
   system: 'dnd5e',
   license: FOUNDRY_DND5E_SRD_LICENSE,
   extensions: ['.yml', '.yaml'],
+  // The selection may hold creature documents only, spell documents only, or
+  // a mixed directory; the zero-valid-entry error names both (row 194).
+  entryNoun: 'creature or spell',
   parseFile,
 };

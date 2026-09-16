@@ -242,13 +242,17 @@ describe('spells page — tradition filter and detail', () => {
 });
 
 describe('spells page — empty states per system', () => {
-  it('says spells are not imported for D&D 5e', async () => {
+  it('names the missing D&D 5e material and offers the import remedy (the 5e lane exists now)', async () => {
     const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
     renderSpells(campaign.id);
 
-    const notice = await screen.findByTestId('spells-not-imported');
-    expect(notice).toHaveTextContent('Spells are not imported for D&D 5e');
-    expect(screen.queryByTestId('spell-list')).not.toBeInTheDocument();
+    const notice = await screen.findByTestId('spells-no-material');
+    expect(notice).toHaveTextContent('No spells imported for D&D 5e');
+    expect(notice).toHaveTextContent('D&D 5e SRD spells pack');
+    expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
+    // The old "spells are not imported for D&D 5e" claim is GONE: the lane
+    // exists, so a dnd5e campaign with no imported spells says exactly that.
+    expect(screen.queryByTestId('spells-not-imported')).not.toBeInTheDocument();
   });
 
   it('names the missing Pathfinder 2e rules material and offers the import remedy', async () => {
@@ -258,5 +262,147 @@ describe('spells page — empty states per system', () => {
     const notice = await screen.findByTestId('spells-no-material');
     expect(notice).toHaveTextContent('No spells imported for Pathfinder 2e');
     expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
+  });
+});
+
+describe('spells page — the dnd5e lane and its OWN filter axis (row 194)', () => {
+  function dnd5eSpellData(over: Partial<SpellData> = {}): SpellData {
+    return spellData({
+      system: 'dnd5e',
+      rank: 3,
+      cantrip: false,
+      traditions: [],
+      school: 'evo',
+      filterAxis: 'school',
+      properties: ['vocal', 'somatic'],
+      count: undefined,
+      ...over,
+    } as Partial<SpellData>);
+  }
+
+  async function fiveEB(): Promise<Id> {
+    return readyBook('SRD Spells', 'dnd5e');
+  }
+
+  it('shows a dnd5e campaign its 5e spells with LEVEL wording and the SCHOOL filter, never PF2e traditions', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const book = await fiveEB();
+    await putChunks([
+      chunk(book, 'Fire Bolt', {}, dnd5eSpellData({ rank: 0, cantrip: true })),
+      chunk(book, 'Fireball', {}, dnd5eSpellData({ rank: 3, school: 'evo' })),
+      chunk(book, 'Cure Wounds', {}, dnd5eSpellData({ rank: 1, school: 'abj' })),
+    ]);
+
+    renderSpells(campaign.id);
+    await screen.findByTestId('spells-page');
+    expect(await screen.findAllByTestId('spell-chip')).toHaveLength(3);
+    // The rank wording is dnd5e's own.
+    expect(screen.getByTestId('spell-list')).toHaveTextContent('Level 3');
+    expect(screen.getByTestId('spell-list')).toHaveTextContent('Level 1');
+    expect(screen.getByTestId('spell-list')).toHaveTextContent('Cantrip');
+    expect(screen.getByTestId('spell-list')).not.toHaveTextContent('Rank 3');
+    // The STRIP says which axis it is, and it is the system's own.
+    expect(screen.getByTestId('spell-filter-axis')).toHaveTextContent('Schools');
+    expect(screen.getByTestId('spell-filter')).not.toHaveTextContent('Traditions');
+    expect(screen.queryByTestId('spell-tradition-arcane')).not.toBeInTheDocument();
+
+    // Filtering by a school keeps exactly that school's spells (union).
+    await user.click(screen.getByTestId('spell-school-evo'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('spell-chip').map((chip) => chip.textContent)).toEqual([
+        'Fire Bolt',
+        'Fireball',
+      ]);
+    });
+    await user.click(screen.getByTestId('spell-school-abj'));
+    await waitFor(() => {
+      expect(screen.getAllByTestId('spell-chip')).toHaveLength(3);
+    });
+    // A school NO spell carries → the filter-empty state names SCHOOLS.
+    await user.click(screen.getByTestId('spell-school-evo'));
+    await user.click(screen.getByTestId('spell-school-abj'));
+    await user.click(screen.getByTestId('spell-school-ill'));
+    expect(await screen.findByTestId('spells-filter-empty')).toHaveTextContent(
+      'No spells match the selected schools.',
+    );
+  });
+
+  it("a 5e spell with no school is LISTED honestly and says it has no filter axis", async () => {
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const book = await fiveEB();
+    await putChunks([
+      chunk(book, 'Mystery Spell', {}, dnd5eSpellData({ rank: 2, school: '' })),
+    ]);
+
+    renderSpells(campaign.id);
+    await screen.findByTestId('spells-page');
+    expect(await screen.findAllByTestId('spell-chip')).toHaveLength(1);
+    // It is LISTED, marked on the axis it does not state — never given an
+    // invented school and never dropped from the list.
+    expect(screen.getByTestId('spell-list')).toHaveTextContent('Mystery Spell');
+    expect(screen.getByTestId('spell-list')).toHaveTextContent('no school');
+    await userEvent.setup().click(screen.getByTestId('spell-chip'));
+    const card = await screen.findByTestId('spell-detail-card');
+    expect(card).toHaveTextContent('Mystery Spell');
+    expect(within(card).queryByTestId('spell-school')).not.toBeInTheDocument();
+  });
+
+  it('a payload that names NO axis (a pre-arc row) is listed and says so', async () => {
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const book = await fiveEB();
+    await putChunks([
+      chunk(
+        book,
+        'Legacy Spell',
+        {},
+        spellData({ system: 'dnd5e', rank: 2, cantrip: false, filterAxis: null }),
+      ),
+    ]);
+
+    renderSpells(campaign.id);
+    await screen.findByTestId('spells-page');
+    const chip = await screen.findByTestId('spell-chip');
+    expect(chip).toHaveTextContent('Legacy Spell');
+    await userEvent.setup().click(chip);
+    const card = await screen.findByTestId('spell-detail-card');
+    expect(within(card).getByTestId('spell-no-filter-axis')).toHaveTextContent(
+      'names no filter axis',
+    );
+  });
+
+  it('shows the SCHOOL on the detail card and the source higher-level sentence VERBATIM', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const book = await fiveEB();
+    await putChunks([
+      chunk(
+        book,
+        'Fireball',
+        {},
+        dnd5eSpellData({
+          rank: 3,
+          school: 'evo',
+          upcast: {
+            baseLevel: 3,
+            sentence:
+              'When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd.',
+            parts: [],
+          },
+        }),
+      ),
+    ]);
+
+    renderSpells(campaign.id);
+    await screen.findByTestId('spells-page');
+    await user.click(await screen.findByTestId('spell-chip'));
+    const card = await screen.findByTestId('spell-detail-card');
+    expect(within(card).getByTestId('spell-school')).toHaveTextContent('Evocation');
+    expect(card).toHaveTextContent('Level 3');
+    expect(card).not.toHaveTextContent('Rank 3');
+    // VERBATIM — the source's own sentence, never a computed number.
+    expect(within(card).getByTestId('spell-upcast')).toHaveTextContent(
+      'When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd.',
+    );
   });
 });

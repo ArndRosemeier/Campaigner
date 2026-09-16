@@ -48,8 +48,12 @@ export interface PackRecipe {
    * document, the volume the user opts into is its pages (docs/12 §15).
    */
   creatures: number;
-  /** Entry noun for the count label ('creatures' default; item packs: 'items'; journal packs: 'pages'; rules-text packs: 'sections'). */
-  unit?: 'creatures' | 'items' | 'pages' | 'sections';
+  /**
+   * Entry noun for the count label ('creatures' default; item packs: 'items';
+   * journal packs: 'pages'; rules-text packs: 'sections'; spell packs:
+   * 'spells' — row 194).
+   */
+  unit?: 'creatures' | 'items' | 'pages' | 'sections' | 'spells';
 }
 
 export interface PackFetchSource {
@@ -101,13 +105,31 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
     ],
   },
   {
+    // Creature + spell source (row 194 widened the packRoot): the dnd5e spell
+    // documents sit beside `monsters/` under the broad `packs/_source` root, so
+    // ONE source with `packDirs` lists exactly the folders this adapter parses
+    // (the monster types and the ten spell level folders) and the curated
+    // recipes offer both lanes. Both halves go through the SAME
+    // `foundry-dnd5e-srd` adapter — the spell lane is not a second source, so
+    // the settings UI keeps ONE card and one ref badge for dnd5e.
     adapterId: 'foundry-dnd5e-srd',
     owner: 'foundryvtt',
     repo: 'dnd5e',
     ref: '6.0.x',
-    packRoot: 'packs/_source/monsters',
+    packRoot: 'packs/_source',
+    packDirs: ['monsters', 'spells'],
     curated: [
       { id: 'packs/_source/monsters', label: 'D&D 5e SRD Monsters', creatures: 337 },
+      // Counts verified against 6.0.x (trees API, 2026-09-16 sweep): 25 / 50 /
+      // 55 / 43 / 32 / 38 / 32 / 21 / 17 / 16 = 329 spell documents. The
+      // `spells/supplemental-items` folder (2 docs) is NOT a spell level and
+      // is deliberately not offered.
+      {
+        id: 'packs/_source/spells',
+        label: 'D&D 5e SRD Spells',
+        creatures: 329,
+        unit: 'spells',
+      },
     ],
   },
   {

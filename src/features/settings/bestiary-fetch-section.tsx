@@ -138,14 +138,14 @@ export function BestiaryFetchSection(): JSX.Element {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <PackageIcon aria-hidden className="size-4" />
-          Bestiary packs
+          Bestiary &amp; rules packs
         </CardTitle>
         <CardDescription>
-          Download machine-readable bestiaries from the pinned upstream repos into this browser —
-          fetched packs work exactly like locally imported ones. Each fetch tries the repo's newest
-          state (HEAD) first and falls back to the verified snapshot when the newest format imports
-          poorly or fails to list — loudly reported either way. The manual file import stays
-          available in Rules.
+          Download machine-readable bestiaries, equipment and spells from the pinned upstream repos
+          into this browser — fetched packs work exactly like locally imported ones. Each fetch
+          tries the repo's newest state (HEAD) first and falls back to the verified snapshot when
+          the newest format imports poorly or fails to list — loudly reported either way. The manual
+          file import stays available in Rules.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
@@ -175,9 +175,9 @@ export function BestiaryFetchSection(): JSX.Element {
                       <span className="text-xs text-muted-foreground">
                         {/* Item packs (12-BESTIARY-PACKS §13) count documents
                             in "items", journal packs (docs/12 §15) count
-                            pages, condition/corpus packs count sections; the
-                            listing counts adapter-parseable files either
-                            way. */}
+                            pages, condition/corpus packs count sections, spell
+                            packs (docs/17 row 194) count spells; the listing
+                            counts adapter-parseable files either way. */}
                         ({String(recipe.creatures)}{' '}
                         {recipe.unit === 'items'
                           ? recipe.creatures === 1
@@ -191,9 +191,13 @@ export function BestiaryFetchSection(): JSX.Element {
                               ? recipe.creatures === 1
                                 ? 'section'
                                 : 'sections'
-                              : recipe.creatures === 1
-                                ? 'creature'
-                                : 'creatures'})
+                              : recipe.unit === 'spells'
+                                ? recipe.creatures === 1
+                                  ? 'spell'
+                                  : 'spells'
+                                : recipe.creatures === 1
+                                  ? 'creature'
+                                  : 'creatures'})
                       </span>
                     </span>
                     <BlockedControl

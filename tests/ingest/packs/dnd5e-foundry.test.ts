@@ -11,6 +11,7 @@ import {
 } from '@/ingest/packs/dnd5e-foundry';
 import { getPackAdapter, PACK_ADAPTERS } from '@/ingest/packs/registry';
 import { collectPackRoster } from '@/llm/encounterRoster';
+import { sha256Hex } from '@/lib/hash';
 
 import type { PackFileParse } from '@/ingest/packs/types';
 
@@ -488,5 +489,282 @@ describe('dnd5e pack roster integration (12-BESTIARY-PACKS §7/§11)', () => {
     const chunks = persisted.flat();
     expect(roster.chunkByName.get('ape')).toBe(chunks[0]?.id);
     expect(roster.chunkByName.get('kobold')).toBe(chunks[1]?.id);
+  });
+});
+
+/**
+ * The dnd5e SPELL lane (docs/17 row 194, docs/12 §15). Every spell fixture is
+ * a REAL upstream document from `foundryvtt/dnd5e` @ `6.0.x` whose upstream
+ * path, sha256 and byte count are recorded in the fixture's own header comment
+ * and asserted HERE — a fixture that drifts from upstream reds the pin that
+ * names it, so "the mapping was verified against the real corpus" is checked
+ * rather than remembered.
+ */
+describe('foundry-dnd5e-srd spell documents (row 194)', () => {
+  /** The upstream provenance each fixture's body must still match. */
+  const UPSTREAM: readonly {
+    readonly file: string;
+    readonly path: string;
+    readonly sha256: string;
+    readonly bytes: number;
+  }[] = [
+    {
+      file: 'spells/cantrip-fire-bolt.yml',
+      path: 'packs/_source/spells/cantrip/fire-bolt.yml',
+      sha256: '2ffd57301b166ff5ef5b306ede94db3827dcc6bb3a7e1439d0d37df2b3e3e04c',
+      bytes: 2946,
+    },
+    {
+      file: 'spells/1st-level-magic-missile.yml',
+      path: 'packs/_source/spells/1st-level/magic-missile.yml',
+      sha256: '9fea9a6b0845bad8a9b2c96e067308e4cda96c9dca0d734664c7d58786028600',
+      bytes: 2876,
+    },
+    {
+      file: 'spells/3rd-level-fireball.yml',
+      path: 'packs/_source/spells/3rd-level/fireball.yml',
+      sha256: '1011e2baf84af360f5c7852e68b52d6a21df98acf23ad721a435c74fa3925f57',
+      bytes: 3172,
+    },
+    {
+      // A CARVE of the real Mage document (see the fixture header): the
+      // recorded hash is its carved body, not the whole upstream file.
+      file: 'mage-caster.yml',
+      path: 'packs/_source/monsters/humanoid/mage.yml (carve)',
+      sha256: '8246a7145ce5634aab4900f5881747245135c116614e142e0529d4cf2eed5949',
+      bytes: 13336,
+    },
+  ];
+
+  /** The fixture's body: everything after its provenance comment header. */
+  function fixtureBody(name: string): string {
+    const lines = fixtureYaml(name).split('\n');
+    let index = 0;
+    while (index < lines.length && lines[index]?.startsWith('#')) index += 1;
+    return lines.slice(index).join('\n');
+  }
+
+  it.each(UPSTREAM.map((entry) => [entry.file, entry] as const))(
+    'records %s as a REAL upstream document (sha256 + byte count)',
+    async (_file, entry) => {
+      const body = fixtureBody(entry.file);
+      expect({
+        bytes: new TextEncoder().encode(body).byteLength,
+        sha256: await sha256Hex(body),
+      }).toEqual({ bytes: entry.bytes, sha256: entry.sha256 });
+      // The upstream PATH is recorded in the fixture's own header (for the
+      // carve, the header names the real document and the line range).
+      const upstreamDir = entry.path.slice(0, entry.path.lastIndexOf('/'));
+      expect(fixtureYaml(entry.file)).toContain(`# upstream: ${upstreamDir}`);
+    },
+  );
+
+  it('maps the real Fire Bolt cantrip: level 0 is the cantrip flag, the school and cast facts are the source own', async () => {
+    const parsed = await parseYaml('spells/cantrip/fire-bolt.yml', fixtureYaml('spells/cantrip-fire-bolt.yml'));
+    expect(parsed.entries).toHaveLength(0);
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.sections).toHaveLength(1);
+    const section = parsed.sections?.[0];
+    expect(section?.name).toBe('Fire Bolt');
+    // The FOLDER is the rank the heading carries — the same convention the
+    // PF2e rules lane uses (`Spells — Cantrip`).
+    expect(section?.categories).toEqual(['Spells — Cantrip']);
+    const spell = section?.spell;
+    expect(spell?.system).toBe('dnd5e');
+    expect(spell?.rank).toBe(0);
+    expect(spell?.cantrip).toBe(true);
+    expect(spell?.school).toBe('evo');
+    // NO INVENTED PF2E TRADITIONS: a 5e spell has none, and the axis it does
+    // carry is its own school.
+    expect(spell?.traditions).toEqual([]);
+    expect(spell?.filterAxis).toBe('school');
+    expect(spell?.properties).toEqual(['vocal', 'somatic']);
+    expect(spell?.traits).toEqual([]);
+    expect(spell?.rarity).toBe('common');
+    expect(spell?.cast).toEqual({
+      time: '1 action',
+      range: '120 ft.',
+      target: '1 creature',
+      duration: 'Instantaneous',
+    });
+    expect(spell?.damage['0']).toEqual({
+      formula: '1d10',
+      type: 'fire',
+      category: null,
+      materials: [],
+    });
+    // THE STRUCTURED SCALING: the source's own damage part states whole-die
+    // scaling, which is what makes this cantrip's progression a NUMBER rather
+    // than prose.
+    expect(spell?.upcast).toMatchObject({
+      baseLevel: 0,
+      parts: [
+        {
+          index: 0,
+          formula: '1d10',
+          number: 1,
+          denomination: 10,
+          scaling: { mode: 'whole', number: 1, formula: '' },
+        },
+      ],
+    });
+    expect(spell?.heightening ?? null).toBeNull();
+    expect(spell?.publication).toEqual({ title: '', license: 'CC-BY-4.0' });
+    // The description is the source's own prose, stripped by the ingest
+    // lane's ONE HTML→text seam.
+    expect(section?.text).toContain('You hurl a mote of fire');
+    expect(section?.text).toContain('Source: CC-BY-4.0, rules 2014');
+  });
+
+  it('maps the real Fireball: rank 3 from the source level, structured 1d6-per-level scaling AND the At Higher Levels sentence verbatim', async () => {
+    const parsed = await parseYaml('spells/3rd-level/fireball.yml', fixtureYaml('spells/3rd-level-fireball.yml'));
+    const spell = parsed.sections?.[0]?.spell;
+    expect(parsed.failures).toEqual([]);
+    expect(spell?.rank).toBe(3);
+    expect(spell?.cantrip).toBe(false);
+    expect(spell?.school).toBe('evo');
+    expect(spell?.cast.time).toBe('1 action');
+    expect(spell?.cast.range).toBe('150 ft.');
+    expect(spell?.cast.duration).toBe('Instantaneous');
+    // The template is the source's own area (`20`-foot sphere, feet only).
+    expect(spell?.area).toEqual({ type: 'sphere', value: 20, details: null });
+    expect(spell?.damage['0']?.formula).toBe('8d6');
+    expect(spell?.upcast?.baseLevel).toBe(3);
+    expect(spell?.upcast?.parts[0]?.scaling).toEqual({ mode: 'whole', number: 1, formula: '' });
+    // VERBATIM, never paraphrased — `<strong>At Higher Levels.</strong>` is
+    // the source's own heading.
+    expect(spell?.upcast?.sentence).toBe(
+      'When you cast this spell using a spell slot of 4th level or higher, the damage increases by 1d6 for each slot level above 3rd.',
+    );
+  });
+
+  it('maps the real Magic Missile as PROSE ONLY: the source states no scaling mode, so its sentence is stored verbatim and nothing is computed', async () => {
+    const parsed = await parseYaml(
+      'spells/1st-level/magic-missile.yml',
+      fixtureYaml('spells/1st-level-magic-missile.yml'),
+    );
+    const spell = parsed.sections?.[0]?.spell;
+    expect(parsed.failures).toEqual([]);
+    expect(spell?.rank).toBe(1);
+    expect(spell?.upcast?.parts[0]?.scaling).toEqual({ mode: '', number: null, formula: '' });
+    // The OLDER `<strong>Higher Levels.</strong>` spelling is real corpus
+    // text; the sentence is captured verbatim either way.
+    expect(spell?.upcast?.sentence).toBe(
+      'When you cast this spell using a spell slot of 2nd level or higher, the spell creates one more dart for each slot level above 1st.',
+    );
+    expect(spell?.damage['0']?.formula).toBe('1d4+1');
+  });
+
+  it('fails a malformed spell document LOUDLY instead of importing a partial row', async () => {
+    const missingLevel = fixtureYaml('spells/cantrip-fire-bolt.yml').replace('  level: 0\n', '');
+    const noLevel = await parseYaml('spells/cantrip/fire-bolt.yml', missingLevel);
+    expect(noLevel.sections).toEqual([]);
+    expect(noLevel.entries).toEqual([]);
+    expect(noLevel.failures).toHaveLength(1);
+    expect(noLevel.failures[0]?.name).toBe('Fire Bolt');
+    expect(noLevel.failures[0]?.message).toContain('level');
+
+    // An unknown school code is never stored unvalidated.
+    const weirdSchool = fixtureYaml('spells/3rd-level-fireball.yml').replace('  school: evo\n', '  school: chronomancy\n');
+    const badSchool = await parseYaml('spells/3rd-level/fireball.yml', weirdSchool);
+    expect(badSchool.sections).toEqual([]);
+    expect(badSchool.failures[0]?.message).toContain('unknown school "chronomancy"');
+
+    // A scaling block that claims a structured increase but states no dice
+    // count is a corrupt payload, not a silent zero.
+    const noDice = fixtureYaml('spells/3rd-level-fireball.yml').replace(
+      '            scaling:\n              mode: whole\n              number: 1\n',
+      '            scaling:\n              mode: whole\n',
+    );
+    const badScaling = await parseYaml('spells/3rd-level/fireball.yml', noDice);
+    expect(badScaling.sections).toEqual([]);
+    expect(badScaling.failures[0]?.message).toContain('without a positive dice count');
+  });
+
+  it('imports a real spell document as a `spell` chunk through the shared lane', async () => {
+    const persisted: RuleChunk[][] = [];
+    const deps: PackImportDeps = {
+      createBook: (input) =>
+        Promise.resolve({
+          id: crypto.randomUUID(),
+          createdAt: 1,
+          updatedAt: 1,
+          title: input.title,
+          system: input.system,
+          filename: input.filename,
+          pageCount: 0,
+          status: 'processing',
+          errorMessage: '',
+          origin: 'pack',
+          packMeta: null,
+        }),
+      persistChunks: (chunks) => {
+        persisted.push(chunks);
+        return Promise.resolve();
+      },
+      finalizeBook: (id, packMeta) =>
+        Promise.resolve({
+          id,
+          createdAt: 1,
+          updatedAt: 1,
+          title: 'SRD Spells',
+          system: 'dnd5e',
+          filename: 'srd-spells.zip',
+          pageCount: 0,
+          status: 'ready',
+          errorMessage: '',
+          origin: 'pack',
+          packMeta,
+        }),
+      failBook: () => Promise.resolve(),
+    };
+    const result = await importPack(
+      'foundry-dnd5e-srd',
+      [
+        { name: 'spells/cantrip/fire-bolt.yml', bytes: fixtureBytes('spells/cantrip-fire-bolt.yml') },
+        { name: 'spells/3rd-level/fireball.yml', bytes: fixtureBytes('spells/3rd-level-fireball.yml') },
+      ],
+      { title: 'SRD Spells', deps },
+    );
+    expect(result.sectionsImported).toBe(2);
+    expect(result.imported).toBe(2);
+    const chunks = persisted.flat();
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['spell', 'spell']);
+    expect(chunks[0]?.headingPath).toEqual(['Spells — Cantrip', 'Fire Bolt']);
+    expect(chunks[0]?.spellData?.rank).toBe(0);
+    expect(chunks[0]?.spellData?.school).toBe('evo');
+    expect(chunks[1]?.headingPath).toEqual(['Spells — Rank 3', 'Fireball']);
+    expect(chunks[1]?.spellData?.rank).toBe(3);
+    expect(chunks[0]?.statBlock ?? null).toBeNull();
+  });
+
+  it('maps a real caster creature own spell items onto statBlock.spells, level as the cast rank, cantrips rankless', async () => {
+    const parsed = await parseYaml('monsters/humanoid/mage.yml', fixtureYaml('mage-caster.yml'));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries).toHaveLength(1);
+    const spells = parsed.entries[0]?.statBlock.spells;
+    // The source's own item ORDER, the source's own spelling.
+    expect(spells?.map((assignment) => assignment.name)).toEqual(['Fire Bolt', 'Fireball']);
+    // A 5e cantrip carries NO cast rank (the source's level 0): its damage
+    // scales with the character level, never at a slot level.
+    expect(spells?.[0]).toEqual({ name: 'Fire Bolt' });
+    // The LEVEL IS THE CAST RANK for a leveled spell.
+    expect(spells?.[1]).toEqual({ name: 'Fireball', castRank: 3 });
+    // The Mage's document states neither a character level nor a spellcasting
+    // level, so NO level is invented from its CR 6 — the heightening rule then
+    // prints the source's own per-tier scaling without choosing a tier.
+    expect(spells?.[0]?.casterLevel ?? null).toBeNull();
+    expect(spells?.[0]?.characterLevel ?? null).toBeNull();
+  });
+
+  it('renders the creature plain text exactly as before, and a spell-less creature omits the spells key', async () => {
+    const mage = await parseYaml('monsters/humanoid/mage.yml', fixtureYaml('mage-caster.yml'));
+    // The stat block's text is the printed block, byte-identical to the
+    // pre-row-194 output: the spell items were never rendered into it.
+    expect(mage.entries[0]?.text).not.toContain('Fire Bolt');
+    // A spell-less creature (the wolf) carries NO `spells` key at all.
+    const wolf = await parseYaml('wolf.yml');
+    expect(wolf.entries[0]?.statBlock.spells ?? null).toBeNull();
+    expect('spells' in (wolf.entries[0]?.statBlock ?? {})).toBe(false);
   });
 });

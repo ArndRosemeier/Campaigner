@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { comparableName } from '@/domain/artifactAlias';
+import type { GameSystem } from '@/domain/gameSystem';
 import { spellTraitsAreFocus, type SpellData } from '@/domain/spellData';
 import { spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
 
@@ -54,6 +55,21 @@ export const mobSpellAssignmentSchema = z.object({
    * level). docs/17 row 191.
    */
   autoHeightenLevel: z.number().int().positive().max(10).nullish(),
+  /**
+   * A dnd5e assignment's caster level (row 194): the creature's own
+   * `cantripLevel(spell)` resolved by the importer in upstream's order
+   * (`system.attributes.spell.level`). It is carried on the ASSIGNMENT because
+   * the rules-pack `SpellData` — what `spellAtRank` reads — never holds it, and
+   * it is the 5e cantrip progression's input. Ignored for every PF2e spell.
+   */
+  casterLevel: z.number().int().positive().nullish(),
+  /**
+   * A dnd5e assignment's CHARACTER level (row 194), when the creature document
+   * states one (`system.details.level` — a character-class NPC). Preferred over
+   * `casterLevel` for a cantrip's tier; absent for monsters and for every PF2e
+   * spell, which has no character level at all.
+   */
+  characterLevel: z.number().int().positive().nullish(),
 });
 
 export type MobSpellAssignment = z.infer<typeof mobSpellAssignmentSchema>;
@@ -89,6 +105,12 @@ export function mobSpellIndex(entries: Iterable<MobSpellEntry>): MobSpellIndex {
  * CR-less "—". A fractional/junk level is `null`: no arbitrary default is ever
  * invented for it (`spellAtRank` then refuses a cantrip loudly, which is the
  * honest outcome).
+ *
+ * WHAT THIS IS NOT (row 194): a dnd5e creature's CHARACTER level. The printed
+ * level of a 5e stat block is its challenge rating, and the 5e cantrip
+ * progression reads a character/caster level instead — the dnd5e importer
+ * carries that separately on the assignment (`casterLevel`/`characterLevel`),
+ * so this helper's value is never substituted for it.
  */
 export function mobCasterLevel(level: string): number | null {
   const match = /^\s*(-?\d+)\s*$/.exec(level);
@@ -108,6 +130,12 @@ export interface MobSpellChip {
   resolved: boolean;
   /** The library's own spelling of the spell, once resolved. */
   libraryName: string | null;
+  /**
+   * The RESOLVED payload's game system (row 194) — the chip's own noun switch
+   * (`rank` for PF2e, `level` for dnd5e). Separate from the mob's system so a
+   * chip can never take its wording from the caller's context.
+   */
+  system: GameSystem | null;
   /**
    * `spellAtRank`'s result — `null` when the name did not resolve, or when the
    * rule refused to compute (a missing caster level for a cantrip, a corrupt
@@ -143,6 +171,7 @@ export function mobSpellChips(
         castRank,
         resolved: false,
         libraryName: null,
+        system: null,
         result: null,
         issues: [
           `the spell «${assignment.name}» is not in this campaign's imported spell library`,
@@ -166,6 +195,7 @@ export function mobSpellChips(
         castRank?: number;
         casterLevel?: number;
         autoHeightenLevel?: number;
+        characterLevel?: number;
       } = {};
       const focus = spellTraitsAreFocus(entry.spellData.traits);
       if (!entry.spellData.cantrip && !focus) request.castRank = requested ?? entry.spellData.rank;
@@ -173,13 +203,32 @@ export function mobSpellChips(
       if (assignment.autoHeightenLevel !== undefined && assignment.autoHeightenLevel !== null) {
         request.autoHeightenLevel = assignment.autoHeightenLevel;
       }
-      if (casterLevel !== null) request.casterLevel = casterLevel;
+      const isDnd5e = entry.spellData.system === 'dnd5e';
+      if (!isDnd5e && (assignment.casterLevel != null || assignment.characterLevel != null)) {
+        throw new Error(
+          `the spell «${entry.name}» is ${entry.spellData.system}; a dnd5e caster/character level cannot apply to it`,
+        );
+      }
+      if (isDnd5e) {
+        // The dnd5e arm's OWN inputs (row 194): the cantrip progression reads
+        // the creature's CHARACTER level, or the caster level from its
+        // spellcasting attribute when the document states no character level.
+        // The mob's printed challenge rating is NEITHER, so it is deliberately
+        // not substituted — `spellAtRankDnd5e` then prints the source's own
+        // structured scaling without choosing a tier rather than scaling a 5e
+        // cantrip off a CR.
+        const dnd5eLevel = assignment.characterLevel ?? assignment.casterLevel ?? null;
+        if (dnd5eLevel !== null) request.characterLevel = dnd5eLevel;
+      } else if (casterLevel !== null) {
+        request.casterLevel = casterLevel;
+      }
       const result = spellAtRank(entry.spellData, request);
       chips.push({
         name: assignment.name,
         castRank,
         resolved: true,
         libraryName: entry.name,
+        system: entry.spellData.system,
         result,
         issues: [],
       });
@@ -189,6 +238,7 @@ export function mobSpellChips(
         castRank,
         resolved: true,
         libraryName: entry.name,
+        system: entry.spellData.system,
         result: null,
         issues: [error instanceof Error ? error.message : String(error)],
       });
@@ -242,24 +292,39 @@ export function mobSpellChipDetail(chip: MobSpellChip): string {
   const values = mobSpellValuesText(result);
   const autoNote = result.cantripAuto
     ? "cantrip, auto-heightened from the caster's level"
-    : result.focusAuto
-      ? 'focus spell, auto-heightened'
-      : null;
+    : result.cantripScaling
+      ? "cantrip, scaled by the caster's character level"
+      : result.focusAuto
+        ? 'focus spell, auto-heightened'
+        : null;
+  // The noun is the payload's OWN system's (row 194): PF2e casts at a RANK,
+  // dnd5e casts at a LEVEL — a 5e chip must not print the PF2e word.
+  const noun = chip.system === 'dnd5e' ? 'level' : 'rank';
   const rankNote =
     autoNote === null
-      ? `cast at rank ${String(result.appliedRank)}`
-      : `cast at rank ${String(result.appliedRank)} (${autoNote})`;
+      ? `cast at ${noun} ${String(result.appliedRank)}`
+      : `cast at ${noun} ${String(result.appliedRank)} (${autoNote})`;
   lines.push(values === '' ? `${label} — ${rankNote}` : `${label} — ${rankNote}: ${values}`);
-  lines.push(`heightening: ${result.source} (values from ${result.valuesSource})`);
+  lines.push(
+    chip.system === 'dnd5e'
+      ? `upcasting: ${result.source} (values from ${result.valuesSource})`
+      : `heightening: ${result.source} (values from ${result.valuesSource})`,
+  );
   if (result.appliedSteps !== null) {
     lines.push(
-      `${String(result.appliedSteps)} increment(s) applied${
-        result.stepRemainder === null || result.stepRemainder === 0
-          ? ''
-          : `, ${String(result.stepRemainder)} rank(s) left over`
-      }`,
+      chip.system === 'dnd5e'
+        ? `${String(result.appliedSteps)} scaling step(s) applied`
+        : `${String(result.appliedSteps)} increment(s) applied${
+            result.stepRemainder === null || result.stepRemainder === 0
+              ? ''
+              : `, ${String(result.stepRemainder)} rank(s) left over`
+          }`,
     );
   }
+  // The dnd5e source's OWN higher-level sentence, VERBATIM — printed whether
+  // or not the structured scaling answered, so the owner sees the source's
+  // words beside whatever the rule computed from its numbers.
+  if (result.upcastProse !== null) lines.push(result.upcastProse);
   lines.push(...result.notes);
   lines.push(...result.warnings);
   return lines.join('\n');

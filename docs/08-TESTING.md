@@ -5989,6 +5989,116 @@ name is LOUD; and no test can prove a pre-arc rules pack holds structured spells
 at all — row 181's no-migration decision stands, so the rules pack must be
 RE-IMPORTED before an assigned name can resolve (docs/12 §15.4).
 
+### The dnd5e spell lane (docs/17 row 194, docs/12 §3/§5/§16, docs/11 §Mob spells, docs/18 §2.1/§2.3)
+
+The owner's go-ahead ("d&d spell lane is a go") puts the SAME `spell` chunk lane
+on a SECOND system. The fixtures are REAL upstream documents whose provenance is
+recorded HERE and asserted in the test, so "verified against the real corpus" is
+checked rather than remembered:
+
+- `tests/fixtures/packs/dnd5e/spells/cantrip-fire-bolt.yml` (NEW) —
+  `foundryvtt/dnd5e` @ `6.0.x`, `packs/_source/spells/cantrip/fire-bolt.yml`,
+  sha256 `2ffd57301b166ff5ef5b306ede94db3827dcc6bb3a7e1439d0d37df2b3e3e04c`
+  (2,946 bytes), the body after its provenance comment header. The upstream file
+  is COMMITTED VERBATIM; the header also carries the fetch date.
+- `tests/fixtures/packs/dnd5e/spells/1st-level-magic-missile.yml` (NEW) —
+  `packs/_source/spells/1st-level/magic-missile.yml`, sha256
+  `9fea9a6b0845bad8a9b2c96e067308e4cda96c9dca0d734664c7d58786028600` (2,876
+  bytes). Its damage part states `scaling.mode: ''` — the PROSE-ONLY case.
+- `tests/fixtures/packs/dnd5e/spells/3rd-level-fireball.yml` (NEW) —
+  `packs/_source/spells/3rd-level/fireball.yml`, sha256
+  `1011e2baf84af360f5c7852e68b52d6a21df98acf23ad721a435c74fa3925f57` (3,172
+  bytes). Structured `whole` scaling AND an `At Higher Levels.` sentence — the
+  case where both exist.
+- `tests/fixtures/packs/dnd5e/mage-caster.yml` (NEW) — a CARVE of the real
+  `packs/_source/monsters/humanoid/mage.yml` (full upstream sha256
+  `e873a560af94bdc4318498e51f0433fc5230db44acf476907071f9f9276e3b2e`, 67,469
+  bytes; carve body sha256
+  `8246a7145ce5634aab4900f5881747245135c116614e142e0529d4cf2eed5949`, 13,336
+  bytes): the creature document's lines 1–403 plus its `items:` entries for
+  Fire Bolt and Fireball. Every field the adapter reads is upstream's own bytes
+  — the repo's established trimmed-fixture pattern, never a synthesised shape,
+  and the header names the exact line ranges and what was dropped.
+- `tests/ingest/packs/dnd5e-foundry.test.ts` (extended): each fixture's
+  `{path, sha256, bytes}` is ASSERTED (a drift reds by name); Fire Bolt maps
+  `rank: 0` + `cantrip: true` + `school: 'evo'` + `traditions: []` +
+  `filterAxis: 'school'` + the four cast facts + `1d10` + the `whole` scaling
+  part + the `CC-BY-4.0` source line; Fireball maps `rank: 3`, the 20-foot
+  sphere area, `8d6` and the `At Higher Levels.` sentence VERBATIM; Magic
+  Missile maps `scaling.mode: ''` and its `Higher Levels.` sentence verbatim; a
+  document with no `level`, an unknown school code and a `whole` scaling block
+  with no dice count each fail LOUDLY as a named per-entry failure (no partial
+  row); the pack import lands two `spell` chunks with the folder-derived
+  heading paths; and the real Mage carve's own spell items map to
+  `[{name: 'Fire Bolt'}, {name: 'Fireball', castRank: 3}]`, with a CR-only
+  creature inventing NO level field and a spell-less creature omitting the key.
+- `tests/domain/spellHeightening.test.ts` (extended): Fireball at slot 3 vs 5
+  is `8d6` → `10d6` from the source's own dice count; the prose-only shape
+  returns its sentence verbatim behind `DND5E_PROSE_ONLY_MARKER` and computes
+  NOTHING; `'half'` is refused loudly; a rank below the source level is refused;
+  **the CANTRIP TRAP as a differential** — Fire Bolt at character level 5 vs 11
+  is `2d10`/`3d10` with `appliedRank: 0` and `cantripScaling: true` (the PF2e
+  rule would print rank 3 / rank 6), while a PF2e cantrip at the same levels
+  keeps `3d6`/`6d6` with `cantripAuto: true`; and the DISPATCH is pinned BOTH
+  ways (a 5e payload carrying PF2e traits and a PF2e heightening object still
+  never reaches a PF2e arm; a PF2e payload carrying an `upcast` block never
+  reaches the 5e arm).
+- `tests/domain/mobSpells.test.ts` (extended): the differential through the ONE
+  RESOLVER — a 5e cantrip at `casterLevel` 5 vs 11 yields `2d10`/`3d10` at
+  `cast at level 0` with `upcasting: upcast`, a resolved levelled 5e spell
+  keeps its source damage at level 3, an unseeded name stays a loud unresolved
+  chip + a `mobSpellIssues` sentence naming both halves, and a dnd5e
+  `casterLevel` on a PF2e spell is a loud issue (`resolved: true`, `result:
+  null`), never a silent ignore.
+- `tests/features/spells-page.test.tsx` (extended/rewritten): a real Dexie dnd5e
+  campaign lists its spells with `Level N` wording (never `Rank N`), the strip
+  says `Schools` and filtering is a school union, a school-less spell shows the
+  per-row `no school` mark, a payload that names no axis says exactly that on
+  its card, the card shows the school and the source's higher-level sentence
+  VERBATIM, and the OLD "Spells are not imported for D&D 5e" state is gone —
+  the per-system empty state now names the D&D 5e SRD spells pack and its
+  remedy.
+- `tests/features/mob-spell-chips.test.tsx` (extended): the END-TO-END
+  library-mob half through the EXISTING `StatBlockCard`/`SpellChip` harness —
+  the real Fire Bolt and Fireball corpus plus the Mage carve's assignments
+  render `cast at level 0` / `2d10 fire` / `cantrip, scaled by the caster`, and
+  `cast at level 3: 8d6 fire` with the source sentence; an unseeded
+  `Eldritch Blast` renders `spell-chip-unresolved` with the loud issue box; and
+  a spell-less creature renders no `mob-spells` section.
+- `tests/architecture/one-cantrip-signal.test.ts` (extended): the SOURCE SCAN
+  gains the dnd5e signal — `dnd5eSpellIsCantrip` is defined AND called only in
+  `src/ingest/packs/dnd5e-foundry.ts`, and the 5e mapper's own comment proves it
+  compares `level === 0` rather than looking up a trait.
+- `tests/ingest/packs/packFetch.test.ts` (extended): the dnd5e source's
+  broadened `packRoot` + `packDirs: ['monsters','spells']` and both curated
+  recipes (337 creatures · 329 spells) are asserted, and the advanced listing
+  offers the monsters and spells folders while never offering the item-adapter
+  folders.
+- AMENDED, not weakened (NAMED amendments): `tests/ingest/packs/html-to-text.test.ts`
+  — the call-site table's `dnd5e-foundry` count is 1 → 3 (the spell
+  description and the higher-level paragraph use the SAME seam; total 9 → 11)
+  and the `foundry-dnd5e-srd` lane digest is 13 entries →
+  `4e6779ff4e59ec9fa6d5f1476924e533d28d00037942b36c3895f48a169d546f` (14
+  entries: the new flat `mage-caster.yml`; the three spell documents live in the
+  `dnd5e/spells/` subdirectory and the flat lane walk now skips DIRECTORIES
+  explicitly, which is a harness fix, not a byte change);
+  `tests/features/spell-rows.test.ts` asserts the row's `filterAxis` +
+  `filterValues` instead of the removed `traditions` projection (the payload's
+  own `data.traditions` is unchanged and still asserted where it belongs).
+- The fixtures are NOT enumerated by the `tests/fixtures/spells/` corpus lane
+  digest: the dnd5e spell fixtures join `tests/fixtures/packs/dnd5e/spells/`,
+  and the dnd5e LANE digest above covers the flat creature files only.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove a live 5e
+creature's spells all exist in the owner's imported corpus (resolution is a
+library question, and an unresolved name is loud by design); no test can prove
+the `'half'` scaling mode's real semantics — it is REFUSED, so no number is ever
+derived from it; no test can prove a 5e creature's character level is right when
+its document states none (the tier is left UNCHOSEN and the chip says so); no
+test can prove the school is the axis a player would want (class lists are not
+in these documents at all, and inventing them was refused); and no test proves
+the rendering reads well to a person — it proves the bytes.
+
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 
 The owner asked for a picker for the global first-try chat model ("the picker

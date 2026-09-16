@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { formatModifier } from '@/domain/statblock';
 import {
   spellAreaSchema,
   spellDamageMapSchema,
@@ -8,6 +9,7 @@ import {
   type SpellDamage,
   type SpellData,
   type SpellHeighteningEntry,
+  type Dnd5eDamagePart,
 } from '@/domain/spellData';
 
 /**
@@ -66,6 +68,17 @@ import {
 export const PROSE_ONLY_MARKER =
   'prose-only: the source states heightening notes but carries no structured heightening values; the note text is returned verbatim and NO numbers are computed.';
 
+/**
+ * The loud marker for a dnd5e spell whose "At Higher Levels" / cantrip
+ * progression is prose only (row 194): the source's own damage `scaling.mode`
+ * states no structured increase, so the sentence is printed VERBATIM and NO
+ * number is computed from it. Deliberately a SECOND, dnd5e-worded marker:
+ * `PROSE_ONLY_MARKER` names PF2e `heightening` notes, and a chip that showed
+ * that sentence over a 5e spell would misname the mechanism.
+ */
+export const DND5E_PROSE_ONLY_MARKER =
+  'prose-only: the source states its higher-level effect in prose only (no structured damage scaling); the source sentence is returned verbatim and NO numbers are computed.';
+
 /** Prefix on every `warnings` entry that echoes a raw unparsed prose line. */
 export const UNPARSED_HEIGHTENING_PREFIX = 'unparsed-heightening: ';
 
@@ -75,19 +88,22 @@ export const UNPARSED_HEIGHTENING_PREFIX = 'unparsed-heightening: ';
  * still come from this arm — the two are reported separately so neither fact is
  * lost.
  */
-export type HeighteningValuesSource = 'base' | 'fixed' | 'interval';
+export type HeighteningValuesSource = 'base' | 'fixed' | 'interval' | 'scaling';
 
 /**
  * The provenance arm of the whole computation (the brief's six arms): the three
- * value mechanisms plus the two AUTO-RANK rules — which are deliberately
+ * PF2e value mechanisms plus the two AUTO-RANK rules — which are deliberately
  * distinct, because a cantrip and a focus spell are different rules and a
- * chip's provenance line is the only place the owner can see which one ran.
+ * chip's provenance line is the only place the owner can see which one ran —
+ * plus dnd5e's own `upcast` arm (row 194), which is a DIFFERENT system's
+ * mechanism and never shares a name with a PF2e one.
  */
 export type HeighteningSource =
   | HeighteningValuesSource
   | 'cantrip-auto'
   | 'focus-auto'
-  | 'prose-only';
+  | 'prose-only'
+  | 'upcast';
 
 /** One damage entry at the applied rank; `key` is the source's own damage id. */
 export interface SpellDamageValue extends SpellDamage {
@@ -114,6 +130,13 @@ export interface SpellAtRank {
    * an explicit `castRank` was supplied (that rank wins).
    */
   focusAuto: boolean;
+  /**
+   * True when this is a dnd5e cantrip whose values were scaled by CHARACTER
+   * level (row 194) — the dnd5e arm ONLY. A PF2e cantrip's derived RANK is
+   * `cantripAuto`; the two are different rules on different systems and a
+   * consumer must never read one as the other.
+   */
+  cantripScaling: boolean;
   appliedRank: number;
   /** Interval increments applied; `null` for every non-interval spell. */
   appliedSteps: number | null;
@@ -122,6 +145,11 @@ export interface SpellAtRank {
   values: SpellAtRankValues;
   /** The applicable `heighteningEntries` prose, VERBATIM, document order. */
   notes: string[];
+  /**
+   * The dnd5e source's OWN "At Higher Levels" sentence, VERBATIM (row 194);
+   * `null` for PF2e and for a 5e document that states none.
+   */
+  upcastProse: string | null;
   /** Raw prose that matched no heightening shape (never dropped). */
   unparsed: string[];
   /** Loud markers: prose-only, unparsed lines, leftovers, unsupported keys. */
@@ -156,6 +184,14 @@ export interface SpellAtRankRequest {
    * Ignored for a non-focus spell, and ignored when `castRank` is supplied.
    */
   autoHeightenLevel?: number | null;
+  /**
+   * The creature's own CHARACTER level, when its document states one — the
+   * dnd5e cantrip progression's input (row 194). Absent for PF2e (which
+   * derives a cantrip's RANK from `casterLevel` and has no character level)
+   * and for a dnd5e cantrip whose creature states none; the rule then prints
+   * the source's structured per-tier damage WITHOUT choosing a tier.
+   */
+  characterLevel?: number;
 }
 
 // --- the source's `system.heightening` shapes (verbatim in the payload) ------
@@ -330,7 +366,221 @@ export function combineDamageFormula(base: string, delta: string, times: number)
   return formatFormulaTerms(terms);
 }
 
-// --- the rule ---------------------------------------------------------------
+// --- the dnd5e arm (row 194): 5e upcasting is NOT PF2e heightening ----------
+
+/**
+ * The character level a dnd5e cantrip's progression uses, from the actor's
+ * own `cantripLevel(spell)` (foundryvtt/dnd5e @ `6.0.x`, `module/data/actor/
+ * npc.mjs`: `spell.system.method === "innate" ? details.cr : (details.level ||
+ * attributes.spell.level)`; `character.mjs`: `details.level`). This module
+ * takes the already-RESOLVED value in `request.characterLevel` — the two
+ * source fields live on the CREATURE document, which only the importer reads —
+ * so the rule never re-reads a pack. Throws loudly on a value that is not a
+ * positive integer.
+ */
+function dnd5eCharacterLevel(request: SpellAtRankRequest): number | null {
+  const level = request.characterLevel ?? null;
+  if (level === null) return null;
+  if (!Number.isInteger(level) || level < 1) {
+    throw new Error(
+      `spellAtRank: a dnd5e character level must be an integer >= 1 (got ${String(level)})`,
+    );
+  }
+  return level;
+}
+
+/**
+ * The number of cantrip scaling tiers a character of `level` has reached —
+ * the system's own expression, NOT the PF2e `ceil(level / 2)` rule:
+ * `scalingIncrease` is `Math.floor(((actor.system.cantripLevel(spell) ?? 0) +
+ * 1) / 6)` (foundryvtt/dnd5e @ `6.0.x`, `module/data/item/spell.mjs`), i.e.
+ * 0 tiers below level 5, 1 at 5–10, 2 at 11–16, 3 from 17 — the printed 5e
+ * cantrip progression. MEASURED for levels 1…20 against that expression.
+ */
+export function dnd5eCantripStepsFor(level: number): number {
+  return Math.floor((level + 1) / 6);
+}
+
+/**
+ * One dnd5e damage part's formula with `steps` scaling increments applied,
+ * in the printed `NdM±K` convention. The increment is the part's OWN
+ * `scaling.number` dice — `whole` mode only, because that is the only mode the
+ * real corpus states (verified across the fetched documents) — and `half`
+ * (a mode the system also declares) is a LOUD error here rather than a
+ * guessed rounding: a formula this module cannot read is never invented.
+ * A part whose `scaling.mode` is empty (`''`) or absent has NO structured
+ * increase; with `steps > 0` that is an error (the caller only counts parts
+ * that stated one, so this is a corrupt payload) and with `steps === 0` the
+ * base formula is returned unchanged.
+ */
+function dnd5eScaledFormula(part: Dnd5eDamagePart, steps: number): string {
+  const mode = part.scaling?.mode ?? '';
+  if (mode === '') {
+    if (steps > 0) {
+      throw new Error(
+        `spellAtRank: damage part ${String(part.index)} states no scaling mode but ${String(steps)} increment(s) were applied — the payload is inconsistent`,
+      );
+    }
+    return part.formula;
+  }
+  if (mode !== 'whole') {
+    throw new Error(
+      `spellAtRank: unsupported dnd5e damage scaling mode "${mode}" on damage part ${String(part.index)} (this build computes "whole" only; "half" is never guessed)`,
+    );
+  }
+  const number = part.scaling?.number;
+  if (number === undefined || number === null || !Number.isInteger(number) || number < 1) {
+    throw new Error(
+      `spellAtRank: damage part ${String(part.index)} states scaling mode "whole" without a positive dice count`,
+    );
+  }
+  const bonus = numericPartBonus(part.bonus);
+  if (typeof part.number !== 'number' || typeof part.denomination !== 'number') {
+    // A non-dice formula (a custom expression) is carried VERBATIM and never
+    // increased: the increment is a DICE count, and adding dice to prose is
+    // not something this module will guess.
+    if (steps > 0) {
+      throw new Error(
+        `spellAtRank: damage part ${String(part.index)} states dice scaling but carries no dice formula; refusing to increase it`,
+      );
+    }
+    return part.formula;
+  }
+  // THE INCREMENT IS DICE, NOT A FLAT BONUS: `scaling.number` more dice of the
+  // part's own denomination per step (Fire Bolt 1d10 → 2d10 at tier 1; Fireball
+  // 8d6 → 10d6 two slot levels up).
+  const dice = part.number + number * steps;
+  return `${String(dice)}d${String(part.denomination)}${bonus === 0 ? '' : formatModifier(bonus)}`;
+}
+
+/** The flat bonus a damage part carries, as an exact number (a non-numeric
+ *  bonus string is a LOUD failure, never a silent zero). */
+function numericPartBonus(bonus: string): number {
+  const trimmed = bonus.trim();
+  if (trimmed === '') return 0;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`spellAtRank: unsupported dnd5e damage-part bonus "${bonus}"`);
+  }
+  return parsed;
+}
+
+/** The damage a 5e spell deals at `steps` scaling increments: the source's
+ *  parts, each formatted, plus the spell's own base area and cast facts
+ *  (dnd5e does not scale areas — `system.template.size` is fixed — so the
+ *  base area rides through unchanged). */
+function dnd5eValues(spell: SpellData, steps: number): SpellAtRankValues {
+  const damage: SpellDamageValue[] = (spell.upcast?.parts ?? []).map((part) => ({
+    key: String(part.index),
+    formula: dnd5eScaledFormula(part, steps),
+    type: part.types.join(', '),
+    category: null,
+    materials: [],
+  }));
+  return {
+    damage,
+    area: spell.area === null ? null : copyArea(spell.area),
+    target: spell.cast.target,
+    duration: spell.cast.duration,
+  };
+}
+
+/**
+ * THE dnd5e "At Higher Levels" rule (row 194) — the SAME `spellAtRank`
+ * contract, a DIFFERENT system's mechanism. A leveled spell scales by the
+ * spell SLOT it is cast in: `steps = castRank - upcast.baseLevel`, each step
+ * adding the source's own `scaling.number` dice to every part that states a
+ * `whole` scaling mode. A cantrip scales by CHARACTER level at the system's
+ * own tiers (`dnd5eCantripStepsFor`) and is NEVER given the PF2e
+ * `clamp(ceil(casterLevel / 2), 1, 10)` rank — that rule is PF2e's alone.
+ *
+ * When a part states no scaling, the source's own "At Higher Levels" sentence
+ * is returned VERBATIM behind `DND5E_PROSE_ONLY_MARKER` and no number is
+ * computed from it; when a part DOES state one, the sentence still rides
+ * `upcastProse` so the owner reads the source's own words beside the numbers
+ * they come from.
+ */
+export function spellAtRankDnd5e(
+  spell: SpellData,
+  request: SpellAtRankRequest,
+): SpellAtRank {
+  const warnings: string[] = [];
+  const upcast = spell.upcast ?? null;
+  const sentence = upcast?.sentence.trim() ?? '';
+  const baseLevel = upcast?.baseLevel ?? 0;
+  const cantrip = spell.cantrip;
+
+  let steps: number;
+  if (cantrip) {
+    if (request.castRank !== undefined && request.castRank !== 0) {
+      warnings.push(
+        `upcast: castRank ${String(request.castRank)} ignored; a dnd5e cantrip has no slot level and is cast at its own level 0.`,
+      );
+    }
+    const characterLevel = dnd5eCharacterLevel(request);
+    if (characterLevel === null) {
+      steps = 0;
+      warnings.push(
+        'upcast: the creature states no character level, so the cantrip\'s tier is not chosen; the source\'s per-tier scaling is printed below without a computed total.',
+      );
+    } else {
+      steps = dnd5eCantripStepsFor(characterLevel);
+    }
+  } else {
+    const rank = request.castRank;
+    if (rank === undefined || !Number.isInteger(rank)) {
+      throw new Error(
+        `spellAtRank: needs an integer castRank for a non-cantrip spell (got ${String(rank)})`,
+      );
+    }
+    if (rank < baseLevel) {
+      throw new Error(
+        `spellAtRank: this spell is level ${String(baseLevel)} and cannot be cast at level ${String(rank)}`,
+      );
+    }
+    steps = rank - baseLevel;
+  }
+
+  const parts = upcast?.parts ?? [];
+  const scalingParts = parts.filter((part) => (part.scaling?.mode ?? '') !== '');
+  const scales = steps > 0 && scalingParts.length > 0;
+  const values = dnd5eValues(spell, scales ? steps : 0);
+
+  // A prose-only document is one whose parts state no structured increase —
+  // with or without a slot level to multiply by. The sentence is printed
+  // VERBATIM and no number is derived from it.
+  const proseOnly = scalingParts.length === 0;
+  if (proseOnly && sentence !== '') warnings.push(DND5E_PROSE_ONLY_MARKER);
+  if (proseOnly && sentence === '') {
+    warnings.push(
+      'upcast: the source states no structured damage scaling and no higher-level sentence — there is nothing to print at another level.',
+    );
+  }
+  if (!proseOnly && scalingParts.length !== parts.length) {
+    warnings.push(
+      `upcast: ${String(parts.length - scalingParts.length)} of ${String(parts.length)} damage part(s) state no scaling mode; only the parts with one were increased.`,
+    );
+  }
+
+  return {
+    source: proseOnly ? 'prose-only' : 'upcast',
+    valuesSource: scales ? 'scaling' : 'base',
+    cantripAuto: false,
+    focusAuto: false,
+    cantripScaling: cantrip && scales,
+    appliedRank: cantrip ? 0 : (request.castRank ?? baseLevel),
+    appliedSteps: steps,
+    stepRemainder: null,
+    values,
+    notes: [],
+    upcastProse: sentence === '' ? null : sentence,
+    unparsed: [],
+    warnings,
+    structured: parts.length > 0 || sentence !== '',
+  };
+}
+
+// --- the PF2e arm (unchanged) -----------------------------------------------
 
 function copyDamage(key: string, damage: SpellDamage): SpellDamageValue {
   return {
@@ -413,11 +663,18 @@ function baseValues(spell: SpellData): SpellAtRankValues {
  * rank below the spell's own, a missing/invalid caster level for a cantrip (or
  * for a focus spell that states no fixed auto rank), or a formula it cannot
  * read.
+ *
+ * SYSTEM-AWARE BY CONSTRUCTION (row 194): a payload whose own `system` is
+ * `dnd5e` is answered by `spellAtRankDnd5e` and NEVER reaches a PF2e arm — a
+ * 5e cantrip is not, and can never be, given PF2e's `clamp(ceil(casterLevel /
+ * 2), 1, 10)` rank. The PF2e path below it is byte-identical to the
+ * pre-row-194 rule.
  */
 export function spellAtRank(spell: SpellData | null | undefined, request: SpellAtRankRequest): SpellAtRank {
   if (spell === null || spell === undefined) {
     throw new Error('spellAtRank: the spell row carries no spellData payload (corrupt spell chunk)');
   }
+  if (spell.system === 'dnd5e') return spellAtRankDnd5e(spell, request);
 
   const warnings: string[] = [];
   const unparsed = [...spell.heighteningUnparsed];
@@ -571,11 +828,13 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
     valuesSource,
     cantripAuto,
     focusAuto,
+    cantripScaling: false,
     appliedRank,
     appliedSteps,
     stepRemainder,
     values,
     notes,
+    upcastProse: null,
     unparsed,
     warnings,
     structured,

@@ -321,6 +321,10 @@ function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
     rank,
     cantrip,
     traditions: spellTraditionSchema.array().parse(doc.system.traits.traditions),
+    // The PF2e lane's own list axis (docs/17 row 194): the traditions above.
+    filterAxis: 'tradition',
+    school: '',
+    properties: [],
     traits: doc.system.traits.value,
     rarity: doc.system.traits.rarity,
     cast: {

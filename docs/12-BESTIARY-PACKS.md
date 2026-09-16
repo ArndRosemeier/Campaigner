@@ -76,7 +76,7 @@ model is what makes the sources usable at all:
 | Adapter | Source | Content license situation |
 |---|---|---|
 | `foundry-pf2e` | [foundryvtt/pf2e](https://github.com/foundryvtt/pf2e) `packs/pf2e/**` | Creature data used by that project under the Paizo–Foundry partnership; mechanics OGL; system code Apache-2.0. Local import by the end user under Paizo's Community Use Policy; Campaigner stores provenance + license on the book and adds nothing to any distribution. |
-| `foundry-dnd5e-srd` | [foundryvtt/dnd5e](https://github.com/foundryvtt/dnd5e) `packs/_source/monsters/**` | SRD 5.1 / SRD 5.2, CC-BY-4.0 (stated in that repo's README); system code MIT. Clean to import; attribution string stored. SRD scope only — no Monster Manual Product Identity creatures. |
+| `foundry-dnd5e-srd` | [foundryvtt/dnd5e](https://github.com/foundryvtt/dnd5e) `packs/_source/monsters/**` and, since docs/17 row 194, `packs/_source/spells/{cantrip,1st-level…9th-level}/**` | SRD 5.1 / SRD 5.2, CC-BY-4.0 (stated in that repo's README); system code MIT. **The spell documents are the SAME upstream, the SAME repo and the SAME CC-BY-4.0 grant as the creature documents** (each document's own `system.source.license` is `CC-BY-4.0`, recorded as the chunk's `Source:` line and the book's license string) — no new source and no new licence is involved. Clean to import; attribution string stored. SRD scope only — no Monster Manual Product Identity creatures. |
 | Cosmere | — | No machine-readable bestiary source known. No adapter; Cosmere campaigns keep the current inline/LLM path. |
 
 ## 3. Verified source formats (re-verified against the full live corpora 2026-09-06; fixture tests pin them)
@@ -126,6 +126,27 @@ an ability id), `attack.flat` (the stored `bonus` **is** the complete to-hit),
 `base` as dice (`number`/`denomination`/`bonus`/`types`) **or** a custom
 formula (`custom: {enabled, formula}` — e.g. `"1"`, `"1d10 + @mod + 1"`,
 `"2d4 + @mod -3"`). YAML parsing needs one pure-JS dependency (`js-yaml`).
+
+**dnd5e spells (AMENDED 2026-09-16, docs/17 row 194)** — the same branch and
+repo, `packs/_source/spells/{cantrip,1st-level…9th-level}/<slug>.yml`, **329
+documents** (25 cantrips + 50/55/43/32/38/32/21/17/16 by level; the separate
+`supplemental-items` folder of 2 is not a level and is not offered). Verified
+live over the trees API 2026-09-16. Shape: `system.level` **0 = cantrip** (the
+system's own cantrip signal — there is no trait), `system.school` (eight codes
+`abj con div enc evo ill nec trs`, labels from `CONFIG.DND5E.spellSchools`),
+`system.properties` (vocal/somatic/material/concentration/ritual),
+`system.activation`/`duration`/`range`/`target` (incl. the `template` area: type
++ `size` in feet), `system.source` (`license: CC-BY-4.0`, `rules: '2014'`), the
+description HTML carrying its own `<strong>At Higher Levels.</strong>` (older
+docs `<strong>Higher Levels.</strong>`) paragraph, and
+`activities.<id>.damage.parts[]` where each part states `number`/
+`denomination`/`bonus`/`types` and a `scaling` block (`mode`
+`'whole'\|'half'\|''`, `number`, `formula`). A creature's caster spells are the
+SAME document shape embedded in its `items[]` (`type: 'spell'`), which is why
+one import schema reads both; the creature document's own
+`system.attributes.spell.level` / `system.details.level` is the
+`cantripLevel(spell)` upstream's cantrip progression reads, and it is carried on
+the assignment rather than derived from the printed CR.
 
 ## 4. Data model (delta to 01-DATA-MODEL)
 
@@ -310,9 +331,13 @@ names verbatim, and the loud unresolved report stays with the ONE resolver
 (`domain/mobSpells.mobSpellChips`) at render/export time, because the bestiary
 pack and the rules pack that carries the spells are imported separately and in
 either order. **A pack RE-IMPORT is the delivery mechanism** — no migration, no
-new index (row 181's decision stands). **dnd5e creatures are deliberately NOT
-stamped**: `foundry-dnd5e-srd` imports no spell documents (below), so every 5e
-name would render unresolved — noise, not information; the dnd5e adapter is
+new index (row 181's decision stands). **dnd5e creatures were deliberately NOT
+stamped WHEN ROW 189 LANDED** — at that time `foundry-dnd5e-srd` imported no
+spell documents, so every 5e name would have rendered unresolved (noise, not
+information). **AMENDED by docs/17 row 194: the 5e corpus now exists, so the
+dnd5e creature walk DOES stamp its own `spell` items onto `statBlock.spells`**
+(§5/§16.5) under the same no-invention policy. The original text continues for
+the PF2e lane:
 untouched and the 5e spell lane is queued. Attack/action text renders from the
 item fields pinned by the fixture test.
 
@@ -375,6 +400,32 @@ activity (`module/data/activity/attack-data.mjs` @ 6.0.x):
   `1d10+5`; `"2d4 + @mod -3"` → `2d4+2`; flat `"1"` → `1`); a weapon with no
   resolvable damage at all renders damage-less (`Melee Tendril +7` — no
   trailing comma), which is exact, not best-effort.
+
+**dnd5e SPELL documents (AMENDED 2026-09-16, docs/17 row 194).** The same
+adapter also reads `type: 'spell'` documents (standalone, and the identical
+items a caster creature embeds) and emits them on the SAME third lane the PF2e
+rules adapter uses (`PackSectionEntry.spell` → a `chunkType: 'spell'` chunk):
+
+| dnd5e `_source` field | `spellData` target |
+|---|---|
+| `system.level` | `rank` (**0 for a cantrip**); `cantrip` = `level === 0` (`dnd5eSpellIsCantrip`) |
+| `system.school` | `school` (validated against the system's own eight codes; an unknown code fails the entry LOUDLY) |
+| — | `filterAxis: 'school'` — stamped by the adapter, so the page never infers an axis |
+| `system.properties` | `properties` (verbatim casting components) |
+| — | `traits: []`, `traditions: []` — **a 5e spell is never given a PF2e tradition** |
+| `activation`/`range`/`target`/`duration` | the four `cast` facts, printed (`1 action`, `120 ft.`, `1 creature`, `Instantaneous`) |
+| `activities.<first-with-damage>.damage.parts[]` | `damage` (the parts rendered `NdM±K`, keyed by index) and `upcast.parts[]` (each part with its own `scaling` block verbatim) |
+| `target.template` | `area` (type + `size` in FEET; any other unit fails loudly) |
+| description HTML `<strong>At Higher Levels.</strong> …` | `upcast.sentence`, VERBATIM plain text (`<strong>Higher Levels.</strong>` accepted too) |
+| `system.source` | `publication {title: book, license}` + the text's `Source: …` line |
+| `items[]` `type: 'spell'` on a CREATURE | `statBlock.spells[]` — `castRank` = the source's own `system.level` (cantrips carry NONE), the source's own name, plus the creature's `casterLevel`/`characterLevel` |
+
+The emitted TEXT is composed by this adapter's own mapping (a summary line, the
+cast facts, material components, the stripped description and the source line)
+— it is NEW bytes for a NEW lane, not a change to any PF2e or dnd5e creature
+byte. The folder path labels the heading exactly like the PF2e lane
+(`spells/cantrip/fire-bolt.yml` → `['Spells — Cantrip', 'Fire Bolt']`,
+`3rd-level` → `Spells — Rank 3`).
 
 **Exact-vs-book note (binding stance).** The adapter maps the **stored data
 exactly**, applying the system's own derivation rules — it does not correct
@@ -623,8 +674,11 @@ are pinned against each other: they cannot name different packs.
   `spellData` payload on `chunkType: 'spell'` RuleChunks (§15.4) — rank,
   traditions, traits, cast facts and per-entry publication — so a spell list
   can be sorted by level and filtered by tradition. This is DATA only: no
-  list/filter/chip/detail UI yet (a separate follow-up slice). dnd5e spells
-  remain UNIMPORTED (`foundry-dnd5e-srd` still skips them; §5/§13), so that
+  list/filter/chip/detail UI yet (a separate follow-up slice). **AMENDED by
+  docs/17 row 194: dnd5e spells ARE imported now** — the dnd5e adapter reads
+  `type: 'spell'` documents into the SAME `spell` chunk lane and the Spells
+  page shows them with a school filter (§16). The paragraph below records the
+  pre-row-194 state:
   follow-up surface must say so PER SYSTEM rather than render a silent empty
   list for a system whose pack carries no spells. **AMENDED AGAIN 2026-09-17 by
   the library-mob half of the spells arc (docs/17 row 189):** the v1 "no
@@ -645,7 +699,9 @@ are pinned against each other: they cannot name different packs.
   verbatim and does NOT resolve them: resolution and the loud unresolved report
   stay with `domain/mobSpells.mobSpellChips` at render/export time, because the
   bestiary pack and the rules pack are imported separately and in either order.
-  **dnd5e creatures are NOT stamped** — that lane imports no spell documents,
+  **AMENDED by docs/17 row 194: dnd5e creatures ARE stamped now** that the lane
+  imports spell documents; the sentence below records the pre-row-194 state.
+  The original: **dnd5e creatures are NOT stamped** — that lane imports no spell documents,
   so every name would render unresolved; the 5e spell lane is queued, and its
   adapter is untouched. **A pack RE-IMPORT is the delivery mechanism** (no
   migration, no new index — row 181's decision stands).
@@ -1208,3 +1264,143 @@ on the book, network-free adapters, loud per-entry failures.
   line), pins a payload-less `spell` chunk as a loud per-row error, and states
   the per-system empty case.
 - Every gate passes against exactly the committed slice, per commit.
+
+## 16. The D&D 5e spell lane (docs/17 row 194, 2026-09-16)
+
+The owner's go-ahead ("d&d spell lane is a go") extends the rules-text lane to
+a SECOND system without a second source, a second licence or a second lane.
+The upstream is `foundryvtt/dnd5e` @ `6.0.x` — the repo `docs/12:79` already
+imports SRD creatures from — and its spell documents are CC-BY-4.0 exactly like
+the creature documents, so attribution follows the existing adapter's pattern
+(the book's license string is unchanged).
+
+### 16.1 What the source carries (MEASURED 2026-09-16, trees API)
+
+- `packs/_source/spells/{cantrip,1st-level…9th-level}`: 25 + 50 + 55 + 43 + 32
+  + 38 + 32 + 21 + 17 + 16 = **329 spell documents**. `spells/supplemental-items`
+  (2 docs) is not a spell level and is not offered.
+- A spell document's own `system.level` is **0 for a cantrip** — this is the
+  5e cantrip signal. There is NO `cantrip` trait in dnd5e; the PF2e trait
+  predicate is never applied to a 5e document.
+- `system.school` is one of the system's own eight codes. `system.properties`
+  carries the casting components. `system.source` carries
+  `license: CC-BY-4.0` and the rules edition.
+- The description HTML carries the source's own higher-level paragraph
+  (`<strong>At Higher Levels.</strong>` in current documents,
+  `<strong>Higher Levels.</strong>` in older ones).
+- Damage lives on `activities.<id>.damage.parts[]`, each part with its own
+  `scaling` block: `mode: 'whole'` (add `number` dice per step), `'half'` (a
+  mode the system declares but which no fetched document uses), or `''` (no
+  structured increase — the real Magic Missile).
+- A caster creature embeds the SAME document shape in its `items[]`, and its
+  own `system.details.level` / `system.attributes.spell.level` is the
+  character level upstream's cantrip progression reads (`cantripLevel(spell)`;
+  an `innate` spell uses the challenge rating instead).
+
+### 16.2 The filter axis is the school — the source's own axis
+
+The Spells page's pre-arc axis was PF2e's four *traditions*. A 5e spell has
+none, and giving it one would be an invented value with confident provenance.
+The payload therefore names the axis it actually supports
+(`filterAxis: 'tradition' | 'school'`, stamped by the adapter that read the
+document) and the page labels its strip from the rows' payloads. **Class lists
+were considered and rejected on evidence**: the SRD spell documents carry none
+(they live in class journal entries this lane does not import), so the school
+is the only axis the source actually carries. A spell whose source states no
+school is LISTED with a per-row `no school` mark — never filtered into or out
+of a category it does not have, never given an invented one. A payload that
+names no axis at all (a pre-arc row) says exactly that on its detail card.
+
+### 16.3 5e upcasting is NOT PF2e heightening
+
+A separate additive `spellData.upcast` field carries `{baseLevel, sentence,
+parts[]}` — the dnd5e counterpart of `heightening`, deliberately separate
+because the two systems scale on different axes (a spell SLOT vs a CHARACTER
+level). `spellAtRank` dispatches on the payload's own `system` BEFORE any PF2e
+arm:
+
+- **A levelled 5e spell** scales by the slot it is cast in:
+  `steps = castRank - baseLevel`, and each part whose `scaling.mode` is
+  `'whole'` gains `scaling.number * steps` dice of its own denomination
+  (Fireball 8d6 at slot 3 → 10d6 at slot 5, the source's own
+  "+1d6 per slot level above 3rd"). Every number comes from the source's own
+  structure.
+- **A part whose mode is `''`** (the real Magic Missile) gets NO computed
+  number: the source's own sentence is printed VERBATIM behind the loud
+  `DND5E_PROSE_ONLY_MARKER`.
+- **`'half'`** is a loud refusal — this build computes `'whole'` only and
+  never guesses a rounding.
+- **The sentence always rides `upcastProse`**, so the owner reads the source's
+  own words beside whatever the rule computed from its numbers.
+
+### 16.4 The cantrip trap, and how it is closed
+
+PF2e's cantrip rule derives `clamp(ceil(casterLevel / 2), 1, 10)`. 5e cantrips
+scale at CHARACTER levels 5/11/17 by DICE. The two are different rules and
+applying the PF2e one to a 5e cantrip would print wrong values with confident
+provenance. Because the dispatch happens on the payload's own `system`, a 5e
+cantrip **can never reach the PF2e arm**. Its own treatment:
+
+- `appliedRank` stays **0** — a cantrip has no slot level, and the chip prints
+  `cast at level 0` (the dnd5e noun), never a PF2e rank.
+- The scaling step count is the system's OWN expression
+  `floor((characterLevel + 1) / 6)` (`spell.mjs` `scalingIncrease`): 0 tiers
+  below level 5, 1 at 5–10, 2 at 11–16, 3 from 17.
+- The provenance flag is `cantripScaling`, a NEW result field — never the
+  PF2e `cantripAuto`.
+- The character level is resolved by the IMPORTER from the creature document
+  and carried on the assignment; a creature that states none gets the source's
+  per-tier scaling with the tier UNCHOSEN (a loud warning) rather than a number
+  derived from its printed CR.
+
+### 16.5 The library-mob half
+
+Row 189 left dnd5e creatures untouched because there was no 5e corpus and
+every name would have rendered unresolved. With the corpus in place the dnd5e
+creature walk stamps the creature's OWN `type: 'spell'` items onto the SAME
+`statBlock.spells` row 184 built — **the source's own `system.level` IS the
+assignment's `castRank`**, a cantrip carries no cast rank, the name is the
+source's own spelling, and a creature with no spell items OMITS the key
+(`spells` is never `[]`). Resolution, the unresolved state and the loud named
+issue all ride the EXISTING `domain/mobSpells.mobSpellChips` resolver and
+`components/spell-chip.tsx` — no second path. A dnd5e caster/character level
+handed to a PF2e spell is a LOUD error, never a silently ignored field.
+
+### 16.6 Fetch
+
+The existing `foundry-dnd5e-srd` source widens its `packRoot` from
+`packs/_source/monsters` to `packs/_source` (the spell folders sit beside
+`monsters/`), scopes the advanced listing with
+`packDirs: ['monsters', 'spells']`, and gains a curated `D&D 5e SRD Spells`
+recipe (329, unit `'spells'`) beside the monsters one — ONE adapter, ONE
+settings card, ONE ref badge. A second source was rejected because the
+settings UI keys its cards and state by `adapterId`, so a duplicate id would
+have collided.
+
+### 16.7 Non-goals
+
+- No 5e class spell LISTS (the source does not carry them in these documents).
+- No computed value from a higher-level SENTENCE — prose is displayed, never
+  arithmetic.
+- No `'half'` scaling mode, no area scaling (dnd5e templates do not scale).
+- No change to `src/llm/` — the prompt/contract half of the AI-authored-mob
+  arc is docs/17 row 200's this round.
+
+### 16.8 Acceptance criteria (additive to §10 and §15.7)
+
+- The dnd5e adapter maps the three real upstream spell fixtures
+  field-for-field (rank, cantrip, school, properties, cast facts, damage,
+  area, `upcast`), with each fixture's upstream path, sha256 and byte count
+  asserted; a malformed document and an unknown school fail loudly.
+- A levelled 5e spell at a higher slot shows the source's own increased dice;
+  a prose-only 5e spell shows the source's sentence verbatim with the loud
+  marker and no computed number.
+- A 5e cantrip at character level 5 and 11 shows 2d10 and 3d10 at level 0,
+  never the PF2e rank 3/6 progression; a PF2e cantrip's behaviour is unchanged.
+- A real dnd5e caster creature's per-level spells render as chips at the level
+  they are cast, an unseeded name renders the unresolved state, and a
+  spell-less creature renders no spell section.
+- A dnd5e campaign's Spells page lists its spells with `Level N` wording and a
+  `Schools` filter, and a school-less spell is listed as such.
+- Every PF2e spell pin stays green and a PF2e campaign's prompts/definitions
+  are byte-identical.

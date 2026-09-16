@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { TriangleAlertIcon } from 'lucide-react';
 
 import type { SpellData } from '@/domain';
+import { spellRankLabelFor, DND5E_SPELL_SCHOOL_LABELS } from '@/domain/spellData';
 import { Badge } from '@/components/ui/badge';
 import { spellHeighteningLabel } from '@/features/spells/spell-rows';
 
@@ -53,11 +54,28 @@ export function SpellCard({
       <div className="border-b pb-1.5">
         <h3 className="font-serif text-lg font-bold">{name}</h3>
         <p className="text-xs">
-          {spellData.cantrip ? 'Cantrip' : `Rank ${String(spellData.rank)}`}
+          {/* The payload's OWN system's wording (row 194): `Rank N` for PF2e,
+              `Level N` for dnd5e — never the other system's noun. */}
+          {spellRankLabelFor(spellData.rank, spellData.cantrip, spellData.filterAxis)}
+          {spellData.school !== '' && (
+            <span className="ml-2 text-muted-foreground" data-testid="spell-school">
+              {DND5E_SPELL_SCHOOL_LABELS[spellData.school]}
+            </span>
+          )}
           {spellData.rarity !== 'common' && (
             <span className="ml-2 text-muted-foreground">{spellData.rarity}</span>
           )}
         </p>
+        {/* A payload that names NO axis at all is a row written before the
+            axis existed: it is listed and says so, never assigned one. A
+            dnd5e spell whose source states no school still names its axis
+            (`school`) and shows the per-row "no school" mark instead. */}
+        {spellData.filterAxis === null ? (
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="spell-no-filter-axis">
+            This spell's payload names no filter axis (it predates the axis), so it is listed
+            without a filter category.
+          </p>
+        ) : null}
         {spellData.traditions.length > 0 && (
           <p className="mt-1 flex flex-wrap items-center gap-1" data-testid="spell-traditions">
             <span className="text-xs font-semibold">Traditions</span>
@@ -74,6 +92,16 @@ export function SpellCard({
             {spellData.traits.map((trait) => (
               <Badge key={trait} variant="outline">
                 {trait}
+              </Badge>
+            ))}
+          </p>
+        )}
+        {spellData.properties.length > 0 && (
+          <p className="mt-1 flex flex-wrap items-center gap-1" data-testid="spell-properties">
+            <span className="text-xs font-semibold">Properties</span>
+            {spellData.properties.map((property) => (
+              <Badge key={property} variant="outline">
+                {property}
               </Badge>
             ))}
           </p>
@@ -102,6 +130,18 @@ export function SpellCard({
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* The dnd5e source's OWN higher-level sentence, VERBATIM (row 194) —
+          a 5e spell carries `upcast`, a PF2e spell `heighteningEntries`; the
+          two are different systems' mechanisms and never share a heading. */}
+      {spellData.upcast !== null && spellData.upcast !== undefined && spellData.upcast.sentence !== '' && (
+        <div className="mt-2" data-testid="spell-upcast">
+          <h4 className="border-b text-xs font-bold tracking-wide uppercase">
+            {spellData.cantrip ? 'Cantrip scaling' : 'At Higher Levels'}
+          </h4>
+          <p className="mt-1 text-xs">{spellData.upcast.sentence}</p>
         </div>
       )}
 

@@ -1,0 +1,692 @@
+# REAL upstream CARVE — foundryvtt/dnd5e @ 6.0.x
+# upstream: packs/_source/monsters/humanoid/mage.yml
+#   (sha256 e873a560af94bdc4318498e51f0433fc5230db44acf476907071f9f9276e3b2e, 67469 bytes)
+# carve:    the creature document's lines 1-403 (through `system`) and its
+#           `items:` entries for Fire Bolt (lines 549-684) and Fireball
+#           (lines 1949-2083); `prototypeToken`, the carried-equipment items,
+#           `effects`, `folder`, `sort`, `ownership`, `flags` and `_stats` are
+#           dropped. The Mage really carries exactly these two spell items at
+#           levels 0 and 3 and no `details.level`/`attributes.spell.level`.
+# sha256:   8246a7145ce5634aab4900f5881747245135c116614e142e0529d4cf2eed5949
+# bytes:    13336
+# fetched:  2026-09-16 (docs/17 row 194, docs/08-TESTING lane digests)
+# The CARVE is a trimmed subset of the real document (the repo's established
+# trimmed-fixture pattern), not a synthesised one: every field the adapter
+# reads is upstream's own bytes, and the two spell items are byte-identical
+# slices. The hash and byte count cover the BODY (these comment lines
+# excluded) and are asserted in tests/ingest/packs/dnd5e-foundry.test.ts.
+_id: mQnsXanewsPiV7QE
+name: Mage
+type: npc
+img: null
+system:
+  identifier: mage
+  abilities:
+    str:
+      value: 9
+      proficient: 0
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+    dex:
+      value: 14
+      proficient: 0
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+    con:
+      value: 11
+      proficient: 0
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+    int:
+      value: 17
+      proficient: 1
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+    wis:
+      value: 12
+      proficient: 1
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+    cha:
+      value: 11
+      proficient: 0
+      bonuses:
+        check: ''
+        save: ''
+      max: null
+  attributes:
+    ac:
+      flat: 12
+      calc: natural
+      formula: ''
+    hp:
+      value: 40
+      max: 40
+      temp: null
+      tempmax: null
+      formula: 9d8
+    init:
+      ability: ''
+      bonus: '0'
+      roll:
+        min: null
+        max: null
+        mode: 0
+    movement:
+      burrow: 0
+      climb: 0
+      fly: 0
+      swim: 0
+      walk: 30
+      units: ft
+      hover: false
+    attunement:
+      max: 3
+    senses:
+      darkvision: 0
+      blindsight: 0
+      tremorsense: 0
+      truesight: 0
+      units: ft
+      special: ''
+    spellcasting: int
+    exhaustion: 0
+    concentration:
+      ability: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+      bonuses:
+        save: ''
+      limit: 1
+    hd:
+      spent: 0
+    death:
+      ability: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+      success: 0
+      failure: 0
+  details:
+    biography:
+      value: ''
+      public: ''
+    alignment: Any Alignment
+    race: null
+    type:
+      value: humanoid
+      subtype: Any Race
+      swarm: ''
+      custom: ''
+    environment: ''
+    cr: 6
+    spellLevel: 9
+    ideal: ''
+    bond: ''
+    flaw: ''
+  traits:
+    size: med
+    di:
+      value: []
+      bypasses: []
+      custom: ''
+    dr:
+      value: []
+      bypasses: []
+      custom: ''
+    dv:
+      value: []
+      bypasses: []
+      custom: ''
+    ci:
+      value: []
+      custom: ''
+    languages:
+      value: []
+      custom: any four languages
+    dm:
+      amount: {}
+      bypasses: []
+  currency:
+    pp: 0
+    gp: 0
+    ep: 0
+    sp: 0
+    cp: 0
+  skills:
+    acr:
+      value: 0
+      ability: dex
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    ani:
+      value: 0
+      ability: wis
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    arc:
+      value: 1
+      ability: int
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    ath:
+      value: 0
+      ability: str
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    dec:
+      value: 0
+      ability: cha
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    his:
+      value: 1
+      ability: int
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    ins:
+      value: 0
+      ability: wis
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    itm:
+      value: 0
+      ability: cha
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    inv:
+      value: 0
+      ability: int
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    med:
+      value: 0
+      ability: wis
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    nat:
+      value: 0
+      ability: int
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    prc:
+      value: 0
+      ability: wis
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    prf:
+      value: 0
+      ability: cha
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    per:
+      value: 0
+      ability: cha
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    rel:
+      value: 0
+      ability: int
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    slt:
+      value: 0
+      ability: dex
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    ste:
+      value: 0
+      ability: dex
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+    sur:
+      value: 0
+      ability: wis
+      bonuses:
+        check: ''
+        passive: ''
+      roll:
+        min: null
+        max: null
+        mode: 0
+  spells:
+    spell1:
+      value: 4
+      override: null
+    spell2:
+      value: 3
+      override: null
+    spell3:
+      value: 3
+      override: null
+    spell4:
+      value: 3
+      override: null
+    spell5:
+      value: 1
+      override: null
+    spell6:
+      value: 0
+      override: null
+    spell7:
+      value: 0
+      override: null
+    spell8:
+      value: 0
+      override: null
+    spell9:
+      value: 0
+      override: null
+    pact:
+      value: 0
+      override: null
+    spell0:
+      value: 0
+      override: null
+  bonuses:
+    mwak:
+      attack: ''
+      damage: ''
+    rwak:
+      attack: ''
+      damage: ''
+    msak:
+      attack: ''
+      damage: ''
+    rsak:
+      attack: ''
+      damage: ''
+    abilities:
+      check: ''
+      save: ''
+      skill: ''
+    spell:
+      dc: ''
+  resources:
+    legact:
+      value: 0
+      max: 0
+    legres:
+      value: 0
+      max: 0
+    lair:
+      value: false
+      initiative: null
+  tools: {}
+  source:
+    custom: ''
+    book: ''
+    page: ''
+    license: CC-BY-4.0
+    revision: 1
+    rules: '2014'
+items:
+  - _id: EOmsUcFQJTfG2oio
+    name: Fire Bolt
+    ownership:
+      default: 0
+    type: spell
+    system:
+      description:
+        value: >-
+          <p>You hurl a mote of fire at a creature or object within range. Make
+          a ranged spell attack against the target. On a hit, the target takes
+          1d10 fire damage. A flammable object hit by this spell ignites if it
+          isn't being worn or carried.</p><p>This spell's damage increases by
+          1d10 when you reach 5th level (2d10), 11th level (3d10), and 17th
+          level (4d10).</p>
+        chat: ''
+      source:
+        custom: ''
+        book: ''
+        page: ''
+        license: CC-BY-4.0
+        rules: '2014'
+        revision: 1
+      activation:
+        type: action
+        condition: ''
+        value: 1
+      duration:
+        value: ''
+        units: inst
+      target:
+        affects:
+          type: creature
+          count: '1'
+          choice: false
+        template:
+          units: ''
+          contiguous: false
+      range:
+        value: '120'
+        units: ft
+      uses:
+        max: ''
+        recovery: []
+        spent: 0
+      level: 0
+      school: evo
+      materials:
+        value: ''
+        consumed: false
+        cost: 0
+        supply: 0
+      preparation:
+        mode: prepared
+        prepared: true
+      properties:
+        - vocal
+        - somatic
+      activities:
+        dnd5eactivity000:
+          _id: dnd5eactivity000
+          type: attack
+          activation:
+            type: action
+            value: null
+            override: false
+          consumption:
+            targets: []
+            scaling:
+              allowed: false
+              max: ''
+            spellSlot: true
+          description:
+            chatFlavor: ''
+          duration:
+            units: inst
+            concentration: false
+            override: false
+          effects: []
+          range:
+            override: false
+          target:
+            prompt: true
+            template:
+              contiguous: false
+              units: ft
+            affects:
+              choice: false
+            override: false
+          uses:
+            spent: 0
+            max: ''
+            recovery: []
+          attack:
+            ability: ''
+            bonus: ''
+            critical:
+              threshold: null
+            flat: false
+            type:
+              value: ranged
+              classification: spell
+          damage:
+            critical:
+              bonus: ''
+            includeBase: true
+            parts:
+              - number: 1
+                denomination: 10
+                bonus: ''
+                types:
+                  - fire
+                custom:
+                  enabled: false
+                  formula: ''
+                scaling:
+                  mode: whole
+                  number: 1
+                  formula: ''
+          sort: 0
+      identifier: fire-bolt
+    sort: 0
+    flags: {}
+    img: icons/magic/fire/projectile-fireball-smoke-orange.webp
+    effects: []
+    folder: null
+    _stats:
+      compendiumSource: Compendium.dnd5e.spells.EOmsUcFQJTfG2oio
+      duplicateSource: null
+      coreVersion: '14.361'
+      systemId: dnd5e
+      systemVersion: 4.0.0
+      createdTime: null
+      modifiedTime: null
+      lastModifiedBy: null
+      exportSource: null
+    _key: '!actors.items!mQnsXanewsPiV7QE.EOmsUcFQJTfG2oio'
+  - _id: ztgcdrWPshKRpFd0
+    name: Fireball
+    ownership:
+      default: 0
+    type: spell
+    system:
+      description:
+        value: >-
+          <p>A bright streak flashes from your pointing finger to a point you
+          choose within range and then blossoms with a low roar into an
+          explosion of flame. Each creature in a 20-foot-radius sphere centered
+          on that point must make a Dexterity saving throw. A target takes 8d6
+          fire damage on a failed save, or half as much damage on a successful
+          one.</p><p>The fire spreads around corners. It ignites flammable
+          objects in the area that aren't being worn or
+          carried.</p><p><strong>At Higher Levels.</strong> When you cast this
+          spell using a spell slot of 4th level or higher, the damage increases
+          by 1d6 for each slot level above 3rd.</p>
+        chat: ''
+      source:
+        custom: ''
+        book: ''
+        page: ''
+        license: CC-BY-4.0
+        rules: '2014'
+        revision: 1
+      activation:
+        type: action
+        condition: ''
+        value: 1
+      duration:
+        value: ''
+        units: inst
+      target:
+        affects:
+          choice: false
+        template:
+          units: ft
+          type: sphere
+          size: '20'
+          contiguous: false
+      range:
+        value: '150'
+        units: ft
+      uses:
+        max: ''
+        recovery: []
+        spent: 0
+      level: 3
+      school: evo
+      materials:
+        value: A tiny ball of bat guano and sulfur
+        consumed: false
+        cost: 0
+        supply: 0
+      preparation:
+        mode: prepared
+        prepared: true
+      properties:
+        - vocal
+        - somatic
+        - material
+      activities:
+        dnd5eactivity000:
+          _id: dnd5eactivity000
+          type: save
+          activation:
+            type: action
+            value: null
+            override: false
+          consumption:
+            targets: []
+            scaling:
+              allowed: false
+              max: ''
+            spellSlot: true
+          description:
+            chatFlavor: ''
+          duration:
+            units: inst
+            concentration: false
+            override: false
+          effects: []
+          range:
+            override: false
+          target:
+            prompt: true
+            template:
+              contiguous: false
+              units: ft
+            affects:
+              choice: false
+            override: false
+          uses:
+            spent: 0
+            max: ''
+            recovery: []
+          damage:
+            onSave: half
+            parts:
+              - number: 8
+                denomination: 6
+                bonus: ''
+                types:
+                  - fire
+                custom:
+                  enabled: false
+                  formula: ''
+                scaling:
+                  mode: whole
+                  number: 1
+                  formula: ''
+          save:
+            ability: dex
+            dc:
+              calculation: spellcasting
+              formula: '14'
+          sort: 0
+      identifier: fireball
+    sort: 0
+    flags: {}
+    img: icons/magic/fire/projectile-fireball-smoke-large-orange.webp
+    effects: []
+    folder: null
+    _stats:
+      compendiumSource: Compendium.dnd5e.spells.ztgcdrWPshKRpFd0
+      duplicateSource: null
+      coreVersion: '14.361'
+      systemId: dnd5e
+      systemVersion: 4.0.0
+      createdTime: null
+      modifiedTime: null
+      lastModifiedBy: null
+      exportSource: null
+    _key: '!actors.items!mQnsXanewsPiV7QE.ztgcdrWPshKRpFd0'
