@@ -14,7 +14,7 @@ import {
   maxCastableRank,
 } from '@/domain/mobSpells';
 import { spellDataSchema, type SpellData } from '@/domain/spellData';
-import { PROSE_ONLY_MARKER } from '@/domain/spellHeightening';
+import { pf2eCantripRankFor, PROSE_ONLY_MARKER, spellAtRank } from '@/domain/spellHeightening';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 
 /**
@@ -297,6 +297,47 @@ describe('mob caster level is the stat block level', () => {
     expect(maxCastableRank(1)).toBe(1);
     expect(maxCastableRank(5)).toBe(3);
     expect(maxCastableRank(20)).toBe(10);
+  });
+});
+
+/**
+ * THE AGREEMENT PIN for the ONE Paizo cantrip-rank rule (docs/17 row 194, the
+ * fold appended to it): the vocabulary's eligibility cap, the rank a cantrip
+ * is cast at and the rank an auto-heightened focus spell is cast at are the
+ * SAME rule. The fold's whole value is that these three cannot drift, so this
+ * drives all three consumers over the same caster levels and requires one
+ * number. Level 7 → 4 and 9 → 5 are the pinned cells: the arithmetic is not
+ * the trivial double/halve and both sit inside the 1..10 clamp.
+ */
+describe('the Paizo cantrip-rank rule is ONE number for all three consumers', () => {
+  const cantrip = synthetic({ rank: 0, cantrip: true });
+  const focus = synthetic({ rank: 1, traits: ['focus'] });
+
+  it.each([
+    [1, 1],
+    [7, 4],
+    [9, 5],
+    [10, 5],
+    [20, 10],
+  ])('agrees at caster level %i on rank %i', (level, expected) => {
+    // The shared number AND the Paizo rule's own value: the three consumers
+    // agreeing on a WRONG number (one that drifted together) must red too.
+    expect(pf2eCantripRankFor(level)).toBe(expected);
+    expect(maxCastableRank(level)).toBe(expected);
+    expect(spellAtRank(cantrip, { casterLevel: level }).appliedRank).toBe(expected);
+    expect(spellAtRank(focus, { casterLevel: level }).appliedRank).toBe(expected);
+  });
+
+  it('is PF2e ONLY — a dnd5e cantrip never reaches the Paizo rank rule', () => {
+    // Row 194 dispatches on the payload's OWN system before any PF2e arm, so
+    // the same caster level that gives a PF2e cantrip rank 5 gives this 5e
+    // cantrip its own slot-level answer instead.
+    const result = spellAtRank(dnd5eSpell(), { casterLevel: 9, characterLevel: 9 });
+    expect(result.appliedRank).toBe(0);
+    expect(result.cantripAuto).toBe(false);
+    expect(result.cantripScaling).toBe(true);
+    expect(pf2eCantripRankFor(9)).toBe(5);
+    expect(result.appliedRank).not.toBe(pf2eCantripRankFor(9));
   });
 });
 

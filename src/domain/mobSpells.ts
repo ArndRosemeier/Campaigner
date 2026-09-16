@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
 import { spellTraitsAreFocus, type SpellData } from '@/domain/spellData';
-import { spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
+import { pf2eCantripRankFor, spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
 
 /**
  * A mob's spells (docs/17 row 184, the mob half of the spells arc).
@@ -338,10 +338,13 @@ export function mobSpellChipDetail(chip: MobSpellChip): string {
  */
 export const MOB_SPELL_VOCABULARY_LIMIT = 300;
 
-/** PF2e's maximum castable spell rank for a creature of `level` — the same
- *  `ceil(level / 2)` the heightening rule uses for a cantrip's own rank. */
+/** PF2e's maximum castable spell rank for a creature of `level` — the SAME
+ *  rule the heightening seam derives a cantrip's own rank with
+ *  (`spellHeightening.pf2eCantripRankFor`, row 194), so the vocabulary's
+ *  eligibility cap and the rank a cantrip is actually cast at can never
+ *  disagree. */
 export function maxCastableRank(level: number): number {
-  return Math.min(10, Math.max(1, Math.ceil(level / 2)));
+  return pf2eCantripRankFor(level);
 }
 
 export interface MobSpellVocabulary {

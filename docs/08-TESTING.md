@@ -6069,6 +6069,23 @@ checked rather than remembered:
   gains the dnd5e signal — `dnd5eSpellIsCantrip` is defined AND called only in
   `src/ingest/packs/dnd5e-foundry.ts`, and the 5e mapper's own comment proves it
   compares `level === 0` rather than looking up a trait.
+- `tests/architecture/one-cantrip-rank-rule.test.ts` (NEW; node — the
+  `tests/architecture/**` glob is already in `nodeTestGlobs`): the exactly-one
+  pin for the Paizo cantrip-rank rule the row-194 follow-up folded. The
+  arithmetic `Math.min(10, Math.max(1, Math.ceil(level / 2)))` is spelled in
+  exactly ONE file (`src/domain/spellHeightening.ts`, as the exported
+  `pf2eCantripRankFor`) and `domain/mobSpells.maxCastableRank` plus both
+  `spellAtRank` arms (cantrip and auto-heightened focus) CALL it; the needle is
+  the whitespace-collapsed ARITHMETIC with the variable name blanked, so
+  neither a function rename nor a parameter rename can hide a copy, while an
+  unrelated ceil clamp (`llm/roomBudget.roomBudgetReferenceCreatureLevel`, a
+  half-level reference creature with no 1..10 rank ceiling) does not match. The
+  AGREEMENT pin lives in `tests/domain/mobSpells.test.ts` (extended): at caster
+  levels 1, 7, 9, 10 and 20 `maxCastableRank(level)` ===
+  `pf2eCantripRankFor(level)` === the `appliedRank` of a cantrip AND of an
+  auto-heightened focus spell, while a dnd5e cantrip at the same caster level
+  stays `appliedRank: 0` with `cantripScaling: true` — never
+  `pf2eCantripRankFor(9)`'s rank 5.
 - `tests/ingest/packs/packFetch.test.ts` (extended): the dnd5e source's
   broadened `packRoot` + `packDirs: ['monsters','spells']` and both curated
   recipes (337 creatures · 329 spells) are asserted, and the advanced listing

@@ -390,6 +390,18 @@ function dnd5eCharacterLevel(request: SpellAtRankRequest): number | null {
 }
 
 /**
+ * PF2e's auto-heightened cantrip RANK for a caster of `level`:
+ * `clamp(ceil(level / 2), 1, 10)` — the ONE spelling of the Paizo rank rule.
+ * `domain/mobSpells.maxCastableRank` (the vocabulary's eligibility cap, the
+ * same number) and the cantrip arm below both go through this, so the two can
+ * never drift; a dnd5e spell is NEVER given this rank (row 194 dispatches on
+ * the payload's own system before any PF2e arm).
+ */
+export function pf2eCantripRankFor(level: number): number {
+  return Math.min(10, Math.max(1, Math.ceil(level / 2)));
+}
+
+/**
  * The number of cantrip scaling tiers a character of `level` has reached —
  * the system's own expression, NOT the PF2e `ceil(level / 2)` rule:
  * `scalingIncrease` is `Math.floor(((actor.system.cantripLevel(spell) ?? 0) +
@@ -697,7 +709,7 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
         `spellAtRank: a cantrip needs an integer casterLevel >= 1 to auto-heighten (got ${String(level)})`,
       );
     }
-    appliedRank = Math.min(10, Math.max(1, Math.ceil(level / 2)));
+    appliedRank = pf2eCantripRankFor(level);
     if (request.castRank !== undefined && request.castRank !== appliedRank) {
       warnings.push(
         `cantrip-auto: castRank ${request.castRank} ignored; a cantrip is cast at rank ${appliedRank} for caster level ${level}.`,
@@ -725,7 +737,7 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
           `spellAtRank: a focus spell needs EITHER an autoHeightenLevel or an integer casterLevel >= 1 to auto-heighten (got casterLevel ${String(level)})`,
         );
       }
-      appliedRank = Math.min(10, Math.max(1, Math.ceil(level / 2)));
+      appliedRank = pf2eCantripRankFor(level);
     }
   } else {
     // A ranked spell, and a focus spell whose caller ASSIGNED a cast rank (that
