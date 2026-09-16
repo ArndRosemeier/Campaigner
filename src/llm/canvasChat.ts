@@ -13,6 +13,7 @@ import { getChunksByIds } from '@/db/chunkRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { resolveWikiLink } from '@/lib/wikilinks';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import {
   claimModuleGeneration,
@@ -2320,6 +2321,13 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     // path uses), never a silent row re-assembly.
     const parts = splitModulePartsDocument(input.document, module);
     const model = input.model !== undefined && input.model !== '' ? input.model : settings.defaultChatModel;
+    // Only the SESSION-UNSET turn rides the GLOBAL first-try model; a session
+    // selection is a DIFFERENT tier (the sidebar writes `setModelSelection`,
+    // docs/17 row 199), so recording it would put a per-session pick in the
+    // global recents list — the exact lie this split forbids (docs/17 row 198).
+    if (input.model === undefined || input.model === '') {
+      recordGlobalChatModelInUse(settings.defaultChatModel);
+    }
     const messages = buildCanvasChatPayload({
       document: input.document,
       grounding,

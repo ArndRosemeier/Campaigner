@@ -1,7 +1,15 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
+import type * as SettingsRepo from '@/db/settingsRepo';
+
 vi.mock('@/llm/openrouter', () => ({ chat: vi.fn() }));
-vi.mock('@/db/settingsRepo', () => ({ getSettings: vi.fn() }));
+vi.mock('@/db/settingsRepo', async (importOriginal) => ({
+  ...(await importOriginal<typeof SettingsRepo>()),
+  getSettings: vi.fn(),
+  // The recents recording these tests are not about is a resolved no-op here;
+  // docs/17 row 198 pins the real-DB behaviour in ideaBoard-recording.test.ts.
+  recordRecentChatModel: vi.fn(() => Promise.resolve()),
+}));
 
 import { getSettings } from '@/db/settingsRepo';
 import { defaultSettings, newIdeaBoard, type IdeaBoard } from '@/domain';

@@ -7,7 +7,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact } from '@/db/artifactRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
-import { updateSettings } from '@/db/settingsRepo';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module, type ModulePart } from '@/domain';
 import {
   cancelModuleGen,
@@ -1919,5 +1919,84 @@ describe('durable versions — the parts passes snapshot before they write', () 
     const after = (await getModule(moduleId))?.parts.find((part) => part.planIndex === 0)?.markdown ?? '';
     expect(after).toContain('[[Halmund|Guard Halmund]]');
     expect(after).not.toBe(snapshot?.docText);
+  }, 20000);
+});
+
+/**
+ * The global chat model is recorded at every module-generation entry point
+ * (docs/17 row 198). Module generation is NOT the run engine's funnel, so a
+ * model set in Settings and used only here never reached the top bar's
+ * "Recently used" list before this slice. One pin per entry point, against the
+ * REAL settings row; the model is moved to the FRONT with no duplicate.
+ */
+describe('recently used global chat model at the module-generation entry points (docs/17 row 198)', () => {
+  it('records the global model when the spine pass starts', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await updateSettings({ defaultChatModel: 'global/spine', recentChatModels: ['older/model'] });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(SELF_NORMALIZATION),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    await runSpine(moduleId, campaign);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/spine', 'older/model']);
+  }, 20000);
+
+  it('records the global model when a parts pass starts', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await updateSettings({ defaultChatModel: 'global/parts', recentChatModels: [] });
+    chatMock
+      .mockResolvedValueOnce(partMarkdown('PART-ONE'))
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
+
+    await runParts(moduleId, campaign, { planIndexes: [0] });
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/parts']);
+  }, 20000);
+
+  it('records the global model when the full normalization pass starts', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    await updateSettings({ defaultChatModel: 'global/normalize', recentChatModels: [] });
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+
+    await normalizeModuleEntityNames(moduleId);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/normalize']);
+  }, 20000);
+
+  it('records the global model when the incremental classification starts', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+    await normalizeModuleEntityNames(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    await updateSettings({ defaultChatModel: 'global/classify-new', recentChatModels: [] });
+    chatMock.mockReset();
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/classify-new']);
+  }, 20000);
+
+  it('records the global model when one name is classified from the stub popover', async () => {
+    await updateSettings({ defaultChatModel: 'global/classify-one', recentChatModels: [] });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', ['Halmund']);
+
+    expect((await getSettings()).recentChatModels).toEqual(['global/classify-one']);
   }, 20000);
 });

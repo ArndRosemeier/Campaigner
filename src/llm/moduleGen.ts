@@ -63,6 +63,7 @@ import { moduleGenLockName, withGenerationLock } from '@/lib/generationLocks';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { absentable } from '@/llm/schemas';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
@@ -378,6 +379,9 @@ async function runSpinePass(
     await patchModule(moduleId, { status: 'generating', errorMessage: '' });
 
     const settings = await getSettings();
+    // The spine call runs on the GLOBAL first-try model, and it is not the run
+    // engine's funnel — so the model in play is recorded here (docs/17 row 198).
+    recordGlobalChatModelInUse(settings.defaultChatModel);
     const messages = await spineMessages(module, campaign, options.extraInstruction ?? '');
 
     // Live dock detail: the spine call can sit minutes on a queued provider or
@@ -1395,6 +1399,10 @@ async function runPartsPassUnlocked(
   const jobId = `module-parts-${moduleId}`;
   try {
     const settings = await getSettings();
+    // The parts pass writes every part on the GLOBAL first-try model (a
+    // fallback-model floor repair replaces it per part, and is deliberately NOT
+    // recorded — it is the escalation tier; docs/17 row 198).
+    recordGlobalChatModelInUse(settings.defaultChatModel);
     const module = await requireModule(moduleId);
     if (module.spine === null) throw new Error('Cannot generate parts without an approved spine');
     // Durable pre-change snapshot (docs/18 §2.3 simple undo): the WHOLE parts
@@ -2134,6 +2142,10 @@ export async function normalizeModuleEntityNames(
   }
 
   const settings = await getSettings();
+  // The full normalization pass is an independent global-model call (the entity
+  // panel's Retry and the resume sweep reach it directly), so it records the
+  // model it is about to use (docs/17 row 198).
+  recordGlobalChatModelInUse(settings.defaultChatModel);
   let verdicts: NormalizationEntry[];
   try {
     verdicts = await normalizationCall(
@@ -2278,6 +2290,11 @@ export async function classifyNewModuleEntityNames(
   await snapshotModuleVersion(moduleId, 'normalization', 'Classify new entity names');
 
   const settings = await getSettings();
+  // The incremental classification is its own global-model call (the entity
+  // panel's "Classify new names"), so it records the model in use (docs/17 row
+  // 198). The no-target early return above never reaches here — no call, no
+  // recording.
+  recordGlobalChatModelInUse(settings.defaultChatModel);
   // The model may map a new variant onto a canonical the module already
   // records (that name is neither a listed input nor an artifact) — the
   // vocabulary of legal canonicals widens by exactly those recorded names.
@@ -2499,6 +2516,9 @@ export async function classifyEntityName(
   artifactNames: readonly string[],
 ): Promise<{ kind: NormalizationEntry['kind']; canonical: string }> {
   const settings = await getSettings();
+  // The one-name classification is the same global-model call reached from the
+  // stub popover, so it records the model in use (docs/17 row 198).
+  recordGlobalChatModelInUse(settings.defaultChatModel);
   const parsed = await normalizationCall(
     normalizationMessages([{ name, context }], artifactNames, premise),
     settings.defaultChatModel,

@@ -335,14 +335,19 @@ describe('"Fix module problems" on the canvas', () => {
       );
     });
 
-    // The row's own text changed, through the ONE part-text save path.
-    const row = await getModule(world.moduleId);
+    // The row's own text changed, through the ONE part-text save path. The
+    // reads below are DRAINED (docs/08-TESTING §"the write that feeds a mounted
+    // live query is DRAINED"): the repair's trailing normalization pass now
+    // records the global chat model through the fire-and-forget recents seam
+    // (docs/17 row 198), so an extra settings transaction's cascade can land in
+    // a bare `await getModule` after the `waitFor` above and leak act() noise.
+    const row = await actDrained(() => getModule(world.moduleId));
     const repaired = row?.parts.find((part) => part.planIndex === 1);
     expect(repaired?.markdown).toContain('PART-TWO-REPAIRED');
     expect(row?.parts.find((part) => part.planIndex === 0)?.markdown).toContain('PART-ONE');
     // The pre-repair text is a durable version (the undo), and the normalization
     // pass's own snapshot sits beside it.
-    const versions = await listModuleVersions(world.moduleId);
+    const versions = await actDrained(() => listModuleVersions(world.moduleId));
     const fixSnapshot = versions.find((version) => version.label.includes('Fix module problems'));
     expect(fixSnapshot).toBeDefined();
     expect(fixSnapshot?.docText).toContain('PART-TWO: The drowned cathedral waits');
@@ -351,7 +356,7 @@ describe('"Fix module problems" on the canvas', () => {
     // document must split against the CURRENT part plan, which is what
     // `restoreDurableVersion` checks before proposing) and its part 2 is the
     // pre-repair text byte-for-byte.
-    const plan = (await getModule(world.moduleId))?.spine?.partPlan ?? [];
+    const plan = (await actDrained(() => getModule(world.moduleId)))?.spine?.partPlan ?? [];
     const snapshotParts = splitPartsDocument(fixSnapshot?.docText ?? '', plan);
     expect(snapshotParts.find((part) => part.planIndex === 1)?.text).toContain(
       'PART-TWO: The drowned cathedral waits',

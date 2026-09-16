@@ -16,6 +16,7 @@ import { WIKI_GRAPH_NODE_CAP, buildWikiGraph, wikiGraphNodeLabel } from '@/domai
 import { getModule, patchModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import { renderStoredArtifactSection } from '@/llm/canvasChat';
 import {
@@ -362,6 +363,9 @@ export async function planModuleDocument(
       ...(input.battles === undefined ? {} : { battles: input.battles }),
     });
     const settings = await getSettings();
+    // The planner runs on the GLOBAL first-try model and is not the run
+    // engine's funnel, so the model in play is recorded here (docs/17 row 198).
+    recordGlobalChatModelInUse(settings.defaultChatModel);
     const messages = await modulePlanMessages({
       module,
       scopedArtifacts: scoped,

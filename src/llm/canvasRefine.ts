@@ -4,6 +4,7 @@ import type { Id } from '@/domain';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import {
   claimModuleGeneration,
@@ -229,6 +230,9 @@ export async function refineModuleText(
       throw new ModuleBusyError(input.moduleId);
     }
     const settings = await getSettings();
+    // Canvas refine runs on the GLOBAL first-try model and is not the run
+    // engine's funnel, so the model in play is recorded here (docs/17 row 198).
+    recordGlobalChatModelInUse(settings.defaultChatModel);
     const messages = canvasRefineMessages(input, instruction);
     const extractor = new ReplacementStreamExtractor();
     const { text: raw, modelUsed } = await chat(messages, {

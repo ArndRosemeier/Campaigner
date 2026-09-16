@@ -758,6 +758,21 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(chatMock.mock.calls[1]?.[1]?.model).toBe('custom/canvas-model');
   });
 
+  it('records the GLOBAL default only when no session model is selected (docs/17 row 198)', async () => {
+    const repo = await import('@/db/settingsRepo');
+    await repo.updateSettings({ defaultChatModel: 'global/chat', recentChatModels: [] });
+    chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
+
+    await sendCanvasChatMessage(baseInput());
+    expect((await repo.getSettings()).recentChatModels).toEqual(['global/chat']);
+
+    // A SESSION selection (the sidebar's useCanvasChatStore.setModelSelection,
+    // docs/17 row 199) is a different tier: the global recents stay untouched.
+    await repo.updateSettings({ recentChatModels: [] });
+    await sendCanvasChatMessage(baseInput({ model: 'custom/canvas-model' }));
+    expect((await repo.getSettings()).recentChatModels).toEqual([]);
+  });
+
   it('a generating module refuses with ModuleBusyError (chat not called)', async () => {
     await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
     await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(ModuleBusyError);

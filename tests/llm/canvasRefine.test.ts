@@ -19,6 +19,7 @@ import {
   type Id,
 } from '@/domain';
 import { saveModule, getModule, patchModule } from '@/db/moduleRepo';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -129,6 +130,19 @@ describe('canvasRefine contract', () => {
     // Strict structured outputs ride the call (settings gates reused).
     expect(opts?.responseFormat).not.toBeNull();
     expect(opts?.responseFormat).not.toEqual('json');
+  });
+
+  it('records the GLOBAL chat model at the front of the recents (docs/17 row 198)', async () => {
+    await updateSettings({ defaultChatModel: 'global/refine', recentChatModels: ['older/model'] });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ replacement: 'The party bargains harder.' }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    await refineModuleText(baseInput());
+    // Canvas refine runs on the global model outside the run funnel, so the
+    // real settings row must carry it most-recent-first.
+    expect((await getSettings()).recentChatModels).toEqual(['global/refine', 'older/model']);
   });
 
   it('whole-part scope asks for the COMPLETE part markdown without an H1', async () => {

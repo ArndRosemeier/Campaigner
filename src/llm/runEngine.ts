@@ -119,7 +119,7 @@ import {
   type EncounterBudget,
 } from '@/llm/roomBudget';
 import { getRulebook, listRulebooks } from '@/db/rulebookRepo';
-import { getSettings, recordRecentChatModel } from '@/db/settingsRepo';
+import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, z } from 'zod';
@@ -127,6 +127,7 @@ import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type Cha
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { SCENE_AUTHORITY_SECTION, sceneSubstitutionsOf } from '@/llm/sceneAuthority';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { failureKindOf } from '@/llm/failureKind';
@@ -2377,7 +2378,10 @@ export class RunEngine {
       const settings = await getSettings();
       const model = resolveChatModel(settings, persona.model);
       if (model !== settings.defaultChatModel) return;
-      await recordRecentChatModel(model);
+      // The recording half is the ONE `recordGlobalChatModelInUse` seam (docs/17
+      // row 198), which is fire-and-forget with its own catch/toast — never
+      // awaited here (see the caller).
+      recordGlobalChatModelInUse(model);
     } catch (error) {
       toastError('Could not update the recently used models', error);
     }

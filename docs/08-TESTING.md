@@ -586,7 +586,7 @@ test) · ❌ gap.
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | **The ONE model-picking widget** (docs/17 rows 193/199) — two variants (field: label + free-form input + browse; trigger: the compact button), one shared panel; both offer the account list through the ONE option seam, honour free-form entry, and are LOUD with no key / on a failed fetch; recents render in stored order only where the instance edits the GLOBAL chat model, and a choose records through the ONE seam only there | `model-widget.test` (13 pins, NEW), `model-picker.test` (row 193's 5, unchanged), `settings-page.test` (the placement on the REAL Settings page), `feature-shell-and-editor.test` (`onboarding-wizard.test.tsx`'s key-step field writes `defaultChatModel`), `architecture/one-model-option-source.test` (the whole mount population + `recentModels` placement + `recordRecentChatModel` callers) | ✅ |
-| Top bar: the **GLOBAL chat-model picker** beside Settings (docs/17 row 193) — the current `defaultChatModel` on its trigger, the **Recently used** group in stored recency order (never re-sorted), free-form entry for an unlisted id, the ONE account model-id option source, and LOUD no-key / failed-fetch states | `model-picker.test` (5 pins), `recent-chat-models.test` (the ordering rule), `settingsRepo.test` (the recording seam, incl. concurrent recorders), `runEngine.test` (a run records the global default; a persona override does not), `architecture/one-model-option-source.test` | ✅ |
+| Top bar: the **GLOBAL chat-model picker** beside Settings (docs/17 rows 193/198) — the current `defaultChatModel` on its trigger, the **Recently used** group in stored recency order (never re-sorted), free-form entry for an unlisted id, the ONE account model-id option source, and LOUD no-key / failed-fetch states; the group means "the global model was in play", recorded on EVERY path that uses it and on no other tier | `model-picker.test` (5 pins), `recent-chat-models.test` (the ordering rule), `settingsRepo.test` (the recording write, incl. concurrent recorders), `runEngine.test` (a run records the global default; a persona override does not), `moduleGen.test` / `modulePlan.test` / `canvasRefine.test` / `canvasChat.test` / `ideaBoard-recording.test` (one pin per added global path, plus the non-global board/session exclusions), `architecture/global-chat-model-recording.test` (the whole resolution population + each record/exclude decision), `architecture/one-model-option-source.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | A PERSISTENT error notice carries a real dismiss control, and dismissing it destroys no evidence (docs/05 §Error surfaces rule, docs/17 row 136) | `toast-persistent-dismiss.test.tsx` (4 pins, NEW: the real `Toaster` + the real seam, the same through `toastErrorPersistent`, the transient case unchanged, and the console record byte-identical after the click) + `toast.test.ts` (the seam's options) | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
@@ -6169,7 +6169,94 @@ it proves the ORDER the app stored; and no test proves a real OpenRouter account
 returns any particular model list (the fetch is mocked, while its failure and
 its absence are the states that are pinned).
 
+### Every global-chat-model path records the recents (docs/17 row 198, docs/05 §Top bar/§Settings, docs/18 §2.1)
+
+Row 193 recorded "the global model was in play" at exactly two sites (the
+widget's choose and the run funnel's `executeFrom`), so a model SET IN SETTINGS
+and used only in module generation, the document planner, canvas refine/chat or
+the Idea Board never reached the top bar's "Recently used" list. This slice
+makes the list complete for the global model and nothing else, through ONE seam:
+`llm/recentChatModel.recordGlobalChatModelInUse` (fire-and-forget with its own
+catch/toast — awaiting a settings transaction on a run's critical path was row
+193's measured regression) over the unchanged write
+`db/settingsRepo.recordRecentChatModel`, with the ordering rule, the cap of 8,
+the dedupe and the widget untouched. The run funnel's private
+`recordChatModelInUse` keeps its own resolution and comparison and delegates the
+recording half to the shared seam (the rule-4 fold).
+
+The pins are split by idea:
+
+- `tests/architecture/global-chat-model-recording.test.ts` (NEW, SOURCE SCAN):
+  every `src/**` file that mentions `resolveChatModel(` or `defaultChatModel`
+  (comments stripped) is pinned by exact per-file count with a WRITTEN decision
+  — the population and each `record`/`exclude` reason live in the file's
+  `DECISIONS` table. It also pins `recordGlobalChatModelInUse(` to exactly its
+  call sites (runEngine 1, moduleGen 5, modulePlan 1, canvasRefine 1, canvasChat
+  1, ideaBoard 1, the definition 1), refuses a recording site with no `record`
+  decision, and names the deliberate exclusions: the four `moduleGen.repairModel`
+  escalation sites, the lab bench's diagnostic probe, and the UI mounts that only
+  edit or display the setting.
+- `tests/llm/moduleGen.test.ts` (5 new pins): the spine pass, the parts pass, the
+  full normalization pass, the incremental new-name classification and the
+  one-name classification each put a distinct global id at the FRONT of the real
+  settings row's recents.
+- `tests/llm/modulePlan.test.ts`, `tests/llm/canvasRefine.test.ts`: the planner
+  and canvas refine record the global model, real DB.
+- `tests/llm/canvasChat.test.ts`: a turn with NO session model records the global
+  default; a turn with a session model leaves the list byte-unchanged (the
+  non-global exclusion).
+- `tests/llm/ideaBoard-recording.test.ts` (NEW, real Dexie, transport the only
+  mock): an empty `board.model` records the global model at the front; a
+  per-board model leaves the list untouched.
+- Row 193's pins (`recent-chat-models.test`, `settingsRepo.test`,
+  `model-picker.test`, `runEngine.test`) pass UNCHANGED — order, cap, dedupe,
+  concurrent recorders, the widget's three recents mounts and the run funnel's
+  global-vs-persona behaviour. The sibling scan
+  `architecture/one-model-option-source.test`'s `recordRecentChatModel(`
+  expectation is updated to the new truth (the widget, the repo definition and
+  the in-use seam file), because the run funnel no longer calls the write
+  directly.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves the owner finds
+the widened list more useful than the narrow one, nor that a real provider
+accepts any particular id — the pins prove WHICH model each path stored, against
+the real settings row, with the transport mocked (every added site's chat is
+mocked at the protocol boundary). The source scan is textual: it cannot see a
+call assembled through a template or a re-export, which is why the behaviour pins
+carry the per-site proof and the scan carries the population.
+
+**Injected RED, watched (the tree was restored from `HEAD` by a `trap` after every
+arm and every changed file's hash was PRINTED with `git hash-object`; no two arms
+identical):** **A** baseline — `modulePlan.ts` `c4aeffd391…`, `ideaBoard.ts`
+`d809e0d1c5…`, `runEngine.ts` `98849716a9…`, `settingsRepo.ts` `1d7375bc85…`,
+`canvas-module-actions.test.tsx` `daebcc49f4…` → **GREEN 8 files / 190 tests**;
+**B** the planner's recording call removed (`modulePlan.ts` `7cbbbb5eab…`) →
+**RED 1**, exactly the NAMED pin *planModuleDocument … records the GLOBAL chat
+model at the front of the recents (docs/17 row 198)*; **C** the Idea Board made to
+record unconditionally, dropping the `board.model === ''` guard (`ideaBoard.ts`
+`c7d877b9e8…`) → **RED 1**, exactly the NAMED exclusion pin *leaves the recents
+untouched when the per-board model answers*; **D** the run funnel's recording
+awaited — BOTH the method-internal form (`runEngine.ts` `1bed93e27f…`) and the
+faithful critical-path form `await this.recordChatModelInUse(...)`
+(`runEngine.ts` `80a7eddfe4…`) → **GREEN 113/113**, i.e. row 193's racing
+regression did NOT reproduce under either injection in this lightly-loaded
+single-worker run. That is a REPORTED non-reproduction, not a licence to await:
+the race row 193 measured is latency-dependent (the settings transaction
+contending with the run row's write), so the fire-and-forget contract stands on
+row 193's own measurement and is kept. **E** (the `actDrained` cure added to
+`canvas-module-actions.test.tsx` for this slice's extra settings write) was probed
+by delaying the cause — a 50 ms wait inside `recordRecentChatModel`
+(`settingsRepo.ts` `ef4a78d8ff…` in both arms) with the un-cured test
+(`58157bceaa…`, the e9db52f form) against the cured one (`daebcc49f4…`): **BOTH
+GREEN 1/1**, so the injection did not reproduce the chunk-busy leak and this arm
+is INCONCLUSIVE — not evidence for the cure. The cure's evidence is the gate
+itself: the pre-cure full gate reddened on this test (`8` act() entries, all
+`CanvasPage`) and the post-cure full gate is **333 files / 4313 tests green**,
+with the cure following the documented §"the write that feeds a mounted live
+query is DRAINED" pattern and changing no assertion.
+
 ### The ONE model-picking widget (docs/17 row 199, docs/05 §Top bar/§Settings/§Onboarding, docs/18 §2.1/§2.3)
+
 
 The owner asked to make the model picker "a global widget … shared across all
 model picking instances (setup too)". The measured population was NINE

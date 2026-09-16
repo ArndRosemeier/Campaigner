@@ -2,6 +2,7 @@ import type { IdeaBoard } from '@/domain/ideaBoard';
 import { ideaBoardReplySchema } from '@/domain/ideaBoard';
 import { getSettings } from '@/db/settingsRepo';
 import { chat } from '@/llm/openrouter';
+import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
@@ -68,6 +69,11 @@ export async function refineIdeaBoard(
   const text = instruction.trim();
   if (text === '') throw new Error('Enter a message first.');
   const settings = await getSettings();
+  const boardModel = board.model.trim();
+  // Only an UNSET board model rides the GLOBAL first-try setting; a per-board
+  // `board.model` is a different tier (docs/17 row 199), so recording it would
+  // put a board-local pick in the global recents list (docs/17 row 198).
+  if (boardModel === '') recordGlobalChatModelInUse(settings.defaultChatModel);
   const result = await chat(
     [
       { role: 'system', content: SYSTEM_PROMPT },

@@ -14,6 +14,7 @@ import {
   type Id,
   type Module,
 } from '@/domain';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
 import {
   planAndStoreModuleDocument,
   planModuleDocument,
@@ -167,7 +168,6 @@ describe('planModuleDocument — the ONE writer of a plan', () => {
       artifacts: world.artifacts,
       turn: new AbortController(),
     });
-
     const call = chatMock.mock.calls[0];
     const messages = call?.[0] ?? [];
     const options = call?.[1] as unknown as Record<string, unknown>;
@@ -179,6 +179,19 @@ describe('planModuleDocument — the ONE writer of a plan', () => {
     const emitted = modulePlannerReplySchema.parse({ sections: [section()] });
     expect(Object.keys(emitted)).toEqual(['sections']);
     expect(messages).toHaveLength(2);
+  });
+
+  it('records the GLOBAL chat model at the front of the recents (docs/17 row 198)', async () => {
+    await updateSettings({ defaultChatModel: 'global/planner', recentChatModels: ['older/model'] });
+    replyFor([section()]);
+    await planModuleDocument({
+      moduleId: world.moduleId,
+      artifacts: world.artifacts,
+      turn: new AbortController(),
+    });
+    // The planner is a global-model call outside the run funnel, so the real
+    // settings row must now carry it most-recent-first.
+    expect((await getSettings()).recentChatModels).toEqual(['global/planner', 'older/model']);
   });
 
   it('is LOUD on invalid JSON and writes nothing', async () => {

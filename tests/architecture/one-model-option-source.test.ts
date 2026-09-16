@@ -33,7 +33,7 @@ const SRC_DIR = join(process.cwd(), 'src');
 const OPTION_SEAM = 'src/features/settings/model-options.ts';
 const MODEL_WIDGET = 'src/features/settings/model-widget.tsx';
 const SETTINGS_REPO = 'src/db/settingsRepo.ts';
-const RUN_ENGINE = 'src/llm/runEngine.ts';
+const RECENT_CHAT_MODEL = 'src/llm/recentChatModel.ts';
 
 /** The allowlisted `listModels(` call sites: the transport definition plus the
  *  two deliberately-different consumers (see the header). */
@@ -153,9 +153,11 @@ describe('one model-picking widget and one account model-id source (SOURCE SCAN,
     expect(sorted(countsOf('recentModels={'))).toEqual(sorted(RECENTS_MOUNTS));
 
     // The ONE recording seam has exactly one UI caller: the widget's choose.
-    // Everything else is the definition and the run funnel (`executeFrom`).
+    // Everything else is the definition and the ONE in-use recording seam
+    // (`llm/recentChatModel.recordGlobalChatModelInUse`, docs/17 row 198), which
+    // every non-UI global-model path calls — the run funnel included.
     expect(sorted(countsOf('recordRecentChatModel('))).toEqual(
-      sorted({ [MODEL_WIDGET]: 1, [RUN_ENGINE]: 1, [SETTINGS_REPO]: 1 }),
+      sorted({ [MODEL_WIDGET]: 1, [RECENT_CHAT_MODEL]: 1, [SETTINGS_REPO]: 1 }),
     );
   });
 
