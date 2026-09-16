@@ -35,6 +35,7 @@ import {
   nodeAnchors,
   pdfLayoutCarryFixture,
   pdfLayoutCarryPlan,
+  pdfLayoutCompanionRepeatPlan,
   pdfLayoutLargeFixture,
   pdfLayoutLargePlan,
   pdfLayoutOmissionFixture,
@@ -1260,6 +1261,64 @@ describe('§10.1 the sidebar answer — a companion prints ONCE, later reference
       'wet planks by the bell rope',
     ]);
     expect(runs.filter((run) => run === pointer)).toEqual([pointer]);
+  });
+});
+
+// --- 8b. docs/17 row 188: a section's ONE companion --------------------------
+
+/**
+ * THE OWNER'S SIDEBAR WISH, MADE A PLAN DECISION (docs/17 row 188), verbatim:
+ * *"Ideally important NPCs should be introduced in a sidebar where the story
+ * introduces them. I understand that the sidebar can get crowded though, thats
+ * where an LLM needs to make an intelligent judgement call."*
+ *
+ * The division of labour is the one row 109 ratified: the PLANNER decides WHICH
+ * introductions earn a sidebar (the judgement call), and the RENDERER decides
+ * WHERE the result fits (the §5 ladder). A companion whose row already printed
+ * is a REPEATED companion, so §10.1's once-rule must hold for it exactly as it
+ * does for a source row — that is what the pin below measures.
+ */
+describe('docs/17 row 188 — a section’s ONE companion sits beside the story that introduces it', () => {
+  beforeEach(clearDatabase);
+
+  it('prints a companion named by TWO sections ONCE, and the later one carries the §10.1 link back', async () => {
+    const fixture = await pdfLayoutLargeFixture();
+    const npc = fixture.artifacts.find((artifact) => artifact.kind === 'npc');
+    if (npc === undefined) throw new Error('the fixture must build its npc');
+    const definition = buildModuleDefinition({
+      module: { ...fixture.module, documentPlan: pdfLayoutCompanionRepeatPlan(fixture) },
+      artifacts: fixture.artifacts,
+      images: fixture.images,
+      ...(fixture.rosterResolution === undefined
+        ? {}
+        : { rosterResolution: fixture.rosterResolution }),
+    });
+    const runs = contentRuns(definition);
+    const pointer = earlierDetailNote(npc.name).toUpperCase();
+    // The FIRST section's page carries the NPC's profile in its sidebar, under
+    // her own name — this is the owner-visible outcome, on a real fixture.
+    const first = pageOf(definition, '"text":"The Dockyards","style":"chapter"');
+    expect(json(first.sidebar ?? first.main)).toContain(npc.name);
+    expect(json(first.sidebar ?? first.main)).toContain('Appearance');
+    // The LATER section states where the profile printed…
+    expect(json(pageContaining(definition, '"text":"The Vault","style":"chapter"'))).toContain(
+      pointer,
+    );
+    // …and the link goes BACK to the FIRST section's own anchor, never forward.
+    expect(linkedRuns(definition).filter((link) => link.text === pointer)).toEqual([
+      { text: pointer, destination: 'node-plan-0' },
+    ]);
+    // NON-VACUITY, both halves, over the whole document: each appears EXACTLY
+    // once. Printing the companion twice reds the first count; making every
+    // reference link back reds the second.
+    expect(runs.filter((run) => run === 'Hooded')).toEqual(['Hooded']);
+    expect(runs.filter((run) => run === pointer)).toEqual([pointer]);
+    // The companion IS printed by the plan, so the NPC gallery does not describe
+    // her a second time — no `node-<id>` gallery anchor exists for her.
+    expect(nodeAnchors(definition).has(`node-${npc.id}`)).toBe(false);
+    // A wiki-link to the introduced row jumps to the page whose sidebar carries
+    // it (its destination is the introducing section's, docs/17 row 188).
+    expect(linkedRuns(definition)).toContainEqual({ text: 'Vexra', destination: 'node-plan-0' });
   });
 });
 

@@ -22,9 +22,11 @@ import type { PartPlan } from '@/domain/module';
  *    stable `planIndex` the part plan and the canvas both use, `-1` = the
  *    premise), an artifact the module OWNS or MENTIONS (by id), or an
  *    encounter among those (by id) — plus the image ids those rows already
- *    hold. `documentPlanIssues` is the ONE reference check; a name that is not
- *    there is a LOUD, named failure (AGENTS rules 1–3), never a silent skip
- *    and never a guess.
+ *    hold. A section may ALSO name ONE `companion` (docs/17 row 188): a row
+ *    that already exists in the section's own pool, printed in the section's
+ *    sidebar BESIDE the story that introduces it. `documentPlanIssues` is the
+ *    ONE reference check; a name that is not there is a LOUD, named failure
+ *    (AGENTS rules 1–3), never a silent skip and never a guess.
  * 2. **The plan carries no content and no styling.** There is no markdown, no
  *    pdfmake node, no font, no colour and no free-form role vocabulary here:
  *    the roles are the owner's layout insight, CLOSED, one renderer treatment
@@ -114,6 +116,23 @@ export const documentPlanSectionSchema = z.strictObject({
   role: documentPlanRoleSchema,
   audience: documentPlanAudienceSchema,
   source: documentPlanSourceSchema,
+  /**
+   * THE COMPANION (docs/17 row 188, the owner: *"important NPCs should be
+   * introduced in a sidebar where the story introduces them. I understand that
+   * the sidebar can get crowded though, thats where an LLM needs to make an
+   * intelligent judgement call."*): ONE row the section INTRODUCES, printed in
+   * the section's sidebar beside the section's own text — the published-
+   * adventure layout, where a part's story text runs with the NPC it introduces
+   * in the margin. It is a reference to a row that already exists in the
+   * section's own pool, exactly like `source`, and the reference check refuses
+   * an unknown id by name.
+   *
+   * `.nullish()` and NEVER a default, deliberately: an absent companion must
+   * stay ABSENT through parse, so every plan stored before this field existed
+   * keeps parsing and renders byte-identically, and a no-companion section
+   * materializes no key. The renderer reads it as "no companion" either way.
+   */
+  companion: z.strictObject({ artifactId: z.uuid() }).nullish(),
   /**
    * The image ids this section anchors, in print order. Each one must be an
    * image the module ALREADY holds (`modulePdfImageRequests`' set: the module
@@ -230,9 +249,15 @@ export interface DocumentPlanContext {
 
 /**
  * THE reference check (hard rule 1): one named issue per section that names a
- * part, artifact, encounter or image the module does not have. Empty ⇒ the
- * plan may be applied; non-empty ⇒ NOTHING from the plan is rendered (the
- * caller falls back loudly — never a half-applied plan).
+ * part, artifact, encounter, image or companion the module does not have.
+ * Empty ⇒ the plan may be applied; non-empty ⇒ NOTHING from the plan is
+ * rendered (the caller falls back loudly — never a half-applied plan).
+ *
+ * The companion's semantic checks live here too (docs/17 row 188): an
+ * ENCOUNTER is refused (its mechanics are own-page material and the page model
+ * would not see its kind), and a companion that IS the section's own source is
+ * refused (it would describe one row twice). Both are named failures of the
+ * whole plan, with their reason stated, never silent skips.
  *
  * A part whose TEXT has not been generated yet is deliberately NOT an issue:
  * the part plan entry is what the plan names, and the renderer already prints
@@ -260,6 +285,45 @@ export function documentPlanIssues(
         where,
         reason: `it anchors image ${imageId}, but neither the module nor its encounters hold that image`,
       });
+    }
+    // The companion is checked for EVERY section — a part section included,
+    // because the whole point of a companion is to sit beside a PART's story
+    // text (docs/17 row 188). An unknown id is a NAMED failure of the WHOLE
+    // plan, exactly like an unknown source: never a silent skip, never a guess.
+    const companion = section.companion;
+    if (companion !== null && companion !== undefined) {
+      const row = artifactsById.get(companion.artifactId);
+      if (row === undefined) {
+        issues.push({
+          where,
+          reason:
+            `it names companion ${companion.artifactId}, which this module ` +
+            'neither owns nor mentions',
+        });
+      } else if (row.kind === 'encounter') {
+        // The dispatcher's stated rule, with its reason: an encounter's
+        // mechanics — its roster, tactics, treasure and map plate — are
+        // OWN-PAGE material (docs/19 §4), and the page model decides a
+        // companion's placement from the SECTION's source, so an encounter
+        // companion would evade that rule and print a fight in a sidebar.
+        issues.push({
+          where,
+          reason:
+            `it names ${row.name} as its companion, but an encounter’s mechanics ` +
+            '(its roster, tactics, treasure and map plate) are own-page material — ' +
+            'an encounter cannot be a sidebar companion',
+        });
+      } else if (source.type !== 'part' && source.artifactId === row.id) {
+        // A section cannot introduce the row it already IS: the description
+        // would print twice (the artwork at every description, docs/17 row
+        // 187) and the mechanics would link back to the same page.
+        issues.push({
+          where,
+          reason:
+            `it names ${row.name} as its companion, but that row is already the ` +
+            'section’s own source — a companion is a DIFFERENT row it introduces',
+        });
+      }
     }
     if (source.type === 'part') {
       if (source.planIndex === DOCUMENT_PLAN_PREMISE_INDEX) {

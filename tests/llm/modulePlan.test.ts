@@ -423,6 +423,32 @@ describe('modulePlanMessages — what the model is told it may decide', () => {
     expect(user).toContain('the map of “Pier Ambush”');
   });
 
+  it('delegates the sidebar judgement to the planner: a SCARCE companion, and what one is (docs/17 row 188)', async () => {
+    const messages = await modulePlanMessages({
+      module: world.module,
+      scopedArtifacts: world.artifacts,
+      pool: world.artifacts,
+      images: [],
+    });
+    const system = messageText(messages[0]);
+    // The owner's own sentence, verbatim: *"important NPCs should be introduced
+    // in a sidebar where the story introduces them. I understand that the
+    // sidebar can get crowded though, thats where an LLM needs to make an
+    // intelligent judgement call."* — the mechanism AND the delegation.
+    expect(system).toContain('THE SIDEBAR IS SCARCE');
+    expect(system).toContain('which few introductions earn one');
+    expect(system).toContain('That judgement call is YOURS');
+    expect(system).toContain('introduced in the sidebar of the story that introduces them');
+    // What a companion may NOT be, both stated.
+    expect(system).toContain('ENCOUNTER can NEVER be a companion');
+    expect(system).toContain('DIFFERENT row than the section’s own source');
+    // The renderer moves a heavy companion rather than dropping it.
+    expect(system).toContain('MOVES it to a page of its own');
+    expect(system).toContain('never dropped, shortened or clipped');
+    // The reply contract states the field's own shape.
+    expect(system).toContain('"companion": { "artifactId": string } | null');
+  });
+
   it('names the module when it has no artifacts and no images', async () => {
     const messages = await modulePlanMessages({
       module: world.module,

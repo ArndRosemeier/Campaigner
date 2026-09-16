@@ -56,11 +56,13 @@ const toastSuccessMock = vi.mocked(toastSuccess);
 
 const LOCATION_ID = newId();
 const ENCOUNTER_ID = newId();
+const NPC_ID = newId();
 const IMAGE_ID = newId();
 
 const ARTIFACTS: AnyArtifact[] = [
   { id: LOCATION_ID, kind: 'location', name: 'Old Tower' } as AnyArtifact,
   { id: ENCOUNTER_ID, kind: 'encounter', name: 'Pier Ambush' } as AnyArtifact,
+  { id: NPC_ID, kind: 'npc', name: 'Vexra' } as AnyArtifact,
 ];
 
 let module: Module;
@@ -73,6 +75,7 @@ function plan(overrides: Record<string, unknown> = {}) {
         role: 'explanation',
         audience: 'all',
         source: { type: 'part', planIndex: -1 },
+        companion: { artifactId: NPC_ID },
         images: [],
       },
       {
@@ -170,6 +173,18 @@ describe('inspecting what the AI decided', () => {
     // Provenance: the model that made this decision, and the count.
     expect(screen.getByTestId('module-plan-model')).toHaveAttribute('data-model', 'vendor/planner-1');
     expect(screen.getByTestId('module-plan-count')).toHaveTextContent('3 sections');
+  });
+
+  it('shows the ONE companion a section introduces in its sidebar (docs/17 row 188)', async () => {
+    // The owner, verbatim: *"important NPCs should be introduced in a sidebar
+    // where the story introduces them."* — and a decision nobody can see is a
+    // decision nobody can correct, so the surface has to show it.
+    module = { ...module, documentPlan: plan() };
+    await open();
+
+    const shown = screen.getAllByTestId('module-plan-companion');
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toHaveTextContent('Sidebar companion: Vexra · npc');
   });
 
   it('names a STORED plan that is not valid, and offers to replace it', async () => {

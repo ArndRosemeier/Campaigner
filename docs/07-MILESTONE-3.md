@@ -364,6 +364,7 @@ below).
 | Kind chapters (locations, events, encounters, factions, party; plot arcs and notes GM-only) | the artifact pool, restricted to rows the module's own text MENTIONS (`[[…]]`) plus rows owned by the module (`moduleId`) |
 | Map plates | `encounter.data.mapImageId`, else the live battle's `board.mapImageId` |
 | An artifact's own cover art | the row's `coverImageId`, printed WHEREVER the row is described — the procedural kind chapter, the NPC gallery and a planned section alike (docs/17 row 187); a plan's `images` anchor is an EXTRA, never the gate for the row's own picture |
+| A section's sidebar companion (the ONE row it introduces) | `module.documentPlan`'s section `companion` — that row's own profile (its kind fields and stat block, plus its own artwork per row 187) composed into the section's DETAIL companion through the SAME `companionContent` seam and printed beside the section's own text, or moved to its own page by the §5 ladder; a row named twice is governed by §10.1's once-rule (docs/17 row 188) |
 | NPC gallery / Treasure ledger | the printed NPCs / the `treasure` fields of the printed encounters (ledger: GM only) |
 
 The parts are read through the **canvas's own seam** on purpose: the stored
@@ -383,7 +384,8 @@ sidebar. While i do like this format i think it would not work well for us since
 our explanations are pretty beefy and our module text is kind of slim."*
 
 `module.documentPlan` is an ordered list of sections. Each one carries a
-`title`, ONE role from a CLOSED set, an `audience`, a `source` and `images`:
+`title`, ONE role from a CLOSED set, an `audience`, a `source`, ONE optional
+`companion` and `images`:
 
 | Role | Treatment (the renderer's, not the model's) |
 |---|---|
@@ -401,6 +403,25 @@ the section and the reason, the export still lands, and the document says so on
 its own page (see the fallback rule below). A plan cannot smuggle rendering in
 either — the schema is strict, so an extra key is a refusal, and there is no
 field a renderer would have to ignore.
+
+**A section may name ONE companion (docs/17 row 188).** The `companion` is the
+ONE row that section INTRODUCES, printed in the section's sidebar BESIDE the
+section's own text — the published-adventure layout the owner asked for
+(verbatim: *"important NPCs should be introduced in a sidebar where the story
+introduces them. I understand that the sidebar can get crowded though, thats
+where an LLM needs to make an intelligent judgement call."*). It is a reference
+to a row that already exists in the section's own pool (a strict
+`{ artifactId }`), so the SAME reference check refuses an unknown id by name; it
+may not be an `encounter` (an encounter's roster, tactics, treasure and map are
+own-page material) and it may not be the section's own `source`. The SCARCITY
+judgement is the model's, stated in the planner prompt. The field is
+`.nullish()` and never a default, so an absent companion stays absent through
+parse: every plan stored before this field existed re-serializes unchanged and
+renders byte-identically. The renderer composes the companion into the section's
+own DETAIL through the ONE `companionContent`/`artifactDetail`/`roleDetail` seam,
+so §10.1's "a companion prints once", the role gate over mechanics and the
+own-artwork rule all apply to it unchanged, and a companion that does not fit the
+sidebar walks the existing §5 ladder instead of being clipped.
 
 **Audience is the plan's, and the kind rules are its defaults.** `audience` is
 `all | gm | player`, and it decides a section's PLACEMENT: a note or plot arc
@@ -469,8 +490,9 @@ offset 7740).
 
 **The surface** (`src/features/modules/module-plan-dialog.tsx`, next to
 `ModulePdfButton` in the canvas header): the sections in order with their title,
-role, audience, source and anchor count; the model that decided them; and
-Regenerate. It is an INSPECTOR with a manual regenerate — **no longer a
+role, audience, source, the ONE companion it introduces in its sidebar (docs/17
+row 188) and anchor count; the model that decided them; and Regenerate. It is an
+INSPECTOR with a manual regenerate — **no longer a
 prerequisite for anything** (row 139): exporting plans by itself, and nothing
 requires a visit here. There is NO drag-and-drop builder, no tree editor and no
 add/remove/reorder control — the ONE per-section control is the AUDIENCE, and a

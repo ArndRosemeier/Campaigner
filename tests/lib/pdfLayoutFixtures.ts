@@ -699,6 +699,45 @@ export function pdfLayoutRepeatPlan(
 }
 
 /**
+ * A plan over the LARGE fixture for docs/17 row 188's §10.1 case: ONE row (the
+ * NPC `Vexra`) introduced as the COMPANION of TWO part-sourced sections.
+ *
+ * It is the shape the companion feature makes reachable and the ONE the
+ * once-rule has to hold for: a plan that names the same companion twice. The
+ * first section prints the NPC's profile in its sidebar and records the
+ * destination; the later one must print the §10.1 link back instead. No new
+ * fixture is built for it — the large fixture already carries a real NPC with a
+ * stat block, and adding a plan over it cannot move any other fixture's content
+ * set (the differential builds the plans it names, never every plan).
+ */
+export function pdfLayoutCompanionRepeatPlan(fixture: LayoutFixture): ModuleDocumentPlan {
+  const npc = fixture.artifacts.find((artifact) => artifact.kind === 'npc');
+  if (npc === undefined) throw new Error('the fixture must build an npc');
+  return moduleDocumentPlanSchema.parse({
+    sections: [
+      {
+        title: 'The Dockyards',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'part', planIndex: 0 },
+        companion: { artifactId: npc.id },
+        images: [],
+      },
+      {
+        title: 'The Vault',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'part', planIndex: 1 },
+        companion: { artifactId: npc.id },
+        images: [],
+      },
+    ],
+    plannedByModel: 'vendor/planner-1',
+    plannedAt: 1_700_000_000_000,
+  });
+}
+
+/**
  * A FIFTH fixture, for docs/17 row 186's rule (d): a page whose MAIN column is
  * empty because a companion CONTINUES onto it must KEEP that companion and
  * print it full width — a one-sided page is never a blank column beside a

@@ -50,7 +50,8 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * It is deliberately an INSPECTOR, not an editor. The owner has just paid to
  * delete a drag-and-drop outline builder, and a plan is regenerable rather than
  * hand-maintainable: the surface exists so he can SEE the model's sections,
- * their order, titles, roles, audiences and image anchors — the reason the plan
+ * their order, titles, roles, audiences, image anchors and the ONE companion
+ * each section introduces in its sidebar (docs/17 row 188) — the reason the plan
  * is stored as data at all ("he could not see or correct what the AI decided")
  * — and ask for another one. There is no add/remove/reorder control, no tree
  * and no per-node styling: the only per-section control is the AUDIENCE, which
@@ -251,6 +252,16 @@ function PlanSections({
           {sections.map((section, index) => {
             const source = section.source;
             const artifact = source.type === 'part' ? undefined : byId.get(source.artifactId);
+            // The ONE row this section introduces in its sidebar (docs/17 row
+            // 188). A decision nobody can see is a decision nobody can correct,
+            // so the companion is shown here exactly like the source is.
+            const companion =
+              section.companion === null || section.companion === undefined
+                ? null
+                : {
+                    id: section.companion.artifactId,
+                    row: byId.get(section.companion.artifactId),
+                  };
             const where =
               source.type === 'part'
                 ? source.planIndex === -1
@@ -281,6 +292,14 @@ function PlanSections({
                 <div className="mt-1 text-xs text-muted-foreground">
                   {where} · {DOCUMENT_PLAN_ROLE_MEANING[section.role]}
                 </div>
+                {companion === null ? null : (
+                  <div className="mt-1 text-xs text-muted-foreground" data-testid="module-plan-companion">
+                    Sidebar companion:{' '}
+                    {companion.row === undefined
+                      ? `${companion.id} (not in this document’s pool)`
+                      : `${companion.row.name} · ${companion.row.kind}`}
+                  </div>
+                )}
                 <div className="mt-2 flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">Audience</span>
                   <Select

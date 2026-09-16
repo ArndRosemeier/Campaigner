@@ -37,6 +37,7 @@ function artifactStub(id: Id, kind: AnyArtifact['kind'], name: string): AnyArtif
 
 const ARTIFACT_ID = newId();
 const ENCOUNTER_ID = newId();
+const NPC_ID = newId();
 const IMAGE_ID = newId();
 
 function context(overrides: Partial<Parameters<typeof documentPlanIssues>[1]> = {}) {
@@ -46,6 +47,7 @@ function context(overrides: Partial<Parameters<typeof documentPlanIssues>[1]> = 
     artifacts: [
       artifactStub(ARTIFACT_ID, 'location', 'Old Tower'),
       artifactStub(ENCOUNTER_ID, 'encounter', 'Pier Ambush'),
+      artifactStub(NPC_ID, 'npc', 'Vexra'),
     ],
     imageIds: [IMAGE_ID],
     ...overrides,
@@ -177,6 +179,32 @@ describe('moduleDocumentPlanSchema — the shapes it accepts and refuses', () =>
     expect(Object.keys(emitted)).toEqual(['sections']);
     expect(emitted.sections[0]?.images).toEqual([]);
   });
+
+  it('accepts a companion and materializes NO key for a section that has none (docs/17 row 188)', () => {
+    // The owner, verbatim: *"important NPCs should be introduced in a sidebar
+    // where the story introduces them."* A section MAY name ONE companion — a
+    // reference to a row that already exists, exactly like `source` — and
+    // `.nullish()` (NEVER a default) keeps absence ABSENT through parse, so
+    // every plan stored before this field existed re-serializes with no new key
+    // and renders byte-identically.
+    const parsed = moduleDocumentPlanSchema.parse({
+      sections: [
+        section({ companion: { artifactId: NPC_ID } }),
+        section({ title: 'Plain section' }),
+        section({ title: 'Explicit null', companion: null }),
+      ],
+    });
+    expect(parsed.sections[0]?.companion).toEqual({ artifactId: NPC_ID });
+    expect('companion' in (parsed.sections[1] ?? {})).toBe(false);
+    expect(JSON.stringify(parsed.sections[1])).not.toContain('companion');
+    expect(parsed.sections[2]?.companion).toBeNull();
+    // The strict member is still strict: the wrong key is a refusal.
+    expect(
+      moduleDocumentPlanSchema.safeParse({
+        sections: [section({ companion: { id: NPC_ID } as never })],
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe('readStoredDocumentPlan — absent is normal, invalid is an error', () => {
@@ -213,6 +241,14 @@ describe('documentPlanIssues — a plan may only name what exists', () => {
           section({
             source: { type: 'encounter', artifactId: ENCOUNTER_ID },
             images: [IMAGE_ID],
+          }),
+          // A PART-sourced section with a companion is the shape the owner asked
+          // for: it is the only way an NPC profile reaches the sidebar beside
+          // the story that introduces them (docs/17 row 188).
+          section({
+            title: 'The Dockyards',
+            source: { type: 'part', planIndex: 0 },
+            companion: { artifactId: NPC_ID },
           }),
         ],
         context(),
@@ -281,6 +317,45 @@ describe('documentPlanIssues — a plan may only name what exists', () => {
       'the plan’s section “A”',
       'the plan’s section “B”',
     ]);
+  });
+
+  it('reports an UNKNOWN companion id by name — a failure of the WHOLE plan, never a skip (docs/17 row 188)', () => {
+    const stranger = newId();
+    const issues = documentPlanIssues(
+      [section({ title: 'The Dockyards', companion: { artifactId: stranger } })],
+      context(),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.where).toBe('the plan’s section “The Dockyards”');
+    expect(issues[0]?.reason).toContain(stranger);
+    expect(issues[0]?.reason).toContain('neither owns nor mentions');
+  });
+
+  it('refuses an ENCOUNTER as a companion, stating the reason (docs/17 row 188)', () => {
+    const issues = documentPlanIssues(
+      [section({ title: 'The Ambush', companion: { artifactId: ENCOUNTER_ID } })],
+      context(),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.reason).toContain('Pier Ambush');
+    expect(issues[0]?.reason).toContain('own-page material');
+    expect(issues[0]?.reason).toContain('cannot be a sidebar companion');
+  });
+
+  it('refuses a companion that IS the section’s own source (one row must not be described twice)', () => {
+    const issues = documentPlanIssues(
+      [
+        section({
+          title: 'The Old Tower',
+          source: { type: 'artifact', artifactId: ARTIFACT_ID },
+          companion: { artifactId: ARTIFACT_ID },
+        }),
+      ],
+      context(),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.reason).toContain('Old Tower');
+    expect(issues[0]?.reason).toContain('already the section’s own source');
   });
 
   it('gives every planned section a stable destination id', () => {

@@ -192,6 +192,25 @@ to, so it still prints every row it scopes), and the plan's own validator alread
 refuses a section naming a row the module neither owns nor mentions — so the case
 that can reach the renderer is an OWNED row the prose never names.
 
+**AMENDED by docs/17 row 188 — WHICH rows a section presents beside its text is
+the PLAN's decision.** A plan section may name ONE `companion`: a row that
+section introduces, whose profile prints in the section's sidebar beside the
+section's own text. That is what makes the published-adventure layout possible
+at all — a PART's story text with the NPC it introduces in the margin, which the
+old renderer could not produce because a section's companion was derived from
+the section's own `source` only (owner, verbatim: *"important NPCs should be
+introduced in a sidebar where the story introduces them."*). The owner delegated
+the crowding judgement to the planner in the same breath (*"the sidebar can get
+crowded though, thats where an LLM needs to make an intelligent judgement
+call."*), so the prompt tells the model the sidebar is scarce and which
+introductions earn one is ITS call. The renderer still owns WHERE it fits: the
+companion is composed into the section's own DETAIL, so every rule above applies
+to it unchanged. Three closed limits: an `encounter` may not be a companion (its
+roster, tactics, treasure and map are §4's own-page material, and
+`detailPlacement` reads the SECTION's source kind, so an encounter companion
+would evade the own-page arm), a companion may not be the section's own
+`source`, and an unknown companion id refuses the WHOLE plan by name.
+
 ## 5. Overflow: never clip, never shorten
 
 Deterministic step-down, in this order, with every step VISIBLE in the document:
@@ -211,6 +230,17 @@ and prints the artifact full width on the page that follows. The ladder is a
 PURE function of `(kind, hasImage, height)`, so the same input always places the
 same way, and it is pinned both as that function and as the definition a real
 module produces.
+
+**EXTENDED by docs/17 row 188 — a COMPANION walks this same ladder.** A row a
+plan section introduces (its `companion`) is composed into that section's DETAIL,
+so a companion that does not fit the sidebar continues on the next page's sidebar
+or is promoted to a page of its own, exactly as a source row's detail is; a heavy
+companion is never dropped, shortened or clipped, which is what lets the planner
+name one without knowing the height. A companion named TWICE is a repeated
+companion and §10.1's "ONCE, with a link back" governs it exactly as it governs a
+repeated source. `hasImage` is computed over BOTH rows' own artwork
+(`artifactOwnImages`), so an introduced NPC with a portrait takes the §4 own-page
+treatment its picture needs, and no new placement rule exists for any of it.
 
 **AMENDED by docs/17 row 186 (the owner's own reading of an exported PDF).** The
 pointer sentence and the two other marker sentences are not companion content:

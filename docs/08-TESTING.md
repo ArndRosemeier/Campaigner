@@ -865,6 +865,66 @@ clean, combined peak RSS **2338 MB of the 3000 MB cap**, voided chunks 0 —
 `tests/lib/mob-spells-pdf.test.ts` (row 184's PDF spell pin) stayed green
 through the mechanical union recorded in docs/17 row 187.
 
+### A section's ONE sidebar companion — the row it introduces beside its own text (docs/17 row 188, docs/19 §4/§5)
+
+The owner, verbatim: *"Ideally important NPCs should be introduced in a sidebar
+where the story introduces them. I understand that the sidebar can get crowded
+though, thats where an LLM needs to make an intelligent judgement call."*
+
+**THE INTENT IS A DIVISION OF LABOUR**, and the pins measure both halves: the
+PLANNER decides WHICH introductions earn a scarce sidebar (the judgement call),
+and the RENDERER decides WHERE the block fits (the existing §5 ladder). The
+measured gap before this row: a section named exactly ONE `source`, and its DETAIL
+companion was derived from that SAME source, so an NPC's profile could only print
+where the NPC's OWN prose ran — never beside a PART's story text.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The schema accepts a companion and materializes NO key for absence**: `.nullish()` (never a default), so a plan stored before the field existed re-serializes unchanged and `'companion' in section` is false | `documentPlan.test` (`accepts a companion and materializes NO key for a section that has none (docs/17 row 188)`) | ✅ |
+| **An unknown companion id is a NAMED failure of the whole plan** (`it names companion <id>, which this module neither owns nor mentions`) — never a silent skip, never a guess | `documentPlan.test` (`reports an UNKNOWN companion id by name — a failure of the WHOLE plan, never a skip (docs/17 row 188)`) | ✅ |
+| **An encounter may not be a companion**, refused with its reason (roster/tactics/treasure/map are §4 own-page material and `detailPlacement` reads the section's source kind); a companion that IS the section's own source is refused too | `documentPlan.test` (2 pins: `refuses an ENCOUNTER as a companion, stating the reason`, `refuses a companion that IS the section’s own source`) | ✅ |
+| **The prompt the model sees delegates the scarcity judgement** — `THE SIDEBAR IS SCARCE`, `That judgement call is YOURS`, the two refusals, "the renderer MOVES a heavy companion … never dropped, shortened or clipped", and the reply shape `"companion": { "artifactId": string } \| null` | `modulePlan.test` (`delegates the sidebar judgement to the planner`) | ✅ |
+| **THE OWNER-VISIBLE OUTCOME**: a PART-sourced section naming an NPC companion prints the part's story in the MAIN column and the NPC's profile (`Vexra` / `Appearance: Hooded` / `Personality: Cold`) in the SAME page's SIDEBAR, and the row is not described again by the NPC gallery (her appearance run occurs exactly once) | `modulePdfPlan.test` (`prints an introduced NPC’s profile in a PART-sourced section’s sidebar`) | ✅ |
+| **Additive for an artifact-sourced section**: the location keeps its own mechanics (`Inhabitants:` … `gulls and one ghost`) AND gains the companion (`Hooded`) | `modulePdfPlan.test` (`keeps an artifact-sourced section’s own mechanics AND gains its companion`) | ✅ |
+| **THE STORED-PLAN COMPATIBILITY / BYTE-DETERMINISM PIN**: a plan with no `companion` key parses unchanged (no key materialized) and produces the SAME measured definition the byte-identity pin states (8308 characters) | `modulePdfPlan.test` (`renders a stored plan with NO companion byte-identically, and materializes no key`) | ✅ |
+| **§10.1 governs a repeated COMPANION**: one NPC introduced by TWO part-sourced sections prints ONCE, the later section carries the link back LINKED to `node-plan-0`, the wiki-link to the NPC jumps to the introducing section, and the gallery has no `node-<npc.id>` anchor | `pdfLayout.test` (`prints a companion named by TWO sections ONCE, and the later one carries the §10.1 link back`) | ✅ |
+| **The plan surface SHOWS the companion** (`Sidebar companion: Vexra · npc`) — a decision nobody can see is a decision nobody can correct | `module-plan-dialog.test` (`shows the ONE companion a section introduces in its sidebar`) | ✅ |
+
+**REVERT-PROVEN**, five arms, every changed file's hash PRINTED (`git hash-object`),
+NO two arms identical (no VOID arm), the fixed tree restored by `trap` from an
+out-of-tree copy and re-hashed identical after every arm (`modulePdf.ts`
+`9d567fd088acd0cc79d510243fb3ba597c83050d`, `documentPlan.ts`
+`ca62944884dab370796176815c7f0d1d7826a050`) — the five changed test files run
+together, `119 passed (119)` at arm A:
+
+| arm | injection | hash | red |
+| --- | --- | --- | --- |
+| **A** | none — the fixed tree | `modulePdf` `9d567fd0…`, `documentPlan` `ca629448…` | **0 — 119/119 green** |
+| **B** | the companion ignored by the renderer (`if (companion !== null)` → `if (false && companion !== null)`, so the introduced row's detail is never composed) | `febee76b…` | **3** — the part+NPC-sidebar pin (pin 3), the companion-twice once-rule pin (pin 5) and the additive pin |
+| **C** | §10.1's once-rule bypassed (`companionOnce` returns the detail instead of `earlierDetailMarker`) | `c710d57e…` | **3** — the companion-twice pin (pin 5), the pre-existing §10.1 pin, and `prints the own-page artifact’s details AND prints no page that is only the announcement` (reprinting a companion moves the pages) |
+| **D** | an unknown companion id becomes a SILENT SKIP (`if (row === undefined) continue;`) | `5d3261f1…` | **1** — exactly the unknown-id pin (pin 1) |
+| **E** | the schema materializes a key for absence (`.nullish()` → `.nullish().default(null)`) | `445bdb48…` | **2** — the schema no-key pin and the stored-plan byte-identity pin (pin 4) |
+
+**WHAT A TEST CANNOT PROVE.** jsdom asserts DEFINITIONS, never a rendered page:
+the pins prove the profile NODE is in the section's SIDEBAR column and on the page
+carrying the part's heading, not how it LOOKS or whether pdfmake wraps the
+companion's name heading inside the 60 mm column as the eye expects. No test can
+prove a live model picks SENSIBLE introductions to companion — that judgement is
+the model's by the owner's own delegation; the app can only SHOW the decision
+(`module-plan-dialog`), refuse an illegal one by name, and never clip the result.
+And the `event` asymmetry (an encounter is refused as a companion, an event is
+not) is a DECISION, not a proof: an event's stored detail is flow content the §5
+ladder places by measurement and its own art still triggers §4's own-page arm
+through `hasImage`.
+
+**THE LANDING GATE** (`bash scripts/gate.sh`, one run on the fixed tree, raw log
+kept, exit 0): GATE GREEN **319 files / 4130 tests**, `chunk arithmetic: 319 of 319
+test files covered`, lint 0 errors, typecheck clean, combined peak RSS **2360 MB of
+the 3000 MB cap**, voided chunks 0 — **+10 tests** over the base's 319/4120 (row
+187's landing), exactly the new pins (4 in `documentPlan.test.ts`, 3 in
+`modulePdfPlan.test.ts`, 1 each in `pdfLayout.test.ts`, `modulePlan.test.ts` and
+`module-plan-dialog.test.tsx`), with no new test file.
+
 ### §7 navigation — links everywhere, back-references, one companion with a link back (docs/17 row 151, docs/19 §7/§10)
 
 **The slice this section documents was recovered from a writer killed mid-run by

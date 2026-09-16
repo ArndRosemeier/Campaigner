@@ -36,11 +36,13 @@ import { modulePdfArtifacts, modulePdfImageRequests } from '@/lib/modulePdf';
  * The owner's ratified boundary lives here: the model decides what the plan
  * says and NOTHING about how it prints. It is told, in the prompt below, what
  * it may decide (the sections, their order, their titles, their roles, their
- * audience, which existing image prints where) and what it may not (it does
- * not write content, it does not edit the module, it does not invent a
- * section that references nothing). Everything it decides is then visible in
- * the module's "Document plan" surface and re-renderable byte-for-byte — the
- * reason a plan is DATA rather than model-authored rendering.
+ * audience, which existing image prints where, and which ONE row a section
+ * introduces in its sidebar — the companion, docs/17 row 188, whose scarcity
+ * is the model's own judgement call) and what it may not (it does not write
+ * content, it does not edit the module, it does not invent a section that
+ * references nothing). Everything it decides is then visible in the module's
+ * "Document plan" surface and re-renderable byte-for-byte — the reason a plan
+ * is DATA rather than model-authored rendering.
  *
  * Contract rules (binding, AGENTS 1/3):
  * - the settings model + the default escalation chain + strict structured
@@ -499,6 +501,12 @@ export async function modulePlanMessages(input: {
     '- {"type":"encounter","artifactId":"…"} — the id on an `ENCOUNTER …` content heading.',
     'An id or index that is not in the inventory fails the WHOLE plan — the app never guesses what you meant.',
     '',
+    'A section MAY name ONE "companion": {"artifactId":"…"} — the row that this section INTRODUCES in its sidebar, printed BESIDE the section’s own text (docs/17 row 188). This is HOW an important NPC (or a location, a faction — a row the reader meets here) is introduced in the sidebar of the story that introduces them; a section without one prints no sidebar companion.',
+    'THE SIDEBAR IS SCARCE, so CHOOSE deliberately which few introductions earn one: most sections should name NO companion. That judgement call is YOURS — the renderer never adds, invents or moves a companion for you, and it never decides for you which rows deserve one.',
+    'A companion must be a DIFFERENT row than the section’s own source, and an ENCOUNTER can NEVER be a companion (an encounter’s roster, tactics, treasure and map plate are own-page material, not sidebar material).',
+    'A companion’s details print only with the "explanation" and "gm-note" roles; a "read-aloud" or "aside" section prints only the companion’s own picture, if it has one. Give a section whose companion is the point the role that lets its details print.',
+    'When a companion does not fit the sidebar, the renderer MOVES it to a page of its own — a heavy companion is never dropped, shortened or clipped. Title the section after what it and its companion introduce, because the companion prints under its own name in the sidebar.',
+    '',
     'THE CONTENT carries the module’s own text and each row’s real stored fields — read it before deciding what belongs together. The content has a hard character cap: a `[TRUNCATED …]` or `[BLOCK FULL …]` marker at its end names exactly what was left out. Name only a row whose block you were shown; never invent a row that was not sent.',
     '',
     'Every section has a "role", one of exactly these four (there are no others):',
@@ -519,7 +527,7 @@ export async function modulePlanMessages(input: {
     'The order of the "sections" array IS the order of the document. Typical documents run 6–20 sections; a section is a place a reader turns to, not a paragraph.',
     `Reply with ONLY a JSON object: { "sections": [ { "title": string, "role": ${DOCUMENT_PLAN_ROLES.map(
       (role) => `"${role}"`,
-    ).join(' | ')}, "audience": "all" | "gm" | "player", "source": { … }, "images": [ string ] } ] }`,
+    ).join(' | ')}, "audience": "all" | "gm" | "player", "source": { … }, "companion": { "artifactId": string } | null, "images": [ string ] } ] }`,
   ];
 
   // The part index: the planIndex a "part" source must name. The TITLES are the

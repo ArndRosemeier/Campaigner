@@ -104,6 +104,13 @@ import {
  *    alike — through the ONE `artifactDetail`/`companionContent` seam, whatever
  *    ROLE the plan gave the section. The plan's `images` anchors stay
  *    meaningful as EXTRAS, never as the gate for the artifact's own artwork.
+ * 5. **A section may introduce ONE COMPANION** (docs/17 row 188): the row whose
+ *    profile prints in the section's sidebar BESIDE the story that introduces
+ *    it. The companion is composed into the section's DETAIL through the SAME
+ *    seam contract 4 names, so §10.1's once-rule, the role gate and the artwork
+ *    rule apply to it unchanged; the PLANNER decides which introductions earn a
+ *    sidebar (the owner's own delegation of that judgement call), and the page
+ *    model still decides where the result fits.
  */
 
 const ACCENT = '#9a7b4f';
@@ -637,6 +644,13 @@ interface PlannedSection {
   destination: string;
   /** The artifact this section prints, when its source names one. */
   artifact: AnyArtifact | null;
+  /**
+   * The ONE row this section INTRODUCES in its sidebar (docs/17 row 188), or
+   * `null` for the overwhelmingly normal case. Resolved from the plan's
+   * `companion` reference, which `documentPlanIssues` already proved exists and
+   * is neither an encounter nor the section's own source.
+   */
+  companion: AnyArtifact | null;
 }
 
 /**
@@ -756,6 +770,13 @@ export function resolveDocumentPlan(input: {
       }),
       destination: documentPlanSectionDestination(index),
       artifact: section.source.type === 'part' ? null : (byId.get(section.source.artifactId) ?? null),
+      // The reference check above proved a named companion exists, so this is
+      // total for an applied plan; `?? null` keeps the type honest for a
+      // section with no companion at all (absent or explicit `null`).
+      companion:
+        section.companion === null || section.companion === undefined
+          ? null
+          : (byId.get(section.companion.artifactId) ?? null),
     })),
   };
 }
@@ -1614,6 +1635,34 @@ function roleDetail(
   return detail;
 }
 
+/**
+ * A section's COMPANION as it prints in the sidebar (docs/17 row 188, the
+ * owner: *"important NPCs should be introduced in a sidebar where the story
+ * introduces them."*). It is the SAME `roleDetail`/`companionContent` seam
+ * every other description goes through — never a second companion mechanism —
+ * with ONE thing added: the row's own NAME, because a companion has no main
+ * column to carry it the way `artifactBlock` does, and an unnamed profile in a
+ * sidebar would not tell the reader whose it is.
+ *
+ * The name rides the MECHANICS half on purpose, so §10.1's once-rule governs it
+ * with the profile it names (a later reference's link back already names the
+ * row) and a role that suppresses mechanics suppresses the name with them — a
+ * `read-aloud`/`aside` section keeps the companion's picture and nothing else,
+ * which is docs/17 row 187's split unchanged.
+ */
+function companionDetail(
+  role: DocumentPlanRole,
+  companion: AnyArtifact,
+  state: RenderState,
+): { artwork: Content[]; mechanics: Content[] } {
+  const detail = roleDetail(role, companion, state);
+  if (detail.mechanics.length === 0) return detail;
+  return {
+    artwork: detail.artwork,
+    mechanics: [{ text: companion.name, style: 'artifact' }, ...detail.mechanics],
+  };
+}
+
 /** The kicker above a planned section: what the section IS, never its role. */
 const PLAN_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   pc: 'PC',
@@ -1700,6 +1749,14 @@ function plannedSectionAudible(
  * deliberately places), and one that names the artifact's own picture is
  * skipped rather than printing the same image twice.
  *
+ * THE COMPANION (docs/17 row 188) is the ONE row the section introduces,
+ * composed into the SAME detail: a part-sourced section carries the part's
+ * story text in MAIN and the introduced row's profile in the sidebar beside it,
+ * which is the published-adventure layout the owner asked for, and an
+ * artifact-sourced section keeps its own mechanics AND gains the companion.
+ * Both rows go through the same `companionContent` (§10.1's once-rule) and the
+ * section's ROLE gates both rows' mechanics (docs/17 row 187's split).
+ *
  * `pageBreak` is GONE from the heading. docs/19 §3: *"Sections flow. No page
  * break per section"* — a break is now the PAGE MODEL's decision (an own-page
  * artifact, a chapter start), emitted on the page node itself, because a break
@@ -1713,8 +1770,14 @@ function plannedSectionBlock(
   module: Module,
 ): PageBlock {
   const artifact = section.artifact;
-  const ownImages =
-    artifact === null ? [] : artifactOwnImages(artifact, state.input.battles ?? []);
+  const companion = section.companion;
+  // The pictures BOTH rows bring, in one list: the row the section is about and
+  // the ONE row it introduces (docs/17 row 188). §4's rule — an image needs the
+  // page — reads this list, and the anchor filter below drops an anchor naming
+  // a picture either row already prints.
+  const ownImages = [artifact, companion]
+    .filter((row): row is AnyArtifact => row !== null)
+    .flatMap((row) => artifactOwnImages(row, state.input.battles ?? []));
   const main: Content[] = [];
   const aside = section.role === 'aside';
   main.push({
@@ -1781,28 +1844,52 @@ function plannedSectionBlock(
   if (artifact !== null) {
     main.push(...referencedFromContent(artifact, state));
   }
-  const detail =
-    artifact === null
-      ? []
-      : companionContent({
-          artifact,
-          destination: section.destination,
-          detail: roleDetail(section.role, artifact, state),
-          state,
-        });
+  // THE DETAIL COMPANION (docs/19 §3–§5): the section's own row, when its
+  // source names one, and the ONE row it introduces (docs/17 row 188), each
+  // through the SAME `companionContent` seam — so §10.1's once-rule and the
+  // role gate apply to both and a planned companion cannot drift from the
+  // procedural path. A part-sourced section therefore prints its companion's
+  // profile BESIDE the part's own story text, which is the layout the owner
+  // asked for; an artifact-sourced one keeps its own mechanics AND gains the
+  // companion (additive).
+  const detail: Content[] = [];
+  if (artifact !== null) {
+    detail.push(
+      ...companionContent({
+        artifact,
+        destination: section.destination,
+        detail: roleDetail(section.role, artifact, state),
+        state,
+      }),
+    );
+  }
+  if (companion !== null) {
+    detail.push(
+      ...companionContent({
+        artifact: companion,
+        destination: section.destination,
+        detail: companionDetail(section.role, companion, state),
+        state,
+      }),
+    );
+  }
   return {
     main,
     detail,
     placement: blockPlacement({
       kind: artifact?.kind ?? null,
-      // An image needs the page (docs/19 §4), and the artifact's OWN artwork is
-      // one whether or not the plan anchored anything — a location with a cover
-      // must get the full-width treatment its picture needs (docs/17 row 187).
+      // An image needs the page (docs/19 §4), and the OWN artwork of EITHER row
+      // is one whether or not the plan anchored anything — a location with a
+      // cover, or an introduced NPC with a portrait, must get the full-width
+      // treatment its picture needs (docs/17 rows 187/188).
       hasImage: section.images.length > 0 || ownImages.length > 0,
       detail,
       styles: state.measureStyles,
     }),
-    name: artifact?.name ?? null,
+    // The row this block details, for the sidebar's "(continued)" label and the
+    // own-page pointer. A part-sourced section has no source row, so its
+    // companion names the block (docs/17 row 188).
+    name: artifact?.name ?? companion?.name ?? null,
   };
 }
 
@@ -2043,15 +2130,22 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   const parts = needsParts ? renderedParts(module, problems) : [];
   const partsByIndex = new Map(parts.map((part) => [part.planIndex, part]));
   // What the BODY printed: the gallery completes it (an NPC the plan already
-  // printed as a section is not printed a second time) and the treasure ledger
-  // aggregates its encounters. An OMITTED row is neither: the gallery must not
-  // smuggle back in the row the plan's own omission statement says is not here.
+  // printed as a section — OR introduced as a section's companion, docs/17 row
+  // 188 — is not printed a second time) and the treasure ledger aggregates its
+  // encounters. An OMITTED row is neither: the gallery must not smuggle back in
+  // the row the plan's own omission statement says is not here.
   const printedArtifacts: AnyArtifact[] =
     printableSections === null
       ? chapters.flatMap((chapter) => chapter.artifacts)
-      : printableSections.flatMap((section) =>
-          section.artifact === null ? [] : [section.artifact],
-        );
+      : printableSections.flatMap((section) => [
+          ...(section.artifact === null ? [] : [section.artifact]),
+          // A companion IS printed by this document (in the section's sidebar),
+          // so the gallery must not describe the same NPC a second time. It is
+          // deliberately NOT subject to the omission rule above: a companion
+          // always has a page — the section that introduces it — which is the
+          // exact thing an unplaced artifact lacks.
+          ...(section.companion === null ? [] : [section.companion]),
+        ]);
   const printedIds = new Set<Id>(printedArtifacts.map((artifact) => artifact.id));
   const gallery = npcGallery(scoped, audience).filter(
     (npc) => !printedIds.has(npc.id) && !omittedIds.has(npc.id),
@@ -2074,9 +2168,15 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     for (const artifact of printedArtifacts) destinations.set(artifact.id, `node-${artifact.id}`);
   } else {
     for (const section of printableSections) {
-      if (section.artifact === null) continue;
-      if (!destinations.has(section.artifact.id)) {
+      // The section's own row AND the companion it introduces (docs/17 row
+      // 188) both print at the SECTION's destination: a wiki-link to either
+      // jumps to the page whose sidebar carries the description. A row named
+      // twice keeps the FIRST destination, which is where §10.1 prints it.
+      if (section.artifact !== null && !destinations.has(section.artifact.id)) {
         destinations.set(section.artifact.id, section.destination);
+      }
+      if (section.companion !== null && !destinations.has(section.companion.id)) {
+        destinations.set(section.companion.id, section.destination);
       }
     }
   }

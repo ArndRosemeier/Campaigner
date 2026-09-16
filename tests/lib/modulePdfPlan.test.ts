@@ -639,6 +639,79 @@ describe('the renderer executes the plan', () => {
     expect(asideText).not.toContain('Inhabitants:');
   });
 
+  it('prints an introduced NPC’s profile in a PART-sourced section’s sidebar (docs/17 row 188)', async () => {
+    const seeded = await seed();
+    // The owner, verbatim: *"important NPCs should be introduced in a sidebar
+    // where the story introduces them."* Before this row a section's detail was
+    // derived from the section's OWN source, so an NPC profile could only ever
+    // sit where the NPC's own prose ran — never beside a PART's story text.
+    const plan = moduleDocumentPlanSchema.parse({
+      sections: [
+        {
+          title: 'The Dockyards',
+          role: 'explanation',
+          audience: 'all',
+          source: { type: 'part', planIndex: 0 },
+          companion: { artifactId: seeded.npcId },
+          images: [],
+        },
+      ],
+      plannedByModel: 'vendor/planner-1',
+      plannedAt: 1_700_000_000_000,
+    });
+    const { definition, problems } = buildModulePdfDocument({
+      module: withPlan(seeded, plan),
+      artifacts: seeded.artifacts,
+      images: imagesFor(seeded),
+    });
+    const page = pageContaining(definition, '"id":"node-plan-0"');
+    const columns = page.columns as { stack: unknown }[];
+    // The PART's own story text is the MAIN column…
+    expect(JSON.stringify(columns[0])).toContain('The party rows out at dusk.');
+    expect(JSON.stringify(columns[0])).not.toContain('Appearance');
+    // …and the introduced NPC's profile rides the SAME page's sidebar, under her
+    // own name so the reader knows whose profile it is.
+    expect(JSON.stringify(columns[1])).toContain('Vexra');
+    expect(JSON.stringify(columns[1])).toContain('Appearance');
+    expect(JSON.stringify(columns[1])).toContain('Hooded');
+    expect(JSON.stringify(columns[1])).toContain('Personality');
+    expect(JSON.stringify(columns[1])).toContain('Cold');
+    // The row was PRINTED by the plan, so the NPC gallery does not describe her a
+    // second time: her appearance run occurs exactly once in the document.
+    expect(occurrences(textOf(definition), 'Hooded')).toBe(1);
+    expect(problems).toEqual([]);
+  });
+
+  it('keeps an artifact-sourced section’s own mechanics AND gains its companion (additive, docs/17 row 188)', async () => {
+    const seeded = await seed();
+    const plan = moduleDocumentPlanSchema.parse({
+      sections: [
+        {
+          title: 'The Old Tower',
+          role: 'explanation',
+          audience: 'all',
+          source: { type: 'artifact', artifactId: seeded.locationId },
+          companion: { artifactId: seeded.npcId },
+          images: [],
+        },
+      ],
+    });
+    const text = textOf(
+      buildModuleDefinition({
+        module: withPlan(seeded, plan),
+        artifacts: seeded.artifacts,
+        images: imagesFor(seeded),
+      }),
+    );
+    // The location's own stored fields…
+    expect(text).toContain('Inhabitants:');
+    expect(text).toContain('gulls and one ghost');
+    // …and the introduced NPC's profile, in the SAME detail companion.
+    expect(text).toContain('Vexra');
+    expect(text).toContain('Appearance');
+    expect(text).toContain('Hooded');
+  });
+
   it('is LOUD when a planned section’s own image exists but is not in the preloaded set (docs/17 row 187)', async () => {
     const seeded = await seed();
     // The location's cover EXISTS on the row but is NOT in the loaded set, and
@@ -988,6 +1061,31 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // node — a data URL plus its `fit`/`margin` box, +278 characters. The
     // BYTE-IDENTITY above is untouched and is what this pin is about.
     expect(first.length).toBe(8308);
+  });
+
+  it('renders a stored plan with NO companion byte-identically, and materializes no key (docs/17 row 188)', async () => {
+    const seeded = await seed();
+    // THE STORED-PLAN COMPATIBILITY PIN. Every plan stored before the companion
+    // field existed has no `companion` key anywhere — and neither does this
+    // fixture's. `.nullish()` (never a default) means the key stays ABSENT
+    // through parse, so a stored plan re-serializes unchanged…
+    const stored = JSON.parse(JSON.stringify(planFor(seeded))) as {
+      sections: Record<string, unknown>[];
+    };
+    for (const section of stored.sections) expect('companion' in section).toBe(false);
+    const reparsed = moduleDocumentPlanSchema.parse(stored);
+    expect(reparsed.sections.every((section) => !('companion' in section))).toBe(true);
+    // …and the document it produces is the measured one the byte-identity pin
+    // above states (8308 chars): the no-companion path is untouched by row 188.
+    const definition = JSON.stringify(
+      buildModuleDefinition({
+        module: withPlan(seeded, reparsed),
+        artifacts: seeded.artifacts,
+        images: imagesFor(seeded),
+        compiledAt: new Date('2026-01-01T12:00:00.000Z'),
+      }),
+    );
+    expect(definition.length).toBe(8308);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
