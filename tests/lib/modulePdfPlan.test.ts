@@ -804,8 +804,16 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // where two of the three are present, because the Contents page's own
     // `pageBreak` merely MOVES from the heading node onto its page node. No
     // text run moves: the differential in `tests/lib/pdfLayout.test.ts` is
-    // untouched by row 156 and the rendered pages are byte-identical.
-    expect(first.length).toBe(8131);
+    // untouched by row 156 and the rendered pages are byte-identical. UPDATED
+    // AGAIN by docs/17 row 186 (8131 → 8030): the owner's own-page pointer now
+    // RIDES THE TEXT COLUMN, so a page that used to pay for the two-column
+    // frame — `{"columns":[{"width":294.8,"stack":[heading]},{"width":170.1,
+    // "stack":[marker],"style":"detail","fontSize":9.5}],"columnGap":17}` —
+    // is the one-sided full-width `{"stack":[heading,marker]}` the owner asked
+    // for, which is exactly this fixture's single chapter-plus-pointer page.
+    // The MARKER BRAND itself is a Symbol, so it adds no byte: the 101-character
+    // delta is the frame's, and the BYTE-IDENTITY above is still the point.
+    expect(first.length).toBe(8030);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
@@ -834,8 +842,13 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // little; `firstDiff: -1` — no differing byte at all — is unchanged, and is
     // what this pin exists for. UPDATED AGAIN by docs/17 row 151 (51183 →
     // 59215): §7's back-reference lines and the wiki-link annotations are real
-    // content, so the rendered book grows.
-    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 59215 });
+    // content, so the rendered book grows. UPDATED AGAIN by docs/17 row 186
+    // (59215 → 59233): the own-page pointer's page prints as ONE full-width
+    // column instead of a two-column frame, so the text is laid out at different
+    // x positions and the content streams move by 18 bytes. The pin's actual
+    // claim is untouched: two builds of the same input are byte-identical
+    // (`firstDiff: -1`) and carry the same problems.
+    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 59233 });
     expect(first.problems).toEqual(second.problems);
   });
 

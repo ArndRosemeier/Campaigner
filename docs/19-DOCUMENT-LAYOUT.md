@@ -14,8 +14,8 @@ the pins exist at HEAD, `spec only` means nothing implements it yet):**
 
 | § | state |
 |---|---|
-| §3 The page (main column + sidebar, flowing sections, typographic tiers) | **BUILT** — docs/17 row 148 |
-| §4 Two tiers, locality DERIVED from the first reference | **BUILT** — docs/17 row 148 (the `adjacent` pointer is a sentence in the sidebar, §5 step 3) |
+| §3 The page (main column + sidebar, flowing sections, typographic tiers) | **BUILT** — docs/17 row 148; a ONE-sided page uses the whole sheet since row 186 |
+| §4 Two tiers, locality DERIVED from the first reference | **BUILT** — docs/17 row 148 (the `adjacent` pointer is a sentence in the TEXT column, §5 step 3, since row 186) |
 | §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
 | §9 "no silent fitting" (a promotion, continuation or omission is visible and diagnosable) | **BUILT** — docs/17 row 148 |
 | §6 The planner's toolkit (real content through the chat's retrieval seam) | **BUILT** — docs/17 row 169 |
@@ -98,6 +98,17 @@ that exist, and an invalid plan is a loud, named failure (AGENTS rules 1–3).
 - Indicative geometry, to be tuned with real content: 20 mm margins; main column
   ≈ 104 mm; sidebar ≈ 60 mm; gutter 6 mm. The sidebar is the "second bar" the
   owner asked for, full height, and exists on every page that has companions.
+- **A page is ONE full-width column unless BOTH columns carry real content**
+  (docs/17 row 186, the owner: *"Some pages have just a sidebar, nothing else.
+  Makes no sense. If there is nothing else, of course the sidebar can use all
+  room."* / *"Similar problem with main area. If there IS no sidebar, use all
+  room"*). The two-column frame exists only where a reader would see two bars:
+  a marker sentence (§5's pointer, a "(continued)" head, the §10.1 link back) is
+  NOT companion content — it rides the text column, and a page whose only
+  companion content is a marker prints its text at the full content width. A
+  page whose main column is empty because a companion continues onto it keeps
+  that companion and prints it full width; nothing is dropped to make a page
+  nicer (§9).
 - **Sections flow.** No page break per section; breaks happen where content or the
   plan demands one (an own-page item, a chapter start).
 - Typographic tiers — the conventional repertoire, one treatment each, implemented
@@ -174,16 +185,28 @@ Deterministic step-down, in this order, with every step VISIBLE in the document:
 1. fits the sidebar → `beside`;
 2. does not fit → continues on the NEXT page's sidebar, marked "(continued)";
 3. still oversized → promoted to its own page(s) directly after its referring text
-   (§4), marked in the sidebar where the space ran out.
+   (§4), marked in the TEXT column where the space ran out (docs/17 row 186 — a
+   marker sentence never owns a sidebar and never forms a page: the pointer is
+   dropped rather than printed alone on an otherwise empty sheet).
 
 **BUILT (docs/17 row 148), all three steps.** Step 2 arms the continuation
 BEFORE the page closes, because closing the page is what opens the next one — a
 companion that outgrows one sidebar opens the next page's sidebar with the
-"(continued)" head. Step 3 leaves the pointer sentence in the sidebar where the
-space ran out and prints the artifact full width on the page that follows. The
-ladder is a PURE function of `(kind, hasImage, height)`, so the same input always
-places the same way, and it is pinned both as that function and as the definition
-a real module produces.
+"(continued)" head. Step 3 leaves the pointer sentence where the space ran out
+and prints the artifact full width on the page that follows. The ladder is a
+PURE function of `(kind, hasImage, height)`, so the same input always places the
+same way, and it is pinned both as that function and as the definition a real
+module produces.
+
+**AMENDED by docs/17 row 186 (the owner's own reading of an exported PDF).** The
+pointer sentence and the two other marker sentences are not companion content:
+they ride the TEXT column, a page whose sidebar would hold nothing but a marker
+renders as ONE full-width column, and a page whose whole content would be marker
+sentences is dropped rather than printed — the artifact's own page follows
+immediately, so the announcement would be pure waste. The marker/real question
+is answered in ONE place (`lib/pdfPageModel.isMarkerContent`, the brand its
+`marker()` constructor stamps), so neither the paginator nor
+`lib/modulePdf.pageNodes` ever matches a sentence's prose.
 
 The owner's decision, recorded: **no model-authored summaries or condensation.**
 The content is verbatim by contract ("the app prints the module's own text and the
@@ -337,4 +360,7 @@ call, not a spec default.** No question in this section is still open.
    **DONE** (docs/17 row 151) — **and §7 is COMPLETE**: its second bullet, the
    TOC's page numbers, landed as its own slice (docs/17 row 156), proved on the
    rendered page. Everything §7 asks for now exists.
-6. **Print refinement** (OPEN, §10).
+6. **Print refinement** (OPEN, §10). **Untouched by docs/17 row 186** — that slice
+   changed a page's own SHAPE (one full-width column unless both columns carry
+   real content) and not the page-level model this deferral rests on, so §10.4's
+   statement that pairing can be added on top later is still true.

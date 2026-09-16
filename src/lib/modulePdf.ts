@@ -43,6 +43,7 @@ import {
   SIDEBAR_COLUMN_WIDTH,
   earlierDetailMarker,
   estimateHeight,
+  isMarkerContent,
   paginateDocument,
   detailPlacement,
   type DocumentPage,
@@ -1652,9 +1653,22 @@ function blockPlacement(input: {
 /**
  * The pages, as pdfmake nodes: ONE `columns` node per page (docs/19 §3 — the
  * document is built page-level, so a screen viewer's single page carries both
- * bars), or a plain full-width stack for a page that has no companion at all
- * ("the sidebar exists on every page that has companions", §3 — where there are
- * none, the text gets the whole page).
+ * bars), or a plain full-width stack for a one-sided page.
+ *
+ * ONE-SIDED PAGES USE THE WHOLE SHEET (docs/17 row 186, the owner: *"Some pages
+ * have just a sidebar, nothing else. Makes no sense. If there is nothing else,
+ * of course the sidebar can use all room."* / *"Similar problem with main area.
+ * If there IS no sidebar, use all room"*). §3's *"the sidebar exists on every
+ * page that has companions"* is read in both directions here, from ONE rule:
+ *
+ * - no text at all → the companion (the `beside-continued` carry page) prints
+ *   full width, in the detail tier, and nothing is dropped to avoid a lonely
+ *   page;
+ * - no REAL companion → the text gets the whole page, and any marker sentence
+ *   rides the text column beside it (markers are not companion content:
+ *   `pdfPageModel.isMarkerContent` is the ONE place that is decided, and the
+ *   paginator already keeps them out of a sidebar of their own);
+ * - both → the two-column frame the owner asked for in row 148 stays.
  *
  * The sidebar COLUMN node carries the detail tier (§3: 9.5 pt), which every
  * stat box, labeled section and table inside it inherits through pdfmake's own
@@ -1673,8 +1687,18 @@ function blockPlacement(input: {
 function pageNodes(pages: readonly DocumentPage[]): Content[] {
   return pages.map((page, index): Content => {
     const breakBefore = index === 0 ? {} : { pageBreak: 'before' as const };
-    if (page.sidebar.length === 0) {
-      return { stack: page.main, ...breakBefore };
+    const realMain = page.main.filter((node) => !isMarkerContent(node));
+    const realCompanion = page.sidebar.filter((node) => !isMarkerContent(node));
+    if (realMain.length === 0 || realCompanion.length === 0) {
+      // ONE full-width column. `realMain.length === 0` is the companion-only
+      // page (never a marker-only one: `paginateDocument` drops those), so it
+      // takes the whole sheet in the detail tier; otherwise the text takes it,
+      // with any marker sentence riding beside it. Nothing is ever dropped to
+      // avoid a lonely page (docs/19 §9).
+      const oneSided = [...page.main, ...page.sidebar];
+      return realMain.length === 0
+        ? { stack: oneSided, style: 'detail', fontSize: DETAIL_FONT_SIZE, ...breakBefore }
+        : { stack: oneSided, ...breakBefore };
     }
     return {
       columns: [

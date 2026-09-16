@@ -375,7 +375,26 @@ export function earlierDetailNote(name: string): string {
 }
 
 /**
- * A sidebar/own-page marker run, in the document's kicker tier (§3: 8 pt).
+ * The brand every MARKER SENTENCE carries, so the paginator and the page
+ * renderer can tell an announcement from REAL companion content without reading
+ * a sentence (docs/17 row 186). A marker is not content: it may never form a
+ * page and may never own a column, and the decision "is this real or a marker"
+ * is answered in exactly ONE place — `isMarkerContent`, below.
+ *
+ * A SYMBOL, not a string key, on purpose: the node object carries the fact
+ * while the definition's JSON (and with it every byte-determinism pin) is
+ * unchanged by it.
+ */
+const MARKER = Symbol('pdfPageModel.marker');
+
+/** A pdfmake `Content` node carrying this module's marker brand. */
+type MarkerContent = Content & { [MARKER]?: true };
+
+/**
+ * A marker run, in the document's kicker tier (§3: 8 pt) — the ONE constructor
+ * for all three marker sentences (`ownPageNote`, `continuedNote`,
+ * `earlierDetailNote`), which is what makes the brand above total.
+ *
  * `destination` makes the marker an INTERNAL LINK — the ONE reason this
  * function takes a second argument, and the whole of §10.1's link back: a
  * reader who meets the reference a second time can jump to where the companion
@@ -384,14 +403,27 @@ export function earlierDetailNote(name: string): string {
  */
 function marker(text: string, destination?: string): Content {
   const upper = text.toUpperCase();
-  if (destination === undefined) {
-    return { text: upper, style: 'kicker', margin: [0, 0, 0, 4] };
-  }
-  return {
-    text: [{ text: upper, linkToDestination: destination }],
-    style: 'kicker',
-    margin: [0, 0, 0, 4],
-  };
+  const node: MarkerContent =
+    destination === undefined
+      ? { text: upper, style: 'kicker', margin: [0, 0, 0, 4] }
+      : {
+          text: [{ text: upper, linkToDestination: destination }],
+          style: 'kicker',
+          margin: [0, 0, 0, 4],
+        };
+  node[MARKER] = true;
+  return node;
+}
+
+/**
+ * Whether a node is one of this model's MARKER SENTENCES — the whole of the
+ * marker/real question, asked by both `paginateDocument` (which decides where a
+ * marker rides) and `lib/modulePdf.pageNodes` (which decides a page's shape).
+ * Neither caller ever reads a sentence's prose (AGENTS rule 4; docs/17 row
+ * 186).
+ */
+export function isMarkerContent(node: Content): boolean {
+  return (node as MarkerContent)[MARKER] === true;
 }
 
 /**
@@ -419,8 +451,19 @@ export function earlierDetailMarker(name: string, destination: string): Content 
  * - `beside-continued` — the first chunk here with a marker, the page CLOSED
  *   right after it, and the second chunk at the head of the next page's
  *   sidebar, so "the NEXT page's sidebar" is a fact rather than a hope;
- * - `adjacent` — a pointer in the sidebar where the text runs, then the
+ * - `adjacent` — a pointer in the TEXT column where the text runs, then the
  *   block's main AND detail together on a full-width page of its own.
+ *
+ * MARKER SENTENCES ARE NOT CONTENT (docs/17 row 186, the owner: *"A whole empty
+ * page to announce the following."*). A marker rides the TEXT column, it may
+ * never form a page and it may never own a column; a companion that is ONLY
+ * markers (a later reference's `earlierDetailNote`) therefore rides its block's
+ * main content instead of opening a sidebar. Two rules carry that: (a) the
+ * own-page pointer is pushed into `main`, and `flush` DROPS any page whose whole
+ * content would be marker sentences — so a pointer onto an otherwise empty page
+ * disappears rather than becoming a sheet of its own; (b) a page whose `main` is
+ * empty but whose sidebar carries real detail is kept (never clipped) and
+ * `pageNodes` prints it full width.
  */
 export function paginateDocument(
   blocks: readonly PageBlock[],
@@ -457,6 +500,16 @@ export function paginateDocument(
   };
   const flush = (): void => {
     if (main.length === 0 && sidebar.length === 0) return;
+    // A page whose whole content is marker sentences is never a page (docs/17
+    // row 186): an announcement with nothing to announce is dropped, not given
+    // a sheet of its own. THIS is the boundary that makes the rule hold — the
+    // own-page pointer carries no "is the page still empty?" test of its own
+    // and dies here instead, so there is ONE place that decides what may be a
+    // page rather than a check at each emission site.
+    if ([...main, ...sidebar].every(isMarkerContent)) {
+      openPage();
+      return;
+    }
     pages.push({ main, sidebar });
     openPage();
   };
@@ -472,11 +525,25 @@ export function paginateDocument(
     // §3: a break happens "where content or the plan demands one … a chapter
     // start" — a page-model decision, never a node's.
     if (block.breakBefore === true) breakPage();
+    // The marker/real split, asked ONCE per block: markers ride the text
+    // column, real detail is the companion.
+    const detailMarkers = block.detail.filter(isMarkerContent);
+    const hasRealDetail = block.detail.some((node) => !isMarkerContent(node));
+    const detailContent: Content[] = hasRealDetail ? [...block.detail] : [];
+    const mainContent: Content[] = hasRealDetail
+      ? [...block.main]
+      : [...block.main, ...detailMarkers];
     if (block.placement.kind === 'adjacent') {
-      if (block.name !== null) {
+      if (block.name !== null && detailContent.length > 0) {
         // §5 step 3, and the one pointer every own-page artifact leaves: the
-        // reader is told, where the text runs, that the detail follows.
-        sidebar.push(marker(ownPageNote(block.name)));
+        // reader is told, where the text runs, that the detail follows. It
+        // rides the TEXT column (a marker never owns the sidebar), and it is
+        // only ever a page's ADDITION: if the page carries nothing else, the
+        // boundary in `flush` drops the whole page, because a pointer that can
+        // form a page is the owner's "whole empty page to announce the
+        // following" (docs/17 row 186) and the artifact's own page follows
+        // immediately, so the announcement would be pure waste.
+        main.push(marker(ownPageNote(block.name)));
       }
       breakPage();
       // An own page: heading, prose and the companion at FULL width, because
@@ -484,8 +551,8 @@ export function paginateDocument(
       pages.push({ main: [...block.main, ...block.detail], sidebar: [] });
       continue;
     }
-    const blockMain = heightOf(block.main, MAIN_COLUMN_WIDTH);
-    const blockDetail = heightOf(block.detail, SIDEBAR_COLUMN_WIDTH);
+    const blockMain = heightOf(mainContent, MAIN_COLUMN_WIDTH);
+    const blockDetail = heightOf(detailContent, SIDEBAR_COLUMN_WIDTH);
     if (
       (main.length > 0 || sidebar.length > 0) &&
       (mainHeight + blockMain > PAGE_CONTENT_HEIGHT * 0.95 ||
@@ -493,16 +560,17 @@ export function paginateDocument(
     ) {
       flush();
     }
-    main.push(...block.main);
+    main.push(...mainContent);
     mainHeight += blockMain;
+    if (detailContent.length === 0) continue;
     if (block.placement.kind === 'beside') {
-      sidebar.push(...block.detail);
+      sidebar.push(...detailContent);
       sidebarHeight += blockDetail;
       continue;
     }
     // §5 step 2: split the companion where the sidebar runs out, mark BOTH
     // halves, and close the page so the continuation really is the next one's.
-    const [head, tail] = splitContent(block.detail, ctx, SIDEBAR_PAGE_BUDGET - sidebarHeight);
+    const [head, tail] = splitContent(detailContent, ctx, SIDEBAR_PAGE_BUDGET - sidebarHeight);
     sidebar.push(...head, marker(continuedNote(block.name, 'here')));
     // The carry is armed BEFORE the page closes, because closing the page is
     // what OPENS the next one — and the next page's sidebar is where §5 puts

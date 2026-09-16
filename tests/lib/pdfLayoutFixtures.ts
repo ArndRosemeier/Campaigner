@@ -699,6 +699,89 @@ export function pdfLayoutRepeatPlan(
 }
 
 /**
+ * A FIFTH fixture, for docs/17 row 186's rule (d): a page whose MAIN column is
+ * empty because a companion CONTINUES onto it must KEEP that companion and
+ * print it full width — a one-sided page is never a blank column beside a
+ * populated one. It is the ONE shape that reaches the page model's
+ * companion-only branch and NOT one the other fixtures produce: a plan whose
+ * LAST section is an npc whose detail outgrows ONE sidebar
+ * (`beside-continued`), so the final flush emits a page carrying only the
+ * continuation, with no following block to fill its main column.
+ *
+ * Deliberately tiny and built by nobody else, so adding it cannot move the
+ * other fixtures' content sets.
+ */
+export async function pdfLayoutCarryFixture(): Promise<{
+  module: Module;
+  artifacts: AnyArtifact[];
+  images: { dataUrls: Record<Id, string>; failures: [] };
+}> {
+  const campaign = await createCampaign({ name: 'Carry Campaign', system: 'dnd5e' });
+  const module = await saveModule({
+    ...buildModule({
+      campaignId: campaign.id,
+      title: 'The Long Sidebar',
+      concept: 'A companion too long for one column.',
+      levelMin: 1,
+      levelMax: 1,
+      tone: '',
+      sizeDial: 'sketch',
+    }),
+    spine: moduleSpineSchema.parse({
+      premise: 'The tale of [[The Long Tale]] runs on.',
+      themes: [],
+      partPlan: [{ title: 'The Telling', levelBand: '1', synopsis: 'Listen.', levelUpTrigger: '' }],
+    }),
+  });
+  // The appearance is deliberately LONGER than one sidebar budget and shorter
+  // than two (the `beside-continued` window): the paginator splits the detail,
+  // and the stat block that follows is the continuation the LAST page must keep.
+  const long = await createArtifact({
+    campaignId: campaign.id,
+    moduleId: module.id,
+    kind: 'npc',
+    name: 'The Long Tale',
+    body: 'It takes a while.',
+    data: {
+      appearance: 'The tale runs on. '.repeat(120),
+      personality: '',
+      statBlock: layoutStatBlock(),
+    },
+  });
+  return { module, artifacts: [long], images: { dataUrls: {}, failures: [] } };
+}
+
+/** The plan for that fixture: the overflowing npc is the LAST section, so its
+ *  continuation has no following block to share a page with — the shape rule
+ *  (d) is about. */
+export function pdfLayoutCarryPlan(
+  fixture: Awaited<ReturnType<typeof pdfLayoutCarryFixture>>,
+): ModuleDocumentPlan {
+  const row = fixture.artifacts[0];
+  if (row === undefined) throw new Error('the carry fixture must build its row');
+  return moduleDocumentPlanSchema.parse({
+    sections: [
+      {
+        title: 'The Telling',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'part', planIndex: 0 },
+        images: [],
+      },
+      {
+        title: 'The Long Tale',
+        role: 'explanation',
+        audience: 'all',
+        source: { type: 'artifact', artifactId: row.id },
+        images: [],
+      },
+    ],
+    plannedByModel: 'vendor/planner-1',
+    plannedAt: 1_700_000_000_000,
+  });
+}
+
+/**
  * Every TEXT RUN of a pdfmake definition, in document order — the document
  * READ as text, through the same walk `tests/lib/roster-reference-parity`
  * uses (a run's `text` may be a string or a nested array of runs; every other

@@ -668,14 +668,14 @@ without any existing pin noticing.
 | **§3 sections flow**: no heading carries a `pageBreak` any more (the PAGE does), and two planned sections share one page's main column | `pdfLayout.test` (`flows sections: the break belongs to the page, never to a heading`) — every heading node in the definition is checked, and the two sections that were a page each are asserted on ONE page | ✅ |
 | **§4/§5 the ladder as a RULE**: `beside` → `beside-continued` (≤2 sidebar budgets) → `adjacent`; `OWN_PAGE_KINDS` = encounter/event; ANY block with an image is `adjacent` whatever its kind; a `beside`-tier kind stays `beside` | `pdfLayout.test` (2) — the shipped `detailPlacement` called directly, including the boundary cases one point either side of the budget | ✅ |
 | **§5 step 2 (continuation)**: a companion that outgrows one sidebar stops with `CONTINUE IN THE SIDEBAR OF THE NEXT PAGE`, opens the NEXT page's sidebar with `CONTINUED`, and every field is on one of the two pages — the paginator is driven directly with a real overflow | `pdfLayout.test` (`continues a companion on the NEXT page's sidebar and never truncates it`) | ✅ |
-| **§5 step 3 (own page)**: an encounter's own page is a full-width `stack` (NOT a two-column node), its plate uses the whole content box (`"fit":[481.9,660]`), it is the node IMMEDIATELY AFTER the page whose sidebar carries the pointer sentence, and that page names the chapter | `pdfLayout.test` (`gives an own-page artifact its own full-width page, right after its text`) | ✅ |
-| **§3's degenerate case**: an empty sidebar is never rendered (every two-column page is asserted to carry a non-empty sidebar stack), a page with no companion is a full-width stack, the small module renders whole, and a document whose only block has no companion paginates to one page with no columns at all | `pdfLayout.test` (3) — the last one drives `paginateDocument` directly | ✅ |
+| **§5 step 3 (own page)**: an encounter's own page is a full-width `stack` (NOT a two-column node), its plate uses the whole content box (`"fit":[481.9,660]`), it is the node IMMEDIATELY AFTER the page whose TEXT column carries the pointer sentence (docs/17 row 186 moved it out of the sidebar), and that page names the chapter | `pdfLayout.test` (`gives an own-page artifact its own full-width page, right after its text`) | ✅ |
+| **§3's degenerate case**: no two-column page is rendered with a side that holds no REAL content (docs/17 row 186 — the old form forbade only an EMPTY sidebar array), a page with no companion is a full-width stack, the small module renders whole, and a document whose only block has no companion paginates to one page with no columns at all | `pdfLayout.test` (3) — the last one drives `paginateDocument` directly | ✅ |
 | **The verbatim contract**: a body's blank line is a paragraph break (two runs) while a SINGLE newline inside a field stays inside ONE run (`'Melee: +3 to hit, 4 damage.\nReach 5 ft.'` is present and NEITHER half is present alone), and every stat-block section label reaches the page | `pdfLayout.test` (`prints a body's paragraphs and line breaks exactly as the text carries them`) — asserted from the row's own text, so a reflow or a truncation fails even though the row itself is untouched | ✅ |
 | **Nothing is materialized**: building a full planned document moves no stored byte — the artifact rows and the module row are byte-identical afterwards, and the artifacts/modules/revisions counts are unmoved (no Dexie version, no schema change, so a module generated before this change renders under the new layout on its next export) | `pdfLayout.test` (`keeps the builder pure`) | ✅ |
 | **Completeness binds the PLAN** (the owner's answer to docs/19 §10 question 2): every artifact the plan places whose text refers to it prints, pinned on the SECTION HEADINGS rather than on the names — a name also appears as a bold wiki-link run in the premise, so a name-only pin would stay green while the whole section went missing | `pdfLayout.test` (`keeps EVERY artifact the plan places whose text refers to it`) | ✅ |
 | **An artifact nothing refers to is DROPPED — and is not silent** (the owner's answer to §10 question 3, a departure from §4's proposal): it is absent from the document (neither its section title nor its body appears), AND the document states the omission on its own page AND the export's `problems` names the same site with the same wording. Both directions are pinned on one fixture | `pdfLayout.test` (`drops an artifact nothing refers to, and says so on the page AND in the problems`) — a third fixture, `pdfLayoutOmissionFixture`, owned-but-unmentioned | ✅ |
 | **The limit of that rule is pinned too**: the procedural outline has no plan record to attribute an omission to, so it still prints every row it scopes, with no `problems` entry | `pdfLayout.test` (`still prints an owned row nothing refers to in the PROCEDURAL outline`) — the SAME fixture, built without a plan | ✅ |
-| The pre-existing module-PDF pins still hold across the rewrite, with the assertions that measure a page-dependent number UPDATED in place | `modulePdf.test` (1 assertion: the plate's `fit` width 515 → 481.9, the full content box), `modulePdfPlan.test` (5: the same `fit`, an aside's page-break window RE-EXPRESSED structurally — the enclosing PAGE node carries the break, not the aside — and the two deterministic-byte measurements, definition characters 6359 → 6973 and PDF bytes 51271 → 51183) | ✅ |
+| The pre-existing module-PDF pins still hold across the rewrite, with the assertions that measure a page-dependent number UPDATED in place | `modulePdf.test` (1 assertion: the plate's `fit` width 515 → 481.9, the full content box), `modulePdfPlan.test` (5: the same `fit`, an aside's page-break window RE-EXPRESSED structurally — the enclosing PAGE node carries the break, not the aside — and the two deterministic-byte measurements, definition characters 6359 → 6973 → 8095 → 8131 → **8030** and PDF bytes 51271 → 51183 → 59215 → **59233**, the row-186 re-measurements named in that section below) | ✅ |
 | The whole PDF neighbourhood, re-run after every step of the rewrite | 8 files / 101 tests: `pdfLayout`, `modulePdf`, `modulePdfPlan`, `pdfExport`, `provenance-export`, `wiki-raw-export`, `roster-reference-parity`, `module-pdf-export` | ✅ |
 
 **Every assertion that moved is listed above** (1 + 5), and NOTHING was weakened:
@@ -710,9 +710,13 @@ text layer back (`openPdfDocument` → `getPage(n).getTextContent()`, items
 carrying their own string and their own type size), which is how the Contents'
 page numbers are pinned against the pages they name — see the row-156 section
 below for the technique and its limits. What is still NOT visible this way is
-anything that is not TEXT or an annotation: column widths, pagination INSIDE a
-page node, colours, and how a page looks. **What a test cannot prove:** jsdom
-asserts the pdfmake DEFINITION, never a
+anything that is not TEXT or an annotation — colours, how a page looks, and the
+WIDTH of a column as a number. **A text item's own x IS visible, though** (each
+`TextItem` carries its `transform`, and row 186 reads `transform[4]` to prove
+which column a line was laid out in — the one-sided page's text starts at
+`PAGE_MARGIN`, not at the sidebar's offset), so page-level placement geometry is
+pinnable on the rendered page even though pdfmake's measurement is not. **What a
+test cannot prove:** jsdom asserts the pdfmake DEFINITION, never a
 rendered page — pdfmake's own column and pagination behaviour is unverified here,
 and the definition is the only artifact the suite ever sees. So the following is
 NOT proven by anything above: that pdfmake keeps a `columns` row on one page
@@ -730,6 +734,72 @@ right-hand sidebar with the artifact's mechanics at a smaller size beside the ma
 text, and that an encounter or a map-bearing location sits on its own full-width
 page immediately after the page whose sidebar points at it, with no column
 spilling onto the following page.
+
+### The one-sided page and the marker seam (docs/17 row 186, docs/19 §3/§5)
+
+The owner reads the EXPORTED PDF, so these pins are about the pages he holds.
+His three sentences are the felt problem (*"Some pages have just a sidebar,
+nothing else. Makes no sense. If there is nothing else, of course the sidebar can
+use all room."* / *"Similar problem with main area. If there IS no sidebar, use
+all room"* / *"Some pages just say \"x has its own page, following this one\".
+Which is comical. A whole empty page to announce the following."*), and mid-flight
+he CONFIRMED the second direction is real — *"Yes, there was a page where the main
+content was there and narrow without a side bar."* — which is why the mechanism
+was ENUMERATED rather than assumed to be the mirror of the empty-main case.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **A page whose sidebar carries no REAL companion content is ONE full-width stack.** The sidebar held only the 8 pt uppercase pointer, so `pageNodes` read it as a sidebar and confined the main text to 104 mm. Asserted by NODE SHAPE (no `columns` array at all) on the owner's CONFIRMED page (`large-planned` p3: the real `Before the Gate` + `The Dockyards` text in the main column) AND on the procedural chapter page (heading + pointer), with `realNodes` proving the pointer rode the text column rather than being dropped | `pdfLayout.test` (`renders a page whose sidebar carries no REAL companion content as ONE full-width stack`) | ✅ |
+| **No two-column page has a side that holds no real content, and no page's whole content is marker sentences** — over ALL FIVE fixture documents (the three baseline ones + the repeat + the omission), so a future paginator change cannot reintroduce either direction on any of them. Non-vacuous: genuine two-column pages are counted and must exist | `pdfLayout.test` (`never gives a page a two-column frame with no real content on a side, and never prints a page of markers alone`) | ✅ |
+| **The boundary that makes "never a marker-only page" absolute**: two `adjacent` blocks back to back leave `main` empty when the second block pushes its pointer, so without the marker-only boundary in `flush` the pointer would flush as a sheet of its own. The paginator is driven DIRECTLY, and the pin requires exactly the two own pages with both companions intact and both pointers dropped | `pdfLayout.test` (`never emits a page whose whole content is the own-page announcement (two own-page artifacts in a row)`) | ✅ |
+| **A companion-only page (an empty main column) KEEPS its detail and prints full width** (rule (d)): the `beside-continued` carry page has an empty main column, so nothing may be dropped to make the page nicer and it must not be drawn as an empty 104 mm column beside a 60 mm companion. Pinned at BOTH levels — the paginator is driven directly with ONE overflowing companion as the LAST block (the carry page's `main` is empty and its real sidebar holds the whole tail), and a FIFTH fixture (`pdfLayoutCarryFixture`: a plan whose LAST section is an npc that outgrows one sidebar) proves the definition renders that page as ONE full-width `stack` carrying the stat block's own sections | `pdfLayout.test` (2: `keeps a companion-only page (an empty main column) instead of dropping its detail` + `prints a companion-only page as ONE full-width stack, never as an empty column beside a populated one`); `tests/lib/pdfLayoutFixtures.ts` (`pdfLayoutCarryFixture`/`pdfLayoutCarryPlan`) | ✅ |
+| **Nothing is lost and the comical page is gone**: the repeat fixture's first own page still carries the encounter's roster stat block, the later reference's page carries the §10.1 link back, no page is markers alone, and the document is 5 pages (was 6 — the dropped page is the pointer-only sheet) | `pdfLayout.test` (`keeps the own-page artifact's details AND prints no page that is only the announcement`) | ✅ |
+| **RENDERED geometry, not only the definition**: read back with pdfjs in BOTH documents that carry the pointer, with the kicker's letter spacing stripped; no rendered page's whole text layer IS the announcement, and the announcement item's own x (`TextItem.transform[4]`) is `PAGE_MARGIN`, not the sidebar offset `PAGE_MARGIN + MAIN_COLUMN_WIDTH + COLUMN_GUTTER` | `pdfLayout.test` (`prints the announcement on a page that carries other text, at the page margin rather than the sidebar offset`) | ✅ |
+| **The marker/real question is answered in ONE place**: `pdfPageModel.marker()` is the ONE constructor for `ownPageNote`/`continuedNote`/`earlierDetailNote` and brands the node, and `isMarkerContent()` is the ONE test — asked by the paginator and by `modulePdf.pageNodes`, neither of which ever matches a sentence. The brand is a Symbol, so the definition's JSON and every byte-determinism pin are byte-identical | `src/lib/pdfPageModel.ts` (`MARKER`/`isMarkerContent`), `src/lib/modulePdf.ts` (`pageNodes`) — the two callers are the whole population | ✅ |
+| The §5 step-3 own-page pin UPDATED in place (the page before the own page is now the ONE full-width stack carrying the pointer in its TEXT column), and `never renders an empty sidebar` renamed to `never renders a two-column page with a side that holds no real content` (the old form passed a marker-only sidebar while squeezing the text). Nothing deleted or weakened | `pdfLayout.test` (2) | ✅ |
+| The byte-determinism pins re-measured: planned definition 8131 → **8030** characters (the columns frame's 101 characters removed from the fixture's one chapter-plus-pointer page; the Symbol brand adds none) and rendered PDF bytes 59215 → **59233**. The load-bearing halves (`second === first`, `firstDiff: -1`) are UNCHANGED | `modulePdfPlan.test` (2) | ✅ |
+
+**THE ENUMERATION THAT NAMED THE MECHANISM** (the pre-fix form, measured with
+the probe, so the owner's report is not an assumption). Every page of all five
+fixture documents was classified by node shape and by whether its sidebar holds
+REAL content or only markers:
+
+| document | page | main column | sidebar | shape | note |
+| --- | --- | --- | --- | --- | --- |
+| `large-procedural` | 7, 9, 11 | 1 real node (the chapter heading) | 1 marker, nothing else | `columns` | the pointer owns the sidebar |
+| `large-planned` | **3** | **6 real nodes** (`Before the Gate` + `The Dockyards`) | **1 marker, nothing else** | `columns` | **the owner's confirmed page: main content present, narrow, no sidebar a reader would call one** |
+| `repeat-planned` | 3 | 3 real nodes | 1 marker, nothing else | `columns` | |
+| `repeat-planned` | 5 | EMPTY | 1 marker, nothing else | `columns` | the whole-sheet announcement (the same document is 5 pages after the fix) |
+
+Two hypotheses from the mid-flight evidence were CHECKED and are ELIMINATED, not
+guessed: **no page anywhere has a non-empty sidebar that renders nothing** (an
+empty stack, an empty string node or a dropped marker — the sidebar nodes all
+carry the pointer's text), and **no page has a genuinely EMPTY sidebar ARRAY
+together with a narrow main** (which would contradict `pageNodes`' own full-width
+branch and mean a page built outside it — impossible since row 156, when every
+page became a `pageNodes` output).
+
+**REVERT-PROVEN** (each injection applied to the exact executing line, the
+modified file's hash PRINTED for every arm, restored from an out-of-tree copy and
+re-hashed — `pdfPageModel.ts` `1e8883daaab0437e7fae0244d5cff8fcf849ec64`,
+`modulePdf.ts` `83b652fa781d25e874f6ade0219c43ff51eb6979`, identical before and
+after every arm; an arm whose output was identical to the baseline is recorded as
+VOID, never as evidence):
+
+| arm | injection | red |
+| --- | --- | --- |
+| **A** | none — the fixed tree, on `pdfLayout.test.ts` | **0 — 36/36 green** |
+| **B** | the pre-fix one-sided-page mechanism: `pageNodes` decides on `page.sidebar.length === 0` again AND the pointer goes back into the sidebar (`pdfPageModel` `87d6948d…`, `modulePdf` `732d3bbb…`) | **6** — the two row-186 shape pins, the rule-(d) companion-only pin, the renamed degenerate pin, the §5 step-3 own-page pin and the rendered-geometry pin, with `large-procedural page 7: a two-column page with no real sidebar: expected 0 to be greater than 0` |
+| **C (VOID, recorded)** | remove the marker-only `flush` boundary ONLY | **0 — GREEN (33/33 at the time), and it is VOID**: the marker-only COMPANION check already suppresses the pointer for a later reference, so nothing changed. The probe measured the same output, which is the tell the rules name |
+| **C′ (corrected)** | remove the marker-only `flush` boundary only, with the new direct paginator pin present (`pdfPageModel` `67d09e1c…`) | **1** — `never emits a page whose whole content is the own-page announcement (two own-page artifacts in a row)`: `expected [ …(4) ] to have a length of 2 but got 4` |
+| **D** | the pre-fix pointer-before-break ORDER: the pointer is pushed into the sidebar for an `adjacent` block and the boundary is removed (`pdfPageModel` `713b50ac…`) | **3** — the row-186 page-shape pin (`repeat-planned page 5: a page whose only content is marker sentences`), the repeat-fixture pin (`6` pages where `5` is required) and the direct paginator pin |
+
+**WHAT THESE PINS CANNOT PROVE.** The rendered pin reads TEXT and its x, not the
+page's visual weight: it cannot say that the remaining chapter-plus-pointer page
+READS well (the recorded deviation), only that the pointer is in the text column
+at the page margin. The pixmap, the colours and pdfmake's own column measurement
+remain unverified in jsdom (see the row-148 section above), so the owner's eye is
+still the last check on how the fixed pages LOOK.
 
 ### §7 navigation — links everywhere, back-references, one companion with a link back (docs/17 row 151, docs/19 §7/§10)
 

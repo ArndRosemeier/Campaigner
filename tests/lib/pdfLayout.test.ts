@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 
 import { readFileSync } from 'node:fs';
 
+import type { Content } from 'pdfmake/interfaces';
+
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { db } from '@/db/db';
@@ -15,9 +17,12 @@ import {
   PAGE_CONTENT_HEIGHT,
   PAGE_MARGIN,
   SIDEBAR_COLUMN_WIDTH,
+  continuedNote,
   detailPlacement,
   earlierDetailNote,
   estimateHeight,
+  isMarkerContent,
+  ownPageNote,
   paginateDocument,
   type MeasureContext,
   type PageBlock,
@@ -28,6 +33,8 @@ import {
   contentStrings,
   linkedRuns,
   nodeAnchors,
+  pdfLayoutCarryFixture,
+  pdfLayoutCarryPlan,
   pdfLayoutLargeFixture,
   pdfLayoutLargePlan,
   pdfLayoutOmissionFixture,
@@ -77,6 +84,20 @@ import {
  *    slices could not tell whether the numbers were real. This one can, and it
  *    does not re-derive pdfmake's rule: the expected page is read off the
  *    rendered page that carries the section's heading at its own type size.
+ * 7. **A ONE-SIDED PAGE USES THE WHOLE SHEET** (docs/17 row 186, the owner:
+ *    *"Some pages have just a sidebar, nothing else. Makes no sense. If there
+ *    is nothing else, of course the sidebar can use all room."* / *"Similar
+ *    problem with main area. If there IS no sidebar, use all room"* / *"Some
+ *    pages just say \"x has its own page, following this one\". Which is
+ *    comical. A whole empty page to announce the following."*) — a page lays
+ *    out as ONE full-width column unless BOTH columns carry REAL content, and
+ *    a marker sentence (`ownPageNote` / `continuedNote` / `earlierDetailNote`)
+ *    is not content: it rides the TEXT column and may never form a page or own
+ *    a column. The marker/real question is answered in ONE place
+ *    (`pdfPageModel.isMarkerContent`, the brand `marker()` stamps on every
+ *    marker), never by matching prose, and the pins below hold it at the node
+ *    shape AND on the RENDERED page (pdfjs item geometry), because the old
+ *    defect was a page whose only text started at the sidebar's x offset.
  */
 
 interface Baseline {
@@ -532,16 +553,254 @@ describe('§4/§5 the placement rule: two tiers, one deterministic ladder', () =
     // Full width: no sidebar, so the plate may use the whole content box.
     expect(isTwoColumn(own)).toBe(false);
     expect(json(own)).toContain('"fit":[481.9,660]');
-    // §5 step 3: the pointer is left in the sidebar where the text runs, and
-    // the own page is the node that FOLLOWS it.
+    // §5 step 3: the pointer is left where the text runs, and the own page is
+    // the node that FOLLOWS it. UPDATED BY docs/17 row 186 (the owner: *"Some
+    // pages just say \"x has its own page, following this one\". Which is
+    // comical. A whole empty page to announce the following."*): the pointer is
+    // a MARKER, so it rides the TEXT column and never owns a sidebar — the page
+    // before the own page is the ONE full-width `stack` below, where the OLD
+    // form made it a two-column page whose sidebar held the sentence alone. The
+    // pointer itself is unchanged and still prints on the same page, in the same
+    // "following this one" sense.
     const list = pages(definition);
     const ownIndex = list.indexOf(own);
     expect(ownIndex).toBeGreaterThan(0);
     const before = list[ownIndex - 1];
-    expect(before === undefined ? '' : json(before)).toContain(
-      '“PIER AMBUSH” HAS ITS OWN PAGE, FOLLOWING THIS ONE.',
-    );
+    if (before === undefined) throw new Error('the own page must follow a page');
+    expect(isTwoColumn(before)).toBe(false);
+    expect(json(before)).toContain('“PIER AMBUSH” HAS ITS OWN PAGE, FOLLOWING THIS ONE.');
     expect(json(before)).toContain('Encounters');
+  });
+});
+
+// --- 3b. docs/17 row 186: a one-sided page uses the whole sheet --------------
+
+/** The REAL nodes of a page half — every marker sentence filtered out, through
+ * the page model's own brand (`isMarkerContent`), never by matching prose. */
+function realNodes(half: unknown): unknown[] {
+  return ((half as unknown[] | undefined) ?? []).filter(
+    (node) => !isMarkerContent(node as Content),
+  );
+}
+
+/** The nodes of one page node, whichever shape it has. */
+function pageNodesOf(page: Json): unknown[] {
+  const halves: unknown[] =
+    page.columns === undefined
+      ? [page.stack]
+      : (page.columns as Json[]).map((column) => column.stack);
+  return halves.flatMap((half) => (half as unknown[] | undefined) ?? []);
+}
+
+/** `documents()` PLUS the two shapes only the row-186 pins build: the repeated
+ * companion (whose second reference used to be a page carrying the announcement
+ * alone) and the omission fixture. */
+async function everyDocument(): Promise<Record<string, ReturnType<typeof buildModuleDefinition>>> {
+  const built = await documents();
+  const repeated = await pdfLayoutRepeatFixture();
+  built['repeat-planned'] = buildModuleDefinition({
+    module: { ...repeated.module, documentPlan: pdfLayoutRepeatPlan(repeated) },
+    artifacts: repeated.artifacts,
+    images: repeated.images,
+  });
+  const omission = await pdfLayoutOmissionFixture();
+  built['omission-planned'] = buildModuleDefinition({
+    module: { ...omission.module, documentPlan: pdfLayoutOmissionPlan(omission) },
+    artifacts: omission.artifacts,
+    images: omission.images,
+  });
+  return built;
+}
+
+describe('docs/17 row 186 — a one-sided page uses the whole sheet, markers are not content', () => {
+  beforeEach(clearDatabase);
+
+  it('never gives a page a two-column frame with no real content on a side, and never prints a page of markers alone', async () => {
+    // The owner, verbatim: *"Some pages have just a sidebar, nothing else.
+    // Makes no sense. If there is nothing else, of course the sidebar can use
+    // all room."* / *"Similar problem with main area. If there IS no sidebar,
+    // use all room"* / *"Some pages just say \"x has its own page, following
+    // this one\". Which is comical. A whole empty page to announce the
+    // following."* Every page of all FIVE fixture documents is walked: a
+    // `columns` page must carry REAL content in BOTH halves, and no page may
+    // consist of marker sentences alone.
+    const built = await everyDocument();
+    let twoColumnPages = 0;
+    for (const [name, definition] of Object.entries(built)) {
+      for (const [index, page] of pages(definition).entries()) {
+        const where = `${name} page ${String(index + 1)}`;
+        if (page.columns !== undefined) {
+          const { main, sidebar } = columns(page);
+          twoColumnPages += 1;
+          expect(realNodes(main.stack).length, `${where}: a two-column page with an empty main column`).toBeGreaterThan(0);
+          expect(realNodes(sidebar.stack).length, `${where}: a two-column page with no real sidebar`).toBeGreaterThan(0);
+        }
+        const nodes = pageNodesOf(page);
+        expect(nodes.length, `${where}: a page with nothing on it`).toBeGreaterThan(0);
+        expect(realNodes(nodes).length, `${where}: a page whose only content is marker sentences`).toBeGreaterThan(0);
+      }
+    }
+    // NON-VACUITY: the rule did not become "no page is ever two-column" — the
+    // fixtures really do produce pages that genuinely carry both columns.
+    expect(twoColumnPages).toBeGreaterThan(0);
+  });
+
+  it('never emits a page whose whole content is the own-page announcement (two own-page artifacts in a row)', () => {
+    // docs/17 row 186, the owner: *"A whole empty page to announce the
+    // following."* This is the shape that produces it, driven at the ONE seam
+    // that can: two `adjacent` blocks back to back. The first own page's
+    // `pages.push` does NOT fill the paginator's accumulator, so when the second
+    // block pushes its pointer, `main` is empty — and without the marker-only
+    // boundary in `flush` the pointer would flush as a page of its own. The
+    // boundary drops it, and the artifact's own page follows.
+    const own = (text: string, name: string): PageBlock => ({
+      main: [{ text }],
+      detail: [{ text: `${name} companion` }],
+      placement: { kind: 'adjacent', reason: 'oversized-kind' },
+      name,
+    });
+    const laid = paginateDocument([own('First artifact', 'Thing One'), own('Second artifact', 'Thing Two')], {
+      styles: {},
+    });
+    // Two pages — one per artifact — and NOTHING else: the two pointers are
+    // dropped rather than becoming sheets of their own.
+    expect(laid).toHaveLength(2);
+    for (const page of laid) {
+      expect(page.sidebar).toEqual([]);
+      expect(page.main.some((node) => !isMarkerContent(node))).toBe(true);
+    }
+    // …and NOTHING is lost: each artifact's own companion print survives on its
+    // own page (the pointer was the only thing dropped).
+    expect(contentRuns(laid)).toContain('Thing One companion');
+    expect(contentRuns(laid)).toContain('Thing Two companion');
+  });
+
+  it('keeps a companion-only page (an empty main column) instead of dropping its detail', () => {
+    // docs/17 row 186 rule (d): the `beside-continued` carry page has an EMPTY
+    // main column, and this document owes it its companion — nothing is dropped
+    // to make the page nicer (docs/19 §9). The paginator is driven directly with
+    // ONE overflowing companion as the LAST block, so no following block can
+    // fill the carry page's main column.
+    const detail = [0, 1, 2, 3].map((index) => ({
+      text: `${'x'.repeat(3000 * (index + 1))} field ${String(index)}`,
+    }));
+    const long: PageBlock = {
+      main: [{ text: 'The only text' }],
+      detail,
+      placement: { kind: 'beside-continued' },
+      name: 'The Overflowing Companion',
+    };
+    const laid = paginateDocument([long], { styles: {} });
+    const carry = laid[laid.length - 1];
+    if (carry === undefined) throw new Error('the paginator must emit the carry page');
+    // The carry page carries the continuation and NO text …
+    expect(carry.main).toEqual([]);
+    expect(realNodes(carry.sidebar).length).toBeGreaterThan(0);
+    // … and the WHOLE companion reached a page (the split is never a truncation).
+    const all = contentRuns(laid);
+    for (const label of ['field 0', 'field 1', 'field 2', 'field 3']) {
+      expect(all.some((run) => run.includes(label))).toBe(true);
+    }
+  });
+
+  it('prints a companion-only page as ONE full-width stack, never as an empty column beside a populated one', async () => {
+    // The definition-level half of rule (d): the carry fixture's last section is
+    // an npc whose detail outgrows one sidebar, so the document's LAST page is
+    // the continuation — and `pageNodes` must give it the whole sheet, not an
+    // empty 104 mm main column beside the 60 mm companion. The 'CONTINUED' head
+    // is the page's own marker, so the pin finds the page by it.
+    const fixture = await pdfLayoutCarryFixture();
+    const row = fixture.artifacts[0];
+    if (row === undefined) throw new Error('the carry fixture must build its row');
+    const definition = buildModuleDefinition({
+      module: { ...fixture.module, documentPlan: pdfLayoutCarryPlan(fixture) },
+      artifacts: fixture.artifacts,
+      images: fixture.images,
+    });
+    const carryPage = pageContaining(definition, continuedNote(row.name, 'next').toUpperCase());
+    // Non-vacuity is the companion detail itself: the stat block's own sections
+    // reached THIS page (the continuation was neither truncated nor dropped).
+    expect(json(carryPage)).toContain('Dark Devotion: ');
+    expect(json(carryPage)).toContain('Dagger: ');
+    // ONE full-width stack — no `columns` node, so nothing is confined to
+    // `MAIN_COLUMN_WIDTH` and no empty column is drawn beside the companion.
+    expect(isTwoColumn(carryPage)).toBe(false);
+    expect(carryPage.columns).toBeUndefined();
+  });
+
+  it('renders a page whose sidebar carries no REAL companion content as ONE full-width stack', async () => {
+    // docs/17 row 186, and the owner CONFIRMED this direction is real, not the
+    // mirror of the empty-main case: *"Yes, there was a page where the main
+    // content was there and narrow without a side bar."* The MECHANISM was a
+    // sidebar that is NON-EMPTY but holds only the 8 pt uppercase pointer:
+    // `pageNodes` saw a non-empty `sidebar` array and emitted `columns`, so the
+    // text was confined to `MAIN_COLUMN_WIDTH` (104 mm) beside a 60 mm column
+    // carrying a sentence a reader would not call a sidebar. The shape is now
+    // decided on REAL content, so both cases below are ONE full-width `stack`:
+    //
+    // (1) the page carrying the pointer to “Old Tower” in the PLANNED document,
+    //     whose main column holds the two real sections before it — the owner's
+    //     exact report, main content present and no real sidebar;
+    // (2) the chapter page before an own-page artifact in the PROCEDURAL
+    //     document, whose main column holds the chapter heading.
+    const built = await documents();
+    const planned = built['large-planned'];
+    const procedural = built['large-procedural'];
+    if (planned === undefined || procedural === undefined) throw new Error('missing fixture');
+    const pointer = '“OLD TOWER” HAS ITS OWN PAGE, FOLLOWING THIS ONE.';
+    const plannedPage = pageContaining(planned, pointer);
+    expect(isTwoColumn(plannedPage)).toBe(false);
+    expect(plannedPage.columns).toBeUndefined();
+    // The main content really is there, and the pointer rides the SAME text
+    // column: it is neither dropped nor given a 60 mm column of its own.
+    expect(json(plannedPage)).toContain('"text":"Before the Gate"');
+    expect(json(plannedPage)).toContain('"text":"The Dockyards"');
+    expect(json(plannedPage)).toContain(pointer);
+    expect(realNodes(plannedPage.stack).length).toBeGreaterThanOrEqual(2);
+    // The procedural chapter page: one heading, and the marker as its second
+    // node — real content and the marker in ONE column.
+    const chapterPage = pageContaining(procedural, pointer);
+    expect(isTwoColumn(chapterPage)).toBe(false);
+    expect(json(chapterPage)).toContain('"text":"Locations","style":"chapter"');
+    const chapterStack = chapterPage.stack as Content[];
+    expect(chapterStack).toHaveLength(2);
+    expect(chapterStack.filter(isMarkerContent)).toHaveLength(1);
+    expect(realNodes(chapterStack)).toHaveLength(1);
+  });
+
+  it('keeps the own-page artifact’s details AND prints no page that is only the announcement', async () => {
+    // The repeat fixture is the shape that reproduced the owner's whole-page
+    // announcement: one encounter named by TWO plan sections, so the SECOND
+    // reference's own-page pointer was pushed onto an EMPTY page (the first
+    // reference's own page had just closed it) and `flush` emitted
+    // `{main: [], sidebar: [pointer]}`, a whole sheet for one sentence.
+    // docs/17 row 186: the pointer goes onto a page that already carries text,
+    // or it is dropped — the artifact's own page follows immediately.
+    const fixture = await pdfLayoutRepeatFixture();
+    const definition = buildModuleDefinition({
+      module: { ...fixture.module, documentPlan: pdfLayoutRepeatPlan(fixture) },
+      artifacts: fixture.artifacts,
+      images: fixture.images,
+    });
+    const list = pages(definition);
+    // NOTHING IS LOST: the first own page still prints the encounter's own
+    // details (the roster's stat block), and the later reference's page carries
+    // the link back to them.
+    const first = pageContaining(definition, '"text":"The Bell Ambush, first","style":"chapter"');
+    expect(json(first)).toContain('Bellringer');
+    const later = pageContaining(definition, '"text":"The Bell Ambush, again","style":"chapter"');
+    expect(json(later)).toContain(earlierDetailNote('The Bell Ambush').toUpperCase());
+    // NO page is only the announcement — the announcement never appears on a
+    // page that carries nothing else, and no page here is markers alone.
+    for (const [index, page] of list.entries()) {
+      const nodes = pageNodesOf(page);
+      expect(realNodes(nodes).length, `repeat page ${String(index + 1)}`).toBeGreaterThan(0);
+    }
+    // The empty announcement page is GONE. MEASURED: this fixture used to
+    // paginate to 6 pages (cover, Contents, `At the Rope` + pointer, the first
+    // own page, the pointer-ONLY page, the later own page); the fixed document
+    // is 5, and the drop is exactly the page that carried one sentence.
+    expect(list).toHaveLength(5);
   });
 });
 
@@ -550,14 +809,25 @@ describe('§4/§5 the placement rule: two tiers, one deterministic ladder', () =
 describe('§3 the degenerate page: too little for a sidebar still renders', () => {
   beforeEach(clearDatabase);
 
-  it('never renders an empty sidebar', async () => {
+  it('never renders a two-column page with a side that holds no real content', async () => {
+    // UPDATED BY docs/17 row 186 (the owner: *"Some pages have just a sidebar,
+    // nothing else. Makes no sense. If there is nothing else, of course the
+    // sidebar can use all room."* / *"Similar problem with main area. If there
+    // IS no sidebar, use all room"*). The old pin forbade only an EMPTY sidebar
+    // array, which a page whose sidebar held one marker sentence passed while
+    // it squeezed the text into 104 mm of a blank sheet; the rule is now that a
+    // two-column frame exists only for a page whose BOTH sides carry REAL
+    // content. The companion pin over every fixture (and every page) is in the
+    // row-186 block above.
     const built = await documents();
     for (const definition of Object.values(built)) {
       for (const page of pages(definition)) {
         if (page.columns === undefined) continue;
-        const { sidebar } = columns(page);
+        const { main, sidebar } = columns(page);
         expect(Array.isArray(sidebar.stack)).toBe(true);
         expect((sidebar.stack as unknown[]).length).toBeGreaterThan(0);
+        expect(realNodes(sidebar.stack).length).toBeGreaterThan(0);
+        expect(realNodes(main.stack).length).toBeGreaterThan(0);
       }
     }
   });
@@ -983,6 +1253,10 @@ describe('§10.1 the sidebar answer — a companion prints ONCE, later reference
 interface RenderedItem {
   readonly text: string;
   readonly size: number;
+  /** The item's own x on the page, in points — the geometry a definition-level
+   * pin cannot see (docs/17 row 186 reads it back to prove a one-sided page's
+   * text starts at the PAGE MARGIN and not at the sidebar's offset). */
+  readonly x: number;
 }
 
 interface RenderedDocument {
@@ -1005,7 +1279,17 @@ async function render(document: Parameters<typeof generatePdfBlob>[0]): Promise<
       const content = await proxy.getTextContent();
       pages.push(
         content.items
-          .map((item) => ('str' in item ? { text: item.str, size: Math.round(item.height) } : null))
+          .map((item) => {
+            if (!('str' in item)) return null;
+            // pdfjs types the transform as `any[]`, so it is read as `unknown[]`
+            // and the x is taken with a real numeric guard (docs/17 row 186).
+            const x = (item.transform as unknown[])[4];
+            return {
+              text: item.str,
+              size: Math.round(item.height),
+              x: typeof x === 'number' ? x : 0,
+            };
+          })
           .filter((item): item is RenderedItem => item !== null)
           .filter((item) => item.text.trim() !== ''),
       );
@@ -1259,6 +1543,65 @@ describe('§7 the Contents page’s numbers ARE the pages (docs/17 row 156)', ()
     expect(printedContents(rendered.pages[page - 1] ?? []).map((entry) => entry.number)).toEqual(
       printedContents((await render(second)).pages[page - 1] ?? []).map((entry) => entry.number),
     );
+  });
+});
+
+// --- 10. docs/17 row 186, MEASURED on the rendered page ----------------------
+
+describe('docs/17 row 186 — the one-sided page, read back off the RENDERED PDF', () => {
+  beforeEach(clearDatabase);
+
+  it('prints the announcement on a page that carries other text, at the page margin rather than the sidebar offset', async () => {
+    // A definition-level pin cannot see this: the kicker prints ONE CHARACTER
+    // AT A TIME, so the sentence only matches the text layer after whitespace is
+    // stripped, and whether a page's only text sits at the sidebar's x is a
+    // fact about the laid-out page. The owner's report — *"there was a page
+    // where the main content was there and narrow without a side bar"* — is
+    // measured on BOTH documents that carry the pointer: the PLANNED page whose
+    // main holds real sections, and the PROCEDURAL chapter page. The pin is
+    // (a) no rendered page's whole text layer IS the announcement and (b) the
+    // announcement's own item starts at the PAGE MARGIN, where the old form put
+    // it at the SIDEBAR offset (`PAGE_MARGIN + MAIN_COLUMN_WIDTH +
+    // COLUMN_GUTTER`) — i.e. across the gutter from the main text.
+    const built = await documents();
+    const normalized = ownPageNote('Old Tower').toUpperCase().replace(/\s+/g, '');
+    const sidebarOffset = PAGE_MARGIN + MAIN_COLUMN_WIDTH + COLUMN_GUTTER;
+    for (const name of ['large-procedural', 'large-planned'] as const) {
+      const definition = built[name];
+      if (definition === undefined) throw new Error(`missing fixture: ${name}`);
+      const rendered = await render(definition);
+      const hits: { page: number; x: number; pageText: string }[] = [];
+      for (const [index, items] of rendered.pages.entries()) {
+        for (const item of items) {
+          if (item.text.replace(/\s+/g, '').includes(normalized)) {
+            hits.push({
+              page: index + 1,
+              x: item.x,
+              pageText: items
+                .map((entry) => entry.text)
+                .join('')
+                .replace(/\s+/g, ''),
+            });
+          }
+        }
+      }
+      // NON-VACUITY, per document: the pointer really renders (a renderer that
+      // dropped it entirely fails here rather than passing the absences below).
+      expect(hits.length, `${name} renders no announcement at all`).toBeGreaterThan(0);
+      for (const hit of hits) {
+        // (a) NO rendered page's whole text layer is the announcement sentence.
+        expect(
+          hit.pageText,
+          `${name} page ${String(hit.page)} carries only the announcement`,
+        ).not.toBe(normalized);
+        // (b) it starts at the PAGE MARGIN, not at the two-column sidebar offset.
+        expect(
+          hit.x,
+          `${name} page ${String(hit.page)} renders the announcement in the sidebar`,
+        ).toBeCloseTo(PAGE_MARGIN, 1);
+        expect(hit.x).toBeLessThan(sidebarOffset);
+      }
+    }
   });
 });
 
