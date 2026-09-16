@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
+  campaignIdFromPath,
   graphPath,
   modulePath,
   modulesPath,
+  spellsPath,
   workspacePath,
 } from '@/app/routes';
 import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
@@ -187,7 +189,12 @@ describe('campaign switcher', () => {
     });
     // Modules is the FIRST tab (the central view the rest feeds).
     const tabs = within(screen.getByTestId('campaign-bar')).getAllByRole('link');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Modules', 'Workspace', 'Graph']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Modules',
+      'Workspace',
+      'Graph',
+      'Spells',
+    ]);
     expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
       'href',
       workspacePath(campaign.id),
@@ -200,6 +207,20 @@ describe('campaign switcher', () => {
       'href',
       graphPath(campaign.id),
     );
+    expect(screen.getByRole('link', { name: 'Spells' })).toHaveAttribute(
+      'href',
+      spellsPath(campaign.id),
+    );
+  });
+
+  // docs/17 row 182: the campaign-scoped spell route must be PINNED into
+  // `campaignIdFromPath`, or the campaign bar renders campaign-less (its
+  // tabs, New Module and the switcher all read that one function).
+  it('campaignIdFromPath recognizes the spell route', () => {
+    expect(campaignIdFromPath('/c/x/spells')).toBe('x');
+    expect(campaignIdFromPath(spellsPath('x'))).toBe('x');
+    // A non-campaign route still answers undefined.
+    expect(campaignIdFromPath(ROUTES.rules)).toBeUndefined();
   });
 });
 

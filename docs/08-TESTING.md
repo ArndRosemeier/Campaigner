@@ -5145,6 +5145,77 @@ a separate follow-up slice), and no test can prove a dnd5e campaign has spells:
 that adapter still skips them, which is a fact the follow-up surface must
 state per system rather than render as an empty list.
 
+### The spell list — chips, rank order, the licence line, and the ONE chunk read (docs/17 row 182, docs/05 §Routes, docs/12 §15.4, docs/18 §2.1/§2.3)
+
+The spell UI half of the spells arc: a campaign-scoped page over the `spell`
+chunks row 181 landed, with wiki-style chips, a detail card, rank ordering and
+a tradition filter. Every pin below was watched RED against a deliberate
+injection before it was trusted (the injections are listed with each file).
+
+- `tests/features/spell-rows.test.ts` (NEW — the pure builder, run in the NODE
+  project: the file is added to `vite.config.ts`'s `nodeTestGlobs`, or it
+  would silently pay the jsdom cost in the wrong project). It pins the rank
+  order (`[3, 0-cantrip, 1, 1, 10]` → cantrip first, then rank, then name),
+  the loud `data-error` for a `spell` chunk with a null payload (message
+  matched, row kept, pinned first), the name-less arm, the non-spell chunk
+  being ignored, the origin label, and both label helpers
+  (`spellRankLabel` — a cantrip prints `Cantrip`, and `spellHeighteningLabel`
+  — `Heightened (3rd)` / `(11th)` / `(22nd)` / `(+1)`, computing no cast rank).
+  The tradition filter is pinned as a MULTI-select UNION: an empty selection
+  keeps every row, `['primal']` keeps only primal-carrying rows, a second
+  selection REPLACES the first, a data error is always visible, and a
+  spell of no tradition is kept by no selection — the honest arm, not a
+  fallback.
+- `tests/features/spells-page.test.tsx` (NEW, jsdom): a real Dexie library
+  through the real router. (a) A Pathfinder 2e campaign with a READY dnd5e
+  pack book present renders only the PF2e spell — the dnd5e name is absent
+  from the DOM, not merely filtered. (b) The rendered chip order is
+  `Ignition, Alpha, Zeta` (cantrip first), and the corrupt row renders
+  `spell-data-error` with the re-import message while the count says
+  `3 spells` + `1 data error`. (c) The tradition checkboxes narrow the list
+  (union) and an all-miss selection shows `spells-filter-empty`. (d) Clicking
+  a chip opens `spell-detail-card` with the cantrip wording, traditions,
+  traits, cast facts, the `Heightened (3rd)` entry and its prose verbatim,
+  the unparsed line LOUD, and the `Source: Pathfinder Core Rulebook (OGL)`
+  line. (g) The per-system empty states: dnd5e says
+  `Spells are not imported for D&D 5e`, and a PF2e campaign with no ready
+  rules text says `No spells imported for Pathfinder 2e` with the remedy
+  link's href `/rules`.
+- `tests/db/chunk-type-read-seam.test.ts` (NEW — a SOURCE SCAN, node): the
+  `where('chunkType')` query appears EXACTLY once in `src/`, in
+  `chunkRepo.listChunksByType`; the two former sites (`creatureRepo`,
+  `use-library-creatures`) are asserted to call the seam. Non-vacuity: the
+  walk must see >300 `src/**` files. Comments are stripped before counting
+  (the seam's own docstring names the shape it replaces).
+- `tests/architecture/one-chip-element.test.ts` (NEW — a SOURCE SCAN, node):
+  `CHIP_BASE` and the kind-colour vocabulary each appear in exactly one file
+  (`src/components/chip.tsx`); `wiki-markdown.tsx` and `SpellsPage.tsx` both
+  import `Chip`; `wiki-markdown` no longer contains the base class.
+- Amended pins, each watched RED first: `tests/app-shell.test.tsx` (the
+  campaign-tab exact array gains `Spells` at the end — RED as
+  `expected [Modules, Workspace, Graph]`, received with `Spells` — plus a new
+  `campaignIdFromPath('/c/x/spells') === 'x'` pin, which reds when the route
+  is omitted from that function and the campaign bar goes campaign-less);
+  `tests/features/quickfind-modules.test.tsx` (the Go-to label list gains
+  `Spells` between `Graph` and `Rules`); `tests/search-browser.test.tsx` (the
+  Rules type filter now offers `Spells` — the regression row 181 reported).
+- **The injections, watched RED and kept in the raw logs:** the combined
+  injection removed the `Spells` tab, the Go-to entry, the Rules filter
+  entry, the `campaignIdFromPath` line, the book-id intersection, both
+  empty-state branches, the `description` prop, the row sort, the
+  corrupt-payload arm, the tradition filter, and re-spelled the raw chunk
+  query and the chip base class. Every one of the 18 new/changed pins failed
+  BY NAME in that run (15 behavioural arms + 3 source-scan arms), which is what
+  makes the pins evidence rather than decoration.
+
+**WHAT THESE PINS DO NOT PROVE:** no test can prove a library imported before
+row 181 gained `spell` chunks (it did not — re-import the rules pack); the
+system scoping is proven for dnd5e and Pathfinder 2e, not for a future system;
+the card's description is the stored chunk text, so a test proves the licence
+line REACHES the screen, not that a person finds the card readable; and the
+next slice (a spell cast at a rank) reads the heightening data this slice only
+displays — no cast-rank value is computed or asserted anywhere here.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

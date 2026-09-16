@@ -39,6 +39,16 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe('rules search browser', () => {
+  // docs/17 row 182 (the regression row 181 reported): spells moved OUT of
+  // `section` into their own chunk type, so a type-filtered search silently
+  // stopped surfacing them until the filter offered the type by name.
+  it('offers Spells in the chunk-type filter', async () => {
+    renderAppAt(ROUTES.rules);
+    const filter = await screen.findByTestId('rules-type-filter');
+    expect(within(filter).getByText('Spells')).toBeInTheDocument();
+    expect(within(filter).getByText('Sections')).toBeInTheDocument();
+  });
+
   it('searches imported books, expands a hit and pins it to the Assistant', async () => {
     const user = userEvent.setup();
     renderAppAt(ROUTES.rules);

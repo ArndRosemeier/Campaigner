@@ -40,7 +40,7 @@ const nodeTestGlobs = [
   'tests/search/**/*.test.ts',
   'tests/bestiary/roster.test.ts',
   // features pure helpers (module-post-generation needs jsdom, see above)
-  'tests/features/{dice-math,mention-view,persona-request,seed-from-module}.test.ts',
+  'tests/features/{dice-math,mention-view,persona-request,seed-from-module,spell-rows}.test.ts',
   // root-level DOM-free files (walkthrough uses waitFor)
   'tests/{backup,pwa-assets,search}.test.ts',
   // architecture scans (source-level, no DOM)

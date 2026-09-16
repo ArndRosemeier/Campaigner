@@ -24,6 +24,10 @@ const CHUNK_TYPES: { value: ChunkType; label: string }[] = [
   // Item-corpus arc (12-BESTIARY-PACKS §13): imported equipment packs are
   // searchable like any other chunk type.
   { value: 'item', label: 'Items' },
+  // Spells arc (docs/17 row 182): `spell` chunks left `section` in row 181, so
+  // a type-filtered search silently stopped surfacing them until this entry
+  // existed. Unfiltered search already found them.
+  { value: 'spell', label: 'Spells' },
 ];
 
 /**
@@ -100,7 +104,10 @@ export function SearchBrowser({
           </div>
           <HelpButton topic="search" label="rules search" />
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs">
+        <div
+          className="flex flex-wrap items-center gap-3 text-xs"
+          data-testid="rules-type-filter"
+        >
           <BookFilter books={books} selected={bookIds} onChange={setBookIds} />
           {CHUNK_TYPES.map(({ value, label }) => (
             <label key={value} className="flex items-center gap-1.5">

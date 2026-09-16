@@ -186,10 +186,12 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
       'Workspace',
       'Modules',
       'Graph',
+      'Spells',
       'Rules',
       'Settings',
     ]);
     expect(base[0]?.to).toBe('/c/c1');
+    expect(base.find((entry) => entry.label === 'Spells')?.to).toBe('/c/c1/spells');
 
     const onModule = quickFindGoToEntries('c1', '/c/c1/m/m9');
     expect(onModule[0]).toEqual({ label: 'Battle table (this module)', to: '/c/c1/m/m9/battle' });

@@ -1055,15 +1055,18 @@ on the book, network-free adapters, loud per-entry failures.
 - **No new chunk type for the OTHER rules text** — conditions, feats,
   actions, class features and journal pages stay `section` chunks with no
   payload (`conditionData` still does not exist).
-- **A named follow-up consequence of the `spell` type:** the Rules screen's
-  existing chunk-type filter (`features/rules/search-browser.tsx`) lists
-  Sections / Stat blocks / Tables / Items and has NO `Spells` option, so after
-  a re-import a spell is no longer found under "Sections" when a type filter
-  is active (an unfiltered search still finds it). Adding that filter entry
-  belongs to the follow-up spell UI slice, which must also state per system
-  that dnd5e spells are unimported; this DATA landing deliberately renders
-  nothing. `runEngine`'s treasure-grounding search stays `['section',
-  'table']` — a spell is not treasure, so that filter is unchanged by design.
+- **A named follow-up consequence of the `spell` type — LANDED by docs/17 row
+  182:** the Rules screen's chunk-type filter
+  (`features/rules/search-browser.tsx`) gained its `Spells` entry, so after a
+  re-import spells are surfaceable under their own type as well as by an
+  unfiltered search. The follow-up UI slice is also the campaign-scoped spell
+  list (`/c/:campaignId/spells`): it reads the campaign's OWN system through
+  `campaign.system`, shows only that system's ready books' `spell` chunks,
+  orders them by rank with cantrips first, filters by tradition, opens a
+  detail card from a chip, and states per system that dnd5e spells are
+  unimported (docs/17 row 182). `runEngine`'s treasure-grounding search stays
+  `['section', 'table']` — a spell is not treasure, so that filter is unchanged
+  by design.
 
 ### 15.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
 
@@ -1152,4 +1155,12 @@ on the book, network-free adapters, loud per-entry failures.
   5th, 7th, 9th) verbatim in document order; a synthetic increment heading
   and a synthetic unparsed `Heightened` line are pinned too, and the emitted
   text sha256 is unchanged from the arc base.
+- The structured data is RENDERED (docs/17 row 182): the campaign spell list
+  shows only the campaign system's ready books' `spell` chunks (a ready
+  dnd5e book's spell is absent from the DOM in a PF2e campaign), orders them
+  by rank with cantrips first, filters by tradition, opens the detail card
+  from a chip (rank wording, traditions, traits, cast facts, heightening
+  entries verbatim, unparsed lines loud, and the stored `Source: …` licence
+  line), pins a payload-less `spell` chunk as a loud per-row error, and states
+  the per-system empty case.
 - Every gate passes against exactly the committed slice, per commit.

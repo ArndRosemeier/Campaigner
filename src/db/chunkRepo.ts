@@ -53,6 +53,26 @@ export async function listChunksByBooks(bookIds: Id[]): Promise<RuleChunk[]> {
   return db.chunks.where('bookId').anyOf(bookIds).toArray();
 }
 
+/**
+ * THE chunk-type read (docs/17 row 182, docs/18 §2.1): every chunk of one
+ * `chunkType`, through the already-indexed `chunkType` column. It exists
+ * because three call sites were spelling the same Dexie query by hand — the
+ * library creature pool (`db/creatureRepo.listLibraryCreatures`), the wiki-link
+ * creature publisher (`app/use-library-creatures`) and the spell list page —
+ * and the shape `where('chunkType').equals(...)` is EXACTLY the kind of
+ * mechanism that drifts (a fourth caller adding a sort, a filter or a
+ * different index). `chunkType` is indexed (`db/db.ts`), so no new index and
+ * no payload column is needed: `spellData`/`itemData`/`statBlock` are read off
+ * the row just like the item lane's payload.
+ *
+ * A source scan (`tests/db/chunk-type-read-seam.test.ts`) reds on a second
+ * `where('chunkType')` in `src/` — caller-side filtering and sorting are fine,
+ * a second QUERY spelling is not.
+ */
+export async function listChunksByType(chunkType: RuleChunk['chunkType']): Promise<RuleChunk[]> {
+  return db.chunks.where('chunkType').equals(chunkType).toArray();
+}
+
 /** All chunks sharing a content hash (embedding-cache lookups). */
 export async function getChunksByContentHash(contentHash: string): Promise<RuleChunk[]> {
   return db.chunks.where('contentHash').equals(contentHash).toArray();

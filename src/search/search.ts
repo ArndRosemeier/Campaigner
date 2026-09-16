@@ -196,8 +196,14 @@ function promoteHeadingMatches(hits: SearchHit[], query: string): SearchHit[] {
  * Default book resolution for queries without explicit `bookIds`: every
  * 'ready' book, optionally restricted to one game system (the campaign-scoped
  * citable pool — pack books and PDF books alike carry `system`).
+ *
+ * EXPORTED since docs/17 row 182: the spell list needs the same "which ready
+ * books of the campaign's system" answer the retrieval pool uses, and a
+ * hand-rolled `status === 'ready' && system === …` filter on the page would be
+ * a second spelling of one rule. The Rules page's cross-system default is
+ * unchanged (`system` omitted).
  */
-async function readyBookIds(system?: GameSystem): Promise<Id[]> {
+export async function readyBookIds(system?: GameSystem): Promise<Id[]> {
   const books = await listRulebooks();
   return books
     .filter((book) => book.status === 'ready' && (system === undefined || book.system === system))

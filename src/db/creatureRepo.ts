@@ -35,7 +35,7 @@ import {
   listArtifactsByCampaign,
   type RevisionMeta,
 } from '@/db/artifactRepo';
-import { getChunksByContentHash } from '@/db/chunkRepo';
+import { getChunksByContentHash, listChunksByType } from '@/db/chunkRepo';
 import {
   creatureImageIdsByKey,
   getCreatureImageRow,
@@ -269,7 +269,7 @@ export interface LibraryCreature {
  * book's own row.
  */
 export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
-  const chunks = await db.chunks.where('chunkType').equals('statblock').toArray();
+  const chunks = await listChunksByType('statblock');
   const creatures: LibraryCreature[] = [];
   for (const chunk of chunks) {
     if (chunk.statBlock === null) continue;

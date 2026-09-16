@@ -26,6 +26,12 @@ export const ROUTES = {
   canvas: '/c/:campaignId/m/:moduleId/canvas',
   /** Module list (M4). */
   modules: '/c/:campaignId/modules',
+  /**
+   * Spell list for a campaign (docs/17 row 182): the campaign's own system
+   * decides which imported rules material is shown, because the library is
+   * global and a spell's game system is not.
+   */
+  spells: '/c/:campaignId/spells',
   /** Module reader for one module (M4). */
   module: '/c/:campaignId/m/:moduleId',
   /** Rules library (books list + browser). */
@@ -127,6 +133,11 @@ export function modulesPath(campaignId: string): `/c/${string}/modules` {
   return `/c/${encodeURIComponent(campaignId)}/modules`;
 }
 
+/** Path of the spell list for a given campaign (docs/17 row 182). */
+export function spellsPath(campaignId: string): `/c/${string}/spells` {
+  return `/c/${encodeURIComponent(campaignId)}/spells`;
+}
+
 /**
  * Path of the module reader (M4). An optional part index becomes a
  * `#part-<index>` hash the reader scrolls to (quick-find "select scrolls the
@@ -174,6 +185,7 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.board, pathname)?.params.campaignId ??
     matchPath(ROUTES.canvas, pathname)?.params.campaignId ??
     matchPath(ROUTES.modules, pathname)?.params.campaignId ??
+    matchPath(ROUTES.spells, pathname)?.params.campaignId ??
     matchPath(ROUTES.module, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId
   );

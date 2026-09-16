@@ -1,4 +1,4 @@
-import { ROUTES, graphPath, modulesPath, workspacePath } from '@/app/routes';
+import { ROUTES, graphPath, modulesPath, spellsPath, workspacePath } from '@/app/routes';
 
 /** One navigation entry rendered as a link. */
 export interface NavItem {
@@ -46,5 +46,6 @@ export function campaignTabs(campaignId: string | undefined): readonly CampaignT
     { label: 'Modules', to: modulesPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
     { label: 'Workspace', to: workspacePath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
     { label: 'Graph', to: graphPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
+    { label: 'Spells', to: spellsPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
   ];
 }

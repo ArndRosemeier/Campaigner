@@ -11,6 +11,7 @@ import { BoardPage } from '@/features/modules/board/BoardPage';
 import { CanvasPage } from '@/features/modules/canvas/CanvasPage';
 import { ModuleReaderPage } from '@/features/modules/ModuleReaderPage';
 import { ModulesListPage } from '@/features/modules/ModulesListPage';
+import { SpellsPage } from '@/features/spells/SpellsPage';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { LabPage } from '@/features/lab/LabPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
@@ -47,6 +48,7 @@ export function createAppRouter(): AppRouter {
           { path: ROUTES.board, element: <BoardPage /> },
           { path: ROUTES.canvas, element: <CanvasPage /> },
           { path: ROUTES.modules, element: <ModulesListPage /> },
+          { path: ROUTES.spells, element: <SpellsPage /> },
           { path: ROUTES.module, element: <ModuleReaderPage /> },
           { path: ROUTES.rules, element: <RulesPage /> },
           { path: ROUTES.ideaBoard, element: <IdeaBoardPage /> },

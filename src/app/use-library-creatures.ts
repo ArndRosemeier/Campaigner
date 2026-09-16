@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { db } from '@/db/db';
+import { listChunksByType } from '@/db/chunkRepo';
 import { canonicalCreatureName } from '@/db/mobPortraitCache';
 import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import type { WikiLinkCreature } from '@/domain';
@@ -25,7 +25,7 @@ import type { WikiLinkCreature } from '@/domain';
  */
 export function useLibraryCreaturePool(): void {
   const creatures = useLiveQuery(async () => {
-    const chunks = await db.chunks.where('chunkType').equals('statblock').toArray();
+    const chunks = await listChunksByType('statblock');
     const pool: WikiLinkCreature[] = [];
     for (const chunk of chunks) {
       if (chunk.statBlock === null) continue;

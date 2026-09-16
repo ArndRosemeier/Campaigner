@@ -1,6 +1,6 @@
 import { matchPath } from 'react-router-dom';
 
-import { ROUTES, battlePath, graphPath, modulesPath, workspacePath } from '@/app/routes';
+import { ROUTES, battlePath, graphPath, modulesPath, spellsPath, workspacePath } from '@/app/routes';
 
 /** One "Go to" destination in the quick-find palette. */
 export interface GoToEntry {
@@ -20,6 +20,7 @@ export function quickFindGoToEntries(campaignId: string, pathname: string): read
     { label: 'Workspace', to: workspacePath(campaignId) },
     { label: 'Modules', to: modulesPath(campaignId) },
     { label: 'Graph', to: graphPath(campaignId) },
+    { label: 'Spells', to: spellsPath(campaignId) },
   ];
   const moduleMatch = matchPath(ROUTES.module, pathname);
   const moduleId = moduleMatch?.params.moduleId;

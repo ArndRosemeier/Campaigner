@@ -4,10 +4,10 @@ import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import type { AnyArtifact, ArtifactKind, Id } from '@/domain';
+import { CHIP_UNRESOLVED, Chip, KIND_CHIP_CLASSES } from '@/components/chip';
 import { ImageThumb } from '@/features/images/image-thumb';
 import { remarkWikiLinks, WIKI_RAW_ATTRIBUTE } from '@/lib/remark-wikilinks';
 import { resolveWikiLink } from '@/lib/wikilinks';
-import { cn } from '@/lib/utils';
 
 /**
  * The shared wiki-link markdown renderer (08-MODULE-DESIGNER M4-A): ONE
@@ -86,17 +86,6 @@ export interface WikiMarkdownProps {
    */
   sourceOffsets?: boolean | undefined;
 }
-
-const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
-  pc: 'border-rose-500/50 bg-rose-500/10 text-rose-800 dark:text-rose-200',
-  npc: 'border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-200',
-  location: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200',
-  event: 'border-teal-500/50 bg-teal-500/10 text-teal-800 dark:text-teal-200',
-  faction: 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-200',
-  note: 'border-neutral-500/50 bg-neutral-500/10 text-neutral-800 dark:text-neutral-200',
-  encounter: 'border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200',
-  plotarc: 'border-violet-500/50 bg-violet-500/10 text-violet-800 dark:text-violet-200',
-};
 
 export const WikiMarkdown = memo(function WikiMarkdown({
   value,
@@ -263,12 +252,12 @@ function WikiChip({
 
   if (resolution.status === 'unresolved' || resolution.artifact === undefined) {
     return (
-      <button
-        type="button"
+      <Chip
         data-testid="wiki-chip-unresolved"
         data-wiki-name={name}
         data-wiki-raw={raw}
-        className={cn(CHIP_BASE, CHIP_UNRESOLVED, onStub === undefined && 'cursor-default')}
+        tone={CHIP_UNRESOLVED}
+        className={onStub === undefined ? 'cursor-default' : undefined}
         title={wikiChipTitle(raw, `${name} — not detailed yet`)}
         onClick={
           onStub === undefined
@@ -280,7 +269,7 @@ function WikiChip({
         }
       >
         {display}
-      </button>
+      </Chip>
     );
   }
 
@@ -293,14 +282,14 @@ function WikiChip({
           .join(', ')}`
       : `${ARTICLE_KIND_LABEL[artifact.kind]} ${artifact.name}`;
   return (
-    <button
-      type="button"
+    <Chip
       data-testid="wiki-chip"
       data-wiki-name={name}
       data-wiki-artifact-id={artifact.id}
       data-wiki-raw={raw}
       data-wiki-ambiguous={ambiguous || undefined}
-      className={cn(CHIP_BASE, KIND_CHIP_CLASSES[artifact.kind], onOpenArtifact === undefined && 'cursor-default')}
+      tone={KIND_CHIP_CLASSES[artifact.kind]}
+      className={onOpenArtifact === undefined ? 'cursor-default' : undefined}
       title={wikiChipTitle(raw, title)}
       onClick={
         onOpenArtifact === undefined
@@ -318,7 +307,7 @@ function WikiChip({
           ⚠
         </span>
       )}
-    </button>
+    </Chip>
   );
 }
 
@@ -332,12 +321,6 @@ const ARTICLE_KIND_LABEL: Readonly<Record<ArtifactKind, string>> = {
   encounter: 'Encounter',
   plotarc: 'Plot arc',
 };
-
-const CHIP_BASE =
-  'mx-0.5 inline-flex max-w-full items-center gap-1 rounded-full border px-1.5 py-0.5 align-baseline text-[0.9em] font-medium whitespace-nowrap';
-
-const CHIP_UNRESOLVED =
-  'border-dashed border-muted-foreground/40 bg-transparent text-muted-foreground hover:text-foreground';
 
 /** Cover-image micro-thumb inside a resolved chip (hidden when none). */
 function CoverMicroThumb({ imageId }: { imageId: Id | null }): JSX.Element | null {
