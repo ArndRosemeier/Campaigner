@@ -7,7 +7,7 @@ import type { AnyArtifact, Id, MonsterEntry, NpcArtifact } from '@/domain';
 import { monsterEntrySchema } from '@/domain';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { listChunksByBooks } from '@/db/chunkRepo';
-import { listRulebooks } from '@/db/rulebookRepo';
+import { listReadyRulebooks } from '@/db/rulebookRepo';
 import { buildBestiaryRows, filterRosterRows, type RosterEntry } from '@/features/bestiary/roster';
 import { spawnRosterInstance } from '@/db/battleSeed';
 import {
@@ -103,7 +103,8 @@ export function SpawnPicker({
   const library = useLiveQuery(
     async () => {
       if (!open) return undefined;
-      const books = (await listRulebooks()).filter((book) => book.status === 'ready');
+      // The ONE ready-book rule (docs/17 row 184).
+      const books = await listReadyRulebooks();
       const chunks = await listChunksByBooks(books.map((book) => book.id));
       return { books, chunks };
     },

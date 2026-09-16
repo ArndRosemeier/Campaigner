@@ -6,6 +6,16 @@ import type {
   SpellHeighteningEntry,
   SpellTradition,
 } from '@/domain';
+import { spellChunkName, spellCorpusEntries, type SpellCorpusEntry } from '@/domain';
+
+/**
+ * The spell-corpus projection MOVED to `domain/spellData.ts` (docs/17 row 184,
+ * docs/18 §2.1): `db/spellRepo` needed it and a `db` module importing this
+ * FEATURE was the same layering inversion as importing the retrieval barrel.
+ * Re-exported here so this feature keeps its public surface and no consumer
+ * has to change twice.
+ */
+export { spellCorpusEntries, type SpellCorpusEntry };
 
 /**
  * Spell list rows (docs/17 row 182, docs/12 §15): every `spell` chunk of a
@@ -94,7 +104,7 @@ export function buildSpellRows(
   const errors: SpellDataError[] = [];
   for (const chunk of chunks) {
     if (chunk.chunkType !== 'spell') continue;
-    const name = chunk.headingPath[chunk.headingPath.length - 1]?.trim() ?? '';
+    const name = spellChunkName(chunk);
     const data = chunk.spellData;
     if (data === undefined || data === null) {
       errors.push({
@@ -131,6 +141,7 @@ export function buildSpellRows(
   // Data errors pinned to the top — the loud state is the first thing seen.
   return [...errors, ...entries];
 }
+
 
 /**
  * Tradition multi-filter (a spell carries 0..n traditions). An EMPTY selection

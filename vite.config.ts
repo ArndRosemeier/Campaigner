@@ -30,10 +30,10 @@ const nodeTestGlobs = [
   'tests/db/{m2kinds,battleSeed}.test.tsx',
   // domain (13 of 14 — encounterMap draws on canvas)
   'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,creatureName,encounterNeonDetector,encounter-location-kind,entityNormalization}.test.ts',
-  'tests/domain/{itemData,module,pc-artifact,settings-onboarding,spellHeightening,wikiGraph}.test.ts',
+  'tests/domain/{itemData,mobSpells,module,pc-artifact,settings-onboarding,spellHeightening,wikiGraph}.test.ts',
   // lib (8 of 13 — file-picker/globalErrors touch window, imageAspect/
   // imageIntake use canvas, graphLayout renders)
-  'tests/lib/{equal,exportImport,mdToPdfmake,modulePdf,parallel,pdfExport,progress,stopEpoch,wikilinks}.test.ts',
+  'tests/lib/{equal,exportImport,mdToPdfmake,mob-spells-pdf,modulePdf,parallel,pdfExport,progress,stopEpoch,wikilinks}.test.ts',
   // ingest (all 11, incl. packs/)
   'tests/ingest/**/*.test.ts',
   // search (both), bestiary roster (bestiary-roster.tsx renders)

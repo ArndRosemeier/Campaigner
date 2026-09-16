@@ -112,6 +112,8 @@ import {
   INTENT_HIERARCHY,
   INTENT_LABEL,
   MODULE_PREMISE_LABEL,
+  MOB_SPELL_REPAIR_LEAD_IN,
+  MOB_SPELL_SECTION_HEADER,
   PART_TOO_SHORT_REPAIR_SENTENCE,
   PLACE_OWNERSHIP_BOUNDARY,
   SCHEMA_REPAIR_LEAD_IN,
@@ -2684,6 +2686,8 @@ describe('scaffoldingEcho.test.ts', () => {
       ['the schema-repair lead-in', SCHEMA_REPAIR_LEAD_IN],
       ['the encounter-source repair lead-in', ENCOUNTER_SOURCE_REPAIR_LEAD_IN],
       ['the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE],
+      ['the mob-spells section header', MOB_SPELL_SECTION_HEADER],
+      ['the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN],
     ])('every shared literal is DETECTED on its own, as %s', (label, literal) => {
       // A marker that cannot fire is a marker nobody would notice going dead —
       // and this is also the shortest statement of the one-source rule: the

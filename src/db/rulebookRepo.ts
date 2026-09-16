@@ -33,6 +33,34 @@ export async function listRulebooks(): Promise<Rulebook[]> {
   return rows.map(parseRulebookRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/**
+ * Default book resolution for a query without explicit `bookIds`: every
+ * `'ready'` book, optionally restricted to one game system (the
+ * campaign-scoped citable pool — pack books and PDF books alike carry
+ * `system`).
+ *
+ * IT LIVES HERE, BESIDE THE ROWS IT FILTERS (docs/17 row 184). It was defined
+ * in `search/search.ts` and re-exported from the `@/search` barrel; the spell
+ * arc's corpus read (`db/spellRepo`) needed the same answer, and a `db` module
+ * importing the RETRIEVAL barrel is both a layering inversion and a live
+ * coupling — MEASURED: three LLM tests mock `@/search` with only
+ * `searchRules`, so `readyBookIds` arrived `undefined` and every stat-block run
+ * threw. The rule now sits where the books are; `@/search` re-exports it, so
+ * every existing caller (`features/spells/SpellsPage`, `searchRules` itself)
+ * is unchanged and there is still exactly ONE spelling.
+ */
+export async function listReadyRulebooks(system?: GameSystem): Promise<Rulebook[]> {
+  const books = await listRulebooks();
+  return books.filter(
+    (book) => book.status === 'ready' && (system === undefined || book.system === system),
+  );
+}
+
+/** The same answer as IDs — the shape a chunk read takes. */
+export async function readyBookIds(system?: GameSystem): Promise<Id[]> {
+  return (await listReadyRulebooks(system)).map((book) => book.id);
+}
+
 /** Total book count (onboarding detection). */
 export async function countRulebooks(): Promise<number> {
   return db.rulebooks.count();

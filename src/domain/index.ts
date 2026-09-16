@@ -35,5 +35,6 @@ export * from '@/domain/run';
 export * from '@/domain/settings';
 export * from '@/domain/spellData';
 export * from '@/domain/spellHeightening';
+export * from '@/domain/mobSpells';
 export * from '@/domain/statblock';
 export * from '@/domain/wikiGraph';

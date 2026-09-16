@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import { gameSystemSchema } from '@/domain/gameSystem';
+import type { Id } from '@/domain/entity';
+import type { RuleChunk } from '@/domain/rulebook';
 
 /**
  * Normalized spell payload (docs/12 §15, the spells arc): the exact,
@@ -163,3 +165,53 @@ export const spellDataSchema = z.object({
 });
 
 export type SpellData = z.infer<typeof spellDataSchema>;
+
+/**
+ * A spell document's own name: the LAST element of its heading path (the
+ * pack lane stamps the document title as the deepest heading). It is the ONE
+ * spelling of "what is this spell called", shared by the spell list's rows and
+ * by the mob arc's library index, so the two can never disagree about the name
+ * a mob assigns.
+ */
+export function spellChunkName(chunk: RuleChunk): string {
+  return chunk.headingPath[chunk.headingPath.length - 1]?.trim() ?? '';
+}
+
+/**
+ * A validated spell-corpus entry (docs/17 row 184, docs/18 §2.1): the fields
+ * every non-UI consumer needs — the mob-spell index, the prompt vocabulary and
+ * the run engine's boundary. It is the SAME extraction
+ * `features/spells/spell-rows.buildSpellRows` performs, minus the page-only
+ * fields (origin label, display rank label) and minus the error rows: a `spell`
+ * chunk without a payload or without a name is SKIPPED here, and the page that
+ * must report it loudly reads `buildSpellRows` (its `data-error` rows), so a
+ * corrupt row is never silent on the surface that shows the corpus. A mob that
+ * assigns a corrupt row's name gets the loud unresolved-spell issue from the
+ * run boundary.
+ *
+ * IT LIVES IN `domain/` (moved down from `features/spells/spell-rows` by row
+ * 184's verification): `db/spellRepo` and `llm/runEngine` both consume it, and
+ * a `db`/`llm` module importing a FEATURE is the same layering inversion as
+ * importing the retrieval barrel (docs/18 §2.1). `features/spells/spell-rows`
+ * re-exports it so the feature keeps its public surface.
+ */
+export interface SpellCorpusEntry {
+  chunkId: Id;
+  name: string;
+  rank: number;
+  cantrip: boolean;
+  data: SpellData;
+}
+
+export function spellCorpusEntries(chunks: readonly RuleChunk[]): SpellCorpusEntry[] {
+  const entries: SpellCorpusEntry[] = [];
+  for (const chunk of chunks) {
+    if (chunk.chunkType !== 'spell') continue;
+    const data = chunk.spellData;
+    if (data === undefined || data === null) continue;
+    const name = spellChunkName(chunk);
+    if (name === '') continue;
+    entries.push({ chunkId: chunk.id, name, rank: data.rank, cantrip: data.cantrip, data });
+  }
+  return entries;
+}

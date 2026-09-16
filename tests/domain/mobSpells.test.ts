@@ -1,0 +1,273 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  mobCasterLevel,
+  mobSpellChipDetail,
+  mobSpellChips,
+  mobSpellIndex,
+  mobSpellIssues,
+  mobSpellVocabulary,
+  MOB_SPELL_VOCABULARY_LIMIT,
+  maxCastableRank,
+} from '@/domain/mobSpells';
+import { spellDataSchema, type SpellData } from '@/domain/spellData';
+import { PROSE_ONLY_MARKER } from '@/domain/spellHeightening';
+import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+
+/**
+ * The mob-spell resolver (docs/17 row 184): the ONE place an assigned spell
+ * name becomes a chip, and the ONE place the cast-rank request reaches the
+ * heightening rule.
+ *
+ * The Fireball/Ignition payloads are the REAL v14-dev documents mapped by the
+ * ingest lane's own field mapping, so the formulas asserted here are the
+ * source's numbers — the same fixtures `pf2e-rules-heightening.test.ts` pins.
+ */
+
+const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
+
+async function realSpell(file: string, packRelative: string): Promise<SpellData> {
+  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
+  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
+  expect(parsed.failures).toEqual([]);
+  const spell = parsed.sections?.[0]?.spell;
+  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
+  return spell;
+}
+
+const fireball = (): Promise<SpellData> =>
+  realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+const ignition = (): Promise<SpellData> =>
+  realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+
+function synthetic(over: Partial<SpellData> = {}): SpellData {
+  return spellDataSchema.parse({
+    system: 'pathfinder2e',
+    rank: 1,
+    cantrip: false,
+    traditions: ['arcane'],
+    traits: [],
+    rarity: 'common',
+    cast: { time: '', range: '', target: '', duration: '' },
+    heightening: null,
+    heighteningEntries: [],
+    heighteningUnparsed: [],
+    publication: null,
+    ...over,
+  });
+}
+
+describe('mob spell assignments resolve through the ONE rule', () => {
+  it('resolves a real library spell and carries it verbatim', async () => {
+    const spell = await fireball();
+    const index = mobSpellIndex([{ name: 'Fireball', spellData: spell }]);
+
+    const chips = mobSpellChips([{ name: 'fireball' }], 5, index);
+
+    expect(chips).toHaveLength(1);
+    const chip = chips[0];
+    if (chip === undefined) throw new Error('no chip');
+    // The comparable-name form resolved a different casing (docs/18 §2.1)…
+    expect(chip.resolved).toBe(true);
+    expect(chip.libraryName).toBe('Fireball');
+    // The spelling the author assigned is what the chip shows.
+    expect(chip.name).toBe('fireball');
+    expect(chip.issues).toEqual([]);
+    // No castRank supplied ⇒ the spell's own rank.
+    expect(chip.result?.appliedRank).toBe(3);
+    expect(chip.result?.values.damage.map((entry) => entry.formula)).toEqual(['6d6']);
+  });
+
+  it('a spell cast ABOVE its own rank reaches the chip as the heightened values', async () => {
+    const spell = await fireball();
+    const index = mobSpellIndex([{ name: 'Fireball', spellData: spell }]);
+
+    const chips = mobSpellChips([{ name: 'Fireball', castRank: 5 }], 9, index);
+
+    const chip = chips[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.appliedRank).toBe(5);
+    expect(chip.result?.appliedSteps).toBe(2);
+    expect(chip.result?.values.damage.map((entry) => entry.formula)).toEqual(['10d6']);
+    // The same bytes the chip's title and the PDF's line render.
+    expect(mobSpellChipDetail(chip)).toContain('cast at rank 5: 10d6 fire');
+    expect(mobSpellChipDetail(chip)).toContain('heightening: interval (values from interval)');
+  });
+
+  it('a CANTRIP is auto-heightened by the rule from the CASTER LEVEL — the caller picks no rank', async () => {
+    const spell = await ignition();
+    const index = mobSpellIndex([{ name: 'Ignition', spellData: spell }]);
+
+    // The assignment carries NOTHING but the name: if this module computed a
+    // cantrip rank itself, this pin could not see the level at all.
+    const level5 = mobSpellChips([{ name: 'Ignition' }], 5, index)[0];
+    if (level5 === undefined) throw new Error('no chip');
+    expect(level5.castRank).toBeNull();
+    expect(level5.result?.cantripAuto).toBe(true);
+    expect(level5.result?.appliedRank).toBe(3);
+    expect(level5.result?.values.damage.map((entry) => entry.formula)).toEqual(['4d4']);
+    expect(mobSpellChipDetail(level5)).toContain('cast at rank 3');
+    expect(mobSpellChipDetail(level5)).toContain('cantrip, auto-heightened from the caster');
+
+    // The DIFFERENTIAL: the same assignment at another level moves the rank,
+    // which no caller-side constant could do.
+    const level9 = mobSpellChips([{ name: 'Ignition' }], 9, index)[0];
+    if (level9 === undefined) throw new Error('no chip');
+    expect(level9.result?.appliedRank).toBe(5);
+    expect(level9.result?.values.damage.map((entry) => entry.formula)).toEqual(['6d4']);
+  });
+
+  it('a cantrip on a level-less mob is LOUD — never an arbitrary default rank', async () => {
+    const spell = await ignition();
+    const index = mobSpellIndex([{ name: 'Ignition', spellData: spell }]);
+
+    const chip = mobSpellChips([{ name: 'Ignition' }], null, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    // The NAME resolved, so the chip is not the unresolved state…
+    expect(chip.resolved).toBe(true);
+    // …but no number was invented: the rule refused and the chip says why.
+    expect(chip.result).toBeNull();
+    expect(chip.issues.join(' ')).toContain('casterLevel');
+    expect(mobSpellChipDetail(chip)).toContain('casterLevel');
+  });
+
+  it('an invented spell name stays an UNRESOLVED entry and is loud, never dropped', () => {
+    const index = mobSpellIndex([]);
+
+    const chips = mobSpellChips([{ name: 'Flameball', castRank: 3 }], 5, index);
+
+    expect(chips).toHaveLength(1);
+    const chip = chips[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.resolved).toBe(false);
+    expect(chip.result).toBeNull();
+    expect(chip.name).toBe('Flameball');
+    expect(mobSpellChipDetail(chip)).toContain('Flameball');
+    expect(mobSpellChipDetail(chip)).toContain('not in this campaign');
+    // The loud issue names BOTH halves (the spell and the mob).
+    expect(mobSpellIssues(chips, 'Grix the Alchemist')).toEqual([
+      'the mob «Grix the Alchemist» assigns a spell it cannot use: the spell «Flameball» is not in this campaign\'s imported spell library',
+    ]);
+  });
+
+  it('a prose-only heightening shows the verbatim note and the loud marker, and computes NO number', () => {
+    const spell = synthetic({
+      rank: 3,
+      damage: { '0': { formula: '1d6', type: 'fire', category: null, materials: [] } },
+      heightening: null,
+      heighteningEntries: [
+        { kind: 'fixed', rank: 5, text: 'The damage increases to 3d6.' },
+      ],
+    });
+    const index = mobSpellIndex([{ name: 'Prosey', spellData: spell }]);
+
+    const chip = mobSpellChips([{ name: 'Prosey', castRank: 5 }], 9, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.source).toBe('prose-only');
+    expect(chip.result?.valuesSource).toBe('base');
+    expect(chip.result?.values.damage.map((entry) => entry.formula)).toEqual(['1d6']);
+    const detail = mobSpellChipDetail(chip);
+    // The note is verbatim and the marker is loud.
+    expect(chip.result?.notes).toEqual(['The damage increases to 3d6.']);
+    expect(detail).toContain('The damage increases to 3d6.');
+    expect(detail).toContain(PROSE_ONLY_MARKER);
+    // The VALUES line is the base formula, not the prose's number.
+    expect(detail).toContain('cast at rank 5: 1d6 fire');
+  });
+
+  it('surfaces the rule warnings and unparsed lines instead of swallowing them', () => {
+    const spell = synthetic({
+      rank: 3,
+      damage: { '0': { formula: '6d6', type: 'fire', category: null, materials: [] } },
+      heightening: { type: 'interval', interval: 2, area: 0, damage: { '0': '2d6' } },
+      heighteningEntries: [{ kind: 'increment', increment: 2, text: 'The damage increases by 2d6.' }],
+      heighteningUnparsed: ['Heightened (special) something the parser could not classify.'],
+    });
+    const index = mobSpellIndex([{ name: 'Slow Burn', spellData: spell }]);
+
+    // Rank 4 is one rank above the base for a (+2) spell: no whole step applies
+    // and the leftover is named, never hidden.
+    const chip = mobSpellChips([{ name: 'Slow Burn', castRank: 4 }], 9, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.stepRemainder).toBe(1);
+    const detail = mobSpellChipDetail(chip);
+    expect(detail).toContain('left over');
+    expect(detail).toContain('unparsed-heightening: Heightened (special)');
+  });
+
+  it('a legacy row with no assignments resolves to no chips at all', () => {
+    const index = mobSpellIndex([]);
+    expect(mobSpellChips(undefined, 5, index)).toEqual([]);
+    expect(mobSpellChips(null, 5, index)).toEqual([]);
+    expect(mobSpellChips([], 5, index)).toEqual([]);
+  });
+});
+
+describe('mob caster level is the stat block level', () => {
+  it.each([
+    ['5', 5],
+    ['  12 ', 12],
+    ['-1', -1],
+    ['0', 0],
+    ['1/2', null],
+    ['—', null],
+    ['', null],
+    ['CR 5', null],
+  ])('reads %j as %j', (level, expected) => {
+    expect(mobCasterLevel(level)).toBe(expected);
+  });
+
+  it('uses the source expression for the maximum castable rank', () => {
+    expect(maxCastableRank(1)).toBe(1);
+    expect(maxCastableRank(5)).toBe(3);
+    expect(maxCastableRank(20)).toBe(10);
+  });
+});
+
+describe('the prompt vocabulary offers the REAL library, bounded and honest', () => {
+  const entries = [
+    { name: 'Fireball', rank: 3, cantrip: false },
+    { name: 'Ignition', rank: 0, cantrip: true },
+    { name: 'Wish', rank: 10, cantrip: false },
+    { name: 'Magic Missile', rank: 1, cantrip: false },
+  ];
+
+  it('keeps cantrips and the ranks a caster of that level can reach', () => {
+    const vocabulary = mobSpellVocabulary(entries, 5);
+    expect(vocabulary.lines).toEqual([
+      'Ignition — Cantrip',
+      'Magic Missile — Rank 1',
+      'Fireball — Rank 3',
+    ]);
+    expect(vocabulary.total).toBe(3);
+  });
+
+  it('offers everything when the caster level is unknown (no guessed level)', () => {
+    expect(mobSpellVocabulary(entries, null).lines).toHaveLength(4);
+  });
+
+  it('windows a huge corpus deterministically', () => {
+    const many = Array.from({ length: MOB_SPELL_VOCABULARY_LIMIT + 25 }, (_, position) => ({
+      name: `Spell ${String(position).padStart(4, '0')}`,
+      rank: 1,
+      cantrip: false,
+    }));
+    const vocabulary = mobSpellVocabulary(many, 20);
+    expect(vocabulary.lines).toHaveLength(MOB_SPELL_VOCABULARY_LIMIT);
+    expect(vocabulary.total).toBe(MOB_SPELL_VOCABULARY_LIMIT + 25);
+  });
+});
+
+describe('the ONE comparable-name form decides what a name means', () => {
+  it('folds NFC and case through the shared alias comparison, never a hand-rolled one', () => {
+    const spell = synthetic();
+    const index = mobSpellIndex([{ name: 'Müller', spellData: spell }]);
+    // A DECOMPOSED spelling (u + U+0308) is the same name — the exact case the
+    // shared comparison was built for (docs/17 row 162).
+    const chips = mobSpellChips([{ name: 'MU\u0308LLER' }], 3, index);
+    expect(chips[0]?.resolved).toBe(true);
+  });
+});

@@ -26,7 +26,13 @@ import {
   entranceMarkerConfig,
   gridDimensionsFor,
   isCastCreatureNpc,
+  mobCasterLevel,
+  mobSpellChips,
+  mobSpellIndex,
+  mobSpellIssues,
+  mobSpellVocabulary,
   moduleDocumentText,
+  spellCorpusEntries,
   npcCreatureRef,
   spawnFirstPath,
   // The ONE alias merge rule (docs/17 row 121): the three in-place writes below
@@ -45,6 +51,9 @@ import {
   resolveEncounterBudgetPolicy,
   schematicCellPx,
   type DungeonMapPath,
+  type GameSystem,
+  type MobSpellIndex,
+  type MobSpellVocabulary,
 } from '@/domain';
 import {
   attachImagesToArtifact,
@@ -164,6 +173,8 @@ import {
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   SCHEMA_REPAIR_LEAD_IN,
 } from '@/llm/promptScaffolding';
+import { formatMobSpellRepair, formatMobSpellSection } from '@/llm/mobSpellPrompt';
+import { loadSpellChunksFor } from '@/db/spellRepo';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
@@ -1183,6 +1194,55 @@ function encounterSourceIssues(
 }
 
 /**
+ * The library spells available to one run (docs/17 row 184): the corpus read
+ * ONCE per LLM step, projected into the ONE index the resolver uses and the ONE
+ * vocabulary the prompt offers. There is no second spell read and no second
+ * name comparison.
+ */
+interface RunSpellLibrary {
+  index: MobSpellIndex;
+  vocabulary: MobSpellVocabulary;
+}
+
+/**
+ * The mob-spell issues of a MODEL-AUTHORED stat block (the NPC stat-block step):
+ * every assigned name checked against the library, the cantrip rule fed the
+ * block's own printed level. The ONE resolver (`domain/mobSpells.mobSpellChips`)
+ * answers both the issues here and the chips the card renders — this function
+ * only names the halves.
+ */
+function statblockSpellIssues(
+  statBlock: StatBlock,
+  mobName: string,
+  index: MobSpellIndex,
+): string[] {
+  const chips = mobSpellChips(statBlock.spells, mobCasterLevel(statBlock.level), index);
+  return mobSpellIssues(chips, mobName);
+}
+
+/**
+ * The mob-spell issues of an encounter reply's INLINE monster blocks — the same
+ * check as `statblockSpellIssues`, per monster, because each inline block is a
+ * mob of its own (it is materialized into an NPC artifact at finalize) and its
+ * OWN printed level is its caster level.
+ */
+function encounterSpellIssues(
+  monsters: readonly { name: string; statBlock?: StatBlock | undefined }[],
+  index: MobSpellIndex,
+): string[] {
+  return monsters.flatMap((monster) => {
+    const statBlock = monster.statBlock;
+    if (statBlock === undefined) return [];
+    const spells = statBlock.spells;
+    if (spells === null || spells === undefined || spells.length === 0) return [];
+    return mobSpellIssues(
+      mobSpellChips(spells, mobCasterLevel(statBlock.level), index),
+      monster.name,
+    );
+  });
+}
+
+/**
  * Merges a refill draft's data over the target artifact's existing data,
  * preserving what the draft pipeline cannot re-produce: a PC's human-owned
  * fields (playerName/currentHp/initiativeOverride are NEVER drafted —
@@ -1746,6 +1806,11 @@ export class RunEngine {
   /** Monster-citation repair state per run (12-BESTIARY-PACKS §7): one repair
    * attempt for unknown sourceName/out-of-range sourceChunkIndex citations. */
   private sourceRepaired = new Set<Id>();
+  /** Mob-spell repair state per run (docs/17 row 184): one attempt to replace
+   * names the imported library does not hold. A second failure does NOT reject
+   * the block — the entry is stored and the unresolved chip plus a loud notice
+   * are the owner-visible record (the no-invention policy). */
+  private spellRepaired = new Set<Id>();
   private encounterSchematics = new Map<Id, { dataUrl: string; width: number; height: number }>();
   private encounterLayoutVariants = new Map<Id, number>();
 
@@ -1799,6 +1864,7 @@ export class RunEngine {
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
     this.sourceRepaired.delete(run.id);
+    this.spellRepaired.delete(run.id);
     this.cancelRequested.delete(run.id);
     if (input.persona.mode === 'encounter') {
       this.encounterLayoutVariants.set(run.id, 0);
@@ -2144,6 +2210,7 @@ export class RunEngine {
     this.draftRetried.delete(runId);
     this.statblockRetried.delete(runId);
     this.sourceRepaired.delete(runId);
+    this.spellRepaired.delete(runId);
     this.encounterSchematics.delete(runId);
     this.encounterLayoutVariants.delete(runId);
     useProgressStore.getState().finish(encounterProgressId(runId));
@@ -3015,6 +3082,12 @@ export class RunEngine {
     // sources the automatic module generation grounds its briefs in. Every
     // inapplicable state names itself (moduleGroundingSection).
     const moduleSection = moduleGroundingSection(context.moduleGrounding);
+    // The ONE spell library this draft offers and validates against (docs/17
+    // row 184). Encounter drafts author INLINE monster stat blocks, so they are
+    // the other AI-authored mob path; every other kind's draft authors no block
+    // and pays for no spell read (its prompt stays byte-identical).
+    const spellLibrary =
+      kind === 'encounter' ? await this.spellLibraryFor(input.campaign.system, null) : null;
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
@@ -3034,6 +3107,11 @@ export class RunEngine {
       // §13: the item pool renders after the roster — null (nothing rendered)
       // without item books, so prompts stay byte-identical to the pre-arc shape.
       formatItemPoolSection(context.itemLines, context.itemTruncated),
+      // The mob-spells vocabulary (docs/17 row 184): encounter drafts author
+      // inline monster stat blocks, so a caster among them may be given spells.
+      // Null without an imported spell corpus, so those prompts keep their
+      // pre-arc bytes.
+      spellLibrary === null ? null : formatMobSpellSection(spellLibrary.vocabulary),
       // fix-02 (decision 1): with neither excerpts nor a roster there is
       // nothing to cite — the draft must inline a complete block per monster,
       // which finalize then materializes into a real NPC artifact.
@@ -3203,6 +3281,43 @@ export class RunEngine {
     }
     this.sourceRepaired.delete(runId);
 
+    // THE NO-INVENTION BOUNDARY for encounter-authored mobs (docs/17 row 184):
+    // every inline monster block's assigned spells are checked against the
+    // campaign's imported library, exactly as the NPC stat-block step checks
+    // its own. One repair turn names the offenders; a name that survives is NOT
+    // dropped and NOT rejected — the entry rides the block into the
+    // materialized NPC, where its chip renders UNRESOLVED, and the step carries
+    // a loud notice naming the spell and the mob.
+    let spellIssueList: string[] = [];
+    if (kind === 'encounter' && spellLibrary !== null) {
+      const draftMonsters = (parsed as { monsters?: EncounterDraft['monsters'] }).monsters ?? [];
+      spellIssueList = encounterSpellIssues(draftMonsters, spellLibrary.index);
+      if (spellIssueList.length > 0 && !this.spellRepaired.has(runId)) {
+        this.spellRepaired.add(runId);
+        debugLog('run', 'encounter reply assigned unresolvable spells — retrying once', {
+          issue: spellIssueList.join('; '),
+        });
+        return this.runDraft(
+          runId,
+          stepIndex,
+          steps,
+          input,
+          signal,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${formatMobSpellRepair(spellIssueList)}\nReply with corrected JSON only, assigning ONLY names copied from the spell list in this prompt.`,
+        );
+      }
+      if (spellIssueList.length > 0) {
+        debugLog('run', 'encounter stored with unresolvable mob spells', {
+          issue: spellIssueList.join('; '),
+        });
+      }
+    }
+    this.spellRepaired.delete(runId);
+
+    const spellNotice =
+      spellIssueList.length === 0
+        ? null
+        : `Unresolved mob spells — ${spellIssueList.join(' ')}`;
     const step = this.finishStep(
       steps[stepIndex],
       withNotice(
@@ -3212,15 +3327,35 @@ export class RunEngine {
         // the escalation chain's own answer, so a fallback-served draft
         // records the FALLBACK model, never the configured one (docs/18
         // §2.2 recording seam, §4 gotcha).
-        { parsed, writerModel: modelUsed },
+        spellIssueList.length === 0 ? { parsed, writerModel: modelUsed } : { parsed, writerModel: modelUsed, spellIssues: spellIssueList },
         fallback,
-        [contractRepairNotice(firstTryModel, repairTarget), moduleGroundingNotice(context.moduleGrounding)]
+        [contractRepairNotice(firstTryModel, repairTarget), moduleGroundingNotice(context.moduleGrounding), spellNotice]
           .filter((note): note is string => note !== null)
           .join(' ') || null,
       ),
     );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
+  }
+
+  /**
+   * The run's ONE spell library (docs/17 row 184): the campaign system's
+   * imported spells through the ONE corpus read (`db/spellRepo`), indexed by
+   * the ONE comparable-name form and windowed for the prompt by the caster's
+   * level. Read per LLM step, deliberately NOT cached across steps: a rules
+   * pack re-imported mid-run must reach the very next stat block, and a stale
+   * in-memory index would make an invented-spell verdict depend on session
+   * age.
+   */
+  private async spellLibraryFor(
+    system: GameSystem,
+    casterLevel: number | null,
+  ): Promise<RunSpellLibrary> {
+    const entries = spellCorpusEntries(await loadSpellChunksFor(system));
+    return {
+      index: mobSpellIndex(entries.map((entry) => ({ name: entry.name, spellData: entry.data }))),
+      vocabulary: mobSpellVocabulary(entries, casterLevel),
+    };
   }
 
   private async runStatblock(
@@ -3290,12 +3425,23 @@ export class RunEngine {
     // rendered here: statblock filling grounds in rules, not campaign lore
     // (15-GRAPH-RETRIEVAL §3.3).
     const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
+    // The ONE spell library this step offers and validates against (docs/17 row
+    // 184). The brief's own level hint windows the vocabulary — the level the
+    // block is being written for — and the BLOCK's own printed level is what
+    // the cantrip rule is fed later, so nothing is assumed about the reply.
+    const spellLibrary = await this.spellLibraryFor(
+      input.campaign.system,
+      mobCasterLevel(levelHint),
+    );
     const instruction = [
       `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelHint === '' ? '' : ` at level ${levelHint}`}, grounded in the rule excerpts.`,
       input.brief,
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
+      // Null when the campaign's system has no imported spells at all, so a
+      // dnd5e prompt keeps its pre-arc bytes (the validation below still runs).
+      formatMobSpellSection(spellLibrary.vocabulary),
       `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       additionalInstructionSection(extraInstruction),
     ]
@@ -3391,10 +3537,57 @@ export class RunEngine {
       return { step: rejected, runStatus: 'needs_review' };
     }
 
+    // THE NO-INVENTION BOUNDARY (docs/17 row 184). Every assigned spell name is
+    // checked against the campaign's imported library — the ONE resolver, fed
+    // the block's own printed level for the cantrip rule. One repair turn names
+    // the offenders (the prompt lists every legal name); a name that SURVIVES
+    // the repair is NOT dropped and NOT rejected: the entry stays on the block
+    // so its chip renders the UNRESOLVED state with the name visible, and the
+    // step carries a loud notice naming the spell AND the mob (the policy the
+    // owner set — a named issue and an unresolved chip, never a silent drop).
+    const spellIssueList = statblockSpellIssues(
+      statBlock,
+      asString(draft?.name) || 'the NPC',
+      spellLibrary.index,
+    );
+    if (spellIssueList.length > 0 && !this.statblockRetried.has(runId)) {
+      this.statblockRetried.add(runId);
+      debugLog('run', 'statblock reply assigned unresolvable spells — retrying once', {
+        issue: spellIssueList.join('; '),
+      });
+      return this.runStatblock(
+        runId,
+        stepIndex,
+        steps,
+        input,
+        signal,
+        `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${formatMobSpellRepair(spellIssueList)}\nReply with corrected JSON only, assigning ONLY names copied from the spell list in this prompt.`,
+      );
+    }
     this.statblockRetried.delete(runId);
+    if (spellIssueList.length > 0) {
+      // LOUD and durable: the step output keeps the raw issue list (the run row
+      // is the record) and the amber `notice` shows it in the run panel.
+      debugLog('run', 'statblock stored with unresolvable mob spells', {
+        issue: spellIssueList.join('; '),
+      });
+    }
+    const spellNotice =
+      spellIssueList.length === 0
+        ? null
+        : `Unresolved mob spells — ${spellIssueList.join(' ')}`;
+    const repairNotes = [contractRepairNotice(firstTryModel, repairTarget), spellNotice]
+      .filter((note): note is string => note !== null)
+      .join(' ');
     const step = this.finishStep(
       steps[stepIndex],
-      withNotice({ statBlock }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+      withNotice(
+        spellIssueList.length === 0
+          ? { statBlock }
+          : { statBlock, spellIssues: spellIssueList },
+        fallback,
+        repairNotes === '' ? null : repairNotes,
+      ),
     );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };

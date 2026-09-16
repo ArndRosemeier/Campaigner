@@ -176,6 +176,32 @@ export const ENCOUNTER_SOURCE_REPAIR_LEAD_IN =
 export const PART_TOO_SHORT_REPAIR_SENTENCE = 'Your previous reply was too short. Write the full part now.';
 
 /* -------------------------------------------------------------------------
+ * The mob-spells section (docs/17 row 184, the mob half of the spells arc)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The stat-block/encounter prompt's spell vocabulary header. Rendered ONLY when
+ * the campaign's system actually has imported spells, so a dnd5e (or
+ * spell-less) prompt keeps its pre-arc bytes exactly.
+ *
+ * It states the contract the boundary enforces: a name must be copied from the
+ * list, the cast rank is optional, and a cantrip's rank is derived rather than
+ * chosen — the heightening rule's own shape (`domain/spellHeightening`), never
+ * a second instruction.
+ */
+export const MOB_SPELL_SECTION_HEADER =
+  'Spells (optional): to give this creature spells, add a "spells" array to its stat block. Each entry is { "name": <copied EXACTLY from the list below>, "castRank": <the rank it is cast at, or null for the spell\'s own rank; a cantrip ignores it — a cantrip\'s rank is derived from the creature\'s level> }. Assign ONLY names from this list of the campaign\'s imported spells: the app checks every name against the library and reports any spell it cannot find.';
+
+/** The honest truncation note (a slot-free literal pair around the counts). */
+export const MOB_SPELL_TRUNCATION_PREFIX = '(the list is TRUNCATED — showing ';
+export const MOB_SPELL_TRUNCATION_SUFFIX =
+  '; assign only from the names listed above)';
+
+/** The spell repair lead-in: same form as the schema/source repairs. */
+export const MOB_SPELL_REPAIR_LEAD_IN =
+  'Your previous reply assigned spells that are not in this campaign\'s imported spell library:';
+
+/* -------------------------------------------------------------------------
  * The detector
  * ---------------------------------------------------------------------- */
 
@@ -258,6 +284,8 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   literalMarker('the schema-repair lead-in', SCHEMA_REPAIR_LEAD_IN),
   literalMarker('the encounter-source repair lead-in', ENCOUNTER_SOURCE_REPAIR_LEAD_IN),
   literalMarker('the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE),
+  literalMarker('the mob-spells section header', MOB_SPELL_SECTION_HEADER),
+  literalMarker('the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN),
 ];
 
 /** One echo of our own scaffolding found in generated text. */

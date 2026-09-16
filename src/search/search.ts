@@ -1,7 +1,7 @@
 import type { ChunkType, Id, RuleChunk } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
 import { countChunksByBooks, listChunksByBooks } from '@/db/chunkRepo';
-import { listRulebooks } from '@/db/rulebookRepo';
+import { readyBookIds } from '@/db/rulebookRepo';
 import { searchKeyword } from '@/search/keywordIndex';
 import {
   cosineSimilarity,
@@ -194,18 +194,11 @@ function promoteHeadingMatches(hits: SearchHit[], query: string): SearchHit[] {
 
 /**
  * Default book resolution for queries without explicit `bookIds`: every
- * 'ready' book, optionally restricted to one game system (the campaign-scoped
+ * `'ready'` book, optionally restricted to one game system (the campaign-scoped
  * citable pool — pack books and PDF books alike carry `system`).
  *
- * EXPORTED since docs/17 row 182: the spell list needs the same "which ready
- * books of the campaign's system" answer the retrieval pool uses, and a
- * hand-rolled `status === 'ready' && system === …` filter on the page would be
- * a second spelling of one rule. The Rules page's cross-system default is
- * unchanged (`system` omitted).
+ * DEFINED in `db/rulebookRepo` since docs/17 row 184 (it filters the rows it
+ * sits beside) and RE-EXPORTED here so `@/search`'s public API — and every
+ * caller's import — is unchanged. Exactly ONE spelling still exists.
  */
-export async function readyBookIds(system?: GameSystem): Promise<Id[]> {
-  const books = await listRulebooks();
-  return books
-    .filter((book) => book.status === 'ready' && (system === undefined || book.system === system))
-    .map((book) => book.id);
-}
+export { readyBookIds };

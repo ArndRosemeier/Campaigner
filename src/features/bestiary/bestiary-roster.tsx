@@ -7,7 +7,7 @@ import { MapPinnedIcon, SkullIcon, TriangleAlertIcon } from 'lucide-react';
 import type { Id, RuleChunk, StatBlock } from '@/domain';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import { listChunksByBooks } from '@/db/chunkRepo';
-import { listRulebooks } from '@/db/rulebookRepo';
+import { listReadyRulebooks } from '@/db/rulebookRepo';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import {
   buildBestiaryRows,
@@ -48,7 +48,9 @@ export function BestiaryRoster(): JSX.Element {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const loaded = useLiveQuery(async () => {
-    const books = (await listRulebooks()).filter((book) => book.status === 'ready');
+    // The ONE ready-book rule (`db/rulebookRepo.listReadyRulebooks`, docs/17
+    // row 184) — the same answer `readyBookIds` maps to ids.
+    const books = await listReadyRulebooks();
     const chunks = await listChunksByBooks(books.map((book) => book.id));
     return { books, chunks };
   }, []);

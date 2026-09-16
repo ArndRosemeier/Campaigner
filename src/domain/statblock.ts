@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { gameSystemSchema, type GameSystem } from '@/domain/gameSystem';
+import { mobSpellAssignmentSchema } from '@/domain/mobSpells';
 
 /** A named block of rules text (trait, action, reaction, legendary action). */
 export const namedTextSchema = z.object({
@@ -62,6 +63,20 @@ export const statBlockSchema = z.object({
   reactions: z.array(namedTextSchema).default([]),
   legendary: z.array(namedTextSchema).default([]),
   extras: z.record(z.string(), z.string()).default({}),
+  /**
+   * The spells this mob casts (docs/17 row 184, the mob half of the spells
+   * arc): a NAME plus the optional rank it is cast at. `.nullish()` — NOT a
+   * default — is the `itemData`/`spellData` precedent: a stat block written
+   * before this arc genuinely lacks the key, and "no field" must stay
+   * distinguishable from "authored, no spells" so a legacy row renders exactly
+   * as it did (no chip section, no error). No migration, no index.
+   *
+   * The values a chip shows are NOT stored here: they come from
+   * `domain/mobSpells.mobSpellChips` over the library's own `spellData` at
+   * render/validation time, so a re-imported spell row cannot disagree with
+   * the mob that names it.
+   */
+  spells: z.array(mobSpellAssignmentSchema).nullish(),
 });
 
 export type StatBlock = z.infer<typeof statBlockSchema>;
