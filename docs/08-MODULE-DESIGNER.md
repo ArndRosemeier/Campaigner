@@ -2060,7 +2060,9 @@ canvas-destination entry — the **Canvas** link that stood beside it was
 RETIRED by owner request (ledger row 138: the two controls landed on this same
 page and differed only in the sidebar preset, which a plain canvas arrival
 opens by DEFAULT anyway), so the reader nav reads **Board + Chat +
-Contents**; the modules list row's own Chat
+Contents**, beside the **Module PDF** action (docs/17 row 185 — the same
+`ModulePdfButton` the canvas header and the tree mount, an action with no
+`href` so it is not a nav destination); the modules list row's own Chat
 entry was DROPPED by owner decision 2026-09-10 (ledger row 91, AMENDS 57) —
 it landed on this same canvas, so the row keeps one icon per destination and
 the chat stays one click away from the row's Canvas icon through the

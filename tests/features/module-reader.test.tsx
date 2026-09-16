@@ -36,7 +36,7 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * (create artifact with the `module:<title>` tag → chip resolves).
  */
 
-vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
 
 // The popover's "Generate" runs a real chain → real runEngine; only the LLM
 // entry point is mocked (embeddings stays inert: no rulebooks are seeded).
@@ -1201,6 +1201,31 @@ describe('ModuleReaderPage', () => {
     const article = document.querySelector('[data-testid="module-reader"] article');
     if (article?.parentElement == null) throw new Error('reader document pane missing');
     expect(article.parentElement.className.split(/\s+/)).toContain('flex-1');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('the reader header carries the ONE module-PDF control, offering exactly the two documents (docs/17 row 185)', async () => {
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+
+    // The SAME control the canvas header and the campaign tree mount
+    // (`ModulePdfButton`) — a real `<button>` with no `href`, so it can never
+    // be counted as a canvas destination by the exactly-ONE header pin in
+    // `canvas-chat-thread.test.tsx`.
+    const trigger = screen.getByTestId('module-pdf-menu');
+    expect(trigger).toHaveTextContent('Module PDF');
+    expect(trigger).toBeEnabled();
+
+    const user = userEvent.setup();
+    await user.click(trigger);
+
+    // The same TWO audiences as every other surface: the reader reaches the
+    // shared control and the shared documents, not a lookalike menu.
+    expect(await screen.findByTestId('module-pdf-gm')).toHaveTextContent('GM document');
+    expect(screen.getByTestId('module-pdf-player')).toHaveTextContent('Player document');
+    // EXACTLY two documents — a third option or a forked menu reds here.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
     await flushAsyncUpdates();
   }, 20_000);
 });

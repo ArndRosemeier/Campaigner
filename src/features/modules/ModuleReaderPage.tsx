@@ -45,6 +45,7 @@ import { EntityPanel } from '@/features/modules/entity-panel';
 import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
+import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
@@ -431,13 +432,24 @@ export function ModuleReaderPage(): JSX.Element {
                     campaignId={campaignId}
                   />
                 )}
+              {/* Module PDF (docs/17 row 185): the module IS the document, so
+                  the reader header carries the SAME export control the canvas
+                  header and the campaign tree's module group mount — ONE
+                  component, now THREE surfaces, never a second export control
+                  or a second audience menu. It gets the reader's own artifact
+                  pool (`readerArtifacts`, campaign + library, the same pool
+                  the canvas builds as `pool`). The module-action cluster's
+                  right-align anchor moves to its new FIRST control so the
+                  cluster stays right-aligned exactly as it was. */}
+              <span className="ml-auto flex items-center">
+                <ModulePdfButton module={module} artifacts={readerArtifacts} />
+              </span>
               {/* Play is a mode change, not a scroll target: the battle
                   entry stays in the header so collapsing the contents
                   sidebar never hides it. */}
               <Button
                 variant="outline"
                 size="xs"
-                className="ml-auto"
                 data-testid="battle-table-header-link"
                 render={<Link to={battlePath(campaignId, moduleId)} />}
                 nativeButton={false}

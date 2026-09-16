@@ -572,8 +572,9 @@ PDF. They need to be included at the right places."*
 ### The export surface
 
 `ModulePdfButton` (`src/features/modules/module-pdf-button.tsx`), mounted in the
-canvas header and in the campaign tree's module-group header — ONE component for
-both entry points, offering "GM document" and "Player document". Next to it in
+canvas header, in the campaign tree's module-group header and in the module
+reader header (docs/17 row 185) — ONE component for all THREE entry points,
+offering "GM document" and "Player document". Next to it in
 the canvas header sits `ModulePlanButton` (docs/17 row 109): the same document's
 STRUCTURE, inspectable and regenerable, so the decision the renderer executes is
 never a black box. The
