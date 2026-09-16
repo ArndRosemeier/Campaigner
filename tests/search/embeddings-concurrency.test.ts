@@ -2,11 +2,11 @@ import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { saveSettings } from '@/db/settingsRepo';
+import { saveSettings, updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import { createRulebook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 import { EMBED_CONCURRENCY, ensureEmbeddings } from '@/search/embeddings';
 import { invalidateKeywordIndex } from '@/search/keywordIndex';
 import type { RuleChunk } from '@/domain';
@@ -175,5 +175,33 @@ describe('ensureEmbeddings request pool', () => {
       [16, 18],
       [18, 18],
     ]);
+  });
+
+  it('leaves the chat recents UNCHANGED: the embedding model is a different tier (docs/17 rows 198/203)', async () => {
+    await updateSettings({ recentChatModels: ['older/model'] });
+    const chunks = await seedChunks(2);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? '{}') as { input?: string[] };
+        const inputs = body.input ?? [];
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: inputs.map((_text, index) => ({ index, embedding: [0, 0, 0, 1] })),
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+
+    await ensureEmbeddings(chunks);
+
+    // The REAL embedding call went out on `settings.embeddingModel`, which is
+    // NOT the global first-try CHAT model, so the recents list must be
+    // byte-unchanged — compared whole, after the fire-and-forget recorder had
+    // its chance to land.
+    expect(await recentsAfterSettlingWrites()).toEqual(['older/model']);
   });
 });

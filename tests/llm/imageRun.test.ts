@@ -7,11 +7,11 @@ import { createArtifact, getAnyArtifact, getArtifact, publishToLibrary } from '@
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage, listImagesByIds } from '@/db/imageRepo';
 import { getRun } from '@/db/runRepo';
-import { saveSettings } from '@/db/settingsRepo';
+import { saveSettings, updateSettings } from '@/db/settingsRepo';
 import { createPersona, defaultSettings, type Id, type Persona } from '@/domain';
 import { IMAGE_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
 import { runEngine } from '@/llm/runEngine';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 
 /**
  * Illustrator persona (07-MILESTONE-3 M3-A): image-mode pipeline — prompt
@@ -127,6 +127,47 @@ describe('illustrator run (image persona)', () => {
     await expect(runEngine.startRun(input(campaignId, persona, undefined))).rejects.toThrow(
       /target artifact/,
     );
+  });
+
+  it('an image run leaves the recents UNCHANGED: the image tier is not the global chat model (docs/17 rows 198/203)', async () => {
+    const { campaignId, persona, targetId } = await seed();
+    // The image persona answers on `settings.imageModel`, a NON-GLOBAL tier, so
+    // neither it nor the global chat model may enter `recentChatModels` — the
+    // list means "the global first-try chat model was in play".
+    await updateSettings({ defaultChatModel: 'global/chat', recentChatModels: ['older/model'] });
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('one'), fakeImageBytes('two')],
+      costUsd: 0.021,
+      cappedToOne: false,
+      modelUsed: 'test-image-model',
+      fallback: null,
+      filteredCount: 0,
+    });
+
+    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    await runEngine.editStep(
+      runId,
+      0,
+      { parsed: VALID_PROMPT_DRAFT },
+      input(campaignId, persona, targetId),
+    );
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.status).toBe('awaiting_user');
+    });
+    // The image call really happened on the image model…
+    expect(generateImagesMock).toHaveBeenCalledWith(
+      expect.any(String),
+      2,
+      expect.objectContaining({ model: 'google/gemini-2.5-flash-image' }),
+    );
+    // …and the recents list is UNCHANGED (whole array, after the
+    // fire-and-forget recorder had its chance to land).
+    expect(await recentsAfterSettlingWrites()).toEqual(['older/model']);
   });
 
   it('manual flow: pauses at prompt-draft, generates 2 candidates on continue, pauses at pick', async () => {

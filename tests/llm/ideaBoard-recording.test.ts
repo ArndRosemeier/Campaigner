@@ -2,11 +2,11 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getSettings, updateSettings } from '@/db/settingsRepo';
+import { updateSettings } from '@/db/settingsRepo';
 import { newIdeaBoard, type IdeaBoard } from '@/domain';
 import { refineIdeaBoard } from '@/llm/ideaBoard';
 import { chat } from '@/llm/openrouter';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 
 /**
  * The Idea Board's recents rule (docs/17 row 198): the board is one of the
@@ -46,10 +46,10 @@ describe('the Idea Board records the GLOBAL chat model only when it answers with
 
     await refineIdeaBoard(board(), 'tighten this', new AbortController().signal);
 
-    expect((await getSettings()).recentChatModels).toEqual(['global/board', 'older/model']);
+    expect(await recentsAfterSettlingWrites()).toEqual(['global/board', 'older/model']);
   });
 
-  it('leaves the recents untouched when the per-board model answers', async () => {
+  it('leaves the recents UNCHANGED when the per-board model answers', async () => {
     await updateSettings({ defaultChatModel: 'global/board', recentChatModels: ['older/model'] });
     reply();
 
@@ -60,6 +60,9 @@ describe('the Idea Board records the GLOBAL chat model only when it answers with
     );
 
     expect(chatMock.mock.calls[0]?.[1]?.model).toBe('board/own-model');
-    expect((await getSettings()).recentChatModels).toEqual(['older/model']);
+    // The per-board model is a NON-GLOBAL tier (docs/17 rows 198/203): the
+    // WHOLE list must be unchanged. Read through the drain — the recording seam
+    // is fire-and-forget, so a bare read cannot prove no write was in flight.
+    expect(await recentsAfterSettlingWrites()).toEqual(['older/model']);
   });
 });

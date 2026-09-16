@@ -38,7 +38,7 @@ import {
   type Id,
 } from '@/domain';
 import { saveModule, patchModule } from '@/db/moduleRepo';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 
 /**
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): the XML
@@ -758,19 +758,22 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(chatMock.mock.calls[1]?.[1]?.model).toBe('custom/canvas-model');
   });
 
-  it('records the GLOBAL default only when no session model is selected (docs/17 row 198)', async () => {
+  it('records the GLOBAL default only when no session model is selected (docs/17 rows 198/203)', async () => {
     const repo = await import('@/db/settingsRepo');
-    await repo.updateSettings({ defaultChatModel: 'global/chat', recentChatModels: [] });
+    await repo.updateSettings({ defaultChatModel: 'global/chat', recentChatModels: ['older/model'] });
     chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
 
     await sendCanvasChatMessage(baseInput());
-    expect((await repo.getSettings()).recentChatModels).toEqual(['global/chat']);
+    // Drained: the recording seam is fire-and-forget, so its write is only
+    // proven landed by a write queued behind it.
+    expect(await recentsAfterSettlingWrites()).toEqual(['global/chat', 'older/model']);
 
     // A SESSION selection (the sidebar's useCanvasChatStore.setModelSelection,
-    // docs/17 row 199) is a different tier: the global recents stay untouched.
-    await repo.updateSettings({ recentChatModels: [] });
+    // docs/17 row 199) is a different tier: the WHOLE recents list must be
+    // unchanged — not merely free of the global id.
+    const settled = await recentsAfterSettlingWrites();
     await sendCanvasChatMessage(baseInput({ model: 'custom/canvas-model' }));
-    expect((await repo.getSettings()).recentChatModels).toEqual([]);
+    expect(await recentsAfterSettlingWrites()).toEqual(settled);
   });
 
   it('a generating module refuses with ModuleBusyError (chat not called)', async () => {

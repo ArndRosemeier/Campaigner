@@ -20,7 +20,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { sha256Hex } from '@/lib/hash';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { act, waitFor } from '@testing-library/react';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 
 import type { Id } from '@/domain';
 
@@ -217,9 +217,12 @@ describe('runEngine', () => {
     expect(chatMock).toHaveBeenCalledTimes(2);
   }, 20000);
 
-  it('escalates the contract-repair attempt to the fallback model and records it', async () => {
+  it('escalates the contract-repair attempt to the fallback model — and the recents keep the GLOBAL model, never the fallback', async () => {
     const { campaignId, persona } = await seed();
-    await updateSettings({ fallbackChatModel: 'potent/fallback' });
+    await updateSettings({
+      fallbackChatModel: 'potent/fallback',
+      recentChatModels: ['older/model'],
+    });
     const primary = 'anthropic/claude-sonnet-4.5'; // the seeded settings' default chat model
     chatMock
       .mockResolvedValueOnce({ text: 'this is not json at all', modelUsed: primary, fallback: null })
@@ -240,6 +243,13 @@ describe('runEngine', () => {
     expect((draft?.output as { notice?: string }).notice).toBe(
       `The reply contract failed on “${primary}” — the repair attempt ran on “potent/fallback”.`,
     );
+
+    // The escalation tier is a NON-GLOBAL tier (docs/17 rows 198/203): the ONE
+    // funnel record is the GLOBAL first-try model, and the fallback that
+    // actually served the repair never enters the global recents. The WHOLE
+    // list is asserted, after its fire-and-forget recorder had its chance to
+    // land.
+    expect(await recentsAfterSettlingWrites()).toEqual([primary, 'older/model']);
   }, 20000);
 
   it('marks the step needs_review after a second JSON failure (review autonomy)', async () => {
@@ -1264,8 +1274,11 @@ describe('rulebookSourceFor', () => {
 /**
  * Recently-used chat models (docs/17 row 193): the engine's ONE recording call
  * at the point every run path funnels through. The GLOBAL first-try default is
- * recorded; a persona override (and an image run) is not — recording either
- * would put a model in the picker's list that the owner did not run on.
+ * recorded; a persona override, the fallback/escalation tier and an image run
+ * are not — recording any of them would put a model in the picker's list that
+ * the owner did not run on. Each exclusion asserts the WHOLE `recentChatModels`
+ * array is unchanged, drained of the fire-and-forget recorder first (docs/17
+ * row 203).
  */
 describe('recently used chat models (docs/17 row 193)', () => {
   it('records the GLOBAL first-try model when a run resolves it', async () => {
@@ -1289,9 +1302,9 @@ describe('recently used chat models (docs/17 row 193)', () => {
     });
   });
 
-  it('does NOT record a persona override: the global default is not in play', async () => {
+  it('does NOT record a persona override: the whole recents list is unchanged', async () => {
     const { campaignId, persona } = await seed();
-    await updateSettings({ defaultChatModel: 'global/unused', recentChatModels: [] });
+    await updateSettings({ defaultChatModel: 'global/unused', recentChatModels: ['older/model'] });
     chatMock.mockResolvedValue({
       text: JSON.stringify(VALID_DRAFT),
       modelUsed: 'persona/override',
@@ -1307,7 +1320,10 @@ describe('recently used chat models (docs/17 row 193)', () => {
       expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
     expect(chatMock).toHaveBeenCalled();
-    // …and the recents list is untouched.
-    expect((await getSettings()).recentChatModels).toEqual([]);
+    // …and the recents list is UNCHANGED. The list is compared WHOLE, after the
+    // fire-and-forget recorder had its chance to land (docs/17 row 203): "the
+    // global id is absent" would pass while a wrongly scheduled write of the
+    // persona model was still in flight.
+    expect(await recentsAfterSettlingWrites()).toEqual(['older/model']);
   });
 });

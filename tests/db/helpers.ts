@@ -2,6 +2,7 @@ import { expect } from 'vitest';
 
 import { isNotFoundError } from '@/lib/errors';
 import { db } from '@/db/db';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { moduleDocumentVersionSchema, stampNewEntity, type Id } from '@/domain';
 
 /** Clears every table so each test starts from an empty DB. */
@@ -54,4 +55,21 @@ export async function expectNotFound(promise: Promise<unknown>): Promise<void> {
     (rejection: unknown) => rejection,
   );
   expect(isNotFoundError(error)).toBe(true);
+}
+
+/**
+ * The recents list once every recording write the preceding action started has
+ * SETTLED (docs/17 row 203). THE ONE drain for the exclusion pins.
+ *
+ * The ONE recording seam is FIRE-AND-FORGET by contract (rows 193/198), so a
+ * bare read straight after an excluded-tier action does not PROVE no write
+ * happened: a wrongly scheduled recorder can still be in flight. `updateSettings`
+ * opens an `rw` transaction on the ONE settings row, which Dexie queues behind
+ * any pending recorder, so its return is the proof those writes committed.
+ * Callers compare the WHOLE list afterwards: "the global id is absent" is the
+ * weaker claim the exclusion pins used to make (docs/08-TESTING §row 203).
+ */
+export async function recentsAfterSettlingWrites(): Promise<string[]> {
+  await updateSettings({});
+  return (await getSettings()).recentChatModels;
 }

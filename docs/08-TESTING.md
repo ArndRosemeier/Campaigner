@@ -6336,6 +6336,65 @@ itself: the pre-cure full gate reddened on this test (`8` act() entries, all
 with the cure following the documented §"the write that feeds a mounted live
 query is DRAINED" pattern and changing no assertion.
 
+### The non-global recents exclusions assert the WHOLE list is unchanged (docs/17 row 203, appended to row 198 by reference)
+
+Row 198's exclusion pins each asserted "the GLOBAL id is absent" — canvas chat
+and the persona override on an empty list (`toEqual([])`), the Idea Board on a
+list holding one older entry. That is the weaker claim: the list's meaning
+(docs/17 row 199) is *only the global first-try chat model belongs in it*, so an
+excluded tier must leave the array UNCHANGED, whole and in order. Two changes
+close it:
+
+- **One drain, one seam:** `tests/db/helpers.recentsAfterSettlingWrites()` is the
+  ONE way an exclusion pin reads the list. `recordGlobalChatModelInUse` is
+  FIRE-AND-FORGET by contract (rows 193/198), so a bare read straight after the
+  action can pass before a wrongly scheduled recorder commits. The drain awaits
+  an EMPTY `updateSettings` patch — an `rw` transaction on the ONE settings row,
+  which Dexie queues behind any pending recorder — and only then returns the
+  stored array for a full deep-equality compare.
+- **Every pin extended, never duplicated:** `tests/llm/runEngine.test.ts` (the
+  persona override now seeds `['older/model']` and asserts it back; the
+  escalation pin now also asserts the recents hold the GLOBAL first-try model and
+  never `potent/fallback`), `tests/llm/imageRun.test.ts` (NEW pin: an image run
+  on `settings.imageModel` leaves the list unchanged), `tests/search/embeddings-concurrency.test.ts`
+  (NEW pin: a real `ensureEmbeddings` call on `settings.embeddingModel` leaves the
+  list unchanged), `tests/llm/ideaBoard-recording.test.ts` and
+  `tests/llm/canvasChat.test.ts` (their existing exclusion pins read through the
+  drain and compare the whole array).
+
+**Injected RED, watched — one arm per excluded tier (the lock held from BEFORE
+the first injection, every mutated file's hash PRINTED with `git hash-object`,
+the tree restored from `HEAD` by a `trap`, and every post-arm hash printed again
+and MATCHING the baseline hash; no two arms identical):**
+
+| Arm | Tier | Mutation (printed hash) | Pin that reds |
+| --- | --- | --- | --- |
+| A | baseline | no mutation — `ideaBoard.ts` `d809e0d1c58e`, `runEngine.ts` `eef4bbed0a6f`, `canvasChat.ts` `4f8a493deccc`, `embeddings.ts` `6462e5cb46d7` | all six named pins GREEN (1 passed each) |
+| B | Idea Board per-board | `else recordGlobalChatModelInUse(board.model)` — `ideaBoard.ts` `f2505ff328682ba012a11c589703465797f4a8a9` | **RED 1** — *leaves the recents UNCHANGED when the per-board model answers* |
+| C | persona override | the funnel's `if (model !== settings.defaultChatModel) return;` guard dropped — `runEngine.ts` `9bfd46713c60cb8d7e38f3ce6d730c014a38b57c` | **RED 1** — *does NOT record a persona override: the whole recents list is unchanged* |
+| D | fallback/escalation | `recordGlobalChatModelInUse(repairTarget)` at the draft contract-repair site — `runEngine.ts` `366d9b7a0c69f4d0373dd5d98bb5a27582d43eeb` | **RED 1** — *escalates the contract-repair attempt to the fallback model — and the recents keep the GLOBAL model, never the fallback* |
+| E | image | the `persona.mode === 'image'` early return replaced by `recordGlobalChatModelInUse(settings.imageModel)` — `runEngine.ts` `2b817f442c84bd3d2c0de358279f6331d51d6b3c` | **RED 1** — *an image run leaves the recents UNCHANGED: the image tier is not the global chat model* |
+| F | embedding | `recordGlobalChatModelInUse(settings.embeddingModel)` in `requestEmbeddings` — `embeddings.ts` `eb1516155119ffd6aa3fe77975eff1c49b153f3f` | **RED 1** — *leaves the chat recents UNCHANGED: the embedding model is a different tier* |
+| G | canvas-chat session | `else recordGlobalChatModelInUse(model)` on the session branch — `canvasChat.ts` `cacba85bca278b04b955f4cf9ed891539c05d39d` | **RED 1** — *records the GLOBAL default only when no session model is selected (docs/17 rows 198/203)* |
+
+Each arm ran its NAMED pin only (`-t`), one worker, `--max-old-space-size=2048`.
+Restored hashes: `ideaBoard.ts` `d809e0d1c58eb93cc16a5ef78138ac21040e399a`,
+`runEngine.ts` `eef4bbed0a6f7302aeab7bdd800ca995fd27b5ef`, `canvasChat.ts`
+`4f8a493deccc43011826be949a30d504b39776a5`, `embeddings.ts`
+`6462e5cb46d73b9c88f479da1b107f78019a48fc` — byte-identical to baseline.
+
+**The dispatcher's stated mechanism did NOT reproduce for the mutation shape
+above, recorded rather than smoothed:** the brief for row 203 says the IDEA
+mutation left the suite GREEN. I extracted the pre-strengthening pin verbatim
+from `HEAD` (`tests/llm/ideaBoard-recording.test.ts`, hash
+`51a51b57f92425e17fc86e13c8629bc164ee770f`), ran it against arm B's mutation
+(`ideaBoard.ts` `f2505ff328…`) and it also went **RED 1** — the synchronous
+recorder at the top of `refineIdeaBoard` is queued before the test's read, so an
+`else`-branch write lands in time. The gap the drain closes is the general one
+(fire-and-forget writes are only PROVEN committed by a queued write behind them,
+and the whole-array compare is the honest claim); it is not claimed to be
+reproduced by that particular mutation.
+
 ### The ONE model-picking widget (docs/17 row 199, docs/05 §Top bar/§Settings/§Onboarding, docs/18 §2.1/§2.3)
 
 
