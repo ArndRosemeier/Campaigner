@@ -597,6 +597,23 @@ describe('"Resume automatic module creation" on the canvas', () => {
     chatMock.mockClear();
 
     await userEvent.click(within(dialog).getByTestId('canvas-resume-automation-confirm'));
+    // The confirm CLOSES the dialog, and Base UI unmounts the popup on its own
+    // schedule, outside every act window the drained write above opens (row
+    // 192, docs/08-TESTING.md §Console guard): `useOpenChangeComplete` →
+    // `useAnimationsFinished` requests ONE animation frame, resolves the
+    // (stubbed) `getAnimations()` and calls `flushSync(forceUnmount)` — an
+    // update to `AlertDialogRoot`/`DialogPortal`/`DialogBackdrop`/`DialogPopup`
+    // that lands ~16ms after the click. Wait for the popup to be GONE before
+    // the next raw await: `DialogPortal` returns null the moment Base UI's
+    // `mounted` goes false, so this barrier ends exactly on the unmount, and
+    // RTL's `waitFor` deliberately disables the act environment for its whole
+    // window, so the frame's update is absorbed. Measured: a bare 200ms await
+    // between this click and the toast waitFor below reds the un-cured tree 2/2
+    // with the recorded 36 entries and this barrier under the same injection is
+    // green 2/2.
+    await waitFor(() => {
+      expect(screen.queryByTestId('canvas-resume-automation-dialog')).toBeNull();
+    });
     await waitFor(() => {
       expect(toastInfoMock).toHaveBeenCalledWith(
         'Nothing is missing any more — the module already has everything creation was asked to automate.',

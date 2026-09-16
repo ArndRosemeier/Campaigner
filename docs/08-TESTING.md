@@ -307,6 +307,62 @@ neither is a green run produced by loading the machine.
   entries carrying the four dialog components) and the cured one passed **9/9**
   under the same injection; cure = the write goes through `actDrained`. Assertions
   unchanged, no product file touched.
+  **AMENDED by row 192: that cure is WRITE-PATH ONLY.** The same test has a SECOND
+  leak path the write drain never touches, and the record below is what the gate was
+  still reddening on after this cure landed.
+- **…AND THE SAME TEST'S DIALOG CLOSE IS A SECOND PATH — Base UI unmounts the
+  popup on one animation frame outside act, and the post-click turn is the site (row
+  192).** The `actDrained` write above is still load-bearing (re-measured on
+  `9d03eeb`: the docs' own injection — one bare `setTimeout(0)` await after the write
+  — reds the un-cured write form **3/3** with a single `CanvasPage` entry, and the
+  drained form is **green 3/3**), but it is not the whole leak. The test then
+  CLICKS the confirm action, and Base UI settles that close on its OWN schedule:
+  `CanvasPage.tsx:1389` `handleResumeAutomation` calls `setResumeOpen(false)`; Base
+  UI's `useOpenStateTransitions` enables `useOpenChangeComplete`, whose
+  `useAnimationsFinished` (`node_modules/@base-ui/react/internals/useAnimationsFinished.mjs`)
+  requests ONE `AnimationFrame`, resolves the `Element.prototype.getAnimations` stub
+  (`tests/setup.ts`) to `[]`, and calls `ReactDOM.flushSync(forceUnmount)` — which
+  sets `mounted` false and updates the store, re-rendering `AlertDialogRoot` /
+  `DialogPortal` / `DialogBackdrop` / `DialogPopup` ~16 ms after the click, outside
+  every act window the write drain opened. **Reproduced deterministically by
+  DELAYING THE CAUSE at that site** (one file, `CAMPAIGNER_TEST_WORKERS=1`, raw logs
+  kept, every arm's file hash printed): a bare `await new Promise(r => setTimeout(r,
+  200))` inserted immediately after the confirm click reds the current tree **3/3
+  with exactly 36 entries** and exactly the recorded component set — 2×
+  `AlertDialogRoot`, 2× `DialogPortal`, 1× `DialogBackdrop`, 1× `DialogPopup`
+  (hash `afba2a05…`; one of the three runs instead carried 44 entries on `CanvasPage`
+  from the handler continuation, i.e. the same window catching the other pending
+  update). The recorded flake is on demand. **The adjacent sites are NOT sites and
+  were re-measured as such:** a bare delay at the pre-write `getModule` read (the
+  dialog OPEN's transition frame) is **green 3/3**, and a delay at the trailing
+  `listArtifactsByCampaign` read is **green 4/4** (the close frame lands inside the
+  toast `waitFor`, whose act-free window absorbs it there) — so the leak is neither
+  the write nor the open, it is the close, and the bare window to close is the one
+  right after the click. **The cure:** `await waitFor(() => expect(screen.queryByTestId('canvas-resume-automation-dialog')).toBeNull())`
+  immediately after the confirm click — the SAME dialog-absent barrier §"A dialog's
+  confirm/decline closes on an exit TIMER" already prescribes. `DialogPortal`
+  returns null the moment Base UI's `mounted` goes false, so the wait ends precisely
+  on the rAF unmount, and RTL's `waitFor` deliberately disables the act environment
+  for its whole window, so that frame's `flushSync` is absorbed rather than reported.
+  **Differential, hashes printed, identical injection before the toast `waitFor`:**
+  un-cured **RED 2/2 whole-file warm** (36 entries, the recorded components; hash
+  `afba2a05…`) and **RED 3/3 single-test**; cured **GREEN 2/2 warm** (hash
+  `a0b29584…`) and **GREEN 3/3 single-test**; cured with no injection **GREEN 3/3**;
+  un-cured with no injection **GREEN 2/2** (the race is latent, which is why only an
+  injection sees it). **Nothing was widened to make it quiet:** no `src/` change, no
+  `tests/setup.ts` change, no `ALLOWED_NOISE` entry, no assertion weakened; the
+  `actDrained` write, `flushAsyncUpdates` and the file's other tests are untouched.
+  **THE SAME CLASS ELSEWHERE, NAMED RATHER THAN LEFT SILENT:** the same act() family
+  in this one file also red a gate on `rewrites the named part through the repair
+  seam, snapshots first, and the control disappears` (`/tmp/apptables-logs/gate-baseline.log`,
+  one `CanvasPage` entry — the WRITE cascade landing in a bare `getModule` after a
+  `waitFor`, which is the §1 rule, not this close path), and a scan of
+  `tests/features/*` for the row-196 shape (assert an async live-query value
+  immediately after an element appears) found the one real sibling already fixed by
+  row 196 (`tests/features/model-picker.test.tsx`) plus 53 raw candidates that were
+  sampled: each renders its asserted value only once the async data is present
+  (the closest, `tests/images-ui.test.tsx:232` persona/target selects, is protected
+  by an always-mounted panel, an earlier wait and the preselect effect).
 - **A test that starts REAL orchestration must SETTLE it before teardown — the
   pending continuation's next write otherwise lands on a wiped database and turns a
   green gate RED.** This is the `post-run-extras` gate flake (dispatcher report,
