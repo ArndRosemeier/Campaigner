@@ -29,7 +29,23 @@ interface ActionItem {
   };
 }
 
-export type Pf2eItem = MeleeItem | ActionItem;
+/**
+ * A creature's OWN embedded `spell` item (the upstream shape: name, type and
+ * `system.level.value` + `system.traits.value`; a cantrip is the `cantrip`
+ * trait in that array — docs/17 row 189). The adapter consumes only these
+ * fields, so this builder carries only these fields.
+ */
+interface SpellItem {
+  name: string;
+  type: 'spell';
+  system: {
+    level: { value: number };
+    traits: { value: string[] };
+    location?: { heightenedLevel: number };
+  };
+}
+
+export type Pf2eItem = MeleeItem | ActionItem | SpellItem;
 
 export function meleeItem(overrides: Partial<MeleeItem> = {}): MeleeItem {
   const base: MeleeItem = {
@@ -63,6 +79,30 @@ export function actionItem(
       actionType: { value: actionType },
       description: { value: description },
       traits: { value: traits },
+    },
+  };
+}
+
+/**
+ * A creature's own `spell` item in the upstream shape (docs/17 row 189): the
+ * source's `system.level.value` (1 for a cantrip too) plus its traits, where
+ * the `cantrip` trait is the cantrip signal. `heightenedLevel` is the source's
+ * own CAST rank for a heightened spontaneous/innate entry (the real corpus
+ * stores it at `system.location.heightenedLevel`).
+ */
+export function spellItem(
+  name: string,
+  level: number,
+  traits: string[] = [],
+  heightenedLevel?: number,
+): SpellItem {
+  return {
+    name,
+    type: 'spell',
+    system: {
+      level: { value: level },
+      traits: { value: traits },
+      ...(heightenedLevel === undefined ? {} : { location: { heightenedLevel } }),
     },
   };
 }

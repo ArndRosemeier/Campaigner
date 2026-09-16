@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { MobSpellAssignment } from '@/domain/mobSpells';
+import { spellTraitsAreCantrip } from '@/domain/spellData';
 import { formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
@@ -147,9 +149,61 @@ const actionItemSchema = z.object({
   }),
 });
 
+/**
+ * One of the creature's OWN embedded `spell` items (docs/17 row 189). Only the
+ * fields a mob-spell assignment needs are consumed: the name and the rank the
+ * source CASTS the entry at. That rank is
+ * `system.location.heightenedLevel ?? system.level.value`, which IS the
+ * upstream Foundry PF2e system's own `SpellPF2e.rank` getter (`foundryvtt/pf2e`
+ * @ `v14-dev`, `src/module/item/spell/document.ts`:
+ * `Math.clamp(this.system.location.heightenedLevel || this.baseRank, 1, 10)`,
+ * `baseRank = system.level.value`) for a RANKED entry — the same file row 183
+ * pinned its heightening arithmetic from. A cantrip is that getter's ONE
+ * exception: it auto-derives `ceil(actor.level / 2)` and IGNORES
+ * `heightenedLevel` entirely, so a cantrip is stamped with NO cast rank and its
+ * (absent or present) `heightenedLevel` is irrelevant — the rank is
+ * `domain/spellHeightening.spellAtRank`'s to derive from the caster's level
+ * (docs/17 rows 183/184). MEASURED on the real corpus, Ghost Mage's "Dispel
+ * Magic" has `level.value: 2` but `heightenedLevel: 3` and its printed stat
+ * block lists it at 3rd (Bone Prophet's "Harm" is 1 → 4), so `level.value`
+ * alone would print the wrong rank. `type: 'spell'` is REQUIRED: a
+ * `weapon`/`consumable` that merely EMBEDS a `spell` object is carried
+ * equipment, not the creature's own casting, and a `spellcastingEntry` is the
+ * container those items hang from — neither is a spell and neither is stamped.
+ * A `spell` item with no level or no traits is a malformed document: `parse`
+ * fails the creature LOUDLY rather than dropping it as if it were equipment.
+ *
+ * KNOWN GAP (measured, named for a follow-up — not this slice's to fix): the
+ * upstream getter ALSO auto-heightens a FOCUS spell the same way
+ * (`isAutoHeightened = isCantrip || isFocusSpell`), but a focus item may state
+ * neither `heightenedLevel` nor `autoHeightenLevel` (Lawbringer Warpriest,
+ * level 5, "Athletic Rush": level 1, no rank stated; upstream rank 3). The
+ * importer stamps the source's OWN stated rank (its `level.value`) and does NOT
+ * compute an auto-heightened one — deriving it belongs to the mob arc's rule
+ * (`domain/mobSpells.mobSpellChips`), whose auto-heightening arm is
+ * cantrip-only today. Giving it a focus arm is a separate slice (the brief
+ * forbids touching that resolver here).
+ */
+const spellItemSchema = z.object({
+  name: z.string().min(1),
+  type: z.literal('spell'),
+  system: z.object({
+    level: z.object({ value: z.number().int().positive() }),
+    traits: z.object({ value: z.array(z.string()) }),
+    // The rank a spontaneous/innate entry is heightened to; a prepared entry or
+    // an unheightened spell carries none, and the item's own level is the
+    // fallback — exactly `SpellPF2e.rank`'s `heightenedLevel || baseRank`. A
+    // cantrip IGNORES this field upstream (its rank is the auto-derived one).
+    location: z
+      .object({ heightenedLevel: z.number().int().positive().nullish() })
+      .nullish(),
+  }),
+});
+
 type ParsedNpc = z.infer<typeof pf2eNpcSchema>;
 type ParsedMelee = z.infer<typeof meleeItemSchema>;
 type ParsedAction = z.infer<typeof actionItemSchema>;
+type ParsedSpell = z.infer<typeof spellItemSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -192,6 +246,27 @@ function mapAction(item: ParsedAction): { name: string; text: string; actionType
   const description = htmlToText(item.system.description.value, AT_BRACE_LABEL_BLOCK_AND_TABLE);
   const text = traits.length > 0 ? `(${traits.join(', ')}) ${description}`.trim() : description;
   return { name: item.name, text, actionType: item.system.actionType.value };
+}
+
+/**
+ * One of the creature's OWN `spell` items as a mob-spell assignment (docs/17
+ * row 189): the source's own name VERBATIM and the rank the source itself casts
+ * the entry at — `system.location.heightenedLevel` when the entry is heightened,
+ * else the item's own `system.level.value`, i.e. the upstream Foundry PF2e
+ * `SpellPF2e.rank` expression (`src/module/item/spell/document.ts` @ `v14-dev`:
+ * `Math.clamp(heightenedLevel || baseRank, 1, 10)`). A cantrip carries NO cast
+ * rank: upstream IGNORES `heightenedLevel` for one and auto-derives
+ * `ceil(actor.level / 2)`, which is exactly the rank `domain/spellHeightening`
+ * computes (docs/17 rows 183/184) — so a caller-chosen rank would re-implement
+ * the rule, and a cantrip's (absent or present) `heightenedLevel` is
+ * irrelevant. Nothing here normalizes, defaults or invents a name or a rank: an
+ * unresolved name is the render/export boundary's loud business, not the
+ * importer's.
+ */
+function mapSpell(item: ParsedSpell): MobSpellAssignment {
+  if (spellTraitsAreCantrip(item.system.traits.value)) return { name: item.name };
+  const castRank = item.system.location?.heightenedLevel ?? item.system.level.value;
+  return { name: item.name, castRank };
 }
 
 function mapNpc(doc: ParsedNpc): PackEntry {
@@ -254,7 +329,17 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   const otherActions: StatBlock['actions'] = [];
   const reactions: StatBlock['reactions'] = [];
   const passiveTraits: StatBlock['traits'] = [];
+  // The creature's OWN embedded `spell` items, in the SOURCE's own item order
+  // (deterministic, and the honest default: the document's order is the only
+  // ordering the source states). A `spellcastingEntry` is the container those
+  // items hang from and contributes NOTHING here; a `spell` object embedded in
+  // a `weapon`/`consumable` is carried equipment, not the creature's casting.
+  const spells: MobSpellAssignment[] = [];
   for (const item of doc.items) {
+    if (isDocumentRecord(item) && item.type === 'spell') {
+      spells.push(mapSpell(spellItemSchema.parse(item)));
+      continue;
+    }
     const melee = meleeItemSchema.safeParse(item);
     if (melee.success) {
       meleeAttacks.push(mapMelee(melee.data));
@@ -273,8 +358,8 @@ function mapNpc(doc: ParsedNpc): PackEntry {
       }
       continue;
     }
-    // Carried equipment (`weapon`, `armor`, `spell`, `effect`, …) is not part
-    // of the stat block (12-BESTIARY-PACKS §9: no spell data in v1).
+    // Carried equipment (`weapon`, `armor`, `effect`, …) is not part of the
+    // stat block. The creature's own `spell` items ARE (docs/17 row 189).
   }
 
   const level = details.level.value;
@@ -322,6 +407,11 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     reactions,
     legendary: [],
     extras,
+    // A creature whose OWN document carries no `spell` items OMITS the key, so
+    // "no field" (legacy / no spells) stays distinguishable from "authored,
+    // empty" — row 184's `.nullish()` contract, exactly as a legacy stat block
+    // renders today (no chip section, no error).
+    ...(spells.length === 0 ? {} : { spells }),
   };
 
   const lines: string[] = [

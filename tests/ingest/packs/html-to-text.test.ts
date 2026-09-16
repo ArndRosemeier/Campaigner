@@ -822,6 +822,13 @@ describe('the stored bytes of a real fixture — those bytes ARE the content has
  * `before` stays the PRE-ROW-149 digest: for an unchanged lane it is asserted
  * equal to the running digest (so "this lane never moved, in either landing"
  * is checkable), and for a changed lane the pin is the `after` value alone.
+ *
+ * THE ROW-189 RECORD: the `foundry-pf2e` lane gains a SECOND real fixture
+ * (`pf2e/ghost-mage.json`, a real upstream caster, byte-for-byte — docs/17 row
+ * 189). No byte of `wolf.json`'s emitted text moved; the digest moves because
+ * the lane now hashes two entries instead of one, which is why the `after`
+ * value changed and the `before === after` "unchanged" assertion no longer
+ * applies to this lane.
  */
 const LANES: readonly {
   readonly adapterId: string;
@@ -835,9 +842,12 @@ const LANES: readonly {
   {
     adapterId: 'foundry-pf2e',
     dir: 'pf2e',
-    entries: 1,
+    entries: 2,
     before: 'f722b48d56787f6e3a518a25904651f0a3de624d3f2bcc8ac861f6009aac06e6',
-    after: 'f722b48d56787f6e3a518a25904651f0a3de624d3f2bcc8ac861f6009aac06e6',
+    // ROW 189 adds the byte-for-byte real `ghost-mage.json` creature document
+    // to this lane (a second fixture, no byte of `wolf.json` moved), so the
+    // lane digest moves for the SAME reason the count does.
+    after: 'da9f9eb3d660453d762d05ddf2ff172b9b4c024e0cde15d81e3d0d136e94b8f0',
   },
   {
     adapterId: 'foundry-dnd5e-srd',

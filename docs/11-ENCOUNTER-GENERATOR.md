@@ -192,11 +192,19 @@ inside `statBoxContent` (the ONE box both exporters share) and
 `lib/pdfExport.statBlockSection`; a `buildModulePdfDocument` caller with no
 corpus prints a loud "resolved none" line rather than dropping the spells.
 
-**Not this arc.** What a LIBRARY creature's own stat block prints when it
-carries spells (the "standard mobs" half of the owner's request) is a NAMED
-FOLLOW-UP: nothing here reads a library chunk's prose for spells, and the
-importer still writes no `spells` field, so a library mob renders chips only
-once that half lands.
+**The LIBRARY half is LANDED (docs/17 row 189).** What a LIBRARY creature's
+own stat block prints when it carries spells (the "standard mobs" half of the
+owner's request) is no longer a follow-up: the `foundry-pf2e` bestiary adapter
+stamps the creature's own `items[]` of type `spell` onto `statBlock.spells`
+(source order; source name verbatim; a `cantrip`-trait item with NO cast rank),
+so the same `MobSpellChips`/`SpellChip` path above renders it — the renderer
+was already complete. The importer resolves NOTHING: the bestiary pack and the
+rules pack that carries the spells are imported separately and in either order,
+so a name's resolution and its loud unresolved report stay with
+`domain/mobSpells.mobSpellChips` + `mobSpellIssues` at render/export time. The
+old caveat that "the importer still writes no `spells` field" applied to the
+pre-189 shape only: a creature whose document carries no `spell` items still
+omits the key and renders exactly as before.
 
 
 

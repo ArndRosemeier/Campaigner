@@ -167,6 +167,22 @@ export const spellDataSchema = z.object({
 export type SpellData = z.infer<typeof spellDataSchema>;
 
 /**
+ * THE cantrip signal of a PF2e spell: the source's own `cantrip` TRAIT.
+ *
+ * MEASURED against `v14-dev` (2026-09-16, docs/17 rows 181/189): the corpus
+ * stores a cantrip at `system.level.value: 1` exactly like a rank-1 spell, in
+ * BOTH the rules lane's spell documents and a creature's embedded `spell`
+ * items, so the stored LEVEL is never the signal — the trait is. This is the
+ * ONE spelling of that rule: the rules lane reads it to normalize `rank: 0`
+ * for list order and to print "Cantrip", and the bestiary lane reads it to
+ * stamp a cantrip with NO cast rank (docs/17 row 184's assignment contract),
+ * so a future change to the signal cannot land in one lane only.
+ */
+export function spellTraitsAreCantrip(traits: readonly string[]): boolean {
+  return traits.includes('cantrip');
+}
+
+/**
  * A spell document's own name: the LAST element of its heading path (the
  * pack lane stamps the document title as the deepest heading). It is the ONE
  * spelling of "what is this spell called", shared by the spell list's rows and

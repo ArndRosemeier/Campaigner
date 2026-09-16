@@ -4,6 +4,7 @@ import {
   spellAreaSchema,
   spellDamageMapSchema,
   spellTraditionSchema,
+  spellTraitsAreCantrip,
   type SpellData,
   type SpellHeighteningEntry,
 } from '@/domain/spellData';
@@ -212,7 +213,7 @@ const ACTION_TYPE_LABELS: Readonly<Record<string, string>> = {
 function summaryLine(doc: ParsedRulesDoc): string | null {
   const parts: string[] = [];
   if (doc.type === 'spell') {
-    const cantrip = doc.system.traits.value.includes('cantrip');
+    const cantrip = spellTraitsAreCantrip(doc.system.traits.value);
     const rank = doc.system.level?.value;
     parts.push(rank === undefined ? (cantrip ? 'Cantrip' : 'Spell') : `${cantrip ? 'Cantrip' : 'Spell'} ${String(rank)}`);
   } else if (doc.type === 'feat') {
@@ -309,7 +310,7 @@ function parseHeighteningEntries(html: string): {
  */
 function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
   if (doc.type !== 'spell') return null;
-  const cantrip = doc.system.traits.value.includes('cantrip');
+  const cantrip = spellTraitsAreCantrip(doc.system.traits.value);
   const rank = cantrip ? 0 : doc.system.level?.value;
   if (rank === undefined) {
     throw new Error(`spell "${doc.name}" has neither a cantrip trait nor system.level.value`);

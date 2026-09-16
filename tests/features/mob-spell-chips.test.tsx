@@ -19,6 +19,7 @@ import {
   type StatBlock,
 } from '@/domain';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
+import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import { clearDatabase } from '../db/helpers';
 
@@ -26,10 +27,19 @@ import { clearDatabase } from '../db/helpers';
  * The mob's spells as CHIPS (docs/17 row 184): the ONE `StatBlockCard` every
  * stat-block surface renders gains the section, a name that does not resolve
  * renders the UNRESOLVED state with the name visible, and the chip's detail is
- * `spellAtRank`'s output at the cast rank.
+ * `spellAtRank`'s output at the cast rank. Row 189 adds the LIBRARY half: a
+ * real imported creature's OWN `spell` items reach the same field, so the
+ * chips render through this SAME harness with no second path.
  */
 
 const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
+const PF2E_CREATURE_FIXTURES = join(
+  import.meta.dirname,
+  '..',
+  'fixtures',
+  'packs',
+  'pf2e',
+);
 
 async function realSpell(file: string, packRelative: string): Promise<SpellData> {
   const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
@@ -194,5 +204,65 @@ describe('a mob stat block renders its spells as chips (docs/17 row 184)', () =>
     expect(title).toContain('The damage increases to 3d6.');
     expect(title).toContain('prose-only');
     expect(title).toContain('cast at rank 5: 1d6 fire');
+  });
+
+  it('renders an IMPORTED library mob\'s own spells through the ONE chips path (docs/17 row 189)', async () => {
+    // The real upstream Ghost Mage, through the REAL bestiary adapter: its
+    // embedded `spell` items reach `statBlock.spells`, and the SAME harness
+    // above renders them — no second resolution or render path.
+    const bytes = new Uint8Array(
+      readFileSync(join(PF2E_CREATURE_FIXTURES, 'ghost-mage.json')),
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('ghost-mage.json', bytes);
+    expect(parsed.failures).toEqual([]);
+    const entry = parsed.entries[0];
+    expect(entry?.name).toBe('Ghost Mage');
+    if (entry === undefined) throw new Error('ghost-mage.json produced no creature entry');
+
+    // The corpus holds the caster's own ranked spell AND its cantrip; every
+    // other name it carries (e.g. Hallucination) is deliberately ABSENT.
+    await seedSpells([
+      {
+        name: 'Blindness',
+        data: spellDataSchema.parse({
+          system: 'pathfinder2e',
+          rank: 3,
+          cantrip: false,
+          cast: {},
+        }),
+      },
+      {
+        name: 'Detect Magic',
+        data: spellDataSchema.parse({
+          system: 'pathfinder2e',
+          rank: 0,
+          cantrip: true,
+          cast: {},
+        }),
+      },
+    ]);
+
+    render(<StatBlockCard name={entry.name} statBlock={entry.statBlock} />);
+
+    const section = await screen.findByTestId('mob-spells');
+    const resolvedChips = await within(section).findAllByTestId('spell-chip');
+    // Ranked: the ITEM's own rank 3 is the cast rank the chip asks the rule for.
+    const ranked = resolvedChips.find((chip) => chip.textContent.includes('Blindness'));
+    expect(ranked?.getAttribute('title')).toContain('cast at rank 3');
+    // Cantrip: the importer stamped NO cast rank, so the rule auto-heightens it
+    // from the mob's own level 10 → rank 5.
+    const cantrip = resolvedChips.find((chip) => chip.textContent.includes('Detect Magic'));
+    expect(cantrip?.getAttribute('title')).toContain('cantrip, auto-heightened');
+    expect(cantrip?.getAttribute('title')).toContain('cast at rank 5');
+
+    // A name the corpus does not hold is UNRESOLVED by name, and LOUD.
+    const unresolved = within(section)
+      .getAllByTestId('spell-chip-unresolved')
+      .find((chip) => chip.getAttribute('data-spell-unresolved') === 'Hallucination');
+    expect(unresolved).toBeDefined();
+    expect(unresolved).toHaveTextContent('Hallucination');
+    const issues = within(section).getByTestId('mob-spell-issues');
+    expect(issues).toHaveTextContent('Hallucination');
+    expect(issues).toHaveTextContent('Ghost Mage');
   });
 });

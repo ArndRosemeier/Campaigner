@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 
-import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem } from './fixtures';
+import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem, spellItem } from './fixtures';
 
 const FIXTURE_DIR = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'pf2e');
 
@@ -66,6 +66,10 @@ describe('foundry-pf2e adapter', () => {
       '1d6+2 piercing; (unarmed); knockdown',
     );
     expect(entry?.text).toContain('Perception +7; low-light-vision, imprecise scent 30 feet');
+    // A creature whose OWN document carries no `spell` item OMITS the key
+    // (docs/17 rows 184/189): the real Wolf has no spell item, so its block is
+    // byte-for-byte what it was before this arc.
+    expect(block !== undefined && Object.prototype.hasOwnProperty.call(block, 'spells')).toBe(false);
   });
 
   it('maps a creature document onto an exact StatBlock (modifiers → scores)', async () => {    const parsed = await foundryPf2eAdapter.parseFile('charau-ka.json', encodeJson(baseNpc()));
@@ -251,5 +255,138 @@ describe('foundry-pf2e adapter', () => {
     const claw = block?.actions.find((action) => action.name === 'Claw +11');
     expect(claw?.text).toContain('2d8+4 piercing plus 2d6 fire');
     expect(block?.reactions.map((reaction) => reaction.name)).toEqual(['Retreat']);
+  });
+
+  it('stamps a real caster\'s OWN spell items as `spells` (name + rank), in source order (docs/17 row 189)', async () => {
+    // Real document, BYTE-FOR-BYTE: foundryvtt/pf2e @ v14-dev,
+    // packs/pf2e/pathfinder-monster-core/ghost-mage.json
+    // (sha256 b1202c2fa6e9e8f1e70073f25b94778f7b01a463ef860876441e106298cc3401).
+    // A level-10 caster with ONE `spellcastingEntry` container, 14 embedded
+    // `spell` items (5 cantrips) and carried gear — no invented structure.
+    const parsed = await foundryPf2eAdapter.parseFile(
+      'ghost-mage.json',
+      fixtureBytes('ghost-mage.json'),
+    );
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.skipped).toBe(0);
+    const entry = parsed.entries[0];
+    expect(entry?.name).toBe('Ghost Mage');
+    expect(entry?.statBlock.level).toBe('10');
+    expect(entry?.statBlock.spells).toEqual([
+      // The source's OWN item order; one entry per `spell` item. The
+      // `spellcastingEntry` container ("Arcane Innate Spells") contributes
+      // NOTHING, and a cantrip carries NO cast rank even though the source
+      // stores its level as 1 (the cantrip rule derives the rank). A ranked
+      // entry's cast rank is the source's OWN `location.heightenedLevel` where
+      // it states one: "Dispel Magic" is `level.value: 2` but is heightened to
+      // 3 (the printed Ghost Mage stat block lists it at 3rd).
+      { name: 'Hallucination', castRank: 5 },
+      { name: 'Howling Blizzard', castRank: 5 },
+      { name: 'Suggestion', castRank: 4 },
+      { name: 'Vision of Death', castRank: 4 },
+      { name: 'Blindness', castRank: 3 },
+      { name: 'Veil of Privacy', castRank: 3 },
+      { name: 'Dispel Magic', castRank: 3 },
+      { name: 'Telekinetic Maneuver', castRank: 2 },
+      { name: 'Detect Magic' },
+      { name: 'Enfeeble', castRank: 1 },
+      { name: 'Figment' },
+      { name: 'Prestidigitation' },
+      { name: 'Read Aura' },
+      { name: 'Telekinetic Hand' },
+    ]);
+  });
+
+  it('omits the `spells` key entirely when a creature carries no spell items (docs/17 rows 184/189)', async () => {
+    const parsed = await foundryPf2eAdapter.parseFile('charau-ka.json', encodeJson(baseNpc()));
+    const block = parsed.entries[0]?.statBlock;
+    // "No field" (legacy / no spells) stays distinguishable from "authored,
+    // empty": an absent key, never `spells: []`.
+    expect(block !== undefined && Object.prototype.hasOwnProperty.call(block, 'spells')).toBe(false);
+    // …and the rest of the block is unchanged by this arc.
+    expect(block?.ac).toBe(18);
+    expect(block?.actions.map((action) => action.name)).toContain('Sickle +8');
+    expect(block?.traits.map((trait) => trait.name)).toEqual(['Thrown Weapon Mastery']);
+  });
+
+  it('stamps the source name and rank VERBATIM — never normalized, defaulted or invented (docs/17 row 189)', async () => {
+    const doc = baseNpc('Test Caster');
+    (doc.items as unknown[]).unshift(
+      spellItem('arcane-eye', 4, ['concentrate']),
+      spellItem('Detect Magic', 1, ['cantrip', 'detection']),
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('caster.json', encodeJson(doc));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries[0]?.statBlock.spells).toEqual([
+      // The source's lower-case spelling survives (normalization would red
+      // here) and its own rank 4 survives (a default of 1 would red here).
+      { name: 'arcane-eye', castRank: 4 },
+      // A cantrip carries NO cast rank, even though the source stores level 1.
+      { name: 'Detect Magic' },
+    ]);
+  });
+
+  it('reads a ranked spell\'s CAST rank from the source\'s own heightened entry (docs/17 row 189)', async () => {
+    // The Foundry PF2e system's OWN `SpellPF2e.rank` getter is
+    // `system.location.heightenedLevel || baseRank` (measured in upstream
+    // `src/module/item/spell/document.ts` @ v14-dev), so the cast rank is the
+    // heightened field where the source states one and the item's level
+    // otherwise. A cantrip IGNORES a stored heightenedLevel: its rank is the
+    // rule's to derive from the caster's level (docs/17 row 183).
+    const doc = baseNpc('Test Caster');
+    (doc.items as unknown[]).unshift(
+      spellItem('Heightened Bolt', 2, ['concentrate'], 4),
+      spellItem('Plain Bolt', 3, ['concentrate']),
+      spellItem('Auto Cantrip', 1, ['cantrip'], 5),
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('ranks.json', encodeJson(doc));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries[0]?.statBlock.spells).toEqual([
+      { name: 'Heightened Bolt', castRank: 4 },
+      { name: 'Plain Bolt', castRank: 3 },
+      { name: 'Auto Cantrip' },
+    ]);
+  });
+
+  it('ignores a spellcastingEntry container and a carried item that embeds a spell (docs/17 row 189)', async () => {
+    const doc = baseNpc('Test Caster');
+    (doc.items as unknown[]).unshift(
+      // The container the spell items hang from — not a spell.
+      {
+        name: 'Arcane Prepared Spells',
+        type: 'spellcastingEntry',
+        system: { slots: {}, tradition: { value: 'arcane' } },
+      },
+      spellItem('Sure Strike', 1, ['concentrate']),
+      // The upstream shape (real: the Lich's "Scroll of Teleport (Rank 6)"): a
+      // `consumable` carries a nested `system.spell` OBJECT. It is carried
+      // equipment, not the creature's own casting, so it is NOT stamped.
+      {
+        name: 'Scroll of Teleport (Rank 6)',
+        type: 'consumable',
+        system: {
+          spell: { name: 'Teleport', type: 'spell', system: { level: { value: 6 } } },
+        },
+      },
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('scroll.json', encodeJson(doc));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries[0]?.statBlock.spells).toEqual([{ name: 'Sure Strike', castRank: 1 }]);
+  });
+
+  it('fails a malformed `spell` item LOUDLY instead of dropping it as equipment', async () => {
+    const doc = baseNpc('Broken Caster');
+    // The source typed this item as a spell but carries no rank: never silently
+    // fall through the melee/action arms and disappear.
+    (doc.items as unknown[]).unshift({
+      name: 'Nameless Rank',
+      type: 'spell',
+      system: { traits: { value: ['concentrate'] } },
+    });
+    const parsed = await foundryPf2eAdapter.parseFile('broken-caster.json', encodeJson(doc));
+    expect(parsed.entries).toEqual([]);
+    expect(parsed.failures).toHaveLength(1);
+    expect(parsed.failures[0]?.name).toBe('Broken Caster');
+    expect(parsed.failures[0]?.message).toContain('level');
   });
 });

@@ -5614,6 +5614,84 @@ stands, and until the rules pack is re-imported every assigned name resolves to
 nothing and is loud, which is the honest outcome; and no test proves the printed
 page reads well to a person — it proves the bytes.
 
+### A library creature's own spells reach the mob chips (docs/17 row 189, docs/12 §5/§9, docs/11 §Mob spells)
+
+Row 184 built the field, the ONE resolver and the ONE chip; this arc makes an
+IMPORTED creature CARRY the data, so the renderer needed no change. The pins:
+
+- `tests/fixtures/packs/pf2e/ghost-mage.json` (NEW): the REAL upstream document,
+  BYTE-FOR-BYTE — `foundryvtt/pf2e` @ `v14-dev`,
+  `packs/pf2e/pathfinder-monster-core/ghost-mage.json`, sha256
+  `b1202c2fa6e9e8f1e70073f25b94778f7b01a463ef860876441e106298cc3401` (57,959
+  bytes). A level-10 caster with ONE `spellcastingEntry` container, 14 embedded
+  `spell` items (5 cantrips) and carried gear. Nothing was invented and nothing
+  was trimmed: the real bytes are the fixture. The earlier gap ("no PF2e caster
+  fixture exists in the repo") is closed with the upstream document itself.
+- `tests/ingest/packs/pf2e-foundry.test.ts` (extended): the REAL fixture's
+  `statBlock.spells` is the exact source-order list of all 14 items — names
+  verbatim, `castRank` = the source's OWN `location.heightenedLevel ??
+  system.level.value` (the upstream `SpellPF2e.rank` expression: "Dispel Magic"
+  is `level.value: 2` but heightened to **3**, which the printed stat block
+  lists), cantrips with NO cast rank, and the `spellcastingEntry` container
+  absent (pin 1); a `baseNpc` and the real `wolf.json` both OMIT the `spells`
+  key entirely (no own property), with the rest of the block unchanged (pin 2);
+  a synthetic lower-case name at rank 4 and a cantrip at stored level 1 are
+  stamped VERBATIM (`{ name: 'arcane-eye', castRank: 4 }`, `{ name:
+  'Detect Magic' }`) — a normalize, a rank default or an invention reds it
+  (pin 3); a synthetic heightened entry (`level 2` + `heightenedLevel 4`) is
+  stamped at 4, a plain entry at its own level, and a cantrip's stored
+  heightened field is IGNORED (pin 3b — the correction of the brief's rank
+  field, proven against the upstream `SpellPF2e.rank` getter); a
+  `spellcastingEntry` container and a carried `consumable` embedding a `spell`
+  object are both ignored; and a `spell`-typed item with no level fails the
+  creature LOUDLY (a named per-creature failure, not a silent drop).
+- `tests/features/mob-spell-chips.test.tsx` (extended): the END-TO-END outcome
+  the owner asked for — the REAL `ghost-mage.json` through the REAL bestiary
+  adapter, its `statBlock` rendered by the SAME `StatBlockCard` harness as row
+  184: a seeded `Blindness` resolves at the item's own rank 3, a seeded
+  `Detect Magic` auto-heightens from the mob's level 10 to rank 5 with the
+  `cantrip, auto-heightened` note (the importer stamped NO rank, so the rule owns
+  it), and an UNSEEDED `Hallucination` renders `spell-chip-unresolved` with the
+  loud issue box naming both the spell and «Ghost Mage» (pin 4, no second
+  harness).
+- `tests/architecture/one-cantrip-signal.test.ts` (NEW; node — the
+  `tests/architecture/**` glob is already in `nodeTestGlobs`): the SOURCE SCAN
+  that holds the PF2e cantrip signal to exactly ONE site, `spellTraitsAreCantrip`
+  in `src/domain/spellData.ts`; it reds a hand-spelled `.includes('cantrip')` in
+  either adapter by file and count, and asserts both PF2e lanes import the
+  predicate (the fold obligation's pin).
+- AMENDED, not weakened: `tests/ingest/packs/html-to-text.test.ts`'s
+  `foundry-pf2e` lane digest — the lane now hashes TWO fixtures instead of one
+  (no byte of `wolf.json` moved), so `entries` 1 → 2 and the `after` digest is
+  the newly measured `da9f9eb3…e94b8f0`, with the row-189 record written beside
+  the row-149/170 records.
+
+**Injected RED, watched (raw logs kept under the writer's `/tmp` worktree; every
+arm's file hash printed):** removing the spell-item branch reds the real-fixture
+pin and the verbatim pin (the `spells` key vanishes); giving a cantrip a
+`castRank` reds the real-fixture pin (cantrips are asserted rank-less) and the
+verbatim pin; lower-casing a stamped name reds the verbatim pin; reading
+`system.level.value` alone, i.e. dropping the `heightenedLevel` arm, reds the
+real-fixture pin (Dispel Magic 3 → 2) and the rank-source pin. In the fold,
+re-adding a `.includes('cantrip')` outside `domain/spellData.ts` reds the SOURCE
+SCAN by file.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove the owner's
+on-disk library already carries structured spells — this arc adds NO migration
+and NO index, so a pre-arc bestiary book needs a RE-IMPORT (row 181's decision
+stands); the fixture is one real caster, so it cannot prove every future pack
+shape a caster prints (an unknown/malformed `spell` item fails LOUDLY rather
+than being guessed); and no test can prove a person finds the chips readable —
+it proves the bytes. **A NAMED, MEASURED GAP:** upstream's `SpellPF2e.rank`
+auto-heightens a FOCUS spell too, but a focus item may state no rank at all
+(Lawbringer Warpriest, level 5, "Athletic Rush": `level.value: 1`, no
+`heightenedLevel`, entry `autoHeightenLevel: null`; upstream rank 3). The
+importer correctly stamps only the source's STATED rank and derives nothing, and
+`domain/mobSpells.mobSpellChips`'s auto-heightening arm is cantrip-only today,
+so a focus chip can print the base rank — the fix belongs in that resolver,
+which this brief forbids touching, and it is a follow-up for its own row, not a
+claim of this one.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
