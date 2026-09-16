@@ -134,6 +134,20 @@ Nothing about the citation or the materialization changes: the panel reads the
 citation at render time, writes nothing, and a module generated before this change
 gets the reader listing on its next visit (docs/11 D2/D3 bind unchanged).
 
+**The queued mob-spells arc depends on ONE rule, named here so its spec home
+cannot re-derive it (docs/17 row 183, docs/18 §2).** When an AI-authored or
+imported mob carries spells, the chip's numbers come from
+`domain/spellHeightening.spellAtRank(spell, { castRank, casterLevel })` over the
+`spellData` payload the pf2e-rules lane already stores (docs/12 §15.4) —
+`fixed` = the HIGHEST listed layer `<=` the applied rank (base below the
+lowest), `interval` = the source's own delta per whole
+`floor((appliedRank - rulesBaseRank) / interval)` step plus the per-step area
+add, a cantrip's rank auto-derived from the caster's level
+(`clamp(ceil(casterLevel / 2), 1, 10)`), and a prose-only spell DISPLAYED
+verbatim with a loud no-structured-values marker instead of computed numbers.
+The mob arc chooses WHICH rank a ranked spell is cast at; it never re-implements
+the layer/step selection, the cantrip rule or the formula arithmetic.
+
 
 
 ### D5 amendment, SECOND revision — the creature tier supersedes the mob artifact (docs/17 row 106)

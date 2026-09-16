@@ -19,6 +19,11 @@ const acidSplash: SpellData = {
   traits: ['acid', 'attack', 'cantrip', 'concentrate', 'manipulate'],
   rarity: 'common',
   cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },
+  damage: {
+    '0': { formula: '1d6', type: 'acid', category: null, materials: [] },
+    gcovwqxwitqchoin: { formula: '1', type: 'acid', category: 'splash', materials: [] },
+  },
+  area: null,
   heightening: { type: 'fixed', levels: { 3: { damage: {} } } },
   heighteningEntries: [
     {
@@ -50,6 +55,8 @@ describe('spellDataSchema (docs/12 §15)', () => {
       traits: [],
       rarity: 'common',
       cast: { time: '', range: '', target: '', duration: '' },
+      damage: {},
+      area: null,
       heighteningEntries: [],
       heighteningUnparsed: [],
     });

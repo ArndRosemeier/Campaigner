@@ -5215,6 +5215,64 @@ the card's description is the stored chunk text, so a test proves the licence
 line REACHES the screen, not that a person finds the card readable; and the
 next slice (a spell cast at a rank) reads the heightening data this slice only
 displays — no cast-rank value is computed or asserted anywhere here.
+### The heightening computation — ONE pure rule (docs/17 row 183, docs/12 §15.4, docs/18 §2)
+
+Row 181 captured the heightening DATA; this arc computes with it. The ONE rule
+is `domain/spellHeightening.spellAtRank`; these pins, and the injected failure
+each catches:
+
+- `tests/domain/spellHeightening.test.ts` (NEW; added to `nodeTestGlobs`): every
+  arm on synthetic payloads — `fixed` selecting the HIGHEST listed layer `<=`
+  rank (never the lowest) with a layer's `damage` a COMPLETE replacement and
+  `area`/`target`/`duration` replaced when stated, an unconsumed layer key
+  reported; the cantrip auto ranks for caster levels 1..20 (`ceil(level/2)`,
+  clamped to 1..10) with `castRank` ignored loudly; the interval floor with a
+  reported `stepRemainder` (a `(+2)` spell 1 rank up gains nothing); the
+  per-step area add and its no-base-area warning; the cantrip RULES base rank 1
+  (the ignition cell: caster level 5 → TWO steps → `4d4`, never `5d4`); the
+  prose-only arm returning the applicable note VERBATIM with the marker and no
+  numbers; `heighteningUnparsed` echoed into `unparsed` AND `warnings`; and the
+  loud refusals (absent payload, rank below the spell's own, non-integer rank,
+  corrupt interval, unknown type, interval deltas with no base damage entry).
+  Every assertion pins a FORMULA STRING — never a rolled or evaluated number.
+- `tests/domain/spellHeightening.test.ts` — the combiner: same-die counts add
+  (`6d6 + 2×2d6` → `10d6`), mixed dice and flats stay separate (`1d6 + 1d4 + 4`),
+  dice are ordered by first appearance and the flat total last, zero steps leave
+  the base untouched, and an unreadable term (`@item.level`) THROWS instead of
+  being guessed.
+- `tests/ingest/packs/pf2e-rules-heightening.test.ts` (NEW): the three REAL
+  `v14-dev` documents through the real adapter AND the real rule — Acid Splash
+  (fixed) at caster levels 1/5/7/9/13/17/20 giving `1d6`/`2d6`/`2d6`/`3d6`/`4d6`/
+  `5d6`/`5d6` with the splash track, Fireball (interval, base `6d6`, pinned
+  delta `2d6`) at ranks 3/4/5 giving `6d6`/`8d6`/`10d6` with the measured
+  `{type:'interval', interval:1, area:0, damage:{'0':'2d6'}}` object deep-equalled,
+  and Ignition (cantrip interval, base `2d4`, delta `1d4`) at caster levels
+  1/5/9 giving `2d4`/`4d4`/`6d4`. The two new fixtures are the fetched upstream
+  documents, byte-for-byte.
+- Row 181's pins were AMENDED, not weakened, for the two payload fields the
+  computation needs: `tests/ingest/packs/pf2e-rules.test.ts`'s exact payload
+  deep-equal now carries the fixture's own `damage` record and `area: null`, and
+  `tests/domain/spellData.test.ts`'s round-trip/default pins carry
+  `damage: {}`/`area: null`.
+
+**Injected RED, watched (raw gate logs kept):** making `fixed` select the LOWEST
+listed layer reds the domain selection pins AND the real Acid Splash cell by
+name; reverting the cantrip interval origin to `spell.rank` (0) reds the
+ignition cell at `5d4` vs `4d4`; dropping same-die addition in the combiner reds
+the `10d6` string. A green gate over a pin nobody broke is not evidence.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove the imported
+corpus covers every heightening shape a future pack prints — an unknown shape
+THROWS loudly rather than silently falling back to base, which is the honest
+failure mode, not coverage. No test can prove the Paizo rules text and the
+Foundry reference implementation agree on an edge nobody fetched: the floor rule
+is pinned to the reference implementation's OWN expression
+(`Math.floor((castRank - this.baseRank) / heightening.interval)`), quoted from
+the fetched source, not asserted from memory. No test here renders a chip (the
+mob-spells UI is the follow-up slice) and no test can prove a model chooses a
+legal rank for the mob. And no test can prove an existing library recomputes
+heightening until its rules pack is re-imported — row 181's no-migration
+decision still stands.
 
 ### Remaining gaps
 

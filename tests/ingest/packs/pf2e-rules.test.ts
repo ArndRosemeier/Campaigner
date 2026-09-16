@@ -212,6 +212,13 @@ describe('foundry-pf2e-rules adapter', () => {
       traits: ['acid', 'attack', 'cantrip', 'concentrate', 'manipulate'],
       rarity: 'common',
       cast: { time: '2', range: '30 feet', target: '1 creature', duration: '' },
+      // Ledger 183: the base numbers the heightening rule combines against —
+      // the source's own `system.damage` record (keys preserved) and `area`.
+      damage: {
+        '0': { formula: '1d6', type: 'acid', category: null, materials: [] },
+        gcovwqxwitqchoin: { formula: '1', type: 'acid', category: 'splash', materials: [] },
+      },
+      area: null,
       heightening: fixtureSource('acid-splash.json').system.heightening,
       heighteningEntries: [
         {

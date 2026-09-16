@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { spellTraditionSchema, type SpellData, type SpellHeighteningEntry } from '@/domain/spellData';
+import {
+  spellAreaSchema,
+  spellDamageMapSchema,
+  spellTraditionSchema,
+  type SpellData,
+  type SpellHeighteningEntry,
+} from '@/domain/spellData';
 import { errorMessage } from '@/lib/errors';
 
 import {
@@ -84,6 +90,13 @@ const pf2eRulesDocSchema = z.object({
     range: z.object({ value: z.string() }).nullish(),
     target: z.object({ value: z.string() }).nullish(),
     duration: z.object({ value: z.string() }).nullish(),
+    // The source's own damage/area, the numbers the heightening rule adds an
+    // interval delta to (ledger 183). Consumed verbatim; unknown keys inside
+    // each damage entry (`applyMod`, `kinds`) are dropped by the shared schema,
+    // which is the ONE damage-entry shape the payload and the heightening rule
+    // both read.
+    damage: spellDamageMapSchema.nullish(),
+    area: spellAreaSchema.nullish(),
     // The source's own heightening structure — consumed VERBATIM (never
     // normalized) by the spell payload; unknown keys inside it pass through
     // whole, which is the point.
@@ -315,6 +328,8 @@ function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
       target: doc.system.target?.value.trim() ?? '',
       duration: doc.system.duration?.value.trim() ?? '',
     },
+    damage: doc.system.damage ?? {},
+    area: doc.system.area ?? null,
     heightening: doc.system.heightening ?? null,
     heighteningEntries: heightening.entries,
     heighteningUnparsed: heightening.unparsed,

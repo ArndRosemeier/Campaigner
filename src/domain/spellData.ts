@@ -41,6 +41,40 @@ export const spellCastSchema = z.object({
 export type SpellCast = z.infer<typeof spellCastSchema>;
 
 /**
+ * One entry of the source's `system.damage` record, captured VERBATIM
+ * (`docs/12` §15, amended by ledger 183). The BASE formula is load-bearing for
+ * heightening: an `interval` spell states its improvement as a DELTA per step
+ * (Fireball: base `6d6`, `heightening.damage['0'] = '2d6'`), so the delta can
+ * only be applied to a base the payload actually carries. The record KEY is
+ * the source's own damage id and is preserved (never renumbered) because the
+ * delta is keyed by that SAME id.
+ */
+export const spellDamageSchema = z.object({
+  formula: z.string(),
+  type: z.string().default(''),
+  category: z.string().nullish(),
+  materials: z.array(z.string()).default([]),
+});
+
+export type SpellDamage = z.infer<typeof spellDamageSchema>;
+
+/** The source's `system.damage` record verbatim (id → entry), order preserved. */
+export const spellDamageMapSchema = z.record(z.string(), spellDamageSchema);
+
+/**
+ * The source's `system.area` verbatim (`null` when the spell has none). An
+ * `interval` spell heightens its area by a NUMBER of feet per step, added to
+ * `value` (Foundry `prepareBaseData`), so the base area must be stored too.
+ */
+export const spellAreaSchema = z.object({
+  type: z.string(),
+  value: z.number(),
+  details: z.string().nullish(),
+});
+
+export type SpellArea = z.infer<typeof spellAreaSchema>;
+
+/**
  * One heightening note parsed from a spell's RAW description HTML, in
  * document order (the next arc renders a spell at the rank a mob actually
  * casts it, so the notes are captured here rather than re-parsed later):
@@ -88,6 +122,19 @@ export const spellDataSchema = z.object({
   rarity: z.string().default('common'),
   /** The four cast facts, verbatim. */
   cast: spellCastSchema,
+  /**
+   * The source's own `system.damage` record, verbatim (`docs/12` §15, amended
+   * by ledger 183): `{}` when the spell deals none. The heightening rule ADDS
+   * an interval delta to these formulas, so the numbers behind the rendered
+   * text must be here — no test and no caller re-parses the stored prose.
+   * `.default({})` keeps a payload written before this field readable.
+   */
+  damage: spellDamageMapSchema.default({}),
+  /**
+   * The source's own `system.area`, verbatim; `null` when the spell has none
+   * (an interval spell adds its per-step area increase to `value`).
+   */
+  area: spellAreaSchema.nullable().default(null),
   /**
    * The source's OWN `system.heightening` object, captured verbatim and never
    * normalized into new semantics (its `levels`/`type`/`damage` shapes are the

@@ -1041,10 +1041,19 @@ on the book, network-free adapters, loud per-entry failures.
   and `{kind:'increment', increment:N, text}` from
   `<strong>Heightened (+1)</strong> …`); and `heighteningUnparsed` (the raw
   description line(s) that mention "Heightened" but matched NEITHER shape —
-  LOUD DATA, never a run failure and never a silent drop). NO derived
-  cast-rank value is computed here: rendering a spell at the rank a mob
-  actually casts it is the next arc's policy, and this capture exists so it
-  needs no second pass over the packs.
+  LOUD DATA, never a run failure and never a silent drop). The payload ALSO
+  carries the BASE numbers a heightening delta is combined against (ledger
+  183, amendment): `damage` (the source's own `system.damage` record
+  VERBATIM — each entry's `formula`/`type`/`category`/`materials`, keys
+  preserved because an `interval` delta is keyed by the same damage id) and
+  `area` (the source's own `system.area`, `null` when the document has
+  none), both additive (`.default({})` / `nullable().default(null)`) with the
+  emitted TEXT byte-identical (it IS the contentHash). NO derived cast-rank
+  value is computed AT INGEST: the ONE rule that renders a spell at the rank
+  a mob actually casts it is `domain/spellHeightening.spellAtRank` (ledger
+  183) — a pure function over this payload, so the mob arc CALLS it and never
+  re-derives a rank, a layer or a formula, and the pack is still parsed once
+  (docs/18 §2; the rule and its four arms are pinned in docs/17 row 183).
   `ruleChunkSchema.spellData` is `.nullish()` for the item lane's exact
   reason — chunks are read raw from Dexie and pre-arc rows genuinely lack
   the key — so there is NO migration, NO Dexie index change (`chunkType` is
