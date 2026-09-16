@@ -49,14 +49,16 @@ describe('one per-lane pack report (SOURCE SCAN, docs/17 row 204)', () => {
       const hits = stripComments(readFileSync(file, 'utf8')).split('formatPackLanes(').length - 1;
       if (hits > 0) callSites[rel] = hits;
     }
-    // The declaration plus the four surfaces: the manual-import toast and the
-    // summary dialog (`pack-import-dialog`), the fetch toast
-    // (`bestiary-fetch-section`) and the book-card stats line (`RulesPage`).
-    // A new surface that formats its own lane line, or a dropped call, reds.
+    // The declaration plus the report surfaces: the manual-import toast and
+    // the summary dialog (`pack-import-dialog`), the fetch toast and the
+    // per-recipe import-state line (`bestiary-fetch-section`, which gained its
+    // second call in docs/17 row 210) and the book-card stats line
+    // (`RulesPage`). A new surface that formats its own lane line, or a dropped
+    // call, reds.
     expect(callSites).toEqual({
       'src/features/rules/pack-lanes.ts': 1,
       'src/features/rules/pack-import-dialog.tsx': 2,
-      'src/features/settings/bestiary-fetch-section.tsx': 1,
+      'src/features/settings/bestiary-fetch-section.tsx': 2,
       'src/features/rules/RulesPage.tsx': 1,
     });
   });

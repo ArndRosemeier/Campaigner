@@ -6759,6 +6759,83 @@ branch renders which message. The import's own behaviour (what is written,
 page's filtering) is deliberately UNCHANGED and is pinned by the pre-existing
 suites.
 
+### An already-imported pack is stated in Settings — derived live from the library (docs/17 row 210, docs/16 §5/§7, docs/05 §Bestiary packs)
+
+The owner could not tell an already-imported pack from an unfetched one on the
+Settings → "Bestiary packs" card, so his imported spells were invisible until he
+inferred them from an empty Spells page. Every recipe row now states its import
+state, DERIVED FROM THE LIBRARY on each read (never a stored flag, which goes
+stale on a rename/delete/re-import) — and the state is bounded by what the
+library can PROVE: provenance, then an exact title, and UNKNOWN when neither
+answers.
+
+- `tests/features/bestiary-fetch-section.test.tsx` (the section's EXISTING
+  harness; eight pins in a new describe, each seeding the REAL Dexie library
+  through `createPackBook`/`finalizePackBook`/`putChunks` and driven through the
+  real live read):
+  - **pin 1 (provenance)** — a fetched book **renamed away from its label** (so
+    provenance is the ONLY key that can identify it) reads
+    `Imported — fetched 2026-09-16T11:04:00.000Z · 1 spell · 2 stat blocks · 0
+    items · 0 sections` (the spell lane counted LIVE from a stored `spell` chunk)
+    and offers `Re-import`, enabled, with `Re-import Pathfinder Monster Core` as
+    its accessible name.
+  - **pin 2 (title fallback)** — a manual book with NO provenance and the label
+    as its title reads imported through the title key, `updated <its own
+    updatedAt ISO>` (no fetch stamp exists, so the row does not claim one) and
+    `0 spells · 2 stat blocks · 0 items · 1 section`.
+  - **pin 3 (no match)** — with a ready pack book of ANOTHER adapter in the
+    library (so the read provably answered), the recipe reads `Not imported
+    yet.` with `Fetch & import`, enabled.
+  - **pin 4 (ambiguous)** — TWO books matching by title read `Import state
+    unknown — 2 books in the library match this pack (…), so which one to report
+    cannot be decided.`, state NO lane text (never a pick), and keep the button
+    enabled.
+  - **pin 5 (system mismatch)** — a provenance-matched book stored `dnd5e`
+    states `System mismatch: … stored as D&D 5e, but this source imports
+    Pathfinder 2e — a Pathfinder 2e campaign will not see its content. Use "Set
+    system" on the Rules page to correct it.`, with the imported state still
+    stated beside it.
+  - **pin 6 (action honesty)** — ONE render holds an imported recipe
+    (`Re-import`) and an unimported sibling (`Fetch & import`), both ENABLED.
+  - **loading** — synchronously after render the row reads `Checking the
+    library…`, never `Not imported yet.`, and resolves to the real state.
+  - **unidentified** — a manual import's derived slug title
+    (`pathfinder-monster-core` as a book title) reads UNKNOWN (unidentified)
+    with the lookalike named, NOT `Not imported yet.`
+- `tests/architecture/one-pack-lane-report.test.ts` — AMENDED: the
+  `formatPackLanes(` call-site population now counts
+  `bestiary-fetch-section.tsx` TWICE (its fetch toast + its new state line), so
+  the new surface rides row 204's ONE formatter instead of re-spelling the
+  lanes.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no pin proves the live library
+matches a given on-disk library beyond the seeded rows; none proves the copy
+reads well to a person (it proves which data branch renders which message); and
+the UNIDENTIFIED arm is a heuristic by construction — it decides "looks like",
+never "is". The class it genuinely cannot cover is a manual import whose title
+is SILENT about the pack (a zip named `bundle.zip`): it matches neither key and
+matches no lookalike, so the row reads `Not imported yet.` — the one case where
+the row can still be wrong, recorded in docs/17 row 210 rather than hidden (the
+remedy is a re-import either way, and the action stays available).
+
+**INJECTED RED, watched — the suite lock held BEFORE the first injection, the
+mutated file's hash PRINTED with `git hash-object` for every arm, the tree
+restored from an OUT-OF-TREE copy by a `trap` (the work was uncommitted, so
+`git checkout --` would have destroyed it) and re-hashed before the next arm,
+no two arms sharing a hash:**
+
+| injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`) | result |
+|---|---|
+| **A baseline** — `pack-import-state.ts` `268863a6534469c2467184c32b04f919cd484483`, `bestiary-fetch-section.tsx` `87081bb1ce8e2f52146acfe9ca07bceb1df9a952` | **GREEN 17/17** |
+| **B the PROVENANCE key removed** (`if (provenanceMatches(…))` → `if (false && provenanceMatches(…))`) — `pack-import-state.ts` `0844add416164afc77882f348cd5a72e102aa8fc` | **RED 1**, exactly pin 1 (the renamed fetched book, which ONLY provenance can identify) |
+| **C the AMBIGUITY collapse — first match wins** (`identified.length > 1` → `> 2`) — `pack-import-state.ts` `b36bb6646d5167c1545e06328f665319a06c0dc5` | **RED 1**, exactly pin 4 (two matches read imported instead of UNKNOWN) |
+| **D the SYSTEM-MISMATCH state removed** (`systemMismatch: book.system !== expectedSystem` → `false`) — `pack-import-state.ts` `27fe402d461534cb17224ce8d3536e1d375a141f` | **RED 1**, exactly pin 5 |
+
+No arm was VOID: all four hashes differ and every arm's RED named a different
+pin. The five remaining pins (title fallback, no match, action honesty,
+loading, lookalike) stayed GREEN under all four injections, so each pin owns
+its own behaviour rather than riding another's.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

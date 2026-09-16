@@ -258,6 +258,20 @@ via `toastError`; no-network / rate-limit / unknown-pack failures are loud and
 named. Fetching "again" creates a new book (same policy as re-importing a
 PDF).
 
+**Every recipe row also states whether that pack is already in the library**
+(docs/17 row 210): the state is derived LIVE from the book rows — the fetch
+provenance `sourceUrl` first (its tail is this recipe's repo path), the book
+`title` against the recipe `label` as the manual-import fallback — with row
+204's per-lane breakdown beside it. When the library proves the import the row
+reads `Imported — fetched <ISO> · <lanes>` (or `updated <ISO>` for a manual
+import) and the button offers `Re-import`, still ENABLED because a re-import is
+the documented remedy for a book imported before the structured spell payload
+(docs/12 §15.4); when it cannot, the row says the state is UNKNOWN
+(ambiguous — two matches, never a pick — or unidentifiable) rather than
+guessing, and before the live read answers it says `Checking the library…`. A
+matched book stored under ANOTHER system states that mismatch on the row and
+names **Set system** on the Rules page as the correction.
+
 ## 6. Data flow (no pipeline fork)
 
 ```
@@ -288,10 +302,20 @@ error, no book.
 ```ts
 // packMetaSchema additions (all optional → old backups parse unchanged):
 sourceRef: z.string().optional(),   // ref ACTUALLY imported: 'HEAD' or the verified ref (§1.1)
-sourceUrl: z.string().optional(),   // pack base URL (raw.githubusercontent.com/...)
+sourceUrl: z.string().optional(),   // https://github.com/<owner>/<repo>/tree/<ref>/<pack path>
 fetchedAt: z.number().int().positive().optional(), // epoch ms; absent for manual imports
 attemptedRefs: z.string().array().optional(), // attempt trail, e.g. ['HEAD'] | ['HEAD','v14-dev'] (§1.1)
 ```
+
+**`sourceUrl` is the fetch IDENTITY, not just a link** (docs/17 row 210): its
+tail is the recipe's own repo path inside the SOURCE's repo, so the Settings
+card's imported-state derivation reads a fetched book's provenance as a proof
+(it checks the `https://github.com/<owner>/<repo>/tree/` prefix and the
+`/<recipeId>` tail). Only a fetch stamps it — a manual file/zip import carries
+none of these four fields, which is why the card falls back to the book `title`
+against the recipe `label` there. The URL is `github.com` (the code's own
+value); an earlier line here said `raw.githubusercontent.com`, which the
+stamped value never was.
 
 Backup round-trip: `rulebookSchema` parses old packs (no provenance) and new
 packs (provenance present) unchanged; the backup zip dumps tables raw, so no

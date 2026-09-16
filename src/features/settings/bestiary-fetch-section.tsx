@@ -7,6 +7,7 @@ import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
+import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import {
   fetchAndImportPack,
   listPackRecipes,
@@ -20,16 +21,29 @@ import type { PackImportProgress } from '@/ingest/packImport';
 import { getPackAdapter } from '@/ingest/packs/registry';
 import { errorMessage } from '@/lib/errors';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { useRulebookSummaries } from '@/features/rules/hooks';
 import { PackImportReport } from '@/features/rules/pack-import-dialog';
-import { formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
+import {
+  packSourceImportState,
+  type PackSourceCandidate,
+  type PackSourceImportState,
+} from '@/features/rules/pack-import-state';
+import { bookPackLaneCounts, formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
 
 /**
  * "Bestiary packs" settings card (16-BESTIARY-FETCH §5): per adapter the
- * curated pack recipes with per-pack "Fetch & import" buttons, plus the
- * advanced "list everything in the repo" toggle (an on-demand GitHub trees
- * listing). Fetching downloads the pack from the pinned upstream repo into
+ * curated pack recipes with per-pack "Fetch & import" / "Re-import" buttons,
+ * plus the advanced "list everything in the repo" toggle (an on-demand GitHub
+ * trees listing). Fetching downloads the pack from the pinned upstream repo into
  * this browser and runs the unchanged `importPack` — the report component is
  * the one from the /rules manual-import dialog, which stays as the fallback.
+ *
+ * Since docs/17 row 210 every recipe row also STATES whether the library
+ * already holds that pack, derived live from the book rows
+ * (`features/rules/pack-import-state` — provenance first, title fallback,
+ * UNKNOWN rather than a guess) with row 204's ONE per-lane breakdown; a matched
+ * book stored under another system is stated too, because that is invisible the
+ * same way.
  *
  * Failure policy is loud (AGENTS rule 1): fetch/listing/import errors toast
  * via `toastError` AND stay named in the card; one fetch runs at a time.
@@ -55,6 +69,64 @@ function progressDetail(progress: PackFetchProgress | PackImportProgress): strin
   return `Importing ${String(progress.done)}/${String(progress.total)} chunks…`;
 }
 
+/** The titles an UNKNOWN state names, quoted — never a pick among them. */
+function quoteTitles(candidates: readonly PackSourceCandidate[]): string {
+  return candidates.map((candidate) => `“${candidate.summary.book.title}”`).join(', ');
+}
+
+/**
+ * THE line every recipe row states (docs/17 row 210). The IDENTITY decision is
+ * the pure seam (`features/rules/pack-import-state`); the lane breakdown is
+ * row 204's ONE formatter over the LIVE spell count, so this row can never
+ * print a different spell number than the book's own card.
+ *
+ * `library-loading` is not "not imported": the live library read has not
+ * answered yet, and claiming absence before the answer exists is the lie this
+ * row exists to end (AGENTS rule 1).
+ */
+function importStateLine(state: PackSourceImportState): string {
+  switch (state.kind) {
+    case 'library-loading':
+      return 'Checking the library…';
+    case 'not-imported':
+      return 'Not imported yet.';
+    case 'imported': {
+      const fetchedAt = state.candidate.packMeta.fetchedAt;
+      const stamp = fetchedAt ?? state.candidate.summary.book.updatedAt;
+      return (
+        `Imported — ${fetchedAt === undefined ? 'updated' : 'fetched'} ` +
+        `${new Date(stamp).toISOString()} · ` +
+        formatPackLanes(
+          bookPackLaneCounts(state.candidate.packMeta, state.candidate.summary.spellChunkCount),
+        )
+      );
+    }
+    case 'unknown': {
+      const count = state.candidates.length;
+      const titles = quoteTitles(state.candidates);
+      return state.reason === 'ambiguous'
+        ? `Import state unknown — ${String(count)} books in the library match this pack (${titles}), so which one to report cannot be decided.`
+        : `Import state unknown — ${String(count)} book${count === 1 ? '' : 's'} in the library ` +
+            `look${count === 1 ? 's' : ''} like this pack (${titles}) but ` +
+            `${count === 1 ? 'carries' : 'carry'} neither provenance nor a matching title, so none is proven to be this pack.`;
+    }
+  }
+}
+
+/**
+ * The neighbouring confusion this row closes (docs/17 row 210): a pack stored
+ * under another system is invisible to the campaign system that expects it, and
+ * nothing on this card said so. The correction is named because it exists — the
+ * Rules page's book menu "Set system".
+ */
+function systemMismatchLine(actual: GameSystem, expected: GameSystem): string {
+  return (
+    `System mismatch: the matched book is stored as ${GAME_SYSTEM_LABELS[actual]}, but this source imports ` +
+    `${GAME_SYSTEM_LABELS[expected]} — a ${GAME_SYSTEM_LABELS[expected]} campaign will not see its content. ` +
+    `Use “Set system” on the Rules page to correct it.`
+  );
+}
+
 const FETCH_RUNNING_REASON =
   'A pack fetch is already running — one fetch runs at a time here; wait for it to finish.';
 
@@ -62,6 +134,12 @@ export function BestiaryFetchSection(): JSX.Element {
   const [states, setStates] = useState<Record<string, FetchState>>({});
   const [fullLists, setFullLists] = useState<Record<string, FullList>>({});
   const [showFailedFor, setShowFailedFor] = useState<Record<string, boolean>>({});
+  /**
+   * The LIVE library read (row 204's ONE book read), so every recipe row can
+   * say whether it is already imported and show the lanes the book's own card
+   * shows. `undefined` is "not answered yet" — never "not imported".
+   */
+  const summaries = useRulebookSummaries();
 
   const running = Object.values(states).some((state) => state.kind === 'fetching');
   /**
@@ -163,56 +241,94 @@ export function BestiaryFetchSection(): JSX.Element {
               </div>
               <p className="text-xs text-muted-foreground">{adapter.license}</p>
               <ul className="flex flex-col gap-1">
-                {recipes.map((recipe) => (
-                  <li key={recipe.id} className="flex items-center justify-between gap-2">
-                    <span className="text-sm">
-                      {recipe.label}{' '}
-                      <span className="text-xs text-muted-foreground">
-                        {/* Item packs (12-BESTIARY-PACKS §13) count documents
-                            in "items", journal packs (docs/12 §15) count
-                            pages, condition/corpus packs count sections, spell
-                            packs (docs/17 row 194) count spells; the listing
-                            counts adapter-parseable files either way. */}
-                        ({String(recipe.creatures)}{' '}
-                        {recipe.unit === 'items'
-                          ? recipe.creatures === 1
-                            ? 'item'
-                            : 'items'
-                          : recipe.unit === 'pages'
-                            ? recipe.creatures === 1
-                              ? 'page'
-                              : 'pages'
-                            : recipe.unit === 'sections'
+                {recipes.map((recipe) => {
+                  const importState = packSourceImportState(
+                    source,
+                    recipe,
+                    adapter.system,
+                    summaries,
+                  );
+                  // The label states the REAL action (docs/17 row 210): a recipe
+                  // the library already proves imported offers "Re-import" — a
+                  // legitimate, documented remedy (docs/12: a library imported
+                  // before the structured spell payload looks exactly like a
+                  // stale one) — so the control is never disabled; only a
+                  // running fetch holds it, with its own stated reason.
+                  const action = importState.kind === 'imported' ? 'Re-import' : 'Fetch & import';
+                  return (
+                    <li key={recipe.id} className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm">
+                          {recipe.label}{' '}
+                          <span className="text-xs text-muted-foreground">
+                            {/* Item packs (12-BESTIARY-PACKS §13) count documents
+                                in "items", journal packs (docs/12 §15) count
+                                pages, condition/corpus packs count sections, spell
+                                packs (docs/17 row 194) count spells; the listing
+                                counts adapter-parseable files either way. */}
+                            ({String(recipe.creatures)}{' '}
+                            {recipe.unit === 'items'
                               ? recipe.creatures === 1
-                                ? 'section'
-                                : 'sections'
-                              : recipe.unit === 'spells'
+                                ? 'item'
+                                : 'items'
+                              : recipe.unit === 'pages'
                                 ? recipe.creatures === 1
-                                  ? 'spell'
-                                  : 'spells'
-                                : recipe.creatures === 1
-                                  ? 'creature'
-                                  : 'creatures'})
-                      </span>
-                    </span>
-                    <BlockedControl
-                      testId={`fetch-${recipe.id}`}
-                      reason={fetchBlockedReason}
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={running}
-                        data-testid={`fetch-${recipe.id}`}
-                        aria-label={`Fetch & import ${recipe.label}`}
-                        onClick={() => void runFetch(source.adapterId, recipe.id)}
+                                  ? 'page'
+                                  : 'pages'
+                                : recipe.unit === 'sections'
+                                  ? recipe.creatures === 1
+                                    ? 'section'
+                                    : 'sections'
+                                  : recipe.unit === 'spells'
+                                    ? recipe.creatures === 1
+                                      ? 'spell'
+                                      : 'spells'
+                                    : recipe.creatures === 1
+                                      ? 'creature'
+                                      : 'creatures'})
+                          </span>
+                        </span>
+                        <BlockedControl
+                          testId={`fetch-${recipe.id}`}
+                          reason={fetchBlockedReason}
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={running}
+                            data-testid={`fetch-${recipe.id}`}
+                            aria-label={`${action} ${recipe.label}`}
+                            onClick={() => void runFetch(source.adapterId, recipe.id)}
+                          >
+                            <CloudDownloadIcon aria-hidden className="size-3.5" />
+                            {action}
+                          </Button>
+                        </BlockedControl>
+                      </div>
+                      {/* The row STATES its library-derived import state (docs/17
+                          row 210) — the owner could not tell an imported pack
+                          from an unfetched one, and the spell lane is the number
+                          that would have told him. */}
+                      <p
+                        className="text-xs text-muted-foreground"
+                        data-testid={`import-state-${recipe.id}`}
                       >
-                        <CloudDownloadIcon aria-hidden className="size-3.5" />
-                        Fetch &amp; import
-                      </Button>
-                    </BlockedControl>
-                  </li>
-                ))}
+                        {importStateLine(importState)}
+                      </p>
+                      {importState.kind === 'imported' && importState.systemMismatch && (
+                        <p
+                          className="text-xs text-destructive"
+                          data-testid={`import-system-mismatch-${recipe.id}`}
+                        >
+                          {systemMismatchLine(
+                            importState.candidate.summary.book.system,
+                            adapter.system,
+                          )}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               {fullList.kind === 'loading' && (
                 <p className="text-xs text-muted-foreground" data-testid={`listing-${source.adapterId}`}>

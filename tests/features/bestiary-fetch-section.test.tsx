@@ -8,6 +8,10 @@ import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section
 import { clearPackTreeCache } from '@/ingest/packFetch';
 import { Toaster } from '@/components/ui/sonner';
 import { db } from '@/db/db';
+import { putChunks } from '@/db/chunkRepo';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { newId, ruleChunkSchema, spellDataSchema, type RuleChunk } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { clearDatabase } from '../db/helpers';
 import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 
@@ -16,7 +20,10 @@ import { baseNpc } from '../ingest/packs/fixtures';
 /**
  * Settings "Bestiary packs" card (16-BESTIARY-FETCH §5/§9): curated recipes
  * render, the advanced toggle lists the repo on demand, a fetch lands a ready
- * provenance-stamped book in Dexie, and failures are loud and named.
+ * provenance-stamped book in Dexie, failures are loud and named, and every row
+ * states its LIBRARY-DERIVED import state (docs/17 row 210 — provenance first,
+ * title fallback, UNKNOWN rather than a guess, plus the system-mismatch
+ * surface).
  */
 
 const PF2E_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/v14-dev?recursive=1';
@@ -47,6 +54,94 @@ function mockFetch(routes: Record<string, Response | Error>): ReturnType<typeof 
     if (route instanceof Error) return Promise.reject(route);
     return Promise.resolve(route);
   });
+}
+
+// --- The imported-state pins (docs/17 row 210) ------------------------------
+
+/** The curated pf2e creature recipe every state pin is written against. */
+const MONSTER_CORE = 'packs/pf2e/pathfinder-monster-core';
+const MONSTER_CORE_LABEL = 'Pathfinder Monster Core';
+
+/** A valid `section` chunk — the non-spell rules lane. */
+function sectionChunk(bookId: string): RuleChunk {
+  return ruleChunkSchema.parse({
+    id: newId(),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    bookId,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'section',
+    headingPath: ['Chapter 1'],
+    text: 'The bell tolls over the drowned quarter.',
+    statBlock: null,
+    contentHash: 'a'.repeat(64),
+  });
+}
+
+/** A valid `spell` chunk row — the row's LIVE spell lane (docs/17 row 204). */
+function spellRow(bookId: string, name: string): RuleChunk {
+  return ruleChunkSchema.parse({
+    ...sectionChunk(bookId),
+    id: newId(),
+    chunkType: 'spell',
+    headingPath: ['Spells', name],
+    text: `${name}\nSpell 1\nA spell description.`,
+    spellData: spellDataSchema.parse({
+      system: 'pathfinder2e',
+      rank: 0,
+      cantrip: true,
+      traditions: ['arcane', 'primal'],
+      traits: [],
+      rarity: 'common',
+      cast: { time: '', range: '', target: '', duration: '' },
+      heightening: null,
+      heighteningEntries: [],
+      heighteningUnparsed: [],
+      publication: null,
+    }),
+  });
+}
+
+/**
+ * A ready pack book in the real library, the way an import leaves one:
+ * `entriesImported: 3` = 2 stat blocks + 1 rules-text section, so the lane
+ * breakdown of a book with one stored `spell` chunk is
+ * `1 spell · 2 stat blocks · 0 items · 0 sections`.
+ */
+async function seedPackBook(options: {
+  title: string;
+  sourceId: string;
+  system?: GameSystem;
+  provenance?: { sourceUrl: string; fetchedAt: number };
+}): Promise<string> {
+  const book = await createPackBook({
+    title: options.title,
+    system: options.system ?? 'pathfinder2e',
+    filename: 'pack.zip',
+  });
+  await finalizePackBook(book.id, {
+    sourceId: options.sourceId,
+    license: 'test license',
+    entriesImported: 3,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+    sectionsImported: 1,
+    ...(options.provenance === undefined
+      ? {}
+      : {
+          sourceRef: 'HEAD',
+          sourceUrl: options.provenance.sourceUrl,
+          fetchedAt: options.provenance.fetchedAt,
+          attemptedRefs: ['HEAD'],
+        }),
+  });
+  return book.id;
+}
+
+/** The provenance URL a fetch of `recipeId` from this source stamps. */
+function fetchUrl(recipeId: string): string {
+  return `https://github.com/foundryvtt/pf2e/tree/HEAD/${recipeId}`;
 }
 
 beforeEach(async () => {
@@ -396,5 +491,182 @@ describe('BestiaryFetchSection blocked-control reasons', () => {
       );
     });
     expectSelfEvidentBlock('full-list-foundry-pf2e', 'aria-disabled');
+  }, 30_000);
+});
+
+/**
+ * Every recipe row states its import state, DERIVED FROM THE LIBRARY
+ * (docs/17 row 210) — the owner: *"When something is already imported (spells
+ * in my example) in settings, the fetch & import button should somehow
+ * indicate that fact. Right now its invisible which led to me confusion."*
+ *
+ * Each pin seeds the REAL library (real Dexie rows through the real repos) and
+ * asserts the rendered state line, so the derivation is exercised end to end
+ * through the live read — never a stored flag and never a mocked predicate.
+ */
+describe('BestiaryFetchSection imported state (docs/17 row 210)', () => {
+  it('pin 1 — a FETCHED pack (provenance sourceUrl) reads imported, with when and the lanes, and offers Re-import', async () => {
+    // The title is deliberately NOT the recipe label: provenance is the ONLY
+    // key that can identify this book, so this pin reds if that key is lost.
+    const bookId = await seedPackBook({
+      title: 'Monster Core (renamed by owner)',
+      sourceId: 'foundry-pf2e',
+      provenance: {
+        sourceUrl: fetchUrl(MONSTER_CORE),
+        fetchedAt: Date.UTC(2026, 8, 16, 11, 4),
+      },
+    });
+    await putChunks([sectionChunk(bookId), spellRow(bookId, 'Acid Splash')]);
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent(
+        'Imported — fetched 2026-09-16T11:04:00.000Z · 1 spell · 2 stat blocks · 0 items · 0 sections',
+      );
+    });
+    // The spell lane is the number that would have told the owner immediately,
+    // and it comes from row 204's ONE formatter over the LIVE count.
+    expect(state).toHaveTextContent('1 spell');
+    const button = screen.getByTestId(`fetch-${MONSTER_CORE}`);
+    expect(button).toHaveTextContent('Re-import');
+    expect(button).toBeEnabled();
+    expect(button).toHaveAccessibleName(`Re-import ${MONSTER_CORE_LABEL}`);
+  }, 30_000);
+
+  it('pin 2 — a MANUAL import is identified by the TITLE fallback, with its own when', async () => {
+    const bookId = await seedPackBook({ title: MONSTER_CORE_LABEL, sourceId: 'foundry-pf2e' });
+    const book = await db.rulebooks.get(bookId);
+    if (book === undefined) throw new Error('seeded pack book missing');
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    // No provenance exists, so the honest "when" is the row's own last-update
+    // stamp, and the line says exactly that instead of claiming a fetch.
+    await waitFor(() => {
+      expect(state).toHaveTextContent(
+        `Imported — updated ${new Date(book.updatedAt).toISOString()} · 0 spells · 2 stat blocks · 0 items · 1 section`,
+      );
+    });
+    expect(screen.getByTestId(`fetch-${MONSTER_CORE}`)).toHaveTextContent('Re-import');
+  }, 30_000);
+
+  it('pin 3 — an unimported recipe reads not imported and keeps Fetch & import', async () => {
+    // A ready pack book of ANOTHER adapter proves the library answer landed.
+    await seedPackBook({
+      title: 'D&D 5e SRD Monsters',
+      sourceId: 'foundry-dnd5e-srd',
+      system: 'dnd5e',
+    });
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent('Not imported yet.');
+    });
+    const button = screen.getByTestId(`fetch-${MONSTER_CORE}`);
+    expect(button).toHaveTextContent('Fetch & import');
+    expect(button).toBeEnabled();
+  }, 30_000);
+
+  it('pin 4 — TWO matching books read UNKNOWN (ambiguous), never a pick', async () => {
+    await seedPackBook({ title: MONSTER_CORE_LABEL, sourceId: 'foundry-pf2e' });
+    await seedPackBook({ title: MONSTER_CORE_LABEL, sourceId: 'foundry-pf2e' });
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent(
+        'Import state unknown — 2 books in the library match this pack (“Pathfinder Monster Core”, “Pathfinder Monster Core”), so which one to report cannot be decided.',
+      );
+    });
+    // Never a pick: no lane breakdown is stated for an ambiguous identity.
+    expect(state).not.toHaveTextContent(/\d+ spells? ·/);
+    // …and the action is not disabled, and claims no prior import.
+    const button = screen.getByTestId(`fetch-${MONSTER_CORE}`);
+    expect(button).toHaveTextContent('Fetch & import');
+    expect(button).toBeEnabled();
+  }, 30_000);
+
+  it('pin 5 — a matched book stored under another system states the mismatch and the correction', async () => {
+    // Matched by BOTH keys on purpose (title = label, provenance stamped), so
+    // this pin isolates the MISMATCH surface from the identity key.
+    await seedPackBook({
+      title: MONSTER_CORE_LABEL,
+      sourceId: 'foundry-pf2e',
+      system: 'dnd5e',
+      provenance: {
+        sourceUrl: fetchUrl(MONSTER_CORE),
+        fetchedAt: Date.UTC(2026, 8, 16, 11, 4),
+      },
+    });
+
+    render(<BestiaryFetchSection />);
+
+    const mismatch = await screen.findByTestId(`import-system-mismatch-${MONSTER_CORE}`);
+    expect(mismatch).toHaveTextContent(
+      'System mismatch: the matched book is stored as D&D 5e, but this source imports Pathfinder 2e — a Pathfinder 2e campaign will not see its content. Use “Set system” on the Rules page to correct it.',
+    );
+    // The imported state is still stated — the mismatch is additive.
+    expect(screen.getByTestId(`import-state-${MONSTER_CORE}`)).toHaveTextContent(
+      /^Imported — fetched /,
+    );
+  }, 30_000);
+
+  it('never says "not imported" while the library read is unanswered', async () => {
+    render(<BestiaryFetchSection />);
+
+    // Synchronously after render the live read has not answered: the row says
+    // so instead of claiming absence (AGENTS rule 1).
+    expect(screen.getByTestId(`import-state-${MONSTER_CORE}`)).toHaveTextContent(
+      'Checking the library…',
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId(`import-state-${MONSTER_CORE}`)).toHaveTextContent(
+        'Not imported yet.',
+      );
+    });
+  }, 30_000);
+
+  it('a lookalike book that proves nothing reads UNKNOWN (unidentified), not "not imported"', async () => {
+    // A manual import's derived title is the zip/file base name — the pack
+    // folder SLUG, not the recipe's human label — so the library clearly looks
+    // like this pack but cannot prove it.
+    const slugTitle = 'pathfinder-monster-core';
+    await seedPackBook({ title: slugTitle, sourceId: 'foundry-pf2e' });
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent(
+        `Import state unknown — 1 book in the library looks like this pack (“${slugTitle}”) but carries neither provenance nor a matching title, so none is proven to be this pack.`,
+      );
+    });
+    expect(state).not.toHaveTextContent('Not imported yet.');
+    expect(screen.getByTestId(`fetch-${MONSTER_CORE}`)).toBeEnabled();
+  }, 30_000);
+
+  it('pin 6 — the button label reflects the state and every recipe stays enabled', async () => {
+    await seedPackBook({ title: MONSTER_CORE_LABEL, sourceId: 'foundry-pf2e' });
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${MONSTER_CORE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent(/^Imported — updated /);
+    });
+    // The identified recipe offers the documented remedy, enabled.
+    const reimport = screen.getByTestId(`fetch-${MONSTER_CORE}`);
+    expect(reimport).toHaveTextContent('Re-import');
+    expect(reimport).toBeEnabled();
+    // A sibling with no matching book keeps the original action, also enabled.
+    const fresh = screen.getByTestId('fetch-packs/pf2e/pathfinder-bestiary');
+    expect(fresh).toHaveTextContent('Fetch & import');
+    expect(fresh).toBeEnabled();
   }, 30_000);
 });
