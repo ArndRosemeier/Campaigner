@@ -10,6 +10,7 @@ import { ROUTES, campaignIdFromPath, modulePath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
+import { ModelPicker } from '@/features/settings/model-picker';
 import { TopBarNewModuleButton } from '@/features/modules/top-bar-new-module';
 import { QuickFindTopBarButton } from '@/features/quickfind/quickfind-topbar-button';
 import { readSettings } from '@/db/settingsRepo';
@@ -17,7 +18,8 @@ import { cn } from '@/lib/utils';
 
 /**
  * Top bar shown on all routes: app name, campaign switcher, the app-level
- * nav (Rules / Settings / last-module shortcut) and the theme toggle
+ * nav (Rules / Settings / last-module shortcut), the GLOBAL first-try chat
+ * model picker beside Settings (docs/17 row 193) and the theme toggle
  * (05-UI.md §Top bar). The campaign-level sections (Modules / Workspace /
  * Graph) live in the campaign bar rendered below this bar.
  *
@@ -61,6 +63,11 @@ export function TopBar(): JSX.Element {
             {item.label}
           </NavLink>
         ))}
+        {/* The GLOBAL first-try chat model picker (docs/17 row 193) sits
+            immediately beside the Settings nav entry: it edits the same
+            `settings.defaultChatModel` the Settings page edits, and its
+            "Recently used" list is always most-recent-first. */}
+        <ModelPicker />
         {lastModule !== null && (
           <NavLink
             to={modulePath(lastModule.campaignId, lastModule.moduleId)}

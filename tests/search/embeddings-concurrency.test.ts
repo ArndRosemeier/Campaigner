@@ -58,6 +58,7 @@ const SETTINGS = {
   maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'm',
+  recentChatModels: [],
   defaultReasoningEffort: 'default' as const,
   embeddingModel: 'openai/text-embedding-3-small',
   embeddingsEnabled: true,

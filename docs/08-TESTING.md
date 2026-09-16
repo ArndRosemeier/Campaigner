@@ -529,6 +529,7 @@ test) · ❌ gap.
 | **An artifact's own image prints WHEREVER the artifact is described** (docs/17 row 187, docs/19 §2/§4): a planned section whose artifact carries a cover prints it with the plan anchoring NOTHING, an encounter's own map plate does too, a `read-aloud`/`aside` section still prints its artifact's picture while its mechanics stay suppressed, the NPC gallery prints portraits, a plan anchor naming the artifact's own picture is not printed twice, a row with no image prints none, and an image that exists but was not preloaded is LOUD (named problem + alert box) | `modulePdfPlan.test` (`18 → 22`: 5 new pins, one of them replacing the old “prints exactly the images the plan anchored” pin), `pdfLayout.test` (`36 → 37`: the large fixture, planned with every anchor removed), `modulePdf.test` (the procedural loud placeholders and the no-map/no-schematic pins, unchanged) | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
+| Top bar: the **GLOBAL chat-model picker** beside Settings (docs/17 row 193) — the current `defaultChatModel` on its trigger, the **Recently used** group in stored recency order (never re-sorted), free-form entry for an unlisted id, the ONE account model-id option source, and LOUD no-key / failed-fetch states | `model-picker.test` (5 pins), `recent-chat-models.test` (the ordering rule), `settingsRepo.test` (the recording seam, incl. concurrent recorders), `runEngine.test` (a run records the global default; a persona override does not), `architecture/one-model-option-source.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | A PERSISTENT error notice carries a real dismiss control, and dismissing it destroys no evidence (docs/05 §Error surfaces rule, docs/17 row 136) | `toast-persistent-dismiss.test.tsx` (4 pins, NEW: the real `Toaster` + the real seam, the same through `toastErrorPersistent`, the transient case unchanged, and the console record byte-identical after the click) + `toast.test.ts` (the seam's options) | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
@@ -5691,6 +5692,76 @@ importer correctly stamps only the source's STATED rank and derives nothing, and
 so a focus chip can print the base rank — the fix belongs in that resolver,
 which this brief forbids touching, and it is a follow-up for its own row, not a
 claim of this one.
+
+### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
+
+The owner asked for a picker for the global first-try chat model ("the picker
+should also have a section for the most recently used models that is always
+sorted by recency"). The pins are split by idea, each naming row 193:
+
+- `tests/domain/recent-chat-models.test.ts` (NEW): the ONE ordering rule —
+  A→B→C gives exactly `['c','b','a']`; re-using A gives exactly `['a','c','b']`;
+  a duplicate never appears twice; the cap arm asserts the EXACT list and that
+  the entry dropped is the OLDEST; the rule does not mutate its input; an
+  empty/whitespace model is ignored; a fresh row is `[]`; and a stored row
+  written before the field PARSES as `[]` (no migration).
+- `tests/db/settingsRepo.test.ts`: the ONE recording seam reads, merges and
+  writes inside one transaction — a FRONT insert, a DIFFERENTIAL that two
+  concurrent recorders both land (the read-modify-write the seam exists to
+  forbid would lose one), move-to-front dedupe, the exact cap, the empty-model
+  no-op, and a legacy row.
+- `tests/features/model-picker.test.tsx` (NEW, the REAL top bar on the real
+  router): the trigger renders in the banner immediately after the Settings
+  link on `/` (no campaign) AND on `/c/:id` (campaign route); the Recently-used
+  group is in stored order and picking writes `settings.defaultChatModel` AND
+  lands the model at the FRONT; a typed id that is NOT in the loaded account
+  list is settable; with no API key the Account-models group SAYS why it is
+  absent while recents and a typed id still work (and no fetch is attempted);
+  and a failed fetch renders its reason in the panel AND calls `toastError`.
+- `tests/llm/runEngine.test.ts`: a run whose chat model resolves to the GLOBAL
+  default records it; a run with a persona override records NOTHING (the global
+  default is not in play).
+- `tests/architecture/one-model-option-source.test.ts` (NEW, SOURCE SCAN): the
+  `listModels(` population is exactly the transport definition, the
+  `listModelIds` option seam, and the two deliberately-different consumers
+  (the Settings "Test key" probe, `ReasoningEffortSelect`'s full-row metadata);
+  `listModelIds` is defined once; and `model-input.tsx` / `model-picker.tsx`
+  reach the seam and never `listModels` directly.
+
+**Injected RED, watched (four arms, the changed file's hash PRINTED by `git
+hash-object` for every arm and the tree restored from HEAD by a `trap` before
+the next arm — no two arms identical):** **A** baseline — `settings.ts`
+`e6be7c3ee683c5cf176a8644fc6fb288a95569f1`, `model-picker.tsx`
+`db15d36d8b11ab21689f14176f55727d4c2d7310` → **GREEN 4 files / 28 tests**;
+**B** the ordering rule APPENDS instead of moving to front (`settings.ts`
+`d024f2baf18fe4b17ab8414c4ff1980cd9b10b10`) → **RED 4** (A→B→C order,
+re-use dedupe, the cap arm, purity); **C** the cap removed (`settings.ts`
+`cf63d5dc2ec466b5cc428e639458123a9dc9648e`) → **RED 1**, exactly the cap arm
+(the exact-list + oldest-dropped assertion); **D** the picker's recording call
+removed (`model-picker.tsx` `6f546ca950c98ae5c9ec12156bc3c60293336a48`) →
+**RED 3** (pin 3 picking writes the setting AND lands at the front, plus the
+free-form and no-key arms that assert the recency front). Every restored file's
+hash was printed again and matched the baseline hash.
+
+**The engine call is FIRE-AND-FORGET, and that was a measured correction:**
+awaiting a settings transaction at `executeFrom`'s top held the run row at its
+previous status long enough for a legitimately racing `approve` to observe a
+stale `awaiting_user` and re-enter the SAME step — the first gate run reddened
+exactly there (`module-gen-and-provenance`'s finalize pin and
+`encounter-map-queue`'s "deleted run is silent" pin, both from a doubled
+statblock call), and `void this.recordChatModelInUse(...)` (the method catches
+and toasts its own failures) cured both. The top bar's new `Chat model: …`
+control also made `canvas-chat-thread.test.tsx`'s page-wide
+`queryAllByRole('button', { name: /chat/i })` name the app chrome, so that ONE
+assertion is now scoped to `<main>` (the pin is the modules-list front door,
+ledger 91, and its row-inventory half is untouched).
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves eight is the
+right cap for the owner (it is a documented product choice, pinned exactly so
+it cannot drift silently); no test proves the recency list matches his memory —
+it proves the ORDER the app stored; and no test proves a real OpenRouter account
+returns any particular model list (the fetch is mocked, while its failure and
+its absence are the states that are pinned).
 
 ### Remaining gaps
 

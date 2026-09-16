@@ -470,7 +470,14 @@ describe('canvas chat front door', () => {
       `Canvas: The Drowned Vault`,
       'Delete The Drowned Vault',
     ]);
-    expect(screen.queryAllByRole('button', { name: /chat/i })).toHaveLength(0);
+    // Scoped to the PAGE (not the top bar): since docs/17 row 193 the top bar
+    // carries the app-level GLOBAL chat-model picker, whose accessible name
+    // ("Chat model: …") legitimately matches /chat/i. This pin is about the
+    // modules-list front door, so it looks at `<main>` — the row inventory
+    // above already proves the row itself holds no chat entry.
+    expect(
+      within(screen.getByRole('main')).queryAllByRole('button', { name: /chat/i }),
+    ).toHaveLength(0);
     await flushAsyncUpdates();
   });
 

@@ -32,6 +32,7 @@ const SETTINGS_BASE = {
   maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'm',
+  recentChatModels: [],
   defaultReasoningEffort: 'default' as const,
   embeddingModel: 'e',
   embeddingsEnabled: false,

@@ -146,6 +146,33 @@ export function generationLanguageLabel(code: string): string {
 export const DEFAULT_CHAT_MODEL = 'anthropic/claude-sonnet-4.5';
 export const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 
+/**
+ * How many recently-used first-try chat models the top-bar picker remembers
+ * (docs/17 row 193). The list is a convenience on the settings row, so it is
+ * bounded: eight is more than a glance can hold and small enough that the row
+ * never grows without limit. The cap is the ONE constant both the pure rule
+ * and its pin read.
+ */
+export const RECENT_CHAT_MODELS_CAP = 8;
+
+/**
+ * THE recents ordering rule (docs/17 row 193): `model` moves to the FRONT of
+ * `recent` (most-recent-first), a duplicate is removed rather than repeated,
+ * and the list is capped at `RECENT_CHAT_MODELS_CAP` by dropping the OLDEST
+ * entry. Pure and total — the ONE place the ordering exists, shared by the
+ * top-bar picker's recording and the run engine's, so there is no second
+ * ordering to drift. An empty/whitespace model is not a usable pick and is
+ * ignored verbatim (the caller's input is not silently trimmed into the list).
+ */
+export function withRecentChatModel(recent: readonly string[], model: string): string[] {
+  const trimmed = model.trim();
+  if (trimmed === '') return [...recent];
+  return [trimmed, ...recent.filter((entry) => entry !== trimmed)].slice(
+    0,
+    RECENT_CHAT_MODELS_CAP,
+  );
+}
+
 /** One surface's artifact-scope filter (10-MILESTONE-6 D3/D4): which
  * ownership scopes a surface shows. A genuine UI preference — persisted in
  * settings, never derived from data. */
@@ -354,6 +381,15 @@ export const settingsSchema = z.object({
   /** '' when unset. */
   openRouterApiKey: z.string(),
   defaultChatModel: z.string().min(1),
+  /**
+   * The most recently used GLOBAL first-try chat models, most-recent-first,
+   * deduplicated and capped (docs/17 row 193; see `withRecentChatModel`).
+   * Recorded by the top-bar picker when it changes the setting and by a run
+   * whose chat model resolves to this global default. `.default([])` so every
+   * stored row and backup still parses — no migration. Persona overrides, the
+   * fallback/escalation tier and image models are deliberately NOT recorded.
+   */
+  recentChatModels: z.array(z.string()).default([]),
   /** Default reasoning effort for reasoning-capable models ('default' = let the model decide). */
   defaultReasoningEffort: reasoningEffortSchema.default('default'),
   embeddingModel: z.string().min(1),
@@ -535,6 +571,7 @@ export function defaultSettings(): Settings {
     id: SETTINGS_ID,
     openRouterApiKey: '',
     defaultChatModel: DEFAULT_CHAT_MODEL,
+    recentChatModels: [],
     defaultReasoningEffort: 'default',
     embeddingModel: DEFAULT_EMBEDDING_MODEL,
     embeddingsEnabled: false,

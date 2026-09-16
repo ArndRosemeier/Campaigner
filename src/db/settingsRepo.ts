@@ -3,6 +3,7 @@ import {
   newModuleDraftSchema,
   settingsSchema,
   userPromptStyleSchema,
+  withRecentChatModel,
   type NewModuleDraft,
   type Settings,
 } from '@/domain';
@@ -158,5 +159,26 @@ export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
     const updated = settingsSchema.parse(candidate);
     await db.settings.put(updated);
     return updated;
+  });
+}
+
+/**
+ * Records `model` as the most recently used GLOBAL first-try chat model
+ * (docs/17 row 193). THE ONE recording seam: the read, the merge and the write
+ * run inside ONE rw transaction, so two recorders serialize instead of racing
+ * a stale read — a component-side read-modify-write would silently lose an
+ * entry (AGENTS rule 1). The ordering itself is the ONE pure
+ * `withRecentChatModel`; the write rides `updateSettings`, the ONE settings
+ * write, so validation and the prompt-styles carry-forward are unchanged. The
+ * empty string is not a model and records nothing.
+ */
+export async function recordRecentChatModel(model: string): Promise<void> {
+  const trimmed = model.trim();
+  if (trimmed === '') return;
+  await db.transaction('rw', db.settings, async () => {
+    const current = await readSettings();
+    await updateSettings({
+      recentChatModels: withRecentChatModel(current.recentChatModels, trimmed),
+    });
   });
 }

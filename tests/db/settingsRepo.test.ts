@@ -2,8 +2,8 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, PROMPT_STYLE_FREESTYLE_ID } from '@/domain';
-import { getSettings, readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
+import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, PROMPT_STYLE_FREESTYLE_ID, RECENT_CHAT_MODELS_CAP } from '@/domain';
+import { getSettings, readSettings, recordRecentChatModel, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import { clearDatabase } from './helpers';
 
@@ -91,5 +91,58 @@ describe('settingsRepo', () => {
     // Simulate a row written before the model-fallback feature.
     await db.settings.put(legacy as unknown as Parameters<typeof db.settings.put>[0]);
     expect(await readSettings()).toMatchObject({ fallbackChatModel: '', fallbackImageModel: '' });
+  });
+
+  // --- Recently used chat models (docs/17 row 193) -------------------------
+  // THE recording seam: the read, the merge and the write happen in ONE rw
+  // transaction. Pin 3 of the row's brief (a pick writes the setting AND lands
+  // at the front of the recents) is the picker's behaviour pin; these are the
+  // seam's own.
+
+  it('records a model at the FRONT of a fresh row', async () => {
+    await recordRecentChatModel('openai/gpt-4o');
+    expect((await getSettings()).recentChatModels).toEqual(['openai/gpt-4o']);
+  });
+
+  it('reads, reorders and caps in ONE transaction — two concurrent recorders both land', async () => {
+    // The forbidden component-side read-modify-write would have both callers
+    // read `[]` and the second write would drop the first entry. The seam's
+    // transaction serializes them, so BOTH entries survive.
+    await Promise.all([recordRecentChatModel('a/model'), recordRecentChatModel('b/model')]);
+    const recents = (await getSettings()).recentChatModels;
+    expect(recents).toHaveLength(2);
+    expect([...recents].sort()).toEqual(['a/model', 'b/model']);
+  });
+
+  it('re-using a model moves it to the front without duplicating it', async () => {
+    await recordRecentChatModel('a');
+    await recordRecentChatModel('b');
+    await recordRecentChatModel('a');
+    expect((await getSettings()).recentChatModels).toEqual(['a', 'b']);
+  });
+
+  it('caps the list, dropping the OLDEST entry', async () => {
+    for (let i = 0; i < RECENT_CHAT_MODELS_CAP; i += 1) await recordRecentChatModel(`m${String(i)}`);
+    await recordRecentChatModel('fresh');
+    const recents = (await getSettings()).recentChatModels;
+    // m0 was used first, so it is the oldest and the one the cap drops.
+    expect(recents).toEqual([
+      'fresh',
+      ...Array.from(
+        { length: RECENT_CHAT_MODELS_CAP - 1 },
+        (_, i) => `m${String(RECENT_CHAT_MODELS_CAP - 1 - i)}`,
+      ),
+    ]);
+    expect(recents).toHaveLength(RECENT_CHAT_MODELS_CAP);
+    expect(recents).not.toContain('m0');
+  });
+
+  it('ignores an empty model and a legacy row without the field parses as []', async () => {
+    await recordRecentChatModel('   ');
+    expect((await getSettings()).recentChatModels).toEqual([]);
+
+    const { recentChatModels: _drop, ...legacy } = await getSettings();
+    await db.settings.put(legacy as unknown as Parameters<typeof db.settings.put>[0]);
+    expect((await readSettings()).recentChatModels).toEqual([]);
   });
 });

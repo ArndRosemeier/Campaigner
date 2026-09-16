@@ -64,6 +64,7 @@ const SETTINGS = {
   maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'anthropic/claude-sonnet-4.5',
+  recentChatModels: [],
   defaultReasoningEffort: 'default' as const,
   embeddingModel: 'openai/text-embedding-3-small',
   embeddingsEnabled: false,

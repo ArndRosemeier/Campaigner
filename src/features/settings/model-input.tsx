@@ -14,16 +14,17 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { listModels } from '@/llm/openrouter';
+import { listModelIds } from '@/features/settings/model-options';
 import { toastError } from '@/lib/toast';
 
 /**
  * Model field (05-UI.md §Settings): free-form text input prefilled with the
  * default, plus a combobox of the account's models (fetched from /models when
  * a valid key is present). `fetchOptions` customizes the source — e.g. the
- * image-model list (07-MILESTONE-3 M3-A §Settings). The optional class props
- * let dense surfaces (canvas chat sidebar) size the controls up (44px touch
- * targets) without forking the component.
+ * image-model list (07-MILESTONE-3 M3-A §Settings). The DEFAULT source is the
+ * ONE `listModelIds` seam (docs/17 row 193), shared with the top-bar model
+ * picker. The optional class props let dense surfaces (canvas chat sidebar)
+ * size the controls up (44px touch targets) without forking the component.
  */
 export function ModelInput({
   id,
@@ -52,7 +53,7 @@ export function ModelInput({
 
   async function fetchModelOptions(): Promise<void> {
     if (options !== null) return;
-    const load = fetchOptions ?? (async () => (await listModels()).map((model) => model.id));
+    const load = fetchOptions ?? listModelIds;
     try {
       setOptions(await load());
     } catch (error) {

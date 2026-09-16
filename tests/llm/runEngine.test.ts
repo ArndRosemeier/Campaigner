@@ -11,7 +11,7 @@ import {
   listArtifactsByCampaign,
   publishToLibrary,
 } from '@/db/artifactRepo';
-import { updateSettings } from '@/db/settingsRepo';
+import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { failRunningRuns, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
 import { runEngine, rulebookSourceFor } from '@/llm/runEngine';
@@ -1177,5 +1177,56 @@ describe('rulebookSourceFor', () => {
 
   it('throws loudly for a chunk that vanished between retrieve and finalize', async () => {
     await expect(rulebookSourceFor(newId(), 'Goblin Warrior')).rejects.toThrow(/no longer exists/);
+  });
+});
+
+/**
+ * Recently-used chat models (docs/17 row 193): the engine's ONE recording call
+ * at the point every run path funnels through. The GLOBAL first-try default is
+ * recorded; a persona override (and an image run) is not — recording either
+ * would put a model in the picker's list that the owner did not run on.
+ */
+describe('recently used chat models (docs/17 row 193)', () => {
+  it('records the GLOBAL first-try model when a run resolves it', async () => {
+    const { campaignId, persona } = await seed();
+    await updateSettings({ defaultChatModel: 'global/used', recentChatModels: [] });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(VALID_DRAFT),
+      modelUsed: 'global/used',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(INPUT(campaignId, persona));
+
+    await waitFor(async () => {
+      expect((await getSettings()).recentChatModels).toEqual(['global/used']);
+    });
+    // Let the pipeline reach its manual pause so nothing is left in flight
+    // when the next test clears the database.
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+  });
+
+  it('does NOT record a persona override: the global default is not in play', async () => {
+    const { campaignId, persona } = await seed();
+    await updateSettings({ defaultChatModel: 'global/unused', recentChatModels: [] });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(VALID_DRAFT),
+      modelUsed: 'persona/override',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(
+      INPUT(campaignId, { ...persona, model: 'persona/override' }),
+    );
+
+    // The run really started and reached its manual pause…
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    expect(chatMock).toHaveBeenCalled();
+    // …and the recents list is untouched.
+    expect((await getSettings()).recentChatModels).toEqual([]);
   });
 });

@@ -119,7 +119,7 @@ import {
   type EncounterBudget,
 } from '@/llm/roomBudget';
 import { getRulebook, listRulebooks } from '@/db/rulebookRepo';
-import { getSettings } from '@/db/settingsRepo';
+import { getSettings, recordRecentChatModel } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, z } from 'zod';
@@ -2291,6 +2291,34 @@ export class RunEngine {
     return ids;
   }
 
+  /**
+   * Recently-used chat models (docs/17 row 193). A run whose chat model IS the
+   * global first-try default records it, so the top-bar picker's "Recently
+   * used" group answers "what have I actually been running on". Two deliberate
+   * exclusions, both stated rather than implied: an IMAGE-mode run uses the
+   * image model, not the chat one; and a run with a PERSONA override resolves
+   * to that override, so the global default is not in play and recording it
+   * would be a lie (the brief's own scope). This is the ONE recording call in
+   * the engine, placed at the ONE point every way of driving a run funnels
+   * through (the background-activity note below) — never a second site.
+   *
+   * A bookkeeping failure never fails a generation (the recents list is
+   * optional enrichment), but it is SURFACED loudly so it cannot vanish
+   * (AGENTS rule 2). The caller invokes it WITHOUT awaiting (see there): the
+   * recording must never widen the run's own timing window.
+   */
+  private async recordChatModelInUse(persona: Persona): Promise<void> {
+    if (persona.mode === 'image') return;
+    try {
+      const settings = await getSettings();
+      const model = resolveChatModel(settings, persona.model);
+      if (model !== settings.defaultChatModel) return;
+      await recordRecentChatModel(model);
+    } catch (error) {
+      toastError('Could not update the recently used models', error);
+    }
+  }
+
   private async executeFrom(
     runId: Id,
     startIndex: number,
@@ -2305,6 +2333,16 @@ export class RunEngine {
       this.cancelRequested.delete(runId);
       return;
     }
+
+    // Recents bookkeeping (docs/17 row 193) — the run is really starting, so
+    // the model it resolves is genuinely in play. FIRE-AND-FORGET on purpose:
+    // it is optional enrichment, and awaiting a settings transaction here would
+    // sit on the run's critical path, holding the run row at its previous
+    // status long enough for a legitimately racing caller to observe a stale
+    // `awaiting_user` and start the same step twice (a real, measured
+    // regression: `approve` re-entered `executeFrom` at the same index). The
+    // method catches and toasts its own failures, so nothing is unhandled.
+    void this.recordChatModelInUse(input.persona);
 
     const steps: RunStep[] = [...run.steps];
     const kinds: StepName[] =
