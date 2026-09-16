@@ -88,6 +88,7 @@ import {
 } from '@/features/campaign/mob-portrait-queue';
 import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
 import { encountersNeedingMobPortraits } from '@/features/modules/post-generation';
+import { restockModuleEncounters } from '@/features/modules/module-restock';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureCoverImageId, creaturePortraitArt, setCreatureCover } from '@/db/creatureRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -1574,6 +1575,53 @@ describe('post-run-extras.test.ts', () => {
       // The final roster genuinely lacks art — the editor button is its route,
       // exactly as before the fix (the switch is the module's promise).
       expect(plan.missing.length).toBeGreaterThan(0);
+    }, 40000);
+
+    it('the MODULE SWEEP leaves its fresh roster illustrated — the row-196 trigger fires for the run the sweep started (docs/17 row 195)', async () => {
+      // The owner's outcome: "new fights at the new difficulty, illustrated".
+      // The sweep starts the repopulate run, so the SAME completion trigger
+      // row 196 added must enqueue the roster THAT run wrote — a distinct
+      // creature identity makes the fresh roster unambiguous.
+      armPortraitGeneration();
+      const { campaign, moduleId, artifactId } = await createRestockedEncounter();
+      await waitForRestock(artifactId);
+
+      // A SECOND repopulate, this time started by the module-level sweep, with
+      // a roster of a DIFFERENT creature identity than the first restock.
+      const SWEEP_BRIEF = {
+        ...RESTOCK_BRIEF,
+        monsters: RESTOCK_BRIEF.monsters.map((monster) => ({ ...monster, name: 'Sahuagin' })),
+      };
+      chatMock.mockResolvedValue({
+        text: JSON.stringify(SWEEP_BRIEF),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+      const report = await restockModuleEncounters(moduleId);
+      expect(report.total).toBe(1);
+      expect(report.restocked).toEqual([artifactId]);
+      expect(report.failed).toEqual([]);
+      expect(report.stopped).toBe(false);
+
+      const swept = await getAnyArtifact(artifactId);
+      if (swept?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(swept.data.monsters.map((monster) => monster.name)).toContain('Sahuagin');
+
+      // The completion trigger re-reads the row the sweep just wrote and fills
+      // it. REVERT-PROOF for the sweep's own interaction: nothing else in this
+      // test enqueues a portrait for the Sahuagin roster, so a trigger that did
+      // not fire leaves `missing` non-empty and this wait never converges.
+      await waitFor(
+        async () => {
+          const mapped = await getAnyArtifact(artifactId);
+          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+          const plan = await planMobPortraitBatch(mapped, campaign.id);
+          expect(plan.missing).toEqual([]);
+          expect(plan.imaged.length).toBeGreaterThan(0);
+        },
+        { timeout: 15000 },
+      );
     }, 40000);
   });
 });

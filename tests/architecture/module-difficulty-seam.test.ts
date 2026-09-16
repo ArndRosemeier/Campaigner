@@ -17,6 +17,10 @@ const SRC_DIR = join(process.cwd(), 'src');
 const DIFFICULTY_MODULE = 'src/domain/moduleDifficulty.ts';
 const RUN_ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
+const ARTIFACT_EDITOR = 'src/features/campaign/components/artifact-editor.tsx';
+const RESTOCK_BUTTON = 'src/features/modules/module-restock-button.tsx';
+const DIFFICULTY_CONTROL = 'src/features/modules/module-difficulty-control.tsx';
+const NEW_MODULE_DIALOG = 'src/features/modules/new-module-dialog.tsx';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -41,15 +45,37 @@ describe('one module difficulty seam (SOURCE SCAN)', () => {
   it('defines the ONE resolver and reads the module field only through it', () => {
     const definitions = countsOf('export function resolveModuleDifficulty(');
     expect([...definitions.entries()]).toEqual([[DIFFICULTY_MODULE, 1]]);
-    // Every consumer resolves once per run from the owning module row.
+    // Every consumer resolves through the ONE resolver: the three run-time
+    // budget sites, and (docs/17 row 195) the two UI surfaces that must SHOW
+    // the value they act at — the encounter editor's difficulty control and
+    // the module-level restock button's read-only badge. A UI site reading the
+    // raw field instead would be a second resolver; reading it through this
+    // function is exactly what keeps "no field read outside the resolver" true.
     const calls = countsOf('resolveModuleDifficulty(');
     expect([...calls.entries()]).toEqual([
       [DIFFICULTY_MODULE, 1],
+      [ARTIFACT_EDITOR, 1],
+      [RESTOCK_BUTTON, 1],
       [RUN_ENGINE, 3],
     ]);
     // The module row field itself is read in exactly one place — the resolver.
     const fieldReads = countsOf('module?.difficulty');
     expect([...fieldReads.entries()]).toEqual([[DIFFICULTY_MODULE, 1]]);
+  });
+
+  it('draws the five steps in exactly ONE component, mounted by both surfaces', () => {
+    // A second five-step renderer is the duplication this row folded away: the
+    // New Module dialog used to map the steps inline. Only the ONE control may
+    // walk `MODULE_DIFFICULTIES`, so a copy reds by file here.
+    const steppers = countsOf('MODULE_DIFFICULTIES.map(');
+    expect([...steppers.entries()]).toEqual([[DIFFICULTY_CONTROL, 1]]);
+    // The two surfaces that choose a difficulty mount that ONE component:
+    // the New Module dialog and the artifact editor's encounter section.
+    const mounts = countsOf('<ModuleDifficultyControl');
+    expect([...mounts.entries()]).toEqual([
+      [ARTIFACT_EDITOR, 1],
+      [NEW_MODULE_DIALOG, 1],
+    ]);
   });
 
   it('defines the multiplier ladder once and applies it only in the budget seam', () => {

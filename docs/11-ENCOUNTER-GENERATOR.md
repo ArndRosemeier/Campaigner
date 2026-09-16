@@ -1319,6 +1319,28 @@ noted; no Dexie/schema changes):
   gone with the hand-off. This is the intended path for module stubs
   (a roomless complex resets, then runs the full pipeline).
 
+**D18 amendment — the module-level restock is a new CALLER of the one seam
+(docs/17 row 195, owner-scoped).** `features/modules/module-restock.restockModuleEncounters(moduleId)`
+walks the module's encounter artifacts (alphabetical, `listArtifactsByModule`)
+and calls `repopulateEncounter(artifactId, { redesignProse: false })` ONCE PER
+ENCOUNTER, sequentially — no new generation path, no parallel runs, and the
+per-artifact prose checkbox stays the only prose lever. It holds the module's
+shared generation slot (`llm/canvasBusy.claimModuleGeneration`) for the whole
+sweep, so a chat/refine/change for the same module is refused with the existing
+`ModuleBusyError`; it captures the app stop epoch (`lib/stopEpoch`) at entry and
+asks `stoppedSince` before each encounter (and after a run throws), so the
+app's Stop all ends it at the next boundary and the report says so. Failure
+policy: CONTINUE — one failed encounter does not abandon the rest — with a
+loud, persistent, itemised failure report (name + reason) plus a pasteable
+`[campaigner] module-restock summary` console line, so a half-restocked module
+can never look complete. Progress rides the existing dock (`module-restock:<id>`);
+the end-of-sweep summary is raised by the sweep itself, not the button. It is
+the reason the New Module difficulty control is also mounted in the encounter
+editor beside Repopulate (docs/17 row 195): change the module's difficulty,
+then repopulate one encounter or restock them all, and the run reads the module
+row fresh (`llm/runEngine` resolves `difficulty` from `getModule(owningModuleId)`
+at run start) and scales the room budget from it.
+
 ### D19 — vision-located dungeon path (owner-directed, 2026-09-09)
 
 The lab's labeled-map recipe (`experiments/labeledDungeon.ts`), hardened

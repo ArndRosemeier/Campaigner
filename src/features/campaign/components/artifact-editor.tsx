@@ -10,9 +10,10 @@ import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { modulePath } from '@/app/routes';
-import { getModule } from '@/db/moduleRepo';
+import { getModule, patchModule } from '@/db/moduleRepo';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { changeArtifact } from '@/features/modules/change-artifact';
+import { ModuleDifficultyControl } from '@/features/modules/module-difficulty-control';
 import {
   ARTIFACT_KIND_SINGULAR,
   DUNGEON_MAP_PATH_LABELS,
@@ -27,9 +28,12 @@ import {
   type GameSystem,
   type Id,
   type LocationArtifactData,
+  MODULE_DIFFICULTY_LABELS,
+  type ModuleDifficulty,
   type NpcArtifactData,
   type PcArtifactData,
   type PlotArcArtifactData,
+  resolveModuleDifficulty,
 } from '@/domain';
 import { BlockedControl } from '@/components/blocked-control';
 import { Badge } from '@/components/ui/badge';
@@ -622,15 +626,19 @@ function ContentAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element 
 function EncounterAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element | null {
   const data = artifact.kind === 'encounter' ? artifact.data : null;
   if (data === null) return null;
-  return <EncounterRegenControls artifactId={artifact.id} data={data} />;
+  return (
+    <EncounterRegenControls artifactId={artifact.id} data={data} moduleId={artifact.moduleId} />
+  );
 }
 
 function EncounterRegenControls({
   artifactId,
   data,
+  moduleId,
 }: {
   artifactId: Id;
   data: EncounterArtifactData;
+  moduleId: Id | null;
 }): JSX.Element {
   const [redesignProse, setRedesignProse] = useState(false);
   const [running, setRunning] = useState<'repopulate' | 'everything' | null>(null);
@@ -639,6 +647,18 @@ function EncounterRegenControls({
   // the next run starts back at 'default' (the control resets with the
   // section's state per mount).
   const [mapPathChoice, setMapPathChoice] = useState<'default' | DungeonMapPath>('default');
+  /**
+   * The owning module, LIVE (docs/17 row 195): difficulty lives on the module
+   * row and the run reads that row fresh, so the control here must follow the
+   * row rather than a snapshot. `undefined` = still loading, `null` = this
+   * encounter has no owning module (a campaign-level encounter has no module
+   * difficulty to set — the control is absent with an honest reason below,
+   * never a dead button).
+   */
+  const module = useLiveQuery(
+    async () => (moduleId === null ? null : ((await getModule(moduleId)) ?? null)),
+    [moduleId],
+  );
   const complex = encounterDataIsComplex(data);
   // Repopulating a roomless complex has nothing to stock — Regenerate
   // everything builds rooms and a map first.
@@ -650,6 +670,25 @@ function EncounterRegenControls({
    * classification control and CanvasPage's gates took).
    */
   const repopulateHeld = running !== null || repopulateBlocked;
+
+  /**
+   * The difficulty write (docs/17 row 195): the module repo's OWN update path
+   * (`patchModule`, a race-safe read-modify-write), never a hand-rolled Dexie
+   * write. The live query above is what re-renders the control at the new
+   * value; the run itself resolves the row fresh, so the very next Repopulate
+   * is built at this difficulty.
+   */
+  async function setModuleDifficulty(difficulty: ModuleDifficulty): Promise<void> {
+    if (moduleId === null) return;
+    try {
+      await patchModule(moduleId, { difficulty });
+      toastSuccess(
+        `Module difficulty set to ${MODULE_DIFFICULTY_LABELS[difficulty]} — restock to build the fights at it`,
+      );
+    } catch (error) {
+      toastError('Could not set the module difficulty', error);
+    }
+  }
 
   async function run(action: 'repopulate' | 'everything'): Promise<void> {
     if (running !== null) return;
@@ -805,6 +844,32 @@ function EncounterRegenControls({
           </label>
         )}
       </div>
+      {/*
+        The module difficulty (docs/17 row 195): the SAME `ModuleDifficultyControl`
+        the New Module dialog mounts, here beside Repopulate. Changing it writes
+        the module row through the repo's OWN patch, and the next Repopulate (or
+        the module's own "Restock encounters") reads that row fresh and builds
+        the fights at the new difficulty. Roster-only: rooms, layout and map are
+        kept and the prose is NOT rewritten.
+      */}
+      {module === undefined ? null : module === null ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="encounter-module-difficulty-none"
+        >
+          This encounter belongs to no module, so there is no module difficulty to set — it always
+          restocks at Normal.
+        </p>
+      ) : (
+        <ModuleDifficultyControl
+          testId="encounter-module-difficulty"
+          value={resolveModuleDifficulty(module)}
+          onChange={(difficulty) => {
+            void setModuleDifficulty(difficulty);
+          }}
+          description="How hard this module's encounters should be. The next Repopulate — here or from the module's Restock encounters action — builds the new fights at this difficulty. Rooms, layout and maps are kept, and a restock does not rewrite the prose."
+        />
+      )}
       {complex && (
         <p className="text-[11px] text-muted-foreground" data-testid="encounter-regen-map-path-hint">
           {mapPathChoice === 'vision'

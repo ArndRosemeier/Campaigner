@@ -1046,7 +1046,41 @@ five-step control (docs/17 row 190 — `Much easier`, `Easier`, `Normal`,
 `Harder`, `Much harder`, middle selected by default; the SIBLING of the
 policy, scaling how hard the module is for the group). All four are recorded
 on the module row at creation, so the module's later generations, repopulates
-and fills read the same rules.
+and fills read the same rules. Since docs/17 row 195 the five steps are drawn
+by ONE shared component, `features/modules/module-difficulty-control.ModuleDifficultyControl`,
+which the encounter editor mounts too — the dialog's copy of the steps and
+labels is gone.
+
+### Editing the difficulty after creation, and restocking a whole module (docs/17 row 195)
+
+Difficulty is writable after creation, and that is the whole feature — the
+encounter run already reads the owning module row FRESH at run start
+(`llm/runEngine` calls `getModule(owningModuleId)` then
+`resolveModuleDifficulty`), so a change plus a repopulate is the mechanism. Two
+surfaces carry it:
+
+- **The artifact editor's encounter section** mounts the SAME
+  `ModuleDifficultyControl` beside `encounter-repopulate`
+  (`encounter-module-difficulty`, `encounter-module-difficulty-<step>`); its
+  value is the owning module's RESOLVED difficulty (a legacy row reads
+  `Normal`) and a press writes `module.difficulty` through
+  `db/moduleRepo.patchModule` — the repo's own race-safe update path, never a
+  hand-rolled Dexie write. A campaign-level encounter (no owning module) shows
+  the honest `encounter-module-difficulty-none` note instead of a dead control.
+- **"Restock encounters"** (`features/modules/module-restock-button.ModuleRestockButton`,
+  `features/modules/module-restock.restockModuleEncounters`) is the module-level
+  action, mounted with the module's other actions on BOTH module surfaces the
+  ONE-component precedent covers — the canvas header and the campaign tree's
+  module group — and it displays the difficulty it will run at read-only
+  (`module-restock-difficulty`). It walks the module's encounters and drives the
+  ONE repopulate seam once each, sequentially, holding the module's generation
+  slot; the app's Stop all ends it at the next boundary; failures CONTINUE but
+  are reported loudly and itemised. Repopulate is roster-only: rooms, layout and
+  map are kept and the module's prose is NOT rewritten — the per-artifact "also
+  redesign name and prose" checkbox remains the one lever for words, because
+  difficulty's effect is the fights. It never edits the difficulty itself; that
+  is the editor's control, which is also why the action's copy names the value
+  it will use.
 
 ---
 

@@ -37,6 +37,7 @@ import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dia
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
+import { ModuleRestockButton } from '@/features/modules/module-restock-button';
 import { ImageThumb } from '@/features/images/image-thumb';
 import {
   AlertDialog,
@@ -106,6 +107,12 @@ function ModuleGroupActions({
     <>
       <ModulePdfButton module={module} artifacts={pool} />
       <ModulePlanButton module={module} artifacts={pool} />
+      {/*
+        The module-level restock (docs/17 row 195): the SAME component the
+        canvas header mounts, so both module surfaces offer the same action at
+        the same recorded difficulty.
+      */}
+      <ModuleRestockButton module={module} />
     </>
   );
 }

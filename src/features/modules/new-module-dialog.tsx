@@ -35,11 +35,10 @@ import {
   ENCOUNTER_BUDGET_POLICIES,
   ENCOUNTER_BUDGET_POLICY_LABELS,
   ENTITY_KINDS,
-  MODULE_DIFFICULTIES,
-  MODULE_DIFFICULTY_LABELS,
   MODULE_SIZE_LABELS,
   PROMPT_STYLE_FREESTYLE_ID,
 } from '@/domain';
+import { ModuleDifficultyControl } from '@/features/modules/module-difficulty-control';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
 import { readSettings, readStoredNewModuleDraft, updateSettings } from '@/db/settingsRepo';
@@ -895,40 +894,22 @@ function NewModuleDialogContent({
                 </p>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <Label>Module difficulty</Label>
-                <div
-                  className="flex gap-1"
-                  role="group"
-                  aria-label="Module difficulty"
-                  data-testid="module-difficulty"
-                >
-                  {MODULE_DIFFICULTIES.map((step) => (
-                    <Button
-                      key={step}
-                      type="button"
-                      variant={(difficulty ?? DEFAULT_MODULE_DIFFICULTY) === step ? 'default' : 'outline'}
-                      size="sm"
-                      className="flex-1 px-1 text-xs"
-                      aria-pressed={(difficulty ?? DEFAULT_MODULE_DIFFICULTY) === step}
-                      data-testid={`module-difficulty-${step}`}
-                      onClick={() => {
-                        markEdited();
-                        setDifficulty(step);
-                      }}
-                    >
-                      {MODULE_DIFFICULTY_LABELS[step]}
-                    </Button>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  How hard this module should be for the party. Normal (the middle step) is today's
-                  numbers; the outer steps halve or double the standard encounter budget and the
-                  middle-ish ones nudge it. Recorded on the module, so its later generations,
-                  repopulates and fills keep the same difficulty. Under the verbatim budget policy
-                  no numbers are computed, so this is passed to the model as a direction only.
-                </p>
-              </div>
+              {/*
+                THE one difficulty control (docs/17 rows 190/195): the SAME
+                component the artifact editor mounts, so the five steps and
+                their labels exist in exactly one source. The dialog's own
+                half of the write stays here — the choice rides the persisted
+                draft and reaches `createModuleAndRun`'s input, which stamps
+                `module.difficulty` at creation.
+              */}
+              <ModuleDifficultyControl
+                value={difficulty ?? DEFAULT_MODULE_DIFFICULTY}
+                onChange={(step) => {
+                  markEdited();
+                  setDifficulty(step);
+                }}
+                description="How hard this module should be for the party. Normal (the middle step) is today's numbers; the outer steps halve or double the standard encounter budget and the middle-ish ones nudge it. Recorded on the module, so its later generations, repopulates and fills keep the same difficulty. Under the verbatim budget policy no numbers are computed, so this is passed to the model as a direction only."
+              />
 
               <p className="text-xs text-muted-foreground">
                 How many encounters the generator must name per level of the module. This number is

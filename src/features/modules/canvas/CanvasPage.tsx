@@ -84,6 +84,7 @@ import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campai
 import { useModule, useModuleVersions } from '@/features/modules/hooks';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
+import { ModuleRestockButton } from '@/features/modules/module-restock-button';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
@@ -1489,6 +1490,12 @@ export function CanvasPage(): JSX.Element {
             surface, never a second copy of the document.
           */}
           <ModulePlanButton module={currentModule} artifacts={pool} />
+          {/*
+            The module-level restock (docs/17 row 195): repopulate EVERY
+            encounter of this module at its recorded difficulty, through the
+            ONE repopulate seam. It shows the difficulty it will run at.
+          */}
+          <ModuleRestockButton module={currentModule} />
           <BlockedControl testId="canvas-preview-toggle" reason={viewBusyReason}>
             <Button
               variant="ghost"

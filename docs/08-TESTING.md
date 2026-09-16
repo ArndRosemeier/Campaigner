@@ -5351,10 +5351,16 @@ five levels plus a source scan, each naming row 190:
   `createModuleAndRun`'s input (and the real `createModule` stamps the row), and
   the choice survives a close/reopen in the draft.
 - `tests/architecture/module-difficulty-seam.test.ts` (NEW, source scan): the
-  resolver is DEFINED once and called only at runEngine's three budget sites;
-  `MODULE_DIFFICULTY_MULTIPLIERS` is declared once; `difficultyBudgetMultiplier`
-  is applied only in `roomBudget.ts` — a second resolver or a hand-spelled
-  multiplier reds by file and count.
+  resolver is DEFINED once and called only through it — runEngine's three budget
+  sites plus (docs/17 row 195) the two UI read sites that must show the value
+  they act at (the encounter editor's difficulty control and the module restock
+  button's read-only badge); `MODULE_DIFFICULTY_MULTIPLIERS` is declared once;
+  `difficultyBudgetMultiplier` is applied only in `roomBudget.ts` — a second
+  resolver or a hand-spelled multiplier reds by file and count. The same file's
+  second scan (added by row 195) holds the five-step rendering to ONE component:
+  only `module-difficulty-control.tsx` may walk `MODULE_DIFFICULTIES`, and
+  exactly the dialog and the artifact editor may mount it — a copied step
+  renderer reds by file.
 
 **Injected RED, watched (four arms, each file hash printed by `git
 hash-object`, no two arms identical):** B the multiplier forced to 1
@@ -5370,6 +5376,60 @@ model's); no test proves the ladder feels right at a table (it proves the
 numbers and their monotonicity); and no test proves a stored module row gained a
 difficulty — there is deliberately no migration, and a legacy row resolving to
 normal IS the compatibility the pin asserts.
+
+### Difficulty after creation — the shared control and the module restock sweep (docs/17 row 195, docs/11 D18 amendment, docs/18 §2)
+
+The owner's scope choice ("the difficulty selector beside Repopulate, PLUS a
+module-level action that restocks every encounter at the new difficulty") is
+pinned at four levels, each naming row 195:
+
+- `tests/features/change-artifact-ui.test.tsx` — the editor's own harness with a
+  MODULE-OWNED encounter: the shared control renders beside
+  `encounter-repopulate` showing the module's CURRENT difficulty (`Harder`
+  pressed); a press writes the REAL Dexie row (`getModule(...).difficulty ===
+  'much-harder'`) through `patchModule` — a mocked repo would prove nothing; a
+  module with no recorded field reads `Normal` (the compat reading); a
+  campaign-level encounter states `encounter-module-difficulty-none` instead of a
+  dead control.
+- `tests/features/module-restock.test.tsx` (NEW) — the sweep's contract over a
+  seeded module, with the repopulate seam mocked (the run-level behaviour is
+  pinned in `tests/llm/encounterRepopulate.test.ts`): it visits EVERY
+  module-owned encounter and never another module's or a campaign-level one; it
+  runs SEQUENTIALLY (a max-concurrency counter must stay 1 — a `Promise.all`
+  reds), holds `claimModuleGeneration` for the whole sweep (and releases it),
+  reports through the dock (`module-restock:<id>`), CONTINUES past a failure but
+  raises `toastErrorPersistent` naming the failed encounter and its reason plus
+  the pasteable `[campaigner] module-restock summary` record, ends on a Stop
+  epoch bump with the honest "the rest were not touched" and NO failure entry
+  (including a cancelled run, which is a stop, not a failure), and says so when
+  the module has no encounters. The same file renders `ModuleRestockButton` to
+  pin the read-only difficulty badge (a legacy row shows `Normal`) and that a
+  press runs the real sweep.
+- `tests/features/portrait-queues.test.ts` (the row-196 describe) — the
+  INTEGRATION pin for the owner's outcome: the REAL sweep starts a real
+  roster-only Cartographer repopulate with a NEW creature identity, and the
+  row-196 completion trigger must leave the fresh roster illustrated
+  (`planMobPortraitBatch(...).missing === []`, `imaged` non-empty). Reverting
+  the row-196 trigger or failing to route the sweep through the existing
+  repopulate seam reds it; nothing else in the test enqueues a portrait.
+- `tests/architecture/module-difficulty-seam.test.ts` — the "exactly one"
+  source scan described in the section above (one five-step renderer, two
+  mounts) plus the updated resolver call-site population.
+
+**Injected RED, watched (each changed file's hash printed by `git hash-object`,
+no two arms identical):** B the per-encounter sweep call removed → the
+count/summary pin reds (nothing restocked, no success toast); C the
+difficulty write removed from the editor control → the real-DB pin reds (the
+row keeps its old value); D a failing encounter swallowed silently (no
+`failed` entry) → the loud-failure pin reds (no persistent toast, no named
+record). A baseline is green.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+sizes the restocked fights to the module's difficulty — the engine reads the row
+and scales the budget, and the model's obedience is judgement; the sweep's
+duration is N sequential LLM runs, so the pins use mocks or a mocked transport
+and prove wiring, ordering and reporting, not latency; and a stop is pinned by
+the epoch seam, not by clicking a real browser Stop.
 
 ### The spells arc's structured payload — DATA only (docs/17 row 181, docs/12 §15.4, docs/18 §2.1)
 

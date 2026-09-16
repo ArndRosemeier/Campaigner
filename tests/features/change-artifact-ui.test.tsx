@@ -2,12 +2,14 @@ import 'fake-indexeddb/auto';
 
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import type { AnyArtifact } from '@/domain';
+import { getModule, saveModule } from '@/db/moduleRepo';
+import { createModule, type AnyArtifact, type ModuleDifficulty } from '@/domain';
 import type * as ChangeArtifactModule from '@/features/modules/change-artifact';
 import type * as ToastModule from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
@@ -82,13 +84,19 @@ async function seedEncounter(): Promise<{ campaignId: string; encounter: AnyArti
 }
 
 function renderEditor(encounter: AnyArtifact, campaignId: string): void {
+  // A module-owned encounter renders the editor's "Open in module" link and the
+  // run-battle action, both of which need a router — the module difficulty
+  // tests below own their encounters, so the harness provides one (docs/17 row
+  // 195). Campaign-level tests are unaffected.
   render(
-    <ArtifactEditor
-      artifact={encounter}
-      campaignId={campaignId}
-      campaignArtifacts={[encounter]}
-      campaignSystem="dnd5e"
-    />,
+    <MemoryRouter>
+      <ArtifactEditor
+        artifact={encounter}
+        campaignId={campaignId}
+        campaignArtifacts={[encounter]}
+        campaignSystem="dnd5e"
+      />
+    </MemoryRouter>,
   );
 }
 
@@ -187,4 +195,106 @@ describe('the editor\u2019s encounter actions route through the change seam', ()
     );
     expect(screen.getByTestId('encounter-repopulate')).not.toHaveAttribute('title');
   }, 30_000);
+});
+
+/**
+ * The difficulty control in the encounter section (docs/17 row 195): the SAME
+ * `ModuleDifficultyControl` the New Module dialog mounts, here beside
+ * Repopulate, showing the owning module's CURRENT difficulty and writing the
+ * module row through the repo's own patch. The write is asserted against the
+ * REAL Dexie row — a mocked repo would prove nothing about `module.difficulty`.
+ */
+async function seedModuleEncounter(difficulty: ModuleDifficulty | null): Promise<{
+  campaignId: string;
+  moduleId: string;
+  encounter: AnyArtifact;
+}> {
+  const campaign = await createCampaign({ name: 'Difficulty Campaign', system: 'dnd5e' });
+  const module = await saveModule(
+    createModule({
+      campaignId: campaign.id,
+      title: 'Tunable Module',
+      concept: 'a tunable module',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'standard',
+      ...(difficulty === null ? {} : { difficulty }),
+    }),
+  );
+  const encounter = await createArtifact({
+    campaignId: campaign.id,
+    moduleId: module.id,
+    kind: 'encounter',
+    name: 'Tunable Fight',
+    summary: 'A tunable fight.',
+    body: 'The fight.',
+    data: {
+      difficulty: '',
+      levelHint: '2',
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+    },
+  });
+  return { campaignId: campaign.id, moduleId: module.id, encounter };
+}
+
+describe('the encounter editor edits the owning module’s difficulty (docs/17 row 195)', () => {
+  it('renders the ONE shared control beside Repopulate, showing the current difficulty', async () => {
+    const { campaignId, encounter } = await seedModuleEncounter('harder');
+    renderEditor(encounter, campaignId);
+
+    const section = screen.getByTestId('encounter-ai-section');
+    expect(within(section).getByTestId('encounter-repopulate')).toBeInTheDocument();
+    const control = await within(section).findByTestId('encounter-module-difficulty');
+    expect(within(control).getByTestId('encounter-module-difficulty-harder')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('writes module.difficulty on the owning module row — a real DB write', async () => {
+    const { campaignId, moduleId, encounter } = await seedModuleEncounter('normal');
+    renderEditor(encounter, campaignId);
+    const control = await screen.findByTestId('encounter-module-difficulty');
+    const user = userEvent.setup();
+
+    await user.click(within(control).getByTestId('encounter-module-difficulty-much-harder'));
+
+    await waitFor(async () => {
+      expect((await getModule(moduleId))?.difficulty).toBe('much-harder');
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Module difficulty set to Much harder — restock to build the fights at it',
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('a module with NO recorded difficulty reads Normal — the legacy compat reading', async () => {
+    const { campaignId, moduleId, encounter } = await seedModuleEncounter(null);
+    // The row really is fieldless (createModule stamps null for no explicit choice).
+    expect((await getModule(moduleId))?.difficulty ?? null).toBeNull();
+    renderEditor(encounter, campaignId);
+
+    const control = await screen.findByTestId('encounter-module-difficulty');
+    expect(within(control).getByTestId('encounter-module-difficulty-normal')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('a campaign-level encounter states honestly that it has no module difficulty', async () => {
+    const { campaignId, encounter } = await seedEncounter();
+    renderEditor(encounter, campaignId);
+
+    expect(await screen.findByTestId('encounter-module-difficulty-none')).toBeInTheDocument();
+    expect(screen.queryByTestId('encounter-module-difficulty')).not.toBeInTheDocument();
+  });
 });
