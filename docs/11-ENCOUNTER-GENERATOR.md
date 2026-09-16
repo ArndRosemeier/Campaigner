@@ -188,6 +188,32 @@ an amber `notice` on the step naming the spell and the mob. The mob's printed
 `level` is the caster level; a cantrip on a level-less mob is a loud issue, not
 a default.
 
+**The reply contract names `spells` exactly when the vocabulary is offered
+(docs/17 row 200).** The vocabulary section and the reply's OWN field
+enumeration are two halves of ONE instruction, so both render from ONE shape:
+`llm/promptScaffolding.MOB_SPELL_ENTRY_SHAPE` is the single spelling of the
+`{ "name", "castRank" }` entry, the vocabulary header embeds it, and
+`llm/mobSpellPrompt.formatMobSpellContractClause` renders the `"spells"` clause
+that `runEngine.statBlockSchemaHint` puts in every inline stat-block shape —
+gated on the SAME non-empty corpus the vocabulary section reads. A prompt can
+therefore never offer a caster spells in one paragraph and declare its own
+"COMPLETE schema" without the field in the next (row 184's defect); with no
+corpus BOTH halves are absent and the contract keeps its pre-arc bytes exactly
+(pinned as a golden prompt). `formatMobSpellSection` and the clause composer
+share ONE corpus predicate, so the two halves cannot be gated differently.
+
+**The Cartographer is the THIRD spell-carrying lane (docs/17 row 200).**
+`runEngine.runEncounterBrief` authors INLINE monster stat blocks exactly like
+the NPC stat-block step and an encounter draft's inline blocks, so it reads the
+SAME ONE library (`spellLibraryFor`), renders the SAME vocabulary through
+`formatMobSpellSection`, names `spells` in its inline shape hint through the
+SAME composer, and runs the SAME no-invention boundary (`encounterSpellIssues`
++ ONE `formatMobSpellRepair` turn + the raw `spellIssues` list and the amber
+`notice` on the step, the entry staying on the block so its chip renders
+UNRESOLVED). Before row 200 this lane — the one that stocks a dungeon — neither
+offered the vocabulary nor validated a returned name, which is the felt gap
+behind the owner's "NPC casters were not created" report.
+
 **The chips.** `components/spell-chip.SpellChip` is the ONE spell chip; it is
 mounted inside `features/campaign/components/stat-block.StatBlockCard` (the ONE
 stat-block card, so the NPC card, the module reader, the artifact editor, the

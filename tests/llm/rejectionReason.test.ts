@@ -275,10 +275,11 @@ describe('SCAN — the class is recorded at the site that refuses (docs/17 row 1
     const rejectedStatuses =
       text.split("'rejected',").length - 1 - text.split(promiseVerdict).length + 1;
     const constructions = text.split('rejectedStepOutput(').length - 1;
-    // Seven deciding sites at this base (docs/17 row 152 lists them by name);
+    // Eight deciding sites at this base (docs/17 row 152 lists them by name;
+    // the eighth is the Cartographer's spell-repair refusal, docs/17 row 200);
     // the counts must be EQUAL, so a new site that calls `finishStep` with
     // 'rejected' and a hand-built output reds this pin.
-    expect(rejectedStatuses).toBe(7);
+    expect(rejectedStatuses).toBe(8);
     expect(constructions).toBe(rejectedStatuses);
     // And no site may hand-roll the output object beside the constructor.
     expect(text).not.toContain("{ raw, issues }, 'rejected'");
@@ -299,12 +300,14 @@ describe('SCAN — the class is recorded at the site that refuses (docs/17 row 1
   it('the classes are attached BY NAME where each refusal is decided', () => {
     const text = source(SEAM);
     // Three JSON boundaries (draft, stat block, continuity report), one per
-    // class decided by its own detector, and the two whose classes arrive
-    // from the mechanism that produced the issues.
+    // class decided by its own detector, and the ones whose classes arrive
+    // from the mechanism that produced the issues — the encounter brief's own
+    // rejection and (docs/17 row 200) the Cartographer's spell-repair refusal,
+    // which reuse `evaluated.issues`/`evaluated.reasons`.
     expect(text.split("rejectedStepOutput(raw, issues, ['invalid-json'])").length - 1).toBe(3);
     expect(text.split("rejectedStepOutput(raw, sourceIssues, ['unresolved-source'])").length - 1).toBe(1);
     expect(text.split("rejectedStepOutput(raw, abilityIssues, ['ability-convention'])").length - 1).toBe(1);
-    expect(text.split('rejectedStepOutput(raw, evaluated.issues, evaluated.reasons)').length - 1).toBe(1);
+    expect(text.split('rejectedStepOutput(raw, evaluated.issues, evaluated.reasons)').length - 1).toBe(2);
     expect(
       text.split('rejectedStepOutput(JSON.stringify(draft), hygiene.issues, hygiene.reasons)').length - 1,
     ).toBe(1);

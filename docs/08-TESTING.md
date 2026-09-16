@@ -5880,6 +5880,59 @@ a focus spell's own `autoHeightenLevel` is the only fixed-rank source exercised,
 so a second upstream source (should one ever exist) would need its own arm; and
 no test can prove a person finds the chips readable — it proves the bytes.
 
+### The ONE spells instruction reaches every AI-authored mob lane (docs/17 row 200, docs/11 §Mob spells, docs/18 §2.4)
+
+Row 184 built the vocabulary and the no-invention boundary, but its reply
+contract omitted the field the vocabulary invited AND the Encounter Cartographer
+— the lane that stocks a dungeon — was never wired at all. This slice makes the
+two halves come from ONE composer and closes the lane. The pins:
+
+- `tests/llm/mob-spells-lanes.test.ts` (NEW; jsdom, because it drives the engine
+  through `waitFor`): the THREE-lane differential through the REAL run engine
+  with a mocked chat — the NPC stat-block step's prompt, an encounter draft's
+  prompt and the Cartographer brief's prompt each carry
+  `MOB_SPELL_SECTION_HEADER`, the real `Fireball — Rank 3` / `Ignition —
+  Cantrip` lines AND the contract clause `"spells": [`, and each carries
+  NEITHER without a corpus. The NPC arm's no-corpus prompt is compared
+  BYTE-FOR-BYTE against `tests/fixtures/mobSpells/statblock-no-corpus.txt`
+  (captured from the pre-fix tree; the empty-corpus guard is what keeps it
+  green). The Cartographer arm adds the boundary: an invented `Flameball` spends
+  exactly ONE repair turn (`chatMock` is called twice), that repair names the
+  spell through `MOB_SPELL_REPAIR_LEAD_IN`, and the surviving entry lands on the
+  brief step's output as raw `spellIssues` plus the amber `notice` naming both
+  the spell and the mob — never a silent drop.
+- `tests/architecture/one-spells-shape.test.ts` (NEW; node, architecture scan):
+  the JSON-quoted entry shape (`"castRank"`) is declared in exactly ONE `src/`
+  file (`llm/promptScaffolding.ts`), the vocabulary header and the contract
+  composer both render `MOB_SPELL_ENTRY_SHAPE`, the two public composers read
+  ONE corpus predicate declared once, and `runEngine.ts` imports
+  `formatMobSpellContractClause` and hand-writes neither the `"spells":` clause
+  nor the shape.
+- AMENDED, not weakened: `tests/llm/module-gen-and-provenance.test.ts` still
+  detects `MOB_SPELL_SECTION_HEADER` on its own (the header now embeds
+  `MOB_SPELL_ENTRY_SHAPE`, byte-composed by the composer);
+  `tests/llm/rejectionReason.test.ts`'s exactly-N scan goes 7→8 deciding sites
+  (the Cartographer's spell-repair refusal) and its
+  `rejectedStepOutput(raw, evaluated.issues, evaluated.reasons)` byte pattern
+  1→2, so the new refusal is provably built by the ONE constructor; and
+  `tests/llm/mob-spells.test.ts` + `tests/llm/strictSchemaSmoke.test.ts` stay
+  green unchanged.
+
+**Injected RED, watched (raw logs kept under the writer's `/tmp` worktree;
+every arm's file hash printed, identical arms labelled VOID):** dropping the
+clause from the contract reds the three-lane `"spells": [` assertions; removing
+the Cartographer's vocabulary reds the Cartographer arm; removing the
+empty-corpus guard reds the NPC byte-identity arm; re-spelling the shape in a
+second prompt string reds the source scan by file; writing `"spells":` into
+`runEngine.ts` reds the call-site arm.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove a live model
+names a spell for a caster the module's own text implies but never states — it
+proves the vocabulary and the contract reached the prompt and that an invented
+name is LOUD; and no test can prove a pre-arc rules pack holds structured spells
+at all — row 181's no-migration decision stands, so the rules pack must be
+RE-IMPORTED before an assigned name can resolve (docs/12 §15.4).
+
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 
 The owner asked for a picker for the global first-try chat model ("the picker

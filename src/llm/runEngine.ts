@@ -174,7 +174,11 @@ import {
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   SCHEMA_REPAIR_LEAD_IN,
 } from '@/llm/promptScaffolding';
-import { formatMobSpellRepair, formatMobSpellSection } from '@/llm/mobSpellPrompt';
+import {
+  formatMobSpellContractClause,
+  formatMobSpellRepair,
+  formatMobSpellSection,
+} from '@/llm/mobSpellPrompt';
 import { loadSpellChunksFor } from '@/db/spellRepo';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
@@ -887,7 +891,14 @@ function encounterAdvisoryText(
  * d20-scale SCORES in EVERY system (docs/12 §5 is the authority for the
  * conversion); the clause below states that AND the signed-value tell.
  */
-function statBlockSchemaHint(system: string): string {
+function statBlockSchemaHint(system: string, vocabulary: MobSpellVocabulary | null): string {
+  // THE SPELLS CLAUSE (docs/17 row 200): the reply contract's own field list
+  // must name `spells` exactly when this lane is offered the vocabulary, or the
+  // prompt would invite a field its "COMPLETE schema" line omits (row 184's
+  // defect). Rendered through the ONE composer, which shares its corpus gate
+  // with `formatMobSpellSection`; `null` (no library / no eligible spell, or a
+  // lane that authors no inline block) keeps the pre-arc bytes exactly.
+  const spellClause = vocabulary === null ? null : formatMobSpellContractClause(vocabulary);
   return (
     `{ "system": "${system}", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), ` +
     `"size": string, "creatureType": string, "ac": number, ` +
@@ -896,7 +907,9 @@ function statBlockSchemaHint(system: string): string {
     '"saves": string, "skills": string, "senses": string, "languages": string, ' +
     '"traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], ' +
     '"reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], ' +
-    '"extras": Record<string,string> }'
+    '"extras": Record<string,string>' +
+    (spellClause === null ? '' : `, ${spellClause}`) +
+    ' }'
   );
 }
 
@@ -3208,7 +3221,7 @@ export class RunEngine {
       kind === 'encounter' &&
       context.statblockChunkIds.length === 0 &&
       context.rosterLines.length === 0
-        ? `No stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
+        ? `No stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system, spellLibrary?.vocabulary ?? null)}. A partial stat block is rejected.`
         : null,
       // The only NPC-specific guidance left: whether stats matter is the
       // draft's call, so non-fightable characters skip the statblock step.
@@ -3347,8 +3360,8 @@ export class RunEngine {
           this.sourceRepaired.add(runId);
           const inlineRequired =
             context.statblockChunkIds.length === 0 && context.rosterLines.length === 0
-              ? `\nNo stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
-              : `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`;
+              ? `\nNo stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system, spellLibrary?.vocabulary ?? null)}. A partial stat block is rejected.`
+              : `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system, spellLibrary?.vocabulary ?? null)}.`;
           return this.runDraft(
             runId,
             stepIndex,
@@ -3548,7 +3561,7 @@ export class RunEngine {
       // Null when the campaign's system has no imported spells at all, so a
       // dnd5e prompt keeps its pre-arc bytes (the validation below still runs).
       formatMobSpellSection(spellLibrary.vocabulary),
-      `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
+      `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system, spellLibrary.vocabulary)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       additionalInstructionSection(extraInstruction),
     ]
       .filter((part) => part !== null)
@@ -4038,6 +4051,13 @@ export class RunEngine {
     );
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const retrieval = await this.retrieveContext(runId, input);
+    // The run's ONE spell library (docs/17 row 200): the Cartographer authors
+    // INLINE monster stat blocks exactly like the NPC stat-block step and an
+    // encounter draft's inline blocks, so it offers the same vocabulary and runs
+    // the same no-invention boundary. `null` caster level: a roster has no single
+    // level, so every spell is offered and each inline block's own printed level
+    // is what the resolver is fed — the encounter-draft lane's own choice.
+    const spellLibrary = await this.spellLibraryFor(input.campaign.system, null);
     const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
     // Two-button regeneration (docs/11): the roster-only repopulation pass
     // REPLACES the roster — the old spawn was wrong, that is the point — so
@@ -4238,7 +4258,7 @@ export class RunEngine {
           ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; optional appended entries stock a complex)'
           : 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)';
     const inlineStatHint = rosterPin === undefined && retrieval.statblockChunkIds.length === 0
-      ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
+      ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system, spellLibrary.vocabulary)}. A partial stat block is rejected.`
       : null;
     // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
     // renders the derived campaign-grounding section after the brief line;
@@ -4298,6 +4318,12 @@ export class RunEngine {
       // §13: the item pool grounds the treasure field here too.
       formatItemPoolSection(retrieval.itemLines, retrieval.itemTruncated),
       additionalInstructionSection(extraInstruction),
+      // The mob-spells vocabulary (docs/17 row 200): the Cartographer authors
+      // INLINE monster stat blocks, so a caster among them may be given spells.
+      // Null without an imported spell corpus, so those prompts keep their
+      // pre-arc bytes exactly; the reply contract's own clause is rendered by
+      // `statBlockSchemaHint` under the SAME gate.
+      formatMobSpellSection(spellLibrary.vocabulary),
       inlineStatHint,
       // Owner-ratified room keys + mob treasure: structure + per-system
       // budget (treasureGuidanceFor coheres with the item-pool section above)
@@ -4738,7 +4764,7 @@ export class RunEngine {
       // One repair turn that names every problem — a bare "the schema failed"
       // made the model repeat the same mistake three runs in a row.
       const statHintForRepair = rosterPin === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
-        ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`
+        ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system, spellLibrary.vocabulary)}.`
         : '';
       // Contract repair escalates to the fallback model (see runDraft).
       briefRepairTarget = repairModel(chatOptions.model, settings);
@@ -4772,6 +4798,51 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
+    // THE NO-INVENTION BOUNDARY for the Cartographer's inline monster blocks
+    // (docs/17 row 200). The brief authors inline stat blocks exactly like the
+    // NPC stat-block step and an encounter draft, so an assigned spell name is
+    // checked against the ONE library here too: ONE repair turn names the
+    // offenders, and a name that SURVIVES is NOT dropped and NOT rejected — the
+    // entry rides the inline block into the encounter (finalize persists it via
+    // `materializeBriefRoster`), its chip renders UNRESOLVED, and the step
+    // carries a loud notice naming the spell AND the mob.
+    let spellIssueList = encounterSpellIssues(parsed.monsters, spellLibrary.index);
+    if (spellIssueList.length > 0 && !this.spellRepaired.has(runId)) {
+      this.spellRepaired.add(runId);
+      debugLog('run', 'encounter brief assigned unresolvable spells — retrying once', {
+        issue: spellIssueList.join('; '),
+      });
+      const spellRetry = await chat(
+        [
+          ...messages,
+          { role: 'assistant', content: raw },
+          {
+            role: 'user',
+            content: `${formatMobSpellRepair(spellIssueList)}\nReturn the corrected JSON object only, assigning ONLY names copied from the spell list in this prompt.`,
+          },
+        ],
+        chatOptions,
+      );
+      raw = spellRetry.text;
+      modelUsed = spellRetry.modelUsed;
+      fallback = spellRetry.fallback ?? fallback;
+      evaluated = await evaluate(raw, true);
+      if (evaluated.brief === null) {
+        // The repair reply broke the contract: refuse LOUDLY rather than ship
+        // either a bad map or a silently-accepted spell (AGENTS rules 1/3).
+        const step = this.finishStep(
+          steps[stepIndex],
+          rejectedStepOutput(raw, evaluated.issues, evaluated.reasons),
+          'rejected',
+        );
+        if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
+        if (input.autonomy === 'auto') return { step };
+        return { step, runStatus: 'needs_review' };
+      }
+      parsed = evaluated.brief;
+      spellIssueList = encounterSpellIssues(parsed.monsters, spellLibrary.index);
+    }
+    this.spellRepaired.delete(runId);
     if (rosterPin !== undefined && !evaluated.expansionActive) {
       // Regenerate mode (verbatim pin) replaces the roster with the target's
       // verbatim entries — mob treasure included (the brief was told to copy
@@ -4792,7 +4863,9 @@ export class RunEngine {
       };
     }
     // The budget loop's advisory (docs/11 D12): persisted on the step output
-    // (finalize copies it onto the artifact) and surfaced on the notice.
+    // (finalize copies it onto the artifact) and surfaced on the notice. Read
+    // AFTER the spell boundary above, so a repaired reply's own advisory is the
+    // one that ships.
     const budgetAdvisory = evaluated.advisory;
     // Natural-site mode (docs/11): the target's map facts stamp with the
     // brief — the OWNER override and the persisted locationKind are
@@ -4848,11 +4921,15 @@ export class RunEngine {
               ? { freshPopulation: true as const }
               : {}),
             ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
+            ...(spellIssueList.length === 0 ? {} : { spellIssues: spellIssueList }),
           },
           fallback,
           [
             contractRepairNotice(chatOptions.model, briefRepairTarget),
             budgetAdvisory,
+            spellIssueList.length === 0
+              ? null
+              : `Unresolved mob spells — ${spellIssueList.join(' ')}`,
           ].filter((part): part is string => part !== null).join(' ') || null,
         ),
       ),
