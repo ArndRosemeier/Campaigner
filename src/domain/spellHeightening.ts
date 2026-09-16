@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   spellAreaSchema,
   spellDamageMapSchema,
+  spellTraitsAreFocus,
   type SpellArea,
   type SpellDamage,
   type SpellData,
@@ -40,6 +41,17 @@ import {
  *   `system.level.value: 1`; `spellData.rank === 0` is the deliberate
  *   LIST-ordering normalization from ledger 181, NOT the step origin). Using 0
  *   here would over-heighten every cantrip by one step.
+ * - `focus` (ledger 191): a non-cantrip spell carrying the `focus` TRAIT
+ *   auto-heightens EXACTLY like a cantrip upstream
+ *   (`isAutoHeightened = isCantrip || isFocusSpell`) and IGNORES the item's
+ *   `location.heightenedLevel`. Upstream's order is
+ *   `location.autoHeightenLevel || spellcasting?.system?.autoHeightenLevel.value
+ *   || Math.ceil(actor.level / 2)`, clamped to 1..10; this rule takes the
+ *   already-resolved fixed rank in `request.autoHeightenLevel` (the two source
+ *   fields live on the CREATURE document, which only the importer reads — see
+ *   `ingest/packs/pf2e-foundry.ts`) and derives from `casterLevel` otherwise.
+ *   A focus spell whose base rank is above 1 uses its OWN rank as the base,
+ *   and an EXPLICIT `castRank` wins over every derived one.
  * - prose only: a source with NO structured `heightening` but WITH parsed notes
  *   returns the applicable note text VERBATIM and a loud marker — no numbers
  *   are computed from prose.
@@ -58,14 +70,24 @@ export const PROSE_ONLY_MARKER =
 export const UNPARSED_HEIGHTENING_PREFIX = 'unparsed-heightening: ';
 
 /**
- * Which mechanism produced `values`. For a cantrip the rank is auto-derived
- * (`source: 'cantrip-auto'`) while the numbers still come from this arm — the
- * two are reported separately so neither fact is lost.
+ * Which mechanism produced `values`. For a cantrip or a focus spell the rank is
+ * auto-derived (`source: 'cantrip-auto'` / `'focus-auto'`) while the numbers
+ * still come from this arm — the two are reported separately so neither fact is
+ * lost.
  */
 export type HeighteningValuesSource = 'base' | 'fixed' | 'interval';
 
-/** The provenance arm of the whole computation (the brief's five arms). */
-export type HeighteningSource = HeighteningValuesSource | 'cantrip-auto' | 'prose-only';
+/**
+ * The provenance arm of the whole computation (the brief's six arms): the three
+ * value mechanisms plus the two AUTO-RANK rules — which are deliberately
+ * distinct, because a cantrip and a focus spell are different rules and a
+ * chip's provenance line is the only place the owner can see which one ran.
+ */
+export type HeighteningSource =
+  | HeighteningValuesSource
+  | 'cantrip-auto'
+  | 'focus-auto'
+  | 'prose-only';
 
 /** One damage entry at the applied rank; `key` is the source's own damage id. */
 export interface SpellDamageValue extends SpellDamage {
@@ -86,6 +108,12 @@ export interface SpellAtRank {
   valuesSource: HeighteningValuesSource;
   /** True when the cantrip rule derived the rank from `casterLevel`. */
   cantripAuto: boolean;
+  /**
+   * True when the FOCUS rule derived the rank (from `autoHeightenLevel` or
+   * `casterLevel`) — never set together with `cantripAuto`, and never set when
+   * an explicit `castRank` was supplied (that rank wins).
+   */
+  focusAuto: boolean;
   appliedRank: number;
   /** Interval increments applied; `null` for every non-interval spell. */
   appliedSteps: number | null;
@@ -104,17 +132,30 @@ export interface SpellAtRank {
 
 export interface SpellAtRankRequest {
   /**
-   * The rank the spell is cast at — REQUIRED for a non-cantrip, and it must be
+   * The rank the spell is cast at — REQUIRED for a ranked spell, and it must be
    * an integer `>= spell.rank` (a spell cannot be cast below its own rank).
-   * IGNORED for a cantrip, whose rank the module derives.
+   * IGNORED for a cantrip, whose rank the module derives; for a FOCUS spell it
+   * is OPTIONAL and, when present, WINS over every derived rank (the caller's
+   * assignment is authoritative — ledger 191).
    */
   castRank?: number;
   /**
    * The caster's level (integer `>= 1`) — REQUIRED for a cantrip so the module
-   * can derive its rank; ignored for a non-cantrip. The mob arc always has
+   * can derive its rank, and for a FOCUS spell that states no
+   * `autoHeightenLevel`; ignored for a ranked spell. The mob arc always has
    * both and can pass the pair for every spell without branching on kind.
    */
   casterLevel?: number;
+  /**
+   * A FOCUS spell's fixed auto-heightened rank, already RESOLVED from the
+   * source's own two fields in upstream's order (the creature item's
+   * `system.location.autoHeightenLevel`, else its casting entry's
+   * `system.autoHeightenLevel.value`). It lives on the CREATURE document, which
+   * only the pack importer reads, so the importer carries it here; the rule
+   * never re-reads a pack. `null`/absent means "derive from `casterLevel`".
+   * Ignored for a non-focus spell, and ignored when `castRank` is supplied.
+   */
+  autoHeightenLevel?: number | null;
 }
 
 // --- the source's `system.heightening` shapes (verbatim in the payload) ------
@@ -369,8 +410,9 @@ function baseValues(spell: SpellData): SpellAtRankValues {
 /**
  * The ONE heightening rule: this spell cast at `request.castRank` by a caster
  * of `request.casterLevel`. Throws loudly on a corrupt row (no payload), a
- * rank below the spell's own, a missing/invalid caster level for a cantrip, or
- * a formula it cannot read.
+ * rank below the spell's own, a missing/invalid caster level for a cantrip (or
+ * for a focus spell that states no fixed auto rank), or a formula it cannot
+ * read.
  */
 export function spellAtRank(spell: SpellData | null | undefined, request: SpellAtRankRequest): SpellAtRank {
   if (spell === null || spell === undefined) {
@@ -383,10 +425,13 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
 
   // The rules base rank: a cantrip's own rank is 1 in the source (the corpus
   // stores `level.value: 1`); `spell.rank` is the list-ordering normalization.
+  // A focus spell keeps its OWN rank as the base (only its auto-heightened
+  // cast rank is derived).
   const baseRank = spell.cantrip ? 1 : spell.rank;
 
   let appliedRank: number;
   let cantripAuto = false;
+  let focusAuto = false;
   if (spell.cantrip) {
     cantripAuto = true;
     const level = request.casterLevel;
@@ -401,7 +446,33 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
         `cantrip-auto: castRank ${request.castRank} ignored; a cantrip is cast at rank ${appliedRank} for caster level ${level}.`,
       );
     }
+  } else if (spellTraitsAreFocus(spell.traits) && request.castRank === undefined) {
+    // THE FOCUS ARM (ledger 191): upstream auto-heightens a focus spell exactly
+    // like a cantrip and IGNORES its `location.heightenedLevel`. The fixed rank
+    // comes first, in the source's own order (the importer resolved
+    // item-then-entry into `request.autoHeightenLevel`); only when the source
+    // states none does the caster's level drive `ceil(level / 2)`.
+    focusAuto = true;
+    const fixed = request.autoHeightenLevel;
+    if (fixed !== undefined && fixed !== null) {
+      if (!Number.isInteger(fixed) || fixed < 1 || fixed > 10) {
+        throw new Error(
+          `spellAtRank: a focus spell's autoHeightenLevel must be an integer rank 1..10 (got ${String(fixed)})`,
+        );
+      }
+      appliedRank = fixed;
+    } else {
+      const level = request.casterLevel;
+      if (level === undefined || !Number.isInteger(level) || level < 1) {
+        throw new Error(
+          `spellAtRank: a focus spell needs EITHER an autoHeightenLevel or an integer casterLevel >= 1 to auto-heighten (got casterLevel ${String(level)})`,
+        );
+      }
+      appliedRank = Math.min(10, Math.max(1, Math.ceil(level / 2)));
+    }
   } else {
+    // A ranked spell, and a focus spell whose caller ASSIGNED a cast rank (that
+    // assignment is authoritative and lands here unchanged).
     const rank = request.castRank;
     if (rank === undefined || !Number.isInteger(rank)) {
       throw new Error(`spellAtRank: needs an integer castRank for a non-cantrip spell (got ${String(rank)})`);
@@ -489,6 +560,8 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
     warnings.push(PROSE_ONLY_MARKER);
   } else if (cantripAuto) {
     source = 'cantrip-auto';
+  } else if (focusAuto) {
+    source = 'focus-auto';
   } else {
     source = valuesSource;
   }
@@ -497,6 +570,7 @@ export function spellAtRank(spell: SpellData | null | undefined, request: SpellA
     source,
     valuesSource,
     cantripAuto,
+    focusAuto,
     appliedRank,
     appliedSteps,
     stepRemainder,

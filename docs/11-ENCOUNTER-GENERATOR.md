@@ -145,20 +145,28 @@ chip's numbers come from
 lowest), `interval` = the source's own delta per whole
 `floor((appliedRank - rulesBaseRank) / interval)` step plus the per-step area
 add, a cantrip's rank auto-derived from the caster's level
-(`clamp(ceil(casterLevel / 2), 1, 10)`), and a prose-only spell DISPLAYED
-verbatim with a loud no-structured-values marker instead of computed numbers.
-This arc chooses WHICH spell and WHICH rank a mob is given; it never
-re-implements the layer/step selection, the cantrip rule or the formula
-arithmetic.
+(`clamp(ceil(casterLevel / 2), 1, 10)`), a FOCUS spell's rank auto-derived in
+upstream's order (`autoHeightenLevel` — the creature item's, else its casting
+entry's — else the same `clamp(ceil(casterLevel / 2), 1, 10)`), and a prose-only
+spell DISPLAYED verbatim with a loud no-structured-values marker instead of
+computed numbers. This arc chooses WHICH spell and WHICH rank a mob is given; it
+never re-implements the layer/step selection, the cantrip or focus rule, or the
+formula arithmetic.
 
 **The contract.** `domain/statblock.ts` gains `spells`: an array of
-`{ name, castRank? }` (`domain/mobSpells.mobSpellAssignmentSchema`), `.nullish()`
-and therefore additive — a stat block written before the arc has no key, parses
-as it always did and renders exactly as it did (no chips, no error, no Dexie
-version, no index). A cantrip's entry carries nothing but its name; the
-resolver supplies `castRank: spellData.rank` when a RANKED spell omits one
-("absent means the spell's own rank" is the assignment contract), and a cantrip
-is never given a rank at all.
+`{ name, castRank?, autoHeightenLevel? }` (`domain/mobSpells.mobSpellAssignmentSchema`),
+`.nullish()` and therefore additive — a stat block written before the arc has
+no key, parses as it always did and renders exactly as it did (no chips, no
+error, no Dexie version, no index). A cantrip's entry carries nothing but its
+name; the resolver supplies `castRank: spellData.rank` when a RANKED spell
+omits one ("absent means the spell's own rank" is the assignment contract), and
+a cantrip is never given a rank at all. A FOCUS spell (`focus` trait) is the
+same shape (docs/17 row 191): its item is stamped with no cast rank (upstream
+ignores its `heightenedLevel`), and the creature document's own fixed
+`autoHeightenLevel` — the item's, else its casting entry's — rides the
+assignment as `autoHeightenLevel`, so the rule can prefer it over the
+caster-level derivation. A focus spell with neither a fixed rank nor a caster
+level is a loud issue, exactly like a level-less cantrip.
 
 **Grounding and the no-invention boundary (owner policy, verbatim substance:
 no invented spells — anything unresolved is LOUD).** The prompt offers the
@@ -192,11 +200,13 @@ inside `statBoxContent` (the ONE box both exporters share) and
 `lib/pdfExport.statBlockSection`; a `buildModulePdfDocument` caller with no
 corpus prints a loud "resolved none" line rather than dropping the spells.
 
-**The LIBRARY half is LANDED (docs/17 row 189).** What a LIBRARY creature's
+**The LIBRARY half is LANDED (docs/17 rows 189/191).** What a LIBRARY creature's
 own stat block prints when it carries spells (the "standard mobs" half of the
 owner's request) is no longer a follow-up: the `foundry-pf2e` bestiary adapter
 stamps the creature's own `items[]` of type `spell` onto `statBlock.spells`
-(source order; source name verbatim; a `cantrip`-trait item with NO cast rank),
+(source order; source name verbatim; a `cantrip`-trait item with NO cast rank,
+and — docs/17 row 191 — a `focus`-trait item with NO cast rank plus, when the
+source states one, its fixed `autoHeightenLevel`),
 so the same `MobSpellChips`/`SpellChip` path above renders it — the renderer
 was already complete. The importer resolves NOTHING: the bestiary pack and the
 rules pack that carries the spells are imported separately and in either order,

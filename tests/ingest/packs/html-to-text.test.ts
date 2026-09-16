@@ -829,6 +829,15 @@ describe('the stored bytes of a real fixture — those bytes ARE the content has
  * the lane now hashes two entries instead of one, which is why the `after`
  * value changed and the `before === after` "unchanged" assertion no longer
  * applies to this lane.
+ *
+ * THE ROW-191 RECORD: the `foundry-pf2e` lane gains a THIRD real fixture
+ * (`pf2e/lawbringer-warpriest.json`, the level-5 focus-spell caster, also
+ * byte-for-byte — docs/17 row 191) for the same reason: one more entry to hash,
+ * no byte of `wolf.json` or `ghost-mage.json` moved. `foundry-pf2e-rules` is
+ * UNCHANGED by row 191 — the focus SPELL document lives in the separate
+ * `tests/fixtures/spells/` corpus this block does not enumerate (the row-183
+ * Fireball/Ignition precedent), so only the bestiary lane's count and digest
+ * move.
  */
 const LANES: readonly {
   readonly adapterId: string;
@@ -842,12 +851,13 @@ const LANES: readonly {
   {
     adapterId: 'foundry-pf2e',
     dir: 'pf2e',
-    entries: 2,
+    entries: 3,
     before: 'f722b48d56787f6e3a518a25904651f0a3de624d3f2bcc8ac861f6009aac06e6',
-    // ROW 189 adds the byte-for-byte real `ghost-mage.json` creature document
-    // to this lane (a second fixture, no byte of `wolf.json` moved), so the
-    // lane digest moves for the SAME reason the count does.
-    after: 'da9f9eb3d660453d762d05ddf2ff172b9b4c024e0cde15d81e3d0d136e94b8f0',
+    // ROW 189 added the byte-for-byte real `ghost-mage.json` creature document;
+    // ROW 191 adds the byte-for-byte real `lawbringer-warpriest.json` focus
+    // caster. No byte of an existing fixture moved, so the digest moves for the
+    // SAME reason the count does.
+    after: '6ab65fdf04c36a3afec384cee29f53b21e7ee3de9ef4ac90a16adbd340eeaee9',
   },
   {
     adapterId: 'foundry-dnd5e-srd',

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { comparableName } from '@/domain/artifactAlias';
-import type { SpellData } from '@/domain/spellData';
+import { spellTraitsAreFocus, type SpellData } from '@/domain/spellData';
 import { spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
 
 /**
@@ -12,6 +12,11 @@ import { spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
  * NAME and — optionally — the RANK it is cast at. A cantrip carries nothing
  * more, because the cantrip rule derives its rank from the caster's level and
  * a caller that chose one would be re-implementing the rule (docs/17 row 183).
+ * A FOCUS spell is the same shape (docs/17 row 191): upstream auto-heightens it
+ * exactly like a cantrip and IGNORES its stated `heightenedLevel`, so a library
+ * creature's focus item is stamped with no rank and the rule derives it —
+ * `autoHeightenLevel` when the creature document states one, else
+ * `ceil(casterLevel / 2)`.
  *
  * THE FIELD IS ADDITIVE AND NULLABLE (the `itemData`/`spellData` precedent):
  * it sits on `statBlockSchema`, a stored nested row, so every row written
@@ -34,10 +39,21 @@ export const mobSpellAssignmentSchema = z.object({
   name: z.string(),
   /**
    * The rank the spell is cast at. `null`/absent means "the spell's own rank"
-   * for a ranked spell, and is IGNORED for a cantrip (the rule derives that
-   * rank from `casterLevel` and says so in its warnings).
+   * for a ranked spell, and is IGNORED for a cantrip or a FOCUS spell (each
+   * rule derives its rank and says so in its provenance; an explicit rank on a
+   * focus spell is authoritative and wins).
    */
   castRank: z.number().int().positive().nullish(),
+  /**
+   * A FOCUS spell's fixed auto-heightened rank, carried from the source
+   * CREATURE document (the item's `location.autoHeightenLevel`, else its
+   * casting entry's `autoHeightenLevel.value` — the importer resolves that
+   * order). It is stored HERE because the rules-pack `SpellData` the rule reads
+   * never carries either field; absent for a cantrip, for a ranked spell and
+   * for a focus spell whose source states none (which derives from the caster's
+   * level). docs/17 row 191.
+   */
+  autoHeightenLevel: z.number().int().positive().max(10).nullish(),
 });
 
 export type MobSpellAssignment = z.infer<typeof mobSpellAssignmentSchema>;
@@ -139,13 +155,24 @@ export function mobSpellChips(
       // contract — not a heightening computation. `spellAtRank` deliberately
       // requires an explicit `castRank` for a ranked spell (docs/17 row 183),
       // so the one line below hands it the stored rank; every VALUE still comes
-      // from the rule. A cantrip is never given one: its rank is the rule's to
-      // derive from `casterLevel` (a supplied rank is passed straight through
-      // only so the rule can report ignoring it).
+      // from the rule. A cantrip or a FOCUS spell is never given a defaulted
+      // one: its rank is the rule's to derive (docs/17 rows 183/191), and a
+      // supplied rank is passed straight through only so the rule can honour it
+      // (focus) or report ignoring it (cantrip). A focus spell's fixed
+      // `autoHeightenLevel`, when the source creature stated one, rides along
+      // so the rule can apply upstream's precedence.
       const requested = assignment.castRank ?? null;
-      const request: { castRank?: number; casterLevel?: number } = {};
-      if (!entry.spellData.cantrip) request.castRank = requested ?? entry.spellData.rank;
+      const request: {
+        castRank?: number;
+        casterLevel?: number;
+        autoHeightenLevel?: number;
+      } = {};
+      const focus = spellTraitsAreFocus(entry.spellData.traits);
+      if (!entry.spellData.cantrip && !focus) request.castRank = requested ?? entry.spellData.rank;
       else if (requested !== null) request.castRank = requested;
+      if (assignment.autoHeightenLevel !== undefined && assignment.autoHeightenLevel !== null) {
+        request.autoHeightenLevel = assignment.autoHeightenLevel;
+      }
       if (casterLevel !== null) request.casterLevel = casterLevel;
       const result = spellAtRank(entry.spellData, request);
       chips.push({
@@ -213,9 +240,15 @@ export function mobSpellChipDetail(chip: MobSpellChip): string {
   const result = chip.result;
   const lines: string[] = [];
   const values = mobSpellValuesText(result);
-  const rankNote = result.cantripAuto
-    ? `cast at rank ${String(result.appliedRank)} (cantrip, auto-heightened from the caster's level)`
-    : `cast at rank ${String(result.appliedRank)}`;
+  const autoNote = result.cantripAuto
+    ? "cantrip, auto-heightened from the caster's level"
+    : result.focusAuto
+      ? 'focus spell, auto-heightened'
+      : null;
+  const rankNote =
+    autoNote === null
+      ? `cast at rank ${String(result.appliedRank)}`
+      : `cast at rank ${String(result.appliedRank)} (${autoNote})`;
   lines.push(values === '' ? `${label} — ${rankNote}` : `${label} — ${rankNote}: ${values}`);
   lines.push(`heightening: ${result.source} (values from ${result.valuesSource})`);
   if (result.appliedSteps !== null) {

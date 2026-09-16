@@ -32,8 +32,9 @@ interface ActionItem {
 /**
  * A creature's OWN embedded `spell` item (the upstream shape: name, type and
  * `system.level.value` + `system.traits.value`; a cantrip is the `cantrip`
- * trait in that array — docs/17 row 189). The adapter consumes only these
- * fields, so this builder carries only these fields.
+ * trait in that array — docs/17 row 189; a focus spell is the `focus` trait —
+ * docs/17 row 191). The adapter consumes only these fields, so this builder
+ * carries only these fields.
  */
 interface SpellItem {
   name: string;
@@ -41,8 +42,20 @@ interface SpellItem {
   system: {
     level: { value: number };
     traits: { value: string[] };
-    location?: { heightenedLevel: number };
+    location?: {
+      heightenedLevel?: number;
+      autoHeightenLevel?: number;
+      value?: string;
+    };
   };
+}
+
+/** A creature's `spellcastingEntry` container (docs/17 row 191). */
+interface SpellcastingEntryItem {
+  _id: string;
+  name: string;
+  type: 'spellcastingEntry';
+  system: { autoHeightenLevel: { value: number | null } };
 }
 
 export type Pf2eItem = MeleeItem | ActionItem | SpellItem;
@@ -84,26 +97,54 @@ export function actionItem(
 }
 
 /**
- * A creature's own `spell` item in the upstream shape (docs/17 row 189): the
- * source's `system.level.value` (1 for a cantrip too) plus its traits, where
- * the `cantrip` trait is the cantrip signal. `heightenedLevel` is the source's
- * own CAST rank for a heightened spontaneous/innate entry (the real corpus
- * stores it at `system.location.heightenedLevel`).
+ * A creature's own `spell` item in the upstream shape (docs/17 rows 189/191):
+ * the source's `system.level.value` (1 for a cantrip too) plus its traits,
+ * where the `cantrip` trait is the cantrip signal and the `focus` trait the
+ * focus signal. `heightenedLevel` is the source's own CAST rank for a
+ * heightened spontaneous/innate entry (the real corpus stores it at
+ * `system.location.heightenedLevel`); `location.autoHeightenLevel` is the
+ * item's fixed auto rank and `location.value` the id of the `spellcastingEntry`
+ * it hangs from (whose `autoHeightenLevel` is the second source of that rank).
  */
 export function spellItem(
   name: string,
   level: number,
   traits: string[] = [],
   heightenedLevel?: number,
+  location: { autoHeightenLevel?: number; value?: string } = {},
 ): SpellItem {
+  const locationData: {
+    heightenedLevel?: number;
+    autoHeightenLevel?: number;
+    value?: string;
+  } = {};
+  if (heightenedLevel !== undefined) locationData.heightenedLevel = heightenedLevel;
+  if (location.autoHeightenLevel !== undefined) {
+    locationData.autoHeightenLevel = location.autoHeightenLevel;
+  }
+  if (location.value !== undefined) locationData.value = location.value;
   return {
     name,
     type: 'spell',
     system: {
       level: { value: level },
       traits: { value: traits },
-      ...(heightenedLevel === undefined ? {} : { location: { heightenedLevel } }),
+      ...(Object.keys(locationData).length === 0 ? {} : { location: locationData }),
     },
+  };
+}
+
+/** A creature's `spellcastingEntry` container, carrying the fixed auto rank a
+ *  focus item may inherit (docs/17 row 191). */
+export function spellcastingEntryItem(
+  id: string,
+  autoHeightenLevel?: number,
+): SpellcastingEntryItem {
+  return {
+    _id: id,
+    name: 'Prepared Spells',
+    type: 'spellcastingEntry',
+    system: { autoHeightenLevel: { value: autoHeightenLevel ?? null } },
   };
 }
 

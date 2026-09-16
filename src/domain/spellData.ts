@@ -183,6 +183,25 @@ export function spellTraitsAreCantrip(traits: readonly string[]): boolean {
 }
 
 /**
+ * THE focus signal of a PF2e spell: the source's own `focus` TRAIT.
+ *
+ * MEASURED against `v14-dev` (2026-09-17, docs/17 row 191): upstream's
+ * `SpellPF2e.isFocusSpell` is
+ * `(traits.traditions.length === 0 && this.isCantrip) || traits.value.includes("focus")`
+ * (`src/module/item/spell/document.ts`). The tradition-less-CANTRIP arm adds
+ * nothing here: a cantrip is auto-heightened by `spellAtRank`'s cantrip arm
+ * whatever its traditions, and upstream derives the SAME rank for it
+ * (`clamp(ceil(actor.level / 2), 1, 10)`), so no stored value can tell the two
+ * arms apart. The `focus` trait is therefore the ONE signal a NON-cantrip focus
+ * spell carries, and it is read through this predicate by the bestiary importer
+ * (to stamp it with NO cast rank and carry the source's fixed auto rank) and by
+ * the heightening rule (to derive that rank) — one spelling, both lanes.
+ */
+export function spellTraitsAreFocus(traits: readonly string[]): boolean {
+  return traits.includes('focus');
+}
+
+/**
  * A spell document's own name: the LAST element of its heading path (the
  * pack lane stamps the document title as the deepest heading). It is the ONE
  * spelling of "what is this spell called", shared by the spell list's rows and

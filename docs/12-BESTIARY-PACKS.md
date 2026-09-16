@@ -297,7 +297,7 @@ above and the accepted `missing ref` for a citation that cannot rebind.
 | `attributes.speed.value` + `otherSpeeds` | `"25 feet, climb 25 feet"`; a **null** land speed (fly-only creatures) yields no speed entry |
 | `items[]` of type `melee` | `actions`: rendered `"Sickle +9 (agile, finesse), 1d6+3 slashing"`-style lines |
 | `items[]` of type `action` | passive → `traits`, reaction → `reactions`, otherwise `actions` |
-| `items[]` of type `spell` (docs/17 row 189) | `spells`: one `{ name, castRank }` per item, in the **source's own item order** — the item's own `name` **verbatim** and the rank the source itself casts it at, `castRank = system.location.heightenedLevel ?? system.level.value`, which IS the upstream Foundry PF2e `SpellPF2e.rank` getter (`src/module/item/spell/document.ts` @ `v14-dev`: `Math.clamp(location.heightenedLevel \|\| baseRank, 1, 10)`); an item whose `system.traits.value` carries the `cantrip` trait (`domain/spellData.spellTraitsAreCantrip`) carries **NO** cast rank — upstream auto-derives `ceil(actor.level / 2)` for it and IGNORES `heightenedLevel`, so a stored (or absent) `heightenedLevel` is irrelevant and the rank is the mob rule's to derive (docs/17 rows 183/184). A `spellcastingEntry` item is the CONTAINER those spells hang from and contributes nothing; a `spell` object embedded in a carried `weapon`/`consumable` (a scroll's `system.spell`) is carried equipment, not the creature's own casting, and is not stamped. A `spell`-typed item with no level/traits fails the creature LOUDLY rather than falling through as equipment. **KNOWN GAP (measured, follow-up not this row):** upstream auto-heightens a FOCUS spell the same way (`isAutoHeightened = isCantrip \|\| isFocusSpell`) but a focus item may state no rank at all (Lawbringer Warpriest "Athletic Rush": level 1, upstream rank 3); this adapter stamps the source's stated rank and the RESOLVER's auto-heightening arm is cantrip-only today, so a focus chip can print the base rank — the fix belongs in `domain/mobSpells.mobSpellChips` (out of row 189's scope) |
+| `items[]` of type `spell` (docs/17 rows 189/191) | `spells`: one `{ name, castRank?, autoHeightenLevel? }` per item, in the **source's own item order** — the item's own `name` **verbatim** and the rank the source itself casts it at, `castRank = system.location.heightenedLevel ?? system.level.value`, which IS the upstream Foundry PF2e `SpellPF2e.rank` getter (`src/module/item/spell/document.ts` @ `v14-dev`: `Math.clamp(location.heightenedLevel \|\| baseRank, 1, 10)`); an item whose `system.traits.value` carries the `cantrip` trait (`domain/spellData.spellTraitsAreCantrip`) carries **NO** cast rank — upstream auto-derives `ceil(actor.level / 2)` for it and IGNORES `heightenedLevel`, so a stored (or absent) `heightenedLevel` is irrelevant and the rank is the mob rule's to derive (docs/17 rows 183/184). **A FOCUS item (the `focus` trait, `domain/spellData.spellTraitsAreFocus`) is the OTHER auto-heightened kind upstream (`isAutoHeightened = isCantrip \|\| isFocusSpell`): it too carries NO cast rank — `heightenedLevel` is IGNORED — and the source's own fixed rank rides the assignment as `autoHeightenLevel` (`system.location.autoHeightenLevel`, else the casting entry's `system.autoHeightenLevel.value`, READ in one pre-pass over `items[]` and resolved item-first, exactly upstream's order), because those fields live on the CREATURE document while the rule reads the rules-pack `SpellData`. `domain/spellHeightening.spellAtRank` then derives `autoHeightenLevel ?? clamp(ceil(casterLevel / 2), 1, 10)` with the `focus-auto` provenance (docs/17 row 191); a focus item whose entry states `null` and whose own field is absent derives from the mob's level. The measured case — Lawbringer Warpriest, level 5, "Athletic Rush": `level.value: 1`, no rank stated, both entries `autoHeightenLevel: null`, upstream rank 3 — is now rendered at rank 3.** A `spellcastingEntry` item is the CONTAINER those spells hang from and contributes no row of its own (only the fixed auto rank above); a `spell` object embedded in a carried `weapon`/`consumable` (a scroll's `system.spell`) is carried equipment, not the creature's own casting, and is not stamped. A `spell`-typed item with no level/traits fails the creature LOUDLY rather than falling through as equipment. |
 | everything else worth keeping (rarity, …) | `extras` |
 
 Spells **were** not represented in v1 (the original scope cut this table stated);
@@ -630,9 +630,18 @@ are pinned against each other: they cannot name different packs.
   the library-mob half of the spells arc (docs/17 row 189):** the v1 "no
   spellcasting data" cut is **SUPERSEDED for the PF2e bestiary lane** — the
   `foundry-pf2e` adapter now maps a creature's OWN `items[]` of type `spell`
-  onto `statBlock.spells` (`{ name, castRank }`, source order, cantrips with no
-  cast rank; §5 mapping table), so an IMPORTED caster's spells reach the SAME
-  chips an AI-authored mob uses. The importer stamps the source's names
+  onto `statBlock.spells` (`{ name, castRank?, autoHeightenLevel? }`, source
+  order, cantrips with no cast rank; §5 mapping table), so an IMPORTED caster's
+  spells reach the SAME
+  chips an AI-authored mob uses. **AMENDED 2026-09-17 by docs/17 row 191 (the
+  focus half of the same mapping):** a `focus`-trait item is stamped with NO
+  cast rank either — upstream IGNORES its `heightenedLevel` — and carries the
+  creature document's own fixed `autoHeightenLevel` (item first, else its
+  casting entry's), so `domain/spellHeightening.spellAtRank` renders the
+  auto-heightened rank upstream computes (Athletic Rush on a level-5 Lawbringer
+  Warpriest: rank 3) rather than the base rank. The importer still DERIVES
+  nothing: it resolves two source fields in upstream's own order and the rule
+  owns the rank. The importer stamps the source's names
   verbatim and does NOT resolve them: resolution and the loud unresolved report
   stay with `domain/mobSpells.mobSpellChips` at render/export time, because the
   bestiary pack and the rules pack are imported separately and in either order.

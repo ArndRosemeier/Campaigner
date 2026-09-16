@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { MobSpellAssignment } from '@/domain/mobSpells';
-import { spellTraitsAreCantrip } from '@/domain/spellData';
+import { spellTraitsAreCantrip, spellTraitsAreFocus } from '@/domain/spellData';
 import { formatModifier, type StatBlock } from '@/domain/statblock';
 import { errorMessage } from '@/lib/errors';
 
@@ -158,10 +158,11 @@ const actionItemSchema = z.object({
  * @ `v14-dev`, `src/module/item/spell/document.ts`:
  * `Math.clamp(this.system.location.heightenedLevel || this.baseRank, 1, 10)`,
  * `baseRank = system.level.value`) for a RANKED entry — the same file row 183
- * pinned its heightening arithmetic from. A cantrip is that getter's ONE
- * exception: it auto-derives `ceil(actor.level / 2)` and IGNORES
- * `heightenedLevel` entirely, so a cantrip is stamped with NO cast rank and its
- * (absent or present) `heightenedLevel` is irrelevant — the rank is
+ * pinned its heightening arithmetic from. A cantrip is one of that getter's two
+ * auto-heightened kinds (the other is a FOCUS spell, docs/17 row 191): it
+ * auto-derives `ceil(actor.level / 2)` and IGNORES `heightenedLevel` entirely,
+ * so a cantrip is stamped with NO cast rank and its (absent or present)
+ * `heightenedLevel` is irrelevant — the rank is
  * `domain/spellHeightening.spellAtRank`'s to derive from the caster's level
  * (docs/17 rows 183/184). MEASURED on the real corpus, Ghost Mage's "Dispel
  * Magic" has `level.value: 2` but `heightenedLevel: 3` and its printed stat
@@ -173,16 +174,19 @@ const actionItemSchema = z.object({
  * A `spell` item with no level or no traits is a malformed document: `parse`
  * fails the creature LOUDLY rather than dropping it as if it were equipment.
  *
- * KNOWN GAP (measured, named for a follow-up — not this slice's to fix): the
- * upstream getter ALSO auto-heightens a FOCUS spell the same way
- * (`isAutoHeightened = isCantrip || isFocusSpell`), but a focus item may state
+ * KNOWN GAP — CLOSED BY docs/17 ROW 191: the upstream getter ALSO
+ * auto-heightens a FOCUS spell the same way
+ * (`isAutoHeightened = isCantrip || isFocusSpell`), and a focus item may state
  * neither `heightenedLevel` nor `autoHeightenLevel` (Lawbringer Warpriest,
- * level 5, "Athletic Rush": level 1, no rank stated; upstream rank 3). The
- * importer stamps the source's OWN stated rank (its `level.value`) and does NOT
- * compute an auto-heightened one — deriving it belongs to the mob arc's rule
- * (`domain/mobSpells.mobSpellChips`), whose auto-heightening arm is
- * cantrip-only today. Giving it a focus arm is a separate slice (the brief
- * forbids touching that resolver here).
+ * level 5, "Athletic Rush": level 1, no rank stated; upstream rank 3). A focus
+ * item is now stamped with NO cast rank (upstream IGNORES `heightenedLevel` for
+ * it, and the rank is `domain/spellHeightening.spellAtRank`'s to derive), and
+ * the source's fixed `autoHeightenLevel` — item first, else the casting entry's
+ * — is carried on the assignment because the rules-pack `SpellData` the rule
+ * reads never holds it. The `focus` TRAIT is the signal
+ * (`domain/spellData.spellTraitsAreFocus`); upstream's tradition-less-cantrip
+ * arm of `isFocusSpell` adds nothing, because a cantrip is auto-heightened
+ * whatever its traditions.
  */
 const spellItemSchema = z.object({
   name: z.string().min(1),
@@ -193,17 +197,47 @@ const spellItemSchema = z.object({
     // The rank a spontaneous/innate entry is heightened to; a prepared entry or
     // an unheightened spell carries none, and the item's own level is the
     // fallback — exactly `SpellPF2e.rank`'s `heightenedLevel || baseRank`. A
-    // cantrip IGNORES this field upstream (its rank is the auto-derived one).
+    // cantrip or a FOCUS spell IGNORES this field upstream (its rank is the
+    // auto-derived one). `autoHeightenLevel` is the item half of the one fixed
+    // auto rank upstream reads for either; `value` is the id of the
+    // `spellcastingEntry` this item hangs from, whose own `autoHeightenLevel` is
+    // the second half.
     location: z
-      .object({ heightenedLevel: z.number().int().positive().nullish() })
+      .object({
+        heightenedLevel: z.number().int().positive().nullish(),
+        autoHeightenLevel: z.number().int().positive().nullish(),
+        value: z.string().nullish(),
+      })
       .nullish(),
   }),
+});
+
+/**
+ * The container a creature's `spell` items hang from (docs/17 row 191). It
+ * contributes NOTHING to the stat block itself, but upstream's `rank` getter
+ * reads its `system.autoHeightenLevel.value` as the SECOND source of a focus
+ * spell's fixed auto rank (after the item's own). `_id` may be absent on a
+ * hand-built document (the entry is then unreferencable and simply carries no
+ * rank); a malformed `autoHeightenLevel` FAILS the creature loudly rather than
+ * silently falling back to the caster-level derivation.
+ */
+const spellcastingEntrySchema = z.object({
+  _id: z.string().min(1).nullish(),
+  type: z.literal('spellcastingEntry'),
+  system: z
+    .object({
+      autoHeightenLevel: z
+        .object({ value: z.number().int().positive().nullish() })
+        .nullish(),
+    })
+    .nullish(),
 });
 
 type ParsedNpc = z.infer<typeof pf2eNpcSchema>;
 type ParsedMelee = z.infer<typeof meleeItemSchema>;
 type ParsedAction = z.infer<typeof actionItemSchema>;
 type ParsedSpell = z.infer<typeof spellItemSchema>;
+type ParsedSpellcastingEntry = z.infer<typeof spellcastingEntrySchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -249,22 +283,61 @@ function mapAction(item: ParsedAction): { name: string; text: string; actionType
 }
 
 /**
- * One of the creature's OWN `spell` items as a mob-spell assignment (docs/17
- * row 189): the source's own name VERBATIM and the rank the source itself casts
- * the entry at — `system.location.heightenedLevel` when the entry is heightened,
- * else the item's own `system.level.value`, i.e. the upstream Foundry PF2e
- * `SpellPF2e.rank` expression (`src/module/item/spell/document.ts` @ `v14-dev`:
- * `Math.clamp(heightenedLevel || baseRank, 1, 10)`). A cantrip carries NO cast
- * rank: upstream IGNORES `heightenedLevel` for one and auto-derives
- * `ceil(actor.level / 2)`, which is exactly the rank `domain/spellHeightening`
- * computes (docs/17 rows 183/184) — so a caller-chosen rank would re-implement
- * the rule, and a cantrip's (absent or present) `heightenedLevel` is
- * irrelevant. Nothing here normalizes, defaults or invents a name or a rank: an
- * unresolved name is the render/export boundary's loud business, not the
- * importer's.
+ * The fixed auto-heightened rank a creature's `spellcastingEntry` container
+ * states, keyed by entry `_id`, from the ONE pre-pass over `doc.items`. The
+ * importer resolves upstream's `location.autoHeightenLevel ||
+ * spellcasting?.system?.autoHeightenLevel.value || null` order HERE — two
+ * source fields, so reading them is the importer's job, not a derivation — and
+ * carries the resolved value on the focus item's assignment.
  */
-function mapSpell(item: ParsedSpell): MobSpellAssignment {
-  if (spellTraitsAreCantrip(item.system.traits.value)) return { name: item.name };
+function entryAutoHeightenLevels(items: readonly unknown[]): Map<string, number> {
+  const levels = new Map<string, number>();
+  for (const item of items) {
+    if (!isDocumentRecord(item) || item.type !== 'spellcastingEntry') continue;
+    const entry: ParsedSpellcastingEntry = spellcastingEntrySchema.parse(item);
+    const id = entry._id ?? null;
+    const value = entry.system?.autoHeightenLevel?.value ?? null;
+    if (id !== null && value !== null) levels.set(id, value);
+  }
+  return levels;
+}
+
+/**
+ * One of the creature's OWN `spell` items as a mob-spell assignment (docs/17
+ * rows 189/191): the source's own name VERBATIM and the rank the source itself
+ * casts the entry at — `system.location.heightenedLevel` when the entry is
+ * heightened, else the item's own `system.level.value`, i.e. the upstream
+ * Foundry PF2e `SpellPF2e.rank` expression (`src/module/item/spell/document.ts`
+ * @ `v14-dev`: `Math.clamp(heightenedLevel || baseRank, 1, 10)`).
+ *
+ * A CANTRIP carries NO cast rank (docs/17 row 189): upstream IGNORES
+ * `heightenedLevel` for one and auto-derives `ceil(actor.level / 2)`.
+ *
+ * A FOCUS spell is upstream's OTHER auto-heightened kind (docs/17 row 191):
+ * `isAutoHeightened = isCantrip || isFocusSpell`, so its `heightenedLevel` is
+ * IGNORED too and the importer claims no rank. Instead it carries the source's
+ * fixed auto rank when one is stated — the item's own
+ * `location.autoHeightenLevel`, else its entry's (`entryLevels`) — because
+ * upstream prefers that fixed value over `ceil(actor.level / 2)` and only the
+ * CREATURE document holds it; `domain/spellHeightening.spellAtRank` applies it
+ * (and derives the ceil rank when the source states none).
+ *
+ * Nothing here normalizes, defaults or invents a name or a rank: an unresolved
+ * name is the render/export boundary's loud business, not the importer's.
+ */
+function mapSpell(
+  item: ParsedSpell,
+  entryLevels: ReadonlyMap<string, number>,
+): MobSpellAssignment {
+  const traits = item.system.traits.value;
+  if (spellTraitsAreCantrip(traits)) return { name: item.name };
+  if (spellTraitsAreFocus(traits)) {
+    const entryLevel = entryLevels.get(item.system.location?.value ?? '') ?? null;
+    const autoHeightenLevel = item.system.location?.autoHeightenLevel ?? entryLevel;
+    return autoHeightenLevel === null
+      ? { name: item.name }
+      : { name: item.name, autoHeightenLevel };
+  }
   const castRank = item.system.location?.heightenedLevel ?? item.system.level.value;
   return { name: item.name, castRank };
 }
@@ -332,12 +405,17 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   // The creature's OWN embedded `spell` items, in the SOURCE's own item order
   // (deterministic, and the honest default: the document's order is the only
   // ordering the source states). A `spellcastingEntry` is the container those
-  // items hang from and contributes NOTHING here; a `spell` object embedded in
+  // items hang from and contributes no row of its own — only a focus item's
+  // fixed auto rank, read below (docs/17 row 191); a `spell` object embedded in
   // a `weapon`/`consumable` is carried equipment, not the creature's casting.
   const spells: MobSpellAssignment[] = [];
+  // docs/17 row 191: a focus item's fixed auto rank may live on the
+  // `spellcastingEntry` it hangs from, which can sit anywhere in `items`, so the
+  // container values are read in ONE pre-pass before the walk.
+  const spellcastingEntries = entryAutoHeightenLevels(doc.items);
   for (const item of doc.items) {
     if (isDocumentRecord(item) && item.type === 'spell') {
-      spells.push(mapSpell(spellItemSchema.parse(item)));
+      spells.push(mapSpell(spellItemSchema.parse(item), spellcastingEntries));
       continue;
     }
     const melee = meleeItemSchema.safeParse(item);

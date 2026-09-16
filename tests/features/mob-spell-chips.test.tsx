@@ -265,4 +265,44 @@ describe('a mob stat block renders its spells as chips (docs/17 row 184)', () =>
     expect(issues).toHaveTextContent('Hallucination');
     expect(issues).toHaveTextContent('Ghost Mage');
   });
+
+  it('renders an IMPORTED focus spell at its auto-heightened rank through the ONE chips path (docs/17 row 191)', async () => {
+    // The REAL upstream Lawbringer Warpriest, through the REAL bestiary
+    // adapter: its `focus`-trait "Athletic Rush" item (level 1, no rank stated,
+    // both casting entries' `autoHeightenLevel` null) reaches `statBlock.spells`
+    // with NO cast rank, and the SAME harness renders it — the rank comes from
+    // the ONE rule over the library's own focus spell document.
+    const bytes = new Uint8Array(
+      readFileSync(join(PF2E_CREATURE_FIXTURES, 'lawbringer-warpriest.json')),
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('lawbringer-warpriest.json', bytes);
+    expect(parsed.failures).toEqual([]);
+    const entry = parsed.entries[0];
+    expect(entry?.name).toBe('Lawbringer Warpriest');
+    expect(entry?.statBlock.level).toBe('5');
+    if (entry === undefined) throw new Error('lawbringer-warpriest.json produced no creature entry');
+
+    // The rules corpus holds the focus spell itself (the chip resolves the NAME
+    // against the library), so the end-to-end pin needs BOTH real documents.
+    await seedSpells([
+      {
+        name: 'Athletic Rush',
+        data: await realSpell('athletic-rush.json', 'spells/focus/athletic-rush.json'),
+      },
+    ]);
+
+    render(<StatBlockCard name={entry.name} statBlock={entry.statBlock} />);
+
+    const section = await screen.findByTestId('mob-spells');
+    // The focus spell is the ONE seeded/resolvable chip; the mob's ranked and
+    // cantrip names are deliberately unseeded and render unresolved.
+    const chip = await within(section).findByTestId('spell-chip');
+    expect(chip).toHaveTextContent('Athletic Rush');
+    const title = chip.getAttribute('title') ?? '';
+    // Upstream's rank for a level-5 actor: clamp(ceil(5 / 2)) = 3 — and the
+    // detail names the FOCUS provenance, never the cantrip one.
+    expect(title).toContain('cast at rank 3 (focus spell, auto-heightened)');
+    expect(title).toContain('heightening: focus-auto');
+    expect(title).not.toContain('cantrip-auto');
+  });
 });

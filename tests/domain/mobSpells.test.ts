@@ -42,6 +42,8 @@ const fireball = (): Promise<SpellData> =>
   realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
 const ignition = (): Promise<SpellData> =>
   realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+const athleticRush = (): Promise<SpellData> =>
+  realSpell('athletic-rush.json', 'spells/focus/athletic-rush.json');
 
 function synthetic(over: Partial<SpellData> = {}): SpellData {
   return spellDataSchema.parse({
@@ -132,6 +134,77 @@ describe('mob spell assignments resolve through the ONE rule', () => {
     expect(chip.result).toBeNull();
     expect(chip.issues.join(' ')).toContain('casterLevel');
     expect(mobSpellChipDetail(chip)).toContain('casterLevel');
+  });
+
+  it('a FOCUS spell auto-heightens from the CASTER LEVEL — the caller picks no rank (docs/17 row 191)', async () => {
+    // The REAL upstream `Athletic Rush` (foundryvtt/pf2e @ v14-dev,
+    // packs/pf2e/spells/focus/athletic-rush.json): level 1, the `focus` trait.
+    // Upstream's `SpellPF2e.rank` on an actor is clamp(ceil(level / 2), 1, 10),
+    // so the same assignment must move with the mob's level.
+    const spell = await athleticRush();
+    const index = mobSpellIndex([{ name: 'Athletic Rush', spellData: spell }]);
+
+    const level5 = mobSpellChips([{ name: 'Athletic Rush' }], 5, index)[0];
+    if (level5 === undefined) throw new Error('no chip');
+    // The assignment carries NOTHING but the name: if this module computed a
+    // focus rank itself, this pin could not see the level at all.
+    expect(level5.castRank).toBeNull();
+    expect(level5.result?.focusAuto).toBe(true);
+    expect(level5.result?.cantripAuto).toBe(false);
+    expect(level5.result?.source).toBe('focus-auto');
+    expect(level5.result?.appliedRank).toBe(3);
+    const detail = mobSpellChipDetail(level5);
+    expect(detail).toContain('cast at rank 3 (focus spell, auto-heightened)');
+    // The provenance line names the FOCUS rule, never the cantrip one.
+    expect(detail).toContain('heightening: focus-auto');
+    expect(detail).not.toContain('cantrip-auto');
+
+    // The DIFFERENTIAL at another level, which no caller-side constant could do.
+    const level9 = mobSpellChips([{ name: 'Athletic Rush' }], 9, index)[0];
+    if (level9 === undefined) throw new Error('no chip');
+    expect(level9.result?.appliedRank).toBe(5);
+    expect(level9.result?.source).toBe('focus-auto');
+  });
+
+  it('lets a focus spell\'s source fixed autoHeightenLevel win over the caster level', async () => {
+    const spell = await athleticRush();
+    const index = mobSpellIndex([{ name: 'Athletic Rush', spellData: spell }]);
+
+    const chip = mobSpellChips([{ name: 'Athletic Rush', autoHeightenLevel: 6 }], 9, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.appliedRank).toBe(6);
+    expect(chip.result?.source).toBe('focus-auto');
+  });
+
+  it('honours an explicitly assigned cast rank for a focus spell', async () => {
+    const spell = await athleticRush();
+    const index = mobSpellIndex([{ name: 'Athletic Rush', spellData: spell }]);
+
+    const chip = mobSpellChips([{ name: 'Athletic Rush', castRank: 4 }], 9, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.appliedRank).toBe(4);
+    expect(chip.result?.focusAuto).toBe(false);
+    expect(chip.result?.source).toBe('base');
+  });
+
+  it('a focus spell on a level-less mob is a LOUD named issue — never a default rank', async () => {
+    const spell = await athleticRush();
+    const index = mobSpellIndex([{ name: 'Athletic Rush', spellData: spell }]);
+
+    const chips = mobSpellChips([{ name: 'Athletic Rush' }], null, index);
+    const chip = chips[0];
+    if (chip === undefined) throw new Error('no chip');
+    // The NAME resolved, so the chip is not the unresolved state…
+    expect(chip.resolved).toBe(true);
+    // …but no number was invented: the rule refused and the chip says why.
+    expect(chip.result).toBeNull();
+    expect(chip.issues.join(' ')).toContain('focus spell');
+    expect(chip.issues.join(' ')).toContain('casterLevel');
+    // The run-boundary sentence still names the MOB (docs/17 row 184).
+    const issues = mobSpellIssues(chips, 'Level-less Warpriest');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('«Level-less Warpriest»');
+    expect(issues[0]).toContain('casterLevel');
   });
 
   it('an invented spell name stays an UNRESOLVED entry and is loud, never dropped', () => {

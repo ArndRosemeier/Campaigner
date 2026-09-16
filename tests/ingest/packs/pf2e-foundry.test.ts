@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 
-import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem, spellItem } from './fixtures';
+import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem, spellcastingEntryItem, spellItem } from './fixtures';
 
 const FIXTURE_DIR = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'pf2e');
 
@@ -346,6 +346,87 @@ describe('foundry-pf2e adapter', () => {
       { name: 'Plain Bolt', castRank: 3 },
       { name: 'Auto Cantrip' },
     ]);
+  });
+
+  it('stamps the REAL Lawbringer Warpriest focus item with NO rank (docs/17 row 191)', async () => {
+    // Real document, BYTE-FOR-BYTE: foundryvtt/pf2e @ v14-dev,
+    // packs/pf2e/pathfinder-monster-core/lawbringer-warpriest.json
+    // (sha256 d6daa2f0d5856e2eae767a64626d65dfc6d1fa477c89b4301a6659becca16cd4,
+    // 66,187 bytes) — the creature the brief's measured evidence names. A
+    // level-5 caster with TWO `spellcastingEntry` containers (both
+    // `autoHeightenLevel.value: null`), 12 embedded `spell` items and carried
+    // gear. "Athletic Rush" is the `focus`-trait item: `level.value: 1`, no
+    // `heightenedLevel` anywhere; upstream's `SpellPF2e.rank` for it on this
+    // actor is clamp(ceil(5 / 2)) = 3, so the importer claims NO rank.
+    const parsed = await foundryPf2eAdapter.parseFile(
+      'lawbringer-warpriest.json',
+      fixtureBytes('lawbringer-warpriest.json'),
+    );
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.skipped).toBe(0);
+    const entry = parsed.entries[0];
+    expect(entry?.name).toBe('Lawbringer Warpriest');
+    expect(entry?.statBlock.level).toBe('5');
+    expect(entry?.statBlock.spells).toEqual([
+      { name: 'Blindness', castRank: 3 },
+      { name: 'Haste', castRank: 3 },
+      { name: 'Enlarge', castRank: 2 },
+      // The focus item: no cast rank and (both entries state null) no fixed
+      // auto rank — the rank is the mob rule's to derive from the mob's level.
+      { name: 'Athletic Rush' },
+      { name: 'Daze' },
+      { name: 'Divine Lance' },
+      { name: 'Forbidding Ward' },
+      { name: 'Guidance' },
+      { name: 'Harm', castRank: 1 },
+      { name: 'Heal', castRank: 1 },
+      { name: 'Light' },
+      { name: 'Sure Strike', castRank: 1 },
+    ]);
+  });
+
+  it('carries a FOCUS item\'s source fixed auto rank — item first, else the casting entry (docs/17 row 191)', async () => {
+    const doc = baseNpc('Focus Caster');
+    (doc.items as unknown[]).unshift(
+      spellcastingEntryItem('entry-1', 6),
+      // The item states its own fixed rank: it WINS over the entry's.
+      spellItem('Item Fixed', 1, ['focus'], undefined, {
+        autoHeightenLevel: 4,
+        value: 'entry-1',
+      }),
+      // This one states none: the ENTRY's 6 is carried.
+      spellItem('Entry Fixed', 1, ['focus'], undefined, { value: 'entry-1' }),
+      // A focus item pointing at an entry that states none carries nothing.
+      spellItem('No Fixed', 1, ['focus'], undefined, { value: 'entry-missing' }),
+      // A focus item that DOES state `heightenedLevel` still claims no cast
+      // rank: upstream ignores it for an auto-heightened spell.
+      spellItem('Ignored Heighten', 1, ['focus'], 9, { value: 'entry-missing' }),
+      // A ranked NON-focus item keeps row 189's ratified expression.
+      spellItem('Plain Bolt', 3, ['concentrate'], 5),
+    );
+    const parsed = await foundryPf2eAdapter.parseFile('focus.json', encodeJson(doc));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries[0]?.statBlock.spells).toEqual([
+      { name: 'Item Fixed', autoHeightenLevel: 4 },
+      { name: 'Entry Fixed', autoHeightenLevel: 6 },
+      { name: 'No Fixed' },
+      { name: 'Ignored Heighten' },
+      { name: 'Plain Bolt', castRank: 5 },
+    ]);
+  });
+
+  it('fails a creature LOUDLY on a malformed spellcastingEntry autoHeightenLevel (docs/17 row 191)', async () => {
+    const doc = baseNpc('Broken Entry Caster');
+    (doc.items as unknown[]).unshift({
+      _id: 'entry-x',
+      name: 'Prepared Spells',
+      type: 'spellcastingEntry',
+      system: { autoHeightenLevel: { value: 'high' } },
+    });
+    const parsed = await foundryPf2eAdapter.parseFile('broken-entry.json', encodeJson(doc));
+    expect(parsed.entries).toEqual([]);
+    expect(parsed.failures).toHaveLength(1);
+    expect(parsed.failures[0]?.name).toBe('Broken Entry Caster');
   });
 
   it('ignores a spellcastingEntry container and a carried item that embeds a spell (docs/17 row 189)', async () => {

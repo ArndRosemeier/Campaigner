@@ -5691,7 +5691,93 @@ importer correctly stamps only the source's STATED rank and derives nothing, and
 `domain/mobSpells.mobSpellChips`'s auto-heightening arm is cantrip-only today,
 so a focus chip can print the base rank — the fix belongs in that resolver,
 which this brief forbids touching, and it is a follow-up for its own row, not a
-claim of this one.
+claim of this one. **docs/17 row 191 LANDED that follow-up** (the importer
+stops claiming a focus rank and `spellAtRank` derives it with its own
+`focus-auto` provenance — see the row-191 section below).
+
+### A focus spell auto-heightens (docs/17 row 191, docs/12 §5/§9, docs/11 §Mob spells, docs/18 §2)
+
+Row 189 recorded the measured gap: upstream's `SpellPF2e.rank` auto-heightens a
+FOCUS spell exactly like a cantrip and IGNORES its `heightenedLevel`, but the
+importer claimed a rank and the rule's auto arm was cantrip-only. This arc
+lands the two-layer fix. The pins:
+
+- `tests/fixtures/packs/pf2e/lawbringer-warpriest.json` (NEW): the REAL
+  upstream document, BYTE-FOR-BYTE — `foundryvtt/pf2e` @ `v14-dev`,
+  `packs/pf2e/pathfinder-monster-core/lawbringer-warpriest.json`, sha256
+  `d6daa2f0d5856e2eae767a64626d65dfc6d1fa477c89b4301a6659becca16cd4` (66,187
+  bytes). A level-5 caster with TWO `spellcastingEntry` containers (both
+  `autoHeightenLevel.value: null`), 12 embedded `spell` items and carried gear;
+  "Athletic Rush" is the `focus`-trait item (`level.value: 1`, no
+  `heightenedLevel`). Nothing was invented or trimmed.
+- `tests/fixtures/spells/athletic-rush.json` (NEW): the focus SPELL document,
+  also BYTE-FOR-BYTE — `packs/pf2e/spells/focus/athletic-rush.json`, sha256
+  `f672e99b18aff88aabea8b33953a0c0d04c7dfcc8210b0ee4d4194af7637ed18` (1,482
+  bytes). BOTH are required: the chip resolves the NAME against this library
+  corpus, so an end-to-end pin needs the creature AND the spell.
+- `tests/domain/spellHeightening.test.ts` (extended): the FOCUS arm's
+  precedence, each arm its own pin — `clamp(ceil(casterLevel / 2), 1, 10)` with
+  no fixed rank (level 5 → 3, level 9 → 5, `source: 'focus-auto'`,
+  `focusAuto: true`); a fixed `autoHeightenLevel` wins over the ceil rule; an
+  explicit `castRank` wins over BOTH; no fixed rank and no usable level is the
+  rule's loud refusal; and a `cantrip`+`focus` document still rides the
+  CANTRIP arm (`cantrip-auto`, `focusAuto: false`) — row 183's behaviour.
+- `tests/domain/mobSpells.test.ts` (extended): the DIFFERENTIAL through the ONE
+  resolver — the real `Athletic Rush` at mob level 5 → rank 3 and level 9 →
+  rank 5 with the assignment carrying NOTHING but the name, the detail naming
+  `heightening: focus-auto` and `(focus spell, auto-heightened)` and NOT
+  `cantrip-auto`; a fixed `autoHeightenLevel` (6) wins over level 9; an explicit
+  `castRank` (4) wins; a focus spell on a level-less mob resolves but yields
+  `result: null` with a `casterLevel`/`focus spell` issue and a
+  `mobSpellIssues` sentence naming the mob.
+- `tests/ingest/packs/pf2e-foundry.test.ts` (extended): the REAL Lawbringer's
+  12 `spell` items in exact source order, "Athletic Rush" rank-LESS and with no
+  `autoHeightenLevel` (both entries state null) while the ranked non-focus items
+  keep row 189's `heightenedLevel ?? level.value` expression (row 189's real
+  Ghost Mage pin stays green — the brief's demanded proof that the ranked
+  mapping did not move); a synthetic focus item takes the ITEM's fixed rank (4)
+  over the entry's (6); a focus item's stated `heightenedLevel: 9` is IGNORED
+  (still no cast rank); and a malformed `spellcastingEntry.autoHeightenLevel`
+  fails the creature LOUDLY as a named per-creature failure.
+- `tests/features/mob-spell-chips.test.tsx` (extended): the END-TO-END outcome
+  through the ONE `MobSpellChips`/`SpellChip` path and the EXISTING row-184
+  harness — the REAL Lawbringer through the REAL bestiary adapter, the REAL
+  `Athletic Rush` seeded in the library, rendered as a chip whose title is
+  `cast at rank 3 (focus spell, auto-heightened)` / `heightening: focus-auto`
+  (no second harness, no second fixture set).
+- `tests/architecture/one-cantrip-signal.test.ts` (EXTENDED): the SOURCE SCAN
+  now holds BOTH trait signals to exactly ONE site each — `.includes('cantrip')`
+  and `.includes('focus')` only in `src/domain/spellData.ts`
+  (`spellTraitsAreCantrip`, `spellTraitsAreFocus`) — and asserts every consumer
+  (both PF2e lanes, `spellHeightening`, `mobSpells`) calls the predicate.
+- AMENDED, not weakened: `tests/ingest/packs/html-to-text.test.ts`'s
+  `foundry-pf2e` lane digest — the lane now hashes THREE fixtures instead of two
+  (no byte of `wolf.json` or `ghost-mage.json` moved), so `entries` 2 → 3 and the
+  `after` digest is the newly measured
+  `6ab65fdf04c36a3afec384cee29f53b21e7ee3de9ef4ac90a16adbd340eeaee9`, with the
+  row-191 record written beside the row-149/170/189 records.
+  `foundry-pf2e-rules` is UNCHANGED: the focus spell fixture lives in the
+  separate `tests/fixtures/spells/` corpus this block does not enumerate, the
+  same reason Fireball/Ignition never moved it (row 183).
+
+**Injected RED, watched (raw logs kept out of tree; every arm's file hash
+printed, identical arms labelled VOID):** removing the focus arm from
+`spellAtRank` reds the level-5/level-9 differential pins (a focus spell then
+throws for a missing `castRank`); reversing the precedence so the ceil rule runs
+before `autoHeightenLevel` reds the fixed-rank pins; stamping a cast rank for a
+focus item in the importer reds the real Lawbringer pin and the synthetic
+`heightenedLevel: 9` pin; reusing `'cantrip-auto'` for the focus provenance reds
+the focus-detail pins; re-adding a `.includes('focus')` outside
+`domain/spellData.ts` reds the EXTENDED source scan by file.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove the owner's
+on-disk bestiary already carries the no-rank focus stamp — this arc adds NO
+migration and NO index, so a pre-arc bestiary pack needs a RE-IMPORT (row 181's
+decision stands); the fixtures are one real focus caster, so a future pack shape
+that states the fixed rank differently fails LOUDLY rather than being guessed;
+a focus spell's own `autoHeightenLevel` is the only fixed-rank source exercised,
+so a second upstream source (should one ever exist) would need its own arm; and
+no test can prove a person finds the chips readable — it proves the bytes.
 
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 

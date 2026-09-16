@@ -173,6 +173,68 @@ describe('spellAtRank — cantrip auto-heightening (the module owns the rank)', 
   });
 });
 
+describe('spellAtRank — focus auto-heightening (docs/17 row 191)', () => {
+  const focusSpell = makeSpell({
+    rank: 1,
+    cantrip: false,
+    traits: ['cleric', 'focus', 'manipulate'],
+  });
+
+  it('derives clamp(ceil(casterLevel / 2), 1, 10) when the source states no fixed rank', () => {
+    // THE DIFFERENTIAL: the SAME focus spell at two caster levels moves the
+    // rank, so no caller-side constant could have supplied it.
+    const level5 = spellAtRank(focusSpell, { casterLevel: 5 });
+    expect(level5.appliedRank).toBe(3);
+    expect(level5.focusAuto).toBe(true);
+    expect(level5.cantripAuto).toBe(false);
+    expect(level5.source).toBe('focus-auto');
+    const level9 = spellAtRank(focusSpell, { casterLevel: 9 });
+    expect(level9.appliedRank).toBe(5);
+    expect(level9.source).toBe('focus-auto');
+  });
+
+  it('prefers the source fixed autoHeightenLevel over the ceil rule', () => {
+    // The importer resolved upstream's item-then-entry order; the rule applies
+    // the value but still names the focus rule as the provenance.
+    const result = spellAtRank(focusSpell, { casterLevel: 9, autoHeightenLevel: 7 });
+    expect(result.appliedRank).toBe(7);
+    expect(result.focusAuto).toBe(true);
+    expect(result.source).toBe('focus-auto');
+  });
+
+  it('lets an EXPLICIT cast rank win over every derived one', () => {
+    // The caller's assignment is authoritative: neither the fixed rank nor the
+    // caster level is used, and no auto provenance is claimed.
+    const result = spellAtRank(focusSpell, {
+      castRank: 4,
+      casterLevel: 9,
+      autoHeightenLevel: 7,
+    });
+    expect(result.appliedRank).toBe(4);
+    expect(result.focusAuto).toBe(false);
+    expect(result.source).toBe('base');
+  });
+
+  it('refuses a focus spell with neither a fixed rank nor a usable caster level', () => {
+    expect(() => spellAtRank(focusSpell, {})).toThrow(/casterLevel/);
+    expect(() => spellAtRank(focusSpell, { casterLevel: 0 })).toThrow(/casterLevel/);
+    expect(() => spellAtRank(focusSpell, { casterLevel: 5, autoHeightenLevel: 0 })).toThrow(
+      /autoHeightenLevel/,
+    );
+  });
+
+  it('keeps the CANTRIP arm unchanged for a spell carrying both traits (docs/17 rows 183/191)', () => {
+    // A cantrip+focus document rides the cantrip arm byte for byte — the focus
+    // trait must not reroute it, and its provenance stays `cantrip-auto`.
+    const both = makeSpell({ rank: 0, cantrip: true, traits: ['cantrip', 'focus'] });
+    const result = spellAtRank(both, { casterLevel: 5 });
+    expect(result.source).toBe('cantrip-auto');
+    expect(result.cantripAuto).toBe(true);
+    expect(result.focusAuto).toBe(false);
+    expect(result.appliedRank).toBe(3);
+  });
+});
+
 describe('spellAtRank — interval heightening (a delta per whole step)', () => {
   const fireballish = makeSpell({
     rank: 3,
