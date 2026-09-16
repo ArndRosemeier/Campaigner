@@ -11,6 +11,7 @@ import {
   mobSpellChipDetail,
   mobSpellIndex,
   mobSpellIssues,
+  mobSpellWarnings,
   spellCorpusEntries,
   type GameSystem,
   type MobSpellAssignment,
@@ -27,6 +28,12 @@ import {
  * and every rule issue — an invented name, a cantrip on a level-less mob, a
  * corrupt spell row — is printed LOUDLY under the chips, because a mob whose
  * spells cannot be read must not look like a mob with no spells.
+ *
+ * THE WARNING CHANNEL IS SEPARATE (docs/17 row 205). A stored assignment can
+ * carry a field that belongs to the other system (a `casterLevel` on a PF2e
+ * spell — the owner's eight loud errors). That field is IGNORED, the rule's own
+ * values still answer, and the note below says so QUIETLY: it is not an issue,
+ * does not spend a repair turn and must not read as "a spell it cannot use".
  *
  * The library is read through `db/spellRepo.loadSpellChunksFor` — the ONE
  * corpus read — for the stat block's OWN system, so a dnd5e mob never resolves
@@ -58,6 +65,7 @@ export function MobSpellChips({
     [spells, level, index],
   );
   const issues = useMemo(() => mobSpellIssues(chips, mobName), [chips, mobName]);
+  const warnings = useMemo(() => mobSpellWarnings(chips, mobName), [chips, mobName]);
 
   return (
     <div className="mt-2" data-testid="mob-spells">
@@ -83,6 +91,16 @@ export function MobSpellChips({
               <TriangleAlertIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
               <span>{issue}</span>
             </p>
+          ))}
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div
+          className="mt-1 rounded-md border border-amber-500/40 bg-amber-500/5 p-2 text-xs text-amber-800 dark:text-amber-200"
+          data-testid="mob-spell-warnings"
+        >
+          {warnings.map((warning, position) => (
+            <p key={position}>{warning}</p>
           ))}
         </div>
       )}

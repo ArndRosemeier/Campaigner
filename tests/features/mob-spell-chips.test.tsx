@@ -181,6 +181,38 @@ describe('a mob stat block renders its spells as chips (docs/17 row 184)', () =>
     expect(screen.queryByTestId('mob-spells')).not.toBeInTheDocument();
   });
 
+  it('IGNORES a stray cross-system field with a QUIET warning — never "a spell it cannot use" (docs/17 row 205)', async () => {
+    // THE OWNER'S REAL RUN: a saved PF2e NPC whose assignments carry the dnd5e
+    // `casterLevel`/`characterLevel` (our own contract asked for them). The
+    // stored row needs NO migration — the chip renders the correct values and
+    // the note is separate from the loud issue box.
+    const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
+    await seedSpells([{ name: 'Ignition', data: ignition }]);
+
+    render(
+      <StatBlockCard
+        name="Nirklex"
+        statBlock={block({
+          spells: [{ name: 'Ignition', casterLevel: 8, characterLevel: 8 }],
+        })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const chip = await within(section).findByTestId('spell-chip');
+    // The cantrip still auto-heightens from the mob's OWN level 5 → rank 3.
+    const title = chip.getAttribute('title') ?? '';
+    expect(title).toContain('cast at rank 3');
+    expect(title).toContain('4d4 fire');
+    // NO loud issue box (so no repair turn at the boundary)…
+    expect(within(section).queryByTestId('mob-spell-issues')).not.toBeInTheDocument();
+    // …and the honest note is present, naming the mob.
+    const warnings = within(section).getByTestId('mob-spell-warnings');
+    expect(warnings).toHaveTextContent('Nirklex');
+    expect(warnings).toHaveTextContent('other game system');
+    expect(warnings).toHaveTextContent('ignored');
+  });
+
   it('renders a spell whose heightening is prose-only without inventing a number', async () => {
     const prosey = spellDataSchema.parse({
       system: 'pathfinder2e',

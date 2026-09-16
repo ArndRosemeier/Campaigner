@@ -10,6 +10,7 @@ import {
   mobSpellIndex,
   mobSpellIssues,
   mobSpellVocabulary,
+  mobSpellWarnings,
   MOB_SPELL_VOCABULARY_LIMIT,
   maxCastableRank,
 } from '@/domain/mobSpells';
@@ -528,12 +529,52 @@ describe('the dnd5e arm of the ONE resolver (row 194)', () => {
     ]);
   });
 
-  it('a dnd5e assignment level is never applied to a PF2e spell (loud, not ignored)', async () => {
+  it('a dnd5e assignment level on a PF2e spell is IGNORED with a WARNING — never "a spell it cannot use" (docs/17 row 205)', async () => {
     const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
     const index = mobSpellIndex([{ name: 'Ignition', spellData: ignition }]);
-    const chips = mobSpellChips([{ name: 'Ignition', casterLevel: 9 }], 5, index);
-    expect(chips[0]?.resolved).toBe(true);
-    expect(chips[0]?.result).toBeNull();
-    expect(chips[0]?.issues[0]).toContain('caster/character level cannot apply');
+    // THE OWNER'S REAL RUN: our own PF2e request contract asked the model for
+    // `casterLevel`/`characterLevel` (the dnd5e keys) and the model filled
+    // them, so these entries rendered loud errors. The field does not apply to
+    // a PF2e spell, so it is IGNORED: the cantrip still auto-heightens from the
+    // mob's own level and the note is quiet.
+    const chips = mobSpellChips([{ name: 'Ignition', casterLevel: 9, characterLevel: 9 }], 5, index);
+    const chip = chips[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.resolved).toBe(true);
+    // The correct values, exactly as if the field were absent.
+    expect(chip.result?.appliedRank).toBe(3);
+    expect(chip.result?.values.damage.map((entry) => entry.formula)).toEqual(['4d4']);
+    // NO issue, so no boundary failure and no repair turn.
+    expect(chip.issues).toEqual([]);
+    expect(mobSpellIssues(chips, 'Nirklex')).toEqual([]);
+    // …and the note is NAMED, on the chip detail and through the warning seam.
+    expect(chip.warnings).toEqual([
+      '"casterLevel" and "characterLevel" belong to the other game system, so they were ignored',
+    ]);
+    expect(mobSpellChipDetail(chip)).toContain('belong to the other game system');
+    expect(mobSpellWarnings(chips, 'Nirklex')).toEqual([
+      'the mob «Nirklex»: "casterLevel" and "characterLevel" belong to the other game system, so they were ignored',
+    ]);
+  });
+
+  it('a dnd5e spell keeps its OWN caster/character level inputs (row 194 unchanged)', () => {
+    const index = mobSpellIndex([{ name: 'Fire Bolt', spellData: dnd5eSpell() }]);
+    const chip = mobSpellChips([{ name: 'Fire Bolt', casterLevel: 9, characterLevel: 9 }], null, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    // The 5e arm still reads the assignment's own levels: one tier at
+    // character level 9 → 2d10, and NO warning (the keys apply here).
+    expect(chip.result?.values.damage.map((entry) => entry.formula)).toEqual(['2d10']);
+    expect(chip.result?.cantripScaling).toBe(true);
+    expect(chip.warnings).toEqual([]);
+    expect(chip.issues).toEqual([]);
+  });
+
+  it('an autoHeightenLevel on a dnd5e spell is the mirror: ignored with a warning', () => {
+    const index = mobSpellIndex([{ name: 'Fireball', spellData: dnd5eFireball() }]);
+    const chip = mobSpellChips([{ name: 'Fireball', castRank: 3, autoHeightenLevel: 7 }], null, index)[0];
+    if (chip === undefined) throw new Error('no chip');
+    expect(chip.result?.appliedRank).toBe(3);
+    expect(chip.issues).toEqual([]);
+    expect(chip.warnings.join(' ')).toContain('"autoHeightenLevel" belongs to the other game system');
   });
 });

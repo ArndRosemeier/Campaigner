@@ -190,17 +190,59 @@ a default.
 
 **The reply contract names `spells` exactly when the vocabulary is offered
 (docs/17 row 200).** The vocabulary section and the reply's OWN field
-enumeration are two halves of ONE instruction, so both render from ONE shape:
-`llm/promptScaffolding.MOB_SPELL_ENTRY_SHAPE` is the single spelling of the
-`{ "name", "castRank" }` entry, the vocabulary header embeds it, and
-`llm/mobSpellPrompt.formatMobSpellContractClause` renders the `"spells"` clause
-that `runEngine.statBlockSchemaHint` puts in every inline stat-block shape —
-gated on the SAME non-empty corpus the vocabulary section reads. A prompt can
-therefore never offer a caster spells in one paragraph and declare its own
-"COMPLETE schema" without the field in the next (row 184's defect); with no
-corpus BOTH halves are absent and the contract keeps its pre-arc bytes exactly
-(pinned as a golden prompt). `formatMobSpellSection` and the clause composer
-share ONE corpus predicate, so the two halves cannot be gated differently.
+enumeration are two halves of ONE instruction, so both render from ONE builder:
+`llm/statBlockContract.spellEntryShape(system)` is the single spelling of the
+per-system `spells` entry, the vocabulary header embeds it between the stable
+`llm/promptScaffolding.MOB_SPELL_SECTION_PREFIX`/`MOB_SPELL_SECTION_SUFFIX`
+pair, and `llm/mobSpellPrompt.formatMobSpellContractClause(vocabulary, system)`
+renders the `"spells"` clause that `runEngine.statBlockSchemaHint` puts in every
+inline stat-block shape — gated on the SAME non-empty corpus the vocabulary
+section reads. A prompt can therefore never offer a caster spells in one
+paragraph and declare its own "COMPLETE schema" without the field in the next
+(row 184's defect); with no corpus BOTH halves are absent and the contract keeps
+its pre-arc bytes exactly (pinned as a golden prompt). `formatMobSpellSection`
+and the clause composer share ONE corpus predicate, so the two halves cannot be
+gated differently.
+
+**The request contract is PER SYSTEM, and the prose is built from the SAME
+builder (docs/17 row 205).** An assignment's own keys are system-specific:
+`autoHeightenLevel` is PF2e's focus key and `casterLevel`/`characterLevel` are
+dnd5e's (row 194) — and strict structured outputs turn every key of the request
+schema into a required, nullable property, so a PF2e request built from the
+STORED (superset) schema DEMANDED the dnd5e keys. That was the owner's real
+run: eight errors reading *"the mob «Nirklex» assigns a spell it cannot use: the
+spell «Regenerate» is pathfinder2e; a dnd5e caster/character level cannot apply
+to it"*. `llm/statBlockContract.ts` is now the ONE builder: `statBlockSchemaFor(
+system, spellCorpus)` emits a PF2e assignment of `name`/`castRank`/
+`autoHeightenLevel` and a dnd5e one of `name`/`castRank`/`casterLevel`/
+`characterLevel`; `spellEntryShape(system)` renders the SAME keys as the prose
+above; `statBlockResponseFormat(system, spellCorpus)` is the response format
+(schema name `statblock-<system>`); and `foreignAssignmentKeys(system)` names
+the other system's keys for the warning below. Every lane that sends a
+spell-bearing contract goes through it: the NPC stat-block step, an encounter
+draft's inline blocks and the Cartographer's brief. `domain/statblockFields.ts`
+owns the shared field set, so the stored schema and every request schema are ONE
+definition (fresh instances per call — a reused zod instance emits a `$ref`,
+which `strictSchema` refuses). A system with NO corpus passes `spellCorpus:
+false` and gets the FULL stored superset, so that request's JSON bytes are
+exactly the stored schema's.
+
+**A field that does not apply to the spell's system is IGNORED with a named
+WARNING, never reported as an unusable spell (docs/17 row 205).** The chip
+carries `warnings` beside `issues`. `issues` keeps meaning unusable/unresolvable
+— an invented name, a missing caster level for a cantrip or focus spell, a rule
+refusal — and remains the ONE repair trigger; `warnings` means a stored
+assignment field that belongs to the OTHER system (a `casterLevel` on a PF2e
+spell, an `autoHeightenLevel` on a 5e one), which `domain/mobSpells.mobSpellChips`
+ignores: the values still come from the ONE heightening rule,
+`mobSpellIssues` returns nothing for it (no repair turn, no boundary failure),
+and `mobSpellWarnings`/`mobSpellChipDetail` name it. The split lives in
+`domain/mobSpells`: the run boundary reads only `issues`, and the card renders
+both — the quiet note in a separate `mob-spell-warnings` box beside the
+destructive `mob-spell-issues` box. THE COMPATIBILITY PROMISE: the STORED
+schema stays the superset, so an already-saved NPC whose assignments carry the
+spurious field renders chips + a warning with NO migration, and only the
+interpretation moved.
 
 **The Cartographer is the THIRD spell-carrying lane (docs/17 row 200).**
 `runEngine.runEncounterBrief` authors INLINE monster stat blocks exactly like

@@ -1,9 +1,11 @@
-import { z } from 'zod';
-
 import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
 import { spellTraitsAreFocus, type SpellData } from '@/domain/spellData';
 import { pf2eCantripRankFor, spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
+import {
+  storedMobSpellAssignmentSchema,
+  type MobSpellAssignment,
+} from '@/domain/statblockFields';
 
 /**
  * A mob's spells (docs/17 row 184, the mob half of the spells arc).
@@ -35,44 +37,9 @@ import { pf2eCantripRankFor, spellAtRank, type SpellAtRank } from '@/domain/spel
  * it only decides which spell the name means and which rank to ask about.
  */
 
-export const mobSpellAssignmentSchema = z.object({
-  /** The spell's name as the library spells it (matched through `comparableName`). */
-  name: z.string(),
-  /**
-   * The rank the spell is cast at. `null`/absent means "the spell's own rank"
-   * for a ranked spell, and is IGNORED for a cantrip or a FOCUS spell (each
-   * rule derives its rank and says so in its provenance; an explicit rank on a
-   * focus spell is authoritative and wins).
-   */
-  castRank: z.number().int().positive().nullish(),
-  /**
-   * A FOCUS spell's fixed auto-heightened rank, carried from the source
-   * CREATURE document (the item's `location.autoHeightenLevel`, else its
-   * casting entry's `autoHeightenLevel.value` — the importer resolves that
-   * order). It is stored HERE because the rules-pack `SpellData` the rule reads
-   * never carries either field; absent for a cantrip, for a ranked spell and
-   * for a focus spell whose source states none (which derives from the caster's
-   * level). docs/17 row 191.
-   */
-  autoHeightenLevel: z.number().int().positive().max(10).nullish(),
-  /**
-   * A dnd5e assignment's caster level (row 194): the creature's own
-   * `cantripLevel(spell)` resolved by the importer in upstream's order
-   * (`system.attributes.spell.level`). It is carried on the ASSIGNMENT because
-   * the rules-pack `SpellData` — what `spellAtRank` reads — never holds it, and
-   * it is the 5e cantrip progression's input. Ignored for every PF2e spell.
-   */
-  casterLevel: z.number().int().positive().nullish(),
-  /**
-   * A dnd5e assignment's CHARACTER level (row 194), when the creature document
-   * states one (`system.details.level` — a character-class NPC). Preferred over
-   * `casterLevel` for a cantrip's tier; absent for monsters and for every PF2e
-   * spell, which has no character level at all.
-   */
-  characterLevel: z.number().int().positive().nullish(),
-});
+export const mobSpellAssignmentSchema = storedMobSpellAssignmentSchema();
 
-export type MobSpellAssignment = z.infer<typeof mobSpellAssignmentSchema>;
+export type { MobSpellAssignment };
 
 /** One library spell a name can resolve to (the library's own spelling). */
 export interface MobSpellEntry {
@@ -142,8 +109,42 @@ export interface MobSpellChip {
    * spell row). The chip shows `issues` in that case, never a number.
    */
   result: SpellAtRank | null;
-  /** LOUD problems: an unresolved name, a missing caster level, a rule throw. */
+  /**
+   * LOUD problems: an unresolved name, a missing caster level, a rule throw.
+   * `mobSpellIssues` names them, the run boundary spends its one repair turn
+   * on them and the chip's loud box renders them. A REAL refusal only.
+   */
   issues: string[];
+  /**
+   * QUIET notes (docs/17 row 205): a stored assignment carried a field that
+   * belongs to the OTHER system (`casterLevel`/`characterLevel` on a PF2e
+   * spell, `autoHeightenLevel` on a dnd5e one). The field is IGNORED — the
+   * values are the rule's own — and the note says so. It is NOT an issue: it
+   * must never spend the one repair turn, never count as a boundary failure
+   * and never be reported as "a spell it cannot use", because a harmless extra
+   * field is not an unusable spell. The chip detail and the card render it;
+   * `mobSpellWarnings` names the mob for the surfaces that want the sentence.
+   */
+  warnings: string[];
+}
+
+/**
+ * The QUIET note for an assignment field that belongs to the OTHER system
+ * (docs/17 row 205): the field is ignored — every value still comes from the
+ * rule — and the note names it. It is a warning, never an issue: a harmless
+ * extra field must not read as "a spell it cannot use", must not spend the
+ * repair turn and must not count as a boundary failure.
+ */
+function foreignAssignmentWarnings(
+  assignment: MobSpellAssignment,
+  foreign: readonly string[],
+): string[] {
+  const stated = foreign.filter((key) => assignment[key as keyof MobSpellAssignment] != null);
+  if (stated.length === 0) return [];
+  const fields = stated.map((key) => `"${key}"`).join(' and ');
+  return [
+    `${fields} ${stated.length === 1 ? 'belongs' : 'belong'} to the other game system, so ${stated.length === 1 ? 'it was' : 'they were'} ignored`,
+  ];
 }
 
 /**
@@ -176,6 +177,9 @@ export function mobSpellChips(
         issues: [
           `the spell «${assignment.name}» is not in this campaign's imported spell library`,
         ],
+        // The cross-system keys are only ignorable once we know the system:
+        // an unresolved name made no claim about one, so it says nothing here.
+        warnings: [],
       });
       continue;
     }
@@ -200,16 +204,26 @@ export function mobSpellChips(
       const focus = spellTraitsAreFocus(entry.spellData.traits);
       if (!entry.spellData.cantrip && !focus) request.castRank = requested ?? entry.spellData.rank;
       else if (requested !== null) request.castRank = requested;
-      if (assignment.autoHeightenLevel !== undefined && assignment.autoHeightenLevel !== null) {
-        request.autoHeightenLevel = assignment.autoHeightenLevel;
-      }
       const isDnd5e = entry.spellData.system === 'dnd5e';
-      if (!isDnd5e && (assignment.casterLevel != null || assignment.characterLevel != null)) {
-        throw new Error(
-          `the spell «${entry.name}» is ${entry.spellData.system}; a dnd5e caster/character level cannot apply to it`,
-        );
-      }
-      if (isDnd5e) {
+      // THE CROSS-SYSTEM ARM IS A WARNING, NOT A REFUSAL (docs/17 row 205).
+      // The RESOLVED payload's own system decides which of an assignment's
+      // keys apply: a dnd5e assignment's `casterLevel`/`characterLevel` mean
+      // nothing on a PF2e spell and `autoHeightenLevel` means nothing on a 5e
+      // one, so the foreign keys are IGNORED and named. This used to throw and
+      // the run boundary reported it as "a spell it cannot use" — the owner's
+      // eight loud errors on a real PF2e run, where our own contract had asked
+      // the model for the wrong system's fields. Every rule check stays loud:
+      // this arm is about a field that does not apply, not about a value.
+      const warnings = foreignAssignmentWarnings(
+        assignment,
+        isDnd5e ? ['autoHeightenLevel'] : ['casterLevel', 'characterLevel'],
+      );
+      if (!isDnd5e) {
+        if (assignment.autoHeightenLevel !== undefined && assignment.autoHeightenLevel !== null) {
+          request.autoHeightenLevel = assignment.autoHeightenLevel;
+        }
+        if (casterLevel !== null) request.casterLevel = casterLevel;
+      } else {
         // The dnd5e arm's OWN inputs (row 194): the cantrip progression reads
         // the creature's CHARACTER level, or the caster level from its
         // spellcasting attribute when the document states no character level.
@@ -219,8 +233,6 @@ export function mobSpellChips(
         // cantrip off a CR.
         const dnd5eLevel = assignment.characterLevel ?? assignment.casterLevel ?? null;
         if (dnd5eLevel !== null) request.characterLevel = dnd5eLevel;
-      } else if (casterLevel !== null) {
-        request.casterLevel = casterLevel;
       }
       const result = spellAtRank(entry.spellData, request);
       chips.push({
@@ -231,6 +243,7 @@ export function mobSpellChips(
         system: entry.spellData.system,
         result,
         issues: [],
+        warnings,
       });
     } catch (error) {
       chips.push({
@@ -241,6 +254,12 @@ export function mobSpellChips(
         system: entry.spellData.system,
         result: null,
         issues: [error instanceof Error ? error.message : String(error)],
+        warnings: foreignAssignmentWarnings(
+          assignment,
+          entry.spellData.system === 'dnd5e'
+            ? ['autoHeightenLevel']
+            : ['casterLevel', 'characterLevel'],
+        ),
       });
     }
   }
@@ -284,8 +303,12 @@ export function mobSpellValuesText(result: SpellAtRank): string {
  */
 export function mobSpellChipDetail(chip: MobSpellChip): string {
   const label = chip.libraryName ?? chip.name;
+  // Warnings ride BOTH the unanswered and the answered chip (docs/17 row 205):
+  // they are notes about a field that does not apply, so they must survive a
+  // rule refusal beside it (a cantrip with no caster level has BOTH a real
+  // issue and, on a stray cross-system field, a warning).
   if (!chip.resolved || chip.result === null) {
-    return `${label} — ${chip.issues.join(' ')}`;
+    return [`${label} — ${chip.issues.join(' ')}`, ...chip.warnings].join('\n');
   }
   const result = chip.result;
   const lines: string[] = [];
@@ -327,7 +350,21 @@ export function mobSpellChipDetail(chip: MobSpellChip): string {
   if (result.upcastProse !== null) lines.push(result.upcastProse);
   lines.push(...result.notes);
   lines.push(...result.warnings);
+  lines.push(...chip.warnings);
   return lines.join('\n');
+}
+
+/**
+ * The QUIET notes behind a mob's chips (docs/17 row 205) — the warning channel
+ * beside `mobSpellIssues`, each naming both halves exactly like its loud
+ * sibling, so a surface can say which mob the ignored field belongs to. NOT
+ * used by the run boundary's repair path: a warning never spends the one
+ * repair turn and never counts as a boundary failure.
+ */
+export function mobSpellWarnings(chips: readonly MobSpellChip[], mobName: string): string[] {
+  return chips.flatMap((chip) =>
+    chip.warnings.map((warning) => `the mob «${mobName}»: ${warning}`),
+  );
 }
 
 /**

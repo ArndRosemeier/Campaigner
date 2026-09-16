@@ -25,7 +25,7 @@ import {
 } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
-import { MOB_SPELL_SECTION_HEADER } from '@/llm/promptScaffolding';
+import { MOB_SPELL_SECTION_PREFIX } from '@/llm/promptScaffolding';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -213,7 +213,7 @@ describe('an AI-authored mob carries spells (docs/17 row 184)', () => {
 
     // The prompt OFFERED the real corpus (the grounding half).
     const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).toContain(MOB_SPELL_SECTION_HEADER);
+    expect(statblockPrompt).toContain(MOB_SPELL_SECTION_PREFIX);
     expect(statblockPrompt).toContain('Fireball — Rank 3');
     expect(statblockPrompt).toContain('Ignition — Cantrip');
 

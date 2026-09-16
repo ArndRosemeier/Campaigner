@@ -202,32 +202,33 @@ export const ENCOUNTER_SOURCE_REPAIR_LEAD_IN =
 export const PART_TOO_SHORT_REPAIR_SENTENCE = 'Your previous reply was too short. Write the full part now.';
 
 /* -------------------------------------------------------------------------
- * The mob-spells section (docs/17 rows 184 and 200, the mob half of the arc)
+ * The mob-spells section (docs/17 rows 184, 200 and 205, the mob half of the
+ * arc)
  * ---------------------------------------------------------------------- */
 
 /**
- * The ONE `spells` ENTRY SHAPE (docs/17 row 200). The vocabulary header and
- * the reply contract's own schema clause are TWO HALVES of one instruction and
- * must spell the entry identically, so the shape lives HERE once and both
- * halves render it through `llm/mobSpellPrompt`. Re-typing it at a call site is
- * the exact drift that let row 184's contract omit the field its vocabulary
- * section invited (docs/18 §2.4).
- */
-export const MOB_SPELL_ENTRY_SHAPE =
-  '{ "name": <copied EXACTLY from this prompt\'s spell list>, "castRank": <the rank it is cast at, or null for the spell\'s own rank; a cantrip ignores it — a cantrip\'s rank is derived from the creature\'s level> }';
-
-/**
- * The stat-block/encounter prompt's spell vocabulary header. Rendered ONLY when
- * the campaign's system actually has imported spells, so a dnd5e (or
- * spell-less) prompt keeps its pre-arc bytes exactly.
+ * The stat-block/encounter prompt's spell vocabulary header, WITHOUT the entry
+ * shape: the shape is SYSTEM-SPECIFIC (`llm/statBlockContract.spellEntryShape`)
+ * and is rendered between this prefix and `MOB_SPELL_SECTION_SUFFIX` by
+ * `llm/mobSpellPrompt.formatMobSpellSection`, so what the model READS and what
+ * the strict response schema ACCEPTS are one per-system statement (docs/17 row
+ * 205 — before which the prose shape `{ name, castRank }` disagreed with a
+ * request schema that demanded the other system's fields).
  *
- * It states the contract the boundary enforces: a name must be copied from the
- * list, the cast rank is optional, and a cantrip's rank is derived rather than
- * chosen — the heightening rule's own shape (`domain/spellHeightening`), never
- * a second instruction. Its entry shape is `MOB_SPELL_ENTRY_SHAPE`, the SAME
- * one the reply contract's `"spells"` clause renders.
+ * Rendered ONLY when the campaign's system actually has imported spells, so a
+ * dnd5e (or spell-less) prompt keeps its pre-arc bytes exactly. It states the
+ * contract the boundary enforces: a name must be copied from the list, the
+ * cast rank is optional, and a cantrip's rank is derived rather than chosen —
+ * the heightening rule's own shape (`domain/spellHeightening`), never a second
+ * instruction. The prefix/suffix pair is also what the echo detector watches
+ * (`SCAFFOLDING_MARKERS`), with the shape as its one variable slot.
  */
-export const MOB_SPELL_SECTION_HEADER = `Spells (optional): to give this creature spells, add a "spells" array to its stat block. Each entry is ${MOB_SPELL_ENTRY_SHAPE}. Assign ONLY names from this list of the campaign's imported spells: the app checks every name against the library and reports any spell it cannot find.`;
+export const MOB_SPELL_SECTION_PREFIX =
+  'Spells (optional): to give this creature spells, add a "spells" array to its stat block. Each entry is ';
+
+/** The vocabulary header's closing half; see `MOB_SPELL_SECTION_PREFIX`. */
+export const MOB_SPELL_SECTION_SUFFIX =
+  ". Assign ONLY names from this list of the campaign's imported spells: the app checks every name against the library and reports any spell it cannot find.";
 
 /** The honest truncation note (a slot-free literal pair around the counts). */
 export const MOB_SPELL_TRUNCATION_PREFIX = '(the list is TRUNCATED — showing ';
@@ -349,7 +350,7 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   literalMarker('the schema-repair lead-in', SCHEMA_REPAIR_LEAD_IN),
   literalMarker('the encounter-source repair lead-in', ENCOUNTER_SOURCE_REPAIR_LEAD_IN),
   literalMarker('the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE),
-  literalMarker('the mob-spells section header', MOB_SPELL_SECTION_HEADER),
+  literalMarker('the mob-spells section header', MOB_SPELL_SECTION_PREFIX),
   literalMarker('the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN),
   literalMarker('the caster-awareness clause', MOB_SPELL_CASTER_CLAUSE),
 ];

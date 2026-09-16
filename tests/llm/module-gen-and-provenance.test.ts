@@ -116,7 +116,7 @@ import {
   MODULE_PREMISE_LABEL,
   MOB_SPELL_CASTER_CLAUSE,
   MOB_SPELL_REPAIR_LEAD_IN,
-  MOB_SPELL_SECTION_HEADER,
+  MOB_SPELL_SECTION_PREFIX,
   PART_TOO_SHORT_REPAIR_SENTENCE,
   PLACE_OWNERSHIP_BOUNDARY,
   SCHEMA_REPAIR_LEAD_IN,
@@ -2691,7 +2691,7 @@ describe('scaffoldingEcho.test.ts', () => {
       ['the schema-repair lead-in', SCHEMA_REPAIR_LEAD_IN],
       ['the encounter-source repair lead-in', ENCOUNTER_SOURCE_REPAIR_LEAD_IN],
       ['the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE],
-      ['the mob-spells section header', MOB_SPELL_SECTION_HEADER],
+      ['the mob-spells section header', MOB_SPELL_SECTION_PREFIX],
       ['the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN],
       ['the caster-awareness clause', MOB_SPELL_CASTER_CLAUSE],
     ])('every shared literal is DETECTED on its own, as %s', (label, literal) => {

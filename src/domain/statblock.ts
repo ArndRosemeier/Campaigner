@@ -1,39 +1,15 @@
 import { z } from 'zod';
 
-import { gameSystemSchema, type GameSystem } from '@/domain/gameSystem';
-import { mobSpellAssignmentSchema } from '@/domain/mobSpells';
-
-/** A named block of rules text (trait, action, reaction, legendary action). */
-export const namedTextSchema = z.object({
-  name: z.string(),
-  text: z.string(),
-});
-
-export type NamedText = z.infer<typeof namedTextSchema>;
+import type { GameSystem } from '@/domain/gameSystem';
+import { statBlockBaseFields, storedMobSpellAssignmentSchema } from '@/domain/statblockFields';
 
 /**
- * JSON number or numeric string ("18") — models frequently quote stats even
- * when the contract says number. A non-numeric string ("18 (plate)") is still
- * rejected: only meaning-preserving formatting is coerced.
+ * The field definitions live in `domain/statblockFields` (ONE definition, see
+ * there); re-exported here because this module has always been their public
+ * surface.
  */
-function numericStat() {
-  return z.preprocess((value) => {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (trimmed !== '' && Number.isFinite(Number(trimmed))) return Number(trimmed);
-    }
-    return value;
-  }, z.number());
-}
-
-const abilitiesSchema = z.object({
-  str: numericStat(),
-  dex: numericStat(),
-  con: numericStat(),
-  int: numericStat(),
-  wis: numericStat(),
-  cha: numericStat(),
-});
+export { abilitiesSchema, namedTextSchema, numericStat } from '@/domain/statblockFields';
+export type { NamedText } from '@/domain/statblockFields';
 
 /**
  * Normalized d20 stat block (01-DATA-MODEL §StatBlock): one shared shape for
@@ -42,59 +18,24 @@ const abilitiesSchema = z.object({
  * reactions, legendary, extras, the two notes) default to empty — the prompt
  * defines empty as "section does not apply", so a missing section is the
  * same meaning, not a masked failure; identity/defense fields stay required.
+ *
+ * THE FIELDS ARE DECLARED ONCE. `domain/statblockFields` owns the field set
+ * (shared with the system-aware REQUEST contract builder in
+ * `llm/statBlockContract`, which cannot reuse this INSTANCE — strict mode
+ * refuses zod's `$ref`); this schema is the STORED superset every row parses
+ * through, `spells` included, whatever system wrote it (docs/17 row 205).
+ * `spells` is `.nullish()` — NOT a default — the `itemData`/`spellData`
+ * precedent: a stat block written before the arc genuinely lacks the key, and
+ * "no field" must stay distinguishable from "authored, no spells" so a legacy
+ * row renders exactly as it did (no chip section, no error, no migration).
+ * The values a chip shows are never stored here: they come from
+ * `domain/mobSpells.mobSpellChips` over the library's own `spellData` at
+ * render/validation time, so a re-imported spell row cannot disagree with the
+ * mob that names it.
  */
 export const statBlockSchema = z.object({
-  system: gameSystemSchema,
-  level: z.string(),
-  size: z.string(),
-  creatureType: z.string(),
-  ac: numericStat(),
-  acNote: z.string().default(''),
-  hp: numericStat(),
-  hpFormula: z.string().default(''),
-  speed: z.string(),
-  abilities: abilitiesSchema,
-  saves: z.string(),
-  skills: z.string(),
-  senses: z.string(),
-  languages: z.string(),
-  traits: z.array(namedTextSchema).default([]),
-  actions: z.array(namedTextSchema).default([]),
-  reactions: z.array(namedTextSchema).default([]),
-  legendary: z.array(namedTextSchema).default([]),
-  extras: z.record(z.string(), z.string()).default({}),
-  /**
-   * The spells this mob casts (docs/17 row 184, the mob half of the spells
-   * arc): a NAME plus the optional rank it is cast at. `.nullish()` — NOT a
-   * default — is the `itemData`/`spellData` precedent: a stat block written
-   * before this arc genuinely lacks the key, and "no field" must stay
-   * distinguishable from "authored, no spells" so a legacy row renders exactly
-   * as it did (no chip section, no error). No migration, no index.
-   *
-   * The values a chip shows are NOT stored here: they come from
-   * `domain/mobSpells.mobSpellChips` over the library's own `spellData` at
-   * render/validation time, so a re-imported spell row cannot disagree with
-   * the mob that names it.
-   */
-  spells: z.array(mobSpellAssignmentSchema).nullish(),
-  /**
-   * The caster's printed spell save DC (docs/17 row 201) — the owner's "must":
-   * a GM plays the spell from this number, so if the block is a caster and the
-   * model states none, the surface prints a LOUD marker instead of a value
-   * derived from the level (a plausible-looking guess is forbidden by AGENTS
-   * rule 1). `.nullish()` and additive exactly like `spells`: a block written
-   * before this arc has no key, parses as it always did and renders unchanged.
-   */
-  spellDC: numericStat().nullish(),
-  /** The caster's printed spell attack bonus. Stored as the d20 MODIFIER (a
-   *  signed value is legitimate here, unlike an ability score), printed through
-   *  `formatModifier`. `.nullish()`, never invented. */
-  spellAttack: numericStat().nullish(),
-  /** The caster's magical tradition as the model stated it (`arcane`, `divine`,
-   *  … — a free string, never an enum: a dnd5e caster has no PF2e tradition and
-   *  a homebrew role is not the app's to reject). `.nullish()`, never invented;
-   *  `domain/statblock.casterStatLine` is the ONE renderer. */
-  tradition: z.string().nullish(),
+  ...statBlockBaseFields(),
+  spells: z.array(storedMobSpellAssignmentSchema()).nullish(),
 });
 
 export type StatBlock = z.infer<typeof statBlockSchema>;

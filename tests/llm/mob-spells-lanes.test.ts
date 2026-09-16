@@ -12,7 +12,8 @@ import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { getRun } from '@/db/runRepo';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
-import { MOB_SPELL_CASTER_CLAUSE, MOB_SPELL_SECTION_HEADER } from '@/llm/promptScaffolding';
+import { MOB_SPELL_CASTER_CLAUSE, MOB_SPELL_SECTION_PREFIX } from '@/llm/promptScaffolding';
+import { spellEntryShape } from '@/llm/statBlockContract';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import {
   ruleChunkSchema,
@@ -168,9 +169,12 @@ function statBlockReply(over: Record<string, unknown> = {}): Record<string, unkn
 const NPC_BRIEF = 'a goblin alchemist boss for a level 5 party';
 
 /** Drives the NPC smith to its stat-block step and returns that step's prompt. */
-async function npcStatblockPrompt(withCorpus: boolean): Promise<string> {
-  const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
-  if (withCorpus) await seedCorpus('pathfinder2e');
+async function npcStatblockPrompt(
+  withCorpus: boolean,
+  system: 'pathfinder2e' | 'dnd5e' = 'pathfinder2e',
+): Promise<string> {
+  const campaign = await createCampaign({ name: 'Ember', system });
+  if (withCorpus) await seedCorpus(system);
   const persona = await seedPersona('npc');
   const input: StartRunInput = {
     campaign,
@@ -183,7 +187,9 @@ async function npcStatblockPrompt(withCorpus: boolean): Promise<string> {
     .mockResolvedValueOnce({ text: JSON.stringify(NPC_DRAFT), modelUsed: 'test-model', fallback: null })
     .mockResolvedValueOnce({
       text: JSON.stringify(
-        withCorpus ? statBlockReply({ spells: [{ name: 'Fireball', castRank: 5 }] }) : statBlockReply(),
+        withCorpus
+          ? statBlockReply({ system, spells: [{ name: 'Fireball', castRank: 5 }] })
+          : statBlockReply({ system }),
       ),
       modelUsed: 'test-model',
       fallback: null,
@@ -359,7 +365,7 @@ afterEach(() => {
 describe('every AI-authored mob lane carries the ONE spells instruction (docs/17 row 200)', () => {
   it('the NPC stat-block step carries the clause and the vocabulary with a corpus', async () => {
     const present = await npcStatblockPrompt(true);
-    expect(present).toContain(MOB_SPELL_SECTION_HEADER);
+    expect(present).toContain(MOB_SPELL_SECTION_PREFIX);
     // The caster-awareness clause (docs/17 row 201) rides the SAME prompt the
     // vocabulary does, so the rule and the list cannot drift.
     expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
@@ -372,12 +378,28 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(present).toContain('matching this COMPLETE schema');
   }, 60000);
 
+  it('the NPC stat-block prompt renders the PF2e PROSE SHAPE its own request schema demands (docs/17 row 205)', async () => {
+    const present = await npcStatblockPrompt(true, 'pathfinder2e');
+    expect(present).toContain(spellEntryShape('pathfinder2e'));
+    expect(present).toContain('"autoHeightenLevel"');
+    expect(present).not.toContain('"casterLevel"');
+    expect(present).not.toContain('"characterLevel"');
+  }, 60000);
+
+  it('the dnd5e NPC stat-block prompt renders the dnd5e shape — the mirror (docs/17 row 205)', async () => {
+    const present = await npcStatblockPrompt(true, 'dnd5e');
+    expect(present).toContain(spellEntryShape('dnd5e'));
+    expect(present).toContain('"casterLevel"');
+    expect(present).toContain('"characterLevel"');
+    expect(present).not.toContain('"autoHeightenLevel"');
+  }, 60000);
+
   it('the NPC DRAFT step carries the clause with a corpus', async () => {
     const present = await npcDraftPrompt(true);
     expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(present).toContain('MUST be given spells');
     // The draft authors no stat block, so it is offered the RULE, not the list.
-    expect(present).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(present).not.toContain(MOB_SPELL_SECTION_PREFIX);
   }, 60000);
 
   it('the NPC DRAFT step keeps its PRE-ARC bytes without a corpus', async () => {
@@ -393,14 +415,14 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     const absent = await npcStatblockPrompt(false);
     // BYTE-IDENTITY: the pre-arc prompt, captured at the pre-fix tree.
     expect(absent).toBe(readFileSync(NPC_GOLDEN, 'utf8'));
-    expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_SECTION_PREFIX);
     expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);
 
   it('the encounter draft carries the clause and the vocabulary with a corpus', async () => {
     const present = await encounterDraftPrompt(true);
-    expect(present).toContain(MOB_SPELL_SECTION_HEADER);
+    expect(present).toContain(MOB_SPELL_SECTION_PREFIX);
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('"spells": [');
     // The owner's scope: the Encounter Smith keeps its existing OPTIONAL
@@ -413,14 +435,14 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
 
   it('the encounter draft carries neither without a corpus', async () => {
     const absent = await encounterDraftPrompt(false);
-    expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_SECTION_PREFIX);
     expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);
 
   it('the Cartographer lane carries the clause and the vocabulary with a corpus', async () => {
     const present = await cartographerBriefPrompt(true);
-    expect(present).toContain(MOB_SPELL_SECTION_HEADER);
+    expect(present).toContain(MOB_SPELL_SECTION_PREFIX);
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('"spells": [');
     expect(present).not.toContain(MOB_SPELL_CASTER_CLAUSE);
@@ -430,7 +452,7 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
 
   it('the Cartographer lane carries neither without a corpus', async () => {
     const absent = await cartographerBriefPrompt(false);
-    expect(absent).not.toContain(MOB_SPELL_SECTION_HEADER);
+    expect(absent).not.toContain(MOB_SPELL_SECTION_PREFIX);
     expect(absent).not.toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(absent).not.toContain('"spells"');
   }, 60000);

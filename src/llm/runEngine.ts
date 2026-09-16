@@ -137,12 +137,14 @@ import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFa
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { SCENE_AUTHORITY_SECTION, sceneSubstitutionsOf } from '@/llm/sceneAuthority';
 import { schemaResponseFormat } from '@/llm/strictSchema';
+import { statBlockResponseFormat } from '@/llm/statBlockContract';
 import { failureKindOf } from '@/llm/failureKind';
 import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
-  encounterDraftSchema,
+  encounterDraftSchemaFor,
   encounterGeneratorBriefSchema,
+  encounterGeneratorBriefSchemaFor,
   eventDraftSchema,
   factionDraftSchema,
   imagePromptDraftSchema,
@@ -187,6 +189,7 @@ import {
   formatMobSpellContractClause,
   formatMobSpellRepair,
   formatMobSpellSection,
+  mobSpellVocabularyRenders,
 } from '@/llm/mobSpellPrompt';
 import { loadSpellChunksFor } from '@/db/spellRepo';
 import { toastError } from '@/lib/toast';
@@ -869,7 +872,20 @@ interface DraftContract {
   name: string;
 }
 
-function draftContractFor(kind: ArtifactKind): DraftContract {
+/**
+ * The draft contract for one artifact kind. The ENCOUNTER draft embeds an
+ * inline monster stat block, so its REQUEST schema is built from the campaign's
+ * system (docs/17 row 205) — the schema that constrains the reply names only
+ * its own system's spell-entry keys. `spellCorpus` is the campaign's offer:
+ * with no imported spells the stored superset is used, so the request bytes are
+ * exactly the pre-arc ones. The other kinds author no stat block and are
+ * system-independent.
+ */
+function draftContractFor(
+  kind: ArtifactKind,
+  system: GameSystem,
+  spellCorpus: boolean,
+): DraftContract {
   switch (kind) {
     case 'pc':
       return { schema: pcDraftSchema, keys: Object.keys(pcDraftSchema.shape), name: 'pc-draft' };
@@ -883,8 +899,10 @@ function draftContractFor(kind: ArtifactKind): DraftContract {
       return { schema: factionDraftSchema, keys: Object.keys(factionDraftSchema.shape), name: 'faction-draft' };
     case 'note':
       return { schema: noteDraftSchema, keys: Object.keys(noteDraftSchema.shape), name: 'note-draft' };
-    case 'encounter':
-      return { schema: encounterDraftSchema, keys: Object.keys(encounterDraftSchema.shape), name: 'encounter-draft' };
+    case 'encounter': {
+      const schema = encounterDraftSchemaFor(system, spellCorpus);
+      return { schema, keys: Object.keys(schema.shape), name: 'encounter-draft' };
+    }
     case 'plotarc':
       return { schema: plotArcDraftSchema, keys: Object.keys(plotArcDraftSchema.shape), name: 'plotarc-draft' };
   }
@@ -942,14 +960,17 @@ function encounterAdvisoryText(
  * d20-scale SCORES in EVERY system (docs/12 §5 is the authority for the
  * conversion); the clause below states that AND the signed-value tell.
  */
-function statBlockSchemaHint(system: string, vocabulary: MobSpellVocabulary | null): string {
-  // THE SPELLS CLAUSE (docs/17 row 200): the reply contract's own field list
-  // must name `spells` exactly when this lane is offered the vocabulary, or the
-  // prompt would invite a field its "COMPLETE schema" line omits (row 184's
-  // defect). Rendered through the ONE composer, which shares its corpus gate
-  // with `formatMobSpellSection`; `null` (no library / no eligible spell, or a
-  // lane that authors no inline block) keeps the pre-arc bytes exactly.
-  const spellClause = vocabulary === null ? null : formatMobSpellContractClause(vocabulary);
+function statBlockSchemaHint(system: GameSystem, vocabulary: MobSpellVocabulary | null): string {
+  // THE SPELLS CLAUSE (docs/17 rows 200 and 205): the reply contract's own
+  // field list must name `spells` exactly when this lane is offered the
+  // vocabulary, and its entry keys must be THIS SYSTEM'S — rendered through the
+  // ONE builder (`llm/statBlockContract.spellEntryShape`), the SAME one the
+  // strict response schema is built from. Row 184's defect was the omission;
+  // row 205's was the prose shape disagreeing with the contract (PF2e prose,
+  // dnd5e keys demanded). `null` (no library / no eligible spell, or a lane
+  // that authors no inline block) keeps the pre-arc bytes exactly.
+  const spellClause =
+    vocabulary === null ? null : formatMobSpellContractClause(vocabulary, system);
   return (
     `{ "system": "${system}", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), ` +
     `"size": string, "creatureType": string, "ac": number, ` +
@@ -3219,7 +3240,6 @@ export class RunEngine {
     const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not draft artifacts');
-    const contract = draftContractFor(kind);
     const contextArtifacts = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const contextSection =
       contextArtifacts.length === 0
@@ -3260,6 +3280,14 @@ export class RunEngine {
       kind === 'encounter' || kind === 'npc'
         ? await this.spellLibraryFor(input.campaign.system, null)
         : null;
+    // The reply contract, built AFTER the library so an encounter draft's
+    // REQUEST schema names the campaign's OWN system's spell keys (docs/17 row
+    // 205) and uses the stored superset when there is no corpus.
+    const contract = draftContractFor(
+      kind,
+      input.campaign.system,
+      spellLibrary !== null && mobSpellVocabularyRenders(spellLibrary.vocabulary),
+    );
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
@@ -3286,7 +3314,7 @@ export class RunEngine {
       // stat block and so is never handed the list — it gets the caster CLAUSE
       // alone (docs/17 row 201), which is the identity half, not the vocabulary.
       kind === 'encounter' && spellLibrary !== null
-        ? formatMobSpellSection(spellLibrary.vocabulary)
+        ? formatMobSpellSection(spellLibrary.vocabulary, input.campaign.system)
         : null,
       // fix-02 (decision 1): with neither excerpts nor a roster there is
       // nothing to cite — the draft must inline a complete block per monster,
@@ -3656,7 +3684,7 @@ export class RunEngine {
         : `Rule excerpts:\n${context.excerpts}`,
       // Null when the campaign's system has no imported spells at all, so a
       // dnd5e prompt keeps its pre-arc bytes (the validation below still runs).
-      formatMobSpellSection(spellLibrary.vocabulary),
+      formatMobSpellSection(spellLibrary.vocabulary, input.campaign.system),
       // THE CASTER CLAUSE at the STAT-BLOCK step (docs/17 row 201): the step
       // that writes the spells AND the DC, through the SAME composer and the
       // SAME corpus gate as the vocabulary just above. Rendered only for this
@@ -3680,7 +3708,10 @@ export class RunEngine {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-        responseFormat: schemaResponseFormat('statblock', statBlockSchema),
+        responseFormat: statBlockResponseFormat(
+          input.campaign.system,
+          mobSpellVocabularyRenders(spellLibrary.vocabulary),
+        ),
         signal,
       }),
     );
@@ -4435,8 +4466,8 @@ export class RunEngine {
       // INLINE monster stat blocks, so a caster among them may be given spells.
       // Null without an imported spell corpus, so those prompts keep their
       // pre-arc bytes exactly; the reply contract's own clause is rendered by
-      // `statBlockSchemaHint` under the SAME gate.
-      formatMobSpellSection(spellLibrary.vocabulary),
+      // `statBlockSchemaHint` under the SAME gate, with THIS system's keys.
+      formatMobSpellSection(spellLibrary.vocabulary, input.campaign.system),
       inlineStatHint,
       // Owner-ratified room keys + mob treasure: structure + per-system
       // budget (treasureGuidanceFor coheres with the item-pool section above)
@@ -4457,7 +4488,13 @@ export class RunEngine {
       model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-      responseFormat: schemaResponseFormat('encounter-brief', encounterGeneratorBriefSchema),
+      responseFormat: schemaResponseFormat(
+        'encounter-brief',
+        encounterGeneratorBriefSchemaFor(
+          input.campaign.system,
+          mobSpellVocabularyRenders(spellLibrary.vocabulary),
+        ),
+      ),
       signal,
       onToken: (delta: string) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });

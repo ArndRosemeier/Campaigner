@@ -6092,7 +6092,82 @@ the draft body), so a caster the DRAFT invents without the module stating it is
 carried only by the draft's name and the clause — closing that would need a
 draft-level caster field, deliberately not added (docs/17 row 201).
 
-### The dnd5e spell lane (docs/17 row 194, docs/12 §3/§5/§16, docs/11 §Mob spells, docs/18 §2.1/§2.3)
+### The stat-block request contract is PER SYSTEM, and a stray cross-system field is quiet (docs/17 row 205, docs/11 §Mob spells, docs/18 §2.2/§2.3)
+
+The owner's real Pathfinder 2e run produced eight loud errors, one per spell:
+*"the mob «Nirklex» assigns a spell it cannot use: the spell «Regenerate» is
+pathfinder2e; a dnd5e caster/character level cannot apply to it"*. The root
+cause was our own contract: the 5e lane's `casterLevel`/`characterLevel` sat on
+the ONE STORED assignment schema, strict structured outputs turn every key into
+a required nullable property, and the PF2e request's response format therefore
+DEMANDED the other system's fields while the prose shape named only
+`{ name, castRank }`. The pins:
+
+- `tests/llm/stat-block-contract.test.ts` (NEW) — THE DIFFERENTIAL over the
+  emitted JSON Schema: the PF2e `spells` item carries
+  `name`/`castRank`/`autoHeightenLevel` and NOT the dnd5e keys; the dnd5e item is
+  the mirror (`name`/`castRank`/`casterLevel`/`characterLevel`); the two emitted
+  schemas must DIFFER (identical arms are the tell, never the result); every
+  emitted property stays required-nullable; no `$ref` is emitted (a reused zod
+  instance would be refused by `strictSchema`); the assignment builder itself is
+  per-system; and a system with NO corpus emits the STORED schema
+  byte-for-byte. Plus the compatibility arm: `statBlockSchema` still parses a row
+  carrying ANY of the five assignment keys (the owner's saved NPC needs no
+  migration), a legacy row keeps `spells: undefined`, and a reply admitted by
+  either request variant parses as storage.
+- `tests/llm/stat-block-contract.test.ts` (SOURCE SCAN) — the population pins:
+  `statBlockResponseFormat(` occurs once (the NPC stat-block step),
+  `encounterDraftSchemaFor(` once (the encounter draft contract),
+  `encounterGeneratorBriefSchemaFor(` once (the Cartographer brief), and
+  `schemaResponseFormat` survives only for the two contracts that carry NO stat
+  block (continuity report, vision-locate). A fourth hand-built variant reds by
+  count.
+- `tests/llm/mob-spells-lanes.test.ts` (EXTENDED) — the PROSE half through the
+  REAL engine: the PF2e stat-block prompt contains `spellEntryShape('pathfinder2e')`
+  and not `"casterLevel"`; a dnd5e campaign's prompt contains
+  `spellEntryShape('dnd5e')` and not `"autoHeightenLevel"` — one assertion per
+  system on the bytes the model sees. The two with-corpus goldens
+  (`encounter-draft-with-corpus.txt`, `cartographer-brief-with-corpus.txt`) were
+  REGENERATED for the per-system shape rather than claimed byte-identical; the
+  no-corpus goldens are untouched (the gate keeps those prompts pre-arc).
+- `tests/domain/mobSpells.test.ts` (EXTENDED) — THE REGRESSION PIN: a PF2e
+  `Ignition` carrying `casterLevel: 9, characterLevel: 9` resolves to rank 3 /
+  `4d4` (the mob's OWN level 5), yields `issues: []`, makes `mobSpellIssues`
+  return `[]` (so no repair turn and no boundary failure), and names both keys on
+  the chip detail and through `mobSpellWarnings`; the mirror (a 5e spell carrying
+  `autoHeightenLevel`) is ignored the same way; and a 5e spell STILL reads its own
+  `casterLevel`/`characterLevel` into the cantrip progression (row 194 unchanged).
+- `tests/features/mob-spell-chips.test.tsx` (EXTENDED) — the same case through
+  the ONE card: the chip renders the correct values with NO `mob-spell-issues`
+  box, and the quiet `mob-spell-warnings` box names the mob and says the field
+  was ignored.
+- `tests/architecture/one-spells-shape.test.ts` (AMENDED) — the JSON-quoted
+  `"castRank"` needle now lives in exactly ONE src file (`llm/statBlockContract`),
+  the composer renders `spellEntryShape(system)` in BOTH halves, the corpus gate
+  is declared once and read by THREE composers, and `runEngine.ts` hand-writes
+  neither the shape nor a `"spells": [` clause nor a `schemaResponseFormat('statblock'` call.
+
+**Every existing REAL check stays as loud as it was** and its pins are
+unamended: an invented name still stores an unresolved chip plus a named issue
+and spends the ONE repair turn (`tests/llm/mob-spells-lanes.test.ts`,
+`tests/llm/mob-spells.test.ts`), and a level-less cantrip is still a loud
+`casterLevel` issue.
+
+**Injected RED, watched (raw logs kept under the writer's `/tmp` worktree; every
+arm's file hash printed, identical arms labelled VOID):** gave the PF2e request
+schema the dnd5e keys back → the differential pins red; restored the old throw
+for a cross-system field → the regression and card pins red; routed one lane to
+a hand-built variant → the population pins red.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+obeys the per-system shape (every pin mocks the transport or drives the real
+engine with a mocked chat); no test can prove the reinterpretation of a real
+saved row beyond the parse plus `mobSpellChips` pins (a real on-disk row is not
+available to a test); and no test proves the owner's eight errors are gone on his
+own library — that follows from the request no longer demanding the fields and
+from the tolerance being unable to throw.
+
+
 
 The owner's go-ahead ("d&d spell lane is a go") puts the SAME `spell` chunk lane
 on a SECOND system. The fixtures are REAL upstream documents whose provenance is

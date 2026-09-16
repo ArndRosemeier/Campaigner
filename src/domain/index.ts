@@ -38,4 +38,5 @@ export * from '@/domain/spellData';
 export * from '@/domain/spellHeightening';
 export * from '@/domain/mobSpells';
 export * from '@/domain/statblock';
+export * from '@/domain/statblockFields';
 export * from '@/domain/wikiGraph';

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+import type { GameSystem } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
+import { statBlockSchemaFor } from '@/llm/statBlockContract';
 
 /**
  * Draft JSON contracts (04-LLM-PERSONAS §Draft JSON contracts): what the
@@ -239,49 +241,85 @@ const sceneSubstitutions = z.preprocess(
   z.array(sceneSubstitutionSchema),
 );
 
-export const encounterDraftSchema = z.object({
-  ...draftBase,
-  difficulty: z.string(),
-  levelHint: z.string(),
-  monsters: z.array(
-    z.object({
-      name: z.string(),
-      /** Models often send "4"; accept numeric strings. */
-      count: z.coerce.number().int().positive(),
-      notes: z.string(),
-      /** Mob treasure (owner-ratified): what ONE instance carries — GM
-       * checklist text, '' when nothing. Optional enrichment, never a
-       * rejection (the guidance-fields convention). */
-      treasure: z.string().default(''),
-      /** M3-B: index into the numbered stat-block excerpts of the retrieve
-       * step — mapped back to a content-identity-stamped { type: 'rulebook' }
-       * citation on finalize. Absentable: strict mode forces the key; `null`
-       * parses to undefined. */
-      sourceChunkIndex: absentable(rosterIndex),
-      /** M-B (12-BESTIARY-PACKS §7): exact roster name of an imported pack
-       * creature — resolved against the same roster the prompt listed. */
-      sourceName: absentable(z.string()),
-      /** M3-B: a full inline stat block when no rulebook excerpt matched. */
-      statBlock: absentable(statBlockSchema),
-    }),
-  ),
-  terrain: z.string(),
-  tactics: z.string(),
-  treasure: z.string(),
-  /**
-   * Scene-assertion substitutions the reply must declare (docs/11 assertion
-   * rule): a stated creature or place it could not honour. Absent/null = none.
-   */
-  substitutions: sceneSubstitutions,
-  /**
-   * D10 amendment: the persona classifies WHERE the encounter takes place in
-   * its existing draft call (no extra LLM call). Guides the automatic
-   * battlemap's preset resolution; omitted drafts default to unclassified.
-   */
-  locationKind: enumCaseInsensitive(['dungeon', 'building', 'wilderness', 'other']).default(
-    'other',
-  ),
-});
+/**
+ * One roster monster of BOTH encounter contracts (the Smith's draft and the
+ * Cartographer's brief): the two differed only in whether `name`/`notes` are
+ * required, which is the `required` flags here — ONE definition, so the inline
+ * stat block and its spell contract can never be described twice.
+ */
+function encounterMonsterSchema<S extends z.ZodType>(
+  statBlock: S,
+  options: { requireName?: boolean; requireNotes?: boolean } = {},
+) {
+  return z.object({
+    name: options.requireName === true ? z.string().min(1) : z.string(),
+    /** Models often send "4"; accept numeric strings. */
+    count: z.coerce.number().int().positive(),
+    notes: options.requireNotes === true ? z.string() : z.string().default(''),
+    /** Mob treasure (owner-ratified): what ONE instance carries — GM
+     * checklist text, '' when nothing. Optional enrichment, never a
+     * rejection (the guidance-fields convention). */
+    treasure: z.string().default(''),
+    /** M3-B: index into the numbered stat-block excerpts of the retrieve
+     * step — mapped back to a content-identity-stamped { type: 'rulebook' }
+     * citation on finalize. Absentable: strict mode forces the key; `null`
+     * parses to undefined. */
+    sourceChunkIndex: absentable(rosterIndex),
+    /** M-B (12-BESTIARY-PACKS §7): exact roster name of an imported pack
+     * creature — resolved against the same roster the prompt listed. */
+    sourceName: absentable(z.string()),
+    /** M3-B: a full inline stat block when no rulebook excerpt matched. The
+     *  schema is the caller's, so a REQUEST contract names its own system's
+     *  spell-entry keys (docs/17 row 205) while storage still parses the
+     *  superset. */
+    statBlock: absentable(statBlock),
+  });
+}
+
+/**
+ * THE encounter draft contract for one system (docs/17 row 205). The draft
+ * authors INLINE monster stat blocks, so its monsters carry the system-specific
+ * spell contract; `statBlock` defaults to the stored superset, which is what the
+ * no-corpus arm and the parse boundary use.
+ *
+ * The field ORDER is the stored contract's own (pinned): `monsters` sits between
+ * `levelHint` and `terrain`, exactly where it was before this factory existed,
+ * so the reply's `contract.keys` line and the strict schema's property order do
+ * not move.
+ */
+export function encounterDraftSchemaFor(
+  system: GameSystem,
+  spellCorpus: boolean,
+) {
+  return z.object({
+    ...draftBase,
+    difficulty: z.string(),
+    levelHint: z.string(),
+    monsters: z.array(encounterMonsterSchema(statBlockSchemaFor(system, spellCorpus))),
+    terrain: z.string(),
+    tactics: z.string(),
+    treasure: z.string(),
+    /**
+     * Scene-assertion substitutions the reply must declare (docs/11 assertion
+     * rule): a stated creature or place it could not honour. Absent/null = none.
+     */
+    substitutions: sceneSubstitutions,
+    /**
+     * D10 amendment: the persona classifies WHERE the encounter takes place in
+     * its existing draft call (no extra LLM call). Guides the automatic
+     * battlemap's preset resolution; omitted drafts default to unclassified.
+     */
+    locationKind: enumCaseInsensitive(['dungeon', 'building', 'wilderness', 'other']).default(
+      'other',
+    ),
+  });
+}
+
+/**
+ * The STORED/parse encounter draft: the superset, which every reply the
+ * per-system request contracts admit still satisfies.
+ */
+export const encounterDraftSchema = encounterDraftSchemaFor('pathfinder2e', false);
 
 export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
 
@@ -292,7 +330,8 @@ export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
  * per 07 §M3-A, never empty-required. Everything semantic (roster, rooms,
  * indexes, connectivity) stays strict and is reported as named issues.
  */
-export const encounterGeneratorBriefSchema = z
+function encounterGeneratorBriefBaseSchema<S extends z.ZodType>(statBlock: S) {
+  return z
   .object({
     name: substanceText('name'),
     summary: substanceText('summary'),
@@ -313,17 +352,7 @@ export const encounterGeneratorBriefSchema = z
      */
     substitutions: sceneSubstitutions,
     monsters: z.array(
-      z.object({
-        name: z.string().min(1),
-        count: z.coerce.number().int().positive(),
-        notes: z.string().default(''),
-        /** Mob treasure (owner-ratified): what ONE instance carries — GM
-         * checklist text, '' when nothing. Optional enrichment. */
-        treasure: z.string().default(''),
-        sourceChunkIndex: absentable(rosterIndex),
-        sourceName: absentable(z.string()),
-        statBlock: absentable(statBlockSchema),
-      }),
+      encounterMonsterSchema(statBlock, { requireName: true }),
     ).min(1),
     rooms: z.array(
       z.object({
@@ -386,6 +415,27 @@ export const encounterGeneratorBriefSchema = z
       }
     }
   });
+}
+
+/**
+ * THE Cartographer brief REQUEST contract for one system (docs/17 row 205): the
+ * brief authors INLINE monster stat blocks, so its monsters carry the
+ * system-specific spell contract.
+ */
+export function encounterGeneratorBriefSchemaFor(
+  system: GameSystem,
+  spellCorpus: boolean,
+) {
+  return encounterGeneratorBriefBaseSchema(
+    statBlockSchemaFor(system, spellCorpus),
+  );
+}
+
+/** The STORED/parse brief: the superset, the same contract the request
+ *  variants narrow. */
+export const encounterGeneratorBriefSchema = encounterGeneratorBriefBaseSchema(
+  statBlockSchema,
+);
 export type EncounterGeneratorBrief = z.infer<typeof encounterGeneratorBriefSchema>;
 
 export const plotArcDraftSchema = z.object({
