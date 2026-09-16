@@ -5,8 +5,8 @@ import { ImageIcon, SparklesIcon } from 'lucide-react';
 import type { AnyArtifact, Id } from '@/domain';
 import type { MobPortraitBatchPlan } from '@/features/campaign/mob-portrait-queue';
 import {
+  enqueueEncounterPortraitFill,
   enqueueInventedCreaturePortraits,
-  enqueueMobPortraits,
   planMobPortraitBatch,
   regenerateInventedCreaturePortraits,
   regenerateMobPortraits,
@@ -185,17 +185,16 @@ export function MobPortraitsSection({
       // roster of nothing but such rows left a visible hole unfilled: the
       // count offered "Fill 1 missing portrait" and the press enqueued
       // nothing (row 90's exact shape-gating defect, and row 92's rule — an
-      // offer the work refuses is a bug — applied to the press). Each lane
-      // enumerates away what it has no business with, so the extra call is a
-      // no-op, not a second job.
-      const rulebook = hasParticipants
-        ? await enqueueMobPortraits(artifact, campaignId)
+      // offer the work refuses is a bug — applied to the press). The two lanes
+      // go through ONE seam (`enqueueEncounterPortraitFill`), the same call
+      // the module sweep and the run-completion trigger make — so no caller
+      // can enqueue only one lane (docs/17 row 196). Each lane enumerates away
+      // what it has no business with, so the pair is a no-op, not a second job.
+      const fill = hasParticipants
+        ? await enqueueEncounterPortraitFill(artifact, campaignId)
         : { enqueued: 0, alreadyImaged: [] as string[] };
-      const invented = hasParticipants
-        ? await enqueueInventedCreaturePortraits(artifact, campaignId)
-        : { created: 0, enqueued: 0, alreadyImaged: [] as string[] };
-      const enqueued = rulebook.enqueued + invented.enqueued;
-      const kept = rulebook.alreadyImaged.length + invented.alreadyImaged.length;
+      const enqueued = fill.enqueued;
+      const kept = fill.alreadyImaged.length;
       if (enqueued === 0) {
         // Covers landed between the count and this call (read-through or a
         // concurrent run) — nothing left to fill, and nothing was replaced.

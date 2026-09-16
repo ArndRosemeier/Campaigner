@@ -93,6 +93,23 @@ vi.mock('@/features/modules/encounter-map-queue', () => ({
 vi.mock('@/features/campaign/mob-portrait-queue', () => ({
   enqueueMobPortraits,
   enqueueInventedCreaturePortraits: enqueueInventedPortraits,
+  // The sweep calls the ONE seam (docs/17 row 196); this composite forwards to
+  // the two lane spies this file asserts on, so the sweep's DECISION (which
+  // encounters, which switch) stays what is under test here.
+  enqueueEncounterPortraitFill: async (encounter: never, campaignId: never) => {
+    const rulebook = (await enqueueMobPortraits(encounter, campaignId)) as {
+      enqueued: number;
+      alreadyImaged: string[];
+    };
+    const invented = (await enqueueInventedPortraits(encounter, campaignId)) as {
+      enqueued: number;
+      alreadyImaged: string[];
+    };
+    return {
+      enqueued: rulebook.enqueued + invented.enqueued,
+      alreadyImaged: [...rulebook.alreadyImaged, ...invented.alreadyImaged],
+    };
+  },
 }));
 
 const { toastError, toastSuccess } = await import('@/lib/toast');

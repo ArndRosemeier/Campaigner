@@ -78,8 +78,13 @@ describe('the top-bar model picker (docs/17 row 193)', () => {
     expect(
       settingsLink.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    // The trigger carries the current model, legibly.
-    expect(trigger).toHaveTextContent('anthropic/claude-sonnet-4.5');
+    // The trigger carries the current model, legibly. The settings liveQuery is
+    // asynchronous, so the barrier waits for the FIELD it asserts (docs/17 row
+    // 132): finding the element alone can resolve on its first, model-less
+    // render.
+    await waitFor(() => {
+      expect(trigger).toHaveTextContent('anthropic/claude-sonnet-4.5');
+    });
     cleanup();
 
     const campaign = await createCampaign({ name: 'Picker Campaign', system: 'dnd5e' });

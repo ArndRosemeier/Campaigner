@@ -50,6 +50,7 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   libraryCreatureKey,
+  moduleCreationPool,
 } from '@/domain';
 import type { Id, Campaign, Persona, EncounterArtifactData } from '@/domain';
 import {
@@ -70,12 +71,13 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
-import { createPersona } from '@/db/personaRepo';
+import { createPersona, listPersonas } from '@/db/personaRepo';
 import { listRunsByCampaign, getRun } from '@/db/runRepo';
 import { runEngine, encounterRunAdapters } from '@/llm/runEngine';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
 import {
   useMobPortraitQueue,
+  enqueueEncounterPortraitFill,
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
   planMobPortraitBatch,
@@ -84,6 +86,8 @@ import {
   regenerateInventedCreaturePortraits,
   regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
+import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
+import { encountersNeedingMobPortraits } from '@/features/modules/post-generation';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureCoverImageId, creaturePortraitArt, setCreatureCover } from '@/db/creatureRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -1262,6 +1266,315 @@ describe('post-run-extras.test.ts', () => {
       // The queue contract holds: the completed Smith run was never reopened.
       expect((await getRun(runId))?.status).toBe('completed');
     }, 30000);
+  });
+
+  describe('automatic roster portraits for a restocked encounter (row 196)', () => {
+    /**
+     * The owner's report, verbatim: *"There is still a small problem that
+     * encounters can have mobs without images even when \"generate mob
+     * encounter images\" is selected in the module creator. When selecting the
+     * image generation button inside the encounter, those images get created
+     * successfully."*
+     *
+     * The mechanism: the module sweep illustrated the Encounter Smith's STUB
+     * roster, then the unattended Cartographer restock (auto-enqueued by this
+     * very module) REPLACED it, and nothing re-enqueued the creatures that only
+     * exist after the restock. The fix is the run-completion trigger in
+     * `post-run-extras`: a completed run whose result artifact is an encounter
+     * that carried a `targetArtifactId` re-reads the row and runs both lanes
+     * over it. These tests drive the REAL flow (Smith run -> automatic
+     * battlemap -> Cartographer restock) and never call the sweep, so the only
+     * thing that can illustrate the fresh roster is the trigger.
+     */
+
+    const blob = (): Blob => new Blob(['fake-png'], { type: 'image/png' });
+
+    /**
+     * The shared `CARTOGRAPHER_BRIEF` with GROUNDED monsters. The restocked
+     * creatures are inline-statblock entries, so they materialize into authored
+     * `npc` artifacts whose `summary` IS the roster `notes` — and the portrait
+     * prompt refuses to illustrate an artifact with no appearance, summary or
+     * body. A non-empty `notes` is therefore what makes the fresh roster a
+     * legitimate portrait target, exactly like a real stocked dungeon's prose
+     * (`materializeMonsterNpc` writes `summary: notes`).
+     */
+    const RESTOCK_BRIEF = {
+      ...CARTOGRAPHER_BRIEF,
+      monsters: CARTOGRAPHER_BRIEF.monsters.map((monster) => ({
+        ...monster,
+        notes: 'a bog-drowned ambusher trailing weed and a barbed spear',
+      })),
+    };
+
+    function armPortraitGeneration(): void {
+      generateImagesMock.mockResolvedValue({
+        images: [blob()],
+        costUsd: null,
+        cappedToOne: false,
+        modelUsed: 'test-image-model',
+        fallback: null,
+        filteredCount: 0,
+      });
+      intakeImageMock.mockResolvedValue({
+        blob: blob(),
+        mimeType: 'image/webp',
+        width: 320,
+        height: 240,
+      });
+    }
+
+    async function createRestockedEncounter(options?: {
+      autoGenerateMobImages?: boolean;
+    }): Promise<{
+      campaign: Campaign;
+      moduleId: Id;
+      artifactId: Id;
+    }> {
+      await seedBuiltInPersonas();
+      const campaign = await createCampaign({ name: 'Cellars', system: 'dnd5e' });
+      const smith = (await listPersonas()).find((persona) => persona.slug === 'encounter-smith');
+      if (smith === undefined) throw new Error('the built-in Encounter Smith is missing');
+      const module = await saveModule(
+        createModule({
+          campaignId: campaign.id,
+          title: 'Ruins',
+          concept: '',
+          levelMin: 1,
+          levelMax: 3,
+          sizeDial: 'sketch',
+          autoGenerateBattlemaps: true,
+          autoGenerateMobImages: options?.autoGenerateMobImages ?? true,
+        }),
+      );
+      // Same proven reply sequence as the automatic-battlemap tests above: the
+      // Smith draft, then the Cartographer's 4-room fresh stocking.
+      chatMock
+        .mockResolvedValue({
+          text: JSON.stringify(ENCOUNTER_DRAFT),
+          modelUsed: 'test-model',
+          fallback: null,
+        })
+        .mockResolvedValueOnce({
+          text: JSON.stringify(ENCOUNTER_DRAFT),
+          modelUsed: 'test-model',
+          fallback: null,
+        })
+        .mockResolvedValueOnce({
+          text: JSON.stringify(RESTOCK_BRIEF),
+          modelUsed: 'test-model',
+          fallback: null,
+        });
+      const runId = await runEngine.startRun({
+        campaign,
+        persona: smith,
+        autonomy: 'auto',
+        brief: 'a flooded cellar ambush',
+        pinnedChunkIds: [],
+        placementModuleId: module.id,
+      });
+      await waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      return { campaign, moduleId: module.id, artifactId: artifact.id };
+    }
+
+    /** The restock landed: the Smith stub's single fight is replaced by the
+     * Cartographer's 4-room, 4-entry population (the shape the existing
+     * automatic-battlemap pin already asserts at `:1032-1041`). */
+    async function waitForRestock(artifactId: Id): Promise<void> {
+      await waitFor(
+        async () => {
+          const mapped = await getAnyArtifact(artifactId);
+          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+          expect(mapped.data.layout?.rooms).toHaveLength(4);
+          expect(mapped.data.monsters).toHaveLength(4);
+        },
+        { timeout: 15000 },
+      );
+    }
+
+    it('P1 — the FINAL restocked roster is illustrated by the completion trigger (revert-proof)', async () => {
+      armPortraitGeneration();
+      const { campaign, artifactId } = await createRestockedEncounter();
+      await waitForRestock(artifactId);
+
+      // The trigger re-reads the row the restock just wrote and fills it
+      // through the shared enumeration. REVERT-PROOF: delete the automatic
+      // branch from `runPostCreateExtras` and nothing in this test enqueues a
+      // portrait (the sweep never runs here), so this wait never converges —
+      // RED. Before the fix the ONLY portraits in this flow belonged to the
+      // stub roster, which no longer matches the final one.
+      await waitFor(
+        async () => {
+          const mapped = await getAnyArtifact(artifactId);
+          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+          const plan = await planMobPortraitBatch(mapped, campaign.id);
+          expect(plan.missing).toEqual([]);
+          expect(plan.imaged.length).toBeGreaterThan(0);
+        },
+        { timeout: 15000 },
+      );
+
+      const mapped = await getAnyArtifact(artifactId);
+      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+      const plan = await planMobPortraitBatch(mapped, campaign.id);
+      // Every distinct creature kind the restock landed carries art.
+      expect(plan.missing).toEqual([]);
+      expect(plan.imaged.length).toBeGreaterThan(0);
+      // The completed runs were never reopened by the extras execution.
+      expect((await listRunsByCampaign(campaign.id)).every((entry) => entry.status !== 'running')).toBe(
+        true,
+      );
+    }, 40000);
+
+    it('P2 DIFFERENTIAL — the module trigger and the editor plan agree over the same post-restock state', async () => {
+      // Block the portrait lane's image call so NOTHING has committed art yet
+      // while both arms are read: the module arm is the trigger's actual
+      // enqueue set, the editor arm is `planMobPortraitBatch` (the read-only
+      // half of the editor's own enumeration) over the identical DB state.
+      type GenResult = Awaited<ReturnType<typeof generateImages>>;
+      const genResult: GenResult = {
+        images: [blob()],
+        costUsd: null,
+        cappedToOne: false,
+        modelUsed: 'test-image-model',
+        fallback: null,
+        filteredCount: 0,
+      };
+      let releaseImages: ((value: GenResult) => void) | undefined;
+      const gate = new Promise<GenResult>((resolve) => {
+        releaseImages = resolve;
+      });
+      // The run engine and the portrait lane share ONE `generateImages`
+      // function (`encounterRunAdapters.generateImages` IS this mock), so the
+      // gate must block ONLY the portrait call: the map run's own stylize call
+      // carries a battlemap prompt and resolves immediately, while every
+      // creature-portrait call parks on `gate` — leaving the restock landed
+      // and no portrait committed.
+      generateImagesMock.mockImplementation((prompt: string) =>
+        prompt.includes('battlemap') ? Promise.resolve(genResult) : gate,
+      );
+      intakeImageMock.mockResolvedValue({
+        blob: blob(),
+        mimeType: 'image/webp',
+        width: 320,
+        height: 240,
+      });
+
+      const { campaign, artifactId } = await createRestockedEncounter();
+      await waitForRestock(artifactId);
+      // The map queue drains (the restock is on the row)…
+      await waitFor(
+        () => {
+          expect(useEncounterMapQueue.getState().queued).toEqual([]);
+          expect(useEncounterMapQueue.getState().active).toEqual([]);
+        },
+        { timeout: 15000 },
+      );
+      // …and the trigger's jobs sit BLOCKED on the image call, so no art has
+      // committed and the two arms are read over the same state.
+      await waitFor(
+        () => {
+          const jobs = [
+            ...useMobPortraitQueue.getState().queued,
+            ...useMobPortraitQueue.getState().active,
+          ].filter((job) => job.encounterId === artifactId);
+          expect(jobs.length).toBeGreaterThan(0);
+        },
+        { timeout: 15000 },
+      );
+
+      try {
+        const mapped = await getAnyArtifact(artifactId);
+        if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+        const triggerJobs = [
+          ...useMobPortraitQueue.getState().queued,
+          ...useMobPortraitQueue.getState().active,
+        ].filter((job) => job.encounterId === artifactId);
+        const moduleArm = [...new Set(triggerJobs.map((job) => job.name))].sort();
+        const editorArm = (await planMobPortraitBatch(mapped, campaign.id)).missing.slice().sort();
+        // Two non-empty arms that DO differ from the empty set — a differential,
+        // never a VOID probe.
+        expect(moduleArm.length).toBeGreaterThan(0);
+        expect(editorArm.length).toBeGreaterThan(0);
+        expect(moduleArm).toEqual(editorArm);
+        // The additive trigger never sets `regen` (it replaces nothing).
+        expect(triggerJobs.every((job) => job.regen !== true)).toBe(true);
+      } finally {
+        releaseImages?.(genResult);
+      }
+      await settleStartedQueues();
+    }, 40000);
+
+    it('P3 — the fill is idempotent: a second pass and the sweep enqueue nothing for imaged kinds', async () => {
+      armPortraitGeneration();
+      const { campaign, moduleId, artifactId } = await createRestockedEncounter();
+      await waitFor(
+        async () => {
+          const mapped = await getAnyArtifact(artifactId);
+          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+          const plan = await planMobPortraitBatch(mapped, campaign.id);
+          expect(plan.missing).toEqual([]);
+        },
+        { timeout: 15000 },
+      );
+      await settleStartedQueues();
+
+      const mapped = await getAnyArtifact(artifactId);
+      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+      const generationsBefore = generateImagesMock.mock.calls.length;
+
+      // The trigger's own body, over the illustrated roster, TWICE.
+      const first = await enqueueEncounterPortraitFill(mapped, campaign.id);
+      const second = await enqueueEncounterPortraitFill(mapped, campaign.id);
+      expect(first.enqueued).toBe(0);
+      expect(second.enqueued).toBe(0);
+      expect(second.alreadyImaged.length).toBeGreaterThan(0);
+      // Zero additional generations were asked for, and nothing was detached
+      // or replaced.
+      expect(generateImagesMock.mock.calls.length).toBe(generationsBefore);
+      expect(
+        [...useMobPortraitQueue.getState().queued, ...useMobPortraitQueue.getState().active].every(
+          (job) => job.regen !== true,
+        ),
+      ).toBe(true);
+
+      // The module sweep's own detector agrees: the encounter is not in its
+      // work list, so the automatic sweep and the completion trigger cannot
+      // double-book it either.
+      const module = await getModule(moduleId);
+      if (module === undefined) throw new Error('module missing');
+      const sweepTargets = encountersNeedingMobPortraits(
+        module,
+        moduleCreationPool(await listArtifactsByCampaign(campaign.id)),
+        await presentationArtOfCampaign(campaign.id),
+      );
+      expect(sweepTargets.map((encounter) => encounter.id)).not.toContain(artifactId);
+    }, 40000);
+
+    it('the owning module switch OFF keeps the automatic roster portraits manual', async () => {
+      armPortraitGeneration();
+      const { campaign, artifactId } = await createRestockedEncounter({
+        autoGenerateMobImages: false,
+      });
+      await waitForRestock(artifactId);
+      // The restock landed, the trigger ran — and the switch stopped it: no
+      // portrait job was ever enqueued and no creature portrait was committed
+      // (the map run's OWN image calls are not portraits; the presentation
+      // table is the portrait pin).
+      await settleStartedQueues();
+      expect(await db.creatureImages.where('campaignId').equals(campaign.id).count()).toBe(0);
+      expect(useMobPortraitQueue.getState().failed).toEqual([]);
+      const mapped = await getAnyArtifact(artifactId);
+      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
+      const plan = await planMobPortraitBatch(mapped, campaign.id);
+      // The final roster genuinely lacks art — the editor button is its route,
+      // exactly as before the fix (the switch is the module's promise).
+      expect(plan.missing.length).toBeGreaterThan(0);
+    }, 40000);
   });
 });
 

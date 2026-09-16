@@ -600,6 +600,34 @@ export async function enqueueMobPortraits(
 }
 
 /**
+ * The encounter-level ADDITIVE fill: BOTH lanes, in the queue's own
+ * enumeration order (cited kinds first, invented ones second) — THE one way to
+ * run them together, so no caller can enqueue one lane and silently drop the
+ * other (docs/17 rows 90/96/196). Its three callers are the editor's fill
+ * press, the module post-generation sweep and the run-completion trigger; all
+ * three want "every creature kind this encounter still lacks a portrait for",
+ * and all three let the shared enumeration (`enumerateBatchKinds`) decide
+ * which those are — never a bespoke job list and never the regen paths.
+ *
+ * Additive by construction: every kind that already carries art comes back in
+ * `alreadyImaged` and no job for it is enqueued, so a re-run over an
+ * illustrated roster enqueues nothing and replaces nothing; a dangling
+ * `npc-ref` throws from the first lane exactly as it does from either lane
+ * alone.
+ */
+export async function enqueueEncounterPortraitFill(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+): Promise<MobPortraitBatchResult> {
+  const rulebook = await enqueueMobPortraits(encounter, campaignId);
+  const invented = await enqueueInventedCreaturePortraits(encounter, campaignId);
+  return {
+    enqueued: rulebook.enqueued + invented.enqueued,
+    alreadyImaged: [...rulebook.alreadyImaged, ...invented.alreadyImaged],
+  };
+}
+
+/**
  * The read-only half of the batch enumeration — what the confirm dialog needs
  * to state the truth BEFORE the owner chooses. Creates nothing (no artifact,
  * no creature), clones nothing, enqueues nothing; every number it returns is

@@ -1421,11 +1421,12 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   belt). Regenerating an existing map stays an EXPLICIT user action
   (regeneration replaces room keys — the ratified consequence).
 - **Mob portraits on the unattended path (owner report, docs/17 row 96):** the
-  module sweep's portrait step runs the encounter editor's OWN two batch
-  entries per module-owned encounter with un-imaged roster creatures —
-  `enqueueMobPortraits` (chunk-backed kinds: `rulebook` citations and
-  `npc-ref` rows to a mob artifact, sharing the one bestiary portrait) then
-  `enqueueInventedCreaturePortraits` (every other participant: an uncited
+  module sweep's portrait step runs the encounter editor's OWN batch fill per
+  module-owned encounter with un-imaged roster creatures — the ONE seam
+  `mob-portrait-queue.enqueueEncounterPortraitFill` (both lanes in the queue's
+  order: `enqueueMobPortraits` for chunk-backed kinds — `rulebook` citations and
+  `npc-ref` rows to a mob artifact, sharing the one bestiary portrait — then
+  `enqueueInventedCreaturePortraits` for every other participant: an uncited
   mob's on-demand creature, a materialized `npc-ref` monster, a named NPC
   standing in the roster) — and it decides WHICH encounters those are with the
   queue's own routing/art rules
@@ -1441,6 +1442,27 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   by the SAME rule. The configured toggle is `autoGenerateMobImages`
   (docs/08 §Post-generation automation); the editor's own one-click batch is
   unchanged.
+- **Where a roster LANDS is what the portraits follow (owner report, docs/17
+  row 196).** The bullet above runs over the sweep's ONE-TIME artifact snapshot,
+  so an encounter whose roster is REPLACED after that snapshot — the unattended
+  Cartographer restock every fresh encounter triggers, "Repopulate",
+  "Regenerate everything" — kept only the portraits of the STUB roster the editor
+  could already see were missing: the automatic path was early, not blind. The
+  run-completion seam (`features/campaign/post-run-extras.runPostCreateExtras`)
+  now fires for every completed run whose result artifact is an encounter and
+  which carried a `targetArtifactId`: it RE-READS the row, obeys the owning
+  module's `autoGenerateMobImages`, the stop epoch and Settings' image generation
+  (the same one loud skip the sweep uses), and runs both lanes over the fresh
+  roster through the same `enqueueEncounterPortraitFill` seam the sweep and the
+  editor press call. It only ADDS art: the regen paths
+  (`regenerateMobPortraits` / `regenerateInventedCreaturePortraits`) are never
+  reached, and every kind that already carries a portrait is skipped by the
+  shared enumeration. The sweep's own portrait step stays as the additive
+  gap-filler for an encounter no run just wrote (a fresh creation whose restock
+  never happens — battlemaps off, a failed map run). A CAMPAIGN-LEVEL encounter
+  (no owning module) is deliberately left to the editor button and the run's
+  ticked `mobPortraits` extra: the automatic rule IS the module's switch, and
+  with no module there is no switch to read.
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 

@@ -5849,6 +5849,105 @@ it proves the ORDER the app stored; and no test proves a real OpenRouter account
 returns any particular model list (the fetch is mocked, while its failure and
 its absence are the states that are pinned).
 
+### The run-completion trigger for a restocked roster's portraits (docs/17 row 196, docs/11 §Module generation integration, docs/18 §2)
+
+The owner's module switch ("generate mob encounter images") promised illustrated
+encounters and they kept shipping cover-less, while the editor's own button
+worked. The mechanism was a stale ROSTER, not a blind detector: the module sweep
+snapshotted right after its entity batches and illustrated the Encounter Smith's
+STUB roster; the unattended Cartographer restock that every fresh encounter
+triggers then REPLACED it (`data.monsters`), and nothing re-enqueued the
+creatures that only exist afterwards. The fix is ONE trigger at the
+run-completion seam (`post-run-extras.enqueueAutomaticRosterPortraits`) plus ONE
+seam for "run both portrait lanes" (`mob-portrait-queue.enqueueEncounterPortraitFill`,
+which the editor's fill press, the module sweep and the trigger now all call).
+
+- `tests/features/portrait-queues.test.ts`, describe `automatic roster portraits
+  for a restocked encounter (row 196)` — four pins, each naming row 196:
+  - **P1 (revert-proof integration)** — the REAL flow (module + Smith + the
+    automatic Cartographer restock), the sweep deliberately ABSENT: the map
+    queue settles with the 4-room/4-entry fresh population, and then the FINAL
+    roster's `planMobPortraitBatch(...)` reports `missing: []` with a non-empty
+    `imaged` set. Deleting the automatic branch from `runPostCreateExtras`
+    leaves `missing: ['Kuo-toa']` forever — nothing else in that test enqueues a
+    portrait — which is the RED this pin exists for. The restocked creatures are
+    inline-statblock entries, so they ride the INVENTED lane (MEASURED by the
+    differential below: dropping that lane reds P1/P2/P3, dropping the cited lane
+    is a VOID probe), and the fixture brief carries non-empty `notes` because an
+    invented creature's roster notes ARE its prompt grounding — the ungrounded
+    arm failed with exactly `"Kuo-toa" has no appearance, summary, or body to
+    ground the image prompt`.
+  - **P2 (DIFFERENTIAL)** — the portrait lane's image call is GATED so nothing
+    has committed art while both arms are read over the SAME post-restock DB
+    state: the trigger's ACTUAL enqueue set (`queued` + `active` job names,
+    deduped and sorted) must EQUAL the editor's
+    `planMobPortraitBatch(...).missing`, with BOTH arms asserted NON-EMPTY (two
+    arms that do not differ are a VOID probe, never evidence). It also asserts
+    no job carries `regen`. The gate blocks ONLY the portrait call —
+    `encounterRunAdapters.generateImages` IS the `@/llm/imageGen` mock, so the
+    map run's own stylize call (a prompt containing `battlemap`) resolves
+    immediately while every creature portrait parks on the gate.
+  - **P3 (no double work)** — over the illustrated roster, the fill seam run
+    TWICE returns `enqueued: 0` both times, asks for ZERO additional
+    generations (`generateImages` call count unchanged), sets no `regen`, and
+    the sweep's own `encountersNeedingMobPortraits` no longer lists the
+    encounter — so the automatic sweep and the completion trigger cannot
+    double-book it.
+  - **the module switch OFF arm** — the same real flow with
+    `autoGenerateMobImages: false`: no portrait job is enqueued and the
+    campaign's `creatureImages` table stays EMPTY (the map run's own image call
+    is not a portrait, which is why this pin is the presentation table and never
+    a raw `generateImages` call count).
+- `tests/features/mob-portraits-section.test.tsx` — the editor's `fillMissing`
+  now calls the ONE seam `enqueueEncounterPortraitFill`, so the mock and every
+  batch-fill assertion moved with it (the per-entry invented action still calls
+  `enqueueInventedCreaturePortraits` directly — it is NOT the batch fill, and
+  the two are asserted apart).
+- `tests/features/mob-portrait-module-gaps.test.ts` and
+  `tests/features/module-post-generation.test.ts` — these spy the two LANES, so
+  their `vi.mock` factory for the queue module gained
+  `enqueueEncounterPortraitFill` as a composite that forwards to the two lane
+  spies. The sweep's DECISION (which encounters, which switch, one failure per
+  encounter) stays exactly what those files assert.
+
+**A LATENT RACE THIS LANDING TIPPED, reported rather than hidden:**
+`tests/features/model-picker.test.tsx`'s first pin asserted the trigger's model
+text in the same beat as `findByTestId` resolved the ELEMENT, but `ModelPicker`
+reads that text from an asynchronous `useLiveQuery` — so the barrier covered the
+element, not the field it asserted (docs/17 row 132). It passed on `origin/main`
+by a hair; this landing's extra module bindings moved the settings liveQuery
+behind the element's first, model-less render and the pin reddened
+deterministically (MEASURED: 5/5 GREEN with this landing's tree stashed, RED
+with it — then GREEN after the one `waitFor`). The fix is a one-line barrier
+around the existing assertion; nothing about the picker's behaviour changed.
+
+**Injected RED, watched — every arm's changed-file hash PRINTED (`git
+hash-object`), the suite lock held BEFORE any injection and the tree restored
+from HEAD by a `trap` before the next arm (the restored hashes matched the
+baseline exactly):**
+- **A baseline** — `post-run-extras.ts`
+  `ce2431197b152a7319ddd31a0e9bc187ae0b28fe`, `mob-portrait-queue.ts`
+  `1508030e768088f72175627c27770460daca0b17` → **GREEN 4/4**.
+- **B the trigger call removed** (`post-run-extras.ts`
+  `9a448d33e540cdf8a7719e3da62e577fa9a9bd36`) → **RED 3** — P1, P2 and P3 all
+  time out on the final roster never being filled. This is the revert-proof the
+  pin exists for.
+- **C1 VOID probe — the CITED lane dropped** from the fill seam
+  (`mob-portrait-queue.ts` `c3bba6f0b71b4f5367d39cd767139e99c3a2b7d0`) →
+  **GREEN 4/4, i.e. the arms did NOT differ: a VOID probe, never evidence.** It
+  is recorded because it MEASURED a fact this fixture would otherwise hide — the
+  restocked inline entries ride the INVENTED lane, so a cited-lane break is
+  invisible here (the cited lane is pinned by `module-post-generation` and
+  `mob-portrait-module-gaps` instead).
+- **C2 the INVENTED lane dropped** from the fill seam (`mob-portrait-queue.ts`
+  `4cbe7f3810eb92dd737498e8c2f2103df0c1a58a`) → **RED 3** — P1, P2 and P3. Both
+  lanes of the ONE seam are therefore load-bearing, in the direction the fixture
+  actually walks.
+- **D the module switch ignored** (`post-run-extras.ts`
+  `233e805eab27e8cfc1aa340d5c156473f750f3d5`) → **RED 1** — exactly the
+  module-switch-OFF arm (portraits were generated for a module that switched
+  them off).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

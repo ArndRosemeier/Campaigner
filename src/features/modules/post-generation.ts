@@ -11,10 +11,7 @@ import { ENTITY_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText } f
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
-import {
-  enqueueInventedCreaturePortraits,
-  enqueueMobPortraits,
-} from '@/features/campaign/mob-portrait-queue';
+import { enqueueEncounterPortraitFill } from '@/features/campaign/mob-portrait-queue';
 import {
   encounterNeedsMobPortraitWork,
   presentationArtOfCampaign,
@@ -426,23 +423,23 @@ async function runModulePostGenerationUnlocked(
       // encounters and never lanes; a failure in the first lane therefore
       // ends that encounter's portrait work with its own loud reason, and a
       // dangling `npc-ref` is exactly such a failure (`enumerateBatchKinds`
-      // throws with the citing name — never a silent skip).
+      // throws with the citing name — never a silent skip). Both lanes run
+      // through ONE seam (`enqueueEncounterPortraitFill`), the same call the
+      // editor's fill press and the run-completion trigger make — the
+      // invented lane always follows because every encounter in
+      // `portraitTargets` has a non-empty roster by construction (the
+      // predicate walks roster rows), which IS the editor's `hasParticipants`
+      // gate — stated here instead of as an unreachable branch. It enumerates
+      // nothing when every participant is chunk-backed, and creates/enqueues
+      // nothing that exists.
       const failedPortraits: string[] = [];
       for (const encounter of portraitTargets) {
         // The portrait batch awaits per encounter (it reads the roster), so a
         // stop landing mid-loop must end it here, not after the last one.
         if (stoppedSince(epoch)) break;
         try {
-          portraitJobs += (await enqueueMobPortraits(encounter, module.campaignId)).enqueued;
-          // The invented lane always follows: every encounter in
-          // `portraitTargets` has a non-empty roster by construction (the
-          // predicate walks roster rows), which IS the editor's
-          // `hasParticipants` gate — stated here instead of as an unreachable
-          // branch. It enumerates nothing when every participant is
-          // chunk-backed, and creates/enqueues nothing that exists.
-          portraitJobs += (
-            await enqueueInventedCreaturePortraits(encounter, module.campaignId)
-          ).enqueued;
+          portraitJobs += (await enqueueEncounterPortraitFill(encounter, module.campaignId))
+            .enqueued;
         } catch (error) {
           failedPortraits.push(`"${encounter.name}" — ${errorMessage(error)}`);
         }

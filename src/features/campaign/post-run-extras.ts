@@ -28,7 +28,24 @@
  *   (`enqueueMobPortraits` for chunk-backed creatures + the shared bestiary
  *   portrait, `enqueueInventedCreaturePortraits` for every other participant
  *   incl. materialized `npc-ref` monsters), i.e. exactly what the encounter
- *   editor's own batch press does).
+ *   editor's own batch press does, through the ONE seam all three callers
+ *   share (`mob-portrait-queue.enqueueEncounterPortraitFill`).
+ * - **Automatic roster portraits** (docs/17 row 196, owner report) — EVERY
+ *   completed run that LANDS a roster on an existing ENCOUNTER (its result
+ *   artifact is an encounter and it carried a `targetArtifactId`: the
+ *   creation-time Cartographer restock, "Repopulate", "Regenerate everything")
+ *   re-reads the row it just wrote and runs the same two lanes over it. This
+ *   is the missing trigger that produced the owner's report: the module sweep
+ *   had illustrated the Encounter Smith's STUB roster and the Cartographer
+ *   restock then REPLACED it, so the creatures that only exist afterwards were
+ *   never enqueued — while the editor button, which reads the live row,
+ *   worked. Gated by the owning module's "Generate mob encounter images"
+ *   switch (a campaign-level encounter has no module switch and is left to the
+ *   editor / the ticked extra) and by Settings' image generation through the
+ *   existing loud-skip pattern; the shared enumeration decides what is
+ *   missing, so a kind that already carries art is never re-enqueued and the
+ *   regen paths are never touched (no portrait is ever replaced by this
+ *   path).
  *
  * The `battlemap` extra is GONE — the automatic path above replaced it (the
  * extra was unticked-by-default and one-off, exactly the manual trigger the
@@ -51,16 +68,16 @@
  * row itself is untouched and stays exactly as completed as the engine left
  * it.
  */
-import type { Id, PersonaRun } from '@/domain';
+import type { AnyArtifact, Id, PersonaRun } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getPersona } from '@/db/personaRepo';
 import { getRun } from '@/db/runRepo';
+import { getSettings } from '@/db/settingsRepo';
 import { runEngine } from '@/llm/runEngine';
 import {
   enqueueArtifactPortrait,
-  enqueueInventedCreaturePortraits,
-  enqueueMobPortraits,
+  enqueueEncounterPortraitFill,
 } from '@/features/campaign/mob-portrait-queue';
 import {
   encounterNeedsMap,
@@ -104,25 +121,98 @@ async function runPostCreateExtras(runId: Id): Promise<void> {
     }
   }
 
-  if (run.runExtras == null || artifact === undefined) return;
-  if (stoppedSince(epoch)) return;
-  if (run.runExtras.image) {
-    enqueueArtifactPortrait(artifact, run.campaignId);
-  }
-  if (run.runExtras.mobPortraits) {
-    if (artifact.kind !== 'encounter') {
-      throw new Error(`mob portraits need an encounter — "${artifact.name}" is a ${artifact.kind}`);
+  if (artifact === undefined) return;
+
+  // 1) The run's OWN ticked extras (the persona panel's press). A stop wins
+  //    over the subscription exactly as it always has.
+  if (run.runExtras !== null) {
+    if (stoppedSince(epoch)) return;
+    if (run.runExtras.image) {
+      enqueueArtifactPortrait(artifact, run.campaignId);
     }
-    // BOTH lanes, exactly like the editor's batch (the same section press the
-    // owner uses by hand): chunk-backed creature kinds share the bestiary
-    // portrait, and every other roster participant — an inline entry, or the
-    // `npc-ref` monster the assertion rule's collision path materialized for a
-    // creature the prose staged (docs/17 row 90) — gets its own local one.
-    // Enqueuing only the rulebook lane is what left a freshly created
-    // encounter's materialized monsters permanently cover-less.
-    await enqueueMobPortraits(artifact, run.campaignId);
-    await enqueueInventedCreaturePortraits(artifact, run.campaignId);
+    if (run.runExtras.mobPortraits) {
+      if (artifact.kind !== 'encounter') {
+        throw new Error(`mob portraits need an encounter — "${artifact.name}" is a ${artifact.kind}`);
+      }
+      // BOTH lanes, exactly like the editor's batch (the same section press
+      // the owner uses by hand): chunk-backed creature kinds share the
+      // bestiary portrait, and every other roster participant — an inline
+      // entry, or the `npc-ref` monster the assertion rule's collision path
+      // materialized for a creature the prose staged (docs/17 row 90) — gets
+      // its own local one. Enqueuing only the rulebook lane is what left a
+      // freshly created encounter's materialized monsters permanently
+      // cover-less. The run's own extra is the owner's explicit choice, so it
+      // never consults the module's automation switch.
+      await enqueueEncounterPortraitFill(artifact, run.campaignId);
+      return;
+    }
   }
+
+  // 2) The MISSING TRIGGER (docs/17 row 196): every run that LANDS a roster on
+  //    an EXISTING encounter — the creation-time Cartographer restock,
+  //    "Repopulate" and "Regenerate everything" (all carry
+  //    `targetArtifactId`) — re-reads the row it just wrote and fills its
+  //    portraits. Without this, the automation illustrated the Encounter
+  //    Smith's stub roster and the restock then replaced it, so the fresh
+  //    creatures were never enqueued (the owner's report) while the editor
+  //    button, which reads the live row, worked.
+  if (artifact.kind === 'encounter' && run.targetArtifactId !== null) {
+    await enqueueAutomaticRosterPortraits(run, artifact, epoch);
+  }
+}
+
+/**
+ * The automatic mob-portrait trigger for a roster that has just LANDED on an
+ * existing encounter (docs/17 row 196) — the creation-time restock, Repopulate
+ * and Regenerate everything.
+ *
+ * The artifact is re-READ here rather than trusted from the completion event's
+ * snapshot: the whole defect was a stale roster, and a concurrent second
+ * restock must be illustrated from what is on the row NOW. The owning module's
+ * master switch ("Generate mob encounter images") gates the automatic path,
+ * exactly like `autoGenerateBattlemaps` gates the map above; a vanished module
+ * row falls back to ON, the same reason as the battlemap path (the encounter
+ * exists either way).
+ *
+ * A CAMPAIGN-LEVEL encounter (moduleId null) is deliberately NOT auto-filled:
+ * the automatic mob-portrait rule IS the module's switch, and with no owning
+ * module there is no switch to read — its route stays the editor's own button
+ * and the run's ticked extra. That is the deliberate half of the asymmetry
+ * with the editor (which has no ownership filter because it is opened ON one
+ * encounter); see docs/17 row 196.
+ *
+ * `settings.imagesEnabled` is the existing loud-skip pattern: when image
+ * generation is off the automation says so once instead of enqueueing work
+ * that can only fail per creature. An EMPTY roster is genuinely nothing to
+ * illustrate, so it is not a skip to report (recorded as a named limitation,
+ * docs/17 row 196) — the shared enumeration simply enqueues nothing.
+ */
+async function enqueueAutomaticRosterPortraits(
+  run: PersonaRun,
+  // Structural: the completion's own read of the encounter; the union's
+  // variants all carry id/moduleId/data, which is all this needs.
+  artifact: AnyArtifact & { kind: 'encounter' },
+  epoch: number,
+): Promise<void> {
+  if (artifact.moduleId === null) return;
+  const module = await getModule(artifact.moduleId);
+  if (module !== undefined && !module.autoGenerateMobImages) return;
+  // The reads above are awaits: a stop landing while they were in flight must
+  // still keep the queue empty.
+  if (stoppedSince(epoch)) return;
+  const fresh = await getAnyArtifact(artifact.id);
+  if (fresh?.kind !== 'encounter') return;
+  const settings = await getSettings();
+  if (!settings.imagesEnabled) {
+    if (fresh.data.monsters.length > 0) {
+      toastError(
+        'Auto mob portrait generation skipped — image generation is disabled in Settings',
+      );
+    }
+    return;
+  }
+  if (stoppedSince(epoch)) return;
+  await enqueueEncounterPortraitFill(fresh, run.campaignId);
 }
 
 /**

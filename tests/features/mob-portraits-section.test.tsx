@@ -27,6 +27,7 @@ import { flushAsyncUpdates } from '../helpers/flush';
  */
 
 vi.mock('@/features/campaign/mob-portrait-queue', () => ({
+  enqueueEncounterPortraitFill: vi.fn(),
   enqueueMobPortraits: vi.fn(),
   enqueueInventedCreaturePortraits: vi.fn(),
   planMobPortraitBatch: vi.fn(),
@@ -36,12 +37,14 @@ vi.mock('@/features/campaign/mob-portrait-queue', () => ({
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
 
 const {
+  enqueueEncounterPortraitFill,
   enqueueMobPortraits,
   enqueueInventedCreaturePortraits,
   planMobPortraitBatch,
   regenerateMobPortraits,
   regenerateInventedCreaturePortraits,
 } = await import('@/features/campaign/mob-portrait-queue');
+const enqueueFillMock = vi.mocked(enqueueEncounterPortraitFill);
 const enqueueMobPortraitsMock = vi.mocked(enqueueMobPortraits);
 const enqueueInventedMock = vi.mocked(enqueueInventedCreaturePortraits);
 const planMock = vi.mocked(planMobPortraitBatch);
@@ -92,6 +95,7 @@ const NONE = { type: 'none' };
 const RULEBOOK = { type: 'rulebook', chunkId: 'chunk-1' };
 
 beforeEach(() => {
+  enqueueFillMock.mockReset();
   enqueueMobPortraitsMock.mockReset();
   enqueueInventedMock.mockReset();
   planMock.mockReset();
@@ -100,6 +104,7 @@ beforeEach(() => {
   toastSuccessMock.mockReset();
   toastInfoMock.mockReset();
   planMock.mockResolvedValue(plan());
+  enqueueFillMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   enqueueMobPortraitsMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   regenerateMobPortraitsMock.mockResolvedValue({ regenerated: 0, republishedCanonical: [] });
@@ -140,13 +145,13 @@ describe('MobPortraitsSection invented-creature actions', () => {
       expect(enqueueInventedMock).toHaveBeenCalledTimes(1);
     });
     expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1', [1]);
-    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
+    expect(enqueueFillMock).not.toHaveBeenCalled();
     // The per-entry action never consults the batch count.
     expect(planMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   });
 
-  it('batch-all with both kinds calls both batches and labels the combined count', async () => {
+  it('batch-all with both kinds routes through the ONE fill seam (both lanes inside it)', async () => {
     const artifact = enc([
       { name: 'Goblin Boss', source: RULEBOOK },
       { name: 'Gloom Ooze', source: INLINE },
@@ -166,11 +171,14 @@ describe('MobPortraitsSection invented-creature actions', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('generate-mob-portraits'));
     await waitFor(() => {
-      expect(enqueueMobPortraitsMock).toHaveBeenCalledTimes(1);
-      expect(enqueueInventedMock).toHaveBeenCalledTimes(1);
+      // ONE seam runs both lanes (docs/17 row 196): the surface composes the
+      // counts from its result, so it can never call one lane and drop the
+      // other (row 90's shape-gating defect).
+      expect(enqueueFillMock).toHaveBeenCalledTimes(1);
     });
-    expect(enqueueMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
-    expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
+    expect(enqueueInventedMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   });
 
@@ -214,8 +222,10 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     // 2 kinds already show a portrait (Monster Core art from the shared
     // canonical slot), Ogre has none — the owner's report verbatim.
     planMock.mockResolvedValue(plan({ missing: ['Ogre'], imaged: ['Goblin Boss', 'Gloom Ooze'] }));
-    enqueueMobPortraitsMock.mockResolvedValue({ enqueued: 1, alreadyImaged: ['Goblin Boss'] });
-    enqueueInventedMock.mockResolvedValue({ enqueued: 0, alreadyImaged: ['Gloom Ooze'] });
+    enqueueFillMock.mockResolvedValue({
+      enqueued: 1,
+      alreadyImaged: ['Goblin Boss', 'Gloom Ooze'],
+    });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     const user = userEvent.setup();
@@ -230,15 +240,14 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     expect(copy).toMatch(/1 has none \("Ogre"\)/);
     expect(copy).toMatch(/Filling adds only the missing portrait and keeps the 2 that exist/);
     expect(copy).toMatch(/Replacing regenerates all 2 existing portraits and still fills the missing one/);
-    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
+    expect(enqueueFillMock).not.toHaveBeenCalled();
     expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
 
     const fill = screen.getByTestId('mob-portraits-choice-fill');
     expect(fill.textContent).toMatch(/Fill the missing 1/);
     await user.click(fill);
     await waitFor(() => {
-      expect(enqueueMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
-      expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
     // The imaged kinds are untouched: no regen path ran at all.
     expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
@@ -299,7 +308,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     });
     // Never the all-generated toast in a state that still has a hole.
     expect(toastSuccessMock).not.toHaveBeenCalledWith('All mob portraits are already generated');
-    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
+    expect(enqueueFillMock).not.toHaveBeenCalled();
     expect(regenerateMobPortraitsMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   });
@@ -416,13 +425,13 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
   it('pure gaps fill immediately with no dialog, and report what happened', async () => {
     const artifact = enc([{ name: 'Ogre', source: RULEBOOK }]);
     planMock.mockResolvedValue(plan({ missing: ['Ogre'] }));
-    enqueueMobPortraitsMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
+    enqueueFillMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     const user = userEvent.setup();
     await user.click(screen.getByTestId('generate-mob-portraits'));
     await waitFor(() => {
-      expect(enqueueMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
     await flushAsyncUpdates();
     expect(screen.queryByTestId('mob-portraits-choice-dialog')).toBeNull();
@@ -440,7 +449,7 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     const lumberjack = { type: 'npc-ref', artifactId: 'lumberjack-1' };
     const artifact = enc([{ name: 'Risen Lumberjack', source: lumberjack }]);
     planMock.mockResolvedValue(plan({ missing: ['Risen Lumberjack'] }));
-    enqueueInventedMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
+    enqueueFillMock.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     expect(screen.queryByText(/No creatures to illustrate/i)).toBeNull();
@@ -454,18 +463,17 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     const user = userEvent.setup();
     await user.click(button);
     await waitFor(() => {
-      // Pure gaps: it fills immediately, and the invented lane is one of the
-      // two batches the press runs.
-      expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+      // Pure gaps: it fills immediately through the ONE seam (both lanes
+      // inside it). The rulebook lane runs even though this roster has no
+      // `rulebook` citation row at all (docs/17 row 96, row 90's own lesson):
+      // a roster of nothing but `npc-ref` rows whose artifacts carry the
+      // `monsterChunkId` marker belongs to the RULEBOOK lane — which lane a
+      // row rides is the queue's routing decision (`rosterParticipantRoute`),
+      // so the surface must never gate a lane on the roster's SHAPE. It used
+      // to (`rulebookCount === 0`), and the resulting press counted a missing
+      // portrait and then enqueued nothing.
+      expect(enqueueFillMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
-    // AND the rulebook lane, although this roster has no `rulebook` citation
-    // row at all (docs/17 row 96, row 90's own lesson): a roster of nothing but
-    // `npc-ref` rows whose artifacts carry the `monsterChunkId` marker belongs
-    // to the RULEBOOK lane — which lane a row rides is the queue's routing
-    // decision (`rosterParticipantRoute`), so the surface must never gate a lane
-    // on the roster's SHAPE. It used to (`rulebookCount === 0`), and the
-    // resulting press counted a missing portrait and then enqueued nothing.
-    expect(enqueueMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         'Filling 1 missing portrait — nothing is replaced',
@@ -548,7 +556,7 @@ describe('MobPortraitsSection blocked-control reasons', () => {
     const pending = deferred<{ enqueued: number; alreadyImaged: string[] }>();
     const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
     planMock.mockResolvedValue(plan({ missing: ['Gloom Ooze'] }));
-    enqueueMobPortraitsMock.mockReturnValue(pending.promise);
+    enqueueFillMock.mockReturnValue(pending.promise);
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
     await user.click(screen.getByTestId('generate-mob-portraits'));
