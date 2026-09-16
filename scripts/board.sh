@@ -145,8 +145,14 @@ while IFS= read -r line; do
         [ -e "$p" ] && echo "  recovery artifact present: $p" || note "recovery artifact missing: $p"
       fi
       ;;
+    PROBE)
+      # A read-only scoping/verification agent: no worktree, no branch, but still
+      # live state a successor should know about — and its session id must count
+      # as "named on the board" or the unrecorded-live-state check reports it.
+      echo "  PROBE ${line#*| }"
+      ;;
   esac
-done < <(grep -E '^(SESSION|IN-FLIGHT|UNLANDED|AWAITING-OWNER|LANDED|RECOVERY|TRAP) *\|' "$BOARD")
+done < <(grep -E '^(SESSION|IN-FLIGHT|UNLANDED|AWAITING-OWNER|LANDED|RECOVERY|TRAP|PROBE) *\|' "$BOARD")
 
 # Am I named at all? With one actor this catches a stale SESSION record; with two
 # it is satisfied by either, so a second CoS session is information, not staleness.
@@ -164,7 +170,7 @@ fi
 # anything live that the board does not name is reported as a finding.
 echo
 echo "=== unrecorded live state (git + session dirs vs the board) ==="
-recorded="$(grep -oE '(worktree|branch|writer|cos)=[^ |]*' "$BOARD" | cut -d= -f2- | sed 's/^session-//' | sort -u)"
+recorded="$(grep -oE '(worktree|branch|writer|cos|session)=[^ |]*' "$BOARD" | cut -d= -f2- | sed 's/^session-//' | sort -u)"
 while read -r w; do
   [ -z "$w" ] && continue
   [ "$w" = "$PWD" ] && continue
