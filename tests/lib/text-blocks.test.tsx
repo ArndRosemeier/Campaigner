@@ -7,11 +7,12 @@ import { join } from 'node:path';
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { statBlockSchema, type StatBlock } from '@/domain';
+import { createArtifact as createArtifactRow, newId, statBlockSchema, type StatBlock } from '@/domain';
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import { statBoxContent } from '@/lib/modulePdf';
+import { buildGmNotesDefinition, buildPlayerHandoutDefinition } from '@/lib/pdfExport';
 import { blockText, textBlocks } from '@/lib/textBlocks';
 import { clearDatabase } from '../db/helpers';
 
@@ -254,6 +255,180 @@ describe('a row generated BEFORE the change renders with paragraphs after it', (
   }, 20_000);
 });
 
+describe('the single-artifact GM export draws the SAME blocks (docs/17 row 146, docs/18 §5)', () => {
+  /**
+   * The debt docs/18 §5 held: `lib/pdfExport.statBlockSection` /
+   * `dataSections` rendered an npc's-authored `appearance`/`personality` and a
+   * trait body with its OWN `labelValue`/`named` rows, one run per entry, so a
+   * multi-paragraph value printed as a blob on THAT path alone. These pins hold
+   * the fold: the export now reaches the ONE rule, a single-block value is
+   * BYTE-IDENTICAL to the pre-fold node, and the other label/value rows are
+   * untouched.
+   */
+
+  /** A second paragraph and a line break inside a third — never one blob. */
+  const PROSE = 'Hooded and cold.\n\nIt waits by the ford.\nIt does not blink.';
+
+  /** A campaign-owned id for these rows (the factory demands a real uuid). */
+  const CAMPAIGN = newId();
+
+  /** The definition's first node whose JSON contains `needle` — the same
+   *  "find the node, don't re-derive the document" read the layout suite uses. */
+  function nodeContaining(definition: { content: unknown }, needle: string): object {
+    const found = (definition.content as object[]).find((node) =>
+      JSON.stringify(node).includes(needle),
+    );
+    if (found === undefined) throw new Error(`no node carries ${needle}`);
+    return found;
+  }
+
+  function npc(overrides: {
+    appearance?: string;
+    personality?: string;
+    traits?: { name: string; text: string }[];
+  }) {
+    return createArtifactRow({
+      campaignId: CAMPAIGN,
+      kind: 'npc',
+      name: 'Ford Warden',
+      data: {
+        appearance: overrides.appearance ?? '',
+        personality: overrides.personality ?? '',
+        statBlock: statBlockSchema.parse({
+          ...paragraphBlock(),
+          traits: overrides.traits ?? [{ name: 'Cold Focus', text: 'It does not blink.' }],
+        }),
+      },
+    });
+  }
+
+  it('a multi-paragraph appearance prints as SEPARATE blocks, never one blob (pin 1)', () => {
+    const definition = buildGmNotesDefinition(npc({ appearance: PROSE }));
+    const node = nodeContaining(definition, 'Hooded and cold.');
+
+    // BEFORE (the defect): ONE `columns` node whose value run carried the whole
+    // blob — the definition's JSON held `Hooded and cold.\n\nIt waits…`. AFTER:
+    // no single run carries a blank line any more.
+    expect(JSON.stringify(definition.content)).not.toContain('Hooded and cold.\\n\\n');
+    // The label rides the first block, once — never repeated per paragraph.
+    expect(node).toEqual({
+      columns: [
+        { text: 'Appearance:', style: 'label', width: 110 },
+        { text: 'Hooded and cold.', style: 'value' },
+      ],
+    });
+    // The later blocks are nodes of their own, indented into the value column,
+    // and the SINGLE newline inside the last block stayed a line break.
+    expect(definition.content as object[]).toContainEqual({
+      text: 'It waits by the ford.\nIt does not blink.',
+      style: 'value',
+      margin: [110, 0, 0, 0],
+    });
+  });
+
+  it('a multi-paragraph trait body prints as separate blocks, the bold name on the first (pin 1)', () => {
+    const definition = buildGmNotesDefinition(
+      npc({
+        traits: [{ name: 'Cold Focus', text: 'It does not blink.\n\nIts hands stay still.' }],
+      }),
+    );
+    // No single run carries the whole body any more…
+    expect(JSON.stringify(definition.content)).not.toContain(
+      'It does not blink.\\n\\nIts hands stay still.',
+    );
+    // …the bold `Name. ` leads the first block…
+    expect(definition.content as object[]).toContainEqual({
+      text: [{ text: 'Cold Focus. ', bold: true }, { text: 'It does not blink.' }],
+      style: 'value',
+    });
+    // …and the later block is a node of its own, indented into the value column.
+    expect(definition.content as object[]).toContainEqual({
+      text: 'Its hands stay still.',
+      style: 'value',
+      margin: [110, 0, 0, 0],
+    });
+  });
+
+  it('a SINGLE-block value is BYTE-IDENTICAL to the pre-fold node (pin 2)', () => {
+    const definition = buildGmNotesDefinition(
+      npc({ appearance: 'Soot-stained', personality: 'Cruel' }),
+    );
+    const appearance = nodeContaining(definition, 'Appearance:');
+    const personality = nodeContaining(definition, 'Personality:');
+    // The exact node this template printed before the fold: one `columns` node,
+    // the value as ONE run, no margin and no continuation node.
+    expect(appearance).toEqual({
+      columns: [
+        { text: 'Appearance:', style: 'label', width: 110 },
+        { text: 'Soot-stained', style: 'value' },
+      ],
+    });
+    expect(personality).toEqual({
+      columns: [
+        { text: 'Personality:', style: 'label', width: 110 },
+        { text: 'Cruel', style: 'value' },
+      ],
+    });
+    // The single-block trait entry is the ONE run it always was — the fold did
+    // not split it and did not add a continuation node.
+    expect(definition.content as object[]).toContainEqual({
+      text: [{ text: 'Cold Focus. ', bold: true }, { text: 'It does not blink.' }],
+      style: 'value',
+    });
+  }, 20_000);
+
+  it('the other label/value rows keep their ONE-column shape (pin 4)', () => {
+    const pc = createArtifactRow({
+      campaignId: CAMPAIGN,
+      kind: 'pc',
+      name: 'Marek',
+      data: {
+        playerName: 'Ada',
+        statBlock: null,
+        currentHp: 12,
+        initiativeOverride: 3,
+        notes: 'Keeps watch.',
+      },
+    });
+    const content = buildGmNotesDefinition(pc).content as object[];
+
+    // A NON-prose row: one node, the label in the first column and the value in
+    // the second, no margin — the shape this slice promised not to touch.
+    expect(content).toContainEqual({
+      columns: [
+        { text: 'Player:', style: 'label', width: 110 },
+        { text: 'Ada', style: 'value' },
+      ],
+    });
+    expect(content).toContainEqual({
+      columns: [
+        { text: 'Current HP:', style: 'label', width: 110 },
+        { text: '12', style: 'value' },
+      ],
+    });
+    // The label appears ONCE (a blank-line split of this line would repeat it).
+    const dump = JSON.stringify(content);
+    expect(dump.split('"text":"Player:"').length - 1).toBe(1);
+    expect(dump).not.toContain('"text":"Player:"},"value"');
+    // A NULL initiative override is still the pre-existing empty-value rule:
+    // NO row at all, never an empty one. Both arms are in one artifact kind, so
+    // the arms DIFFER rather than restating one document twice.
+    const absent = createArtifactRow({
+      campaignId: CAMPAIGN,
+      kind: 'pc',
+      name: 'Marek',
+      data: { playerName: '', statBlock: null, currentHp: 12, initiativeOverride: null, notes: '' },
+    });
+    const absentDump = JSON.stringify(buildGmNotesDefinition(absent).content);
+    expect(absentDump).not.toContain('Initiative bonus');
+    expect(absentDump).not.toContain('Player:');
+    // The player handout has no structured data at all — unchanged by the fold.
+    const handout = JSON.stringify(buildPlayerHandoutDefinition(pc).content);
+    expect(handout).not.toContain('Player:');
+    expect(handout).not.toContain('Cold Focus');
+  });
+});
+
 describe('EXACTLY ONE text→blocks implementation (AGENTS rule 4, made mechanical)', () => {
   /** The files allowed to know the seam, and in what role. A new consumer must
    * edit this list — deliberately — rather than add a second rule. */
@@ -262,6 +437,8 @@ describe('EXACTLY ONE text→blocks implementation (AGENTS rule 4, made mechanic
     'components/text-blocks.tsx': 'the app presenter (draws what the rule says)',
     'lib/modulePdf.ts': 'the PDF consumer (`labeledSection`, so the roster box and every prose field)',
     'features/campaign/components/stat-block.tsx': 'the reader/stat-block consumer',
+    'lib/pdfExport.ts':
+      'the single-artifact PDF consumer (`labelValue`/`named`, so the GM export’s own stat-block prose)',
   };
 
   it('the rule is defined ONCE and only the registered consumers reach it', () => {
@@ -279,6 +456,7 @@ describe('EXACTLY ONE text→blocks implementation (AGENTS rule 4, made mechanic
   it('neither consumer splits text into paragraphs of its own', () => {
     for (const path of [
       'lib/modulePdf.ts',
+      'lib/pdfExport.ts',
       'features/campaign/components/stat-block.tsx',
       'components/text-blocks.tsx',
     ]) {

@@ -15,6 +15,7 @@ import { loadSpellIndexesFor, statBlockSystems } from '@/db/spellRepo';
 import { fileSlug } from '@/lib/fileSlug';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToDisplayText } from '@/lib/markdown';
+import { blockText, textBlocks } from '@/lib/textBlocks';
 import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -50,29 +51,88 @@ const STYLES: Record<string, NamedStyle> = {
   value: { fontSize: 10.5, margin: [0, 0, 0, 6] },
 };
 
-function labelValue(label: string, value: string): { columns: object[] } | null {
-  if (value === '') return null;
-  return {
+/**
+ * One node of this template's own definition. A label/value helper answers an
+ * ARRAY — one node for a single-block value, one node per block for a
+ * multi-block one — so a caller SPREADS it and a value that carries nothing
+ * contributes no node.
+ */
+type Row = object;
+
+/**
+ * The width of this template's label column (points). It is BOTH the column
+ * width and the indent a multi-block continuation inherits, so a paragraph
+ * after the first lines up under the value it continues.
+ */
+const LABEL_COLUMN_WIDTH = 110;
+
+/**
+ * The blocks a field's text carries, drawn in this template's own label/value
+ * shape (docs/17 row 146, docs/18 §5; the third consumer of the ONE rule).
+ *
+ * `lib/textBlocks.textBlocks` decides WHERE the paragraphs are and this is
+ * only how THIS template DRAWS them — no splitting happens here, ever. A value
+ * with ONE block emits the byte-identical `columns` node this template has
+ * always printed (`label:` + value, no margin), so every existing definition
+ * dump and assertion is unchanged and the other label/value rows are untouched.
+ * A value with SEVERAL blocks (the defect: a model's multi-paragraph
+ * `appearance`/`personality`, or a trait body) emits one node per block: the
+ * LABEL rides the first, and each continuation is indented into the value
+ * column, so the label is never repeated and the paragraphs are real pdfmake
+ * nodes rather than one blob carrying blank lines.
+ */
+function labelValue(label: string, value: string): Row[] {
+  const blocks = textBlocks(value).map(blockText);
+  if (blocks.length === 0) return [];
+  const [first = '', ...rest] = blocks;
+  const head = {
     columns: [
-      { text: `${label}:`, style: 'label', width: 110 },
-      { text: value, style: 'value' },
+      { text: `${label}:`, style: 'label', width: LABEL_COLUMN_WIDTH },
+      { text: first, style: 'value' },
     ],
   };
+  if (rest.length === 0) return [head];
+  return [
+    head,
+    ...rest.map((block) => ({
+      text: block,
+      style: 'value',
+      margin: [LABEL_COLUMN_WIDTH, 0, 0, 0],
+    })),
+  ];
 }
 
-function listItems(items: string[]): object[] {
+function listItems(items: string[]): Row[] {
   return items.map((item) => ({ text: item, style: 'value' }));
 }
 
 function statBlockSection(
   statBlock: StatBlock,
   spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
-): object[] {
-  const named = (rows: { name: string; text: string }[]): object[] =>
-    rows.map((row) => ({
-      text: [{ text: `${row.name}. `, bold: true }, { text: row.text }],
-      style: 'value',
-    }));
+): Row[] {
+  // A trait/action/reaction/legendary body is prose the rule applies to, and
+  // the module book already draws it this way (`modulePdf.labeledSection`). A
+  // SINGLE-block body emits exactly the entry this template always printed
+  // (`Name. ` bold + one run) — ONE node, so every existing dump is unchanged;
+  // the name is BOLD here rather than this template's `label` style, so the
+  // entry is built inline while the SHAPE decision (one node per block, no
+  // re-splitting) is still the rule's.
+  const named = (rows: { name: string; text: string }[]): Row[] =>
+    rows.flatMap((row): Row[] => {
+      const blocks = textBlocks(row.text).map(blockText);
+      const [first = '', ...rest] = blocks;
+      return [
+        {
+          text: [{ text: `${row.name}. `, bold: true }, { text: first }],
+          style: 'value',
+        },
+        ...rest.map((block) => ({
+          text: block,
+          style: 'value',
+          margin: [LABEL_COLUMN_WIDTH, 0, 0, 0],
+        })),
+      ];
+    });
   const { abilities } = statBlock;
   // Per-system ability display (docs/12 §5): a Pathfinder 2e stat block prints
   // the signed BONUS — its stored d20 score means nothing to a PF2e reader, so
@@ -147,9 +207,9 @@ function rosterRows(
   artifact: Artifact,
   roster?: readonly ResolvedMonster[],
   spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
-): object[] {
+): Row[] {
   if (artifact.kind !== 'encounter') return [];
-  return artifact.data.monsters.flatMap((monster, index): object[] => {
+  return artifact.data.monsters.flatMap((monster, index): Row[] => {
     const resolved = roster?.[index];
     const reference = rosterReferenceFor(monster, resolved).printed;
     const statBlock = rosterStatBlockFor(monster, resolved);
@@ -182,45 +242,44 @@ function dataSections(
   artifact: Artifact,
   roster?: readonly ResolvedMonster[],
   spellIndexes?: ReadonlyMap<GameSystem, MobSpellIndex>,
-): object[] {
-  const sections: object[] = [];
-  const add = (heading: string, rows: (object | null)[]): void => {
-    const kept = rows.filter((row): row is object => row !== null);
-    if (kept.length === 0) return;
-    sections.push({ text: heading, style: 'heading' }, ...kept);
+): Content[] {
+  const sections: Content[] = [];
+  const add = (heading: string, rows: Row[]): void => {
+    if (rows.length === 0) return;
+    sections.push({ text: heading, style: 'heading' }, ...(rows as Content[]));
   };
 
   switch (artifact.kind) {
     case 'pc': {
       add('PC details', [
-        labelValue('Player', artifact.data.playerName),
-        labelValue('Current HP', String(artifact.data.currentHp)),
-        labelValue(
+        ...labelValue('Player', artifact.data.playerName),
+        ...labelValue('Current HP', String(artifact.data.currentHp)),
+        ...labelValue(
           'Initiative bonus',
           artifact.data.initiativeOverride === null ? '' : String(artifact.data.initiativeOverride),
         ),
-        labelValue('Notes', artifact.data.notes),
+        ...labelValue('Notes', artifact.data.notes),
       ]);
       if (artifact.data.statBlock !== null) {
-        sections.push(...statBlockSection(artifact.data.statBlock, spellIndexes));
+        sections.push(...(statBlockSection(artifact.data.statBlock, spellIndexes) as Content[]));
       }
       break;
     }
     case 'npc': {
       add('NPC details', [
-        labelValue('Appearance', artifact.data.appearance),
-        labelValue('Personality', artifact.data.personality),
+        ...labelValue('Appearance', artifact.data.appearance),
+        ...labelValue('Personality', artifact.data.personality),
       ]);
       if (artifact.data.statBlock !== null) {
-        sections.push(...statBlockSection(artifact.data.statBlock, spellIndexes));
+        sections.push(...(statBlockSection(artifact.data.statBlock, spellIndexes) as Content[]));
       }
       break;
     }
     case 'location':
     case 'event': {
       add(artifact.kind === 'event' ? 'Event details' : 'Location details', [
-        labelValue('Type', artifact.data.locationType),
-        labelValue('Inhabitants', artifact.data.inhabitants),
+        ...labelValue('Type', artifact.data.locationType),
+        ...labelValue('Inhabitants', artifact.data.inhabitants),
         ...(artifact.data.pointsOfInterest.length > 0
           ? [
               { text: 'Points of interest', style: 'subheading' },
@@ -238,9 +297,9 @@ function dataSections(
     }
     case 'faction': {
       add('Faction details', [
-        labelValue('Goals', artifact.data.goals),
-        labelValue('Methods', artifact.data.methods),
-        labelValue('Resources', artifact.data.resources),
+        ...labelValue('Goals', artifact.data.goals),
+        ...labelValue('Methods', artifact.data.methods),
+        ...labelValue('Resources', artifact.data.resources),
         ...(artifact.data.ranks.length > 0
           ? [
               { text: 'Ranks', style: 'subheading' },
@@ -255,11 +314,11 @@ function dataSections(
     }
     case 'encounter': {
       add('Encounter details', [
-        labelValue('Difficulty', artifact.data.difficulty),
-        labelValue('Party level', artifact.data.levelHint),
-        labelValue('Terrain', artifact.data.terrain),
-        labelValue('Tactics', artifact.data.tactics),
-        labelValue('Treasure', artifact.data.treasure),
+        ...labelValue('Difficulty', artifact.data.difficulty),
+        ...labelValue('Party level', artifact.data.levelHint),
+        ...labelValue('Terrain', artifact.data.terrain),
+        ...labelValue('Tactics', artifact.data.tactics),
+        ...labelValue('Treasure', artifact.data.treasure),
         ...(artifact.data.monsters.length === 0
           ? []
           : [
@@ -271,10 +330,10 @@ function dataSections(
     }
     case 'plotarc': {
       add('Plot arc details', [
-        labelValue('Arc type', artifact.data.arcType),
-        labelValue('Premise', artifact.data.premise),
-        labelValue('Stakes', artifact.data.stakes),
-        labelValue('Climax', artifact.data.climax),
+        ...labelValue('Arc type', artifact.data.arcType),
+        ...labelValue('Premise', artifact.data.premise),
+        ...labelValue('Stakes', artifact.data.stakes),
+        ...labelValue('Climax', artifact.data.climax),
         ...(artifact.data.beats.length > 0
           ? [
               { text: 'Beats', style: 'subheading' },
@@ -373,7 +432,7 @@ export function buildGmNotesDefinition(
     text: artifact.body === '' ? '(no body)' : markdownToDisplayText(artifact.body),
     style: 'body',
   });
-  content.push(...(dataSections(artifact, roster, spellIndexes) as Content[]));
+  content.push(...dataSections(artifact, roster, spellIndexes));
   if (artifact.links.length > 0) {
     content.push({ text: 'Relations', style: 'heading' });
     content.push(...(listItems(artifact.links.map((link) => link.relation)) as Content[]));
