@@ -2977,7 +2977,7 @@ of the two classes fired (docs/17 row 152, whose pins are in the next section).
 | **The marker set is the owner's own bytes**: the constants the reporters quoted are pinned byte-exact, so the detector cannot be watching something the model was never sent | same file (`the literals the OWNER saw are markers, byte-exact`, NEW) |
 | **FULL literal, never a fragment** — a truncated run of a marker's own words does not fire | same file (`matches the FULL literal…`, NEW) |
 | **NO FALSE POSITIVES**: ordinary prose about the same subjects (\"The GM should not invent new factions…\", \"Do not invent unrelated sub-plots for the party to chase…\", \"Where it is mentioned twice…\", \"The party is level 3…\") yields NOTHING | same file (`a generically similar sentence…`, NEW — GREEN, the brief's rule 4) |
-| **Identity fields are out of scope by construction**: `documentTextFields` keeps `body` and `monsters[].notes` and drops `name`, `aliases` and `tags` | same file (`identity fields are NOT this seam's business…`, NEW) |
+| **Identity leaves are out of scope BY OWNER, not by key**: `documentTextFields` keeps `body`, `monsters[].notes`, the stat-block `traits`/`actions`/`reactions`/`legendary` entry NAMES and `pointsOfInterest[].name`, while the walked record's own `name`, a roster creature's `name`, a spell name and `aliases`/`tags`/`suggestedTags`/`id` stay out | same file (`identity fields are NOT this seam's business: the OWNER decides…`, amended by docs/17 row 218) |
 | **The brief is BYTE-IDENTICAL to the base commit** after the literals moved: three argument sets (context-free, encounter, location with its ownership boundary) compared against a FROZEN `JSON.stringify` of the BASE module's own output at `d94d4e9` | same file (3 pins, NEW) |
 | **SCAN — no boundary may call the debris half directly** (it would drop the scaffolding half): `debrisIssuesForFields(` appears only in its own definition and in the aggregate, over `src/**`; and the six boundaries that persist reader-visible text all call the aggregate | same file (2 SCAN pins, NEW) |
 
@@ -3008,6 +3008,53 @@ before they could be markers (importing them from the feature would be an import
 cycle); and a USER hand-edit that pastes one of these sentences is rejected
 exactly like a model echo — the accepted cost of not being able to tell a
 deliberate paste from the defect (the escape-debris seam has the same property).
+
+### The echo detector's document field set is decided by the leaf OWNER (docs/17 row 218, docs/18 §2.2)
+
+The seam above reads the READER-VISIBLE leaves only (`documentTextFields`), and
+that exclusion was by last dotted key SEGMENT — so `name` was dropped wherever it
+appeared. One of those `name`s is not an identity at all:
+`stat-block.tsx:187` renders `{item.name}.` for every `traits`/`actions`/
+`reactions`/`legendary` entry (`domain/statblockFields.namedTextSchema.name`),
+and a location's `pointsOfInterest[].name` renders as a heading in the app and
+both PDFs. A scaffolding sentence or an escape-debris token echoed into one of
+those reached the reader unchecked. The fix is ONE path predicate,
+`generatedTextHygiene.identityLeaf`: `aliases`/`tags`/`suggestedTags`/`id` are
+identity wherever they appear; a `name` is identity only when its owner is the
+walked record itself (`<base>.name` — the wiki-link target) or a
+`IDENTITY_NAME_OWNERS` collection (`monsters`, `spells` — creature identity and
+library-resolution keys); every other `name` is prose and is scanned BY DEFAULT.
+Artifact/module names deliberately stay excluded: their contract is the
+verbatim-name rule, not prose.
+
+| fact pinned | where |
+|---|---|
+| **The SAME scaffolding sentence is silent in an artifact NAME and the ISSUE in an action NAME**, naming `draft.actions[0].name` — the whole slice in one assertion, and the pin a bare-segment filter cannot satisfy (it drops both) | `tests/llm/module-gen-and-provenance.test.ts` (`the SAME scaffolding sentence…`) |
+| **The exact field list of one shaped value**: `draft.body`, `draft.monsters[0].notes`, `draft.pointsOfInterest[0].name`/`.description` and `draft.actions[0].name`/`.text` IN; `draft.name`, `aliases`, `tags`, `suggestedTags`, `id` and `draft.monsters[0].name` OUT | same file (`identity fields are NOT this seam's business: the OWNER decides…`, amended) |
+| **NO false positive** in the other direction: artifact/module `name`, `aliases`, `tags`, `suggestedTags` and `id` each carrying a marker yield NO issue and NO reason (the exclusion cannot be "fixed" by scanning everything) | same file (`every metadata key carrying a marker stays SILENT`) |
+| **Non-vacuity**: an ordinary action name (`Multiattack`) yields nothing | same file (`an ORDINARY action name stays silent`) |
+| **The debris class too**: a named-text NAME carrying `Flussm?fcndung` is named (`statBlock.traits[0].name`) when the boundary feeds both halves the document set — the `parseSpine` pattern, where a dropped name was invisible to the debris half as well | same file (`a named-text NAME carrying escape debris is named too`) |
+| **End to end through the REAL boundary**: a `runEngine` run whose statblock `actions[0].name` echoes the brief rejects finalize, names `statBlock.actions[0].name`, records `reasons: ['scaffolding-echo']` and persists no artifact | same file (`rejects a STAT BLOCK whose action NAME echoes the brief…`) |
+
+**REVERT-PROVEN, four arms, every injected file's hash PRINTED with
+`git hash-object`, no two arms identical; the lock held before each injection
+and the tree restored from HEAD in a `trap`.** A: baseline GREEN (101 tests in
+the file). B: `identityLeaf` reverted to the pre-slice bare-segment filter
+(`new Set(['name','aliases','tags','suggestedTags','id']).has(lastPathSegment(path))`)
+→ the integration pin, the debris pin, the same-sentence pin and the exact-list
+pin RED. C: the identity arm removed (`identityLeaf` returns false) → the
+metadata-silence pin RED. D: the integration pin's action name mutated back to
+ordinary prose → the integration pin RED (the field really flows through the
+boundary, not only through the unit).
+
+**WHAT WAS DELIBERATELY NOT WIDENED.** Artifact/module names (the verbatim-name
+rule owns them; a name is never a sentence), `monsters[].name` (the existing
+identity pin declares it, and it becomes the materialized NPC artifact's name),
+and `spells[].name` (a key into the imported spell library that `domain/mobSpells`
+already refuses loudly when unknown). And no new source scan: the duplicate-body
+tripwire (docs/17 row 212) scans `tests/**` too, so a copied helper body would be
+a NEW baselined duplicate — the unit assertion over `documentTextFields`' output
+is the cheaper, honest pin (docs/17 row 218's own note).
 
 ### One HTML→text seam for the ingest layer (docs/17 row 143, docs/18 §2.2)
 

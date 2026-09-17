@@ -6257,8 +6257,10 @@ export class RunEngine {
     //
     // The debris half keeps its historic scope (every string leaf of the
     // effective draft plus the statblock strings); the scaffolding half reads
-    // the reader-visible text only (`documentTextFields` drops names, aliases,
-    // tags and ids — identity fields, not prose).
+    // the reader-visible text only (`documentTextFields` drops the artifact/
+    // module name, a roster creature's name, spell names and the metadata keys
+    // — identity by OWNER, so the stat-block trait/action names it does not own
+    // ARE scanned; docs/17 row 218).
     const hygiene = generatedTextScanForFields(
       [
         ...collectTextLeaves(draft, 'draft'),

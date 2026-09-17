@@ -98,7 +98,10 @@ import { db } from '@/db/db';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { GROUNDING_SECTION_HEADER } from '@/llm/campaignGrounding';
-import { documentTextFields } from '@/llm/generatedTextHygiene';
+import {
+  documentTextFields,
+  generatedTextScanForFields,
+} from '@/llm/generatedTextHygiene';
 import {
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   ENTITY_CONTEXT_LABEL,
@@ -2810,18 +2813,90 @@ describe('scaffoldingEcho.test.ts', () => {
       expect(findScaffoldingEcho(prose)).toEqual([]);
     });
 
-    it("identity fields are NOT this seam's business: names, aliases and tags are out of the scan", () => {
+    it("identity fields are NOT this seam's business: the OWNER decides, not the key segment", () => {
+      // The exclusion is by WHO owns the name, never by the last dotted segment
+      // (docs/17 row 218). `draft.name` (a wiki-link target), a roster monster's
+      // name (the creature's identity) and every metadata key stay out; the
+      // stat-block named-text names and a location's points of interest are
+      // PROSE and are IN — a bare-segment filter drops the last three.
       const fields = documentTextFields(
         {
           name: ENTITY_SERVE_MODULE_TEXT,
           aliases: [ENTITY_CONTEXT_LABEL],
+          tags: [MODULE_PREMISE_LABEL],
           suggestedTags: [GROUNDING_SECTION_HEADER],
+          id: 'artifact-1',
           body: 'She brews by the tide gate.',
           monsters: [{ name: 'Grix', notes: 'Keeps the ledger.' }],
+          pointsOfInterest: [{ name: 'The Tide Gate', description: 'A salt-stained arch.' }],
+          actions: [{ name: 'Multiattack', text: 'She attacks twice.' }],
         },
         'draft',
       );
-      expect(fields.map((field) => field.field)).toEqual(['draft.body', 'draft.monsters[0].notes']);
+      expect(fields.map((field) => field.field)).toEqual([
+        'draft.body',
+        'draft.monsters[0].notes',
+        'draft.pointsOfInterest[0].name',
+        'draft.pointsOfInterest[0].description',
+        'draft.actions[0].name',
+        'draft.actions[0].text',
+      ]);
+    });
+  });
+
+  describe('the document field set is decided by the leaf OWNER (docs/17 row 218)', () => {
+    it('the SAME scaffolding sentence: silent in an artifact NAME, the issue in an action NAME', () => {
+      // Pins 1 and 3 together — the whole slice in one assertion. A bare-segment
+      // filter cannot express this: it drops BOTH names, so the action issue
+      // disappears while this test still finds the artifact name silent.
+      const value = {
+        name: ENTITY_SERVE_MODULE_TEXT,
+        actions: [{ name: ENTITY_SERVE_MODULE_TEXT, text: 'She hurls a flask.' }],
+      };
+      const scan = generatedTextScanForFields(documentTextFields(value, 'draft'));
+      expect(scan.reasons).toEqual(['scaffolding-echo']);
+      expect(scan.issues).toHaveLength(1);
+      expect(scan.issues[0]).toContain('draft.actions[0].name');
+      expect(scan.issues[0]).not.toContain('draft.name');
+      expect(scan.issues[0]).toContain('prompt scaffolding');
+    });
+
+    it('every metadata key carrying a marker stays SILENT (the exclusion is not "scan everything")', () => {
+      const value = {
+        name: ENTITY_SERVE_MODULE_TEXT,
+        aliases: [ENTITY_CONTEXT_LABEL],
+        tags: [MODULE_PREMISE_LABEL],
+        suggestedTags: [GROUNDING_SECTION_HEADER],
+        id: 'the-artifact-id',
+      };
+      const scan = generatedTextScanForFields(documentTextFields(value, 'draft'));
+      expect(scan.issues).toEqual([]);
+      expect(scan.reasons).toEqual([]);
+    });
+
+    it('an ORDINARY action name stays silent — the widened field set is non-vacuous', () => {
+      const scan = generatedTextScanForFields(
+        documentTextFields(
+          { actions: [{ name: 'Multiattack', text: 'She attacks twice.' }] },
+          'statBlock',
+        ),
+      );
+      expect(scan.issues).toEqual([]);
+      expect(scan.reasons).toEqual([]);
+    });
+
+    it('a named-text NAME carrying escape debris is named too (both halves, the spine pattern)', () => {
+      // `parseSpine` feeds the DOCUMENT set to both halves, so a name the
+      // document filter drops was invisible to the debris half there as well.
+      const fields = documentTextFields(
+        { traits: [{ name: 'Flussm?fcndung', text: 'The tide turns.' }] },
+        'statBlock',
+      );
+      const scan = generatedTextScanForFields(fields, fields);
+      expect(scan.reasons).toEqual(['escape-debris']);
+      expect(scan.issues).toHaveLength(1);
+      expect(scan.issues[0]).toContain('statBlock.traits[0].name');
+      expect(scan.issues[0]).toContain('?fc');
     });
   });
 
@@ -2930,6 +3005,79 @@ describe('scaffoldingEcho.test.ts', () => {
       },
       20000,
     );
+
+    it('rejects a STAT BLOCK whose action NAME echoes the brief, naming the field (sub-slice pin)', async () => {
+      // The measured gap of docs/17 row 218, end to end: the echo reaches the
+      // reader through `stat-block.tsx`'s `{item.name}.` heading, and the
+      // finalize boundary must refuse it naming `statBlock.actions[0].name`.
+      // Mutating this action name back to ordinary prose is differential arm D.
+      const { campaignId, persona } = await seedPersona();
+      const cleanDraft = {
+        name: 'Grix',
+        summary: 'A goblin alchemist boss.',
+        suggestedTags: ['goblin'],
+        body: '# Grix\nShe brews by the tide gate.',
+        appearance: 'Small, soot-stained, goggles.',
+        personality: 'Manic, cheerful, volatile.',
+        needsStatBlock: true,
+      };
+      const echoedStatBlock = {
+        system: 'dnd5e',
+        level: '3',
+        size: 'Small',
+        creatureType: 'humanoid (goblinoid)',
+        ac: 14,
+        acNote: 'leather armor',
+        hp: 22,
+        hpFormula: '5d6 + 5',
+        speed: '30 ft.',
+        abilities: { str: 8, dex: 16, con: 13, int: 14, wis: 10, cha: 12 },
+        saves: '',
+        skills: '',
+        senses: '',
+        languages: 'Common, Goblin',
+        traits: [],
+        actions: [{ name: ENTITY_SERVE_MODULE_TEXT, text: 'She hurls a flask of acid.' }],
+        reactions: [],
+        legendary: [],
+        extras: { CR: '1' },
+      };
+      chatMock
+        .mockResolvedValueOnce({
+          text: JSON.stringify(cleanDraft),
+          modelUsed: 'test-model',
+          fallback: null,
+        })
+        .mockResolvedValueOnce({
+          text: JSON.stringify(echoedStatBlock),
+          modelUsed: 'test-model',
+          fallback: null,
+        });
+
+      const runId = await runEngine.startRun(INPUT(campaignId, persona));
+      await waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      await runEngine.approve(runId, INPUT(campaignId, persona));
+      await waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      await runEngine.approve(runId, INPUT(campaignId, persona));
+      await waitFor(async () => {
+        expect((await getRun(runId))?.steps.at(-1)?.name).toBe('finalize');
+      });
+
+      const run = await getRun(runId);
+      const finalize = run?.steps.at(-1);
+      expect(finalize?.status).toBe('rejected');
+      const output = finalize?.output as { issues?: unknown; reasons?: unknown };
+      const issues = (output.issues as string[]).join('\n');
+      expect(issues).toContain('statBlock.actions[0].name');
+      expect(issues).toContain('prompt scaffolding');
+      expect(output.reasons).toEqual(['scaffolding-echo']);
+      expect(run?.resultArtifactId).toBeNull();
+      expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
+    }, 20000);
   });
 
   describe('the MODULE path reaches the SAME seam', () => {
