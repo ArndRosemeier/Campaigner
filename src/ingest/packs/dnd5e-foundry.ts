@@ -11,7 +11,13 @@ import {
 import { errorMessage } from '@/lib/errors';
 
 import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
-import type { PackAdapter, PackEntry, PackFileParse, PackSectionEntry } from './types';
+import {
+  asPackFileParser,
+  type PackAdapter,
+  type PackEntry,
+  type PackFileParse,
+  type PackSectionEntry,
+} from './types';
 
 /**
  * `foundry-dnd5e-srd` pack adapter (12-BESTIARY-PACKS §2/§5/§11): creature
@@ -1440,7 +1446,7 @@ export function dnd5eSpellIsCantrip(level: number): boolean {
 
 // --- Adapter ---------------------------------------------------------------
 
-/** Synchronous parse body — wrapped into a promise by `parseFile`. */
+/** Synchronous parse body — wrapped into the promise contract by `asPackFileParser`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
   const docs = parseYamlDocs(text, fileName);
@@ -1487,14 +1493,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   return { entries, sections, skipped, failures };
 }
 
-function parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse> {
-  try {
-    return Promise.resolve(parseFileSync(fileName, bytes));
-  } catch (error) {
-    // Rejections instead of sync throws: the adapter contract is promise-based.
-    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-  }
-}
+const parseFile = asPackFileParser(parseFileSync);
 
 export const foundryDnd5eSrdAdapter: PackAdapter = {
   id: FOUNDRY_DND5E_SRD_ADAPTER_ID,

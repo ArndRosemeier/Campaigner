@@ -107,6 +107,46 @@ export interface PackAdapter {
   parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse>;
 }
 
+/**
+ * THE one pack-adapter promise seam (AGENTS §Centralization rule 4, docs/17 row
+ * 214).
+ *
+ * `PackAdapter.parseFile` is deliberately PROMISE-based — `packImport` awaits
+ * every adapter identically, and a synchronous throw escaping one lane would
+ * break that contract — but each adapter's real parsing lives in its own
+ * synchronous `parseFileSync` (a different body per lane), so each of the seven
+ * hand-wrote the SAME wrapper around it: resolve the sync result, and re-wrap a
+ * non-`Error` throw as an `Error` rejection. Seven byte-identical copies, born
+ * correct and therefore invisible until the duplicate-body tripwire
+ * (`tests/architecture/no-duplicate-implementations.test.ts`, docs/17 row 172)
+ * named them as group `4849c733c9136aa8`.
+ *
+ * It lives HERE, in the module that declares the `PackAdapter` contract it
+ * enforces (beside `fileToPackInput`, this module's other runtime adapter
+ * helper), NOT in an adapter, and NOT in `text.ts`: `text.ts` is the ingest
+ * layer's DOCUMENT-conventions home (HTML→text, the document stream), while this
+ * is the adapter CONTRACT — a different idea. Every adapter keeps its own
+ * `parseFileSync` (the parsing is not shared) and states the contract in one
+ * line: `const parseFile = asPackFileParser(parseFileSync);`.
+ *
+ * The non-`Error` arm is deliberate, not defensive noise: a third-party parser
+ * may throw a string or a plain object, and the import runner reads the
+ * rejection's `.message` — re-wrapping keeps that read honest instead of letting
+ * a raw value reach it (AGENTS rule 1: a failure is never silently reshaped).
+ */
+export function asPackFileParser(
+  parseFileSync: (fileName: string, bytes: Uint8Array) => PackFileParse,
+): (fileName: string, bytes: Uint8Array) => Promise<PackFileParse> {
+  return (fileName, bytes) => {
+    try {
+      return Promise.resolve(parseFileSync(fileName, bytes));
+    } catch (error) {
+      // Rejections instead of sync throws: the adapter contract is promise-based.
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  };
+}
+
 /** A user-selected pack file already in memory (loose file or zip member). */
 export interface PackInputFile {
   name: string;

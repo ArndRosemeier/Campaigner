@@ -11,7 +11,7 @@ import {
   parseJsonDocs,
   AT_BRACE_LABEL_BLOCK_AND_TABLE,
 } from './text';
-import type { PackAdapter, PackEntry, PackFileParse } from './types';
+import { asPackFileParser, type PackAdapter, type PackEntry, type PackFileParse } from './types';
 
 /**
  * `foundry-pf2e` pack adapter (12-BESTIARY-PACKS §5): creature entries from
@@ -526,7 +526,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
 
 // --- Adapter ---------------------------------------------------------------
 
-/** Synchronous parse body — wrapped into a promise by `parseFile`. */
+/** Synchronous parse body — wrapped into the promise contract by `asPackFileParser`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
   const docs = parseJsonDocs(text, fileName);
@@ -552,14 +552,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   return { entries, skipped, failures };
 }
 
-function parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse> {
-  try {
-    return Promise.resolve(parseFileSync(fileName, bytes));
-  } catch (error) {
-    // Rejections instead of sync throws: the adapter contract is promise-based.
-    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-  }
-}
+const parseFile = asPackFileParser(parseFileSync);
 
 export const foundryPf2eAdapter: PackAdapter = {
   id: FOUNDRY_PF2E_ADAPTER_ID,

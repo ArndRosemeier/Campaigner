@@ -5,7 +5,12 @@ import { DND5E_PROPERTY_LABELS } from './dnd5e-foundry';
 import { errorMessage } from '@/lib/errors';
 
 import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
-import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
+import {
+  asPackFileParser,
+  type PackAdapter,
+  type PackFileParse,
+  type PackItemEntry,
+} from './types';
 
 /**
  * `foundry-dnd5e-equipment` pack adapter (12-BESTIARY-PACKS §13): equipment/
@@ -110,7 +115,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
 
 // --- Adapter ---------------------------------------------------------------
 
-/** Synchronous parse body — wrapped into a promise by `parseFile`. */
+/** Synchronous parse body — wrapped into the promise contract by `asPackFileParser`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
   const docs = parseYamlDocs(text, fileName);
@@ -136,14 +141,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   return { entries: [], items, skipped, failures };
 }
 
-function parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse> {
-  try {
-    return Promise.resolve(parseFileSync(fileName, bytes));
-  } catch (error) {
-    // Rejections instead of sync throws: the adapter contract is promise-based.
-    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-  }
-}
+const parseFile = asPackFileParser(parseFileSync);
 
 export const foundryDnd5eEquipmentAdapter: PackAdapter = {
   id: FOUNDRY_DND5E_EQUIPMENT_ADAPTER_ID,

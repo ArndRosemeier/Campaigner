@@ -8,7 +8,12 @@ import {
   parseJsonDocs,
   AT_BRACE_LABEL_BLOCK_AND_TABLE,
 } from './text';
-import type { PackAdapter, PackFileParse, PackSectionEntry } from './types';
+import {
+  asPackFileParser,
+  type PackAdapter,
+  type PackFileParse,
+  type PackSectionEntry,
+} from './types';
 
 /**
  * `foundry-pf2e-journal` pack adapter (rules-text packs arc, docs/12 §15):
@@ -110,7 +115,7 @@ function mapPage(page: ParsedPage): PackSectionEntry {
 
 // --- Adapter ---------------------------------------------------------------
 
-/** Synchronous parse body — wrapped into a promise by `parseFile`. */
+/** Synchronous parse body — wrapped into the promise contract by `asPackFileParser`. */
 function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   const text = new TextDecoder('utf-8').decode(bytes);
   const docs = parseJsonDocs(text, fileName);
@@ -149,14 +154,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
   return { entries: [], sections, skipped, failures };
 }
 
-function parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse> {
-  try {
-    return Promise.resolve(parseFileSync(fileName, bytes));
-  } catch (error) {
-    // Rejections instead of sync throws: the adapter contract is promise-based.
-    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
-  }
-}
+const parseFile = asPackFileParser(parseFileSync);
 
 export const foundryPf2eJournalAdapter: PackAdapter = {
   id: FOUNDRY_PF2E_JOURNAL_ADAPTER_ID,

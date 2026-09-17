@@ -7554,6 +7554,93 @@ input); and the prefill-is-good call is the owner's, so the suite pins the
 BEHAVIOUR he ratified, not that a second module starting from the previous name
 is desirable in general.
 
+### The seven pack-adapter promise wrappers are ONE seam (docs/17 row 214, docs/12 §15, docs/18 §2)
+
+The duplicate-body tripwire's first `src/` inventory held group
+`4849c733c9136aa8` with seven sites, all named `parseFile` — every pack adapter
+hand-wrote the same promise-wrapper around its own synchronous `parseFileSync`.
+The parsing is per-lane and genuinely different; the wrapper was one idea, so
+row 214 folds it into `ingest/packs/types.asPackFileParser` (beside the
+`PackAdapter` contract it enforces, not in the document-conventions module
+`text.ts`) and each adapter keeps its identical exported surface through one
+line: `const parseFile = asPackFileParser(parseFileSync);`. The fold's own proof
+is the tripwire's stale-entry red, watched BEFORE the baseline line was deleted;
+the per-idea pin is a source scan, because a folded group cannot guard against a
+member coming back alone — the tripwire only sees a verbatim second copy.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **The promise wrapper is defined exactly once**, in `types.ts`, and non-vacuously carries both arms (the resolve of the sync result and the non-`Error` rejection rewrap) | `tests/architecture/one-pack-file-parser.test.ts` (2 pins) | ✅ REVERT-PROVEN (arm C) |
+| **No adapter may re-spell the wrapper** — no `Promise.resolve(parseFileSync`, no `instanceof Error ? error : new Error(String(error))`, no revived `function parseFile(` outside the seam | same | ✅ REVERT-PROVEN (arm C) |
+| **All seven adapters import the seam and call it exactly once**, and no eighth file reaches for it | same | ✅ |
+| **The tripwire's `src/` population no longer holds the group**, and the stale baseline line was DELETED only after its red | `tests/architecture/no-duplicate-implementations.test.ts` (baseline `14 groups / 32 sites`) | ✅ REVERT-PROVEN (arm B) |
+| **Every adapter's parse behaviour is unchanged** — mapping, schemas, failure shapes, skip counting, and the rejection path through the real adapters | the existing per-adapter/lane suites, untouched (below) | ✅ REVERT-PROVEN (arm D) |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `defines the ONE seam in types.ts, and proves the needles can see it` | `tests/architecture/one-pack-file-parser.test.ts` | the seam deleted or moved, or a copy that reuses either wrapper line in another pack file — arm C |
+| `has every adapter call the ONE seam, and no other file that does` | same | one adapter dropping its seam call (re-spelling the wrapper), or an eighth file reaching for it |
+| `matches the checked-in baseline exactly` | `tests/architecture/no-duplicate-implementations.test.ts` | the stale `4849c733c9136aa8` line surviving the fold — arm B; and a verbatim copy returning at 2+ sites |
+| `.rejects` assertions through each REAL adapter (`empty`/`unparseable` inputs) | `dnd5e-equipment.test.ts`, `dnd5e-foundry.test.ts`, `pf2e-equipment.test.ts`, `pf2e-foundry.test.ts`, `parse-docs.test.ts` | the seam's rejection arm swallowing a sync throw — arm D |
+
+**REVERT-PROVEN** (each arm's changed-file `git hash-object` PRINTED, restored
+by a `trap` from HEAD, raw logs in `/tmp/parsefile-logs/`; no arm VOID):
+
+- **A — baseline after the fold.** detector + the new source scan + the whole
+  `tests/ingest/packs/` suite → **14 files / 242 tests passed**. Folded-file
+  hashes: `types.ts` `e67c1c118e5e388d0ba765bc44e2fbabe9e044f8`,
+  `pf2e-journal.ts` `7c12a2044dd075088640189e7b15e6038940dc2a`,
+  `pf2e-conditions.ts` `17fa6ed766aab9d047aaada941f9bf6b09b89cec`; the new pin
+  `331cbe077c5e5dee94f8d4dda374ce57941442db`.
+- **B — the fold with the stale baseline line still present**
+  (`duplicateImplementationsBaseline.json` hash
+  `66313f19227063cd5c4e58f6d0ea3d69b1b47fab` BEFORE the deletion) → the detector
+  **RED 1 / 19 passed**, printing `STALE BASELINE ENTRY — 4849c733c9136aa8
+  [all seven src/ingest/packs/…:parseFile sites] no longer matches any duplicate
+  group`. This is the fold's own proof. Folded sources at that arm:
+  `29153af6fed73d948b9707d20a175fb59d1a3c51` (dnd5e-equipment),
+  `3b923512d813bce97038a1110734c771902b5460` (dnd5e-foundry),
+  `2a95b72aa442ae1aee68bda8280150a778d4d456` (pf2e-equipment),
+  `97237a09f33147a85dbea711f4c59d25b9999311` (pf2e-foundry),
+  `0043dd2b9650f79f0f29b84255f24110146a87ee` (pf2e-rules).
+- **C — the wrapper pasted back into ONE adapter under another name**
+  (`pf2e-journal.ts` `7c12a2044dd075088640189e7b15e6038940dc2a` → injected
+  `37359b273a4bc7ac04bd5acce74a833942b8686b`) → the SOURCE SCAN reds **1 failed
+  / 19 passed** naming the file and the `Promise.resolve(parseFileSync` needle,
+  with the DETECTOR GREEN — the single-site class the tripwire structurally
+  cannot see. Pasted into TWO adapters (adding `pf2e-conditions.ts`
+  `17fa6ed766aab9d047aaada941f9bf6b09b89cec` → `b8a76fd31d034a2d2448758835ed605095952b99`)
+  → the detector reds **NEW DUPLICATE — shared normalized body
+  `4849c733c9136aa8` (180 chars)** at the two `parseFileLegacy` sites AND the
+  source scan reds (**2 failed / 18 passed**), so both pins have teeth.
+- **D — the seam's rejection arm made to swallow** (`types.ts`
+  `e67c1c118e5e388d0ba765bc44e2fbabe9e044f8` → injected
+  `963bbad293c986a2f3f1345449883a8414fb552f`, the `Promise.reject` replaced by a
+  resolved empty `PackFileParse`) → **5 files / 7 tests failed, 215 passed**: the
+  per-adapter `.rejects` pins (`dnd5e-equipment`, `dnd5e-foundry`,
+  `pf2e-equipment`, `pf2e-foundry`, `parse-docs`), so a failure-path pin DID
+  already exist and none was added. Every restored hash equals its baseline and
+  `git status` names only this slice's files.
+
+**WHAT THESE PINS DO NOT PROVE:** the source scan is textual and
+comment-blind — a wrapper composed at runtime or reached through an
+intermediate helper is invisible to it, and a paraphrase that avoids both needle
+lines would pass it; the tripwire side catches only an exact verbatim second
+copy. The behaviour claim rests on the untouched per-adapter suites, not on the
+scan.
+
+**GATE — RAW NUMBERS.** `bash scripts/gate.sh` from the worktree, raw log
+`/tmp/parsefile-logs/gate.log`, chunk logs `/tmp/parsefile-logs/gate-chunks`:
+**GATE GREEN, exit 0 — 344 files / 4450 tests**, `chunk arithmetic: 344 of 344
+test files covered`, lint **0 errors**, typecheck clean, **no `Errors:` line**,
+peak RSS of any single chunk **1231 MB**, combined peak **2341 MB of the 3000 MB
+cap**. This slice adds **+1 file / +2 tests** (the new source scan; the baseline
+JSON change adds no test).
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

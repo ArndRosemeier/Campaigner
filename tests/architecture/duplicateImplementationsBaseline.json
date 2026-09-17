@@ -36,19 +36,6 @@
       ]
     },
     {
-      "hash": "4849c733c9136aa8",
-      "reason": "All seven pack adapters copy the same async parseFile wrapper over parseFileSync, including its Error re-wrap; a fold is owed on the pack-adapter seam row 171 is working in, but it is not this detector slice.",
-      "sites": [
-        "src/ingest/packs/dnd5e-equipment.ts:parseFile",
-        "src/ingest/packs/dnd5e-foundry.ts:parseFile",
-        "src/ingest/packs/pf2e-conditions.ts:parseFile",
-        "src/ingest/packs/pf2e-equipment.ts:parseFile",
-        "src/ingest/packs/pf2e-foundry.ts:parseFile",
-        "src/ingest/packs/pf2e-journal.ts:parseFile",
-        "src/ingest/packs/pf2e-rules.ts:parseFile"
-      ]
-    },
-    {
       "hash": "6cb7f0cd682b51d6",
       "reason": "Three runner/engine classes copy the same on() listener add/delete (the EventEmitter shape); fold onto one emitter primitive. Owed; out of this detector slice's scope.",
       "sites": [
