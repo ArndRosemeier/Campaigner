@@ -14,6 +14,7 @@ import { createModule as createModuleRow } from '@/db/moduleRepo';
 import { createPersona } from '@/db/personaRepo';
 import { getRun } from '@/db/runRepo';
 import { runEngine, moduleGroundingSection, type StartRunInput } from '@/llm/runEngine';
+import { entityNameVerbatimSentence, findScaffoldingEcho } from '@/llm/promptScaffolding';
 import {
   createModule,
   moduleSchema,
@@ -255,7 +256,9 @@ describe('in-place refill parity (module grounding)', () => {
     expect(artifact?.tags).toContain('module:Ashen Vault');
     expect(artifact?.summary).toBe(NPC_DRAFT.summary);
     expect(artifact?.body).toBe(NPC_DRAFT.body);
-    // The model's invented name became an alias.
+    // A model name that is NOT another artifact's (a variant/title of the
+    // target) still became an alias, exactly as before: docs/17 row 226 SPLITS
+    // this arm from the foreign-name refusal below rather than weakening it.
     expect(artifact?.aliases).toContain('Kael Ashbound');
     // The draft declined stats (needsStatBlock=false, skipped step) — the
     // existing stat block survives the refill instead of being clobbered.
@@ -565,6 +568,149 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     expect(after.data.statBlock?.hp).toBe(22);
     expect(after.data.creatureRef).toBeUndefined();
     expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30000);
+});
+
+/**
+ * THE REPORTED DEFECT (docs/17 row 226), end to end on the ONE path the owner
+ * used: the artifact editor's "Regenerate with AI" hands the panel a generic,
+ * NAME-LESS brief, the co-mention grounding feeds a neighbouring NPC's module
+ * prose into the prompt, the model answers as that neighbour, and finalize
+ * wrote its name onto the target as "also known as".
+ *
+ * TWO independent halves are pinned here: the NAME ANCHOR (the prompt states
+ * the target's own name verbatim, through the entity lane's ONE sentence) and
+ * the ALIAS GUARD (a returned name another artifact answers is NOT attached and
+ * the refusal is LOUD). The anchor is a PROMPT INSTRUCTION — a model can ignore
+ * it — so the guard, not the anchor, is what makes the mocked foreign reply
+ * safe to store; what the anchor cannot guarantee is said plainly in docs/17.
+ */
+describe('the reported wrong-NPC alias defect (docs/17 row 226)', () => {
+  /** The owner's setup: TWO NPCs co-mentioned in ONE module paragraph, both
+   * real artifacts, and a target whose editor hands over a name-less brief. */
+  async function seedCoMentioned(): Promise<{
+    campaign: Campaign;
+    hildeId: Id;
+    fennwickId: Id;
+  }> {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const module = moduleRow(campaign.id, {
+      title: 'Ashen Vault',
+      premise: 'The ford is watched after dusk.',
+      parts: [
+        {
+          planIndex: 0,
+          markdown: '[[Hilde Marben]] and [[Fennwick Morsgrimm]] meet at the ford at dusk.',
+        },
+      ],
+    });
+    await createModuleRow(module);
+    const hilde = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Hilde Marben',
+      tags: ['module:Ashen Vault'],
+      summary: 'The ford warden.',
+      body: 'Hilde keeps the ford.',
+      data: { appearance: 'Grey cloak.', personality: 'Watchful.', statBlock: null },
+    });
+    const fennwick = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Fennwick Morsgrimm',
+      summary: 'A smuggler with a grudge.',
+      body: 'Fennwick runs the contraband past the ford.',
+      data: { appearance: 'Scarred.', personality: 'Sly.', statBlock: null },
+    });
+    return { campaign, hildeId: hilde.id, fennwickId: fennwick.id };
+  }
+
+  /** The model's reply on the reported run: it answers as the OTHER NPC. */
+  const FOREIGN_REPLY = {
+    name: 'Fennwick Morsgrimm',
+    summary: 'Fennwick smuggles contraband past the ford.',
+    suggestedTags: [],
+    body: '# Fennwick\nHe runs the contraband and hates the warden.',
+    appearance: 'Scarred and sullen.',
+    personality: 'Sly, resentful.',
+    needsStatBlock: false,
+  };
+
+  it('names the target in the prompt and refuses the other NPC’s returned name, loudly', async () => {
+    const { campaign, hildeId, fennwickId } = await seedCoMentioned();
+    const persona = await seedPersona();
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(FOREIGN_REPLY),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      // The panel's OWN refill brief, verbatim — it names NOBODY, which is the
+      // whole point: the anchor must come from the engine.
+      ...INPUT(campaign, persona, hildeId),
+      brief:
+        'Regenerate the full content of this npc — summary, body and details. Its name, relations and images are preserved.',
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    // THE NAME ANCHOR: the prompt states the TARGET's name, through the entity
+    // lane's ONE sentence (and the scaffolding detector can see it, so it is
+    // our registered wording rather than a hand-copied string).
+    const prompt = userMessage(0);
+    expect(prompt).toContain(entityNameVerbatimSentence('Hilde Marben'));
+    expect(prompt).not.toContain(entityNameVerbatimSentence('Fennwick Morsgrimm'));
+    expect(findScaffoldingEcho(prompt).map((hit) => hit.label)).toContain('the verbatim-name rule');
+    // The mechanism the owner hit is REPRODUCED, not assumed: the module prose
+    // around Hilde's mention carries Fennwick too, and the grounding injected
+    // both blocks.
+    const retrieveStep = (await getRun(runId))?.steps.find((step) => step.name === 'retrieve');
+    const stored = retrieveStep?.output as {
+      moduleGrounding?: { status: string; targetName?: string };
+      expansionExcerpts?: { entityName: string }[];
+    };
+    expect(stored.moduleGrounding?.status).toBe('ok');
+    expect(stored.moduleGrounding?.targetName).toBe('Hilde Marben');
+    expect(stored.expansionExcerpts?.map((block) => block.entityName)).toEqual(
+      expect.arrayContaining(['Hilde Marben', 'Fennwick Morsgrimm']),
+    );
+
+    // THE SHAPE THE OWNER MEASURED: the stored name is unchanged and the
+    // CONTENT is the reply's — only the foreign NAME was refused.
+    const hilde = await getArtifact(hildeId);
+    expect(hilde?.name).toBe('Hilde Marben');
+    expect(hilde?.summary).toBe(FOREIGN_REPLY.summary);
+    expect(hilde?.body).toBe(FOREIGN_REPLY.body);
+    expect(hilde?.aliases).not.toContain('Fennwick Morsgrimm');
+    expect(hilde?.aliases).toEqual([]);
+    if (hilde?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(hilde.data.appearance).toBe(FOREIGN_REPLY.appearance);
+    expect(hilde.data.personality).toBe(FOREIGN_REPLY.personality);
+
+    // THE OTHER NPC IS UNTOUCHED, byte for byte.
+    const fennwick = await getArtifact(fennwickId);
+    expect(fennwick?.name).toBe('Fennwick Morsgrimm');
+    expect(fennwick?.summary).toBe('A smuggler with a grudge.');
+    expect(fennwick?.body).toBe('Fennwick runs the contraband past the ford.');
+    expect(fennwick?.aliases).toEqual([]);
+
+    // THE REFUSAL IS LOUD at BOTH surfaces (AGENTS rules 1/2): the run step's
+    // notice and a toast, both naming the collision and the fact it was NOT
+    // attached.
+    const finalizeStep = (await getRun(runId))?.steps.find((step) => step.name === 'finalize');
+    const notice = (finalizeStep?.output as { notice?: string } | null | undefined)?.notice ?? '';
+    expect(notice).toContain('Fennwick Morsgrimm');
+    expect(notice).toContain('NOT attached as an alias');
+    expect(toastErrorMock).toHaveBeenCalled();
+    const toastSentence = toastErrorMock.mock.calls
+      .map((call) => String(call[1]))
+      .join(' ');
+    expect(toastSentence).toContain('Fennwick Morsgrimm');
+    expect(toastSentence).toContain('NOT attached as an alias');
   }, 30000);
 });
 

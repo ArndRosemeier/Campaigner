@@ -1,5 +1,5 @@
 import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, ModuleEntityKind, PersonaRun } from '@/domain';
-import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName, unmatchedEntityLevelHints } from '@/domain';
+import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName, unmatchedEntityLevelHints, aliasCollisionSentence, type AliasCollision } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import type { GameSystem } from '@/domain/gameSystem';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -9,7 +9,7 @@ import {
   rulebookDisplayTitle,
 } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { listArtifactsByCampaign, foreignAliasNames } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { castCreatureAsNpc, listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
 import { getRulebook } from '@/db/rulebookRepo';
@@ -98,14 +98,23 @@ export const RUN_STEP_LABELS: Record<string, string> = {
  * finding the creature. The refusal is a throw — never a silent skip — so every
  * caller has to surface the reason (AGENTS rule 2); the batch records it as a
  * per-entity failure with its toast.
+ *
+ * Returns the model's name REFUSED as another artifact's (docs/17 row 226) —
+ * empty on the ordinary path — so the caller can speak it (AGENTS rule 1). The
+ * rename itself still lands: refusing the rename would leave the row under a
+ * name no wiki-link resolves, which is a worse row than one whose old name no
+ * longer answers.
  */
-export async function alignEntityName(artifactId: Id, entityName: string): Promise<void> {
+export async function alignEntityName(
+  artifactId: Id,
+  entityName: string,
+): Promise<AliasCollision[]> {
   const artifact = await artifactRepo.getArtifact(artifactId);
-  if (artifact === undefined) return;
+  if (artifact === undefined) return [];
   if (isCastCreatureNpc(artifact)) {
     throw new Error(castCreatureWriteRefusal(artifact.name, entityName));
   }
-  if (sameAliasName(artifact.name, entityName)) return;
+  if (sameAliasName(artifact.name, entityName)) return [];
   const modelName = artifact.name;
   // The "is the old name already an alias?" question is the MERGE's own
   // dedupe (docs/17 row 121): the comparison lives in `domain/artifactAlias`
@@ -114,9 +123,18 @@ export async function alignEntityName(artifactId: Id, entityName: string): Promi
   // merge result rides the RENAME patch below (one revision: name + aliases),
   // so this uses the shared RULE rather than `artifactRepo.addArtifactAliases`.
   // Which artifact a name BELONGS to (`libraryCitationForEntity`, the creature
-  // lookup above) is a different question and stays out of the seam.
-  const aliases = mergeAliasNames(artifact.aliases, [modelName], entityName);
+  // lookup above) is a different question and stays out of the seam — but the
+  // FOREIGN-name half of it is `artifactRepo.foreignAliasNames` (docs/17 row
+  // 226), the SAME guard every alias write applies: the model's name is not
+  // attached when another artifact already answers it.
+  const refused = await foreignAliasNames(artifactId, [modelName]);
+  const aliases = mergeAliasNames(
+    artifact.aliases,
+    refused.length === 0 ? [modelName] : [],
+    entityName,
+  );
   await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
+  return refused;
 }
 
 /** The library's OWN disclosure of where one candidate creature comes from:
@@ -930,7 +948,16 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
               // The wiki-link resolves by EXACT name, so an artifact the model
               // named "Kael Ashbound…" would never link back to [[Kael]] —
               // enforce the entity name and keep the model's name as an alias.
-              await alignEntityName(outcome.resultArtifactId, target.name);
+              const refusedNames = await alignEntityName(outcome.resultArtifactId, target.name);
+              // The model's name was another artifact's (docs/17 row 226): the
+              // rename landed, the alias was NOT attached, and that is spoken
+              // here — never a silent drop (AGENTS rule 1).
+              for (const collision of refusedNames) {
+                toastError(
+                  'A returned name belongs to another artifact — not attached as an alias',
+                  new Error(aliasCollisionSentence(collision)),
+                );
+              }
             } catch (error) {
               toastError(`Could not align the artifact name for "${target.name}"`, error);
             }

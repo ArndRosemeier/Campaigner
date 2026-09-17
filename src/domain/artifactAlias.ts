@@ -1,3 +1,5 @@
+import type { Id } from '@/domain/entity';
+
 /**
  * An artifact's ALIAS POOL — the ONE comparison and the ONE merge rule
  * (docs/17 row 121, docs/18 §2.1).
@@ -21,7 +23,16 @@
  *   an earlier name of the same batch;
  * - a merge that adds NOTHING returns the caller's list UNCHANGED — the SAME
  *   reference — which is how a caller knows to skip its write entirely
- *   (`artifactRepo.addArtifactAliases` returns `null` on that case).
+ *   (`artifactRepo.addArtifactAliases` returns `null` on that case);
+ * - a name that already answers for a DIFFERENT artifact is NOT merged either
+ *   (docs/17 row 226). That question needs the campaign's OTHER rows, which a
+ *   pure function cannot see, so it is `db/artifactRepo.foreignAliasNames` —
+ *   the ONE lookup — and the guard is applied by every alias WRITE
+ *   (`artifactRepo.addArtifactAliases` for its callers, and the callers that
+ *   must land the alias inside their own revision call the same lookup).
+ *   `AliasCollision` + `aliasCollisionSentence` are the shape and the ONE
+ *   sentence a refusal is surfaced with, so the seam that refuses and the
+ *   surface that speaks cannot drift.
  *
  * STORED SPELLING (deliberate, docs/17 row 121): the accepted name is stored
  * EXACTLY as the caller passed it — never re-trimmed, never re-cased. The
@@ -184,4 +195,35 @@ export function mergeAliasNames(
     merged.push(name);
   }
   return merged ?? existing;
+}
+
+/**
+ * One candidate alias name that was REFUSED because another artifact already
+ * answers it (docs/17 row 226).
+ *
+ * The name alone is not enough to speak loudly: the owner has to be told WHICH
+ * artifact it belongs to, or "not attached" reads as an arbitrary refusal.
+ * `artifactId` is what a surface could navigate to; `artifactName` is what it
+ * prints. The shape is pure data so `db/artifactRepo` can mint it and the
+ * domain can own the sentence, without either importing the other's layer.
+ */
+export interface AliasCollision {
+  /** The candidate name, exactly as the caller passed it. */
+  name: string;
+  /** The artifact that already answers this name. */
+  artifactId: Id;
+  /** That artifact's own name (what a reader calls it). */
+  artifactName: string;
+}
+
+/**
+ * THE sentence a refused alias is surfaced with (docs/17 row 226, AGENTS rule
+ * 1: a refusal is LOUD, never a silent drop). ONE composer, because the seam
+ * that decides the refusal is not always the surface that reports it — the run
+ * engine writes its own step notice and toast, the entity batch records a
+ * per-entity toast, and the module/reader paths toast their own headline — and
+ * three hand-written sentences for one fact drift.
+ */
+export function aliasCollisionSentence(collision: AliasCollision): string {
+  return `The name «${collision.name}» already answers for another artifact, «${collision.artifactName}» — it was NOT attached as an alias.`;
 }

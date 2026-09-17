@@ -2,7 +2,13 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { addArtifactAliases, createArtifact, getAnyArtifact, listRevisions } from '@/db/artifactRepo';
+import {
+  addArtifactAliases,
+  createArtifact,
+  foreignAliasNames,
+  getAnyArtifact,
+  listRevisions,
+} from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { newId } from '@/domain';
 import { clearDatabase, expectNotFound } from './helpers';
@@ -15,6 +21,11 @@ import { clearDatabase, expectNotFound } from './helpers';
  * callers depend on — one revision per real addition, and NOTHING AT ALL when
  * the pool already answers (no revision, no `updatedAt` move), which is what
  * lets a surface ask twice and write once.
+ *
+ * Since docs/17 row 226 it also carries the FOREIGN-NAME GUARD: a name another
+ * artifact already answers is refused and REPORTED (`refused`), because the
+ * pool is what `[[wiki links]]` resolve against — the owner's report was one
+ * NPC's row gaining "also known as" a completely different NPC's name.
  */
 async function seedNpc(aliases: string[] = []) {
   const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
@@ -34,8 +45,9 @@ describe('artifactRepo.addArtifactAliases', () => {
     const npc = await seedNpc(['Missing Person ']);
     const before = await listRevisions(npc.id);
 
-    const updated = await addArtifactAliases(npc.id, ['Sentry']);
+    const { artifact: updated, refused } = await addArtifactAliases(npc.id, ['Sentry']);
 
+    expect(refused).toEqual([]);
     expect(updated?.aliases).toEqual(['Missing Person ', 'Sentry']);
     expect(updated?.currentRevision).toBe(npc.currentRevision + 1);
     expect((await listRevisions(npc.id)).length).toBe(before.length + 1);
@@ -43,7 +55,10 @@ describe('artifactRepo.addArtifactAliases', () => {
 
   it('names the LAST writer of the row (the revision meta the callers pass)', async () => {
     const npc = await seedNpc();
-    const updated = await addArtifactAliases(npc.id, ['Sentry'], { source: 'persona', runId: null });
+    const { artifact: updated } = await addArtifactAliases(npc.id, ['Sentry'], {
+      source: 'persona',
+      runId: null,
+    });
     const revisions = await listRevisions(npc.id);
     const latest = revisions.find((row) => row.revision === updated?.currentRevision);
     expect(latest?.source).toBe('persona');
@@ -56,10 +71,10 @@ describe('artifactRepo.addArtifactAliases', () => {
 
     // The `"Kael "` divergence, at the write path: `Missing Person` is already
     // answered by the stored `"Missing Person "`.
-    expect(await addArtifactAliases(npc.id, ['missing person'])).toBeNull();
-    expect(await addArtifactAliases(npc.id, ['  Missing Person  '])).toBeNull();
+    expect((await addArtifactAliases(npc.id, ['missing person'])).artifact).toBeNull();
+    expect((await addArtifactAliases(npc.id, ['  Missing Person  '])).artifact).toBeNull();
     // …and the artifact's own name is not an alias either.
-    expect(await addArtifactAliases(npc.id, ['Warden Bellamy'])).toBeNull();
+    expect((await addArtifactAliases(npc.id, ['Warden Bellamy'])).artifact).toBeNull();
 
     const after = await getAnyArtifact(npc.id);
     expect(after?.aliases).toEqual(['Missing Person ']);
@@ -70,9 +85,9 @@ describe('artifactRepo.addArtifactAliases', () => {
 
   it('is idempotent across two calls (the second is the no-op)', async () => {
     const npc = await seedNpc();
-    const first = await addArtifactAliases(npc.id, ['Kael']);
+    const { artifact: first } = await addArtifactAliases(npc.id, ['Kael']);
     expect(first?.aliases).toEqual(['Kael']);
-    expect(await addArtifactAliases(npc.id, ['KAEL'])).toBeNull();
+    expect((await addArtifactAliases(npc.id, ['KAEL'])).artifact).toBeNull();
     expect((await getAnyArtifact(npc.id))?.currentRevision).toBe(first?.currentRevision);
   });
 
@@ -84,8 +99,8 @@ describe('artifactRepo.addArtifactAliases', () => {
     ]);
     // Both writes landed: each call reads the row INSIDE its own transaction,
     // so neither caller's snapshot is written back over the other's name.
-    expect(left).not.toBeNull();
-    expect(right).not.toBeNull();
+    expect(left.artifact).not.toBeNull();
+    expect(right.artifact).not.toBeNull();
     const after = await getAnyArtifact(npc.id);
     expect(after?.aliases).toHaveLength(2);
     expect(new Set(after?.aliases ?? [])).toEqual(new Set(['Kael', 'Bram']));
@@ -95,5 +110,95 @@ describe('artifactRepo.addArtifactAliases', () => {
     // A row that is not there is an error, never a `null` (which means "nothing
     // to write"): the callers treat `null` as success.
     await expectNotFound(addArtifactAliases(newId(), ['Ghost']));
+  });
+});
+
+/**
+ * THE FOREIGN-NAME GUARD (docs/17 row 226): a name that already ANSWERS for a
+ * different artifact is not attached, comes back in `refused` so the caller can
+ * speak it, and leaves the requested row byte-untouched.
+ */
+describe('artifactRepo.addArtifactAliases — the foreign-name guard', () => {
+  beforeEach(clearDatabase);
+
+  async function seedPair(): Promise<{
+    hilde: Awaited<ReturnType<typeof createArtifact>>;
+    fennwick: Awaited<ReturnType<typeof createArtifact>>;
+  }> {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const hilde = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Hilde Marben' });
+    const fennwick = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Fennwick Morsgrimm',
+      aliases: ['Fenn'],
+    });
+    return { hilde, fennwick };
+  }
+
+  it('refuses another artifact NAME, reports the owner, and writes nothing at all', async () => {
+    const { hilde, fennwick } = await seedPair();
+    const revisionsBefore = (await listRevisions(hilde.id)).length;
+
+    const outcome = await addArtifactAliases(hilde.id, ['Fennwick Morsgrimm']);
+
+    expect(outcome.artifact).toBeNull();
+    expect(outcome.refused).toEqual([
+      {
+        name: 'Fennwick Morsgrimm',
+        artifactId: fennwick.id,
+        artifactName: 'Fennwick Morsgrimm',
+      },
+    ]);
+    const after = await getAnyArtifact(hilde.id);
+    expect(after?.aliases).toEqual([]);
+    expect(after?.currentRevision).toBe(hilde.currentRevision);
+    expect((await listRevisions(hilde.id)).length).toBe(revisionsBefore);
+    // …and the artifact that owns the name is untouched.
+    const owner = await getAnyArtifact(fennwick.id);
+    expect(owner?.aliases).toEqual(['Fenn']);
+    expect(owner?.currentRevision).toBe(fennwick.currentRevision);
+  });
+
+  it('refuses a name that is another artifact ALIAS too, and attaches the rest of the batch', async () => {
+    const { hilde, fennwick } = await seedPair();
+
+    const outcome = await addArtifactAliases(hilde.id, ['Fenn', 'Hilde the Elder']);
+
+    expect(outcome.refused).toEqual([
+      { name: 'Fenn', artifactId: fennwick.id, artifactName: 'Fennwick Morsgrimm' },
+    ]);
+    // The accepted half is stored; the refused half is not.
+    expect(outcome.artifact?.aliases).toEqual(['Hilde the Elder']);
+  });
+
+  it('a name NOTHING else answers still attaches exactly as before (the guard is not vacuous)', async () => {
+    const { hilde } = await seedPair();
+    const outcome = await addArtifactAliases(hilde.id, ['Hilde Ashbound']);
+    expect(outcome.refused).toEqual([]);
+    expect(outcome.artifact?.aliases).toEqual(['Hilde Ashbound']);
+  });
+
+  it('does NOT collide on a SUBSTRING — only the ONE comparable name answers (precision)', async () => {
+    const { hilde } = await seedPair();
+    // `Fennwick` is a prefix of the OTHER artifact's name and `Hilde` a prefix
+    // of the target's own; neither is a name or alias anything answers, so the
+    // guard — which asks the SAME question `resolveWikiLink` asks — must not
+    // refuse them. This is what separates the guard from a substring match, and
+    // it is the arm-D injection's red.
+    const outcome = await addArtifactAliases(hilde.id, ['Fennwick', 'Hilde']);
+    expect(outcome.refused).toEqual([]);
+    expect(outcome.artifact?.aliases).toEqual(['Fennwick', 'Hilde']);
+  });
+
+  it('names the guard directly: the SAME lookup every direct alias writer calls', async () => {
+    const { hilde, fennwick } = await seedPair();
+    expect(await foreignAliasNames(hilde.id, ['Fennwick Morsgrimm', 'Hilde Marben', 'Nobody'])).toEqual([
+      {
+        name: 'Fennwick Morsgrimm',
+        artifactId: fennwick.id,
+        artifactName: 'Fennwick Morsgrimm',
+      },
+    ]);
   });
 });

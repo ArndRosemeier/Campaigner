@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { Campaign, EntityKind, Id } from '@/domain';
-import { moduleCreationPool, sameAliasName } from '@/domain';
+import { moduleCreationPool, aliasCollisionSentence, sameAliasName } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -177,8 +177,19 @@ export function StubPopover({
       // rule of `domain/artifactAlias`: trimmed, case-insensitive, never a
       // duplicate, never the artifact's own name, and NO write at all when the
       // pool already answers, which is the "needsAlias" guard this call
-      // replaces).
-      await artifactRepo.addArtifactAliases(artifact.id, [alias]);
+      // replaces). Since docs/17 row 226 a name ANOTHER artifact answers is
+      // refused instead of stored, and the refusal is spoken here — the alias
+      // would otherwise resolve the link to the wrong row (AGENTS rule 1).
+      const { refused } = await artifactRepo.addArtifactAliases(artifact.id, [alias]);
+      if (refused.length > 0) {
+        for (const collision of refused) {
+          toastError(
+            'A name belongs to another artifact — not attached as an alias',
+            new Error(aliasCollisionSentence(collision)),
+          );
+        }
+        return;
+      }
       // LINKS hook: this module just referenced another scope's artifact by
       // alias-linking — a second-module use promotes it to shared campaign
       // ownership (no-op when already shared or own-module).

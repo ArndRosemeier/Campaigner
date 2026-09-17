@@ -31,7 +31,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AnyArtifact, Campaign, Id, Module, ModulePart } from '@/domain';
-import { MODULE_SIZE_LABELS, entityKindFor, moduleDocumentText, moduleTagFor } from '@/domain';
+import { MODULE_SIZE_LABELS, aliasCollisionSentence, entityKindFor, moduleDocumentText, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
@@ -283,7 +283,19 @@ export function ModuleReaderPage(): JSX.Element {
       // existing alias spelled `"Kael "` no longer gets a duplicate `"Kael"`
       // appended here while `entity-batch.alignEntityName` skipped it — the two
       // surfaces now agree, and a pool that already answers writes nothing.
-      await artifactRepo.addArtifactAliases(artifact.id, [name]);
+      // Since docs/17 row 226 it also refuses a name ANOTHER artifact answers
+      // and hands the refusal back: the linked name would resolve to the wrong
+      // row, so the success line must not claim it resolved (AGENTS rule 1).
+      const { refused } = await artifactRepo.addArtifactAliases(artifact.id, [name]);
+      if (refused.length > 0) {
+        for (const collision of refused) {
+          toastError(
+            'A name belongs to another artifact — not attached as an alias',
+            new Error(aliasCollisionSentence(collision)),
+          );
+        }
+        return;
+      }
       toastSuccess(`“${name}” now resolves to ${artifact.name}`);
     } catch (error) {
       toastError('Could not use the existing entity', error);

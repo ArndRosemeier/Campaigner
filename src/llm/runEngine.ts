@@ -42,6 +42,8 @@ import {
   // The ONE alias merge rule (docs/17 row 121): the three in-place writes below
   // read it directly because their alias rides a combined content patch.
   mergeAliasNames,
+  // The ONE sentence a refused foreign alias is spoken with (docs/17 row 226).
+  aliasCollisionSentence,
   comparableName,
   sameAliasName,
   abilityScoreFromModifier,
@@ -63,6 +65,7 @@ import {
 import {
   attachImagesToArtifact,
   createArtifact,
+  foreignAliasNames,
   getArtifact,
   getAnyArtifact,
   listArtifactsByCampaign,
@@ -188,6 +191,7 @@ import {
 import {
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   SCHEMA_REPAIR_LEAD_IN,
+  entityNameVerbatimSentence,
 } from '@/llm/promptScaffolding';
 import {
   formatMobSpellCasterClause,
@@ -257,6 +261,11 @@ const storedModuleGroundingSchema = z.object({
   // parses to `undefined` and behaves exactly as it did — the compatibility
   // promise a resume depends on.
   entityLevelHint: z.number().int().min(1).max(20).optional(),
+  // The target artifact's OWN name (docs/17 row 226), additive and optional:
+  // the draft states it verbatim so the model answers as the artifact it is
+  // regenerating. A grounding stored before this field parses to `undefined`
+  // and renders exactly as it did — the same compatibility promise as above.
+  targetName: z.string().optional(),
 });
 
 /** The persisted retrieve-step output the draft/statblock steps re-consume
@@ -297,6 +306,25 @@ export interface TargetModuleGrounding {
    * campaign/global-scoped; `module-missing` — the artifact claims a module
    * whose row is gone (kept artifact of a deleted module). */
   status: 'ok' | 'not-module-owned' | 'module-missing';
+  /**
+   * The target artifact's OWN name, read from the row the engine already loads
+   * for this grounding (docs/17 row 226). Present on EVERY status — the name
+   * anchor is the refill's identity statement and must reach a campaign-scoped
+   * target too, where there is no module to ground in. The draft renders it
+   * through the ONE verbatim-name sentence
+   * (`promptScaffolding.entityNameVerbatimSentence`), so the engine states the
+   * target's identity exactly as the entity lane's brief always has.
+   *
+   * WHY HERE, ONE SEAM (the same argument as `entityLevelHint` below): the
+   * artifact editor's "Regenerate with AI" hands the panel a GENERIC, name-less
+   * brief, and the panel's target selector can be driven by hand as well — so a
+   * fact attached at one `startRun` call site is a fact the next path loses.
+   * Reading it off the target row the engine ALREADY loads covers every
+   * targeted generate run, and the persisted field keeps pause/resume
+   * byte-identical. Additive and optional: an older stored grounding renders no
+   * anchor, exactly as before.
+   */
+  targetName?: string | undefined;
   /** The owning module's id (module-owned targets only). */
   moduleId?: Id | undefined;
   /** The owning module's title (`ok` only). */
@@ -3064,16 +3092,22 @@ export class RunEngine {
     if (target === undefined) {
       throw new Error(`The artifact to refill (${input.targetArtifactId}) no longer exists`);
     }
+    // The target's own name rides every arm (docs/17 row 226): it is the
+    // identity the draft must state, and it exists whether or not a module
+    // does. Read HERE so every targeted generate run gets it from the ONE row
+    // the engine already loads.
+    const targetName = target.name;
     if (target.moduleId === null) {
-      return { status: 'not-module-owned' };
+      return { status: 'not-module-owned', targetName };
     }
     const module = await getModule(target.moduleId);
     if (module === undefined) {
-      return { status: 'module-missing', moduleId: target.moduleId };
+      return { status: 'module-missing', moduleId: target.moduleId, targetName };
     }
     const recordedLevel = entityLevelHintFor(module.entityKinds, target.name);
     return {
       status: 'ok',
+      targetName,
       moduleId: module.id,
       moduleTitle: module.title,
       contextParagraphs: surroundingParagraphs(moduleDocumentText(module), target.name),
@@ -3270,6 +3304,25 @@ export class RunEngine {
     // sources the automatic module generation grounds its briefs in. Every
     // inapplicable state names itself (moduleGroundingSection).
     const moduleSection = moduleGroundingSection(context.moduleGrounding);
+    // THE NAME ANCHOR (docs/17 row 226): an in-place refill states the target
+    // artifact's identity VERBATIM, so the model answers as the artifact it is
+    // regenerating instead of as a co-mentioned entity the grounding also fed
+    // it. It reuses the entity lane's ONE sentence
+    // (`promptScaffolding.entityNameVerbatimSentence` — the same function
+    // `buildEntityBrief` renders), so there is one wording, and the string is
+    // already a registered scaffolding marker: a model that echoes the rule
+    // back is caught by the existing echo detector.
+    //
+    // It is read off the STORED grounding, exactly like the module section, so
+    // pause/resume and the repair turn render the same bytes. It is skipped
+    // when the brief ALREADY carries the sentence (the entity/change lane's
+    // `buildEntityBrief` does): one prompt never states the rule twice.
+    const nameAnchor =
+      context.moduleGrounding?.targetName === undefined
+        ? null
+        : entityNameVerbatimSentence(context.moduleGrounding.targetName);
+    const nameAnchorSection =
+      nameAnchor === null || input.brief.includes(nameAnchor) ? null : nameAnchor;
     // The ONE spell library this draft offers and validates against (docs/17
     // row 184). Encounter drafts author INLINE monster stat blocks, so they are
     // the other AI-authored mob path; every other kind's draft authors no block
@@ -3296,6 +3349,10 @@ export class RunEngine {
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
+      // THE NAME ANCHOR (docs/17 row 226), immediately after the Task line it
+      // qualifies: the artifact being regenerated keeps its name, and the
+      // reply's `name` field must say so.
+      nameAnchorSection,
       // The assertion rule (docs/11, docs/17 row 89): the scene text the brief
       // carries is the TRUTH about this fight — fixed in what it states, free
       // where it states nothing. Encounter runs only, and null everywhere else
@@ -6578,13 +6635,26 @@ export class RunEngine {
       // through `artifactRepo.addArtifactAliases`.
       const renamed = input.encounterRedesignName === true &&
         !sameAliasName(modelAlias, target.name);
+      // THE FOREIGN-NAME GUARD (docs/17 row 226), on the one arm that adds a
+      // name the MODEL returned: a name that already answers for another
+      // artifact is not attached, rides `aliasDrift` into this step's notice
+      // and is toasted below. The renamed arm adds the target's OWN former
+      // name (a rename must keep its own old name answerable), so the guard's
+      // question — "does this answer for a DIFFERENT artifact?" — belongs to
+      // the seam, not this arm.
+      const refusedModelName = renamed ? [] : await foreignAliasNames(target.id, [modelAlias]);
       const aliases = renamed
         ? mergeAliasNames(
             target.aliases.filter((alias) => !sameAliasName(alias, modelAlias)),
             [target.name],
             modelAlias,
           )
-        : mergeAliasNames(target.aliases, [modelAlias], target.name);
+        : mergeAliasNames(
+            target.aliases,
+            refusedModelName.length === 0 ? [modelAlias] : [],
+            target.name,
+          );
+      const aliasDrift = refusedModelName.map(aliasCollisionSentence).join(' ');
       // In-place fill reconciliation (docs/11 D12; packing amended by the
       // fill-grade arc): `data.monsters` is the NEW roster while the
       // target's layout stays byte-identical — without re-partitioning,
@@ -6779,9 +6849,15 @@ export class RunEngine {
         withNotice(
           { artifactId: target.id },
           null,
-          budgetAdvisory === '' ? null : budgetAdvisory,
+          [budgetAdvisory, aliasDrift].filter((part) => part !== '').join(' ') || null,
         ),
       );
+      if (aliasDrift !== '') {
+        toastError(
+          'A returned name belongs to another artifact — not attached as an alias',
+          new Error(aliasDrift),
+        );
+      }
       await updateRun(runId, { resultArtifactId: target.id });
       return { step, artifactId: target.id };
       }
@@ -6794,10 +6870,24 @@ export class RunEngine {
       // generation rides the retrieve step (targetModuleGrounding).
       if (input.persona.mode === 'generate' && target.kind === kind) {
         const modelAlias = draftName.trim();
-        // The model's invented name joins the pool through the ONE alias merge
-        // rule (trimmed, case-insensitive, never a duplicate, never equal to the
-        // row's own name) and rides the content patch below — one revision.
-        const aliases = mergeAliasNames(target.aliases, [modelAlias], target.name);
+        // THE FOREIGN-NAME GUARD (docs/17 row 226 — the owner's report): the
+        // model's returned name joins the pool through the ONE alias merge rule
+        // (trimmed, case-insensitive, never a duplicate, never equal to the
+        // row's own name) ONLY when no other artifact already answers it. The
+        // co-mention grounding deliberately feeds a neighbouring entity's prose
+        // into this prompt, so a model with no name anchor can answer as that
+        // neighbour — and before this guard its name was stored on THIS row as
+        // "also known as", which is exactly the alias line the owner saw. The
+        // refusal is LOUD (the step notice below carries the sentence; the
+        // toast surfaces it immediately), never a silent drop. The name anchor
+        // in the draft prompt is the cure; this is the safety net.
+        const refusedModelName = await foreignAliasNames(target.id, [modelAlias]);
+        const aliases = mergeAliasNames(
+          target.aliases,
+          refusedModelName.length === 0 ? [modelAlias] : [],
+          target.name,
+        );
+        const aliasDrift = refusedModelName.map(aliasCollisionSentence).join(' ');
         await updateArtifact(
           target.id,
           {
@@ -6814,7 +6904,16 @@ export class RunEngine {
           },
           { source: 'persona', runId },
         );
-        const step = this.finishStep(steps[stepIndex], { artifactId: target.id });
+        const step = this.finishStep(
+          steps[stepIndex],
+          withNotice({ artifactId: target.id }, null, aliasDrift === '' ? null : aliasDrift),
+        );
+        if (aliasDrift !== '') {
+          toastError(
+            'A returned name belongs to another artifact — not attached as an alias',
+            new Error(aliasDrift),
+          );
+        }
         await updateRun(runId, { resultArtifactId: target.id });
         return { step, artifactId: target.id };
       }

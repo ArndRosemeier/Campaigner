@@ -276,6 +276,25 @@ schema-validated — so an empty body refuses to create or overwrite: an
 in-place refill that comes back empty keeps the existing content and fails
 the run loudly. Never materialize empty text.
 
+**The refill states the target's IDENTITY, and a returned name that belongs to
+another artifact is refused (owner report, docs/17 row 226).** An in-place
+refill (`targetArtifactId`) states the target's own name in its draft prompt,
+through the entity lane's ONE composer
+(`promptScaffolding.entityNameVerbatimSentence`), read off the target row the
+engine already loads (`targetModuleGrounding.targetName`) and placed right
+after the `Task:` line — so the model is told WHICH artifact it is
+regenerating even though the panel's brief is generic. The anchor is skipped
+when the brief already carries the sentence (`buildEntityBrief`'s callers).
+Because the campaign grounding deliberately injects a co-mentioned entity's
+module prose, a model with no anchor can answer as that neighbour; the anchor
+is the cure, and it is an INSTRUCTION — a model can ignore it. The safety net
+is the ALIAS GUARD: `artifactRepo.foreignAliasNames` is the ONE lookup for
+"does this name already answer for a different artifact?", every alias write
+asks it, and a refused name is never stored but IS spoken — the run's finalize
+notice and a `toastError`, through `domain/artifactAlias.aliasCollisionSentence`.
+The stored row keeps its name and gets the reply's content; the foreign name
+does not become an "also known as" line, and the drift is on screen.
+
 **Escape-debris hygiene (detection backstop for the UTF-8 contract).** The
 generation-language directive (`src/llm/language.ts`) requires non-ASCII
 written directly as UTF-8 (prevention); model prose still intermittently

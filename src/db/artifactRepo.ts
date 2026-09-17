@@ -23,6 +23,8 @@ import {
   globalArtifactKindSchema,
   globalArtifactSchema,
   mergeAliasNames,
+  sameAliasName,
+  type AliasCollision,
 } from '@/domain';
 import type { Table } from 'dexie';
 
@@ -181,35 +183,124 @@ export async function updateArtifact(
 }
 
 /**
+ * THE foreign-name guard: the members of `names` that already ANSWER for a
+ * DIFFERENT artifact in the same resolution pool (docs/17 row 226).
+ *
+ * THE DEFECT IT CLOSES. The in-place refill turned the name a model RETURNED
+ * into an alias of the row it was regenerating (`mergeAliasNames`), and no
+ * caller asked whether that name already answered for somebody else — so
+ * regenerating «Hilde Marben» with a draft whose `name` was the co-mentioned
+ * «Fennwick Morsgrimm» stored "Also known as Fennwick Morsgrimm" on Hilde,
+ * which is the owner's report verbatim. The alias pool is what wiki-links
+ * resolve against, so a second artifact answering one name makes it ambiguous
+ * by construction.
+ *
+ * WHY IT LIVES HERE AND NOT IN `mergeAliasNames`: the merge is PURE, and
+ * "does another artifact answer this name?" needs the campaign's other rows.
+ * The repository owns that read. `mergeAliasNames` keeps its own question
+ * (self-name, duplicates) exactly as it was.
+ *
+ * THE POOL is the one `lib/wikilinks.resolveWikiLink` answers from: the
+ * target's own campaign plus the global library, never another campaign's
+ * rows (a name in someone else's campaign is not a collision). The target
+ * itself is excluded — its own name and pool were `mergeAliasNames`'s
+ * business — and BOTH of another artifact's fields are checked, because an
+ * alias answers a link exactly as a name does.
+ *
+ * Exported because callers whose alias rides a COMBINED content patch (the run
+ * engine's in-place writes, `entity-batch.alignEntityName`) must apply the
+ * SAME guard without a second write — see `addArtifactAliases`'s doc for why
+ * they cannot route through it.
+ */
+export async function foreignAliasNames(
+  id: Id,
+  names: readonly string[],
+): Promise<AliasCollision[]> {
+  if (names.length === 0) return [];
+  const current = await db.artifacts.get(id);
+  if (current === undefined) throw new NotFoundError('Artifact', id);
+  const others: AnyArtifact[] = [
+    ...(current.campaignId === null ? [] : await listArtifactsByCampaign(current.campaignId)),
+    ...(await listGlobalArtifacts()),
+  ].filter((candidate) => candidate.id !== id);
+  const collisions: AliasCollision[] = [];
+  for (const name of names) {
+    const owner = others.find(
+      (candidate) =>
+        sameAliasName(candidate.name, name) ||
+        candidate.aliases.some((alias) => sameAliasName(alias, name)),
+    );
+    if (owner !== undefined) {
+      collisions.push({ name, artifactId: owner.id, artifactName: owner.name });
+    }
+  }
+  return collisions;
+}
+
+/**
+ * What one alias write did: the written row (or `null` when NOTHING was
+ * written) plus every candidate that was REFUSED as another artifact's name.
+ *
+ * Both halves are returned rather than only the row, because a silent refusal
+ * is exactly what AGENTS rule 1 forbids: the caller has to be able to name
+ * what did not happen. `refused` is empty on the ordinary path, so a caller
+ * that ignores it is not lying about anything it did.
+ */
+export interface AliasWriteOutcome {
+  /** The written row, or `null` when nothing was added (the pool already
+   * answered, or every requested name was refused as another artifact's). */
+  artifact: AnyArtifact | null;
+  /** The names NOT attached because another artifact already answers them. */
+  refused: AliasCollision[];
+}
+
+/**
  * Add names to an artifact's alias pool — the ONE write path for the alias
  * merge (docs/17 row 121, docs/18 §2.1). The rule itself is
  * `domain/artifactAlias.mergeAliasNames` (trimmed, case-insensitive, never a
  * duplicate, never a name equal to the artifact's own name); this function owns
- * PERSISTING its answer.
+ * PERSISTING its answer, and since docs/17 row 226 it also applies the
+ * foreign-name guard (`foreignAliasNames`) — a name another artifact already
+ * answers is NOT attached and comes back in `refused` for the caller to speak.
  *
  * The row is read INSIDE this transaction — the shape of the neighbouring row
  * writers (`stampModuleOwnership`) — so a caller's stale snapshot can never
  * clobber an alias another writer added in between, and the merged pool is one
- * revisioned save with one `updatedAt`. Returns the written row, or `null` when
- * the pool already answered: a `null` means NOTHING WAS WRITTEN, not a failure
- * (the row is guaranteed to exist — a missing row throws `NotFoundError`).
+ * revisioned save with one `updatedAt`. Returns `{ artifact: null }` when the
+ * pool already answered everything: a `null` means NOTHING WAS WRITTEN, not a
+ * failure (the row is guaranteed to exist — a missing row throws
+ * `NotFoundError`).
  *
  * Callers that must land the alias in the SAME revision as other fields — the
  * run engine's combined content patches, `entity-batch.alignEntityName`'s
  * rename — call `mergeAliasNames` directly and put the result in their own
  * patch: a second write there would split one save into two revisions and
- * leave the alias on the row when the content write fails.
+ * leave the alias on the row when the content write fails. They apply the SAME
+ * guard by calling `foreignAliasNames` themselves before the merge, so the
+ * rule is one implementation with two write shapes, never two rules.
  */
 export async function addArtifactAliases(
   id: Id,
   names: readonly string[],
   meta: RevisionMeta = USER_SAVE,
-): Promise<AnyArtifact | null> {
+): Promise<AliasWriteOutcome> {
   return db.transaction('rw', db.artifacts, db.revisions, async () => {
     const current = await db.artifacts.get(id);
     if (current === undefined) throw new NotFoundError('Artifact', id);
-    const aliases = mergeAliasNames(current.aliases, names, current.name);
-    if (aliases === current.aliases) return null;
+    const merged = mergeAliasNames(current.aliases, names, current.name);
+    if (merged === current.aliases) return { artifact: null, refused: [] };
+    // The guard runs on what the MERGE wanted to add, so an already-answered
+    // name (which writes nothing) is never reported as a refusal of this call.
+    const additions = merged.slice(current.aliases.length);
+    const refused = await foreignAliasNames(id, additions);
+    const accepted = additions.filter(
+      (name) => !refused.some((collision) => sameAliasName(collision.name, name)),
+    );
+    const aliases =
+      accepted.length === additions.length
+        ? merged
+        : mergeAliasNames(current.aliases, accepted, current.name);
+    if (aliases === current.aliases) return { artifact: null, refused };
     const next = anyArtifactSchema.parse({
       ...current,
       aliases,
@@ -217,7 +308,7 @@ export async function addArtifactAliases(
       updatedAt: Date.now(),
     });
     await writeRevision(next, meta);
-    return next;
+    return { artifact: next, refused };
   });
 }
 

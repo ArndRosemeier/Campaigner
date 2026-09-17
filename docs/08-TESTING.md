@@ -556,6 +556,7 @@ test) · ❌ gap.
 | Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
 | **Structured text renders as PARAGRAPHS in the app AND the PDF**: a blank line is a paragraph break and a single newline a line break, both consumers drawing the ONE rule's own blocks, on a stored row no migration touched (docs/17 row 146) | `text-blocks.test` (12 pins, NEW) | ✅ |
 | **The single-artifact GM export's own stat-block prose draws the ONE rule's blocks too**: a multi-paragraph appearance/trait body prints as separate pdfmake nodes, a single-block value is byte-identical to the pre-fold node, and the other label/value rows are untouched (docs/17 row 220) | `text-blocks.test` (+4 pins), `pdfExport.test` (10, unchanged) | ✅ |
+| **An in-place refill names its target and refuses a returned name that belongs to another artifact** (docs/17 row 226): the draft prompt carries the entity lane's verbatim-name sentence for the TARGET, a mock reply answering as a co-mentioned neighbour does NOT become an alias, the neighbour's row is untouched, and the refusal is loud on the run notice and a toast | `runEngine-refill.test` (NEW reported-case pin), `artifactRepo-alias.test` (5 NEW guard pins) | ✅ |
 | Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: images, cover/lightbox, encounter generator handoff | `images-ui.test` | ✅ |
 | Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
@@ -2947,6 +2948,39 @@ differs from the baseline and every injection reds a NAMED pin.**
 | **B — the grounding read removed** (`const recordedLevel = context.moduleGrounding?.entityLevelHint` → `undefined`) | runEngine `5b68a7c5…` → `6a28a148692f135d327883eb65facc80b8294e1a` → `5b68a7c5…` | **RED 1**: `a TARGETED refill of a module-owned npc resolves the recorded level …` — the prompt loses `at level 7` and the rank-6 spell is offered (the cap went null) |
 | **C — the fallback allowed to read the party line again** (`withoutPartyLevelLines(input.brief)` → `input.brief`) | runEngine `5b68a7c5…` → `5af0a2034926458ec9d36825437e698e767048e0` → `5b68a7c5…` | **RED 2**: the party-line pin (`at level 13, grounded` appears) and the source scan (the exclusion call is gone) |
 | **D — the loud-absence notice removed** (`moduleLevelHintAbsenceNotice(…)` → `null`) | runEngine `5b68a7c5…` → `9ed70f3ab505d50e5bb6136c20f094b0e2e8c379` → `5b68a7c5…` | **RED 2**: the loud-absence pin and the stored-grounding compatibility pin (which asserts the absence is now LOUD on a pre-206 store) |
+
+### The refill names its target, and a foreign returned name is refused (docs/17 row 226, docs/18 §2.1/§2.2)
+
+The owner regenerated «Hilde Marben» from the artifact editor and got *"this NPC
+is also known as \"Fennwick Morsgrimm\""* — a completely different NPC — with the
+content rewritten to fit Fennwick. The measured mechanism is one chain: the
+refill's brief was NAME-LESS, the deliberate co-mention grounding injected the
+neighbour's module prose, the model answered `name: "Fennwick Morsgrimm"`, and
+`runFinalize` turned that returned name into an alias of the TARGET row with no
+cross-artifact check. The cure is the entity lane's own mechanism — the target's
+name stated VERBATIM in the prompt, through the ONE composer
+`promptScaffolding.entityNameVerbatimSentence`, read off the target row the
+engine already loads (`targetModuleGrounding.targetName`, the row-206 shape) —
+plus a safety net at ONE repository seam: `artifactRepo.foreignAliasNames` is
+the ONE lookup for "does this name already answer for a different artifact?",
+every alias write asks it, and a refused name is never stored but IS spoken.
+
+| fact pinned | where |
+|---|---|
+| **THE REPORTED CASE, end to end**: two NPCs co-mentioned in one module paragraph; the target refilled with the panel's generic brief; the mocked reply answers as the neighbour → the draft prompt carries `entityNameVerbatimSentence('Hilde Marben')` and the registered verbatim-name marker, the grounding really injected BOTH blocks (`expansionExcerpts`), the stored row keeps its name while `summary`/`body`/`data` are the reply's, `aliases` does NOT contain the neighbour, the neighbour's row is byte-untouched, and the `finalize` notice AND a toast both say it was NOT attached | `tests/llm/runEngine-refill.test.ts` (NEW `describe`, 1 pin) |
+| **The non-foreign arm is UNCHANGED** (the row's pre-existing pin): a model name that is a VARIANT of the target still becomes an alias, exactly as before — the old assertion is kept byte-for-byte, only its comment now says which arm it pins | `tests/llm/runEngine-refill.test.ts` (the existing first pin) |
+| **The repository guard**: another artifact's NAME and another artifact's ALIAS are both refused and reported (`refused`), the requested row writes NOTHING (no revision, no `updatedAt` move), the owner row is byte-untouched, a mixed batch attaches its accepted half, a name nothing else answers still attaches (non-vacuity), and the exported lookup answers directly | `tests/db/artifactRepo-alias.test.ts` (5 NEW pins + the outcome shape on the 6 pre-existing ones) |
+| **The outcome shape**: `addArtifactAliases` returns `AliasWriteOutcome { artifact, refused }`; a caller that ignores `refused` cannot be silently wrong because the row was not written either | `tests/db/artifactRepo-alias.test.ts` |
+
+**The brief's own characterization of the old pin is corrected here**: it does
+NOT "pin the defect" — it pins a legitimate variant-name alias and never
+exercised the discriminating input (another artifact's name). It is therefore
+SPLIT, not deleted: the kept arm + the new foreign arm.
+
+The REVERT-PROVEN arms (baseline, the anchor removed, the guard removed, and the
+guard made to compare by SUBSTRING) are run against the committed tree, each
+arm's `git hash-object` printed, each restored from an out-of-tree copy; the
+measured table is recorded in this section's follow-up docs commit.
 
 ### Prompt scaffolding echoed back into a document (docs/17 row 142, docs/18 §2.2/§4)
 

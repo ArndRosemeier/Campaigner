@@ -1,5 +1,6 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import {
+  aliasCollisionSentence,
   carriedTextOrigin,
   comparableName,
   createModule,
@@ -2421,7 +2422,17 @@ async function applyNormalizationVerdict(
   // added: the helper returns `null` on a pool that already answered, where the
   // hand-rolled version here wrote a revision that changed nothing.
   for (const [artifactId, variants] of aliasAdditions) {
-    await addArtifactAliases(artifactId, variants);
+    // The seam both refuses a variant name another artifact already answers
+    // (docs/17 row 226) and hands the refusal back, so it is spoken here — a
+    // link that will not resolve on its own is exactly what the owner must
+    // hear about rather than discover later (AGENTS rule 1).
+    const { refused } = await addArtifactAliases(artifactId, variants);
+    for (const collision of refused) {
+      toastError(
+        'A variant name belongs to another artifact — not attached as an alias',
+        new Error(aliasCollisionSentence(collision)),
+      );
+    }
   }
 
   // CONSENT (fix-01, re-based on AUTHORSHIP by docs/17 row 113): a rewrite is

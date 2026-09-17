@@ -1233,12 +1233,22 @@ whatever it still finds in use.
   prompt, feeds the same text to the campaign-grounding detection, and
   names every inapplicable state in the prompt/run (module row gone,
   campaign-scoped target, no mention of the name) — never a silent drop.
+  **The refill also STATES THE TARGET'S NAME in that prompt** (docs/17 row
+  226): the same grounding carries `targetName` and the draft renders the
+  entity lane's ONE sentence (`promptScaffolding.entityNameVerbatimSentence`)
+  right after the `Task:` line, so a model fed a co-mentioned neighbour's
+  grounded prose is still told which artifact it is regenerating. And the
+  model's returned name becomes an alias ONLY when no OTHER artifact already
+  answers it (`artifactRepo.foreignAliasNames`); a refused name is not stored
+  and is surfaced LOUDLY in the run notice and a toast — the owner's report
+  was Hilde's row gaining "Also known as Fennwick Morsgrimm".
 - **Generate**: runs the persona chain IN PLACE (one step, auto autonomy —
   the same machinery as the batch) with the shared progress bar
   (00-OVERVIEW §binding progress). Brief = link name + the paragraphs
   surrounding its occurrences (cap ~1200 chars) + module premise. On
   finalize the produced artifact is aligned to the exact link name (the
-  model's invented name is kept as an alias) and tagged `module:<title>`;
+  model's invented name is kept as an alias unless another artifact already
+  answers it — docs/17 row 226) and tagged `module:<title>`;
   the chip resolves via the live query. A failed run stays loud: toast +
   the failed row in the Runs tab. (This used to navigate to the workspace
   with a prefilled persona panel — from the reader it was
