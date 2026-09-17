@@ -63,6 +63,25 @@ const nodeTestGlobs = [
 export const DEFAULT_TEST_WORKERS = 2;
 
 /**
+ * The HARD per-worker V8 heap cap, in MiB — the memory half of the bound.
+ *
+ * Owner directive (verbatim): "please make sure that you restrict the mem use to
+ * not more than 4gb or so since you are not the only worker here." It bounds each
+ * worker's V8 heap; it cannot bound OFF-heap memory (pdfjs holds ArrayBuffers),
+ * which is why the gate also runs in CHUNKS under a watchdog (scripts/gate.sh,
+ * AGENTS §Host hygiene 7).
+ *
+ * VITEST 4 READS THIS ONLY AS A TOP-LEVEL `execArgv` (ledger row 229). The
+ * pre-4 `poolOptions.forks/threads.execArgv` spelling is not merely deprecated:
+ * nothing in vitest 4 reads it (the only mention is the `logger.deprecate` that
+ * greets the key), and `poolOptions` is absent from vitest's types — so `tsc -b`,
+ * which DOES typecheck this file (`tsconfig.node.json` includes it), cannot see
+ * the loss either. MEASURED on this box: the spelling below → 1584 MB
+ * `heap_size_limit`; the old one → 4144 MB, i.e. no cap at all.
+ */
+export const TEST_WORKER_HEAP_CAP_MB = 1536;
+
+/**
  * The worker budget for a test run — the ONE bound that actually binds.
  *
  * `maxWorkers` must be set at the root AND in every project: vitest resolves a
@@ -96,6 +115,9 @@ export function testMaxWorkers(): number {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const maxWorkers = testMaxWorkers();
+  // Spelled ONCE, referenced at the root and in every project: the number lives
+  // in TEST_WORKER_HEAP_CAP_MB, never as a literal at a call site.
+  const workerHeapArg = `--max-old-space-size=${String(TEST_WORKER_HEAP_CAP_MB)}`;
   const fromEnv = process.env.CAMPAIGNER_BASE?.trim();
   const base =
     fromEnv && fromEnv.length > 0
@@ -138,11 +160,11 @@ export default defineConfig(({ mode }) => {
       // also runs in CHUNKS under a watchdog (scripts/gate.sh, AGENTS §Host
       // hygiene 7). Together: no single gate run is allowed to approach the
       // box's capacity, and a run that does is killed rather than allowed to
-      // take dsh with it.
-      poolOptions: {
-        forks: { execArgv: ['--max-old-space-size=1536'] },
-        threads: { execArgv: ['--max-old-space-size=1536'] },
-      },
+      // take dsh with it. VITEST 4 READS THIS ONLY AS A TOP-LEVEL `execArgv`
+      // (ledger row 229) — see TEST_WORKER_HEAP_CAP_MB — and it is repeated in
+      // each project for the same reason `maxWorkers` is: a project's own value
+      // is what binds.
+      execArgv: [workerHeapArg],
       testTimeout: 20_000,
       projects: [
         {
@@ -152,6 +174,7 @@ export default defineConfig(({ mode }) => {
             environment: 'node',
             include: nodeTestGlobs,
             maxWorkers,
+            execArgv: [workerHeapArg],
           },
         },
         {
@@ -162,6 +185,7 @@ export default defineConfig(({ mode }) => {
             include: ['tests/**/*.test.{ts,tsx}'],
             exclude: [...configDefaults.exclude, ...nodeTestGlobs],
             maxWorkers,
+            execArgv: [workerHeapArg],
           },
         },
       ],

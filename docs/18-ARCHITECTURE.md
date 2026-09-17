@@ -483,6 +483,22 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 ## 4. Gotchas
 
+- **A vitest config key that vitest does not read is INERT, not deprecated — and
+  the compiler cannot tell you (docs/17 row 229).** Vitest 4 flattened
+  `poolOptions` into top-level options, so the pre-4
+  `test.poolOptions.forks.execArgv` spelling bought ONE `logger.deprecate` line
+  and NO cap: the only mention of the string in the installed runtime is the check
+  that prints that warning
+  (`node_modules/vitest/dist/chunks/coverage.DM_a_rWm.js`), and `poolOptions` is
+  absent from every `.d.ts` — so `tsc -b` accepts it, and `tsconfig.node.json`
+  really does typecheck `vite.config.ts`. MEASURED: top-level `execArgv` → 1584 MB
+  `heap_size_limit`, the dead spelling → 4144 MB. The rule: a BOUND in this config
+  is pinned by measuring the worker's live
+  `v8.getHeapStatistics().heap_size_limit`, never by asserting the option is
+  written — `tests/lib/test-workers.test.ts` carries that probe AND a
+  `process.execArgv` arm, because the gate's own `NODE_OPTIONS=1536` masks the
+  limit arm (1584 MB either way) exactly where the suite runs.
+
 - **Merging test files that share a background puts them in ONE module
   registry — the `--no-isolate` failure mode, inside one file (docs/17 row 176,
   docs/08 §Tests that share one background belong in one file).** Vitest gives

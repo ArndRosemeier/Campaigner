@@ -7898,7 +7898,22 @@ process group (`setsid`). The config bound is unchanged: `vite.config.ts` defaul
 `--maxWorkers=N` cannot raise or lower it (it lands on the root config, which each
 project's own value overrides). `CAMPAIGNER_TEST_WORKERS=<n>` remains the one
 explicit way to raise it for a run that owns the machine, and a mis-set value
-fails loudly rather than silently defaulting. The default test timeout is 20
+fails loudly rather than silently defaulting.
+
+**The MEMORY half of the bound is a top-level `execArgv`, and a live probe pins it
+(docs/17 row 229).** `vite.config.ts` sets
+`execArgv: ['--max-old-space-size=1536']` (`TEST_WORKER_HEAP_CAP_MB`) at the root
+and in each `test.projects` entry. The pre-vitest-4 `poolOptions.forks.execArgv`
+spelling is INERT under vitest 4 — nothing reads it, and it is absent from
+vitest's types, so `tsc -b` (which does typecheck `vite.config.ts`) cannot see its
+loss: measured, the dead spelling left a worker at its 4144 MB default where the
+declared one measures 1584 MB. `tests/lib/test-workers.test.ts` therefore probes
+the LIVE `v8.getHeapStatistics().heap_size_limit` of the worker it runs in AND
+that `process.execArgv` carries the cap — under this gate's own
+`NODE_OPTIONS=--max-old-space-size=1536` the limit comes out capped either way, so
+only the second arm reds there, and only the first reds for a bare run.
+
+The default test timeout is 20
 seconds. `GATE_PARALLEL_CHUNKS=1 bash scripts/gate.sh` forces the gate back to
 sequential.
 

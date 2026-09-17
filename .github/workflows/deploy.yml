@@ -15,8 +15,10 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # No `version` input on purpose: the action reads `packageManager` from
+        # package.json, which is the ONE place the pnpm version is declared.
+        # `allowBuilds` in pnpm-workspace.yaml needs pnpm 11+, so a stale major
+        # pinned here would silently ignore the workspace's build policy.
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
