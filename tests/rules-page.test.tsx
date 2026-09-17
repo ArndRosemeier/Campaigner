@@ -272,11 +272,17 @@ describe('rules screen', () => {
     expect(within(report).getByTestId('pack-import-lanes')).toHaveTextContent(
       '0 spells · 1 stat block · 0 items · 0 sections',
     );
+    // The report names the system the pack went in AS (docs/17 row 209), beside
+    // the lanes and from the adapter's own declaration.
+    expect(within(report).getByTestId('pack-import-system')).toHaveTextContent(
+      'stored as Pathfinder 2e',
+    );
 
-    // The success TOAST carries the same breakdown, through the same seam.
+    // The success TOAST carries the same breakdown, through the same seam, plus
+    // the stored-system line.
     expect(
       await screen.findByText(
-        /Imported “age-of-ashes-goblin” \(0 spells · 1 stat block · 0 items · 0 sections/,
+        /Imported “age-of-ashes-goblin” \(0 spells · 1 stat block · 0 items · 0 sections.*stored as Pathfinder 2e/,
       ),
     ).toBeInTheDocument();
 

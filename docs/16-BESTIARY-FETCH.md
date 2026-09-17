@@ -252,8 +252,12 @@ import" button. Advanced toggle "List all packs in the repo" (on-demand
 trees-API listing; pf2e ~60+ packs incl. every AP bestiary; dnd5e lists its 15
 type folders as pack rows). Inline progress ("Fetching X/Y files…"), then the
 standard import report (imported / skipped / failed counts + expandable failed
-list — with the §1.1 `fetchNote` line naming BOTH refs when the chain fired)
-and the book lands in `/rules` with Pack badge, license and provenance. Errors
+list — with the §1.1 `fetchNote` line naming BOTH refs when the chain fired;
+since docs/17 row 209 the report and the fetch toast also carry row 204's
+per-lane breakdown and the `stored as <system>` line, and a payload that
+disagrees with the source adapter's declared system is refused into that same
+failed list) and the book lands in `/rules` with Pack badge, license and
+provenance. Errors
 via `toastError`; no-network / rate-limit / unknown-pack failures are loud and
 named. Fetching "again" creates a new book (same policy as re-importing a
 PDF).

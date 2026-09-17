@@ -14,7 +14,7 @@ import {
   type PackImportDeps,
   type PackImportProgress,
 } from '@/ingest/packImport';
-import { PACK_ADAPTERS } from '@/ingest/packs/registry';
+import { PACK_ADAPTERS, getPackAdapter } from '@/ingest/packs/registry';
 import type { PackAdapter, PackFileParse } from '@/ingest/packs/types';
 import { sha256Hex } from '@/lib/hash';
 
@@ -471,5 +471,198 @@ describe('importPack item lane (12-BESTIARY-PACKS §13)', () => {
       }),
     ).rejects.toThrow('no valid item entries');
     expect(deps.failed[0]?.message).toContain('crash.json: file-level parse failure');
+  });
+});
+
+// --- System agreement (docs/17 row 209) ---------------------------------------
+// A book's `system` is a CONSTANT per adapter (`createBook({ system:
+// adapter.system })`) while the adapter's OWN payloads carry a system
+// (`StatBlock.system`, `ItemData.system`, `SpellData.system`), and nothing
+// compared the two — so a mis-chosen adapter could silently store a PF2e rules
+// pack as dnd5e, invisible to every PF2e campaign. These pins drive the REAL
+// adapters and the REAL fixtures: a fixture fed to the wrong adapter is refused
+// LOUDLY with the entry and both systems named, a correct import is unchanged
+// and states its system, an entry that makes NO system claim is not a failure,
+// and a partial disagreement imports the rest while naming every refusal.
+
+const CONDITIONS_FIXTURE = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  'fixtures',
+  'packs',
+  'pf2e-conditions',
+  'blinded.json',
+);
+
+/**
+ * The row-209 probes: a REAL adapter's OWN parser under the OTHER declared
+ * system — exactly the "user chose the wrong adapter in the dialog" case, with
+ * no adapter modified and no second fixture set. Registered like the item-lane
+ * probe above and removed after every test.
+ */
+const REAL_PF2E_CREATURE_ADAPTER = getPackAdapter('foundry-pf2e');
+const REAL_DND5E_CREATURE_ADAPTER = getPackAdapter('foundry-dnd5e-srd');
+
+const PF2E_FIXTURE_UNDER_DND5E: PackAdapter = {
+  ...REAL_PF2E_CREATURE_ADAPTER,
+  id: 'test-pf2e-fixture-under-dnd5e',
+  system: 'dnd5e',
+};
+const DND5E_FIXTURE_UNDER_PF2E: PackAdapter = {
+  ...REAL_DND5E_CREATURE_ADAPTER,
+  id: 'test-dnd5e-fixture-under-pf2e',
+  system: 'pathfinder2e',
+};
+
+/** Emits an item whose CLAIMED system comes from the document, so one
+ *  selection can hold an agreeing entry beside a disagreeing one. */
+const TEST_SYSTEM_MIX_ADAPTER: PackAdapter = {
+  id: 'test-system-mix',
+  label: 'Test system mix',
+  system: 'pathfinder2e',
+  license: 'Test system mix license',
+  extensions: ['.json'],
+  entryNoun: 'item',
+  parseFile: (_fileName, bytes): Promise<PackFileParse> => {
+    const doc = JSON.parse(new TextDecoder().decode(bytes)) as { name?: string; system?: string };
+    const name = doc.name ?? '';
+    const item: ItemData = {
+      system: doc.system === 'dnd5e' ? 'dnd5e' : 'pathfinder2e',
+      category: 'treasure',
+      level: 0,
+      priceDisplay: '10 gp',
+      priceCp: 1000,
+      rarity: 'common',
+      traits: [],
+      rulesEdition: null,
+    };
+    return Promise.resolve({
+      entries: [],
+      items: [{ name, item, text: `${name} item text` }],
+      skipped: 0,
+      failures: [],
+    });
+  },
+};
+
+describe('importPack system agreement (docs/17 row 209)', () => {
+  beforeEach(() => {
+    (PACK_ADAPTERS as PackAdapter[]).push(
+      PF2E_FIXTURE_UNDER_DND5E,
+      DND5E_FIXTURE_UNDER_PF2E,
+      TEST_SYSTEM_MIX_ADAPTER,
+    );
+  });
+  afterEach(() => {
+    const adapters = PACK_ADAPTERS as PackAdapter[];
+    for (const probe of [
+      PF2E_FIXTURE_UNDER_DND5E,
+      DND5E_FIXTURE_UNDER_PF2E,
+      TEST_SYSTEM_MIX_ADAPTER,
+    ]) {
+      const index = adapters.indexOf(probe);
+      if (index >= 0) adapters.splice(index, 1);
+    }
+  });
+
+  it('refuses a pf2e-shaped fixture chosen under the dnd5e adapter, naming the entry and both systems', async () => {
+    const deps = memoryDeps();
+    await expect(
+      importPack(
+        'test-pf2e-fixture-under-dnd5e',
+        [{ name: 'charau-ka.json', bytes: encodeJson(baseNpc('Charau-ka')) }],
+        { title: 'Wrong Adapter', deps },
+      ),
+    ).rejects.toThrow('no valid creature entries');
+    expect(deps.finalized).toHaveLength(0);
+    expect(deps.failed[0]?.message).toContain(
+      'charau-ka.json (Charau-ka): the stat block is for game system "pathfinder2e", ' +
+        'but adapter "test-pf2e-fixture-under-dnd5e" declares "dnd5e"',
+    );
+  });
+
+  it('mirror: refuses a dnd5e fixture chosen under the pf2e adapter', async () => {
+    const deps = memoryDeps();
+    await expect(
+      importPack(
+        'test-dnd5e-fixture-under-pf2e',
+        [{ name: 'ape.yml', bytes: dnd5eFixture('ape.yml') }],
+        { title: 'Wrong Adapter', deps },
+      ),
+    ).rejects.toThrow('no valid creature or spell entries');
+    expect(deps.finalized).toHaveLength(0);
+    expect(deps.failed[0]?.message).toContain(
+      'ape.yml (Ape): the stat block is for game system "dnd5e", ' +
+        'but adapter "test-dnd5e-fixture-under-pf2e" declares "pathfinder2e"',
+    );
+  });
+
+  it('imports a correct selection unchanged and reports the system it went in as', async () => {
+    const pf2eDeps = memoryDeps();
+    const pf2e = await importPack(
+      'foundry-pf2e',
+      [{ name: 'charau-ka.json', bytes: encodeJson(baseNpc()) }],
+      { title: 'PF2e Pack', deps: pf2eDeps },
+    );
+    expect(pf2e.failed).toHaveLength(0);
+    expect(pf2e.system).toBe('pathfinder2e');
+    // The report's system IS the adapter's declared system, checked against
+    // the book the runner asked for at `createBook`.
+    expect(pf2eDeps.created[0]?.system).toBe(pf2e.system);
+
+    const dnd5eDeps = memoryDeps();
+    const dnd5e = await importPack(
+      'foundry-dnd5e-srd',
+      [{ name: 'monsters/beast/ape.yml', bytes: dnd5eFixture('ape.yml') }],
+      { title: 'SRD Pack', deps: dnd5eDeps },
+    );
+    expect(dnd5e.failed).toHaveLength(0);
+    expect(dnd5e.system).toBe('dnd5e');
+    expect(dnd5eDeps.created[0]?.system).toBe(dnd5e.system);
+  });
+
+  it('does not refuse an entry that carries NO system (the no-false-positive pin)', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      'foundry-pf2e-conditions',
+      [
+        {
+          name: 'conditions/blinded.json',
+          bytes: new TextEncoder().encode(readFileSync(CONDITIONS_FIXTURE, 'utf8')),
+        },
+      ],
+      { title: 'Conditions', deps },
+    );
+    // A rules-text `section` entry carries no structured payload, so it makes
+    // no system claim: absent is not disagreement.
+    expect(result.failed).toHaveLength(0);
+    expect(result.system).toBe('pathfinder2e');
+    expect(result.sectionsImported).toBe(1);
+    expect(deps.persisted.flat()[0]?.chunkType).toBe('section');
+  });
+
+  it('imports the agreeing rest of a partial disagreement and names every refusal', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      'test-system-mix',
+      [
+        { name: 'good.json', bytes: encodeJson({ name: 'Agreeing item' }) },
+        { name: 'bad.json', bytes: encodeJson({ name: 'Foreign item', system: 'dnd5e' }) },
+      ],
+      { title: 'Mixed Systems', deps },
+    );
+    expect(result.system).toBe('pathfinder2e');
+    expect(result.imported).toBe(1);
+    expect(result.itemsImported).toBe(1);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({ file: 'bad.json', name: 'Foreign item' });
+    expect(result.failed[0]?.message).toContain('game system "dnd5e"');
+    expect(result.failed[0]?.message).toContain('"pathfinder2e"');
+    // The agreeing entry is imported and persisted; the refused one is not.
+    expect(deps.persisted.flat().map((chunk) => chunk.headingPath[0])).toEqual(['Agreeing item']);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.entriesImported).toBe(1);
+    expect(result.book.packMeta?.entriesFailed).toBe(1);
   });
 });

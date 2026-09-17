@@ -196,7 +196,9 @@ export interface PackFileParse {
 export interface PackAdapter {
   id: string;              // 'foundry-pf2e' | 'foundry-dnd5e-srd'
   label: string;           // UI label
-  system: GameSystem;      // the system stamped on book + stat blocks
+  system: GameSystem;      // the system stamped on book + stat blocks, and the
+                           // system every emitted payload must AGREE with (§6
+                           // step 3, docs/17 row 209)
   license: string;         // stored on the book, shown in the UI
   extensions: readonly string[]; // lowercase file extensions (with dot) the adapter parses
   /** Parses one file's bytes into entries. Throws only for file-level
@@ -450,13 +452,29 @@ YAML parsing is fast; no worker):
    `{ imported: PackEntry[], skipped: number, failed: { file, name, message }[] }`.
    A file that throws is one loud failure entry — never `catch`-and-continue
    into silence.
+   **THE SYSTEM-AGREEMENT CHECK RUNS HERE (docs/17 row 209).** Every emitted
+   payload carries a game system of its own — `StatBlock.system`,
+   `ItemData.system`, `SpellData.system` — while the book's `system` is a
+   CONSTANT per adapter (`adapter.system`, stamped at step 2), and nothing used
+   to compare the two. Each payload is now compared against `adapter.system`
+   BEFORE it is imported: a disagreement becomes a failure entry naming the
+   entry, the system it claimed and the system the adapter declares
+   (`the stat block is for game system "pathfinder2e", but adapter "…" declares
+   "dnd5e"`), the agreeing entries still import, and a whole selection that
+   disagrees falls into the zero-entry path in step 6. A payload that makes NO
+   system claim (a plain `section` entry — a journal page, a condition, a feat)
+   is NOT a disagreement. This is what makes "a PF2e pack stored as dnd5e" — a
+   book no PF2e campaign can see (docs/17 row 207) — impossible to miss at the
+   moment of import.
 4. Validate every entry with `statBlockSchema`, build `RuleChunkDraft`s
    (`ruleChunkSchema.parse` like the PDF path, `stampNewEntity`), `putChunks`
    in batches of 250, reporting progress via an `onProgress` callback shaped
    like `IngestProgress` (`{ bookId, done, total }` — rendered on the book's
    processing chip exactly like PDF page progress).
 5. `updateRulebook(book.id, { status: 'ready', packMeta })` and return
-   `{ book, imported, skipped, failed }`.
+   `{ book, system, imported, skipped, failed }` — `system` is the adapter's
+   declared system, which every accepted payload agrees with, and the import
+   report states it (`stored as Pathfinder 2e`).
 6. **Zero imported entries** → `updateRulebook({ status: 'error',
    errorMessage })` + throw; the UI toasts the report. No empty ready book.
    The error message **leads with a representative failure** — the first
@@ -465,15 +483,26 @@ YAML parsing is fast; no worker):
    16-BESTIARY-FETCH §6 after the live Monster Core import surfaced 492
    failures with no visible reason). A skipped-only selection (no failure at
    all) keeps the bare summary — no invented reason.
+   The zero-entry path is ALSO the whole-selection-disagrees outcome above, so
+   a wholly mismatched import fails with the adapter's own `entryNoun` — one
+   failure mechanism, not two.
 
 UI (`05-UI.md §Rules` delta): a second **"Import bestiary pack"** button next
 to "Import PDFs" opens a dialog — adapter select (registered adapters only),
 multi-file input, then the import report (imported / skipped / failed counts;
 when entries fail, the report leads with the first failure's `file (name):
-issue` line above the expandable failed-entries list). Book cards get a
+issue` line above the expandable failed-entries list), plus the row 204
+per-lane breakdown and the row 209 `stored as <system>` line. Book cards get a
 **Pack** badge and show `packMeta.license` in the book menu. The search
 browser, quick-find and the monster-source dialog need **no changes**: pack
 chunks are statblock chunks and flow through `searchRules` as-is.
+
+**A book stored under the WRONG system is not auto-corrected.** The agreement
+check refuses a mismatch before it is written, but a book already stored that
+way (imported before this check landed) keeps its stored `system`, because that
+value decides which campaigns and scoped reads can see it (docs/17 row 207).
+The correction is the Rules page book menu's **Set system** (docs/05 §Rules) —
+the owner's deliberate act, not a silent rewrite at read time.
 
 ## 7. Encounter pipeline: roster grounding + name citation
 

@@ -6840,6 +6840,77 @@ pin. The five remaining pins (title fallback, no match, action honesty,
 loading, lookalike) stayed GREEN under all four injections, so each pin owns
 its own behaviour rather than riding another's.
 
+### A pack payload must agree with its adapter's declared system (docs/17 row 209, docs/12 §6, docs/18 §2.2)
+
+A book's `system` is a CONSTANT per adapter (`packImport` writes
+`adapter.system` at `createBook`) while the adapter's own payloads carry a game
+system (`StatBlock.system`, `ItemData.system`, `SpellData.system`), and nothing
+compared them — so a mis-chosen adapter could silently store a PF2e rules pack
+as dnd5e, invisible to every PF2e campaign (the same invisible-state class as
+rows 204/210, one step earlier). The pins below drive the REAL adapters and the
+REAL fixtures and assert the refusal, the report line and the no-false-positive
+rule together.
+
+- `tests/ingest/packs/pack-import.test.ts` (the runner's EXISTING harness; the
+  probes reuse the real adapters and real fixtures — no second fixture set):
+  - **pin 1 (wrong adapter, both directions)** — a wrapper of the REAL
+    `foundry-pf2e` parser declaring `dnd5e`, fed the real pf2e `baseNpc`
+    document, hits the EXISTING zero-entry path (`finalized` empty) and the
+    `failBook` message contains `charau-ka.json (Charau-ka): the stat block is
+    for game system "pathfinder2e", but adapter "…" declares "dnd5e"` — entry,
+    claimed system and declared system, all named. The mirror feeds the real
+    dnd5e `ape.yml` under a `pathfinder2e` declaration and asserts the
+    dnd5e→pathfinder2e sentence plus the adapter's OWN `entryNoun` (`no valid
+    creature or spell entries`).
+  - **pin 2 (a correct import is unchanged and says its system)** —
+    `result.system === 'pathfinder2e'` for `foundry-pf2e` and `'dnd5e'` for
+    `foundry-dnd5e-srd`, each equal to the `system` `createBook` was handed and
+    with zero failures. The RENDERED line is pinned in
+    `tests/rules-page.test.tsx` (`pack-import-system` reads
+    `stored as Pathfinder 2e`, and the toast carries the same words) and in
+    `tests/features/bestiary-fetch-section.test.tsx` (the fetch report).
+  - **pin 3 (no false positive)** — the REAL `foundry-pf2e-conditions` fixture
+    (`blinded.json`) is a plain `section` entry with NO structured payload, so
+    it makes no system claim: it imports with zero failures,
+    `sectionsImported === 1` and a `section` chunk. Absent is not disagreement.
+  - **pin 4 (partial disagreement)** — a probe adapter emitting one
+    `pathfinder2e` item beside one `dnd5e` item imports exactly the agreeing
+    one (`itemsImported === 1`, one persisted `item` chunk), names every
+    refusal (`file`, `name`, both systems) and finalizes `ready` with
+    `entriesImported: 1` / `entriesFailed: 1` — the importer's existing
+    per-entry policy, pinned rather than a new behaviour.
+  - **pin 5 (row 204 unchanged)** — `tests/architecture/one-pack-lane-report.test.ts`
+    still names exactly the formatter plus the four surfaces, and the lane
+    strings (`0 spells · 1 stat block · 0 items · 0 sections`) are asserted
+    unchanged in `rules-page` and `bestiary-fetch-section`: the system line
+    rides BESIDE the breakdown, never inside it.
+
+**INJECTED RED, watched — the suite lock held BEFORE the first injection, the
+mutated file's hash PRINTED with `git hash-object` for every arm, the tree
+restored by a `trap` FROM HEAD (the slice was committed first, so
+`git checkout HEAD -- <path>` is the correct restore — never a bare
+`git checkout -- <path>`, which restores the index), and the post-arm hashes
+printed again and MATCHING the baseline:**
+
+| injection (one file at a time, `NODE_OPTIONS=--max-old-space-size=2048 CAMPAIGNER_TEST_WORKERS=1`, the four report/runner files) | result |
+|---|---|
+| **A baseline** — `packImport.ts` `71c1ae6fcb6ce826bf898a6ca46abd6b9b5cc0ca`, `pack-lanes.ts` `566a95a89fa6c40fc0b51acd1f4bc0b63ef06411` | **GREEN 4 files / 46 tests** |
+| **B the agreement check disabled** (`if (claimed === null \|\| claimed === adapter.system) return null` → `return null`) — `packImport.ts` `86776f4231007dd13a8253bee88430d2428fc0d7` | **RED 3 = exactly the refusal pins** (pin 1 in both directions and pin 4 — all three assert the LOUD refusal, so disabling the check reds all three) |
+| **C the check made to fail on an ABSENT system** (the same guard → `if (claimed === adapter.system) return null`) — `packImport.ts` `0a27df0fe23dc2398f03180dfc4bff6d4eeaee92` | **RED 1 = exactly pin 3** (the no-claim conditions `section`) |
+| **D the report's system line blanked** (`formatPackSystem` returning `''`) — `pack-lanes.ts` `7ef03bd3554c8fb3817a3d2b90fa9d0a84589032` | **RED 2 = exactly pin 2's RENDERED halves** (the manual report + toast in `rules-page.test.tsx` and the fetch report in `bestiary-fetch-section.test.tsx`; the ingest-level `result.system` stays green, which is why both halves are pinned) |
+
+No arm was VOID: the mutated files' four hashes are distinct and three
+different pin sets reddened. The restored hashes matched the baseline exactly
+(`71c1ae6f…` / `566a95a8…`), so no injection survived its arm.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** the check compares the systems
+payloads CLAIM — it does not detect a system from a document's own shape, so an
+adapter whose mapping stamped a wrong literal in BOTH its payload and its
+declaration would still agree. No pin proves the copy reads well to a person.
+What is deliberately UNCHANGED — every adapter's emitted payloads and declared
+`system`, every parse schema, `packMeta`, the row-204 lane counts, the corpus
+read and row 207's scoping — is held by the pre-existing suites.
+
 ### The generation reads are scoped to the campaign's game system (docs/17 row 207, docs/12 §15.1, docs/11 §Module-side cast, docs/18 §2 rows 136/160)
 
 The owner asked whether a dnd5e pack changes what a Pathfinder campaign

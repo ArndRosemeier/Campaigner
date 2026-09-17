@@ -23,7 +23,7 @@ import { importPack } from '@/ingest/packImport';
 import { PACK_ADAPTERS } from '@/ingest/packs/registry';
 import { fileToPackInput } from '@/ingest/packs/types';
 import type { PackImportProgress, PackImportResult } from '@/ingest/packImport';
-import { formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
+import { formatPackLanes, formatPackSystem, packLaneCounts } from '@/features/rules/pack-lanes';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -76,7 +76,8 @@ export function PackImportDialog({ open, onOpenChange, onProgress }: PackImportD
       // explicitly.
       toastSuccess(
         `Imported “${imported.book.title}” (${formatPackLanes(packLaneCounts(imported))}, ` +
-          `${String(imported.skipped)} skipped, ${String(imported.failed.length)} failed)`,
+          `${String(imported.skipped)} skipped, ${String(imported.failed.length)} failed) — ` +
+          formatPackSystem(imported.system),
       );
     } catch (error) {
       onProgress(null);
@@ -206,6 +207,13 @@ export function PackImportReport({
             spells, actions and class features into one number. The four lanes
             partition the chunks (the total stays on the badge beside it). */}
         <span data-testid="pack-import-lanes">{formatPackLanes(packLaneCounts(result))}</span>
+        {/* The system the book was stored AS (docs/17 row 209): the adapter's
+            DECLARED system, which every accepted payload agrees with (the
+            runner's agreement check refuses one that claims another). Said at
+            the moment of import, through its ONE spelling seam — a mismatch is
+            otherwise invisible until a campaign of the expected system cannot
+            see the book. */}
+        <span data-testid="pack-import-system">{formatPackSystem(result.system)}</span>
         <Badge variant="secondary">{String(skipped)} skipped</Badge>
         <Badge variant={failed.length === 0 ? 'outline' : 'destructive'}>
           {String(failed.length)} failed

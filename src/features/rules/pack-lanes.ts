@@ -1,4 +1,6 @@
 import type { PackMeta } from '@/domain/rulebook';
+import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
+import type { GameSystem } from '@/domain/gameSystem';
 import type { PackImportResult } from '@/ingest/packImport';
 
 /**
@@ -75,4 +77,18 @@ export function formatPackLanes(lanes: PackLaneCounts): string {
     lane(lanes.items, 'item', 'items'),
     lane(lanes.sections, 'section', 'sections'),
   ].join(' · ');
+}
+
+/**
+ * The system an import stored the book AS — the ADAPTER's declared system, in
+ * the ONE spelling every report surface uses (docs/17 row 209). It rides
+ * beside (never inside) the lane breakdown: the lanes are row 204's ONE
+ * formatter, and this is the line that answers "this pack went in as
+ * <system>" at the moment of import. A refused entry names the system it
+ * claimed and the system the adapter declares in its own failure sentence
+ * (`ingest/packImport.systemAgreementFailure`), which the report's existing
+ * failure list renders — no second refusal wording lives here.
+ */
+export function formatPackSystem(system: GameSystem): string {
+  return `stored as ${GAME_SYSTEM_LABELS[system]}`;
 }

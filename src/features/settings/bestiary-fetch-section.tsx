@@ -28,7 +28,7 @@ import {
   type PackSourceCandidate,
   type PackSourceImportState,
 } from '@/features/rules/pack-import-state';
-import { bookPackLaneCounts, formatPackLanes, packLaneCounts } from '@/features/rules/pack-lanes';
+import { bookPackLaneCounts, formatPackLanes, formatPackSystem, packLaneCounts } from '@/features/rules/pack-lanes';
 
 /**
  * "Bestiary packs" settings card (16-BESTIARY-FETCH §5): per adapter the
@@ -177,10 +177,13 @@ export function BestiaryFetchSection(): JSX.Element {
       // toast names BOTH attempts via `fetchNote` — no silent degradation.
       // The per-lane breakdown (docs/17 row 204) is the SAME wording the
       // manual-import toast prints, so a fetched rules pack says how many
-      // SPELLS it brought instead of one mixed noun.
+      // SPELLS it brought instead of one mixed noun; the system line (docs/17
+      // row 209) says which system the book went in as, through the SAME
+      // spelling seam the manual report uses.
       toastSuccess(
         `Fetched & imported “${result.book.title}” (${formatPackLanes(packLaneCounts(result))}, ` +
-          `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules` +
+          `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — ` +
+          `${formatPackSystem(result.system)}, it is in Rules` +
           (result.fetchNote === undefined ? '' : ` — ${result.fetchNote}`),
       );
     } catch (error) {

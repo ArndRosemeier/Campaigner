@@ -34,6 +34,19 @@ import type {
  * valid entries fails the book (`status: 'error'`) and throws — an empty
  * "ready" book is forbidden.
  *
+ * THE SYSTEM-AGREEMENT CHECK (docs/17 row 209). A book's `system` is a
+ * constant per adapter (`adapter.system`, written to the book at
+ * `createBook`), while an adapter's parsed payloads THEMSELVES carry a game
+ * system (`StatBlock.system`, `ItemData.system`, `SpellData.system`). Nothing
+ * used to compare the two, so a mis-chosen adapter could store a PF2e rules
+ * pack as dnd5e — invisible to every PF2e campaign. Every emitted payload is
+ * now checked against the adapter's declared system BEFORE it is imported: a
+ * disagreement is a LOUD per-entry failure in the report the importer already
+ * builds (never a `console` line, never a silent drop, never a coerced
+ * payload), the agreeing entries still import, and a whole selection that
+ * disagrees hits the EXISTING zero-entry failure path above. A payload that
+ * makes no system claim is not a disagreement.
+ *
  * The Dexie deps are injectable so tests run the whole flow in memory; the
  * UI integration points are `importPack(adapterId, await Promise.all(files.map
  * (fileToPackInput)))` from the /rules import dialog and, for fetched packs,
@@ -50,6 +63,16 @@ export interface PackImportProgress {
 
 export interface PackImportResult {
   book: Rulebook;
+  /**
+   * The game system this book was stored as — the ADAPTER's DECLARED system
+   * (`PackAdapter.system`, the value `createBook` was handed), docs/17 row
+   * 209. Every payload the import accepted carries this same system (the
+   * agreement check in `importPack` refuses one that claims another), so the
+   * import report can state "this pack went in as <system>" without asking
+   * the book row back. It is a REPORT field only: the check and this line
+   * never change what an adapter emits, its declared system or the schemas.
+   */
+  system: GameSystem;
   chunkCount: number;
   /** Valid entries the import produced — creature AND item lanes combined. */
   imported: number;
@@ -177,6 +200,74 @@ function* batches<T>(items: readonly T[], size: number): Generator<readonly T[]>
   }
 }
 
+/**
+ * The game system an adapter-emitted payload CLAIMS, or null when it states
+ * none (docs/17 row 209).
+ *
+ * Only a payload that exists AND carries a system can disagree. A rules-text
+ * entry with no structured `spell` half (a journal page, a condition, a feat)
+ * carries NO payload and therefore makes NO claim — absent is not
+ * disagreement, and this helper must never invent one. Every payload that
+ * DOES exist is schema-bound to a `GameSystem` id, never a display label, so
+ * the comparison below is id-to-id.
+ */
+function claimedSystem(payload: { system?: unknown } | undefined): string | null {
+  const value = payload?.system;
+  return typeof value === 'string' ? value : null;
+}
+
+/**
+ * THE import-time system-agreement refusal (docs/17 row 209) — the ONE
+ * sentence, produced once and rendered by the report's existing failure list.
+ * `claimed === null` means the payload made no claim (see `claimedSystem`) and
+ * is NOT a failure; an agreement is not a failure either.
+ */
+function systemAgreementFailure(
+  adapter: PackAdapter,
+  file: string,
+  lane: string,
+  name: string,
+  claimed: string | null,
+): PackEntryFailure | null {
+  if (claimed === null || claimed === adapter.system) return null;
+  return {
+    file,
+    name,
+    message:
+      `the ${lane} is for game system "${claimed}", but adapter "${adapter.id}" ` +
+      `declares "${adapter.system}"`,
+  };
+}
+
+/**
+ * Splits one lane's emitted entries into the ones whose payload agrees with
+ * the adapter's declared system and the LOUD per-entry refusals for the ones
+ * that claim another. ONE mechanism for all three lanes (docs/17 row 209).
+ */
+function partitionAgreeing<T>(
+  list: readonly T[],
+  adapter: PackAdapter,
+  file: string,
+  lane: string,
+  nameOf: (entry: T) => string,
+  payloadOf: (entry: T) => { system?: unknown } | undefined,
+): { accepted: T[]; failures: PackEntryFailure[] } {
+  const accepted: T[] = [];
+  const failures: PackEntryFailure[] = [];
+  for (const entry of list) {
+    const failure = systemAgreementFailure(
+      adapter,
+      file,
+      lane,
+      nameOf(entry),
+      claimedSystem(payloadOf(entry)),
+    );
+    if (failure === null) accepted.push(entry);
+    else failures.push(failure);
+  }
+  return { accepted, failures };
+}
+
 export async function importPack(
   adapterId: string,
   inputs: readonly PackInputFile[],
@@ -206,9 +297,39 @@ export async function importPack(
     }
     try {
       const parsed = await adapter.parseFile(expanded.file.name, expanded.file.bytes);
-      entries.push(...parsed.entries);
-      items.push(...(parsed.items ?? []));
-      sections.push(...(parsed.sections ?? []));
+      // The system-agreement check (docs/17 row 209) runs on EVERY emitted
+      // payload, per lane, BEFORE the chunk-building step parses it: an entry
+      // whose payload claims a system other than the adapter's declared one is
+      // refused into the SAME `failures` list the adapter's own per-entry
+      // problems use — never dropped silently, never coerced, never imported.
+      const creatures = partitionAgreeing(
+        parsed.entries,
+        adapter,
+        expanded.file.name,
+        'stat block',
+        (entry) => entry.name,
+        (entry) => entry.statBlock,
+      );
+      const itemLane = partitionAgreeing(
+        parsed.items ?? [],
+        adapter,
+        expanded.file.name,
+        'item',
+        (entry) => entry.name,
+        (entry) => entry.item,
+      );
+      const sectionLane = partitionAgreeing(
+        parsed.sections ?? [],
+        adapter,
+        expanded.file.name,
+        'spell',
+        (entry) => entry.name,
+        (entry) => entry.spell,
+      );
+      entries.push(...creatures.accepted);
+      items.push(...itemLane.accepted);
+      sections.push(...sectionLane.accepted);
+      failures.push(...creatures.failures, ...itemLane.failures, ...sectionLane.failures);
       skipped += parsed.skipped;
       failures.push(...parsed.failures);
     } catch (error) {
@@ -295,6 +416,7 @@ export async function importPack(
   const ready = await deps.finalizeBook(book.id, packMeta);
   return {
     book: ready,
+    system: adapter.system,
     chunkCount: chunks.length,
     imported: entries.length + items.length + sections.length,
     itemsImported: items.length,

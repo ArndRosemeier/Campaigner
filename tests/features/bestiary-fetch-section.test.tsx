@@ -233,6 +233,9 @@ describe('BestiaryFetchSection', () => {
     expect(screen.getByTestId('pack-import-lanes')).toHaveTextContent(
       '0 spells · 2 stat blocks · 0 items · 0 sections',
     );
+    // The fetch report names the system the book went in as (docs/17 row 209),
+    // through the SAME spelling seam the manual report uses.
+    expect(screen.getByTestId('pack-import-system')).toHaveTextContent('stored as Pathfinder 2e');
   });
 
   it('lists every pack in the repo when the advanced toggle goes on', async () => {
