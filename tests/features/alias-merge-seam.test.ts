@@ -307,4 +307,33 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     // The write path's half of the seam names the rule it applies.
     expect(source('db/artifactRepo.ts')).toContain('mergeAliasNames(current.aliases, names, current.name)');
   });
+
+  /**
+   * The FOREIGN-NAME GUARD is ONE lookup and ONE sentence (docs/17 row 226,
+   * AGENTS §Centralization 2): `foreignAliasNames` is DEFINED once and every
+   * alias write asks it — the write seam for its callers, and the two
+   * combined-patch writers (`runEngine`'s in-place writes, `entity-batch`'s
+   * rename) directly, because a second write there would split one revision.
+   * A future hand-rolled "does another artifact answer this name?" reds here by
+   * file, which behaviour cannot see (the two spellings agree on the common
+   * case).
+   */
+  it('asks the ONE foreign-name lookup before attaching an alias (docs/17 row 226)', () => {
+    const files = srcFiles();
+    const definers = files.filter((file) =>
+      source(file).includes('export async function foreignAliasNames'),
+    );
+    expect(definers).toEqual(['db/artifactRepo.ts']);
+    const callers = files.filter((file) => source(file).includes('foreignAliasNames('));
+    expect(callers.sort()).toEqual([
+      'db/artifactRepo.ts',
+      'features/modules/entity-batch.ts',
+      'llm/runEngine.ts',
+    ]);
+    // The refusal is spoken through ONE sentence, defined once.
+    const sentences = files.filter((file) =>
+      source(file).includes('export function aliasCollisionSentence'),
+    );
+    expect(sentences).toEqual(['domain/artifactAlias.ts']);
+  });
 });

@@ -156,7 +156,13 @@ function respondToBatch(
     }
     const overridden = override?.(content);
     if (overridden !== undefined) return overridden;
-    return { text: JSON.stringify(BATCH_DRAFT), modelUsed: 'test-model', fallback: null };
+    // ONE invented name PER ENTITY — the realistic model behaviour, and the
+    // shape docs/17 row 226's guard requires: a constant name for every entity
+    // would make two artifacts answer one name, which the guard (correctly)
+    // refuses on the second. The batch's own intro line carries the entity.
+    const entity = /Detail the entity "([^"\n]+)"/.exec(content)?.[1];
+    const name = entity === undefined ? BATCH_DRAFT.name : `${entity} the Watcher`;
+    return { text: JSON.stringify({ ...BATCH_DRAFT, name }), modelUsed: 'test-model', fallback: null };
   };
 }
 
@@ -771,7 +777,7 @@ describe('EntityPanel', () => {
     });
     const artifacts = await listArtifactsByCampaign(campaign.id);
     const kael = artifacts.find((artifact) => artifact.name === 'Kael');
-    expect(kael?.aliases).toContain('Watcher of the Crypt');
+    expect(kael?.aliases).toContain('Kael the Watcher');
     expect(kael?.tags).toContain('module:Ember Crypt');
     expect(kael?.moduleId).toBe(module.id);
     const bram = artifacts.find((artifact) => artifact.name === 'Bram');

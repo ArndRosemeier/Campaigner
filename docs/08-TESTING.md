@@ -2971,11 +2971,27 @@ every alias write asks it, and a refused name is never stored but IS spoken.
 | **The non-foreign arm is UNCHANGED** (the row's pre-existing pin): a model name that is a VARIANT of the target still becomes an alias, exactly as before — the old assertion is kept byte-for-byte, only its comment now says which arm it pins | `tests/llm/runEngine-refill.test.ts` (the existing first pin) |
 | **The repository guard**: another artifact's NAME and another artifact's ALIAS are both refused and reported (`refused`), the requested row writes NOTHING (no revision, no `updatedAt` move), the owner row is byte-untouched, a mixed batch attaches its accepted half, a name nothing else answers still attaches (non-vacuity), and the exported lookup answers directly | `tests/db/artifactRepo-alias.test.ts` (5 NEW pins + the outcome shape on the 6 pre-existing ones) |
 | **The outcome shape**: `addArtifactAliases` returns `AliasWriteOutcome { artifact, refused }`; a caller that ignores `refused` cannot be silently wrong because the row was not written either | `tests/db/artifactRepo-alias.test.ts` |
+| **EXACTLY ONE foreign-name lookup** (AGENTS §Centralization 2): `foreignAliasNames` is DEFINED once (`db/artifactRepo.ts`) and the only files that ASK it are the write seam plus the two combined-patch writers (`llm/runEngine.ts`, `features/modules/entity-batch.ts`); `aliasCollisionSentence` is defined once (`domain/artifactAlias.ts`) — a future hand-rolled "does another artifact answer this name?" reds by file | `tests/features/alias-merge-seam.test.ts` (NEW source-scan pin) |
 
 **The brief's own characterization of the old pin is corrected here**: it does
 NOT "pin the defect" — it pins a legitimate variant-name alias and never
 exercised the discriminating input (another artifact's name). It is therefore
 SPLIT, not deleted: the kept arm + the new foreign arm.
+
+**TWO PRE-EXISTING FIXTURES WERE CORRECTED, named before/after — the guard was
+not weakened; the fixtures encoded the ambiguity it refuses.** `tests/features/
+entity-panel.test.tsx`'s `respondToBatch` returned ONE invented name
+(`Watcher of the Crypt`) for EVERY entity of a multi-entity batch, so two
+artifacts answered one name and the guard refused the second; the mock now
+derives a per-entity name from the brief's own `Detail the entity "…"` line
+(`Kael the Watcher`), and the single assertion that named the old constant
+(`kael.aliases` contains) now names `Kael the Watcher`. `tests/features/
+generate-everything.test.tsx`'s `DRAFT` mock likewise returned one constant
+`Drafted` for every entity; it is now `draftedReply(messages)`, deriving
+`${entity} the Drafted`. No assertion was weakened — each still requires the
+produced artifact to keep the model's invented name as an alias; only the
+invented name's SUBJECT changed (before: one constant shared by all entities,
+which is itself the collision).
 
 The REVERT-PROVEN arms, every arm's `git hash-object` printed, each restored
 from an OUT-OF-TREE copy (never `git checkout HEAD --`), the gate runner holding
