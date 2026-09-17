@@ -2977,10 +2977,21 @@ NOT "pin the defect" — it pins a legitimate variant-name alias and never
 exercised the discriminating input (another artifact's name). It is therefore
 SPLIT, not deleted: the kept arm + the new foreign arm.
 
-The REVERT-PROVEN arms (baseline, the anchor removed, the guard removed, and the
-guard made to compare by SUBSTRING) are run against the committed tree, each
-arm's `git hash-object` printed, each restored from an out-of-tree copy; the
-measured table is recorded in this section's follow-up docs commit.
+The REVERT-PROVEN arms, every arm's `git hash-object` printed, each restored
+from an OUT-OF-TREE copy (never `git checkout HEAD --`), the gate runner holding
+the suite lock, raw logs in
+`/tmp/campaigner-npc-scratch/armlogs/` (the arm runner lives in
+`/tmp/campaigner-npc-scratch/`). Baseline engine
+`8ab66e53717a97252a0da5ddd7d19e379de24f92`, artifactRepo
+`2465d4c87030ae950e44223558a45d7ecd5a9929`; every INJECTED hash differs from the
+baseline (no VOID probe) and every arm restored to the baseline hash.
+
+| arm | injected file (hash before → injected → after) | observed |
+|---|---|---|
+| **A — baseline** | engine `8ab66e53…`, artifactRepo `2465d4c8…` | **GREEN 2 files / 24 tests**, lint 0 errors, typecheck clean |
+| **B — the NAME ANCHOR removed** (`entityNameVerbatimSentence(context.moduleGrounding.targetName)` → `entityNameVerbatimSentence('NAME-ANCHOR-REMOVED')`) | runEngine `8ab66e53…` → `343f17e74393c90aab77463553a7b943fd894585` → `8ab66e53…` | **RED 1 / 12**: the reported-case pin — `expected 'Campaign: Emberfall…' to contain 'The artifact "name" field must be exa…'`; lint 0, typecheck clean. (A FIRST attempt replaced the expression with a literal `null`, which ALSO left the import unused: its red was confounded by a lint+typecheck failure and is recorded as such — the clean re-run is the evidence.) |
+| **C — the FOREIGN-NAME GUARD removed at the reported refill** (the `foreignAliasNames` call answered `[]`, restoring the pre-slice merge) | runEngine `8ab66e53…` → `58097f465a078019c403bf25ffe2060bb3ded37e` → `8ab66e53…` | **RED 1 / 12**: the reported-case pin — `expected [ 'Fennwick Morsgrimm' ] to not include 'Fennwick Morsgrimm'` (the foreign alias came back) |
+| **D — the guard made to compare by SUBSTRING** (`sameAliasName` → `…trim().toLowerCase().includes(…)`) | artifactRepo `2465d4c8…` → `83a54839258ac7df893863a630f415934b9d7b87` → `2465d4c8…` | **RED 1 / 10**: the precision pin — `expected [ { name: 'Fennwick', … } ] to deeply equal []`, i.e. the guard's exact comparable-name precision IS pinned |
 
 ### Prompt scaffolding echoed back into a document (docs/17 row 142, docs/18 §2.2/§4)
 
