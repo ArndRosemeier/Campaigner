@@ -3881,6 +3881,99 @@ files / 4401 tests**, so this slice adds **+0 files / +9 tests** (the detector
 file 4 → 13; the new test-tree inventory is JSON, not a test file), with no
 existing assertion weakened, no test skipped, and no `Errors:` line.
 
+### The tripwire now sees a copy that SPANS the two trees — ONE union pin, a THIRD inventory (docs/17 row 215, docs/18 §3/§5)
+
+Row 212 made each tree's population countable and, in doing so, made the one
+class that SPANS them uncountable: a body written in `src/` and re-implemented
+in a test is ONE site in each scoped scan, so neither reaches the 2-site floor
+and NEITHER inventory can see it. That is the drift class that matters most — a
+test asserting against its own copy of production logic keeps passing while the
+production function moves. Row 215 extends the SAME detector over the union
+instead of writing a second one.
+
+**The one seam extended, nothing new.** `scanRepo`, `groupFunctions`,
+`NORMALIZED_FLOOR = 75` and `populationProblems` are unchanged; the file gains
+`UNION_SCOPE = { roots: ['src', 'tests'], exclude: ['tests/fixtures'] }` and ONE
+filter, `crossTreeGroups(groups, scope)` — the groups holding at least one site
+under EACH resolved root, classified by the scope's OWN roots so the temp-seeded
+arms reuse it. The third inventory
+`tests/architecture/duplicateImplementationsCrossTreeBaseline.json` uses the SAME
+`{ note, scope, groups }` schema and the SAME helper.
+
+**The measured finding, re-derived at base `82b3fc3`.** Scoped `src/` = 15
+groups / 39 sites, scoped `tests/` = 136 groups / 390 sites, and the union
+`scanRepo({ roots: ['src','tests'], exclude: ['tests/fixtures'] })` = **151
+groups / 430 sites** with exactly **1 cross-tree group**: hash
+`39d1cc194600176d`, **310 normalized characters**, at
+`src/ingest/packs/pf2e-conditions.ts:publicationSourceLine:69`,
+`src/ingest/packs/pf2e-rules.ts:publicationSourceLine:123` and
+`tests/ingest/packs/source-line.test.ts:expected:136`.
+
+**FOLD, not declare.** `source-line.test.ts`'s `expected` was a byte-identical
+transcription of `publicationSourceLine` — an already-EXPORTED, already-IMPORTED
+symbol in the same file — and its comment claims no independence, while the
+header justifies transcription only for sites 3 and 4 and only because "there is
+no exported symbol to import". Under the brief's own criterion that is a
+convenience copy, so it was folded to `const expected = publicationSourceLine`.
+The honest cost: site 1's half of the edge matrix becomes a self-comparison; the
+differential's real power is sites 2 and 3 (driven through their REAL adapters)
+and the literal real-fixture expectations. The landed union is **151 groups /
+429 sites with 0 cross-tree groups**, and the declaration is EMPTY — a claim the
+pin asserts, not a blank file. The two scoped inventories are BYTE-IDENTICAL
+before and after (`git hash-object`:
+`66313f19227063cd5c4e58f6d0ea3d69b1b47fab` for `src/`,
+`ea6403f17d8040975ad1d7d99e092a30fb54bc3d` for the test tree) — a TEST-side fold
+cannot move the `src/` pair, and that test site was never a group in the scoped
+scan.
+
+**The fixture exclusion is a GUARD, not currently load-bearing — measured, and
+the brief's premise was wrong.** `tests/fixtures/**` holds ZERO `.ts`/`.tsx`
+files (67 files, all data), so the union population is byte-identical with and
+without the exclusion (151 groups / 429 sites / 0 cross-tree). It stays as the
+declared scope; the existing temp-seeded arm proves it works the day a `.ts`
+file lands there.
+
+| fact pinned | where |
+|---|---|
+| **The cross-tree population EQUALS the declared inventory exactly** — a new body implemented under `src/` AND under `tests/` reds `NEW DUPLICATE` naming every `file:function:line` and the shared hash | `tests/architecture/no-duplicate-implementations.test.ts` (`crossTreeGroups(scanRepo(UNION_SCOPE))` through the shared `populationProblems`) |
+| **The declared population is EMPTY, as a FACT** — `groups: []`, asserted from the JSON beside the union scope, the `tests/fixtures/**` exclusion and floor 75 in its header | same (the header-as-data pin reading the JSON) |
+| **Non-vacuity** — a temp-seeded `src/`-shaped + `tests/`-shaped pair is DETECTED, and the two scoped halves on the SAME temp root see ZERO groups (the gap itself as data); the empty declaration's `NEW DUPLICATE` arm still fires and names both sites | same |
+| **The union scope covers BOTH trees and excludes `tests/fixtures/**`** — the file list contains `src/lib/fileSlug.ts`, the detector and `tests/setup.ts`, and no fixture file | same (`scopedFiles(UNION_SCOPE)`) |
+| **The union pin is a THIRD call of the one machinery** — one scanner, one normalizer, one floor, one comparison; no second mechanism | same (`UNION_SCOPE`/`crossTreeGroups` over the unchanged `scanRepo`/`populationProblems`) |
+
+**WATCHED RED — every changed file's blob hash PRINTED, the lock held BEFORE
+injecting, the tree restored by a `trap` (`git checkout HEAD -- <path>` for the
+tracked target and an out-of-tree copy for the untracked new inventory; a bare
+`git checkout -- <path>` was never used).** No arm is VOID: each changed file's
+hash DIFFERS from arm A's on the arms that change it. Raw logs under
+`/tmp/cross-tree-diff/`.
+
+| arm | change | hash printed | result |
+|---|---|---|---|
+| **A** | none — the landed tree | detector `7542b8177d12e92a756b21abda91d9bdfe107c87`, cross-tree inventory `e446f42fa8f6ca0e56cf84757a81bb2a4cb9899e`, `fileSlug.test.ts` `3ab32e2ff1f065b117164312dc32c7e6f4029943` | **GREEN 18/18** |
+| **B** | a REAL body (`src/lib/fileSlug.ts:fileSlug`) pasted into `tests/lib/fileSlug.test.ts` | `fileSlug.test.ts` `ab9750fd2a4205e35fbff9a705066e11a44e38ee` (≠ A) | **RED 1 / GREEN 17 (18)**: `NEW DUPLICATE — shared normalized body 74db1eb74d6c7135 (111 chars) is implemented at 2 sites:` naming `src/lib/fileSlug.ts:fileSlug:21` and `tests/lib/fileSlug.test.ts:copiedFileSlug:199`; the two SCOPED pins stayed GREEN — the gap itself |
+| **C** | a synthetic stale entry appended to the cross-tree inventory | inventory `dbaa5d108048e294f5f97547a6cd64ffa9dfe778` (≠ A) | **RED 2 / GREEN 16 (18)**: `STALE BASELINE ENTRY — 00000000deadbeef …`, plus the empty-declaration fact (`groups: []`) — the declaration has teeth the other way too |
+| **P** | `source-line.test.ts` restored to HEAD (hash `ac109dd1526c638b66afcd707de012c64929a09e`) so the REAL cross-tree entry exists again | source-line differs from A's `0eccb180e4aa2bdfa43984981324c24083c60872` | **RED 1 / GREEN 18 (19)** on the real tree: `NEW DUPLICATE — shared normalized body 39d1cc194600176d (310 chars) is implemented at 3 sites:` with all three sites named; the pre-fold union measured **151 / 430 / 1** |
+| **D** | the union scan WITHOUT the `tests/fixtures/**` exclusion | no file changed (scope-only measurement) | **NO FLOOD**: identical to the excluded scan (151 groups / 429 sites / 0 cross-tree), because `tests/fixtures/**` holds zero `.ts`/`.tsx` files |
+| **F** | restored by the `trap` | detector `7542b817…`, inventory `e446f42…`, `fileSlug.test.ts` `3ab32e2…` — all EQUAL arm A; `git status` shows only the intended modifications | — |
+
+**GATE — RAW NUMBERS.** `bash scripts/gate.sh` from the worktree, raw log
+`/tmp/cross-tree-regate-28.log`, chunk logs `/tmp/gate-2045817`: **GATE GREEN,
+exit 0 — 340 files / 4424 tests**, `chunk arithmetic: 340 of 340 test files
+covered`, lint **0 errors**, typecheck clean, no `Errors:` line, combined peak
+RSS **2381 MB of the 3000 MB cap** (single-chunk peak 1227 MB, wall 461 s,
+voided chunks 0); chunks `tests_lib 33/389 (902MB)`, `tests_remainder 57/522
+(1185MB)`, `tests_db 37/386 (709MB)`, `tests_llm 62/1239 (904MB)`,
+`tests_domain 30/447 (624MB)`, `tests_features_a 61/652 (1216MB)`,
+`tests_features_b 60/789 (1227MB)`. The FIRST gate ran pre-rebase on this
+slice's functional tree at base `82b3fc3` (raw log `/tmp/cross-tree-gate-1.log`,
+chunk logs `/tmp/gate-2022965`: 339 files / 4415 tests, combined peak 2305 MB,
+wall 463 s) and the rebased re-gate above folds in row 213's concurrent landing
+(+1 file / +9 tests). Against `82b3fc3` (339 files / 4410 tests) this slice
+itself adds **+0 files / +5 tests** (the detector file 13 → 18;
+the cross-tree inventory is JSON, not a test file), with no existing assertion
+weakened, no test skipped, and no `Errors:` line.
+
 ### The canvas chat's two copies become ONE applier and ONE turn controller (docs/17 row 150, docs/18 §2.3)
 
 `snapshotChat.ts` carried byte-identical copies of two neighbouring modules, measured

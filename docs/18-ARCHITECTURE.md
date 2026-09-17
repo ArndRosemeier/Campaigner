@@ -447,17 +447,28 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   parameter names blanked in value position — property keys stay, so
   `artifact.name` and `entry.title` remain different bodies), and requires the
   population of normalized bodies at 2+ sites at or above **75 normalized
-  characters** to EQUAL the checked-in inventory exactly. TWO scopes, ONE
-  scanner, ONE floor and ONE comparison: `src/**` (nothing excluded) against
-  `tests/architecture/duplicateImplementationsBaseline.json`, and `tests/**`
+  characters** to EQUAL the checked-in inventory exactly. TWO scopes plus the
+  UNION that spans them, ONE scanner, ONE floor and ONE comparison: `src/**`
+  (nothing excluded) against
+  `tests/architecture/duplicateImplementationsBaseline.json`, `tests/**`
   EXCEPT `tests/fixtures/**` (captured upstream documents and prompt goldens
   repeat legitimately) against
-  `tests/architecture/duplicateImplementationsTestsBaseline.json`; both
-  populations are compared by the ONE exported `populationProblems` helper, and
+  `tests/architecture/duplicateImplementationsTestsBaseline.json`, and the
+  union `scanRepo({ roots: ['src', 'tests'], exclude: ['tests/fixtures'] })`
+  against
+  `tests/architecture/duplicateImplementationsCrossTreeBaseline.json`; all
+  three populations are compared by the ONE exported `populationProblems`
+  helper, `crossTreeGroups()` is the ONE cross-tree filter, and
   `scanRepo(scope)` is the ONE scan entry (`scanRepo()` is the `src/` call). A
   new copy reds naming every `file:function:line` and the shared body hash; a
   baselined copy that is folded, renamed or moved reds the stale entry, so the
-  baseline is debt a fold FORCES out. It catches identical copies, not
+  baseline is debt a fold FORCES out. The union pin exists because a copy that
+  SPANS the trees is exactly one site in each scoped scan and so invisible to
+  both (docs/17 row 215): its measured cross-tree population is EMPTY — the one
+  entry found (`publicationSourceLine` ×2 under `src/` re-implemented as the
+  `source-line.test.ts` reference expectation) was folded onto the exported
+  seam — and a temp-seeded `src/`-shaped + `tests/`-shaped pair keeps the pin
+  non-vacuous. It catches identical copies, not
   paraphrases — a tripwire, not a proof. The test tree keeps floor 75 too
   (docs/17 row 212): the measured capture is 136 groups / 390 sites, and a
   raised floor was REJECTED because it would hide copies a single seam could
@@ -2461,11 +2472,34 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   families ×4, plus per-test inline fixture builders that are legitimate
   scenario data for now. **FOLDING IS QUEUED, not done in row 212's slice**;
   every test-tree entry's `reason` says whether a fold is a real candidate
-  (naming the `tests/helpers/` seam) or the repetition is legitimate. The
-  `src/` groups worth naming here so nobody "discovers" them as fresh work:
+  (naming the `tests/helpers/` seam) or the repetition is legitimate.
+  **The union pin closes the gap the two scoped inventories cannot (docs/17
+  row 215).** A copy that spans the trees — a production body re-implemented in
+  a test — is ONE site in each scoped scan, so it never reaches the 2-site floor
+  in either; the third pin scans
+  `{ roots: ['src', 'tests'], exclude: ['tests/fixtures'] }` and declares the
+  cross-tree population (groups with a site under EACH tree) in
+  `tests/architecture/duplicateImplementationsCrossTreeBaseline.json`. MEASURED
+  at base `82b3fc3`: scoped `src/` 15 groups / 39 sites, scoped `tests/` 136
+  groups / 390 sites, the union **151 groups / 430 sites** with exactly **1**
+  cross-tree group (hash `39d1cc194600176d`, 310 normalized characters:
+  `publicationSourceLine` in `pf2e-conditions.ts` and `pf2e-rules.ts` plus the
+  `expected` reference in `source-line.test.ts`) — invisible to both scoped pins
+  and to nothing else. That one entry was FOLDED onto the exported
+  `publicationSourceLine` (the test's reference aliases the already-imported
+  seam), so the landed union is **151 groups / 429 sites with 0 cross-tree
+  groups** and the declaration is empty-but-non-vacuous. The
+  `tests/fixtures/**` exclusion is NOT load-bearing at HEAD for this population:
+  that directory holds ZERO `.ts`/`.tsx` files, and the union is byte-identical
+  with and without it (151 groups / 429 sites / 0 cross-tree) — it stays as the
+  declared scope and is proven by the existing temp-seeded arms the moment a
+  `.ts` file lands there. The `src/` groups worth naming here so nobody
+  "discovers" them as fresh work:
   - `parseFile` ×7 (all seven pack adapters) and `titleCase` ×3 and
     `publicationSourceLine` ×2 — the same pack-adapter duplication family as
-    `isRecord`; row 171's landing (or its successor) owns the fold.
+    `isRecord`; row 171's landing (or its successor) owns the fold. The
+    `publicationSourceLine` pair is now the `src/` half of row 215's measured
+    cross-tree class; the TEST-side reference copy was the one folded.
   - The image-queue trio `mob-portrait-queue.ts` / `cover-image-queue.ts` /
     `entity-image-queue.ts` copies `workerCount` ×3 — and its `settledDetail`
     copies normalize to 74 characters, ONE character under the floor, so the

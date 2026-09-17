@@ -27,11 +27,15 @@
  * input, and site 4 declares the one LEGITIMATE difference: the same rule with
  * the `Source: ` prefix removed. Both halves are asserted, as data.
  *
- * Sites 1 and 2 are read from the REAL implementations. Sites 3 and 4 are
- * TRANSCRIBED here, because one is inline inside `formatItemText` and the other
- * inline inside `mapNpc` — there is no exported symbol to import. That
- * transcription is the point of the pins that follow it: the real-data pins
- * drive the REAL `formatItemText` through the equipment lane and the REAL
+ * Sites 1 and 2 are read from the REAL implementations, and the differential's
+ * one REFERENCE point (`expected` below) IS site 1 — the exported seam itself,
+ * imported. It was a byte-identical hand-copy until docs/17 row 215 folded it:
+ * a pure production formatter has to have ONE implementation, and a copy of an
+ * already-imported symbol is duplication whatever a test calls it. Sites 3 and
+ * 4 are still TRANSCRIBED here, because one is inline inside `formatItemText`
+ * and the other inline inside `mapNpc` — there is no exported symbol to import.
+ * That transcription is the point of the pins that follow it: the real-data
+ * pins drive the REAL `formatItemText` through the equipment lane and the REAL
  * `foundry-pf2e` adapter through the creature lane, so a change to either
  * inline copy fails a pin over the bytes it actually produces.
  *
@@ -132,15 +136,17 @@ function siteFoundryRaw(publication: Publication): string | null {
   return null;
 }
 
-/** The ONE rule, stated as the differential's reference point. */
-function expected(publication: Publication): string | null {
-  if (publication === undefined || publication === null) return null;
-  const title = publication.title.trim();
-  const license = publication.license.trim();
-  if (title === '' && license === '') return null;
-  if (title === '') return `Source: ${license}`;
-  return `Source: ${title}${license === '' ? '' : ` (${license})`}`;
-}
+/**
+ * The ONE rule, stated as the differential's reference point — the production
+ * seam ITSELF, not a copy of it (docs/17 row 215: until then this was a
+ * byte-identical transcription of the already-imported exported
+ * `publicationSourceLine`, which the duplicate-body tripwire's union pin now
+ * scans as one cross-tree population). The four SITES are unchanged; site 1's
+ * half of the matrix is now a self-comparison, which is why the differential's
+ * real power is sites 2 and 3 — driven through their REAL adapters — and the
+ * literal real-fixture expectations further down.
+ */
+const expected = publicationSourceLine;
 
 /**
  * The six edge shapes the audit named: title-only / license-only / both /

@@ -1,6 +1,7 @@
 /**
  * The duplicate-body tripwire — a repo-wide detector for one idea implemented
- * twice (AGENTS `§Centralization` obligation 4; `docs/17` rows 172 and 212).
+ * twice (AGENTS `§Centralization` obligation 4; `docs/17` rows 172, 212 and
+ * 215).
  *
  * WHY THIS EXISTS. A copy is invisible when it is BORN: nothing fails and each
  * copy is correct where it was written, so duplication is caught by a pin, not
@@ -9,9 +10,17 @@
  * to grep the right word. This file is the generic detector; it is a TRIPWIRE,
  * not a proof (see WHAT IT CANNOT SEE below).
  *
- * WHAT IT SCANS. TWO scopes, ONE scanner, ONE floor and ONE comparison:
+ * WHAT IT SCANS. TWO scoped populations plus the UNION that spans them, ONE
+ * scanner, ONE floor and ONE comparison:
  *   * `src/**` — every `*.ts`/`*.tsx` file, no path excluded;
- *   * `tests/**` — every `*.ts`/`*.tsx` file EXCEPT `tests/fixtures/**`.
+ *   * `tests/**` — every `*.ts`/`*.tsx` file EXCEPT `tests/fixtures/**`;
+ *   * `src/**` AND `tests/**` in ONE `UNION_SCOPE` scan, compared only for
+ *     groups that hold a site under EACH tree (docs/17 row 215). A body written
+ *     in `src/` and re-implemented in a test is ONE site in each scoped scan, so
+ *     it never reaches the 2-site floor in either and NEITHER inventory can see
+ *     it; in the union it is a group, and that is the drift class that matters
+ *     most — a test asserting against its own copy of production logic keeps
+ *     passing while the production function moves.
  * The fixture exclusion is the one deliberate gap, and it covers only what its
  * reason actually justifies: `tests/fixtures/` holds captured upstream
  * documents and prompt goldens that legitimately repeat, so comparing their
@@ -20,7 +29,8 @@
  * themselves — because a copy-pasted helper or factory in a test is exactly the
  * same defect one layer up. The exclusion and the scope are stated in the tests
  * inventory's own header and pinned as data, never left silent (docs/17 row
- * 212).
+ * 212); the union scan carries the SAME exclusion for the same reason, or the
+ * fixture goldens flood its cross-tree population (measured, docs/17 row 215).
  *
  * WHAT IT EXTRACTS. NAMED functions/methods only, through the TypeScript
  * compiler API (`node.getText()`/the scanner are used for correctness — a
@@ -90,11 +100,15 @@
  * shared hash, so the fix starts at the seam question (can ONE seam carry
  * this?), never at "fix each copy".
  *
- * THE INVENTORIES ARE DEBT, NOT A LICENCE. TWO checked-in files carry the
+ * THE INVENTORIES ARE DEBT, NOT A LICENCE. THREE checked-in files carry the
  * captured populations in the SAME schema and are compared by the SAME helper:
- * `duplicateImplementationsBaseline.json` (the `src/` population) and
+ * `duplicateImplementationsBaseline.json` (the `src/` population),
  * `duplicateImplementationsTestsBaseline.json` (the test-tree population, whose
- * header states the scope and the fixture exclusion). Each records the
+ * header states the scope and the fixture exclusion) and
+ * `duplicateImplementationsCrossTreeBaseline.json` (the cross-tree population
+ * of the union scan — EMPTY at docs/17 row 215, because the one measured
+ * cross-tree copy was folded onto the exported production seam, and the pin's
+ * non-vacuity arm proves a new one still reds). Each records the
  * population that exists TODAY, one entry per group with every `file:function`
  * site and a written reason — the repo's captured-state pattern
  * (`tests/lib/pdfLayoutBaseline.json`). Folding a copy FORCES its baseline line
@@ -165,6 +179,16 @@ export const BASELINE_PATH = 'tests/architecture/duplicateImplementationsBaselin
 
 /** The test-tree inventory — same schema, same comparison, sibling file. */
 export const TESTS_BASELINE_PATH = 'tests/architecture/duplicateImplementationsTestsBaseline.json';
+
+/**
+ * The cross-tree inventory — the third population, and the third call of the
+ * same `populationProblems`. It is EMPTY at docs/17 row 215 because the one
+ * measured cross-tree copy was folded onto the exported production seam; the
+ * empty declaration is still a claim the pin asserts and the non-vacuity arm
+ * keeps honest.
+ */
+export const CROSS_TREE_BASELINE_PATH =
+  'tests/architecture/duplicateImplementationsCrossTreeBaseline.json';
 
 /** Read and validate one checked-in inventory. */
 export function readBaseline(baselinePath: string): DuplicateBaseline {
@@ -380,6 +404,17 @@ export const SRC_SCOPE: ScanScope = { roots: ['src'] };
 /** The test-tree scope: every TypeScript file under `tests/` EXCEPT `tests/fixtures/`. */
 export const TESTS_SCOPE: ScanScope = { roots: ['tests'], exclude: ['tests/fixtures'] };
 
+/**
+ * The UNION scope: BOTH trees in ONE scan, with the same `tests/fixtures/**`
+ * exclusion. It exists because a copy that SPANS the trees is invisible to both
+ * scoped inventories — a body written in `src/` and re-implemented in a test is
+ * exactly ONE site in each scoped scan, so it never reaches the 2-site floor in
+ * either — while in the union it is a group of two (docs/17 row 215). The same
+ * exclusion applies here for the same reason; `tests/fixtures/**` is the only
+ * one, and it is pinned as data.
+ */
+export const UNION_SCOPE: ScanScope = { roots: ['src', 'tests'], exclude: ['tests/fixtures'] };
+
 function isInside(file: string, prefix: string): boolean {
   return file === prefix || file.startsWith(prefix + path.sep);
 }
@@ -421,6 +456,35 @@ export function scanRepo(scope: ScanScope = SRC_SCOPE): DuplicateGroup[] {
     functions.push(...collectNamedFunctions(file, code));
   }
   return groupFunctions(functions);
+}
+
+/**
+ * The CROSS-TREE population: the groups of a multi-root scan that hold at least
+ * one site under EACH of its roots. For `UNION_SCOPE` that is exactly "a body
+ * implemented under `src/` AND under `tests/`" — the class a scoped scan cannot
+ * see (one site in each, so neither reaches the floor) and the reason the union
+ * pin exists (docs/17 row 215). Classification is by the scope's OWN roots, so
+ * the same helper serves the temp-seeded non-vacuity arms. The WHOLE group is
+ * returned, so `populationProblems` still compares every site and names them
+ * all.
+ */
+export function crossTreeGroups(
+  groups: readonly DuplicateGroup[],
+  scope: ScanScope = UNION_SCOPE,
+): DuplicateGroup[] {
+  const cwd = process.cwd();
+  const roots = scope.roots.map((root) => path.resolve(cwd, root));
+  const spansBoth = (group: DuplicateGroup): boolean => {
+    const sides = new Set<number>();
+    for (const site of group.sites) {
+      const full = path.resolve(cwd, site.file);
+      roots.forEach((root, index) => {
+        if (isInside(full, root)) sides.add(index);
+      });
+    }
+    return sides.size >= 2;
+  };
+  return groups.filter(spansBoth);
 }
 
 function siteKey(fn: ScannedFunction): string {
@@ -627,6 +691,98 @@ describe('the tripwire covers the test tree (fixtures excluded, docs/17 row 212)
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the tripwire sees a copy that SPANS both trees (docs/17 row 215)', () => {
+  it('matches the checked-in cross-tree inventory exactly at the same 75-character floor', () => {
+    const problems = populationProblems(
+      crossTreeGroups(scanRepo(UNION_SCOPE)),
+      readBaseline(CROSS_TREE_BASELINE_PATH),
+      CROSS_TREE_BASELINE_PATH,
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it('declares the cross-tree population as a FACT, with the scope, the exclusion and the fold in its header', () => {
+    const header = readBaseline(CROSS_TREE_BASELINE_PATH);
+    expect(header.groups).toEqual([]);
+    expect(header.scope).toContain('src/**');
+    expect(header.scope).toContain('tests/**');
+    expect(header.scope).toContain('tests/fixtures/**');
+    expect(header.scope).toMatch(/exclud/i);
+    expect(header.scope).toContain('75');
+    expect(header.note).toMatch(/debt/i);
+    expect(header.note).toMatch(/fold/i);
+  });
+
+  it('excludes tests/fixtures/** from the union scan and covers BOTH trees (non-vacuity of the union scope)', () => {
+    const files = scopedFiles(UNION_SCOPE);
+    expect(files.some((file) => file.startsWith(`tests/fixtures${path.sep}`))).toBe(false);
+    expect(files).toContain('tests/architecture/no-duplicate-implementations.test.ts');
+    expect(files).toContain('tests/setup.ts');
+    expect(files).toContain(`src${path.sep}lib${path.sep}fileSlug.ts`);
+    expect(files.some((file) => file.startsWith(`src${path.sep}`))).toBe(true);
+  });
+
+  it('DETECTS a body copied between a src/-shaped and a tests/-shaped path, while BOTH scoped halves MISS it', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'dupe-cross-tree-'));
+    try {
+      const srcRoot = path.join(tmp, 'src');
+      const testsRoot = path.join(tmp, 'tests');
+      mkdirSync(srcRoot, { recursive: true });
+      mkdirSync(testsRoot, { recursive: true });
+      const produced = path.join(srcRoot, 'produced.ts');
+      const copied = path.join(testsRoot, 'copied.ts');
+      writeFileSync(produced, copySource('alpha', 'value'));
+      writeFileSync(copied, copySource('beta', 'thing'));
+      const union: ScanScope = { roots: [srcRoot, testsRoot] };
+
+      const spanning = crossTreeGroups(scanRepo(union), union);
+      expect(spanning).toHaveLength(1);
+      expect(spanning[0]?.sites.map(siteKey)).toEqual([
+        `${reported(produced)}:alpha`,
+        `${reported(copied)}:beta`,
+      ]);
+
+      // THE GAP ITSELF, as data: each SCOPED half sees ONE site of the body, so
+      // neither produces a group at all — no scoped inventory can red on it.
+      expect(scanRepo({ roots: [srcRoot] })).toEqual([]);
+      expect(scanRepo({ roots: [testsRoot] })).toEqual([]);
+
+      // The declared EMPTY inventory is not vacuous: the same comparison the
+      // real pin calls fires on this synthetic pair and names both sites.
+      const problems = populationProblems(
+        spanning,
+        readBaseline(CROSS_TREE_BASELINE_PATH),
+        CROSS_TREE_BASELINE_PATH,
+      );
+      const joined = problems.join('\n');
+      expect(joined).toContain('NEW DUPLICATE');
+      expect(joined).toContain(`${reported(produced)}:alpha`);
+      expect(joined).toContain(`${reported(copied)}:beta`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('reds a NEW cross-tree copy through the declared inventory, naming both sites', () => {
+    const probeBody = copySource('delta', 'input');
+    const groups = groupFunctions(
+      collectNamedFunctions('src/probe.ts', probeBody).concat(
+        collectNamedFunctions('tests/probe.ts', probeBody),
+      ),
+    );
+    expect(groups).toHaveLength(1);
+    const problems = populationProblems(
+      groups,
+      readBaseline(CROSS_TREE_BASELINE_PATH),
+      CROSS_TREE_BASELINE_PATH,
+    );
+    const joined = problems.join('\n');
+    expect(joined).toContain('NEW DUPLICATE');
+    expect(joined).toContain('src/probe.ts:delta:1');
+    expect(joined).toContain('tests/probe.ts:delta:1');
   });
 });
 

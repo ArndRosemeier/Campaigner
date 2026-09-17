@@ -144,7 +144,8 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
    **seven identical `isRecord` helpers** (one per pack adapter) that no test
    could see until a task happened to grep the right word.
    The generic detector is **LANDED** (docs/17 row 172, extended to the test
-   tree by row 212): `tests/architecture/no-duplicate-implementations.test.ts`
+   tree by row 212 and closed across the two trees by row 215):
+   `tests/architecture/no-duplicate-implementations.test.ts`
    scans every named function body under `src/**/*.ts(x)` AND under
    `tests/**/*.ts(x)` except `tests/fixtures/**` (captured upstream documents
    and prompt goldens repeat legitimately) through the TypeScript parser,
@@ -154,10 +155,18 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
    `tests/architecture/duplicateImplementationsBaseline.json` for `src/` and
    `tests/architecture/duplicateImplementationsTestsBaseline.json` for the test
    tree (136 groups / 390 sites at row 212; both scopes at the same floor, and
-   `tests/fixtures/**` is the ONLY exclusion, pinned as data). Known gap, being
-   closed: the two inventories are scoped, so a copy that spans BOTH trees (a
-   production body re-implemented in a test) is a single site in each and
-   invisible to both — measured, docs/17 row 215 carries the fix.
+   `tests/fixtures/**` is the ONLY exclusion, pinned as data). A THIRD pin runs
+   over the UNION of the two trees — `scanRepo({ roots: ['src', 'tests'],
+   exclude: ['tests/fixtures'] })` — and declares the cross-tree population
+   (groups holding at least one `src/` site AND one `tests/` site) in
+   `tests/architecture/duplicateImplementationsCrossTreeBaseline.json`: a body
+   written in `src/` and re-implemented in a test is a single site in each
+   scoped scan and so invisible to both, and the union pin is what makes it red
+   naming both sites. That population is EMPTY at row 215 — the one measured
+   entry (the `publicationSourceLine` pair re-implemented as the
+   `source-line.test.ts` reference expectation) was FOLDED onto the exported
+   seam, and the pin's non-vacuity arm proves a synthetic cross-tree pair still
+   reds.
    The floor is **75 normalized characters** — the largest floor that
    still sees the seven-copy `isRecord` case this rule was born from, so the
    floor is MEASURED, not guessed (a 120-char floor cannot see it). A NEW copy
