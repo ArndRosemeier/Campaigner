@@ -71,7 +71,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
-LOGDIR="${GATE_LOGDIR:-$PWD/.gate-logs/gate-$$}"
+LOGDIR="${GATE_LOGDIR:-$PWD/.gate-logs/gate-$$-$(date -u +%Y%m%dT%H%M%S)-$RANDOM}"
 # The lock MUST be on a path shared by every shell AND every worktree, and it
 # must be derivable identically from the main tree and from a worktree.
 #   * /tmp is out: per-call and read-only in this harness.
@@ -156,10 +156,16 @@ trap 'rm -rf "$PLAN_DIR"' EXIT
 
 CHUNKS=()
 declare -A CHUNK_FILES=()
+# A chunk NAME is used to build log paths, so two names that differ only in their
+# leading `tests_` would silently share ONE log file and corrupt both counts
+# (real: a caller chunk named `features_a` against `tests_features_a`). Normalize
+# every name into its own filename, once, here.
+chunk_slug() { printf '%s' "$1" | tr '[:upper:]/' '[:lower:]-'; }
+
 register_chunk() {
   local name="$1"
   shift
-  local f="$JOBS_DIR/$name.files"
+  local f="$JOBS_DIR/$(chunk_slug "$name").files"
   : > "$f"
   local p
   for p in "$@"; do printf '%s\n' "$p" >> "$f"; done
@@ -358,18 +364,24 @@ elif [ "$MODE" != "compile-only" ]; then
 fi
 print_plan
 
-if [ -n "$(foreign)" ]; then
-  echo "WAITING: another suite is already running (ours or the peer project's):"
-  foreign | head -3
-  exit 9
+# The compile tier runs NO suite: it must never wait on (or hold) the suite lock,
+# or a 27s typecheck would be refused for the ~12 minutes a full verification
+# takes — backwards, since the compile tier is what a writer needs most. It
+# reads nothing the lock protects, so contention is not a concern for it.
+if [ "$COMPILE_ONLY" != "1" ]; then
+  if [ -n "$(foreign)" ]; then
+    echo "WAITING: another suite is already running (ours or the peer project's):"
+    foreign | head -3
+    exit 9
+  fi
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    echo "LOCK HELD: $(cat "$LOCK/owner" 2>/dev/null || echo unknown)"
+    echo "(stale? a lock whose owner file is >30 min old with no vitest alive may be removed)"
+    exit 9
+  fi
+  printf '%s %s %s\n' "$self" "$(date +%s)" "$PWD" > "$LOCK/owner"
+  trap 'rm -rf "$LOCK" "$PLAN_DIR"' EXIT
 fi
-if ! mkdir "$LOCK" 2>/dev/null; then
-  echo "LOCK HELD: $(cat "$LOCK/owner" 2>/dev/null || echo unknown)"
-  echo "(stale? a lock whose owner file is >30 min old with no vitest alive may be removed)"
-  exit 9
-fi
-printf '%s %s %s\n' "$self" "$(date +%s)" "$PWD" > "$LOCK/owner"
-trap 'rm -rf "$LOCK" "$PLAN_DIR"' EXIT
 # The log dir is created only once the lock is OURS: a refused attempt (a foreign
 # suite, or the lock held by a sibling) used to leave an empty log dir behind,
 # and retry loops accumulated them by the hundred.
@@ -411,13 +423,13 @@ finish_chunk() {
 start_chunk() {
   local name="$1"
   local -a args=()
-  mapfile -t args < "$JOBS_DIR/$name.files"
+  mapfile -t args < "$JOBS_DIR/$(chunk_slug "$name").files"
   if [ "${#args[@]}" -eq 0 ]; then
     echo "!! GATE: chunk $name has no files — refusing to run an empty chunk"
     status=1
     return 1
   fi
-  local log="$LOGDIR/$name.log"
+  local log="$LOGDIR/$(chunk_slug "$name").log"
   setsid env NODE_OPTIONS="--max-old-space-size=1536" CAMPAIGNER_TEST_WORKERS=1 \
     pnpm exec vitest run "${args[@]}" > "$log" 2>&1 &
   local pid=$!
