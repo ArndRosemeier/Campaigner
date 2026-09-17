@@ -1053,6 +1053,21 @@ on the book, network-free adapters, loud per-entry failures.
   guard every encounter run after such an import would die on "no validated
   stat block". The `spell` arm is load-bearing the moment a rules pack is
   re-imported, because spells move OUT of `section` into their own type.
+- **The SAME-SYSTEM rule now also covers the creator/cast creature pool
+  (docs/17 row 207).** The encounter roster and the item pool were already
+  scoped to the campaign's system; the module creator's bestiary window
+  (`llm/creatorRoster` → `db/creatureRepo.listLibraryCreatures`) and the cast
+  that resolves a requested name (`features/modules/entity-batch.
+  libraryCitationForEntity`) read the same library and used to cross systems —
+  a Pathfinder 2e module could be offered, and could cast, a dnd5e stat block.
+  Both now take the campaign's system through the ONE optional `system` on that
+  pool read (filtered by the OWNING BOOK's system; the books are read once and
+  indexed by id), and the module's PARTS rule excerpts
+  (`llm/moduleGen.ruleExcerptSection` → `searchRules`) pass the same system.
+  The GLOBAL surfaces — the Rules page, the bestiary browser and the
+  wiki-link publisher — deliberately take no system: there an explicit
+  reference is the owner's own act, and scoping them would hide an installed
+  book (or dangle a resolvable `[[…]]` mention).
 - **Volume honesty on the opt-in.** The GM Screen recipe counts PAGES (61 —
   the fetch is one document, the volume is its pages); the conditions recipe
   counts its 43 documents; the corpus source is ONE entry labelled with the

@@ -17,6 +17,7 @@ import {
   npcCreatureRef,
   sameAliasName,
 } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import {
   creatureCitationName,
@@ -267,12 +268,40 @@ export interface LibraryCreature {
  * also prints each creature's pack title beside its name, read from the carried
  * `bookId` — the pool stays a pure read of the chunk table, and the title is the
  * book's own row.
+ *
+ * **`system` SCOPES THE POOL TO THE CAMPAIGN'S GAME SYSTEM (docs/17 row 207).**
+ * A generation read that offers or resolves cross-system content is a real
+ * defect: a Pathfinder 2e module grounded in a dnd5e rules book, or cast from a
+ * dnd5e stat block, is confidently wrong. A chunk does not carry a system of its
+ * own, so the OWNING BOOK decides (`bookId`): the books the pool names are read
+ * ONCE here and indexed by id — never one read per creature — and a chunk whose
+ * book row is missing (or whose book is another system) is not offered. The
+ * filter is OPT-IN so the global surfaces are untouched: the Rules page and the
+ * bestiary browser are global BY DESIGN (the owner may own several systems'
+ * books) and the wiki-link publisher is a library-wide reference resolver, so
+ * all three call this with NO system and see every creature, exactly as before.
+ * A caller that DOES know the campaign system — the creator window and the cast
+ * lookup — passes it, so the prompt vocabulary and the resolution that judges it
+ * are scoped by the SAME read.
  */
-export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
+export async function listLibraryCreatures(system?: GameSystem): Promise<LibraryCreature[]> {
   const chunks = await listChunksByType('statblock');
+  // The owning books, read once: the chunk row's `system` does not exist and
+  // its stat block's `system` is the ADAPTER's reading (a dnd5e-shaped block
+  // stored in a pf2e book would answer the wrong question) — the book is the
+  // row that really knows. `bulkGet` over the unique ids the pool names keeps
+  // this ONE read whatever the creature count.
+  const systemOfBook = new Map<Id, GameSystem>();
+  if (system !== undefined) {
+    const books = await db.rulebooks.bulkGet([...new Set(chunks.map((chunk) => chunk.bookId))]);
+    for (const book of books) {
+      if (book !== undefined) systemOfBook.set(book.id, book.system);
+    }
+  }
   const creatures: LibraryCreature[] = [];
   for (const chunk of chunks) {
     if (chunk.statBlock === null) continue;
+    if (system !== undefined && systemOfBook.get(chunk.bookId) !== system) continue;
     const name = canonicalCreatureName(chunk);
     if (name === null) continue;
     creatures.push({
@@ -292,7 +321,12 @@ export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
 }
 
 /** The same pool in the shape `lib/wikilinks` resolves against (the ONE
- * conversion, so no caller re-derives it). */
+ * conversion, so no caller re-derives it). Deliberately UNSCOPED (docs/17 row
+ * 207): a `[[Zombie]]` mention is an explicit user reference into the library,
+ * and the resolver must answer it whatever system the creature's book carries —
+ * a reader who owns several systems' books is not editing a campaign's system
+ * scope. Scoping this would silently turn a resolvable mention into a dangling
+ * link. */
 export async function wikiLinkCreatures(): Promise<WikiLinkCreature[]> {
   return (await listLibraryCreatures()).map((creature) => ({
     chunkId: creature.chunkId,

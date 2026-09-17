@@ -120,6 +120,26 @@ describe('buildBestiaryRows', () => {
     expect(origins).toContain('SRD Pack: Goblin');
   });
 
+  it('lists creatures from EVERY game system — the bestiary browser is global BY DESIGN (docs/17 row 207)', () => {
+    // The stated decision: the browser is a library surface, not a generation
+    // read. The owner may own several systems' books and browses them from one
+    // place, so no campaign system is ever consulted here — scoping this would
+    // hide a whole installed pack from the only screen that shows it.
+    const pf2eBook: Rulebook = {
+      ...pdfBook(),
+      id: '33333333-3333-4333-8333-333333333333',
+      title: 'Pathfinder Monster Core',
+      system: 'pathfinder2e',
+      filename: 'pathfinder-monster-core.json',
+    };
+    const rows = buildBestiaryRows([pdfBook(), pf2eBook], [
+      chunk({ bookId: PDF_ID, headingPath: ['Troll'] }),
+      chunk({ bookId: pf2eBook.id, headingPath: ['Goblin Warrior'] }),
+    ]);
+    const entries = rows.filter((row) => row.kind === 'entry');
+    expect([...entries.map((row) => row.name)].sort()).toEqual(['Goblin Warrior', 'Troll']);
+  });
+
   it('marks a pack chunk with a null stat block as a loud data error; a PDF one is simply not a creature', () => {
     const rows = buildBestiaryRows([pdfBook(), packBook()], [
       chunk({ bookId: PACK_ID, headingPath: ['Broken'], statBlock: null }),

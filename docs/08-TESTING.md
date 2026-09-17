@@ -1283,6 +1283,10 @@ loosening.
 | The no-such-creature refusal names the nearest creatures (case/hyphen/umlaut/qualifier-insensitive, bounded to three, deduped, each with its book) and stays SILENT when nothing is close | `llm/moduleGen-cast.test` (1, both halves through `runEntityBatch`) + `llm/creatorRoster.test` (4) + `domain/creatureName.test` (13). REVERT-PROVEN: making the suggestion unconditional RED | ✅ |
 | The normalization and similarity measures themselves: case, whitespace, hyphen-vs-space, umlauts and NFKD-invisible ligatures (æ/ø/ß/þ), a trailing `(…)` qualifier, and an empty side scoring 0 (never a division artifact) | `domain/creatureName.test` (13) | ✅ |
 | **REGRESSION GUARD — the encounter roster is unchanged by the shared-comparator extraction**: its own 29 pins (order, cap, note, name index, duplicate-book suffix, retry, item/section skipping) stay green with `buildPackRoster` reading `libraryLevelOrder` | `llm/encounter-roster.test` (29, untouched) | ✅ |
+| The window is **SCOPED to the campaign's game system** (docs/17 row 207): a Pathfinder 2e campaign is offered NONE of the dnd5e-only creatures and the dnd5e mirror holds, while an UNSCOPED call still lists both (the non-vacuity half) | `llm/creatorRoster.test` (2 + the mirror). REVERT-PROVEN: dropping the `system` argument from the pool read REDs both |
+| The UI surfaces stay **UNSCOPED on purpose** (docs/17 row 207 — the owner's decision): ONE bestiary browser lists a dnd5e AND a pf2e book's creatures, and the wiki-link pool resolves a creature of either system | `bestiary/roster.test` (1), `llm/creatorRoster.test` (1). REVERT-PROVEN: filtering either by a campaign system REDs it |
+| The module's **PARTS rule excerpts** are scoped to the campaign's game system, and a same-system library's prompt is BYTE-IDENTICAL whether or not a foreign-system book is installed (docs/17 row 207) | `llm/moduleGen.test` (2, real retrieval + prompt byte comparison; an unscoped read of the same query is asserted to see BOTH markers). REVERT-PROVEN: removing `system` from `ruleExcerptSection` REDs the retrieval pin |
+| The **CAST** refuses a cross-system citation loudly BY NAME (docs/17 row 207): the entity, the creature AND the system appear in the sentence, the same-system cast resolves in both directions, and an unscoped caller keeps the pre-207 pool — never a silent drop, never a substituted stat block | `features/entity-batch-creature-book.test` (3). REVERT-PROVEN: the throw replaced by a silent drop REDs the refusal pin |
 | **UNPROVEN — stated, not implied:** no live-provider run observed a model naming a creature from the list (every pin mocks the transport at the protocol boundary), so "the model copies a listed name in production" is intent rather than measurement; the suggestion FLOOR (`0.4`) was calibrated against hand-written cases only — no real library was swept — so a compound-language near miss below it stays silent, which is the designed direction but not a measured one; the window's ORDER cannot be observed in a finished module, only in the composed prompt; and 300 lines is §7's cap inherited for this consumer rather than re-derived | `docs/18 §4`; `docs/12 §7`; `docs/17 row 114` | stated |
 | **A run the owner STOPPED is never reported as a failure and never resurrected**: a step reply that lands after `cancelAll()` is discarded before any write, the row keeps `cancelled`, a cancel-path write meeting a deleted row stays silent, and the stopped row keeps its Retry | `features/encounter-map-queue.test.ts` (4 new: the late-reply seam — row stays `cancelled`, no toast; the vanished-row spurious toast; a step DYING after the stop with the row gone; and the contrast — a step that dies with NO stop in play still toasts and still writes its `failed` row) + `llm/runEngine.test.ts` (2 new: the in-flight step does not resurrect a stopped run; the stop does not strand the row's Retry). The pre-existing `cancelAll` pin is byte-unchanged | ✅ REVERT-PROVEN, line by line: restoring `cancel()`'s `cancelRequested.delete` REDs 4 of the 6 with the sightings' own `Encounter step "brief" failed: PersonaRun not found: …`; removing the catch branch's tolerant write REDs the died-after-stop pin; removing `retryStep`'s restart clear REDs the Retry pin; removing `recordCancelled`'s vanished-row tolerance REDs the same pin with an unhandled `NotFoundError` |
 | **UNPROVEN — stated, not implied (same row):** two of the fix's guard lines are NOT reached by any pin — the tail check before the completion write, and the intent clears in `executeFrom`'s `finally` and early return (injections removing each stay GREEN), so they are consistency, not coverage; the *victim* of the original flake is not identified (the guards test `:371` and the dequeue test `:416` both return with real orchestration in flight, and only the SHAPE is forced); and a cancel landing AFTER a pipeline has already ended leaves the intent set until the row's next deliberate restart (measured `pipelines=0 intent=1` at a test boundary) | `docs/17 row 115`; `docs/18 §4` | stated |
@@ -6835,6 +6839,90 @@ No arm was VOID: all four hashes differ and every arm's RED named a different
 pin. The five remaining pins (title fallback, no match, action honesty,
 loading, lookalike) stayed GREEN under all four injections, so each pin owns
 its own behaviour rather than riding another's.
+
+### The generation reads are scoped to the campaign's game system (docs/17 row 207, docs/12 §15.1, docs/11 §Module-side cast, docs/18 §2 rows 136/160)
+
+The owner asked whether a dnd5e pack changes what a Pathfinder campaign
+generates. It did, in exactly THREE generation reads, while the spell corpus,
+the run retrieval, the encounter roster and the item pool were already scoped:
+the module PARTS rule excerpts (`ruleExcerptSection` called `searchRules` with
+no `system`), the module creator's bestiary window (`collectCreatorRoster` →
+`listLibraryCreatures()`), and the CAST that resolves the window's request
+(`entity-batch.libraryCitationForEntity`, the dangerous half — it could resolve
+a dnd5e stat block INTO a pf2e npc). The fix threads ONE optional `system`
+through the ONE creature pool (filtered by the OWNING BOOK's system, the books
+read once and indexed by id) and through `searchRules`'s existing option; the
+global Rules page, bestiary browser and wiki-link publisher stay deliberately
+unscoped.
+
+- `tests/llm/moduleGen.test.ts` — the existing PARTS harness with REAL retrieval
+  (nothing mocked at the search boundary): two READY rules books, one per
+  system, each carrying the part synopsis's own tokens (`low tide`) plus a
+  system-distinct marker sentence, so an UNSCOPED search of the same synopsis is
+  asserted to return BOTH markers (the non-vacuity half). A pf2e module's PARTS
+  prompt carries the pf2e marker and NOT the dnd5e one; the dnd5e campaign is
+  the mirror. The byte no-behaviour-change pin is in the same test: a fresh,
+  identical pf2e campaign/module built against the own-system-only library and
+  one built AFTER the dnd5e book is installed produce the SAME prompt bytes.
+- `tests/llm/creatorRoster.test.ts` — the existing window harness with one
+  creature that exists only in its own system's book:
+  `collectCreatorRoster(3, 'pathfinder2e')` offers only the pf2e creature, the
+  mirror holds, and the unscoped call still lists both. The same file pins the
+  UNSCOPED decisions: `wikiLinkCreatures()` and `listLibraryCreatures()` return
+  every system's creatures.
+- `tests/features/entity-batch-creature-book.test.ts` — the existing cast
+  harness drives `libraryCitationForEntity` DIRECTLY: the pf2e cast of the
+  dnd5e-only name REJECTS, and the message names the entity «Aunt Agatha», the
+  creature «Beholder» AND the scope (`no creature of that name for Pathfinder 2e`);
+  the same-system cast resolves in both directions; a caller passing NO system
+  keeps the pre-207 every-book pool (the pre-207 exact-sentence pin in the same
+  file is untouched and still green).
+- `tests/bestiary/roster.test.ts` — the UI decision, behaviourally: one
+  `buildBestiaryRows` call over a dnd5e AND a pf2e book lists both systems'
+  creatures, so the browser's global design cannot be scoped silently.
+
+**Injected RED, watched — the suite lock held from BEFORE the first injection,
+each mutated file's hash PRINTED with `git hash-object` for every arm, and the
+tree restored from OUT-OF-TREE pristine copies of the changed files inside a
+`trap`; every post-arm hash printed again and MATCHING its baseline, no two arms
+identical:**
+
+- **A baseline (no injection)** — `creatureRepo.ts`
+  `c862eda121b86db588b028f60ce387d50f8c83a9`, `creatorRoster.ts`
+  `adae436d521a55e68a7e85c03f8282904e628aea`, `moduleGen.ts`
+  `807fcc570965ee9b67b75668ad64ca1df06969da`, `entity-batch.ts`
+  `4dfb30194ade2e3747d3fb46ddc8de5ae4ff6f43` → **GREEN 5 files / 156 tests**
+  (the four files above PLUS `llm/moduleGen-cast.test.ts`, whose two pre-existing
+  `'no creature of that name'` pins stay green because the scoped clause is
+  APPENDED after that substring).
+- **B the search scoping removed** (`ruleExcerptSection`'s `system` dropped from
+  the `searchRules` options) — `moduleGen.ts`
+  `d0f31e1d939ca3a0639d092ec455c566e4a21f5f` → **RED 2**, exactly the two new
+  PARTS pins: the byte comparison (`expected 'Campaign: Emberfall (Pathfinder
+  2e)…' to be '…'` — the dnd5e marker leaked into the pf2e prompt) and the
+  mirror (`expected '…' not to contain 'PF2E-ONLY-RULE'`).
+- **C the pool scoping removed** (the owning-book filter line deleted from
+  `listLibraryCreatures`) — `creatureRepo.ts`
+  `fff429ff40644342273bba5a2f562dd1714db981` → **RED 5**: both window pins
+  (`expected [ 'Goblin Warrior', 'Beholder' ] to deeply equal [ 'Goblin
+  Warrior' ]` and the mirror), the missing-book pin, and both cast-refusal pins.
+- **D the loud refusal replaced by a silent drop** (the no-such-creature throw
+  becomes `return null`) — `entity-batch.ts`
+  `2dfd173214daaf77565c093dd6dbc677e186d2ab` → **RED 6**: the two row-207 cast
+  pins plus the four pre-existing refusal pins (a silent drop defeats every
+  "this must NOT resolve" pin, which is exactly why the loudness is
+  load-bearing). Restored byte-identically after every arm (hashes printed again
+  and matching), tree clean.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** every pin drives the REAL
+pools, retrievals and DB rows over fake-indexeddb but mocks the model transport,
+so what is proved is which bytes a prompt carries and which citations resolve —
+never a live model's obedience; the "only its own system's books" property is
+proved over SEEDED books, not over an owner's on-disk mixed library; and no pin
+proves the library UI's items/pack titles read well to a person. **The
+already-scoped reads (spell corpus, encounter roster, item pool) and the
+already-recorded citation resolution are deliberately UNCHANGED and stay pinned
+by their pre-existing suites.**
 
 ### Remaining gaps
 

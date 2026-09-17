@@ -48,7 +48,9 @@ import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/
 // `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
 // the SAME pool the batch's cast resolves a requested name against, ordered by
 // level distance to the module's band and capped, so the prompt names real
-// creatures instead of offering a slot with no vocabulary. The cast itself is
+// creatures instead of offering a slot with no vocabulary. Both halves are
+// scoped to the campaign's game system (docs/17 row 207): the vocabulary and
+// the lookup it judges pass the SAME `system`. The cast itself is
 // not this module's — the entity batch resolves the requested name and casts
 // through `db/creatureRepo.castCreatureAsNpc`, the ONE cast function
 // (docs/18 §2.2).
@@ -56,7 +58,7 @@ import { collectCreatorRoster } from '@/llm/creatorRoster';
 import { addArtifactAliases, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
-import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
+import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import { getSettings, readPromptStyles } from '@/db/settingsRepo';
 import { setBackgroundActivity, clearBackgroundActivity } from '@/lib/backgroundTitle';
 import { moduleGenLockName, withGenerationLock } from '@/lib/generationLocks';
@@ -1020,14 +1022,20 @@ async function spineMessages(
   // prompt offers casting only with the actual list of creatures this
   // workspace holds — built from the SAME pool the cast will resolve the
   // requested name against (`collectCreatorRoster` →
-  // `db/creatureRepo.listLibraryCreatures`, any book origin), ordered by level
+  // `db/creatureRepo.listLibraryCreatures`), ordered by level
   // distance to this module's band midpoint (the docs/12 §7 chain's spine
-  // step) and capped like the encounter roster. An empty window composes the
+  // step) and capped like the encounter roster. **Scoped to the campaign's own
+  // game system since docs/17 row 207** — the window and the cast resolve
+  // through the SAME `system` seam, so a Pathfinder module is never offered a
+  // dnd5e stat block to borrow. An empty window composes the
   // pre-change prompt byte for byte AND leaves the slot off, because a slot
   // with no vocabulary is uncastable by construction (docs/18 §4). Read here,
   // like every other prompt input, so the clause, the list and the lookup that
   // judges the model's answer all describe the same library.
-  const bestiaryRoster = await collectCreatorRoster((module.levelMin + module.levelMax) / 2);
+  const bestiaryRoster = await collectCreatorRoster(
+    (module.levelMin + module.levelMax) / 2,
+    campaign.system,
+  );
 
   const levelCount = module.levelMax - module.levelMin + 1;
   // Tone dial teeth (08 §M4-B): the module's tone rules out a few OUTCOMES,
@@ -1817,7 +1825,11 @@ async function partCall(
     .map((entry, index) => `${index + 1}. [${entry.levelBand}] ${entry.title} — ${entry.synopsis}`)
     .join('\n');
 
-  const ruleExcerpts = await ruleExcerptSection(plan.synopsis, options.onEmbeddingProgress);
+  const ruleExcerpts = await ruleExcerptSection(
+    plan.synopsis,
+    campaign.system,
+    options.onEmbeddingProgress,
+  );
 
   // fix-01: the writer sees the canonical glossary (the normalized spine
   // records) plus the campaign artifact index, so it reuses exact spellings
@@ -2532,12 +2544,20 @@ export async function classifyEntityName(
   return { kind: match.kind, canonical: match.canonical };
 }
 
-/** Rule excerpts for grounding (empty library → no section, not an error). */
+/** Rule excerpts for grounding (empty library → no section, not an error).
+ *
+ *  SCOPED to the module's campaign system (docs/17 row 207): `searchRules`
+ *  defaults to EVERY ready book when `system` is unset, which grounded a
+ *  Pathfinder module's prose in an installed dnd5e pack's rules text. The
+ *  system comes from the campaign the module belongs to — the SAME row the
+ *  prompt's own `Campaign: … (label)` line is built from — so the excerpt
+ *  cannot describe a different game than the one the module is written for. */
 async function ruleExcerptSection(
   query: string,
+  system: GameSystem,
   onEmbeddingProgress?: (done: number, total: number) => void,
 ): Promise<string | null> {
-  const hits = await searchRules(query, { limit: 4, onEmbeddingProgress });
+  const hits = await searchRules(query, { limit: 4, system, onEmbeddingProgress });
   if (hits.length === 0) return null;
   return `Rule excerpts for grounding:\n${hits
     .map((hit) => `[${hit.chunk.headingPath.join(' > ')}]\n${hit.chunk.text}`)

@@ -1,4 +1,5 @@
 import type { Id } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { comparableName } from '@/domain/artifactAlias';
 import { creatureNameSimilarity } from '@/domain/creatureName';
 import { citationBookTitle } from '@/domain/encounterResolve';
@@ -30,6 +31,15 @@ import { libraryLevelOrder, parseLevelSort } from '@/llm/encounterRoster';
  *   and WRONG here: a library whose creatures came from an ordinary imported
  *   rulebook would produce an empty window while the slot stayed on offer, and
  *   the model would be inventing names again with the app's blessing.
+ *   **SCOPED TO THE CAMPAIGN'S GAME SYSTEM SINCE docs/17 row 207.** The window
+ *   is a generation read, so offering a dnd5e creature to a Pathfinder 2e
+ *   module is not generosity — it is a stat block from the wrong game, which
+ *   the cast would then resolve INTO a pf2e npc. The pool is read through the
+ *   SAME optional `system` seam the cast uses (`listLibraryCreatures(system)`,
+ *   filtered by the OWNING BOOK's system), so the vocabulary a prompt shows and
+ *   the lookup that judges the reply are scoped by construction. A caller that
+ *   passes NO system (a unit test driving the window mechanics; the pool read
+ *   itself) keeps the pre-207 every-book behaviour byte for byte.
  * - **Level.** `listLibraryCreatures` never returned a level, so the ordering
  *   reads the creature's OWN stat block (the same row the pool names) and
  *   parses it with the ONE parser (`encounterRoster.parseLevelSort` — a second
@@ -117,14 +127,15 @@ export interface CreatorRoster {
 }
 
 /** Loads the library pool this window is built from. Injected for tests; the
- *  production default is the ONE pool the cast resolves against. */
-export type CreatorRosterDeps = () => Promise<LibraryCreature[]>;
+ *  production default is the ONE pool the cast resolves against, scoped to the
+ *  campaign's system when one is given (docs/17 row 207). */
+export type CreatorRosterDeps = (system?: GameSystem) => Promise<LibraryCreature[]>;
 
 /** Reads one book row's COPYABLE title — `undefined` when this library records
  *  none. Injected for tests; the production default is the ONE stamping read. */
 export type CreatorBookTitleDeps = (bookId: Id) => Promise<string | undefined>;
 
-const defaultDeps: CreatorRosterDeps = () => listLibraryCreatures();
+const defaultDeps: CreatorRosterDeps = (system) => listLibraryCreatures(system);
 
 /**
  * The pack title a window line may print, from the book row the chunk names:
@@ -252,13 +263,20 @@ async function windowBookTitles(
   return titles;
 }
 
-/** Collects and builds the window in one call — the seam `moduleGen` uses. */
+/**
+ * Collects and builds the window in one call — the seam `moduleGen` uses, and
+ * the ONLY caller that passes a `system` (docs/17 row 207): the module's own
+ * campaign system, so the creatures the spine prompt offers are the ones the
+ * cast can actually use. `system` is optional so every pre-207 caller — and the
+ * window's own mechanics pins — keep reading the whole library.
+ */
 export async function collectCreatorRoster(
   targetLevel?: number,
+  system?: GameSystem,
   load: CreatorRosterDeps = defaultDeps,
   loadBookTitle: CreatorBookTitleDeps = defaultBookTitleDeps,
 ): Promise<CreatorRoster> {
-  const entries = creatorRosterEntries(await load());
+  const entries = creatorRosterEntries(await load(system));
   const { sorted, window } = creatorRosterWindow(entries, targetLevel);
   return rosterFromWindow(sorted, window, await windowBookTitles(window, loadBookTitle));
 }

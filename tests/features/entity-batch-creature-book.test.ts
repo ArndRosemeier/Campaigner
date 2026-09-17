@@ -8,6 +8,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
 import { createRulebook } from '@/db/rulebookRepo';
 import { ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { libraryCitationForEntity } from '@/features/modules/entity-batch';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
@@ -61,10 +62,14 @@ async function seedCreature(options: {
   bookTitle: string;
   name: string;
   hp: number;
+  /** The book's (and its stat block's) game system — `'dnd5e'` is the
+   *  pre-row-207 default. */
+  system?: GameSystem;
 }): Promise<string> {
+  const system = options.system ?? 'dnd5e';
   const book = await createRulebook({
     title: options.bookTitle,
-    system: 'dnd5e',
+    system,
     filename: `${options.bookTitle.toLowerCase().replaceAll(' ', '-')}.pdf`,
   });
   const text = `${options.name}\nMedium undead, neutral evil\nArmor Class 8\nHit Points ${String(options.hp)}`;
@@ -79,7 +84,7 @@ async function seedCreature(options: {
     text,
     contentHash: await sha256Hex(text),
     statBlock: statBlockSchema.parse({
-      system: 'dnd5e',
+      system,
       level: '1',
       size: 'Medium',
       creatureType: 'undead',
@@ -110,8 +115,9 @@ async function seedCreature(options: {
 async function refusalFor(
   entityName: string,
   slot: { creature: string; book?: string },
+  system?: GameSystem,
 ): Promise<string> {
-  const outcome = await libraryCitationForEntity(entityName, slot).then(
+  const outcome = await libraryCitationForEntity(entityName, slot, system).then(
     (citation) => ({ resolved: citation }),
     (error: unknown) => ({ message: error instanceof Error ? error.message : String(error) }),
   );
@@ -303,6 +309,74 @@ describe('a name the library does not hold still fails, with the nearest names (
         "but this workspace's library holds no creature of that name — import the book it comes " +
         'from, or name a creature the library has (never a guess)',
     );
+  });
+});
+
+describe('the cast pool is scoped to the campaign’s game system (docs/17 row 207)', () => {
+  /** The owner's case: one pf2e pack AND one dnd5e pack installed, each with a
+   *  creature that exists ONLY in its own system. */
+  async function seedBothSystems(): Promise<void> {
+    await seedCreature({
+      bookTitle: 'Pathfinder Monster Core',
+      name: 'Goblin Warrior',
+      hp: 10,
+      system: 'pathfinder2e',
+    });
+    await seedCreature({ bookTitle: 'D&D 5e SRD', name: 'Beholder', hp: 90, system: 'dnd5e' });
+  }
+
+  it('REFUSES a pf2e module’s citation of a dnd5e-only creature, loudly and by name', async () => {
+    await seedBothSystems();
+
+    const message = await refusalFor('Aunt Agatha', { creature: 'Beholder' }, 'pathfinder2e');
+
+    // Loud and BY NAME — the entity and the creature, plus the scope the
+    // library was read under, so the sentence explains itself instead of
+    // implying the whole library lacks the creature.
+    expect(message).toContain('the entity «Aunt Agatha»');
+    expect(message).toContain('«Beholder»');
+    expect(message).toContain('Pathfinder 2e');
+    expect(message).toContain('no creature of that name for Pathfinder 2e');
+    // NEVER a substitution: the refusal names no other creature to use in its
+    // place beyond the library's own nearest-name suggestions (there are none
+    // close to «Beholder»).
+    expect(message).not.toContain('Goblin Warrior');
+  });
+
+  it('is the mirror for a dnd5e module — the pf2e-only creature is refused', async () => {
+    await seedBothSystems();
+
+    const message = await refusalFor('Aunt Agatha', { creature: 'Goblin Warrior' }, 'dnd5e');
+
+    expect(message).toContain('«Goblin Warrior»');
+    expect(message).toContain('no creature of that name for D&D 5e');
+  });
+
+  it('still RESOLVES the same-system creature in both directions', async () => {
+    await seedBothSystems();
+
+    const pf2e = await libraryCitationForEntity(
+      'Aunt Agatha',
+      { creature: 'Goblin Warrior' },
+      'pathfinder2e',
+    );
+    expect(pf2e.bookTitle).toBe('Pathfinder Monster Core');
+    const dnd5e = await libraryCitationForEntity(
+      'Aunt Agatha',
+      { creature: 'Beholder' },
+      'dnd5e',
+    );
+    expect(dnd5e.bookTitle).toBe('D&D 5e SRD');
+  });
+
+  it('leaves a caller with NO system on the pre-207 every-book pool', async () => {
+    await seedBothSystems();
+
+    // The UI/wiki-link shape (and every pre-207 caller): unscoped, still both.
+    const pf2e = await libraryCitationForEntity('Aunt Agatha', { creature: 'Goblin Warrior' });
+    expect(pf2e.bookTitle).toBe('Pathfinder Monster Core');
+    const dnd5e = await libraryCitationForEntity('Aunt Agatha', { creature: 'Beholder' });
+    expect(dnd5e.bookTitle).toBe('D&D 5e SRD');
   });
 });
 

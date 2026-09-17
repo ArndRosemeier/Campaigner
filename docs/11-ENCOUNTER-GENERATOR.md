@@ -497,12 +497,27 @@ The request travels in three hops, and each hop has exactly one owner.
    Trash mobs cited only inside an encounter are untouched by all of this: the
    encounter side still holds no cast seam and no persona of its own.
 
+   **SCOPED TO THE CAMPAIGN'S GAME SYSTEM (docs/17 row 207).** Both halves above
+   — the window the spine prompt shows (item 2) and the lookup that judges the
+   model's answer (item 3) — read `db/creatureRepo.listLibraryCreatures` with
+   the module's `campaign.system`, so a Pathfinder 2e module can never be
+   offered (or resolve) a dnd5e stat block, and the vocabulary and the lookup
+   are scoped by the SAME value. A chunk belongs to the campaign's system when
+   its OWNING BOOK does (the books the pool names are read once and indexed by
+   id); a chunk whose book row is gone cannot be attributed and is not offered.
+   The GLOBAL surfaces — the Rules page, the bestiary browser and the
+   wiki-link publisher — deliberately keep reading every book: they are library
+   readers, not generation reads, and an explicit `[[Zombie]]` reference is the
+   owner's own act. A citation ALREADY recorded keeps resolving its own data
+   (`domain/encounterResolve` and `db/monsterResolve` are untouched) — the
+   scope decides a NEW cast, it never rewrites history.
+
 **Failures are LOUD and NAMED, never a guess and never a silent drop of the
 prose.** `entity-batch.libraryCitationForEntity` refuses, in the owner's terms:
 
 | Situation | What happens |
 |---|---|
-| The library holds no creature of that name | the entity FAILS with "the entity «X» asks to borrow the stats of «Y», but this workspace's library holds no creature of that name — import the book it comes from" |
+| The library holds no creature of that name | the entity FAILS with "the entity «X» asks to borrow the stats of «Y», but this workspace's library holds no creature of that name — import the book it comes from" (since docs/17 row 207 a SYSTEM-SCOPED lookup appends "…of that name for `Pathfinder 2e`" instead, so the sentence names the scope rather than implying the whole library lacks the creature) |
 | Two creatures share the name and the slot named no book | the entity FAILS listing both candidates and their books, naming the field to disambiguate with |
 | A book is named that holds no such creature | the entity FAILS naming the book and listing what the library does have |
 | One canonical entity is asked for two different creatures | the slot carry itself throws rather than picking one |

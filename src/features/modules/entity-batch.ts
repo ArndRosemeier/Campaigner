@@ -1,6 +1,8 @@
 import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, ModuleEntityKind, PersonaRun } from '@/domain';
 import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName, unmatchedEntityLevelHints } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
+import type { GameSystem } from '@/domain/gameSystem';
+import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import {
   citationBookTitle,
   contentIdentityFor,
@@ -151,14 +153,29 @@ async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
  * everything after that — the citation's identity, the derived stats, the
  * portrait key — is `castCreatureAsNpc`'s, unchanged.
  *
+ * **SCOPED TO THE CAMPAIGN'S GAME SYSTEM (docs/17 row 207).** `system` is the
+ * campaign the module belongs to, passed straight to the ONE pool read, so a
+ * Pathfinder 2e module can never resolve a dnd5e creature's stat block into one
+ * of its NPCs — the dangerous half of the owner's "D&D imports should not be
+ * active when the campaign is pathfinder" question. It is the SAME read (and
+ * the same `system` value) the creator window uses, so the vocabulary the model
+ * was shown and the resolution that judges its answer describe one population.
+ * The global surfaces stay unscoped on purpose (the Rules page, the bestiary
+ * browser, the wiki-link publisher — an explicit user reference is an explicit
+ * act); a caller that omits `system` gets the pre-207 every-creature pool.
+ * A citation that RESOLVES to another system's creature is never touched here:
+ * `domain/encounterResolve`/`db/monsterResolve` resolve what was RECORDED, and
+ * this seam only decides a NEW cast.
+ *
  * EVERY failure is LOUD and NAMES both halves (AGENTS rules 1-3), because the
  * alternative is the exact defect this path must not have: a guess, or a silent
  * drop of the prose the model wrote:
  *
  * - no creature of that name in the workspace (a module designed before the
- *   bestiary was imported, a typo, a creature the owner deleted) — the message
- *   also names the nearest creatures the library DOES hold, so the failure is
- *   actionable rather than a dead end;
+ *   bestiary was imported, a typo, a creature the owner deleted, or — since
+ *   row 207 — a creature that exists only in ANOTHER game system's books, which
+ *   the refusal names) — the message also names the nearest creatures the
+ *   library DOES hold, so the failure is actionable rather than a dead end;
  * - the name is ambiguous — two or more creatures share it, which happens the
  *   moment two books are installed — and the slot's book does not narrow the
  *   pool to exactly one of them (no book named, a book that holds several, or
@@ -204,11 +221,12 @@ async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
 export async function libraryCitationForEntity(
   entityName: string,
   slot: EntityBestiarySlot,
+  system?: GameSystem,
 ): Promise<CreatureCitation> {
   const wanted = slot.creature.trim();
   const book = slot.book?.trim() ?? '';
   const named = `the entity «${entityName}» asks to borrow the stats of «${wanted}»`;
-  const pool = await listLibraryCreatures();
+  const pool = await listLibraryCreatures(system);
   // The ONE creature-name comparison (docs/17 row 166, never re-stated here).
   const sameName = pool.filter((creature) => sameCreatureName(creature.name, wanted));
   // The library's own disclosure of which book each candidate comes from. Read
@@ -242,7 +260,8 @@ export async function libraryCitationForEntity(
         ? ''
         : ` — the nearest creatures this library holds: ${await describe(nearest)}`;
     throw new Error(
-      `bestiary cast: ${named}, but this workspace's library holds no creature of that name — ` +
+      `bestiary cast: ${named}, but this workspace's library holds no creature of that name` +
+        `${system === undefined ? '' : ` for ${GAME_SYSTEM_LABELS[system]}`} — ` +
         'import the book it comes from, or name a creature the library has (never a guess)' +
         suggestion,
     );
@@ -749,7 +768,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // cast.
         const slot = castSlotFor(module, target.name);
         if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
-          const citation = await libraryCitationForEntity(target.name, slot);
+          const citation = await libraryCitationForEntity(target.name, slot, campaign.system);
           // The prose the cast row is BORN with: the module's own paragraphs
           // about this entity, at the mention site. A batch target is always a
           // wiki-link of the module text (`post-generation.batchTargets`), so

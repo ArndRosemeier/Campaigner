@@ -11,11 +11,12 @@ import {
 } from '@/llm/creatorRoster';
 import { libraryCitationForEntity } from '@/features/modules/entity-batch';
 import { bestiaryVocabularyBlock } from '@/llm/promptStyles';
-import { listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
+import { listLibraryCreatures, wikiLinkCreatures, type LibraryCreature } from '@/db/creatureRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { db } from '@/db/db';
 import { ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 
@@ -31,7 +32,9 @@ import { clearDatabase } from '../db/helpers';
  *
  * 1. every stat-block chunk of ANY book origin (a rulebook import is as
  *    castable as a pack — the trap is a pack-only window, which would offer the
- *    slot while listing nothing);
+ *    slot while listing nothing) — and, since docs/17 row 207, only the
+ *    CAMPAIGN'S OWN game system's books when the campaign system is passed
+ *    (the dnd5e-only creature is never offered to a Pathfinder 2e module);
  * 2. the ratified §7 order (level distance to the target, ties by levelSort
  *    then locale name, `—` last), the 300-line cap and its truncation note;
  * 3. determinism for an unchanged library;
@@ -67,10 +70,14 @@ async function seedCreature(options: {
   bookTitle?: string;
   origin?: 'pdf' | 'pack';
   status?: 'ready' | 'processing';
+  /** The book's (and its stat block's) game system — `'dnd5e'` is the
+   *  pre-row-207 default. */
+  system?: GameSystem;
 }): Promise<string> {
+  const system = options.system ?? 'dnd5e';
   const book = await createRulebook({
     title: options.bookTitle ?? 'Monster Manual',
-    system: 'dnd5e',
+    system,
     filename: `${(options.bookTitle ?? 'monster-manual').toLowerCase().replaceAll(' ', '-')}.pdf`,
   });
   if (options.origin === 'pack' || options.status === 'processing') {
@@ -91,7 +98,7 @@ async function seedCreature(options: {
     text,
     contentHash: await sha256Hex(text),
     statBlock: statBlockSchema.parse({
-      system: 'dnd5e',
+      system,
       level: options.level,
       size: 'Medium',
       creatureType: 'undead',
@@ -380,6 +387,7 @@ describe('every line carries the pack title of the book it really comes from (do
     const reads: string[] = [];
     const roster = await collectCreatorRoster(
       1,
+      undefined,
       () =>
         Promise.resolve([
           creature('c-1', 'Zombie', 'book-a'),
@@ -577,6 +585,80 @@ describe('the window is deterministic for an unchanged library', () => {
     expect(second.lines).toEqual(first.lines);
     expect(second.total).toBe(first.total);
     expect(second.truncated).toBe(first.truncated);
+  });
+});
+
+describe('the window is scoped to the campaign’s game system (docs/17 row 207)', () => {
+  /** The two books the owner's report is about: a Pathfinder 2e pack and a
+   *  dnd5e pack in ONE workspace, with one creature each that exists ONLY in
+   *  its own system. */
+  async function seedBothSystems(): Promise<void> {
+    await seedCreature({
+      name: 'Goblin Warrior',
+      level: '1',
+      bookTitle: 'Pathfinder Monster Core',
+      system: 'pathfinder2e',
+    });
+    await seedCreature({
+      name: 'Beholder',
+      level: '5',
+      bookTitle: 'D&D 5e SRD',
+      system: 'dnd5e',
+    });
+  }
+
+  it('offers a Pathfinder 2e campaign ONLY pf2e creatures — never the dnd5e-only one', async () => {
+    await seedBothSystems();
+    const roster = await collectCreatorRoster(3, 'pathfinder2e');
+    expect(windowNames(roster.lines)).toEqual(['Goblin Warrior']);
+    expect(roster.lines.join('\n')).not.toContain('Beholder');
+    // Non-vacuity: the UNSCOPED read really holds the dnd5e creature, so the
+    // absence above is the scope doing the work — not an empty library.
+    const everything = await collectCreatorRoster(3);
+    expect(windowNames(everything.lines)).toEqual(['Goblin Warrior', 'Beholder']);
+  });
+
+  it('is the mirror for a dnd5e campaign', async () => {
+    await seedBothSystems();
+    const roster = await collectCreatorRoster(3, 'dnd5e');
+    expect(windowNames(roster.lines)).toEqual(['Beholder']);
+    expect(roster.lines.join('\n')).not.toContain('Goblin Warrior');
+  });
+
+  it('keeps the wiki-link pool UNSCOPED — an explicit `[[Beholder]]` still resolves', async () => {
+    // The stated decision (docs/17 row 207): the wiki-link resolver is a
+    // library-wide reference reader, not a generation read. Scoping it would
+    // silently turn a resolvable mention in a pf2e campaign into a dangling
+    // link the moment the owner also owns the dnd5e book.
+    await seedBothSystems();
+    expect((await wikiLinkCreatures()).map((creature) => creature.name)).toEqual([
+      'Beholder',
+      'Goblin Warrior',
+    ]);
+    // …and the unscoped pool read itself is unchanged (the pre-207 contract).
+    expect((await listLibraryCreatures()).map((creature) => creature.name)).toEqual([
+      'Beholder',
+      'Goblin Warrior',
+    ]);
+  });
+
+  it('names a creature whose OWNING BOOK row is gone as out of scope, not as present', async () => {
+    // The system lives on the BOOK row, so a chunk whose book has been deleted
+    // cannot be attributed to the campaign's system. It is therefore not
+    // offered — the honest answer — while the unscoped read still sees it.
+    const chunkId = await seedCreature({
+      name: 'Goblin Warrior',
+      level: '1',
+      bookTitle: 'Pathfinder Monster Core',
+      system: 'pathfinder2e',
+    });
+    const chunk = await db.chunks.get(chunkId);
+    if (chunk === undefined) throw new Error('the seeded chunk vanished');
+    await db.rulebooks.delete(chunk.bookId);
+    expect((await collectCreatorRoster(1, 'pathfinder2e')).lines).toEqual([]);
+    // The unscoped read still pools it — with its title now unreadable, so the
+    // line is the bare name (the pre-207 shape).
+    expect((await collectCreatorRoster(1)).lines).toEqual(['Goblin Warrior']);
   });
 });
 

@@ -5,10 +5,16 @@ import { waitFor } from '@testing-library/react';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact } from '@/db/artifactRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { db } from '@/db/db';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
+import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module, type ModulePart } from '@/domain';
+import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
+import { sha256Hex } from '@/lib/hash';
+import { searchRules } from '@/search';
 import {
   cancelModuleGen,
   campaignCastContext,
@@ -158,8 +164,8 @@ function encounterReply(...names: string[]): ChatResult {
   return normalizationReply(names.map((name) => ({ name, kind: 'encounter' })));
 }
 
-async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
-  const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+async function seedModule(system: GameSystem = 'dnd5e'): Promise<{ campaign: Campaign; moduleId: Id }> {
+  const campaign = await createCampaign({ name: 'Emberfall', system });
   const draft = createModule({
     campaignId: campaign.id,
     title: 'The Drowned Bell',
@@ -175,6 +181,45 @@ async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
 
 async function seedSpine(moduleId: Id): Promise<void> {
   await patchModule(moduleId, { spine: moduleSpineSchema.parse(VALID_SPINE) });
+}
+
+/**
+ * One READY rules book of `system` whose single section chunk shares the part
+ * synopsis's own tokens (`low tide`) and carries a system-distinct marker
+ * sentence. Both books are therefore retrieved by an UNSCOPED search of the
+ * part's synopsis — which is exactly what makes the scope visible.
+ */
+async function seedReadyRulesBook(
+  system: GameSystem,
+  title: string,
+  marker: string,
+): Promise<void> {
+  const book = await createRulebook({ title, system, filename: `${system}.pdf` });
+  await db.rulebooks.update(book.id, { status: 'ready' });
+  const text = `${marker}: when the low tide turns, the ritual is measured in the system's own units.`;
+  const chunk = ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId: book.id,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'section',
+    headingPath: [marker],
+    text,
+    contentHash: await sha256Hex(text),
+    statBlock: null,
+  });
+  await putChunks([chunk]);
+}
+
+/** The part-0 prompt sent since `startIndex` — found by its own heading rather
+ *  than a fixed call index, so the normalization call after each pass cannot
+ *  shift it. */
+function partPromptSince(startIndex: number): string {
+  for (let index = startIndex; index < chatMock.mock.calls.length; index += 1) {
+    const prompt = userPromptOf(index);
+    if (prompt.includes('Write part 1:')) return prompt;
+  }
+  throw new Error('no part prompt was sent since the given call index');
 }
 
 /**
@@ -460,6 +505,83 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
     expect(finished.entityKinds).toEqual(
       VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
     );
+  }, 20000);
+});
+
+/**
+ * docs/17 row 207 — the PARTS prompt's rule excerpts are scoped to the
+ * campaign's own game system. `ruleExcerptSection` used to call
+ * `searchRules(query, { limit: 4 })` with no system, and `searchRules` reads
+ * EVERY ready book when the system is unset — so a Pathfinder 2e campaign with
+ * a dnd5e pack installed grounded its module prose in dnd5e rules text.
+ *
+ * The pins below seed TWO ready rules books whose section chunks carry the
+ * part synopsis's own tokens (`low tide`) plus a system-distinct marker
+ * sentence, so an UNSCOPED retrieval really would return both: the marker's
+ * absence is then the scope at work, never a retrieval miss. The same-system
+ * half is a PROMPT BYTE COMPARISON: the identical campaign and module built
+ * against the own-system-only library must produce the same prompt bytes as
+ * one built after the foreign book is installed (no behaviour change).
+ */
+describe('the parts prompt grounds in the campaign’s own game system (docs/17 row 207)', () => {
+  const PF2E_MARKER = 'PF2E-ONLY-RULE';
+  const DND5E_MARKER = 'DND5E-ONLY-RULE';
+
+  /** Answers every part call with portable prose naming one encounter, and
+   *  every normalization call with that encounter — so `runParts` completes. */
+  function answerCalls(): void {
+    chatMock.mockImplementation((messages: Parameters<typeof chat>[0]) => {
+      const user = messages.find((message) => message.role === 'user')?.content;
+      const prompt = user === undefined ? '' : messageText(user);
+      return Promise.resolve(
+        prompt.includes('Write part 1:')
+          ? partWithNames('PART-ONE', ['Ember Trial'])
+          : encounterReply('Ember Trial'),
+      );
+    });
+  }
+
+  it('a pf2e module never grounds in an installed dnd5e book, and the same-system prompt is UNCHANGED by it', async () => {
+    await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
+    const ownSystemOnly = await seedModule('pathfinder2e');
+    await seedSpine(ownSystemOnly.moduleId);
+    answerCalls();
+    await runParts(ownSystemOnly.moduleId, ownSystemOnly.campaign, { planIndexes: [0] });
+    const promptOwnSystemOnly = partPromptSince(0);
+    expect(promptOwnSystemOnly).toContain(PF2E_MARKER);
+    expect(promptOwnSystemOnly).not.toContain(DND5E_MARKER);
+
+    // Install the other system's book AFTER that prompt was captured.
+    await seedReadyRulesBook('dnd5e', 'D&D 5e SRD', DND5E_MARKER);
+    // Non-vacuity: the UNSCOPED read retrieves BOTH books for the same query.
+    const synopsis = VALID_SPINE.partPlan[0]?.synopsis ?? '';
+    const unscopedText = (await searchRules(synopsis, { limit: 4 }))
+      .map((hit) => hit.chunk.text)
+      .join('\n');
+    expect(unscopedText).toContain(PF2E_MARKER);
+    expect(unscopedText).toContain(DND5E_MARKER);
+
+    // The SAME library state plus that foreign book: a fresh, identical
+    // campaign and module, so the ONLY difference is what the library holds.
+    const withForeignBook = await seedModule('pathfinder2e');
+    await seedSpine(withForeignBook.moduleId);
+    const callsBefore = chatMock.mock.calls.length;
+    await runParts(withForeignBook.moduleId, withForeignBook.campaign, { planIndexes: [0] });
+    const promptWithForeignBook = partPromptSince(callsBefore);
+    expect(promptWithForeignBook).toBe(promptOwnSystemOnly);
+    expect(promptWithForeignBook).not.toContain(DND5E_MARKER);
+  }, 20000);
+
+  it('is the mirror: a dnd5e module grounds in dnd5e rules text, never in the pf2e book’s', async () => {
+    await seedReadyRulesBook('dnd5e', 'D&D 5e SRD', DND5E_MARKER);
+    await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
+    const { campaign, moduleId } = await seedModule('dnd5e');
+    await seedSpine(moduleId);
+    answerCalls();
+    await runParts(moduleId, campaign, { planIndexes: [0] });
+    const prompt = partPromptSince(0);
+    expect(prompt).toContain(DND5E_MARKER);
+    expect(prompt).not.toContain(PF2E_MARKER);
   }, 20000);
 });
 
