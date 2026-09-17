@@ -9,6 +9,7 @@ import type {
   EncounterMapMode,
   EncounterPreset,
   Id,
+  Module,
   MonsterEntry,
   Persona,
   PersonaRun,
@@ -3265,6 +3266,57 @@ export class RunEngine {
     };
   }
 
+  /**
+   * THE run's ONE resolved encounter budget from its owning (or placement)
+   * module (docs/17 rows 180/190): the policy and the difficulty are read
+   * through their ONE resolvers and turned into the ONE `EncounterBudget`
+   * here, so the Cartographer brief, the roster-only repopulate finalize, the
+   * Smith's in-place fill and the single-room repopulate draft cannot come to
+   * different numbers for the same module. Row 228 folded the fourth
+   * resolution site onto this method rather than paste the three-call chain a
+   * fourth time (AGENTS rule 4); the resolution ORDER is byte-identical.
+   */
+  private runEncounterBudget(module: Module | undefined, system: GameSystem): EncounterBudget {
+    return encounterBudgetFor(
+      resolveEncounterBudgetPolicy(module),
+      system,
+      resolveModuleDifficulty(module),
+    );
+  }
+
+  /**
+   * The level/difficulty context a Smith content draft carries when it targets
+   * an EXISTING encounter (docs/17 row 228). The single-room Repopulate route
+   * sent a literal brief that stated no party level and no difficulty at all,
+   * while the complex route's `runEncounterBrief` carried both — so a level-1
+   * repopulate was sized blind and could return level-9 creatures. It renders
+   * through the SAME seams the Cartographer brief uses (`encounterPartyLevel`
+   * + `partyLevelLine`, the ONE level sentence; `roomBudgetGuidanceFor`, which
+   * embeds the ONE `moduleDifficultyGuidanceFor` clause plus the band that
+   * clause refers to) — never a second composer.
+   *
+   * A campaign-level target has no owning module, so no MODULE difficulty can
+   * honestly be stated there; the clause is omitted and only the level line
+   * renders. A digit-free levelHint yields no line at all (never an invented
+   * number).
+   */
+  private async encounterInputGuidanceFor(
+    targetArtifactId: Id,
+    system: GameSystem,
+  ): Promise<{ levelLine: string | null; budgetClause: string | null }> {
+    const target = await getAnyArtifact(targetArtifactId);
+    if (target?.kind !== 'encounter') return { levelLine: null, budgetClause: null };
+    const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
+    const level = encounterPartyLevel(owningModule, target.name, target.data.levelHint);
+    return {
+      levelLine: level === undefined ? null : partyLevelLine(level),
+      budgetClause:
+        owningModule === undefined
+          ? null
+          : roomBudgetGuidanceFor(this.runEncounterBudget(owningModule, system)),
+    };
+  }
+
   private async runDraft(
     runId: Id,
     stepIndex: number,
@@ -3346,6 +3398,17 @@ export class RunEngine {
       input.campaign.system,
       spellLibrary !== null && mobSpellVocabularyRenders(spellLibrary.vocabulary),
     );
+    // THE ENCOUNTER LEVEL/DIFFICULTY INPUT (docs/17 row 228): a content draft
+    // that targets an EXISTING encounter is a repopulate — the row's own level
+    // and the owning module's difficulty are INPUTS to the fight. Fresh
+    // creates (no target) and the prose-only pass keep their prompts
+    // byte-identical, so those lanes are untouched (pinned).
+    const encounterGuidance =
+      kind === 'encounter' &&
+      input.targetArtifactId !== undefined &&
+      input.encounterProseOnly !== true
+        ? await this.encounterInputGuidanceFor(input.targetArtifactId, input.campaign.system)
+        : null;
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
@@ -3353,6 +3416,12 @@ export class RunEngine {
       // qualifies: the artifact being regenerated keeps its name, and the
       // reply's `name` field must say so.
       nameAnchorSection,
+      // THE ENCOUNTER LEVEL/DIFFICULTY INPUT (docs/17 row 228): the party
+      // level line and the module-difficulty/band clause, right after the task
+      // they calibrate. Both render ONLY for a targeted content fill — the
+      // fresh-create and prose-only lanes stay byte-identical.
+      encounterGuidance?.levelLine ?? null,
+      encounterGuidance?.budgetClause ?? null,
       // The assertion rule (docs/11, docs/17 row 89): the scene text the brief
       // carries is the TRUTH about this fight — fixed in what it states, free
       // where it states nothing. Encounter runs only, and null everywhere else
@@ -4300,12 +4369,7 @@ export class RunEngine {
       ? target.moduleId
       : (input.placementModuleId ?? null);
     const owningModule = owningModuleId === null ? undefined : await getModule(owningModuleId);
-    const budgetPolicy = resolveEncounterBudgetPolicy(owningModule);
-    const budget: EncounterBudget = encounterBudgetFor(
-      budgetPolicy,
-      input.campaign.system,
-      resolveModuleDifficulty(owningModule),
-    );
+    const budget: EncounterBudget = this.runEncounterBudget(owningModule, input.campaign.system);
     // Shape-gated restock (docs/11 D12 amendment, owner-directed): the
     // stocking/expansion contract keys on the TARGET'S ACTUAL SHAPE —
     // `encounterDataIsComplex`, the parse-normalized D11 derivation — not on
@@ -5674,11 +5738,7 @@ export class RunEngine {
     // the same policy AND difficulty every other generation of that module
     // uses.
     const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
-    const budget = encounterBudgetFor(
-      resolveEncounterBudgetPolicy(owningModule),
-      input.campaign.system,
-      resolveModuleDifficulty(owningModule),
-    );
+    const budget = this.runEncounterBudget(owningModule, input.campaign.system);
     // Fill grade (docs/11 D12 amendment, draw-once): the row's value always
     // wins; then the brief's stamped value (the draw the prompt was written
     // against — the same precedence the full finalize uses); a legacy
@@ -6622,6 +6682,24 @@ export class RunEngine {
         await updateRun(runId, { resultArtifactId: target.id });
         return { step, artifactId: target.id };
       }
+      // THE ENCOUNTER'S OWN LEVEL AND DIFFICULTY ARE INPUTS ON A REPOPULATE
+      // (docs/17 row 228), never outputs. The row the owner retuned states
+      // them, and this single-room route used to let the generic draft
+      // silently rewrite both: a level-1 repopulate came back as level 9 and
+      // the row's own difficulty label was replaced by the reply's. A value
+      // the target does NOT state (a stub, a legacy row, a fresh create) still
+      // takes the model's — and a FRESH creation never reaches this branch at
+      // all, so that lane keeps writing the model's values (pinned).
+      //
+      // The KEPT level is also what stamps a target-less room below, so the
+      // deterministic budget check reads the encounter's own level rather than
+      // the reply's claim.
+      const storedLevelHint = target.data.levelHint.trim();
+      const storedDifficulty = target.data.difficulty.trim();
+      const draftLevelHint = asString(draft.levelHint).trim();
+      const draftDifficulty = asString(draft.difficulty).trim();
+      const effectiveLevelHint = storedLevelHint === '' ? draftLevelHint : storedLevelHint;
+      const effectiveDifficulty = storedDifficulty === '' ? draftDifficulty : storedDifficulty;
       const modelAlias = draftName.trim();
       // The prose checkbox (two-button regeneration): ticked, the draft's
       // name REPLACES the target's (the old name becomes an alias, so links
@@ -6675,18 +6753,14 @@ export class RunEngine {
         // the same recorded policy AND difficulty every other generation of it
         // uses.
         const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
-        const budget = encounterBudgetFor(
-          resolveEncounterBudgetPolicy(owningModule),
-          input.campaign.system,
-          resolveModuleDifficulty(owningModule),
-        );
+        const budget = this.runEncounterBudget(owningModule, input.campaign.system);
         // Fill grade (docs/11 D12 amendment): the row's value always wins;
         // a legacy complex without one draws NOW (draw-once at the refill —
         // the second ratified draw site) so the packing and the budget
         // check run against a real expectation.
         const fillGrade = isComplex ? (target.data.fillGrade ?? drawFillGrade()) : undefined;
         if (isComplex && fillGrade !== undefined) fillGradeToPersist = fillGrade;
-        const hintLevel = parseRosterTargetLevel(asString(draft.levelHint));
+        const hintLevel = parseRosterTargetLevel(effectiveLevelHint);
         const stampedRooms = targetLayout.rooms.map((room) => ({
           ...room,
           ...(room.targetLevel === undefined && hintLevel !== undefined
@@ -6783,6 +6857,34 @@ export class RunEngine {
         if (verificationAdvisory !== null) advisories.push(verificationAdvisory);
         budgetAdvisory = advisories.join(' ');
       }
+      // A kept value the reply DISAGREED with is spoken LOUDLY (docs/17 row
+      // 228): preserving the encounter's own input silently would be its own
+      // small lie, so the mismatch rides the persisted advisory block (which
+      // the editor shows) and the step notice, exactly like the budget
+      // verdicts. Only a readable disagreement is reported — a digit-free or
+      // empty claim is not one, and a value the row never stated was the
+      // model's to write.
+      const draftHintLevel = parseRosterTargetLevel(draftLevelHint);
+      const statedHintLevel = parseRosterTargetLevel(storedLevelHint);
+      const levelDrift =
+        storedLevelHint !== '' &&
+        draftHintLevel !== undefined &&
+        statedHintLevel !== undefined &&
+        draftHintLevel !== statedHintLevel
+          ? `The repopulate reply was designed at level ${String(draftHintLevel)} but "${target.name}" is set to ` +
+            `level ${String(statedHintLevel)} — the encounter's OWN level is kept; the reply's claimed level was not written.`
+          : null;
+      const difficultyDrift =
+        storedDifficulty !== '' && draftDifficulty !== '' && draftDifficulty !== storedDifficulty
+          ? `The repopulate reply labelled this fight "${draftDifficulty}" but "${target.name}" is set to ` +
+            `"${storedDifficulty}" — the encounter's OWN difficulty is kept.`
+          : null;
+      const inputDrift = [levelDrift, difficultyDrift].filter((part) => part !== null);
+      if (inputDrift.length > 0) {
+        budgetAdvisory = [budgetAdvisory, ...inputDrift]
+          .filter((part) => part !== '')
+          .join(' ');
+      }
       // Fixed-cast advisories (docs/11): the same checks as fresh creations,
       // riding the same advisory block + notice (which the update below
       // persists). The prose-only path above returns earlier and persists
@@ -6793,7 +6895,10 @@ export class RunEngine {
         moduleId: target.moduleId,
         encounterName: target.name,
         monsters: data.monsters,
-        levelHint: asString(draft.levelHint),
+        // The encounter's OWN level when it states one (docs/17 row 228), so
+        // the cast level-mismatch check is never keyed off a reply the row
+        // refused to accept.
+        levelHint: effectiveLevelHint,
       });
       const declaredSubstitutions = substitutionAdvisories(
         target.name,
@@ -6822,6 +6927,12 @@ export class RunEngine {
           // `data` (typed as the ArtifactData union) lost at runtime.
           data: encounterDataSchema.parse({
             ...data,
+            // The encounter's own level and difficulty WIN when the row states
+            // them (docs/17 row 228's input rule): the model's reply is not
+            // allowed to rewrite what the owner retuned. A row that states
+            // neither keeps the reply's value (`effective*` above).
+            levelHint: effectiveLevelHint,
+            difficulty: effectiveDifficulty,
             // Identity of the artifact wins: an existing battlemap survives a
             // content regeneration untouched — including its persisted preset
             // (D10: the label describes the layout on file; only an explicit

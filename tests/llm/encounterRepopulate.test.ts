@@ -14,6 +14,8 @@ import {
   createPersona,
   defaultSettings,
   newId,
+  resolveEncounterBudgetPolicy,
+  resolveModuleDifficulty,
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
@@ -23,6 +25,7 @@ import {
 } from '@/domain';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
+import { encounterBudgetFor, moduleDifficultyGuidanceFor, partyLevelLine } from '@/llm/roomBudget';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { rejectionIssues } from '@/llm/rejectionReason';
 import { chat } from '@/llm/openrouter';
@@ -243,12 +246,42 @@ async function seedComplexTarget(
   return target;
 }
 
+/** A valid persisted SINGLE-room layout (one arena on file). Its room carries
+ *  no `targetLevel`, so the finalize stamps the encounter's OWN level — the
+ *  input the reported bug overwrote. */
+function singleRoomLayoutFixture() {
+  const id = newId();
+  return {
+    gridW: 24,
+    gridH: 18,
+    theme: 'gatehouse',
+    rooms: [
+      {
+        id,
+        name: 'Gate',
+        rects: [{ x: 2, y: 2, w: 8, h: 6 }],
+        mobsRect: { x: 3, y: 3, w: 4, h: 4 },
+        description: '',
+        monsterIndexes: [0],
+        spawn: true,
+        key: '',
+        keyTreasure: '',
+      },
+    ],
+    corridors: [],
+    path: [id],
+  };
+}
+
 async function seedSingleTarget(
   campaignId: Id,
   goblinChunkId: Id,
+  overrides: Record<string, unknown> = {},
+  moduleId?: Id,
 ): Promise<Artifact & { kind: 'encounter' }> {
   const target = await createArtifact({
     campaignId,
+    ...(moduleId === undefined ? {} : { moduleId }),
     kind: 'encounter',
     name: 'Gate Ambush',
     summary: 'Gate summary.',
@@ -260,10 +293,18 @@ async function seedSingleTarget(
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'standard', locationKind: 'other',
       siteShape: 'single', budgetAdvisory: '', layout: null,
+      ...overrides,
     },
   });
   if (target.kind !== 'encounter') throw new Error('encounter target missing');
   return target;
+}
+
+/** The user-content of ONE chat call (the model prompt), by index. */
+function userPrompt(callIndex = 0): string {
+  const content =
+    chatMock.mock.calls[callIndex]?.[0].find((message) => message.role === 'user')?.content ?? '';
+  return typeof content === 'string' ? content : JSON.stringify(content);
 }
 
 function smithDraft(overrides: Record<string, unknown> = {}) {
@@ -800,6 +841,130 @@ describe('singles keep today\u2019s behavior under the new buttons', () => {
     expect(after.data.mapImageId).not.toBeNull();
     expect(after.data.mapImageId).not.toBe(beforeMap);
     expect(after.data.layout?.rooms).toHaveLength(1);
+  });
+});
+
+/**
+ * The encounter's own level and the owning module's difficulty are INPUTS on a
+ * repopulate (docs/17 row 228) — the owner set a level-1 fight to Normal,
+ * hit Repopulate, and got two level-9 mobs because the single-room route's
+ * Smith brief stated neither level nor difficulty and the reply was allowed
+ * to overwrite the row. These pins hold both halves: the prompt states them
+ * through the EXISTING seams, and the row's stored values survive a reply
+ * that claims otherwise (with the mismatch spoken loudly).
+ */
+describe('repopulate states and preserves its level and difficulty (docs/17 row 228)', () => {
+  it('the SINGLE-room Smith draft prompt carries the party level and the module-difficulty clause', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const module = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Level One Module', concept: '', levelMin: 1, levelMax: 1,
+      sizeDial: 'standard', difficulty: 'much-harder',
+    }));
+    const target = await seedSingleTarget(
+      campaign.id, goblinChunkId, { levelHint: '1', difficulty: 'normal' }, module.id,
+    );
+    chatMock.mockResolvedValue({ text: JSON.stringify(smithDraft()), modelUsed: 'test-model', fallback: null });
+
+    await repopulateEncounter(target.id, { redesignProse: false });
+
+    const prompt = userPrompt();
+    // The party level, through the ONE shared sentence composer.
+    expect(prompt).toContain(partyLevelLine(1));
+    // The module difficulty, through the ONE clause composer — the seam's own
+    // wording, so a re-spelled second sentence cannot satisfy this.
+    const moduleRow = await getModule(module.id);
+    const budget = encounterBudgetFor(
+      resolveEncounterBudgetPolicy(moduleRow),
+      'dnd5e',
+      resolveModuleDifficulty(moduleRow),
+    );
+    expect(prompt).toContain(moduleDifficultyGuidanceFor(budget));
+    expect(prompt).toContain('Much harder');
+    expect(prompt).toContain('(targetLevel + 2) × 2');
+  });
+
+  it("keeps the row's own level and difficulty when the reply claims level 9, and warns loudly", async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const module = await saveModule(createModule({
+      campaignId: campaign.id, title: 'Level One Module', concept: '', levelMin: 1, levelMax: 1,
+      sizeDial: 'standard',
+    }));
+    // The owner's row: a SINGLE-room encounter WITH a layout (so the budget
+    // check runs at all — the old singles fixture carried none), level 1,
+    // difficulty normal.
+    const target = await seedSingleTarget(
+      campaign.id,
+      goblinChunkId,
+      { levelHint: '1', difficulty: 'normal', layout: singleRoomLayoutFixture() },
+      module.id,
+    );
+    // The mocked reply claims level 9 and fields two level-9 creatures.
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(smithDraft({
+        levelHint: '9',
+        difficulty: 'deadly',
+        monsters: [
+          { name: 'Ash Cultist', count: 2, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '9' } },
+        ],
+      })),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await repopulateEncounter(target.id, { redesignProse: false });
+
+    const after = await getArtifact(target.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    // WARN-AND-ACCEPT is preserved (docs/11 D14): the roster DID land.
+    expect(after.data.monsters).toHaveLength(1);
+    expect(after.data.monsters[0]?.name).toBe('Ash Cultist');
+    // The row's own level and difficulty are inputs: the reply did not
+    // rewrite them.
+    expect(after.data.levelHint).toBe('1');
+    expect(after.data.difficulty).toBe('normal');
+    // The room was stamped from the ENCOUNTER's level (1), not the reply's 9.
+    expect(after.data.layout?.rooms[0]?.targetLevel).toBe(1);
+    // The over-band advisory is present and visible, computed against the
+    // row's own band (target level 1 ⇒ at most 3 creature-levels): two
+    // level-9 creatures sum to 18.
+    expect(after.data.budgetAdvisory).toContain('ships over its challenge budget');
+    expect(after.data.budgetAdvisory).toContain('a band of at most 3 for target level 1');
+    // The kept value is spoken LOUDLY, never silently preserved.
+    expect(after.data.budgetAdvisory).toContain("the encounter's OWN level is kept");
+    expect(after.data.budgetAdvisory).toContain('designed at level 9');
+    expect(after.data.budgetAdvisory).toContain('labelled this fight "deadly"');
+  });
+
+  it('a FRESH encounter generation still writes the model\'s level and difficulty (the lane this must not break)', async () => {
+    const { campaign } = await setup();
+    await seedPackBook();
+    const { db } = await import('@/db');
+    const smith = await db.personas.where('slug').equals('encounter-smith').first();
+    if (smith === undefined) throw new Error('smith missing');
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(smithDraft({ levelHint: '9', difficulty: 'deadly' })),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona: smith,
+      autonomy: 'auto',
+      brief: 'Design a brand new fight.',
+      pinnedChunkIds: [],
+    });
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const created = await getArtifact((await getRun(runId))?.resultArtifactId ?? '');
+    if (created?.kind !== 'encounter') throw new Error('fresh encounter missing');
+    // No target row states a level, so the model's values are the row's —
+    // the preserve rule is deliberately target-gated.
+    expect(created.data.levelHint).toBe('9');
+    expect(created.data.difficulty).toBe('deadly');
   });
 });
 

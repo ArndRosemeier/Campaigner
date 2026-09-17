@@ -5755,16 +5755,20 @@ five levels plus a source scan, each naming row 190:
   `createModuleAndRun`'s input (and the real `createModule` stamps the row), and
   the choice survives a close/reopen in the draft.
 - `tests/architecture/module-difficulty-seam.test.ts` (NEW, source scan): the
-  resolver is DEFINED once and called only through it — runEngine's three budget
-  sites plus (docs/17 row 195) the two UI read sites that must show the value
-  they act at (the encounter editor's difficulty control and the module restock
-  button's read-only badge); `MODULE_DIFFICULTY_MULTIPLIERS` is declared once;
-  `difficultyBudgetMultiplier` is applied only in `roomBudget.ts` — a second
-  resolver or a hand-spelled multiplier reds by file and count. The same file's
-  second scan (added by row 195) holds the five-step rendering to ONE component:
-  only `module-difficulty-control.tsx` may walk `MODULE_DIFFICULTIES`, and
-  exactly the dialog and the artifact editor may mount it — a copied step
-  renderer reds by file.
+  resolver is DEFINED once and called only through it — ONE run-time budget
+  resolver (`RunEngine.runEncounterBudget`, docs/17 row 228 folded the old
+  three budget sites onto it) plus (docs/17 row 195) the two UI read sites that
+  must show the value they act at (the encounter editor's difficulty control and
+  the module restock button's read-only badge); `MODULE_DIFFICULTY_MULTIPLIERS`
+  is declared once; `difficultyBudgetMultiplier` is applied only in
+  `roomBudget.ts` — a second resolver or a hand-spelled multiplier reds by file
+  and count. The same file's second scan (added by row 195) holds the five-step
+  rendering to ONE component: only `module-difficulty-control.tsx` may walk
+  `MODULE_DIFFICULTIES`, and exactly the dialog and the artifact editor may
+  mount it — a copied step renderer reds by file. Row 228's third scan holds the
+  ONE level sentence (`adventurers at level`, only `roomBudget.ts`) and the ONE
+  difficulty clause (`MODULE DIFFICULTY (`, only `roomBudget.ts`), so a second
+  composer reds by file.
 
 **Injected RED, watched (four arms, each file hash printed by `git
 hash-object`, no two arms identical):** B the multiplier forced to 1
@@ -5834,6 +5838,69 @@ and scales the budget, and the model's obedience is judgement; the sweep's
 duration is N sequential LLM runs, so the pins use mocks or a mocked transport
 and prove wiring, ordering and reporting, not latency; and a stop is pinned by
 the epoch seam, not by clicking a real browser Stop.
+
+### The repopulate level/difficulty INPUT — the prompt states it, the row keeps it (docs/17 row 228, docs/11 D18 amendment, docs/18 §2)
+
+The owner's report ("a level 1 encounter … set it to normal and hit
+repopulate … That gave me 2 level 9!! mobs") is OUR defect, not the model's,
+and it is pinned at four levels, each naming row 228:
+
+- `tests/llm/encounterRepopulate.test.ts` — pin 1: the SINGLE-room Smith draft
+  prompt for a module-owned target must contain `partyLevelLine(1)` and
+  `moduleDifficultyGuidanceFor(budget)` VERBATIM, plus `Much harder` and the
+  scaled `(targetLevel + 2) × 2` band. Watch RED: removing the two prompt lines
+  reds it (arm B) — a re-spelled second sentence also fails the verbatim
+  containment.
+- the same file — pin 2 (the REPORTED CASE): a level-1 single-room encounter
+  WITH a layout (the pre-existing singles fixture carried `layout: null`, so the
+  budget check was skipped — the fixture gap the probe named), stored
+  `levelHint: '1'`/`difficulty: 'normal'`, repopulated with a reply claiming
+  level 9 and fielding two level-9 creatures. The roster still LANDS (the
+  warn-and-accept D14 behaviour), the row keeps `levelHint: '1'` and
+  `difficulty: 'normal'`, the target-less room is stamped 1, and
+  `data.budgetAdvisory` carries BOTH the over-band sentence (`a band of at most
+  3 for target level 1`) AND the drift sentence (`the encounter's OWN level is
+  kept`). Watch RED: writing the reply's level/difficulty back reds it (arm C).
+- the same file — pin 3 (the lane that must NOT move): a FRESH Smith encounter
+  run (no target) with a reply claiming `levelHint: '9'`/`difficulty: 'deadly'`
+  lands those values on the new row. Watch RED: forcing the fresh-create lane
+  through the preserve rule's empty-stored branch blanks them (arm D). The
+  existing warn-and-accept pin (`tests/llm/encounterRun.test.ts`, the in-place
+  fill reconciliation at `:1970-2080` — a level-10 Ogre accepted against a
+  level-5 target with the advisory) stays GREEN, byte-unchanged.
+- `tests/architecture/module-difficulty-seam.test.ts` — the resolver call-site
+  population updated honestly (`RUN_ENGINE` 3 → 1: `RunEngine.runEncounterBudget`
+  folds the Cartographer brief, the roster-only repopulate finalize and the
+  in-place fill, and the single-room draft reads it too), plus a NEW composer
+  scan: the ONE level sentence (`adventurers at level`) and the ONE difficulty
+  clause (`MODULE DIFFICULTY (`) may appear only in `roomBudget.ts`.
+
+**Injected RED, watched (each changed file's hash printed by `git hash-object`,
+no two arms identical; a baseline green):** B the two prompt lines removed →
+pin 1 reds; C the persisted `levelHint`/`difficulty` taken from the reply again
+→ pin 2 reds; D the fresh-create lane forced through the preserve rule's
+empty-stored branch → pin 3 reds.
+
+**NOT changed:** the complex branch's behaviour, the budget maths, the
+difficulty ladder, the pool ordering/limit, the warning's threshold, or its
+warn-and-accept character (D14). A REFUSAL for an over-band single-room roster
+is recorded in docs/17 row 228 as a RECOMMENDATION awaiting an owner decision,
+because it collides with D14 ("the user is the judge; regenerate is the
+correction").
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+obeys the stated level and difficulty (that is judgement and remains the
+model's — the cure is the prompt, the advisory is the safety net); no test
+proves the level-9 reply is impossible, only that it can no longer arrive
+un-stated nor rewrite the row; and no test proves the warning's threshold feels
+right at a table.
+
+**Gate** (`bash scripts/gate.sh`, raw log `/tmp/gate-restock-level-228.log`):
+**GATE GREEN, exit 0 — 344 files / 4481 tests** (`chunk arithmetic: 344 of 344
+test files covered`), lint 0 errors, typecheck clean, combined peak RSS
+**2114 MB** of the 3000 MB cap (single-chunk peak 1151 MB), wall 426 s. This
+slice adds **+4 tests** (3 in `encounterRepopulate.test.ts`, 1 in the
+architecture scan) and no test file.
 
 ### The spells arc's structured payload — DATA only (docs/17 row 181, docs/12 §15.4, docs/18 §2.1)
 

@@ -21,7 +21,6 @@ const ARTIFACT_EDITOR = 'src/features/campaign/components/artifact-editor.tsx';
 const RESTOCK_BUTTON = 'src/features/modules/module-restock-button.tsx';
 const DIFFICULTY_CONTROL = 'src/features/modules/module-difficulty-control.tsx';
 const NEW_MODULE_DIALOG = 'src/features/modules/new-module-dialog.tsx';
-
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -45,18 +44,24 @@ describe('one module difficulty seam (SOURCE SCAN)', () => {
   it('defines the ONE resolver and reads the module field only through it', () => {
     const definitions = countsOf('export function resolveModuleDifficulty(');
     expect([...definitions.entries()]).toEqual([[DIFFICULTY_MODULE, 1]]);
-    // Every consumer resolves through the ONE resolver: the three run-time
-    // budget sites, and (docs/17 row 195) the two UI surfaces that must SHOW
-    // the value they act at — the encounter editor's difficulty control and
-    // the module-level restock button's read-only badge. A UI site reading the
-    // raw field instead would be a second resolver; reading it through this
-    // function is exactly what keeps "no field read outside the resolver" true.
+    // Every consumer resolves through the ONE resolver: ONE run-time budget
+    // resolver (docs/17 row 228), and (docs/17 row 195) the two UI surfaces
+    // that must SHOW the value they act at — the encounter editor's difficulty
+    // control and the module-level restock button's read-only badge. A UI site
+    // reading the raw field instead would be a second resolver; reading it
+    // through this function is exactly what keeps "no field read outside the
+    // resolver" true.
     const calls = countsOf('resolveModuleDifficulty(');
     expect([...calls.entries()]).toEqual([
       [DIFFICULTY_MODULE, 1],
       [ARTIFACT_EDITOR, 1],
       [RESTOCK_BUTTON, 1],
-      [RUN_ENGINE, 3],
+      // ONE run-time site (docs/17 row 228 folded the old three — the
+      // Cartographer brief, the roster-only repopulate finalize and the
+      // in-place fill — onto `RunEngine.runEncounterBudget`, and the
+      // single-room repopulate draft reads it too, so a fourth copy of the
+      // resolution chain cannot reappear).
+      [RUN_ENGINE, 1],
     ]);
     // The module row field itself is read in exactly one place — the resolver.
     const fieldReads = countsOf('module?.difficulty');
@@ -91,5 +96,18 @@ describe('one module difficulty seam (SOURCE SCAN)', () => {
     // No other file embeds a copy of the ladder's literals as a multiplier.
     const ladder = countsOf('MODULE_DIFFICULTY_MULTIPLIERS:');
     expect([...ladder.entries()]).toEqual([[DIFFICULTY_MODULE, 1]]);
+  });
+
+  it('states the party level and the difficulty clause through their ONE composers', () => {
+    // The ONE level sentence (`partyLevelLine`) — the count is its template,
+    // its own exclusion matcher and the two doc references beside them, all in
+    // the ONE file. A hand-written "… adventurers at level N." anywhere else is
+    // the exact defect docs/17 row 228 cured on the single-room repopulate
+    // route (the Smith brief stated none), and it reds by file here.
+    const levelSentences = countsOf('adventurers at level');
+    expect([...levelSentences.entries()]).toEqual([[ROOM_BUDGET, 4]]);
+    // The ONE module-difficulty clause: a second composer reds the same way.
+    const difficultyClauses = countsOf('MODULE DIFFICULTY (');
+    expect([...difficultyClauses.entries()]).toEqual([[ROOM_BUDGET, 1]]);
   });
 });
