@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,6 +13,7 @@ import { useModules } from '@/features/modules/hooks';
 import { useScopeToggles } from '@/features/campaign/hooks';
 import { ScopeControl } from '@/features/campaign/components/scope-control';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
+import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { adoptIntoCampaign, publishToLibrary } from '@/db/artifactRepo';
 import { graphPath, workspacePath } from '@/app/routes';
 import { Link } from 'react-router-dom';
@@ -216,6 +217,22 @@ export function CampaignTree({
     [globals, filter],
   );
 
+  // The pool a row's summary-tooltip wiki chips resolve against (docs/17 row
+  // 217) — the campaign rows plus the shared library, exactly as the module
+  // group controls pass them (see `ModuleGroupActions`). The open callback is
+  // the tree's own selection, so a chip in the tooltip lands where clicking the
+  // row lands.
+  const wikiPool = useMemo<readonly AnyArtifact[]>(
+    () => [...artifacts, ...globals],
+    [artifacts, globals],
+  );
+  const openWikiArtifact = useCallback(
+    (artifact: AnyArtifact) => {
+      onSelectArtifact(artifact.id);
+    },
+    [onSelectArtifact],
+  );
+
   // Scope split (10-MILESTONE-6 D3): the library group, one group per owning
   // module, the plain campaign rows in their kind groups — and an explicit
   // "Orphaned" group for module-owned rows whose module row is missing
@@ -411,6 +428,8 @@ export function CampaignTree({
                 <li key={artifact.id}>
                   <TreeRow
                     artifact={artifact}
+                    artifacts={wikiPool}
+                    onOpenArtifact={openWikiArtifact}
                     selected={artifact.id === selectedArtifactId}
                     onSelect={() => {
                       onSelectArtifact(artifact.id);
@@ -465,6 +484,8 @@ export function CampaignTree({
                 <li key={artifact.id}>
                   <TreeRow
                     artifact={artifact}
+                    artifacts={wikiPool}
+                    onOpenArtifact={openWikiArtifact}
                     selected={artifact.id === selectedArtifactId}
                     onSelect={() => {
                       onSelectArtifact(artifact.id);
@@ -516,6 +537,8 @@ export function CampaignTree({
                   <TreeRow
                     artifact={artifact}
                     orphaned
+                    artifacts={wikiPool}
+                    onOpenArtifact={openWikiArtifact}
                     selected={artifact.id === selectedArtifactId}
                     onSelect={() => {
                       onSelectArtifact(artifact.id);
@@ -603,6 +626,8 @@ export function CampaignTree({
                       <li key={artifact.id}>
                         <TreeRow
                           artifact={artifact}
+                          artifacts={wikiPool}
+                          onOpenArtifact={openWikiArtifact}
                           selected={artifact.id === selectedArtifactId}
                           onSelect={() => {
                             onSelectArtifact(artifact.id);
@@ -773,6 +798,10 @@ interface TreeRowProps {
   artifact: AnyArtifact;
   selected: boolean;
   onSelect: () => void;
+  /** Wiki-chip pool for the summary tooltip (docs/17 row 217). */
+  artifacts: readonly AnyArtifact[];
+  /** Resolved wiki-chip click — the tree's own selection. */
+  onOpenArtifact: (artifact: AnyArtifact) => void;
   onRename: () => void;
   onDuplicate?: (() => void) | undefined;
   onDelete: () => void;
@@ -806,6 +835,8 @@ function TreeRow({
   artifact,
   selected,
   onSelect,
+  artifacts,
+  onOpenArtifact,
   onRename,
   onDuplicate,
   onDelete,
@@ -855,7 +886,15 @@ function TreeRow({
           </Button>
         </TooltipTrigger>
         <TooltipContent side="right" className="max-w-64">
-          {artifact.summary === '' ? 'No summary yet.' : artifact.summary}
+          {artifact.summary === '' ? (
+            'No summary yet.'
+          ) : (
+            <WikiMarkdown
+              value={artifact.summary}
+              artifacts={artifacts}
+              onOpenArtifact={onOpenArtifact}
+            />
+          )}
         </TooltipContent>
       </Tooltip>
       <ContextMenuContent>

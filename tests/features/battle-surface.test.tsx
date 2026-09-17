@@ -355,8 +355,16 @@ async function currentBattle(moduleId: string) {
 }
 
 /** A battle seeded from an encounter WITH a layout (2 keyed rooms) and a
- *  treasure-carrying roster row. packRooms keeps attempt-0 order. */
-async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: string }> {
+ *  treasure-carrying roster row. packRooms keeps attempt-0 order.
+ *
+ * The `keyText`/`keyTreasure`/`treasure` overrides exist for the model-prose
+ * wiki-chip pins (docs/17 row 217): raising a battle with tokens in its key
+ * text must not disturb the bytes the other key/treasure pins assert. */
+async function seedKeyedBattle(options: {
+  keyText?: string;
+  keyTreasure?: string;
+  treasure?: string;
+} = {}): Promise<{ moduleId: string; encounterId: string }> {
   const pc1 = await addPc('Serren', 20);
   void pc1;
   const roomA = newId();
@@ -374,8 +382,8 @@ async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: strin
         size: 'small',
         monsterIndexes: [],
         adjacentRoomIds: [roomB],
-        key: KEY_TEXT,
-        keyTreasure: KEY_TREASURE,
+        key: options.keyText ?? KEY_TEXT,
+        keyTreasure: options.keyTreasure ?? KEY_TREASURE,
       },
       {
         id: roomB,
@@ -396,7 +404,7 @@ async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: strin
     data: {
       difficulty: 'hard',
       levelHint: '4',
-      monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
+      monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: options.treasure ?? MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -3661,6 +3669,60 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     fireEvent.pointerUp(el, { pointerId: 2 });
     await flushAsyncUpdates();
     expect(screen.getByTestId('token-treasure')).toHaveTextContent(MOB_TREASURE);
+  });
+
+  /**
+   * docs/17 row 217: the room key, the room's key treasure and a mob's frozen
+   * token treasure are MODEL-authored prose and render through the ONE
+   * wiki-aware renderer, resolved against the board's own campaign pool. Before
+   * the slice these three were bare `<p>`s, so the owner read literal
+   * `[[Name]]` bytes on the battle table.
+   */
+  it('room key, room treasure and a mob’s frozen treasure all render wiki chips, never raw bytes', async () => {
+    const RESOLVED_TOKEN = 'Temple ambush';
+    const UNRESOLVED_TOKEN = 'Ghost Room';
+    const { moduleId, encounterId } = await seedKeyedBattle({
+      keyText: `A door names [[${RESOLVED_TOKEN}]] and [[${UNRESOLVED_TOKEN}]].`,
+      keyTreasure: `Coffers tagged [[${RESOLVED_TOKEN}]].`,
+      treasure: `Purse marked [[${UNRESOLVED_TOKEN}]].`,
+    });
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+
+    // Room key + room treasure (GM rail card).
+    fireEvent.click(screen.getByTestId('room-key-marker-A'));
+    await flushAsyncUpdates();
+    const keyCard = screen.getByTestId('room-key-card');
+    const keyChip = within(screen.getByTestId('room-key-text')).getByTestId('wiki-chip');
+    // The resolved token is the encounter artifact the board was seeded from.
+    expect(keyChip.getAttribute('data-wiki-artifact-id')).toBe(encounterId);
+    const keyDashed = within(screen.getByTestId('room-key-text')).getByTestId(
+      'wiki-chip-unresolved',
+    );
+    expect(keyDashed.textContent).toContain(UNRESOLVED_TOKEN);
+    expect(
+      within(screen.getByTestId('room-key-treasure')).getByTestId('wiki-chip').getAttribute(
+        'data-wiki-artifact-id',
+      ),
+    ).toBe(encounterId);
+    // The byte-exact token lives only in the chip's tooltip, never in the text.
+    expect(keyCard.textContent).not.toContain('[[');
+
+    // A mob's frozen treasure on the selection card.
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === 'Cultist');
+    if (token === undefined) throw new Error('cultist token missing');
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Cultist');
+    if (el === undefined) throw new Error('cultist element missing');
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+    const treasure = screen.getByTestId('token-treasure');
+    const treasureDashed = within(treasure).getByTestId('wiki-chip-unresolved');
+    expect(treasureDashed.textContent).toContain(UNRESOLVED_TOKEN);
+    expect(treasure.textContent).not.toContain('[[');
   });
 
   it('player-safe view: no key markers and no key/treasure text anywhere in the DOM', async () => {

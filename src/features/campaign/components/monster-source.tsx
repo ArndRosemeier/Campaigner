@@ -13,6 +13,7 @@ import {
   rosterTreasureFor,
 } from '@/domain/encounterResolve';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
+import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -403,6 +404,7 @@ function InlineStatblockEditor({
 export function MonsterStatblocksPanel({
   monsters,
   targets,
+  onOpenArtifact,
 }: {
   monsters: readonly MonsterEntry[];
   /**
@@ -412,9 +414,12 @@ export function MonsterStatblocksPanel({
    * surface can point at, and its own named `missing ref (…)` reason for one it
    * cannot; passing a row that does not exist here would therefore be a claim
    * the surface cannot honour, so the pool is stated explicitly at every mount
-   * rather than guessed.
+   * rather than guessed. The SAME pool resolves a mob's model-authored `notes`
+   * chips (docs/17 row 217).
    */
   targets: readonly AnyArtifact[];
+  /** Resolved wiki-chip click for a mob's `notes`. Omit → inert chip. */
+  onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
 }): JSX.Element | null {
   const resolved = useLiveQuery(
     () => resolveMonsterEntries(monsters),
@@ -488,7 +493,12 @@ export function MonsterStatblocksPanel({
               </span>
             )}
             {monster.notes !== '' && (
-              <span className="text-xs text-muted-foreground">{monster.notes}</span>
+              <WikiMarkdown
+                value={monster.notes}
+                artifacts={targets}
+                onOpenArtifact={onOpenArtifact}
+                className="text-xs text-muted-foreground"
+              />
             )}
             {treasure !== null && (
               <span className="text-xs text-muted-foreground" data-testid="roster-treasure">

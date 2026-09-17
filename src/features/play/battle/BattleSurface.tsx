@@ -96,6 +96,7 @@ import { runBattle } from '@/features/play/run-battle-seed';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
+import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -2174,6 +2175,7 @@ export function BattleSurface(): JSX.Element {
                   ? undefined
                   : artifactById.get(selectedToken.artifactId)
               }
+              artifacts={artifacts}
               portraitImageId={selectedPortraitImageId}
               stats={stats}
               statBlock={selectedStatBlock}
@@ -2288,18 +2290,26 @@ export function BattleSurface(): JSX.Element {
                 Room {selectedKeyRoom.letter} — {selectedKeyRoom.room.name}
               </p>
               {selectedKeyRoom.room.key !== '' ? (
-                <p className="whitespace-pre-line text-xs text-zinc-300" data-testid="room-key-text">
-                  {selectedKeyRoom.room.key}
-                </p>
+                <div data-testid="room-key-text">
+                  <WikiMarkdown
+                    value={selectedKeyRoom.room.key}
+                    artifacts={artifacts}
+                    className="text-xs text-zinc-300"
+                  />
+                </div>
               ) : (
                 <p className="text-xs italic text-zinc-500">No key written for this room yet.</p>
               )}
               {selectedKeyRoom.room.keyTreasure !== '' && (
                 <div className="mt-1 border-t border-white/10 pt-1">
                   <p className="text-xs font-medium text-zinc-400">Room treasure</p>
-                  <p className="whitespace-pre-line text-xs text-zinc-300" data-testid="room-key-treasure">
-                    {selectedKeyRoom.room.keyTreasure}
-                  </p>
+                  <div data-testid="room-key-treasure">
+                    <WikiMarkdown
+                      value={selectedKeyRoom.room.keyTreasure}
+                      artifacts={artifacts}
+                      className="text-xs text-zinc-300"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -2844,6 +2854,9 @@ function EffectView({
 interface SelectionCardProps {
   token: BattleToken;
   artifact: AnyArtifact | undefined;
+  /** The campaign pool, for the card's model-prose wiki chips (docs/17 row
+   * 217) — the same pool the board resolves artifacts against. */
+  artifacts: readonly AnyArtifact[];
   /** The token's portrait, resolved by the board's ONE portrait reading. */
   portraitImageId: Id | null;
   stats: FighterStatsLookup;
@@ -2906,6 +2919,7 @@ interface SelectionCardProps {
 function SelectionCard({
   token,
   artifact,
+  artifacts,
   portraitImageId,
   stats,
   statBlock,
@@ -3129,7 +3143,11 @@ function SelectionCard({
       {!playerSafe && token.treasure !== '' && (
         <div className="border-t border-white/10 pt-1" data-testid="token-treasure">
           <p className="text-xs font-medium text-amber-200">Treasure</p>
-          <p className="whitespace-pre-line text-xs text-zinc-300">{token.treasure}</p>
+          <WikiMarkdown
+            value={token.treasure}
+            artifacts={artifacts}
+            className="text-xs text-zinc-300"
+          />
         </div>
       )}
       {!playerSafe && statBlock !== null && (
@@ -3153,7 +3171,7 @@ function SelectionCard({
           <DialogContent>
             <DialogTitle>{npc.name}</DialogTitle>
             <DialogDescription className="sr-only">Full artifact card (GM only)</DialogDescription>
-            <NpcCard npc={npc} />
+            <NpcCard npc={npc} artifacts={artifacts} />
           </DialogContent>
         </Dialog>
       )}

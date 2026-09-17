@@ -248,10 +248,24 @@ function PeekBody({
   onOpenArtifact: (artifact: AnyArtifact) => void;
 }): JSX.Element {
   if (artifact.kind === 'npc') {
-    return <NpcCard npc={artifact} showWriterModel />;
+    return (
+      <NpcCard
+        npc={artifact}
+        artifacts={artifacts}
+        onOpenArtifact={onOpenArtifact}
+        showWriterModel
+      />
+    );
   }
   if (artifact.kind === 'encounter') {
-    return <EncounterCard encounter={artifact} artifacts={artifacts} showWriterModel />;
+    return (
+      <EncounterCard
+        encounter={artifact}
+        artifacts={artifacts}
+        onOpenArtifact={onOpenArtifact}
+        showWriterModel
+      />
+    );
   }
   return (
     <div className="flex flex-col gap-2" data-testid="peek-body">
@@ -264,7 +278,12 @@ function PeekBody({
             {artifact.kind}
           </p>
           {artifact.summary !== '' && (
-            <p className="text-sm break-words text-muted-foreground">{artifact.summary}</p>
+            <WikiMarkdown
+              value={artifact.summary}
+              artifacts={artifacts}
+              onOpenArtifact={onOpenArtifact}
+              className="text-sm break-words text-muted-foreground"
+            />
           )}
         </div>
       </div>

@@ -6531,6 +6531,83 @@ own lane, not here; and the source scan catches a second HOST or a second
 `spell-card` testid owner, not a paraphrased second renderer under a new testid
 (the source scan is a tripwire, not a proof).
 
+### Every model-prose surface renders through the ONE `WikiMarkdown` (docs/17 row 217, docs/05 §The chip, docs/18 §2.2/§2.3)
+
+The owner read literal `[[Name]]` bytes on the npc view (*"In the description i
+see [[<name>]] occurrances which are supposed to be links, but are not."*) and
+asked for the rendering to be centralized. The ONE React renderer already
+existed — `WikiMarkdown` chips a resolved token and dashes an unresolved one —
+so the slice folds every measured BYPASS onto it. The pins below are behaviour
+first (a chip, its destination, and the absence of the raw bytes), plus the
+exactly-one source scan that keeps a second `react-markdown` import impossible
+to be born quietly. The stat-block `TextBlocks` contract and the
+imported-record surfaces are deliberately NOT migrated (docs/17 row 217).
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **`NpcCard` summary / `appearance` / `personality`**: a resolved token is a chip carrying the pool row's id whose click opens it; an unresolved one is the dashed chip whose `title` holds the byte-exact `[[Ghost Keep]]` while the TEXT never does; a token-free field reads as before | `tests/features/model-prose-rendering.test.tsx` (2 pins) | ✅ REVERT-PROVEN (injection B) |
+| **`EncounterCard` summary AND a roster entry's `notes`** both chip against the SAME pool and open it | same | ✅ |
+| **`CollapsibleRow` summary with NO context** (empty pool) dashes, never raw bytes | same | ✅ |
+| **`RevisionDialog` snapshot summary + body** through the seam with an empty pool; the file's direct `react-markdown` import is GONE | same + the import scan | ✅ REVERT-PROVEN (injection C) |
+| **Campaign-tree row-summary tooltip** resolves against `[...artifacts, ...globals]` and opens via the tree's own `onSelectArtifact` | same (hover through the real `WorkspacePage`) | ✅ REVERT-PROVEN (injection D) |
+| **`BattleSurface` room `key`, `keyTreasure` and a mob's frozen `treasure`** chip; the resolved one carries the seeded encounter's id | `tests/features/battle-surface.test.tsx` (existing seeded harness; `seedKeyedBattle` gained optional `keyText`/`keyTreasure`/`treasure`) | ✅ |
+| **The EXACTLY-ONE seam**: `react-markdown` and `remarkWikiLinks` are imported by exactly `wiki-markdown.tsx`, and a declared surface map (file + reason + `<WikiMarkdown` count) holds the migrated population with a per-site rot check | `tests/architecture/one-model-prose-renderer.test.ts` (3 pins) | ✅ REVERT-PROVEN (injections B and C) |
+| **The deliberate exclusions stay green**: the `TextBlocks` pins and the imported-record surfaces untouched, the whole suite green | the full gate (343 files / 4441 tests) | ✅ |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `imports react-markdown from exactly the one renderer, and proves it can see one` | `tests/architecture/one-model-prose-renderer.test.ts` | a second `react-markdown` import (the pre-217 `revision-dialog` spelling) — injection C |
+| `runs the wiki token plugin only inside the one renderer` | same | a second importer of `remarkWikiLinks`, i.e. a second token walker |
+| `declares every model-prose surface, and each still renders through the seam` | same | a surface reverting to a bare `<p>{modelText}</p>` and dropping its `<WikiMarkdown` call — injections B and C |
+| `NpcCard: a resolved token is a chip that opens the artifact, an unresolved one is dashed, and no raw bytes survive` | `tests/features/model-prose-rendering.test.tsx` | the raw bytes coming back — injection B |
+| `NpcCard: appearance resolves or dashes per token, personality without a token is unchanged` | same | a per-field reversion the file-level count cannot see, and a chip that loses its byte-exact tooltip |
+| `EncounterCard: the summary AND a roster entry’s notes both chip, and open the same pool` | same | a summary migrated but `notes` left raw (or vice versa) |
+| `CollapsibleRow: the expanded summary chips even with no context` | same | an empty-pool surface printing raw bytes instead of the dashed chip |
+| `RevisionDialog: both snapshot fields render through the seam (empty pool)` | same | a second markdown dialect (no wiki chips) inside the revision view — injection C |
+| `the campaign-tree summary tooltip resolves against the tree’s own pool` | same | a chip resolved against the WRONG pool (or no pool) — injection D |
+| `room key, room treasure and a mob’s frozen treasure all render wiki chips, never raw bytes` | `tests/features/battle-surface.test.tsx` | the board's three model-prose fields bypassing the renderer |
+
+**REVERT-PROVEN** (each injection applied under the suite lock, its changed
+file's `git hash-object` PRINTED, restored by a `trap` from HEAD — never a bare
+`git checkout --` — and every arm's hash distinct, so no arm is VOID; raw logs
+in `/tmp/model-prose-logs/`):
+
+- **A — baseline.** `artifact-cards.tsx` `e859bd57a9c1b628b2e03dfe5fa7c50fd881a24c`,
+  `revision-dialog.tsx` `7bd9c8f76fdf0d2301d4f596952e2e1cbd9c12d8`,
+  `campaign-tree.tsx` `c8e5ffad3d69790a0717a16f986897400a3df65d`,
+  `one-model-prose-renderer.test.ts` `14eb9655cddc8646a5a669ebc6e2ff79c9bc60f4`,
+  `model-prose-rendering.test.tsx` `a663f9cbd885018e0bf4146996a6cbf5ceaf609a`
+  → **9 passed / 0 failed**.
+- **B — one migrated surface reverted to a bare `<p>`** (`artifact-cards.tsx`
+  hash `ba532c05dfb240f93eeb8c25e99c8cac7858f91b`) → **2 failed / 7 passed**: the
+  `NpcCard` no-raw-bytes pin (`expected … not to contain '[['`) AND the arch
+  surface-count pin (declared 5, observed 4).
+- **C — the seam bypassed** (the pre-slice `revision-dialog.tsx` restored from
+  `1d43d27`, hash `f3923d0fa10ef97245d764e2e6671e95c172f0fe`) → **3 failed / 6
+  passed**: both arch pins (a second `react-markdown` importer; declared 2,
+  observed 0 `<WikiMarkdown`) and the `RevisionDialog` behaviour pin (no dashed
+  chips).
+- **D — a real pool replaced by an EMPTY one where one exists** (all four
+  `TreeRow` mounts' `artifacts={wikiPool}` → `artifacts={[]}`,
+  `campaign-tree.tsx` hash `6fddc90a5fbc743c1835c2aafba3147570fa49f5`) → **1
+  failed / 8 passed**: the campaign-tree clickable-chip pin ALONE, with the arch
+  scan GREEN — the measured proof that the pin tests the THREADING, not merely
+  that a renderer ran.
+- Restored hashes equal the baseline hashes above and `git status` is clean.
+
+**WHAT THESE PINS DO NOT PROVE:** the source scan is TEXTUAL — `await
+import('react-markdown')` and a re-export that hides the specifier are invisible
+to it, and a per-FIELD reversion is caught by that surface's behaviour pin, not
+by the file-level `<WikiMarkdown` count; the behaviour pins render small direct
+fixtures, not a real model run, so "a real LLM echoes a token into this field"
+is established by the write path (docs/17 row 217), not by a fixture; and no pin
+asserts how a chip reads to a person — it proves the bytes, the destination and
+the raw-byte absence.
+
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 
 The owner asked for a picker for the global first-try chat model ("the picker

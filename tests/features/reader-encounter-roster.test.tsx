@@ -448,7 +448,15 @@ describe('EXACTLY ONE roster reference implementation in the app', () => {
     const peek = code('src/features/modules/peek-modal.tsx');
     expect(page).toContain('setPeekId(artifact.id)');
     expect(page).not.toContain("artifact.kind === 'encounter'");
-    expect(peek).toContain('<EncounterCard encounter={artifact} artifacts={artifacts} showWriterModel />');
+    // The peek card gets the SAME pool AND the SAME breadcrumb-push callback
+    // its own `[[…]]` body chips use (docs/17 row 217) — so the encounter's
+    // model-prose summary and its mobs' notes resolve and open like every other
+    // wiki token on the surface. Before row 217 this exact assertion named the
+    // one-line form without `onOpenArtifact`; the HTML-comment state it guards
+    // is unchanged (the peek modal is still the only encounter card seam).
+    expect(peek).toMatch(
+      /<EncounterCard[\s\S]*?artifacts=\{artifacts\}[\s\S]*?onOpenArtifact=\{onOpenArtifact\}[\s\S]*?showWriterModel/,
+    );
   });
 
   it('the shared panel renders the domain rule, not strings of its own', () => {
