@@ -189,13 +189,47 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
 - Any arc that adds or changes a seam, convention, gotcha or known-debt entry
   amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
   spec — an unamended seam is treated as missing.
-- Gate before every commit: `bash scripts/gate.sh` — the ONE way the suite runs
-  (§Host hygiene 7: atomic lock, at most two concurrent chunks, combined-RSS and
-  available-memory watchdog; it
-  invokes lint + typecheck + every vitest chunk and prints the summed counts).
-  **Keep the
-  gate's RAW output** — write it to a file and keep that file until the landing
-  is verified; never pipe the run through `tail`/`head`. Real incident
+- Gate before every push — in TWO TIERS (`docs/17` row 232, owner-directed
+  2026-09-17: *"its actually ok to push unverified code as long as it compiles
+  and as long as the verified code goes in a few minutes later… i am the only
+  user of this app at the moment."*):
+  1. **The COMPILE tier blocks the push.**
+     `GATE_TESTS=0 bash scripts/gate.sh` — typecheck (+ lint if asked).
+     MEASURED 27s. It exists because the deploy job runs `pnpm build` =
+     `tsc -b && vite build`, so a **type error** is what breaks a deploy: the
+     workflow fails and the live site silently keeps the previous bundle. Lint is
+     NOT deploy-critical (nothing in CI runs it), which is why it is opt-in
+     (`GATE_CHECKS=all`, ~2m) rather than the default. Exit 2 = compiles/clean —
+     a result that did NOT run the suite and must never be reported as "the gate
+     passed".
+     **A BUILD-CONFIG DIFF ALSO RUNS THE BUILD.** A change touching
+     `vite.config.ts`, `tsconfig*.json`, `package.json`, the lockfile,
+     `index.html` or `public/` can pass `tsc -b` and still break `vite build` —
+     and the owner's own requirement is that the pushed build stays testable
+     (verbatim: *"no compile errors before push, thats really needed because i
+     need to be able to still test the app"*). The compile tier detects that diff
+     and runs `pnpm build` as well; `GATE_BUILD=0` skips it deliberately and
+     loudly. Do not weaken this to save time: a broken build is the one failure
+     the owner cannot work around.
+  2. **The FULL gate does not block; it follows.** `bash scripts/gate.sh` (the
+     ONE way the suite runs, §Host hygiene 7) is started in the BACKGROUND right
+     after the push, in the SAME session, and its result is OWNED: a green result
+     is recorded on the board; a RED one is fixed forward IMMEDIATELY, before any
+     other change lands — never stacked behind a second unverified commit. The
+     writer's own landing report still carries a FULL green gate on its slice;
+     this tier covers the integrated tree. A background run's log MUST go to the
+     workspace (the gate's default `GATE_LOGDIR`), never `/tmp` — `/tmp` is
+     private per call here, so a `/tmp` log dies with the process and a red
+     result becomes undiagnosable.
+  **The honest cost, recorded rather than glossed:** `origin/main` can carry an
+  UNVERIFIED commit for the ~10 minutes the full tier runs. That is acceptable
+  ONLY because the app has ONE user (the owner) and a red result is fixed
+  forward within minutes. If a second user ever exists, or `main` gains a second
+  consumer, this reverts to gate-then-push — the trade is a single-user app,
+  not a general permission.
+  **Keep the gate's RAW output** — write it to a file under the workspace (never
+  `/tmp`, see above) and keep it until the landing is verified; never pipe the
+  run through `tail`/`head`. Real incident
   (2026-xx, a landing's gate): one test failed, the writer had piped the run
   through `tail -10`, and both the failing test's NAME and its
   `Expected`/`Received` block were destroyed. The surviving tail ended on a

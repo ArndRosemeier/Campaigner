@@ -30,23 +30,45 @@
 #     that touches test files ALONE. Every other diff runs the full set — no
 #     other skipping, ever: a gate that guesses at coverage is the failure mode
 #     this script refuses.
+#   * TWO TIERS, because they answer two different questions (docs/22 §7).
+#     `GATE_TESTS=0` is the COMPILE tier: typecheck by default (`GATE_CHECKS=lint`
+#     or `all` adds eslint), no suite, exit 2 on success — plus `pnpm build` when
+#     the diff touches the build's own inputs (`vite.config.*`, `tsconfig*.json`,
+#     `package.json`, the lockfile, `index.html`, `public/`), because `tsc -b`
+#     cannot prove `vite build` succeeds and the owner needs every pushed build
+#     to stay testable (`GATE_BUILD=0` refuses that build deliberately, loudly).
+#     The fast loop uses it before a push, because the deploy job runs
+#     `pnpm build` (= `tsc -b && vite build`), so a TYPE error is what breaks a
+#     deploy — not a failing test. The FULL run (the default; exit 0 = GREEN,
+#     exit 1 = RED) is what makes a change VERIFIED, and it follows the push
+#     rather than blocking it. A compile-tier result must never be reported as
+#     "the gate passed": it did not run the suite, and it says so in its banner.
+#
+# Exit codes: 0 = full gate GREEN · 1 = RED · 2 = compile tier only (NOT
+# verified) · 9 = the lock is held by another suite.
 #
 # Usage:
-#   scripts/gate.sh                     # lint + typecheck + every chunk, summed
+#   scripts/gate.sh                     # typecheck + lint + every chunk, summed
+#   GATE_TESTS=0 scripts/gate.sh        # COMPILE ONLY: typecheck (26s), no suite
+#   GATE_TESTS=0 GATE_CHECKS=all scripts/gate.sh   # compile tier + eslint (~2m)
 #   scripts/gate.sh tests/lib           # only that chunk (still locked, capped)
 #   GATE_PLAN_ONLY=1 scripts/gate.sh    # print the plan (mode, chunks, order), exit
 #
 # Env: GATE_RSS_CAP_MB (default 3000), GATE_AVAIL_FLOOR_MB (default 2500),
 #      GATE_PARALLEL_CHUNKS (1|2, default 2), GATE_PARALLEL_FALLBACK_MB
 #      (default 90% of the cap), GATE_MAX_VOID_RETRIES (default 1),
-#      GATE_DIFF_BASE (default origin/main), GATE_LOGDIR (default /tmp/gate-<pid>)
+#      GATE_TESTS (1|0, default 1), GATE_CHECKS (typecheck|lint|all, default
+#      typecheck, compile tier only), GATE_BUILD (1|0, default 1: build on a
+#      build-config diff), GATE_DIFF_BASE (default origin/main),
+#      GATE_LOGDIR (default <repo>/.gate-logs/gate-<pid> — IN THE WORKSPACE, so a
+#      background run's evidence outlives the process; /tmp is per-call here)
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
 TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
-LOGDIR="${GATE_LOGDIR:-/tmp/gate-$$}"
+LOGDIR="${GATE_LOGDIR:-$PWD/.gate-logs/gate-$$}"
 LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
 DIFF_BASE="${GATE_DIFF_BASE:-origin/main}"
 PARALLEL_REQUESTED="${GATE_PARALLEL_CHUNKS:-2}"
@@ -57,6 +79,43 @@ case "$PARALLEL_REQUESTED" in
     exit 2
     ;;
 esac
+# GATE_TESTS=0 is the COMPILE tier: typecheck + lint, and NO suite. It exists
+# because the fast loop needs one honest question answered before a push — "does
+# this still build?" — and the answer is `tsc -b`, not the suite: the deploy job
+# runs `pnpm build` (= `tsc -b && vite build`), so a type error fails the deploy
+# and the live site silently keeps the previous bundle. The suite answers a
+# DIFFERENT question (did behaviour move?) and is not skipped, only DEFERRED to
+# the full run that follows the push. It never prints GATE GREEN — a result that
+# did not run the suite must never be quotable as one.
+GATE_TESTS="${GATE_TESTS:-1}"
+case "$GATE_TESTS" in
+  0 | 1) ;;
+  *)
+    echo "!! GATE_TESTS must be 0 or 1 (got '$GATE_TESTS')" >&2
+    exit 2
+    ;;
+esac
+COMPILE_ONLY=0
+[ "$GATE_TESTS" = "0" ] && COMPILE_ONLY=1
+# Which checks the compile tier runs. `typecheck` is the DEFAULT because it is
+# the deploy-critical one (the deploy job runs `pnpm build` = `tsc -b && vite
+# build`) and it is fast: MEASURED 26s cold and warm on this box, against 94s for
+# `eslint .`. Lint is a correctness aid, not a build gate — it runs in the full
+# tier either way — so `GATE_CHECKS=lint` (or `all`) opts it in when a change is
+# lint-heavy and the extra ~94s is worth it. It is refused outside the compile
+# tier, where lint always runs.
+GATE_CHECKS="${GATE_CHECKS:-typecheck}"
+case "$GATE_CHECKS" in
+  typecheck | lint | all) ;;
+  *)
+    echo "!! GATE_CHECKS must be typecheck, lint or all (got '$GATE_CHECKS')" >&2
+    exit 2
+    ;;
+esac
+if [ "$COMPILE_ONLY" != "1" ] && [ "$GATE_CHECKS" != "typecheck" ]; then
+  echo "!! GATE_CHECKS only selects the compile tier (GATE_TESTS=0); the full gate always runs lint + typecheck (got '$GATE_CHECKS')" >&2
+  exit 2
+fi
 SOFT_FALLBACK_MB="${GATE_PARALLEL_FALLBACK_MB:-$((RSS_CAP_MB * 9 / 10))}"
 MAX_VOID_RETRIES="${GATE_MAX_VOID_RETRIES:-1}"
 
@@ -144,18 +203,23 @@ CHANGED=()
 ORDER=()
 MODE=""
 
+# The ONE changed-file list (diff base → HEAD → working tree → untracked). Every
+# consumer of "what did this diff touch" goes through here: the chunk plan and
+# the compile tier's build-config check. A second spelling of it would drift.
+changed_files() {
+  {
+    if git rev-parse --verify --quiet "$DIFF_BASE^{commit}" >/dev/null 2>&1; then
+      git diff --name-only "$DIFF_BASE...HEAD"
+    else
+      echo "!! GATE: diff base '$DIFF_BASE' not found — cannot order or scope chunks; running the FULL set" >&2
+    fi
+    git diff --name-only HEAD
+    git ls-files --others --exclude-standard
+  } | sed '/^$/d' | sort -u
+}
+
 select_order() {
-  mapfile -t CHANGED < <(
-    {
-      if git rev-parse --verify --quiet "$DIFF_BASE^{commit}" >/dev/null 2>&1; then
-        git diff --name-only "$DIFF_BASE...HEAD"
-      else
-        echo "!! GATE: diff base '$DIFF_BASE' not found — cannot order or scope chunks; running the FULL set" >&2
-      fi
-      git diff --name-only HEAD
-      git ls-files --others --exclude-standard
-    } | sed '/^$/d' | sort -u
-  )
+  mapfile -t CHANGED < <(changed_files)
   local f c n=0 docs_only=1 tests_only=1
   for f in "${CHANGED[@]}"; do
     n=$((n + 1))
@@ -237,7 +301,9 @@ print_plan() {
 }
 
 CALLER_MISSING=0
-if [ "$#" -gt 0 ]; then
+if [ "$COMPILE_ONLY" = "1" ]; then
+  MODE=compile-only
+elif [ "$#" -gt 0 ]; then
   MODE=caller
   for chunk in "$@"; do
     if [ -d "$chunk" ]; then
@@ -265,11 +331,13 @@ if [ "${GATE_PLAN_ONLY:-0}" = "1" ]; then
 fi
 
 status_arith=0
-if [ "$MODE" != caller ]; then
+if [ "$MODE" = caller ]; then
+  # In plan-only mode no chunk was selected, so "absent" never ran and cannot be
+  # a finding; the plan is a print, not a verdict.
+  if [ "${GATE_PLAN_ONLY:-0}" != "1" ] && [ "$CALLER_MISSING" -eq 1 ]; then status_arith=1; fi
+elif [ "$MODE" != "compile-only" ]; then
   select_order
   check_arithmetic || status_arith=1
-else
-  [ "$CALLER_MISSING" -eq 1 ] && status_arith=1
 fi
 print_plan
 
@@ -495,22 +563,60 @@ run_plan() {
   return 0
 }
 
-echo "=== lint ==="
-LINT_START=$(date +%s)
-pnpm lint > "$LOGDIR/lint.log" 2>&1 || {
-  echo "LINT FAILED (see $LOGDIR/lint.log)"
-  status=1
-}
-grep -cE "  error  " "$LOGDIR/lint.log" | sed 's/^/  lint errors: /'
+CHECKS_RUN=""
 echo "=== typecheck ==="
+TYPECHECK_START=$(date +%s)
 pnpm typecheck > "$LOGDIR/typecheck.log" 2>&1 || {
   echo "TYPECHECK FAILED (see $LOGDIR/typecheck.log)"
   status=1
 }
-TOOLING_WALL=$(( $(date +%s) - LINT_START ))
+TOOLING_WALL=$(( $(date +%s) - TYPECHECK_START ))
+CHECKS_RUN="typecheck"
+# A BUILD-CONFIG DIFF MUST ALSO BUILD. `tsc -b` proves the types compile; it does
+# NOT prove `vite build` succeeds, and the owner's requirement is that a pushed
+# build stays testable ("no compile errors before push, thats really needed
+# because i need to be able to still test the app"). A change to the build's own
+# inputs is exactly where the two diverge, so the compile tier builds for those
+# and only those. GATE_BUILD=0 skips it and says so.
+BUILD_AFFECTING_RE='^(vite\.config\.|tsconfig[^/]*\.json$|package\.json$|pnpm-lock\.yaml$|index\.html$|public/)'
+if [ "$COMPILE_ONLY" = "1" ]; then
+  build_files="$(changed_files)"
+  if printf '%s\n' "$build_files" | grep -qE "$BUILD_AFFECTING_RE"; then
+    if [ "${GATE_BUILD:-1}" = "0" ]; then
+      echo "=== build: SKIPPED — a build-config diff is present but GATE_BUILD=0 (deliberate; the pushed build is NOT proven) ==="
+    else
+      echo "=== build: build-config diff present — running 'pnpm build' (the deploy runs it too) ==="
+      BUILD_START=$(date +%s)
+      pnpm build > "$LOGDIR/build.log" 2>&1 || {
+        echo "BUILD FAILED (see $LOGDIR/build.log)"
+        status=1
+      }
+      TOOLING_WALL=$((TOOLING_WALL + $(date +%s) - BUILD_START))
+      CHECKS_RUN="$CHECKS_RUN + build"
+    fi
+  fi
+fi
+if [ "$COMPILE_ONLY" != "1" ] || [ "$GATE_CHECKS" = "lint" ] || [ "$GATE_CHECKS" = "all" ]; then
+  echo "=== lint ==="
+  LINT_START=$(date +%s)
+  pnpm lint > "$LOGDIR/lint.log" 2>&1 || {
+    echo "LINT FAILED (see $LOGDIR/lint.log)"
+    status=1
+  }
+  grep -cE "  error  " "$LOGDIR/lint.log" | sed 's/^/  lint errors: /'
+  TOOLING_WALL=$((TOOLING_WALL + $(date +%s) - LINT_START))
+  CHECKS_RUN="$CHECKS_RUN + lint"
+else
+  echo "=== lint: SKIPPED — compile tier runs typecheck by default (GATE_CHECKS=$GATE_CHECKS); add GATE_CHECKS=all for eslint, or use the full gate ==="
+fi
 
 VITEST_WALL=0
-if [ "$MODE" = docs-only ]; then
+if [ "$COMPILE_ONLY" = "1" ]; then
+  echo "=== vitest: SKIPPED — COMPILE TIER (GATE_TESTS=0): the suite did NOT run ==="
+  echo "  this run answers only 'does it still build' (typecheck/lint). The FULL gate is a"
+  echo "  SEPARATE, REAL run and is REQUIRED before this change is treated as verified."
+  echo "  Exit 2 means exactly that — compiles/clean, NOT verified (never 'GATE GREEN')."
+elif [ "$MODE" = docs-only ]; then
   echo "=== vitest: SKIPPED — DOCUMENTATION-ONLY diff (lint + typecheck still ran) ==="
 elif [ "${#ORDER[@]}" -eq 0 ]; then
   echo "=== vitest: nothing selected — no chunk ran ==="
@@ -536,11 +642,21 @@ sum_counts() {
 
 echo "=== summary ==="
 echo "mode: $MODE; requested parallelism: ${PARALLEL_REQUESTED} chunk(s)${FALLBACK_NOTE:+; $FALLBACK_NOTE}"
+echo "checks: ${CHECKS_RUN}${COMPILE_ONLY:+ }"
 echo "chunks completed (non-void): ${#RUN_LOGS[@]} of ${SELECTED_COUNT} selected; voided (re-run): ${VOIDED_COUNT}"
 echo "summed: $(sum_counts 'Test Files') test files / $(sum_counts 'Tests') tests"
 echo "wall: total $(( $(date +%s) - TOTAL_START ))s (tooling ${TOOLING_WALL}s, vitest ${VITEST_WALL}s)"
 echo "peak RSS of any single chunk: ${peak_seen}MB (cap ${RSS_CAP_MB}MB)"
 echo "combined peak RSS of concurrent chunks: ${combined_peak}MB (cap ${RSS_CAP_MB}MB)"
 echo "per-chunk logs: $LOGDIR"
-[ "$status" -eq 0 ] && echo "GATE GREEN" || echo "GATE RED"
+if [ "$COMPILE_ONLY" = "1" ]; then
+  if [ "$status" -eq 0 ]; then
+    echo "===== COMPILE TIER — ${CHECKS_RUN} clean; the suite did NOT run (exit 2) ====="
+    status=2
+  else
+    echo "===== COMPILE TIER — DOES NOT COMPILE; nothing may be pushed ====="
+  fi
+else
+  [ "$status" -eq 0 ] && echo "GATE GREEN" || echo "GATE RED"
+fi
 exit "$status"

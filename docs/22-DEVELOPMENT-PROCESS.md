@@ -317,6 +317,13 @@ once. Its responsibilities, in a form you can re-implement anywhere:
    pipe a gate through `tail`/`head`**: a real incident destroyed both the
    failing test's name and its expected/received block, and the surviving tail
    misattributed the failure to the wrong line.
+9. **Two tiers, because they answer two different questions.** The COMPILE tier
+   (`GATE_TESTS=0`) runs typecheck — the deploy-critical check — and no suite,
+   in ~30s, and it is what blocks a push. The FULL run is the default and is
+   what makes a change VERIFIED; it runs *after* the push, in the background.
+   The two must never be confused: the compile tier exits 2 and prints its own
+   banner, so a result that did not run the suite can never be quoted as "the
+   gate passed". This is a deliberate trade, not a shortcut — see §7.1.
 
 **Rules around it**
 
@@ -331,6 +338,60 @@ once. Its responsibilities, in a form you can re-implement anywhere:
   for ~20 minutes while two writers gated — one of them found it and correctly
   reported it instead of resolving it. A writer running `git add -A` would have
   committed it.
+
+### 7.1 · The two tiers, and why the full gate no longer blocks a push
+
+The 12-minute full gate is the single largest serial cost of a slice, and on a
+small box it is irreducible: the memory ceiling (the thing that keeps the shared
+machine alive) caps the suite at two concurrent chunks, and MEASURED here that
+is 716s wall (120s tooling + 595s vitest) against a summed 1141s of chunk time.
+The only honest lever left is *overlap*, not skipping — so the gate was split by
+the question each half answers:
+
+| | Compile tier | Full gate |
+|---|---|---|
+| Command | `GATE_TESTS=0 scripts/gate.sh` | `scripts/gate.sh` |
+| Runs | typecheck (lint opt-in via `GATE_CHECKS`) | lint + typecheck + every chunk |
+| Cost (measured) | **27s** (build-config diff: +`pnpm build`) | **~12 min** |
+| Question | *does it still build?* | *did behaviour move?* |
+| Blocks | the push | nothing — it follows the push |
+| Verdict | exit 2 (NOT verified) | exit 0 GREEN / exit 1 RED |
+
+**Why typecheck is the blocking half, and lint is not.** The deploy job runs
+`pnpm build` (= `tsc -b && vite build`). A type error therefore fails the deploy
+and the live site silently keeps the previous bundle; nothing in CI runs eslint,
+so a lint error breaks no build. The blocking tier runs exactly what can break a
+deploy, and the ~94s of eslint is opt-in (`GATE_CHECKS=all`) or covered by the
+full run.
+
+**One exception the compile tier must not skip.** `tsc -b` proves the TYPES
+compile; it does not prove `vite build` succeeds. A diff touching
+`vite.config.ts`, `tsconfig*.json`, `package.json`, the lockfile, `index.html` or
+`public/` can pass typecheck and still produce a build the server rejects — and
+the owner's requirement is not merely that a deploy "succeeds" but that the app
+stays testable (verbatim: *"no compile errors before push, thats really needed
+because i need to be able to still test the app"*). So the compile tier detects
+that diff and runs `pnpm build` too (`GATE_BUILD=0` refuses it deliberately and
+loudly). The cost is ~1–2 minutes, and it buys the one failure the owner cannot
+work around.
+
+**Why the full gate may follow the push.** This is an owner decision with a
+stated precondition (verbatim): *"its actually ok to push unverified code as long
+as it compiles and as long as the verified code goes in a few minutes later. I do
+not need a verified state all the time because i am the only user of this app at
+the moment."* The trade is written down with its boundary: `origin/main` can
+carry an unverified commit for ~10 minutes, which is acceptable for a single-user
+app whose only consumer is the person who asked — and it REVERTS to gate-then-push
+the moment a second user or a second consumer of `main` exists. Two rules keep it
+from decaying: the full run is started in the same session that pushed (an
+unowned background gate is how a red result gets lost), and a red is fixed
+forward IMMEDIATELY, never stacked behind another unverified commit.
+
+**Two mechanical requirements** this model adds, both learned the hard way here:
+a background run's log must live in the WORKSPACE (`GATE_LOGDIR` now defaults
+there) — a `/tmp` log is invisible to every later shell in this harness and a red
+result becomes undiagnosable; and the lock must be on a shared path before two
+gates can be trusted to exclude each other.
 
 ---
 
@@ -426,7 +487,10 @@ the existing test harnesses; never build a second fixture set.
 
 # Verification (yours)
 1. The ONE gate command; exit 9 = lock busy → WAIT and retry, never reap another
-   actor's processes; keep the RAW log.
+   actor's processes; keep the RAW log. Your LANDING still carries a FULL green
+   run on your slice — the two-tier model (§7.1) lets the DISPATCHER push behind
+   a 27s compile check, not you: a writer never reports LANDED on a compile-only
+   result.
 2. Your own differential with every arm's file hash printed; lock held before
    injecting; restore from HEAD in a trap (or from an out-of-tree copy while the slice is
    still uncommitted — HEAD does not hold it yet); identical arms are VOID.

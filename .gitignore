@@ -1,6 +1,9 @@
 # Logs
 logs
 *.log
+# Gate run logs: the gate writes them INTO the workspace (GATE_LOGDIR) so a
+# background run's evidence survives — /tmp is private per call in this harness.
+.gate-logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
