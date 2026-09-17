@@ -3700,8 +3700,9 @@ the TypeScript compiler API (function declarations, `const f = () => …`,
 get/set accessors — a regex extractor breaks on nested braces and template
 literals, so none is used), normalizes each body, and FAILS when one normalized
 body occurs at 2+ sites — in one file or across files. Living in the suite
-means it runs in every gate; `tests/` is out of scope by design (fixtures
-repeat legitimately) and NOTHING under `src/` is excluded.
+means it runs in every gate. The `src/` scope excludes NOTHING; the test-tree
+scope — `tests/**` except `tests/fixtures/**` — is the section below
+(docs/17 row 212).
 
 **Normalization, exactly.** (1) comments are stripped — the token stream is the
 PARSER's own child tree (`node.getChildren()`), in which comments are trivia and
@@ -3792,6 +3793,93 @@ act() guard (an `Update to BattleSurface … was not wrapped in act(...)` under
 load) — a file this slice does not touch; it passed 5/5 in isolation
 (`/tmp/dup-flake-check.log`) and the re-gate above was green, so it is a
 load-timing flake, not this landing.
+
+### The tripwire now covers the TEST tree — ONE detector, TWO inventories (docs/17 row 212, docs/18 §3/§5)
+
+Row 172's file doc comment left `tests/` out of scope because "fixtures
+legitimately repeat". That reason covers exactly `tests/fixtures/**` — captured
+upstream documents and prompt goldens — and NOT the test files themselves,
+where a copy-pasted helper or factory is the same defect one layer up. Row 212
+extends the ONE detector to that tree instead of writing a second one.
+
+**The one seam, nothing new.** `collectNamedFunctions`, `groupFunctions` and
+`NORMALIZED_FLOOR = 75` are BYTE-UNCHANGED. `scanRepo` gains ONE scope
+parameter: `ScanScope { roots, exclude? }`, with `SRC_SCOPE = { roots: ['src'] }`
+as the default (so `scanRepo()` keeps its exported behaviour and the `src/`
+pin) and `TESTS_SCOPE = { roots: ['tests'], exclude: ['tests/fixtures'] }`.
+`scopedFiles(scope)` exposes the file list so the scope and its exclusion are
+asserted as DATA. The exact-equality assertion is ONE exported
+`populationProblems(current, baseline, baselinePath)`; BOTH inventories call
+it — a second copy of that comparison is the very defect the file exists for.
+
+**Two inventories, same schema.** `duplicateImplementationsBaseline.json` (the
+`src/` population) is CONTENT-UNCHANGED;
+`tests/architecture/duplicateImplementationsTestsBaseline.json` (NEW) holds the
+test-tree population in the same `{ note, scope, groups: [{ hash, reason,
+sites }] }` shape, every entry with a written reason. The scope line and the
+fixture exclusion are in that header and are asserted by the test.
+
+**The measured capture, and why the floor did NOT move.** At base `b712e8e`,
+over 346 in-scope test files: floor 75 = **136 groups / 390 sites** — far above
+the ~40 that would have kept the slice small. The ladder was printed and the
+floor was held anyway: DOWN only adds noise (70 = 139, 65 = 142, 60 = 146,
+40 = 158), and UP would have to reach about 400 (160 = 98, 200 = 85, 300 = 53,
+400 = 33 groups) to look manageable — a floor that HIDES cheap folds: the
+synchronous `walk` readdir scanner copied into EIGHT test files normalizes to
+349 characters, `completedWith` to 105, `removeEventListener` to 102 and the
+8-site `stripComments` to 84. Blessing those under a raised floor would be the
+exact move AGENTS §Centralization obligation 4 forbids, so 75 is kept for BOTH
+scopes and the inventory declares them instead. **Nothing was folded in this
+slice.**
+
+**The inventory, classified.** The dominant FOLD candidates (each naming a
+seam in its reason): `renderAppAt` ×20 jsdom tests, `sourceFiles` ×12 plus its
+synchronous `walk`/`srcFiles` twins ×8/×8 (source-scan helpers),
+`stripComments` ×8, an identical dnd5e level-1 `statBlock` fixture ×6,
+`sendChat` ×5, `briefs` ×5, the `mockChatReply` families ×4, and the
+`textOf`/`deferred`/pack-dependency/canvas-seed families. The LEGITIMATE
+family is per-test inline scenario data (campaign/module/persona seeds and mock
+LLM reply strings) where each test deliberately owns its numbers.
+
+| fact pinned | where |
+|---|---|
+| **The `src/` population still equals the UNCHANGED `src/` baseline exactly** (15 groups / 39 sites today; the 16-group capture predates row 171's `isRecord` fold) — the shared `populationProblems` call, not a re-implementation | `tests/architecture/no-duplicate-implementations.test.ts` |
+| **The test-tree population equals the NEW inventory exactly** — a NEW copy in a test reds `NEW DUPLICATE` naming every `file:function:line` and the shared hash | same (the new `src/`-style pin over `TESTS_SCOPE`) |
+| **The shared comparison's three arms** — `NEW DUPLICATE`, `BASELINE SITE MISMATCH`, `STALE BASELINE ENTRY` (naming the inventory line to delete) are pinned on synthetic inputs, so the test-tree inventory has the SAME stale-entry behaviour as the `src/` one | same (the shared-helper `describe`) |
+| **`tests/fixtures/**` is excluded, everything else under `tests/` is not** — the scanned file list contains `tests/setup.ts`, `tests/helpers/**` and the detector, and a temp-seeded three-copy tree reports 2 sites with the exclusion and 3 WITHOUT it (the arms differ) | same (the scope pins) |
+| **Non-vacuity** — a renamed pair under a `tests/`-shaped temp root is detected, and the landed inventory is non-empty (136 groups) | same |
+| **The scope and the exclusion are asserted from the test-tree inventory header as data**, never left to prose in a comment | same (the header pin reading the JSON) |
+| **`NORMALIZED_FLOOR` is still exactly ONE declaration, at 75** | same (a source scan of the detector file) |
+
+**WATCHED RED — the differential arms, every changed file's blob hash printed,
+the tree restored from HEAD by a `trap` (`git checkout HEAD -- <path>`; never a
+bare `git checkout -- <path>`, which restores the index).** No arm is VOID: each
+changed file's hash DIFFERS from arm A's on the arms that change it, and the
+whole run held `/tmp/campaigner-suite.lock` (acquired by WAITING for a peer
+writer's suite first — never reaped). Raw logs under `/tmp/dupe-diff/` and
+`/tmp/dupe-diff-run.log`:
+
+| arm | change | hash printed | result |
+|---|---|---|---|
+| **A** | none — the landed tree | detector `81970045554b13e2d91a57c2aab7f52f1de13001`, tests inventory `ea6403f17d8040975ad1d7d99e092a30fb54bc3d`, `fileSlug.test.ts` `3ab32e2ff1f065b117164312dc32c7e6f4029943` | **GREEN 13/13** |
+| **B** | a real named helper (`expectSelfEvidentBlock`, 12 lines) pasted into `tests/lib/fileSlug.test.ts` | `1da011bb543845d8a1d7a5ac1266200aa6881039` (≠ A) | **RED 1 / GREEN 12**: `NEW DUPLICATE — shared normalized body a1283dce9118b20a (356 chars) is implemented at 2 sites:`, naming `tests/helpers/blocked-reason.ts:expectSelfEvidentBlock:135` and `tests/lib/fileSlug.test.ts:expectHeldBlock:199` |
+| **C** | the same copy as a NEW file under `tests/fixtures/` | fixture `ffb4a699c4bcc4bbaa31bc09efcf70d59ffe952b`; target back to A's `3ab32e2…` | **GREEN 13/13** — the exclusion holds |
+| **D** | a baselined tests entry deleted (`04f9773b75c70119`) | inventory `1226066675d636596b49bedba355e320c5113000` (≠ A) | **RED 1 / GREEN 12**: `NEW DUPLICATE … 04f9773b75c70119 (105 chars) …` naming both `completedWith` sites |
+| **E** | a synthetic stale entry (`00000000deadbeef`) appended | inventory `79f19471865c6479a101446cdaa07c6978d8be1c` (≠ A) | **RED 1 / GREEN 12**: `STALE BASELINE ENTRY — 00000000deadbeef […]`, naming the inventory line to delete |
+| **F** | restored from HEAD by the `trap` | detector `8197004…`, inventory `ea6403f…`, target `3ab32e2…` — all EQUAL arm A; `git status` clean and the fixture file gone | — |
+
+**GATE — RAW NUMBERS.** `bash scripts/gate.sh` from the worktree, raw log
+`/tmp/dupe-gate.log`, chunk logs `/tmp/gate-1947113`: **GATE GREEN, exit 0 —
+339 files / 4410 tests**, `chunk arithmetic: 339 of 339 test files covered`,
+lint **0 errors**, typecheck clean, no `Errors:` line, combined peak RSS
+**2324 MB of the 3000 MB cap** (single-chunk peak 1240 MB, wall 465 s, voided
+chunks 0); chunks `tests_lib 33/389 (910MB)`, `tests_remainder 56/515 (1165MB)`,
+`tests_db 37/386 (716MB)`, `tests_llm 62/1239 (916MB)`,
+`tests_domain 30/447 (659MB)`, `tests_features_a 61/652 (1240MB)`,
+`tests_features_b 60/782 (1227MB)`. Baseline at `b712e8e` (row 211) was **339
+files / 4401 tests**, so this slice adds **+0 files / +9 tests** (the detector
+file 4 → 13; the new test-tree inventory is JSON, not a test file), with no
+existing assertion weakened, no test skipped, and no `Errors:` line.
 
 ### The canvas chat's two copies become ONE applier and ONE turn controller (docs/17 row 150, docs/18 §2.3)
 

@@ -1,0 +1,1212 @@
+{
+  "note": "DEBT, NOT A LICENCE. One entry per group the tripwire found in the test tree at base b712e8e, with a written reason; the notes on src/ apply unchanged. Folding a copy FORCES its entry out: tests/architecture/no-duplicate-implementations.test.ts reds BY NAME on any entry whose sites no longer match the tree (folded, renamed or moved), so a stale blessing cannot survive. Never add an entry to make a new copy green; baseline one only with a written reason and a named fold slice. FOLDING IS NOT DONE IN THIS SLICE: every entry is the measured debt this inventory declares.",
+  "scope": "Every tests/**/*.ts and tests/**/*.tsx file EXCEPT tests/fixtures/** — captured upstream documents and prompt goldens legitimately repeat, and that directory is excluded (the only exclusion; it is pinned as data by the test, never left silent). Floor: 75 normalized characters, the SAME floor as the src/ inventory, measured and kept (docs/17 row 212): the ladder DOWN only adds noise (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158) and the ladder UP would hide cheap folds a seam could carry (160 = 98 groups, 200 = 85, 300 = 53, 400 = 33 — while the 8-site `walk` scanner normalizes to 349 characters, `completedWith` to 105, `removeEventListener` to 102 and the 8-site `stripComments` to 84). See the test doc comment for the normalization and what the tripwire cannot see (paraphrases and bodies under the floor).",
+  "groups": [
+    {
+      "hash": "04f9773b75c70119",
+      "reason": "Two local `completedWith` PersonaRun-result builders (entity-batch-fixed-cast, kindOwnershipBoundary); a shared `tests/helpers/personaRun.ts` builder is a real but small fold candidate — recorded, not folded in this inventory slice.",
+      "sites": [
+        "tests/features/entity-batch-fixed-cast.test.ts:completedWith",
+        "tests/llm/kindOwnershipBoundary.test.ts:completedWith"
+      ]
+    },
+    {
+      "hash": "063f7540af0f9179",
+      "reason": "The same synchronous `walk` readdir scanner pasted into EIGHT source-scan tests (name-key-spaces, alias-merge-seam, cast-row-borrowed-stats-scan, encounter-map-offer-scan, entity-batch-creature-book, fileSlug, oneImage-seam, runNotCompletedReason); ONE `tests/helpers/sourceWalk.ts` can carry it — the clearest fold candidate in this inventory.",
+      "sites": [
+        "tests/domain/name-key-spaces.test.ts:walk",
+        "tests/features/alias-merge-seam.test.ts:walk",
+        "tests/features/cast-row-borrowed-stats-scan.test.ts:walk",
+        "tests/features/encounter-map-offer-scan.test.ts:walk",
+        "tests/features/entity-batch-creature-book.test.ts:walk",
+        "tests/lib/fileSlug.test.ts:walk",
+        "tests/llm/oneImage-seam.test.ts:walk",
+        "tests/llm/runNotCompletedReason.test.ts:walk"
+      ]
+    },
+    {
+      "hash": "06eea2670fa5698b",
+      "reason": "Two `mockChatReply` streaming stubs (canvas-chat, canvas-preview-default) that split a reply at a token boundary; a shared `tests/helpers/llmReplies.ts` fold candidate.",
+      "sites": [
+        "tests/features/canvas-chat.test.tsx:mockChatReply",
+        "tests/features/canvas-preview-default.test.tsx:mockChatReply"
+      ]
+    },
+    {
+      "hash": "0992843ce12a06ee",
+      "reason": "Two `partCallText` extractors (fixedCast, module-gen-and-provenance) pulling the \"Write part\" user message out of the chat mock calls; a shared mock-call extractor in `tests/helpers/` is a real fold candidate.",
+      "sites": [
+        "tests/llm/fixedCast.test.ts:partCallText",
+        "tests/llm/module-gen-and-provenance.test.ts:partCallText"
+      ]
+    },
+    {
+      "hash": "099c78af1d81ea24",
+      "reason": "Two identical `removeEventListener` stubs over a fake view's listener map (board-page-flush, module-board); folds with `makeFakeView` into ONE `tests/helpers/fakeView.ts`.",
+      "sites": [
+        "tests/features/board-page-flush.test.tsx:removeEventListener",
+        "tests/features/module-board.test.tsx:removeEventListener"
+      ]
+    },
+    {
+      "hash": "0a3d935c37b6a74a",
+      "reason": "Two `spinePrompt` extractors inside moduleGen-cast.test.ts (different describes) reading the first chat call's user content; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/llm/moduleGen-cast.test.ts:spinePrompt",
+        "tests/llm/moduleGen-cast.test.ts:spinePrompt"
+      ]
+    },
+    {
+      "hash": "0b70084b64fc9c2f",
+      "reason": "Two `openSidebar` canvas-chat drivers (canvas-chat-thread, canvas-chat) that click the toggle and await the panel; foldable onto a shared canvas-chat test helper.",
+      "sites": [
+        "tests/features/canvas-chat-thread.test.tsx:openSidebar",
+        "tests/features/canvas-chat.test.tsx:openSidebar"
+      ]
+    },
+    {
+      "hash": "0d6b98b88fe84e36",
+      "reason": "Two `hangGeneration` deferred image-generation stubs inside portrait-queues.test.ts that hold the mock until an abort; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/features/portrait-queues.test.ts:hangGeneration",
+        "tests/features/portrait-queues.test.ts:hangGeneration"
+      ]
+    },
+    {
+      "hash": "0e05339235151467",
+      "reason": "Four `createBook` stubs (dnd5e-equipment, dnd5e-foundry twice, pf2e-equipment) returning the same processing pack-book row; foldable onto a shared pack-book fixture helper.",
+      "sites": [
+        "tests/ingest/packs/dnd5e-equipment.test.ts:createBook",
+        "tests/ingest/packs/dnd5e-foundry.test.ts:createBook",
+        "tests/ingest/packs/dnd5e-foundry.test.ts:createBook",
+        "tests/ingest/packs/pf2e-equipment.test.ts:createBook"
+      ]
+    },
+    {
+      "hash": "16adad303a9f4a61",
+      "reason": "Two `editorOptions` canvas-chat option objects (canvas-chat-changes, canvas-chat-details) built from an EditorView; per-test scenario setup, but a shared canvas-chat fixture is a reasonable fold.",
+      "sites": [
+        "tests/features/canvas-chat-changes.test.ts:editorOptions",
+        "tests/features/canvas-chat-details.test.ts:editorOptions"
+      ]
+    },
+    {
+      "hash": "198e12196d6f9838",
+      "reason": "`owned` campaign-id assertion in modulePdf.test.ts and pdfLayoutFixtures.ts; a shared assert helper in `tests/helpers/` is a small fold candidate.",
+      "sites": [
+        "tests/lib/modulePdf.test.ts:owned",
+        "tests/lib/pdfLayoutFixtures.ts:owned"
+      ]
+    },
+    {
+      "hash": "1b4231fcc2b5be7a",
+      "reason": "`renderAppAt` route-level render helper pasted into TEN jsdom tests (blocked-reasons, board-page-flush, four canvas-chat/preview tests, canvas-versions, module-board, module-canvas); ONE `tests/helpers/renderApp.ts` is the obvious seam.",
+      "sites": [
+        "tests/features/blocked-reasons.test.tsx:renderAppAt",
+        "tests/features/board-page-flush.test.tsx:renderBoardAt",
+        "tests/features/canvas-chat-clear.test.tsx:renderAppAt",
+        "tests/features/canvas-chat-thread.test.tsx:renderAppAt",
+        "tests/features/canvas-chat.test.tsx:renderAppAt",
+        "tests/features/canvas-preview-ai-actions.test.tsx:renderAppAt",
+        "tests/features/canvas-preview-default.test.tsx:renderAppAt",
+        "tests/features/canvas-versions.test.tsx:renderAppAt",
+        "tests/features/module-board.test.tsx:renderAppAt",
+        "tests/features/module-canvas.test.tsx:renderAppAt"
+      ]
+    },
+    {
+      "hash": "1d8c5af9092e701f",
+      "reason": "Six fixture-bytes wrappers (`fixtureBytes`/`conditionBytes`/`journalBytes`/`docBytes`) that read a fixture and TextEncoder it; ONE `tests/helpers/fixtureBytes.ts` carries them.",
+      "sites": [
+        "tests/db/spellChunks.test.ts:fixtureBytes",
+        "tests/ingest/packs/dnd5e-equipment.test.ts:fixtureBytes",
+        "tests/ingest/packs/pf2e-conditions.test.ts:conditionBytes",
+        "tests/ingest/packs/pf2e-equipment.test.ts:fixtureBytes",
+        "tests/ingest/packs/pf2e-journal.test.ts:journalBytes",
+        "tests/ingest/packs/pf2e-rules.test.ts:docBytes"
+      ]
+    },
+    {
+      "hash": "1f0002344764c873",
+      "reason": "Three large `seedPackBook`/`seedRepopulatePackBook` bestiary-pack seeds (cartographer, repopulate, vision-map); a shared pack-seed helper is a real fold candidate, though each test's exact entry set should stay readable.",
+      "sites": [
+        "tests/llm/encounterCartographer.test.ts:seedPackBook",
+        "tests/llm/encounterRepopulate.test.ts:seedPackBook",
+        "tests/llm/encounterVisionMap.test.ts:seedRepopulatePackBook"
+      ]
+    },
+    {
+      "hash": "1f4729eadec4333b",
+      "reason": "Two `seedItemPackBook` equipment-pack seeds (cartographer, encounterRun); foldable onto the same shared pack-seed helper.",
+      "sites": [
+        "tests/llm/encounterCartographer.test.ts:seedItemPackBook",
+        "tests/llm/encounterRun.test.ts:seedItemPackBook"
+      ]
+    },
+    {
+      "hash": "20c594c8adeadf46",
+      "reason": "Two `srcFilesContaining` source-scan helpers (module-busy, imageTextGuard) each nesting a private walk; foldable onto the shared source-walk seam.",
+      "sites": [
+        "tests/features/module-busy.test.ts:srcFilesContaining",
+        "tests/llm/imageTextGuard.test.ts:srcFilesContaining"
+      ]
+    },
+    {
+      "hash": "264b72566130d569",
+      "reason": "Four `memoryDeps` in-memory pack-import dependency doubles (pack-import, pf2e-conditions, pf2e-journal, pf2e-rules) recording created/persisted/finalized rows; a shared `tests/helpers/packDeps.ts` is a real fold candidate.",
+      "sites": [
+        "tests/ingest/packs/pack-import.test.ts:memoryDeps",
+        "tests/ingest/packs/pf2e-conditions.test.ts:memoryDeps",
+        "tests/ingest/packs/pf2e-journal.test.ts:memoryDeps",
+        "tests/ingest/packs/pf2e-rules.test.ts:memoryDeps"
+      ]
+    },
+    {
+      "hash": "279a1b6442910222",
+      "reason": "Two `approveUntilPick` run-approval helpers (map-slot, encounterCartographer); foldable onto a shared run-engine test helper.",
+      "sites": [
+        "tests/db/map-slot.test.ts:approveUntilPick",
+        "tests/llm/encounterCartographer.test.ts:approveUntilPick"
+      ]
+    },
+    {
+      "hash": "286c500b207f9d62",
+      "reason": "Three `hideDocument` visibilityState spies (board-page-flush, editor-page-flush, page-flush); ONE `tests/helpers/pageFlush.ts` stub carries them.",
+      "sites": [
+        "tests/features/board-page-flush.test.tsx:hideDocument",
+        "tests/features/editor-page-flush.test.tsx:hideDocument",
+        "tests/features/page-flush.test.ts:hideDocument"
+      ]
+    },
+    {
+      "hash": "2890158befa6775e",
+      "reason": "Three `rel` path normalizers (one-cantrip-rank-rule, one-level-resolution, one-spells-shape); a shared `tests/helpers/repoPaths.ts` is a small fold candidate.",
+      "sites": [
+        "tests/architecture/one-cantrip-rank-rule.test.ts:rel",
+        "tests/architecture/one-level-resolution.test.ts:rel",
+        "tests/architecture/one-spells-shape.test.ts:rel"
+      ]
+    },
+    {
+      "hash": "2a97c8de78c00f16",
+      "reason": "Two `block` pf2e level-7 stat-block fixtures (statblock-caster in .test.ts and .tsx); legitimate per-test scenario data, but the identical numbers make a shared stat-block fixture a fold candidate.",
+      "sites": [
+        "tests/domain/statblock-caster.test.ts:block",
+        "tests/features/statblock-caster.test.tsx:block"
+      ]
+    },
+    {
+      "hash": "2b3d6365e13a6b62",
+      "reason": "Five text-block flattener walkers (`runsOf`/`contentRuns`/`referenceRuns` across reader-encounter-roster, pdfLayoutFixtures, per-mob-treasure, roster-reference-parity, text-blocks); ONE shared walker in `tests/helpers/` carries them.",
+      "sites": [
+        "tests/features/reader-encounter-roster.test.tsx:runsOf",
+        "tests/lib/pdfLayoutFixtures.ts:contentRuns",
+        "tests/lib/per-mob-treasure.test.ts:runsOf",
+        "tests/lib/roster-reference-parity.test.ts:referenceRuns",
+        "tests/lib/text-blocks.test.tsx:runsOf"
+      ]
+    },
+    {
+      "hash": "2ec0d74bfe474904",
+      "reason": "Two `codeLines` comment-stripping line filters (name-key-spaces, alias-merge-seam); folds with `stripComments` onto a shared source-scan helper.",
+      "sites": [
+        "tests/domain/name-key-spaces.test.ts:codeLines",
+        "tests/features/alias-merge-seam.test.ts:codeLines"
+      ]
+    },
+    {
+      "hash": "34459a3ac87d9799",
+      "reason": "Two `partReply` mock LLM replies (fixedCast, module-gen-and-provenance) carrying the same repeated prose; legitimate per-scenario reply data, though a shared reply factory would carry it.",
+      "sites": [
+        "tests/llm/fixedCast.test.ts:partReply",
+        "tests/llm/module-gen-and-provenance.test.ts:partReply"
+      ]
+    },
+    {
+      "hash": "353970ba22b66d20",
+      "reason": "Two `reply` entity-JSON mock replies (entity-intent, entity-level-hint); legitimate per-test reply bodies, foldable onto a shared reply factory if the entity sets diverge.",
+      "sites": [
+        "tests/domain/entity-intent.test.ts:reply",
+        "tests/domain/entity-level-hint.test.ts:reply"
+      ]
+    },
+    {
+      "hash": "36016fc30d4cae22",
+      "reason": "Two `seedSettledOnboarding` settings seeds (app-shell, feature-shell-and-editor); a shared onboarding seed in `tests/helpers/` is a small fold candidate.",
+      "sites": [
+        "tests/app-shell.test.tsx:seedSettledOnboarding",
+        "tests/features/feature-shell-and-editor.test.tsx:seedSettledOnboarding"
+      ]
+    },
+    {
+      "hash": "3bf024599486d049",
+      "reason": "Two `tokenFor` battle-token builders (orphanSweep, orphan-offer-agreement); a shared battle-token fixture helper is a real fold candidate.",
+      "sites": [
+        "tests/db/orphanSweep.test.ts:tokenFor",
+        "tests/features/orphan-offer-agreement.test.ts:tokenFor"
+      ]
+    },
+    {
+      "hash": "3cc68fd36ad25c50",
+      "reason": "Two `seedWorld` canvas world seeds (canvas-chat-clear, canvas-versions); foldable onto a shared canvas test-world helper.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:seedWorld",
+        "tests/features/canvas-versions.test.tsx:seedWorld"
+      ]
+    },
+    {
+      "hash": "3cea81cfac3aefbd",
+      "reason": "Four battle token click helpers (`tapToken`/`selectToken` in battle-surface three times, `tapToken` in battle-token-portrait) that find a token by label and click it; ONE shared battle-surface test helper carries them.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:tapToken",
+        "tests/features/battle-surface.test.tsx:selectToken",
+        "tests/features/battle-surface.test.tsx:tapToken",
+        "tests/features/battle-token-portrait.test.tsx:tapToken"
+      ]
+    },
+    {
+      "hash": "3f5869181c499c01",
+      "reason": "Two `walk` scanners (module-busy, imageTextGuard), the same family as the eight-site `walk` above; foldable onto the shared source-walk seam.",
+      "sites": [
+        "tests/features/module-busy.test.ts:walk",
+        "tests/llm/imageTextGuard.test.ts:walk"
+      ]
+    },
+    {
+      "hash": "421d5c3491cb77d4",
+      "reason": "Two `campaignFixture` builders returning the same dnd5e \"Ember Crypt\" campaign (entity-batch-failure-report, toast-persistent-dismiss); a small shared campaign factory is a fold candidate.",
+      "sites": [
+        "tests/features/entity-batch-failure-report.test.ts:campaignFixture",
+        "tests/lib/toast-persistent-dismiss.test.tsx:campaignFixture"
+      ]
+    },
+    {
+      "hash": "45731a3ff040fb6e",
+      "reason": "The eight-site synchronous `srcFiles` source scanner (same files as the `walk` group above) embedding its own recursion; ONE `tests/helpers/sourceFiles.ts` carries both this and `walk`.",
+      "sites": [
+        "tests/domain/name-key-spaces.test.ts:srcFiles",
+        "tests/features/alias-merge-seam.test.ts:srcFiles",
+        "tests/features/cast-row-borrowed-stats-scan.test.ts:srcFiles",
+        "tests/features/encounter-map-offer-scan.test.ts:srcFiles",
+        "tests/features/entity-batch-creature-book.test.ts:srcFiles",
+        "tests/lib/fileSlug.test.ts:srcFiles",
+        "tests/llm/oneImage-seam.test.ts:srcFiles",
+        "tests/llm/runNotCompletedReason.test.ts:srcFiles"
+      ]
+    },
+    {
+      "hash": "46c0e66e78b9f2e4",
+      "reason": "Two microtask pumps (`drain` in run-delete-running, `drainPipeline` in encounter-map-queue); a shared `tests/helpers/asyncDrain.ts` is a real fold candidate.",
+      "sites": [
+        "tests/features/encounter-map-queue.test.ts:drainPipeline",
+        "tests/features/run-delete-running.test.tsx:drain"
+      ]
+    },
+    {
+      "hash": "47af9bbbf179019b",
+      "reason": "Two `renderPartPrompt` helpers inside module-gen-spine-and-styles.test.ts (different describes) that generate a part and return its prompt; a fold is a real candidate.",
+      "sites": [
+        "tests/llm/module-gen-spine-and-styles.test.ts:renderPartPrompt",
+        "tests/llm/module-gen-spine-and-styles.test.ts:renderPartPrompt"
+      ]
+    },
+    {
+      "hash": "47fc980afe938a75",
+      "reason": "Two `source` repo-file readers (campaign-tree-plan-control, wiki-raw-export); folds onto a shared `tests/helpers/repoPaths.ts` reader.",
+      "sites": [
+        "tests/features/campaign-tree-plan-control.test.tsx:source",
+        "tests/lib/wiki-raw-export.test.ts:source"
+      ]
+    },
+    {
+      "hash": "480ed9c12381d100",
+      "reason": "Three canvas-chat option objects (`options` in canvas-chat-changes and canvas-chat-details, `previewOptions` in canvas-chat-turn-parity); the same shape as the `editorOptions` group — a shared canvas-chat fixture is a real fold candidate.",
+      "sites": [
+        "tests/features/canvas-chat-changes.test.ts:options",
+        "tests/features/canvas-chat-details.test.ts:options",
+        "tests/features/canvas-chat-turn-parity.test.ts:previewOptions"
+      ]
+    },
+    {
+      "hash": "4c4c737d88e997b9",
+      "reason": "Two `makeFakeView` DOM-view doubles (board-page-flush, module-board) carrying their own listener map; ONE `tests/helpers/fakeView.ts` carries this, `removeEventListener` and `dispatch`.",
+      "sites": [
+        "tests/features/board-page-flush.test.tsx:makeFakeView",
+        "tests/features/module-board.test.tsx:makeFakeView"
+      ]
+    },
+    {
+      "hash": "4ceae06bbc7f201d",
+      "reason": "Two `makePersona` builders (deleteCampaignWorkspace, removeAllGeneratedContent) creating the same \"Test Persona\"; a shared persona factory is a fold candidate.",
+      "sites": [
+        "tests/db/deleteCampaignWorkspace.test.ts:makePersona",
+        "tests/db/removeAllGeneratedContent.test.ts:makePersona"
+      ]
+    },
+    {
+      "hash": "4e98ceec8e78c691",
+      "reason": "Two `renderPicker` route renders (export-dialog-save-picker, workspace-artifact-surfaces) mounting the campaign picker; folds onto the shared render-route helper.",
+      "sites": [
+        "tests/features/export-dialog-save-picker.test.tsx:renderPicker",
+        "tests/features/workspace-artifact-surfaces.test.tsx:renderPicker"
+      ]
+    },
+    {
+      "hash": "4ea3c0ae02b69ac9",
+      "reason": "Two 912-character `complexLayoutFixture` battle-map layouts (cartographer, vision-steering) with identical rooms; a shared battle-map fixture is a real fold candidate.",
+      "sites": [
+        "tests/llm/encounterCartographer.test.ts:complexLayoutFixture",
+        "tests/llm/encounterVisionSteering.test.ts:complexLayoutFixture"
+      ]
+    },
+    {
+      "hash": "50ed89f3fb150cd8",
+      "reason": "Two `sourceFiles` async scanners (blocked-control-title-scan, board-page-flush) each with their own recursion; folds onto the shared source-scan seam.",
+      "sites": [
+        "tests/features/blocked-control-title-scan.test.ts:sourceFiles",
+        "tests/features/board-page-flush.test.tsx:sourceFiles"
+      ]
+    },
+    {
+      "hash": "52d330592329eb1d",
+      "reason": "Two `changeOf` change-command XML builders (canvas-chat-changes, canvasChatChanges); a shared change-command fixture helper carries them.",
+      "sites": [
+        "tests/features/canvas-chat-changes.test.ts:changeOf",
+        "tests/llm/canvasChatChanges.test.ts:changeOf"
+      ]
+    },
+    {
+      "hash": "53f028499b535772",
+      "reason": "Two `produced` command-result builders (canvas-chat-changes, canvasChatChanges); same family as `changeOf` — foldable onto a shared canvas-chat command fixture.",
+      "sites": [
+        "tests/features/canvas-chat-changes.test.ts:produced",
+        "tests/llm/canvasChatChanges.test.ts:produced"
+      ]
+    },
+    {
+      "hash": "57bfd0e38054572e",
+      "reason": "Two large `seedModule` seeds (generate-everything, module-resume-automation) creating a campaign plus a parsed module; identical scenario data makes a shared module-seed helper a fold candidate.",
+      "sites": [
+        "tests/features/generate-everything.test.tsx:seedModule",
+        "tests/features/module-resume-automation.test.ts:seedModule"
+      ]
+    },
+    {
+      "hash": "5922e5981c068c00",
+      "reason": "Two `observe` ResizeObserver shims (battle-surface, battle-token-portrait) that queue a microtask with the measured rect; ONE shared `tests/helpers/resizeObserver.ts` carries them.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:observe",
+        "tests/features/battle-token-portrait.test.tsx:observe"
+      ]
+    },
+    {
+      "hash": "59727a2a47f2678e",
+      "reason": "Two `renderWorkspace` route renders (campaign-tree-rename, workspace-artifact-surfaces); folds onto the shared render-route helper.",
+      "sites": [
+        "tests/features/campaign-tree-rename.test.tsx:renderWorkspace",
+        "tests/features/workspace-artifact-surfaces.test.tsx:renderWorkspace"
+      ]
+    },
+    {
+      "hash": "5c172f2913356078",
+      "reason": "Three `smithPersona` builders (encounterRepopulate, encounterVisionMap, encounterVisionSteering) creating the same encounter-smith persona; a shared persona factory is a real fold candidate.",
+      "sites": [
+        "tests/llm/encounterRepopulate.test.ts:smithPersona",
+        "tests/llm/encounterVisionMap.test.ts:smithPersona",
+        "tests/llm/encounterVisionSteering.test.ts:smithPersona"
+      ]
+    },
+    {
+      "hash": "5f417570588137bb",
+      "reason": "Two `statBlock` dnd5e level-1 undead fixtures (creature-identity-one-rule, creature-portrait-agreement); legitimate per-test scenario data, but identical numbers make a shared stat-block fixture a fold candidate.",
+      "sites": [
+        "tests/db/creature-identity-one-rule.test.ts:statBlock",
+        "tests/features/creature-portrait-agreement.test.tsx:statBlock"
+      ]
+    },
+    {
+      "hash": "604ae245718b75eb",
+      "reason": "`stripComments` pasted into EIGHT architecture source-scan tests (global-chat-model-recording, four one-* scans, chunk-type-read-seam, one-cantrip-signal, one-level-resolution); ONE `tests/helpers/stripComments.ts` is a real fold candidate.",
+      "sites": [
+        "tests/architecture/global-chat-model-recording.test.ts:stripComments",
+        "tests/architecture/one-cantrip-rank-rule.test.ts:stripComments",
+        "tests/architecture/one-cantrip-signal.test.ts:stripComments",
+        "tests/architecture/one-level-resolution.test.ts:stripComments",
+        "tests/architecture/one-model-option-source.test.ts:stripComments",
+        "tests/architecture/one-pack-lane-report.test.ts:stripComments",
+        "tests/architecture/one-spells-shape.test.ts:stripComments",
+        "tests/db/chunk-type-read-seam.test.ts:stripComments"
+      ]
+    },
+    {
+      "hash": "61713288be6a928b",
+      "reason": "Two `normReply` entity-JSON mock replies (fixedCast, module-gen-and-provenance); legitimate per-scenario reply data, foldable onto a shared reply factory.",
+      "sites": [
+        "tests/llm/fixedCast.test.ts:normReply",
+        "tests/llm/module-gen-and-provenance.test.ts:normReply"
+      ]
+    },
+    {
+      "hash": "6376516ecca37a83",
+      "reason": "Two cartographer-persona builders (encounterCartographer `persona`, structuredPartyLevel `cartographer`) creating the same persona; a shared persona factory is a real fold candidate.",
+      "sites": [
+        "tests/llm/encounterCartographer.test.ts:persona",
+        "tests/llm/structuredPartyLevel.test.ts:cartographer"
+      ]
+    },
+    {
+      "hash": "6503683cb5b73494",
+      "reason": "Two `sourceFiles` recursive scanners (canvas-preview-ai-actions, module-ui-toast); folds onto the shared source-scan seam.",
+      "sites": [
+        "tests/features/canvas-preview-ai-actions.test.tsx:sourceFiles",
+        "tests/features/module-ui-toast.test.tsx:sourceFiles"
+      ]
+    },
+    {
+      "hash": "654a6aae5e74ef4a",
+      "reason": "`sourceFiles` pasted into TWELVE architecture tests (global-chat-model-recording, module-difficulty-seam, module-pdf-seam, five one-* scans, one-chip-element, one-pack-lane-report, chunk-type-read-seam, ready-book-seam); the single largest fold candidate in this inventory.",
+      "sites": [
+        "tests/architecture/global-chat-model-recording.test.ts:sourceFiles",
+        "tests/architecture/module-difficulty-seam.test.ts:sourceFiles",
+        "tests/architecture/module-pdf-seam.test.ts:sourceFiles",
+        "tests/architecture/one-cantrip-rank-rule.test.ts:sourceFiles",
+        "tests/architecture/one-cantrip-signal.test.ts:sourceFiles",
+        "tests/architecture/one-chip-element.test.ts:sourceFiles",
+        "tests/architecture/one-level-resolution.test.ts:sourceFiles",
+        "tests/architecture/one-model-option-source.test.ts:sourceFiles",
+        "tests/architecture/one-pack-lane-report.test.ts:sourceFiles",
+        "tests/architecture/one-spells-shape.test.ts:sourceFiles",
+        "tests/db/chunk-type-read-seam.test.ts:sourceFiles",
+        "tests/db/ready-book-seam.test.ts:sourceFiles"
+      ]
+    },
+    {
+      "hash": "66f9e7395025de57",
+      "reason": "Two `recordLines` console-record extractors (entity-batch-cast-description, entity-batch-fixed-cast) filtering the batch-failure-prefixed calls; a shared batch-report test helper carries them.",
+      "sites": [
+        "tests/features/entity-batch-cast-description.test.ts:recordLines",
+        "tests/features/entity-batch-fixed-cast.test.ts:recordLines"
+      ]
+    },
+    {
+      "hash": "68d081baafc4d624",
+      "reason": "Two 947-character `complexLayoutFixture` layouts (encounterRepopulate, encounterVisionMap); same shape as the 912-character group above — a shared battle-map fixture is a real fold candidate.",
+      "sites": [
+        "tests/llm/encounterRepopulate.test.ts:complexLayoutFixture",
+        "tests/llm/encounterVisionMap.test.ts:complexLayoutFixture"
+      ]
+    },
+    {
+      "hash": "69f194ab4f38c6a2",
+      "reason": "Three `seedCreatureChunk` bestiary-chunk seeds inside portrait-queues.test.ts; one local seed helper is a real fold candidate.",
+      "sites": [
+        "tests/features/portrait-queues.test.ts:seedCreatureChunk",
+        "tests/features/portrait-queues.test.ts:seedCreatureChunk",
+        "tests/features/portrait-queues.test.ts:seedCreatureChunk"
+      ]
+    },
+    {
+      "hash": "6bea4648b0eb3a07",
+      "reason": "Two `proseModule` seeds (orphanSweep, orphan-offer-agreement) building a module plus a spine; a shared module-seed helper is a fold candidate.",
+      "sites": [
+        "tests/db/orphanSweep.test.ts:proseModule",
+        "tests/features/orphan-offer-agreement.test.ts:proseModule"
+      ]
+    },
+    {
+      "hash": "6bf9c10ef609fbae",
+      "reason": "Two `seedOneModule` canvas seeds (canvas-chat-clear, canvas-versions); foldable onto the shared canvas test-world helper.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:seedOneModule",
+        "tests/features/canvas-versions.test.tsx:seedOneModule"
+      ]
+    },
+    {
+      "hash": "6e1067e5ef3d71d1",
+      "reason": "Two `prose` mock replies (canvas-module-actions, module-gen-and-provenance) carrying the repeated tide sentence; legitimate per-scenario reply data.",
+      "sites": [
+        "tests/features/canvas-module-actions.test.tsx:prose",
+        "tests/llm/module-gen-and-provenance.test.ts:prose"
+      ]
+    },
+    {
+      "hash": "6ef5125f116e39cd",
+      "reason": "Five `promptText`/`userPrompt` extractors inside module-gen-spine-and-styles.test.ts; one local mock-call extractor is a real fold candidate.",
+      "sites": [
+        "tests/llm/module-gen-spine-and-styles.test.ts:promptText",
+        "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
+        "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
+        "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
+        "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt"
+      ]
+    },
+    {
+      "hash": "6fa9716dc45bb6cc",
+      "reason": "Two `failedWith` PersonaRun failure builders (entity-intent-batch, entity-level-hint-batch); folds with `completedWith` onto a shared persona-run builder.",
+      "sites": [
+        "tests/features/entity-intent-batch.test.ts:failedWith",
+        "tests/features/entity-level-hint-batch.test.ts:failedWith"
+      ]
+    },
+    {
+      "hash": "724b8545c7aaceb1",
+      "reason": "Two pf2e level-1 stat-block fixtures (`fixtureStatBlock` in exportDependencies, `statBlock` in monster-source-citation); identical numbers make a shared stat-block fixture a fold candidate.",
+      "sites": [
+        "tests/domain/exportDependencies.test.ts:fixtureStatBlock",
+        "tests/features/monster-source-citation.test.tsx:statBlock"
+      ]
+    },
+    {
+      "hash": "7385a46b6fdeee19",
+      "reason": "Two `statBlock` dnd5e level-3 giant fixtures (bestiary-roster, roster); legitimate per-test scenario data, identical numbers make a shared fixture a fold candidate.",
+      "sites": [
+        "tests/bestiary/bestiary-roster.test.tsx:statBlock",
+        "tests/bestiary/roster.test.ts:statBlock"
+      ]
+    },
+    {
+      "hash": "762fde5c4640dd77",
+      "reason": "Six `statBlock` dnd5e level-1 humanoid fixtures (battleRepo, deleteCampaignWorkspace, removeAllGeneratedContent, battle-surface, battle-token-portrait, ipad-overscroll); the most-repeated stat-block fixture — a shared `tests/helpers/statBlocks.ts` is a real fold candidate.",
+      "sites": [
+        "tests/db/battleRepo.test.ts:statBlock",
+        "tests/db/deleteCampaignWorkspace.test.ts:statBlock",
+        "tests/db/removeAllGeneratedContent.test.ts:statBlock",
+        "tests/features/battle-surface.test.tsx:statBlock",
+        "tests/features/battle-token-portrait.test.tsx:statBlock",
+        "tests/ipad-overscroll.test.tsx:statBlock"
+      ]
+    },
+    {
+      "hash": "78b56c386dbb60a9",
+      "reason": "Two `move` mouse-event builders (board-page-flush, module-board); folds with `makeFakeView` onto the shared fake-view helper.",
+      "sites": [
+        "tests/features/board-page-flush.test.tsx:move",
+        "tests/features/module-board.test.tsx:move"
+      ]
+    },
+    {
+      "hash": "7931ccb1a770a12d",
+      "reason": "Two `elFor` battle-veil lookups inside battle-surface.test.tsx; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:elFor",
+        "tests/features/battle-surface.test.tsx:elFor"
+      ]
+    },
+    {
+      "hash": "7d8b55142dfa98b0",
+      "reason": "Four canvas render helpers (`renderCanvas` in blocked-reasons, canvas-preview-default and module-canvas, `openMenu` in module-pdf-export) that render the canvas and await it; ONE shared canvas render helper carries them.",
+      "sites": [
+        "tests/features/blocked-reasons.test.tsx:renderCanvas",
+        "tests/features/canvas-preview-default.test.tsx:renderCanvas",
+        "tests/features/module-canvas.test.tsx:renderCanvas",
+        "tests/features/module-pdf-export.test.tsx:openMenu"
+      ]
+    },
+    {
+      "hash": "7f3271466c5be316",
+      "reason": "The sorted synchronous `srcFiles` scanner pasted into FIVE source-scan tests (mention-where-label, toast-surfaces, mdToPdfmake, unicodeTextHygiene, wiki-token-grammar); folds onto the shared source-scan seam.",
+      "sites": [
+        "tests/features/mention-where-label.test.ts:srcFiles",
+        "tests/features/toast-surfaces.test.tsx:srcFiles",
+        "tests/lib/mdToPdfmake.test.ts:srcFiles",
+        "tests/lib/unicodeTextHygiene.test.ts:srcFiles",
+        "tests/lib/wiki-token-grammar.test.ts:srcFiles"
+      ]
+    },
+    {
+      "hash": "807795daa96ab6fc",
+      "reason": "Two module-id seeds (`newModule` in creature-identity-one-rule, `seedModule` in creature-portrait-agreement); a shared module-seed helper is a fold candidate.",
+      "sites": [
+        "tests/db/creature-identity-one-rule.test.ts:newModule",
+        "tests/features/creature-portrait-agreement.test.tsx:seedModule"
+      ]
+    },
+    {
+      "hash": "830d31af302ef80c",
+      "reason": "Two `board` idea-board fixtures (ideaBoard-recording, ideaBoard); a small shared idea-board fixture helper is a fold candidate.",
+      "sites": [
+        "tests/llm/ideaBoard-recording.test.ts:board",
+        "tests/llm/ideaBoard.test.ts:board"
+      ]
+    },
+    {
+      "hash": "84c00a57e45b7b63",
+      "reason": "Three `renderSurface` battle-surface route renders (battle-surface, battle-token-portrait, creature-portrait-agreement); folds onto the shared render-route helper.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:renderSurface",
+        "tests/features/battle-token-portrait.test.tsx:renderSurface",
+        "tests/features/creature-portrait-agreement.test.tsx:renderSurface"
+      ]
+    },
+    {
+      "hash": "84dfb130841fefed",
+      "reason": "Two `holdUntilAborted` promise stubs (stop-all-generations, module-gen-and-provenance) that reject unless an AbortSignal arrives; a shared abort-stub helper is a real fold candidate.",
+      "sites": [
+        "tests/features/stop-all-generations.test.ts:holdUntilAborted",
+        "tests/llm/module-gen-and-provenance.test.ts:holdUntilAborted"
+      ]
+    },
+    {
+      "hash": "87cc2bf39bf06f01",
+      "reason": "Three `textOf` message-content stringifiers (canvasChat, canvasChatChanges, canvasChatDetails); ONE shared message helper carries them.",
+      "sites": [
+        "tests/llm/canvasChat.test.ts:textOf",
+        "tests/llm/canvasChatChanges.test.ts:textOf",
+        "tests/llm/canvasChatDetails.test.ts:textOf"
+      ]
+    },
+    {
+      "hash": "88d61ad3c01d45ef",
+      "reason": "Three `editDoc` canvas-editor dispatchers (canvas-provenance, canvas-versions, module-canvas); ONE shared canvas-editor test helper carries them.",
+      "sites": [
+        "tests/features/canvas-provenance.test.tsx:editDoc",
+        "tests/features/canvas-versions.test.tsx:editDoc",
+        "tests/features/module-canvas.test.tsx:editDoc"
+      ]
+    },
+    {
+      "hash": "8b6f57532f5764da",
+      "reason": "Two 920-character `seedModule` canvas seeds (canvas-preview-ai-actions, module-canvas) with campaign, artifact and module; a shared canvas test-world seed is a real fold candidate.",
+      "sites": [
+        "tests/features/canvas-preview-ai-actions.test.tsx:seedModule",
+        "tests/features/module-canvas.test.tsx:seedModule"
+      ]
+    },
+    {
+      "hash": "8c368557573686f8",
+      "reason": "Two `moduleInput` schema builders inside artifactRepo.test.ts; one local builder is a real fold candidate.",
+      "sites": [
+        "tests/db/artifactRepo.test.ts:moduleInput",
+        "tests/db/artifactRepo.test.ts:moduleInput"
+      ]
+    },
+    {
+      "hash": "8ed36a0ec192e708",
+      "reason": "Two `renderCanvasEditor` helpers (canvas-chat-clear, canvas-versions); foldable onto the shared canvas render helper.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:renderCanvasEditor",
+        "tests/features/canvas-versions.test.tsx:renderCanvasEditor"
+      ]
+    },
+    {
+      "hash": "8f14ca1576d1e0ab",
+      "reason": "Two `seedTrollPortrait` image seeds inside battle-surface.test.tsx; one local seed helper is a real fold candidate.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:seedTrollPortrait",
+        "tests/features/battle-surface.test.tsx:seedTrollPortrait"
+      ]
+    },
+    {
+      "hash": "900c3b6e8b536aa2",
+      "reason": "Two `currentBattle` act-drained readers (battle-surface, battle-token-portrait); a shared battle test helper carries them.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:currentBattle",
+        "tests/features/battle-token-portrait.test.tsx:currentBattle"
+      ]
+    },
+    {
+      "hash": "91f1c75ff74fe015",
+      "reason": "Two `byName` fixture lookups inside pdfLayoutFixtures.ts; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/lib/pdfLayoutFixtures.ts:byName",
+        "tests/lib/pdfLayoutFixtures.ts:byName"
+      ]
+    },
+    {
+      "hash": "931f528c3d4af843",
+      "reason": "Two `moduleFixture` builders (entity-batch-failure-report, toast-persistent-dismiss) creating the same parsed \"Ember Crypt\" module; a shared module fixture is a fold candidate.",
+      "sites": [
+        "tests/features/entity-batch-failure-report.test.ts:moduleFixture",
+        "tests/lib/toast-persistent-dismiss.test.tsx:moduleFixture"
+      ]
+    },
+    {
+      "hash": "93c3e41b86cb0492",
+      "reason": "Two `seedChunk` bestiary seeds (creature-identity-one-rule, creature-portrait-agreement); a shared library-chunk seed helper is a real fold candidate.",
+      "sites": [
+        "tests/db/creature-identity-one-rule.test.ts:seedChunk",
+        "tests/features/creature-portrait-agreement.test.tsx:seedChunk"
+      ]
+    },
+    {
+      "hash": "9421baa91e4c5b57",
+      "reason": "Two `renderCanvasPreview` helpers (canvas-chat-clear, canvas-versions); folds onto the shared canvas render helper.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:renderCanvasPreview",
+        "tests/features/canvas-versions.test.tsx:renderCanvasPreview"
+      ]
+    },
+    {
+      "hash": "9538875b5b92a6f8",
+      "reason": "Two `addPc` artifact seeds (deleteCampaignWorkspace, removeAllGeneratedContent); a shared artifact fixture helper is a fold candidate.",
+      "sites": [
+        "tests/db/deleteCampaignWorkspace.test.ts:addPc",
+        "tests/db/removeAllGeneratedContent.test.ts:addPc"
+      ]
+    },
+    {
+      "hash": "95abf2d8e7aa902d",
+      "reason": "Two `render` wrapper functions (entity-classify-new, entity-panel) adding a MemoryRouter wrapper; a shared render wrapper is a real fold candidate.",
+      "sites": [
+        "tests/features/entity-classify-new.test.tsx:render",
+        "tests/features/entity-panel.test.tsx:render"
+      ]
+    },
+    {
+      "hash": "95c74619aee67166",
+      "reason": "Two encounter-data builders (`encounterData` in missing-refs-banner, `encounterDataWith` in exportImport) with the same medium encounter shape; a shared encounter fixture helper is a fold candidate.",
+      "sites": [
+        "tests/features/missing-refs-banner.test.tsx:encounterData",
+        "tests/lib/exportImport.test.ts:encounterDataWith"
+      ]
+    },
+    {
+      "hash": "98c795cdaff32cef",
+      "reason": "Three `attachOneImage` helpers (deleteArtifactsOfKind, deleteCampaignWorkspace, removeAllGeneratedContent); a shared image-attach fixture helper is a real fold candidate.",
+      "sites": [
+        "tests/db/deleteArtifactsOfKind.test.ts:attachOneImage",
+        "tests/db/deleteCampaignWorkspace.test.ts:attachOneImage",
+        "tests/db/removeAllGeneratedContent.test.ts:attachOneImage"
+      ]
+    },
+    {
+      "hash": "9aad0e77f0ba6832",
+      "reason": "Two `readyBook` pack-book seeds (spellRepo, spells-page); folds onto a shared pack-book fixture helper.",
+      "sites": [
+        "tests/db/spellRepo.test.ts:readyBook",
+        "tests/features/spells-page.test.tsx:readyBook"
+      ]
+    },
+    {
+      "hash": "9c49232a2bc057a3",
+      "reason": "Three `INPUT` run-engine input objects (module-gen-and-provenance twice, runEngine) with the same campaign/persona/autonomy shape; legitimate per-test input, but a shared run-input factory is a fold candidate.",
+      "sites": [
+        "tests/llm/module-gen-and-provenance.test.ts:INPUT",
+        "tests/llm/module-gen-and-provenance.test.ts:INPUT",
+        "tests/llm/runEngine.test.ts:INPUT"
+      ]
+    },
+    {
+      "hash": "9d3ad87a6ec45f3f",
+      "reason": "Two artifact readers (`loadArtifact` in editor-autosave, `load` in editor-page-flush) that throw on a missing row; a shared artifact test helper is a real fold candidate.",
+      "sites": [
+        "tests/features/editor-autosave.test.tsx:loadArtifact",
+        "tests/features/editor-page-flush.test.tsx:load"
+      ]
+    },
+    {
+      "hash": "a166b150cecda217",
+      "reason": "Two `dispatch` listener-invoking stubs (board-page-flush, module-board); folds with `makeFakeView` onto the shared fake-view helper.",
+      "sites": [
+        "tests/features/board-page-flush.test.tsx:dispatch",
+        "tests/features/module-board.test.tsx:dispatch"
+      ]
+    },
+    {
+      "hash": "a1c23eba342d523a",
+      "reason": "Four entity-normalization mock replies (entity-classify-new, module-gen-spine-and-styles twice, moduleGen); legitimate per-scenario reply bodies, foldable onto a shared reply factory.",
+      "sites": [
+        "tests/features/entity-classify-new.test.tsx:normalizationReply",
+        "tests/llm/module-gen-spine-and-styles.test.ts:normReply",
+        "tests/llm/module-gen-spine-and-styles.test.ts:normReply",
+        "tests/llm/moduleGen.test.ts:normalizationReply"
+      ]
+    },
+    {
+      "hash": "a1ca198fc16e50d9",
+      "reason": "Two `pickIndexOf` run-step lookups (map-slot, encounterCartographer); foldable onto a shared run-engine test helper.",
+      "sites": [
+        "tests/db/map-slot.test.ts:pickIndexOf",
+        "tests/llm/encounterCartographer.test.ts:pickIndexOf"
+      ]
+    },
+    {
+      "hash": "a4580433f072b3d8",
+      "reason": "Two chat-completion call filters (`callsOf` and `chatCallsOf`) inside openrouter.test.ts; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/llm/openrouter.test.ts:chatCallsOf",
+        "tests/llm/openrouter.test.ts:callsOf"
+      ]
+    },
+    {
+      "hash": "a87605e3362cdc85",
+      "reason": "Two `canvasSources` readers (canvas-chat-apply-differential, canvas-chat-turn-parity) listing the canvas source files; a shared canvas-source helper is a real fold candidate.",
+      "sites": [
+        "tests/features/canvas-chat-apply-differential.test.tsx:canvasSources",
+        "tests/features/canvas-chat-turn-parity.test.ts:canvasSources"
+      ]
+    },
+    {
+      "hash": "abadc66e95a7a78c",
+      "reason": "Two `moduleRow` seeds (runEngine-grounding-expansion, runEngine-refill) building a parsed module with a premise; a shared module-seed helper is a fold candidate.",
+      "sites": [
+        "tests/llm/runEngine-grounding-expansion.test.ts:moduleRow",
+        "tests/llm/runEngine-refill.test.ts:moduleRow"
+      ]
+    },
+    {
+      "hash": "abc75374e45f5086",
+      "reason": "Three `userMessage` extractors (runEngine-grounding-expansion, runEngine-refill, sceneAuthority) pulling user messages from the chat mock; ONE shared mock-call extractor carries them.",
+      "sites": [
+        "tests/llm/runEngine-grounding-expansion.test.ts:userMessage",
+        "tests/llm/runEngine-refill.test.ts:userMessage",
+        "tests/llm/sceneAuthority.test.ts:userMessage"
+      ]
+    },
+    {
+      "hash": "ada8a771528a0455",
+      "reason": "Two `payloadTextOf` message joiners (canvasChatChanges, canvasChatDetails); folds with `textOf` onto the shared message helper.",
+      "sites": [
+        "tests/llm/canvasChatChanges.test.ts:payloadTextOf",
+        "tests/llm/canvasChatDetails.test.ts:payloadTextOf"
+      ]
+    },
+    {
+      "hash": "af8a056644cb55df",
+      "reason": "Two `createModuleFixture` seeds (graph-page, mentions-panel) building a parsed module; a shared module fixture is a fold candidate.",
+      "sites": [
+        "tests/features/graph-page.test.tsx:createModuleFixture",
+        "tests/features/mentions-panel.test.tsx:createModuleFixture"
+      ]
+    },
+    {
+      "hash": "b052da9d79c33bf0",
+      "reason": "Three mock prose replies (`prose` twice in module-gen-spine-and-styles, `partMarkdown` in moduleGen); legitimate per-scenario reply data.",
+      "sites": [
+        "tests/llm/module-gen-spine-and-styles.test.ts:prose",
+        "tests/llm/module-gen-spine-and-styles.test.ts:prose",
+        "tests/llm/moduleGen.test.ts:partMarkdown"
+      ]
+    },
+    {
+      "hash": "b522c8bd094444f7",
+      "reason": "Two `story` prompt-style lookups inside toast-surfaces.test.tsx; one local helper is a small fold candidate.",
+      "sites": [
+        "tests/features/toast-surfaces.test.tsx:story",
+        "tests/features/toast-surfaces.test.tsx:story"
+      ]
+    },
+    {
+      "hash": "b7fed05068d43128",
+      "reason": "Three `deferred` promise helpers (blocked-reasons-entity-sweep, mob-portraits-section, rules-page); ONE `tests/helpers/deferred.ts` is a real fold candidate.",
+      "sites": [
+        "tests/features/blocked-reasons-entity-sweep.test.tsx:deferred",
+        "tests/features/mob-portraits-section.test.tsx:deferred",
+        "tests/rules-page.test.tsx:deferred"
+      ]
+    },
+    {
+      "hash": "bbd4a70c436c2927",
+      "reason": "Two simple `mockChatReply` stubs (canvas-chat-clear, canvas-chat-thread); folds with the other `mockChatReply` copies onto a shared reply helper.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:mockChatReply",
+        "tests/features/canvas-chat-thread.test.tsx:mockChatReply"
+      ]
+    },
+    {
+      "hash": "bc52fe0c39047184",
+      "reason": "Two `singleData` encounter-form fixtures inside encounter-form.test.tsx; one local builder is a real fold candidate.",
+      "sites": [
+        "tests/features/encounter-form.test.tsx:singleData",
+        "tests/features/encounter-form.test.tsx:singleData"
+      ]
+    },
+    {
+      "hash": "bcdde06fad6de436",
+      "reason": "Three `encounterDataWith` builders (orphanSweep, entity-orphans, orphan-offer-agreement); a shared encounter fixture helper is a fold candidate.",
+      "sites": [
+        "tests/db/orphanSweep.test.ts:encounterDataWith",
+        "tests/features/entity-orphans.test.ts:encounterDataWith",
+        "tests/features/orphan-offer-agreement.test.ts:encounterDataWith"
+      ]
+    },
+    {
+      "hash": "be3f43a8a4dc0e16",
+      "reason": "Two `section` part fixtures (documentPlan, modulePlan) with the same \"The Gate\" shape; a small shared plan fixture is a fold candidate.",
+      "sites": [
+        "tests/domain/documentPlan.test.ts:section",
+        "tests/llm/modulePlan.test.ts:section"
+      ]
+    },
+    {
+      "hash": "c3443366b6235ab5",
+      "reason": "Three encounter-reply mock builders (canvas-module-actions, module-gen-and-provenance, moduleGen-auto-spine); legitimate per-scenario reply bodies, foldable onto a shared reply factory.",
+      "sites": [
+        "tests/features/canvas-module-actions.test.tsx:encounterReply",
+        "tests/llm/module-gen-and-provenance.test.ts:encounterReply",
+        "tests/llm/moduleGen-auto-spine.test.ts:encounterNormalization"
+      ]
+    },
+    {
+      "hash": "c45b510204871e41",
+      "reason": "Two `lastInstance` engine-instance readers (dice-engine, dice-roller); a shared dice test helper is a real fold candidate.",
+      "sites": [
+        "tests/features/dice-engine.test.tsx:lastInstance",
+        "tests/features/dice-roller.test.tsx:lastInstance"
+      ]
+    },
+    {
+      "hash": "ca4016f1aeb29332",
+      "reason": "Two `statBlockReply` pf2e level-5 goblinoid replies (mob-spells-lanes, mob-spells); legitimate per-scenario reply data, identical numbers make a shared fixture a fold candidate.",
+      "sites": [
+        "tests/llm/mob-spells-lanes.test.ts:statBlockReply",
+        "tests/llm/mob-spells.test.ts:statBlockReply"
+      ]
+    },
+    {
+      "hash": "ca7a5527d3a43ebb",
+      "reason": "Two `visionPass` stubs inside encounterVisionMap.test.ts; one local helper is a real fold candidate.",
+      "sites": [
+        "tests/llm/encounterVisionMap.test.ts:visionPass",
+        "tests/llm/encounterVisionMap.test.ts:visionPass"
+      ]
+    },
+    {
+      "hash": "cb656195f386b4a1",
+      "reason": "Four `finalizeBook` stubs (pack-import, pf2e-conditions, pf2e-journal, pf2e-rules) recording the finalized row; folds with `memoryDeps` onto the shared pack-deps helper.",
+      "sites": [
+        "tests/ingest/packs/pack-import.test.ts:finalizeBook",
+        "tests/ingest/packs/pf2e-conditions.test.ts:finalizeBook",
+        "tests/ingest/packs/pf2e-journal.test.ts:finalizeBook",
+        "tests/ingest/packs/pf2e-rules.test.ts:finalizeBook"
+      ]
+    },
+    {
+      "hash": "cd947bedaf744d80",
+      "reason": "Two dnd5e cultist stat-block fixtures (`statBlockFixture` in modulePdf, `statBlockFixture` in provenance-export); identical numbers make a shared stat-block fixture a fold candidate.",
+      "sites": [
+        "tests/lib/modulePdf.test.ts:statBlockFixture",
+        "tests/lib/provenance-export.test.ts:statBlockFixture"
+      ]
+    },
+    {
+      "hash": "d3f85e267219b838",
+      "reason": "Two `putBattle` seeds (entity-panel, orphan-offer-agreement) writing a parsed battle row; a shared battle fixture helper is a real fold candidate.",
+      "sites": [
+        "tests/features/entity-panel.test.tsx:putBattle",
+        "tests/features/orphan-offer-agreement.test.ts:putBattle"
+      ]
+    },
+    {
+      "hash": "d4de0cbdcbfb876f",
+      "reason": "Two `oozeBlock` dnd5e level-2 ooze fixtures inside portrait-queues.test.ts; one local fixture is a fold candidate.",
+      "sites": [
+        "tests/features/portrait-queues.test.ts:oozeBlock",
+        "tests/features/portrait-queues.test.ts:oozeBlock"
+      ]
+    },
+    {
+      "hash": "d56f9fcdcaf37908",
+      "reason": "Four `makeModule` id seeds (deleteArtifactsOfKind, deleteCampaignWorkspace, removeAllGeneratedContent, campaign-tree-remove-all); a shared module-seed helper is a real fold candidate.",
+      "sites": [
+        "tests/db/deleteArtifactsOfKind.test.ts:makeModule",
+        "tests/db/deleteCampaignWorkspace.test.ts:makeModule",
+        "tests/db/removeAllGeneratedContent.test.ts:makeModule",
+        "tests/features/campaign-tree-remove-all.test.tsx:makeModule"
+      ]
+    },
+    {
+      "hash": "d58011a9fe95f358",
+      "reason": "Three `bytesText` image-bytes readers (mob-cover-carry-forward, portrait-queues twice); a shared image test helper is a real fold candidate.",
+      "sites": [
+        "tests/db/mob-cover-carry-forward.test.ts:bytesText",
+        "tests/features/portrait-queues.test.ts:bytesText",
+        "tests/features/portrait-queues.test.ts:bytesText"
+      ]
+    },
+    {
+      "hash": "d6eec8051c559637",
+      "reason": "Two `selectByLabel` battle helpers inside battle-surface.test.tsx; folds with `tapToken`/`elFor` onto a shared battle-surface helper.",
+      "sites": [
+        "tests/features/battle-surface.test.tsx:selectByLabel",
+        "tests/features/battle-surface.test.tsx:selectByLabel"
+      ]
+    },
+    {
+      "hash": "d8bfd626f26bb72b",
+      "reason": "Two `selectSpan` canvas selection dispatchers (canvas-versions, module-canvas); folds onto the shared canvas-editor helper.",
+      "sites": [
+        "tests/features/canvas-versions.test.tsx:selectSpan",
+        "tests/features/module-canvas.test.tsx:selectSpan"
+      ]
+    },
+    {
+      "hash": "dbb876123a220534",
+      "reason": "Two `npcRefEntry` roster-entry builders (entity-orphans, orphan-offer-agreement); a shared encounter-roster fixture is a fold candidate.",
+      "sites": [
+        "tests/features/entity-orphans.test.ts:npcRefEntry",
+        "tests/features/orphan-offer-agreement.test.ts:npcRefEntry"
+      ]
+    },
+    {
+      "hash": "dc2ff9e040c98ce3",
+      "reason": "Five `briefs` start-run-brief extractors (change-artifact-instruction, entity-batch-fixed-cast, entity-intent-batch, entity-level-hint-batch, kindOwnershipBoundary); ONE shared run-mock extractor carries them.",
+      "sites": [
+        "tests/features/change-artifact-instruction.test.ts:briefs",
+        "tests/features/entity-batch-fixed-cast.test.ts:briefs",
+        "tests/features/entity-intent-batch.test.ts:briefs",
+        "tests/features/entity-level-hint-batch.test.ts:briefs",
+        "tests/llm/kindOwnershipBoundary.test.ts:briefs"
+      ]
+    },
+    {
+      "hash": "dffdfbcf260fbd15",
+      "reason": "Five `sendChat` canvas-chat drivers (canvas-chat-clear, canvas-chat-thread, canvas-chat, canvas-preview-default, canvas-versions); ONE shared canvas-chat driver carries them.",
+      "sites": [
+        "tests/features/canvas-chat-clear.test.tsx:sendChat",
+        "tests/features/canvas-chat-thread.test.tsx:sendChat",
+        "tests/features/canvas-chat.test.tsx:sendChat",
+        "tests/features/canvas-preview-default.test.tsx:sendChat",
+        "tests/features/canvas-versions.test.tsx:sendChat"
+      ]
+    },
+    {
+      "hash": "e07bb881950a95b1",
+      "reason": "Four pf2e rank-1 spell fixtures (`spellData` in spellRepo, spell-rows and spells-page; `synthetic` in mobSpells); legitimate scenario data, identical fixtures make a shared spell fixture a fold candidate.",
+      "sites": [
+        "tests/db/spellRepo.test.ts:spellData",
+        "tests/domain/mobSpells.test.ts:synthetic",
+        "tests/features/spell-rows.test.ts:spellData",
+        "tests/features/spells-page.test.tsx:spellData"
+      ]
+    },
+    {
+      "hash": "e11c36f7320634fe",
+      "reason": "Six `realSpell` fixture-parse helpers (mobSpells, statblock-caster, mob-spell-chips, mob-spells-pdf, mob-spells-lanes, mob-spells); a shared spell-fixture parser helper is a real fold candidate.",
+      "sites": [
+        "tests/domain/mobSpells.test.ts:realSpell",
+        "tests/domain/statblock-caster.test.ts:realSpell",
+        "tests/features/mob-spell-chips.test.tsx:realSpell",
+        "tests/lib/mob-spells-pdf.test.ts:realSpell",
+        "tests/llm/mob-spells-lanes.test.ts:realSpell",
+        "tests/llm/mob-spells.test.ts:realSpell"
+      ]
+    },
+    {
+      "hash": "e227f6d4a5c58211",
+      "reason": "Four `createBook` recording stubs (pack-import, pf2e-conditions, pf2e-journal, pf2e-rules) sharing the created array; folds with `memoryDeps` and `finalizeBook` onto the shared pack-deps helper.",
+      "sites": [
+        "tests/ingest/packs/pack-import.test.ts:createBook",
+        "tests/ingest/packs/pf2e-conditions.test.ts:createBook",
+        "tests/ingest/packs/pf2e-journal.test.ts:createBook",
+        "tests/ingest/packs/pf2e-rules.test.ts:createBook"
+      ]
+    },
+    {
+      "hash": "e4a732e7833db28d",
+      "reason": "Two `owned` campaign-owned assertions (provenance-export, wiki-raw-export); folds with the other `owned` copies onto a shared assert helper.",
+      "sites": [
+        "tests/lib/provenance-export.test.ts:owned",
+        "tests/lib/wiki-raw-export.test.ts:owned"
+      ]
+    },
+    {
+      "hash": "e4e36597afb9ae88",
+      "reason": "Two `cartographerPersona` builders (encounterRepopulate, encounterVisionSteering); folds with `smithPersona` and `persona` onto a shared persona factory.",
+      "sites": [
+        "tests/llm/encounterRepopulate.test.ts:cartographerPersona",
+        "tests/llm/encounterVisionSteering.test.ts:cartographerPersona"
+      ]
+    },
+    {
+      "hash": "e537d031f20d5838",
+      "reason": "`renderAppAt` pasted into TWENTY jsdom tests (app-shell, ui-smoke, feature-shell-and-editor three times, model-picker, module-board-rewrite, module-pdf-auto-plan, module-pdf-export, module-reader, module-ui-toast twice, provenance-display, quickfind-topbar, reader-encounter-roster, toast-surfaces, images-ui, ipad-overscroll, rules-page, search-browser); ONE `tests/helpers/renderApp.ts` is the single largest fold candidate in the test tree.",
+      "sites": [
+        "tests/app-shell.test.tsx:renderAppAt",
+        "tests/app/ui-smoke.test.tsx:renderAppAt",
+        "tests/features/feature-shell-and-editor.test.tsx:renderAppAt",
+        "tests/features/feature-shell-and-editor.test.tsx:renderAppAt",
+        "tests/features/feature-shell-and-editor.test.tsx:renderAppAt",
+        "tests/features/model-picker.test.tsx:renderAppAt",
+        "tests/features/module-board-rewrite.test.tsx:renderAppAt",
+        "tests/features/module-pdf-auto-plan.test.tsx:renderAppAt",
+        "tests/features/module-pdf-export.test.tsx:renderAppAt",
+        "tests/features/module-reader.test.tsx:renderAppAt",
+        "tests/features/module-ui-toast.test.tsx:renderAppAt",
+        "tests/features/module-ui-toast.test.tsx:renderAppAt",
+        "tests/features/provenance-display.test.tsx:renderAppAt",
+        "tests/features/quickfind-topbar.test.tsx:renderAppAt",
+        "tests/features/reader-encounter-roster.test.tsx:renderAppAt",
+        "tests/features/toast-surfaces.test.tsx:renderAppAt",
+        "tests/images-ui.test.tsx:renderAppAt",
+        "tests/ipad-overscroll.test.tsx:renderAppAt",
+        "tests/rules-page.test.tsx:renderAppAt",
+        "tests/search-browser.test.tsx:renderAppAt"
+      ]
+    },
+    {
+      "hash": "ea5279d13326a378",
+      "reason": "Two `mockChatReply` replacement stubs (canvas-preview-ai-actions, module-canvas); folds with the other `mockChatReply` copies onto a shared reply helper.",
+      "sites": [
+        "tests/features/canvas-preview-ai-actions.test.tsx:mockChatReply",
+        "tests/features/module-canvas.test.tsx:mockChatReply"
+      ]
+    },
+    {
+      "hash": "ed589be6e794fc6a",
+      "reason": "Two `partMarkdown` prose builders inside module-gen-and-provenance.test.ts; one local reply builder is a real fold candidate.",
+      "sites": [
+        "tests/llm/module-gen-and-provenance.test.ts:partMarkdown",
+        "tests/llm/module-gen-and-provenance.test.ts:partMarkdown"
+      ]
+    },
+    {
+      "hash": "ee2735a9e823b213",
+      "reason": "Two `firstItem` fixture-parse assertions (dnd5e-equipment, pf2e-equipment); a shared equipment-fixture assertion helper is a real fold candidate.",
+      "sites": [
+        "tests/ingest/packs/dnd5e-equipment.test.ts:firstItem",
+        "tests/ingest/packs/pf2e-equipment.test.ts:firstItem"
+      ]
+    },
+    {
+      "hash": "f0f97fe51cc73df8",
+      "reason": "Three React harnesses inside encounter-form.test.tsx (`StatefulEncounterForm` twice, `FillGradeHarness`); one local form harness is a real fold candidate.",
+      "sites": [
+        "tests/features/encounter-form.test.tsx:StatefulEncounterForm",
+        "tests/features/encounter-form.test.tsx:FillGradeHarness",
+        "tests/features/encounter-form.test.tsx:StatefulEncounterForm"
+      ]
+    },
+    {
+      "hash": "f15863eb03729d8b",
+      "reason": "Two `enqueueEncounterPortraitFill` helpers (mob-portrait-module-gaps, module-post-generation); a shared portrait-queue test helper is a real fold candidate.",
+      "sites": [
+        "tests/features/mob-portrait-module-gaps.test.ts:enqueueEncounterPortraitFill",
+        "tests/features/module-post-generation.test.ts:enqueueEncounterPortraitFill"
+      ]
+    },
+    {
+      "hash": "f47ab3540dd90b60",
+      "reason": "Two `packSources` readers (html-to-text, parse-docs) listing the pack adapter sources; a shared pack-source helper is a real fold candidate.",
+      "sites": [
+        "tests/ingest/packs/html-to-text.test.ts:packSources",
+        "tests/ingest/packs/parse-docs.test.ts:packSources"
+      ]
+    },
+    {
+      "hash": "f7b32618f35a74ea",
+      "reason": "Two `transactionTablesDuring` Dexie transaction-table spies (mob-portrait-cache, portrait-queues); a shared Dexie test helper is a real fold candidate.",
+      "sites": [
+        "tests/db/mob-portrait-cache.test.ts:transactionTablesDuring",
+        "tests/features/portrait-queues.test.ts:transactionTablesDuring"
+      ]
+    },
+    {
+      "hash": "f9f5ceae1daa4ab8",
+      "reason": "Two `revisionCount` queries (editor-page-flush, canvasChatChanges); a shared revision-count test helper is a small fold candidate.",
+      "sites": [
+        "tests/features/editor-page-flush.test.tsx:revisionCount",
+        "tests/llm/canvasChatChanges.test.ts:revisionCount"
+      ]
+    },
+    {
+      "hash": "fdea61927f19ec46",
+      "reason": "Three `countsOf` source-needle counters (module-difficulty-seam, module-pdf-seam, one-chip-element); folds onto the shared source-scan helper.",
+      "sites": [
+        "tests/architecture/module-difficulty-seam.test.ts:countsOf",
+        "tests/architecture/module-pdf-seam.test.ts:countsOf",
+        "tests/architecture/one-chip-element.test.ts:countsOf"
+      ]
+    }
+  ]
+}

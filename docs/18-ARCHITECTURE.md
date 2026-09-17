@@ -439,20 +439,29 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   never silently skipped, and both sides decide "deletable" with the ONE
   `evaluateOrphanGuards` predicate.
 - **"Is this idea implemented twice?" is answered by the duplicate-body
-  tripwire** (AGENTS §Centralization obligation 4, docs/17 row 172).
-  `tests/architecture/no-duplicate-implementations.test.ts` reads every
-  `src/**/*.ts(x)` named function/method body through the TypeScript compiler
-  API, normalizes it (comments stripped, whitespace collapsed, the function's
-  own name and parameter names blanked in value position — property keys stay,
-  so `artifact.name` and `entry.title` remain different bodies), and requires
-  the population of normalized bodies at 2+ sites at or above **75 normalized
-  characters** to EQUAL the checked-in baseline
-  (`tests/architecture/duplicateImplementationsBaseline.json`) exactly. A new
-  copy reds naming every `file:function:line` and the shared body hash; a
+  tripwire** (AGENTS §Centralization obligation 4, docs/17 rows 172 and 212).
+  `tests/architecture/no-duplicate-implementations.test.ts` reads every NAMED
+  function/method body through the TypeScript compiler API, normalizes it
+  (comments stripped, whitespace collapsed, the function's own name and
+  parameter names blanked in value position — property keys stay, so
+  `artifact.name` and `entry.title` remain different bodies), and requires the
+  population of normalized bodies at 2+ sites at or above **75 normalized
+  characters** to EQUAL the checked-in inventory exactly. TWO scopes, ONE
+  scanner, ONE floor and ONE comparison: `src/**` (nothing excluded) against
+  `tests/architecture/duplicateImplementationsBaseline.json`, and `tests/**`
+  EXCEPT `tests/fixtures/**` (captured upstream documents and prompt goldens
+  repeat legitimately) against
+  `tests/architecture/duplicateImplementationsTestsBaseline.json`; both
+  populations are compared by the ONE exported `populationProblems` helper, and
+  `scanRepo(scope)` is the ONE scan entry (`scanRepo()` is the `src/` call). A
+  new copy reds naming every `file:function:line` and the shared body hash; a
   baselined copy that is folded, renamed or moved reds the stale entry, so the
   baseline is debt a fold FORCES out. It catches identical copies, not
-  paraphrases — a tripwire, not a proof. `tests/` is out of scope by design
-  (fixtures repeat legitimately); nothing under `src/` is excluded.
+  paraphrases — a tripwire, not a proof. The test tree keeps floor 75 too
+  (docs/17 row 212): the measured capture is 136 groups / 390 sites, and a
+  raised floor was REJECTED because it would hide copies a single seam could
+  carry (the 8-site `walk` scanner normalizes to 349 characters, the
+  `renderAppAt` helper is pasted into 20 tests).
 
 ## 4. Gotchas
 
@@ -2431,10 +2440,28 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   unreferenced orphan (the next prune sweep owns it), never a dangling slot.
 - **The duplicate-body tripwire's FIRST capture found 16 duplicate groups /
   46 sites in `src/` at base `7b390de` — the seven `isRecord` helpers the
-  owner named are only 7 of the 46 sites.** Every group is recorded (with a
-  reason) in `tests/architecture/duplicateImplementationsBaseline.json`, which
-  is DEBT, not a licence. The ones worth naming here so nobody "discovers"
-  them as fresh work:
+  owner named were only 7 of the 46 sites — and its TEST-TREE extension is
+  DONE (docs/17 row 212, seam row in §3).** The `src/` capture predates row
+  171's `isRecord` fold, so that inventory holds 15 groups / 39 sites today.
+  Every group is recorded (with a reason) in
+  `tests/architecture/duplicateImplementationsBaseline.json`, which is DEBT,
+  not a licence. **The test tree is now in scope too** — `tests/**/*.ts(x)`
+  except `tests/fixtures/**`, compared by the SAME `populationProblems` helper
+  against the NEW `tests/architecture/duplicateImplementationsTestsBaseline.json`
+  — and its measured capture is **136 groups / 390 sites at the same
+  75-character floor** (346 in-scope files at base `b712e8e`). A raised floor
+  was REJECTED because it would hide cheap folds: at floor 400 there are still
+  33 groups, and that floor would bless the 8-site `walk` scanner (349
+  characters), `completedWith` (105), `removeEventListener` (102) and the
+  8-site `stripComments` (84). The test-tree families worth knowing so nobody
+  "discovers" them as fresh work: `renderAppAt` ×20, `sourceFiles`/`walk`
+  ×12/×8 (source-scan helpers), `stripComments` ×8, an identical dnd5e level-1
+  `statBlock` fixture ×6, `sendChat` ×5, `briefs` ×5, the `mockChatReply`
+  families ×4, plus per-test inline fixture builders that are legitimate
+  scenario data for now. **FOLDING IS QUEUED, not done in row 212's slice**;
+  every test-tree entry's `reason` says whether a fold is a real candidate
+  (naming the `tests/helpers/` seam) or the repetition is legitimate. The
+  `src/` groups worth naming here so nobody "discovers" them as fresh work:
   - `parseFile` ×7 (all seven pack adapters) and `titleCase` ×3 and
     `publicationSourceLine` ×2 — the same pack-adapter duplication family as
     `isRecord`; row 171's landing (or its successor) owns the fold.

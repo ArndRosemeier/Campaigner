@@ -1,6 +1,6 @@
 /**
  * The duplicate-body tripwire — a repo-wide detector for one idea implemented
- * twice (AGENTS `§Centralization` obligation 4; `docs/17` row 172).
+ * twice (AGENTS `§Centralization` obligation 4; `docs/17` rows 172 and 212).
  *
  * WHY THIS EXISTS. A copy is invisible when it is BORN: nothing fails and each
  * copy is correct where it was written, so duplication is caught by a pin, not
@@ -9,10 +9,18 @@
  * to grep the right word. This file is the generic detector; it is a TRIPWIRE,
  * not a proof (see WHAT IT CANNOT SEE below).
  *
- * WHAT IT SCANS. Every `src/**` file named `*.ts` or `*.tsx` — no path is
- * excluded, and the baseline header repeats that (if a path ever must be
- * excluded, the exclusion and its reason belong in the baseline header, never
- * silent). `tests/` is deliberately out of scope: fixtures legitimately repeat.
+ * WHAT IT SCANS. TWO scopes, ONE scanner, ONE floor and ONE comparison:
+ *   * `src/**` — every `*.ts`/`*.tsx` file, no path excluded;
+ *   * `tests/**` — every `*.ts`/`*.tsx` file EXCEPT `tests/fixtures/**`.
+ * The fixture exclusion is the one deliberate gap, and it covers only what its
+ * reason actually justifies: `tests/fixtures/` holds captured upstream
+ * documents and prompt goldens that legitimately repeat, so comparing their
+ * prose would bless noise. Everything else under `tests/` is IN scope — test
+ * files, `tests/helpers/**`, `tests/setup.ts` and the architecture tests
+ * themselves — because a copy-pasted helper or factory in a test is exactly the
+ * same defect one layer up. The exclusion and the scope are stated in the tests
+ * inventory's own header and pinned as data, never left silent (docs/17 row
+ * 212).
  *
  * WHAT IT EXTRACTS. NAMED functions/methods only, through the TypeScript
  * compiler API (`node.getText()`/the scanner are used for correctness — a
@@ -59,15 +67,36 @@
  * therefore NOT compared — a floor decision for the next reader, named here
  * rather than left as a silent gap.
  *
- * NAMING THE PIN: the population below is keyed by the hash of the normalized
- * body, and a group is any normalized body with 2+ sites — whether in one file
- * or several. The failure message names every site as `file:function:line` and
- * the shared hash, so the fix starts at the seam question (can ONE seam carry
+ * THE TEST TREE KEEPS THE SAME 75, and that is a MEASURED decision, not an
+ * inheritance (docs/17 row 212). Measured at base `b712e8e` over the in-scope
+ * test tree (`tests/fixtures/` excluded): the ladder DOWN adds only noise
+ * (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158), and
+ * the ladder UP cannot buy a defensible floor either: 160 = 98 groups,
+ * 200 = 85, 300 = 53, 400 = 33. The floor that finally approaches a manageable
+ * inventory (400) HIDES cheap folds a reader should have to answer for — the
+ * synchronous `walk` readdir scanner pasted into EIGHT test files normalizes to
+ * 349 characters, the `completedWith` PersonaRun builder to 105, the
+ * `removeEventListener` fake-view stub to 102, and `stripComments` (8 sites) to
+ * 84. A raised floor would silently bless every one of them, so 75 is kept and
+ * the inventory declares them instead: a floor may not hide a copy a single
+ * seam could carry (AGENTS §Centralization obligation 4). The test-tree
+ * population is dominated by per-test inline fixture data and by generic
+ * helpers copied between tests; each group's `reason` says which it is and names
+ * the fold seam where one exists.
+ *
+ * NAMING THE PIN: a population is keyed by the hash of the normalized body, and
+ * a group is any normalized body with 2+ sites — whether in one file or
+ * several. The failure message names every site as `file:function:line` and the
+ * shared hash, so the fix starts at the seam question (can ONE seam carry
  * this?), never at "fix each copy".
  *
- * THE BASELINE IS DEBT, NOT A LICENCE. `duplicateImplementationsBaseline.json`
- * records the population that exists TODAY, one entry per group with every
- * `file:function` site and a written reason — the repo's captured-state pattern
+ * THE INVENTORIES ARE DEBT, NOT A LICENCE. TWO checked-in files carry the
+ * captured populations in the SAME schema and are compared by the SAME helper:
+ * `duplicateImplementationsBaseline.json` (the `src/` population) and
+ * `duplicateImplementationsTestsBaseline.json` (the test-tree population, whose
+ * header states the scope and the fixture exclusion). Each records the
+ * population that exists TODAY, one entry per group with every `file:function`
+ * site and a written reason — the repo's captured-state pattern
  * (`tests/lib/pdfLayoutBaseline.json`). Folding a copy FORCES its baseline line
  * out: an entry whose sites no longer match the tree (folded, renamed or moved)
  * reds this test BY NAME, so a stale blessing cannot survive. Never add an
@@ -83,8 +112,10 @@
  * tripwire catches identical copies, not duplicated INTENT.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -126,7 +157,21 @@ const baselineSchema = z.object({
   groups: z.array(baselineEntrySchema),
 });
 
+/** One checked-in inventory: the exact population a scope is pinned to. */
+export type DuplicateBaseline = z.infer<typeof baselineSchema>;
+
+/** The `src/` inventory. Its content is deliberately unchanged by this slice. */
 export const BASELINE_PATH = 'tests/architecture/duplicateImplementationsBaseline.json';
+
+/** The test-tree inventory — same schema, same comparison, sibling file. */
+export const TESTS_BASELINE_PATH = 'tests/architecture/duplicateImplementationsTestsBaseline.json';
+
+/** Read and validate one checked-in inventory. */
+export function readBaseline(baselinePath: string): DuplicateBaseline {
+  return baselineSchema.parse(
+    JSON.parse(readFileSync(path.join(process.cwd(), baselinePath), 'utf8')) as unknown,
+  );
+}
 
 export function hashBody(normalized: string): string {
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
@@ -308,26 +353,72 @@ export function groupFunctions(functions: readonly ScannedFunction[]): Duplicate
   return groups.sort((a, b) => a.hash.localeCompare(b.hash));
 }
 
-function sourceFiles(root: string): string[] {
+/**
+ * ONE scan entry for the whole repo: a set of directory roots and the directory
+ * prefixes inside them that are deliberately NOT scanned.
+ *
+ * There is exactly ONE scanner, ONE floor and ONE comparison — the `src/`
+ * inventory and the test-tree inventory are two CALLS of this entry, never two
+ * implementations. Roots and exclusions are resolved against the repo root
+ * (`process.cwd()`), so an absolute path (a temp directory in a pin) works too.
+ */
+export interface ScanScope {
+  /** Directories to walk, e.g. `src` or `tests`. */
+  roots: readonly string[];
+  /**
+   * Directory prefixes whose files are excluded. The ONLY exclusion at HEAD is
+   * `tests/fixtures` (captured upstream documents and prompt goldens repeat
+   * legitimately); it is stated in the tests inventory's header too and pinned
+   * by a source assertion, so an exclusion cannot appear silently.
+   */
+  exclude?: readonly string[];
+}
+
+/** The `src/` scope: every TypeScript file under `src/`, nothing excluded. */
+export const SRC_SCOPE: ScanScope = { roots: ['src'] };
+
+/** The test-tree scope: every TypeScript file under `tests/` EXCEPT `tests/fixtures/`. */
+export const TESTS_SCOPE: ScanScope = { roots: ['tests'], exclude: ['tests/fixtures'] };
+
+function isInside(file: string, prefix: string): boolean {
+  return file === prefix || file.startsWith(prefix + path.sep);
+}
+
+/**
+ * Every `.ts`/`.tsx` file in the scope, as repo-relative paths, sorted. Exposed
+ * so the scope and its exclusion can be asserted AS A FILE LIST, rather than
+ * inferred from an empty scan result.
+ */
+export function scopedFiles(scope: ScanScope): string[] {
+  const cwd = process.cwd();
+  const excluded = (scope.exclude ?? []).map((entry) => path.resolve(cwd, entry));
   const files: string[] = [];
   const walk = (dir: string): void => {
+    if (excluded.some((prefix) => isInside(dir, prefix))) return;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
+      if (excluded.some((prefix) => isInside(full, prefix))) continue;
       if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) files.push(full);
+      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+        files.push(path.relative(cwd, full));
+      }
     }
   };
-  walk(root);
+  for (const root of scope.roots) walk(path.resolve(cwd, root));
   return files.sort();
 }
 
-/** Scan the real `src/` tree and return the duplicate groups at the floor. */
-export function scanRepo(): DuplicateGroup[] {
+/**
+ * Scan ONE scope and return the duplicate groups at the floor. `scanRepo()` is
+ * the `src/` inventory (its exported behaviour is unchanged); the test-tree
+ * inventory is `scanRepo(TESTS_SCOPE)`.
+ */
+export function scanRepo(scope: ScanScope = SRC_SCOPE): DuplicateGroup[] {
   const cwd = process.cwd();
   const functions: ScannedFunction[] = [];
-  for (const file of sourceFiles(path.join(cwd, 'src'))) {
-    const code = readFileSync(file, 'utf8');
-    functions.push(...collectNamedFunctions(path.relative(cwd, file), code));
+  for (const file of scopedFiles(scope)) {
+    const code = readFileSync(path.join(cwd, file), 'utf8');
+    functions.push(...collectNamedFunctions(file, code));
   }
   return groupFunctions(functions);
 }
@@ -338,6 +429,82 @@ function siteKey(fn: ScannedFunction): string {
 
 function siteWithLine(fn: ScannedFunction): string {
   return `${fn.file}:${fn.name}:${fn.line}`;
+}
+
+/**
+ * THE ONE exact-equality comparison, shared by BOTH inventories: the population
+ * a scope produced must EQUAL its checked-in baseline exactly. A second copy of
+ * this comparison would be the very defect this file exists for, so the `src/`
+ * pin and the test-tree pin are two calls of this helper, never two bodies.
+ *
+ * Returns human-readable problems; an empty array means the population matches.
+ */
+export function populationProblems(
+  current: readonly DuplicateGroup[],
+  baseline: DuplicateBaseline,
+  baselinePath: string,
+): string[] {
+  const currentByHash = new Map(current.map((group) => [group.hash, group]));
+  const baselineByHash = new Map(baseline.groups.map((entry) => [entry.hash, entry]));
+  const problems: string[] = [];
+
+  for (const group of current) {
+    const entry = baselineByHash.get(group.hash);
+    const currentSites = group.sites.map(siteKey);
+    if (entry === undefined) {
+      problems.push(
+        [
+          `NEW DUPLICATE — shared normalized body ${group.hash} (${group.normalized.length} chars) is implemented at ${group.sites.length} sites:`,
+          ...group.sites.map((site) => `    ${siteWithLine(site)}`),
+          '  Ask the seam question first (AGENTS §Centralization obligation 4): can ONE seam carry this?',
+          '  Do NOT add a baseline entry without a reason and a named fold slice.',
+        ].join('\n'),
+      );
+    } else if (JSON.stringify([...currentSites].sort()) !== JSON.stringify([...entry.sites].sort())) {
+      problems.push(
+        [
+          `BASELINE SITE MISMATCH — shared normalized body ${group.hash}:`,
+          `    baseline sites: ${entry.sites.join(', ')}`,
+          `    current sites:  ${group.sites.map(siteWithLine).join(', ')}`,
+          '  A copy was folded, renamed or moved: update or delete this baseline entry.',
+        ].join('\n'),
+      );
+    }
+  }
+
+  for (const entry of baseline.groups) {
+    if (!currentByHash.has(entry.hash)) {
+      problems.push(
+        [
+          `STALE BASELINE ENTRY — ${entry.hash} [${entry.sites.join(', ')}] no longer matches any duplicate group:`,
+          '  the copies were folded, renamed or moved out of the floor.',
+          `  Delete this line from ${baselinePath} — the baseline is debt, not a licence.`,
+        ].join('\n'),
+      );
+    }
+  }
+
+  return problems;
+}
+
+/**
+ * A named body a rename cannot disguise, for the temp-seeded scope pins (never
+ * for a real inventory). Its normalized form is well over the floor.
+ */
+function copySource(name: string, parameter: string): string {
+  return [
+    `export function ${name}(${parameter}: string): string[] {`,
+    `  return ${parameter}.trim().toLowerCase().split(' ').filter((part) => part.length > 2);`,
+    '}',
+  ].join('\n');
+}
+
+/** The two-function probe source: alpha lands on line 1, beta on line 4. */
+const PROBE_PAIR = [copySource('alpha', 'value'), copySource('beta', 'thing')].join('\n');
+
+/** How the scanner reports a temp file's path: relative to the repo root. */
+function reported(file: string): string {
+  return path.relative(process.cwd(), file);
 }
 
 describe('the duplicate-body tripwire can see what it polices (non-vacuity)', () => {
@@ -378,52 +545,142 @@ describe('the duplicate-body tripwire can see what it polices (non-vacuity)', ()
 
 describe('no duplicate implementations in src/ (the tripwire)', () => {
   it('matches the checked-in baseline exactly at the 75-character normalized floor', () => {
-    const current = scanRepo();
-    const baseline = baselineSchema.parse(
-      JSON.parse(readFileSync(path.join(process.cwd(), BASELINE_PATH), 'utf8')) as unknown,
-    );
-    const currentByHash = new Map(current.map((group) => [group.hash, group]));
-    const baselineByHash = new Map(baseline.groups.map((entry) => [entry.hash, entry]));
-    const problems: string[] = [];
-
-    for (const group of current) {
-      const entry = baselineByHash.get(group.hash);
-      const currentSites = group.sites.map(siteKey);
-      if (entry === undefined) {
-        problems.push(
-          [
-            `NEW DUPLICATE — shared normalized body ${group.hash} (${group.normalized.length} chars) is implemented at ${group.sites.length} sites:`,
-            ...group.sites.map((site) => `    ${siteWithLine(site)}`),
-            '  Ask the seam question first (AGENTS §Centralization obligation 4): can ONE seam carry this?',
-            '  Do NOT add a baseline entry without a reason and a named fold slice.',
-          ].join('\n'),
-        );
-      } else if (
-        JSON.stringify([...currentSites].sort()) !== JSON.stringify([...entry.sites].sort())
-      ) {
-        problems.push(
-          [
-            `BASELINE SITE MISMATCH — shared normalized body ${group.hash}:`,
-            `    baseline sites: ${entry.sites.join(', ')}`,
-            `    current sites:  ${group.sites.map(siteWithLine).join(', ')}`,
-            '  A copy was folded, renamed or moved: update or delete this baseline entry.',
-          ].join('\n'),
-        );
-      }
-    }
-
-    for (const entry of baseline.groups) {
-      if (!currentByHash.has(entry.hash)) {
-        problems.push(
-          [
-            `STALE BASELINE ENTRY — ${entry.hash} [${entry.sites.join(', ')}] no longer matches any duplicate group:`,
-            '  the copies were folded, renamed or moved out of the floor.',
-            `  Delete this line from ${BASELINE_PATH} — the baseline is debt, not a licence.`,
-          ].join('\n'),
-        );
-      }
-    }
-
+    const problems = populationProblems(scanRepo(), readBaseline(BASELINE_PATH), BASELINE_PATH);
     expect(problems).toEqual([]);
+  });
+});
+
+describe('the tripwire covers the test tree (fixtures excluded, docs/17 row 212)', () => {
+  it('matches the checked-in test-tree inventory exactly at the same 75-character floor', () => {
+    const problems = populationProblems(
+      scanRepo(TESTS_SCOPE),
+      readBaseline(TESTS_BASELINE_PATH),
+      TESTS_BASELINE_PATH,
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it('excludes tests/fixtures/** from the scanned file list, and nothing else under tests/', () => {
+    const files = scopedFiles(TESTS_SCOPE);
+    expect(files.some((file) => file.startsWith(`tests/fixtures${path.sep}`))).toBe(false);
+    // Non-vacuity: the exclusion must not have swallowed the whole test tree.
+    expect(files).toContain('tests/architecture/no-duplicate-implementations.test.ts');
+    expect(files).toContain('tests/setup.ts');
+    expect(files.some((file) => file.startsWith(`tests/helpers${path.sep}`))).toBe(true);
+  });
+
+  it('states its scope and the fixture exclusion in the test-tree inventory header (asserted as data)', () => {
+    const header = readBaseline(TESTS_BASELINE_PATH);
+    expect(header.scope).toContain('tests/**/*.ts');
+    expect(header.scope).toContain('tests/fixtures/**');
+    expect(header.scope).toMatch(/exclud/i);
+    expect(header.note).toMatch(/debt/i);
+    expect(header.groups.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT compare a copy placed under tests/fixtures/** (temp-seeded, never the real fixture tree)', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'dupe-tests-scope-'));
+    try {
+      const root = path.join(tmp, 'tests');
+      const fixtures = path.join(root, 'fixtures');
+      mkdirSync(fixtures, { recursive: true });
+      // Three renamed copies of ONE body: two in scope, one under the excluded
+      // fixtures directory. A synthetic shape, never a claimed upstream fixture.
+      const one = path.join(root, 'one.ts');
+      const two = path.join(root, 'two.ts');
+      const three = path.join(fixtures, 'three.ts');
+      writeFileSync(one, copySource('alpha', 'value'));
+      writeFileSync(two, copySource('beta', 'thing'));
+      writeFileSync(three, copySource('gamma', 'item'));
+      const scope: ScanScope = { roots: [root], exclude: [fixtures] };
+
+      const files = scopedFiles(scope);
+      expect(files).toHaveLength(2);
+      expect(files).not.toContain(reported(three));
+
+      const groups = scanRepo(scope);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.sites.map(siteKey)).toEqual([`${reported(one)}:alpha`, `${reported(two)}:beta`]);
+
+      // The WITHOUT-exclusion arm sees all three sites: the two arms DIFFER, so
+      // the exclusion is what changed the outcome.
+      const unfiltered = scanRepo({ roots: [root] });
+      expect(unfiltered).toHaveLength(1);
+      expect(unfiltered[0]?.sites).toHaveLength(3);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('sees a renamed pair of copies under a tests/-shaped root (non-vacuity of the extended scan)', () => {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'dupe-tests-nonvacuous-'));
+    try {
+      const root = path.join(tmp, 'tests');
+      mkdirSync(root, { recursive: true });
+      const one = path.join(root, 'one.ts');
+      const two = path.join(root, 'two.ts');
+      writeFileSync(one, copySource('alpha', 'value'));
+      writeFileSync(two, copySource('beta', 'thing'));
+      const groups = scanRepo({ roots: [root] });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.sites.map(siteKey)).toEqual([`${reported(one)}:alpha`, `${reported(two)}:beta`]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the ONE population comparison, shared by both inventories', () => {
+  const probe = (): DuplicateGroup[] =>
+    groupFunctions(collectNamedFunctions('tests/synthetic-probe.ts', PROBE_PAIR));
+
+  it('reds a NEW group by naming every site as file:function:line and the shared hash', () => {
+    const groups = probe();
+    expect(groups).toHaveLength(1);
+    const [group] = groups;
+    expect(group).toBeDefined();
+    const problems = populationProblems(groups, { note: 'n', scope: 's', groups: [] }, TESTS_BASELINE_PATH);
+    const joined = problems.join('\n');
+    expect(joined).toContain(`NEW DUPLICATE — shared normalized body ${group?.hash}`);
+    expect(joined).toContain('tests/synthetic-probe.ts:alpha:1');
+    expect(joined).toContain('tests/synthetic-probe.ts:beta:4');
+  });
+
+  it('reds a STALE entry by name and points the reader at the inventory line to delete', () => {
+    const problems = populationProblems(
+      [],
+      {
+        note: 'n',
+        scope: 's',
+        groups: [{ hash: '00000000deadbeef', reason: 'probe', sites: ['a.ts:x', 'b.ts:y'] }],
+      },
+      TESTS_BASELINE_PATH,
+    );
+    const joined = problems.join('\n');
+    expect(joined).toContain('STALE BASELINE ENTRY — 00000000deadbeef');
+    expect(joined).toContain(TESTS_BASELINE_PATH);
+  });
+
+  it('reds a SITE MISMATCH when a baselined copy is folded, renamed or moved', () => {
+    const groups = probe();
+    const [group] = groups;
+    expect(group).toBeDefined();
+    const problems = populationProblems(
+      groups,
+      {
+        note: 'n',
+        scope: 's',
+        groups: [{ hash: group?.hash ?? '', reason: 'probe', sites: ['moved/here.ts:x', 'moved/here.ts:y'] }],
+      },
+      TESTS_BASELINE_PATH,
+    );
+    expect(problems.join('\n')).toContain('BASELINE SITE MISMATCH');
+    expect(problems.join('\n')).toContain('tests/synthetic-probe.ts:alpha:1');
+  });
+
+  it('still declares exactly ONE normalized floor, and it is 75', () => {
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    expect([...source.matchAll(/NORMALIZED_FLOOR\s*=/g)]).toHaveLength(1);
+    expect(NORMALIZED_FLOOR).toBe(75);
   });
 });
