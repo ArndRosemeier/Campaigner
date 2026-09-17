@@ -36,7 +36,7 @@ described self-containedly in `docs/22-DEVELOPMENT-PROCESS.md`.
 ## Board
 
 ```
-reconciled: a348bc6 · 2026-09-17T22:33Z
+reconciled: 2cd3dc2 · 2026-09-17T22:38Z
 
 PROBE | session=session-068c9e25-7e1b-47af-a259-c0f1ffe9257d | dispatched_by=session-faf73c44 | role=read-only | state=DONE, report CONSUMED (no files written) | note=FILESYSTEM INTROSPECTION of this harness, and it changed the dispatch recipe: (1) `/tmp` is a PER-CALL, READ-ONLY tmpfs (`mount` from the second call shows `tmpfs on /tmp ... (ro)`), so a file written there in one call is absent in the next — that is why AGENTS §Parallel writers 5's `/tmp/<slice>` worktree recipe cannot work here at all, and why the suite lock (row 232) had to move; (2) the workspace PARENT is read-only, so a worktree cannot live outside the repo either; (3) worktrees DO work in-repo (verified: `git worktree add` under `<repo>/worktrees/` succeeded and `bash scripts/gate.sh` ran from inside it), and `git rev-parse --git-common-dir` resolves to the SAME absolute path from the main tree and from a worktree, which is what makes the row-232 lock one lock across writers. The probe's own session dir remains on disk because no delete tool is exposed to this session
 
