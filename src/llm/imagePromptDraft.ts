@@ -19,6 +19,14 @@ import type { NamedText, StatBlock } from '@/domain/statblock';
  * images, portraits, and the appearance shortcut alike. The vision dungeon
  * path is the one documented carve-out (it needs its room plaques, so it
  * never routes through this contract).
+ *
+ * Owner-directed amendment (docs/17 row 224, the text-budget REVERSAL): the
+ * guard above stopped forbidding text WHOLESALE. The bare text terms are
+ * gone, and a POSITIVE clause — `IMAGE_TEXT_SPARING_CLAUSE`, the owner's own
+ * wording — rides the composed prompt of both branches instead, so a request
+ * for a treasure map, a confession letter or a map with a legend is never
+ * overridden by the Avoid list. See the constants below for the incident,
+ * the reversal and why the vision path keeps its own clause.
  */
 
 /**
@@ -82,13 +90,48 @@ export interface BuildImagePromptOptions {
 /**
  * Text-render guard for EVERY image prompt (docs/11 D5, generalized):
  * smart image models otherwise render the grounding prose as captions
- * inside the art (owner report: the model "tends to render lots of text,
+ * inside the art (OWNER INCIDENT: the model "tends to render lots of text,
  * explaining the whole plot in the image"). Flows into the final prompt as
- * `Avoid: …` via `assembleImagePrompt`. "Use text sparingly" hedges are
- * explicitly NOT the fix — this Avoid list is the proven mechanism.
+ * `Avoid: …` via `assembleImagePrompt`.
+ *
+ * REVERSAL — the incident stands; the first cure was TOO BROAD (docs/17 row
+ * 224). Owner report, verbatim: *"Apparently that now led to a negative
+ * prompt so that models don't produce ANY text at all anymore. That was not
+ * my goal. I instructed a model to make a legend and it did not do it. I
+ * would like to discourage the model to use too much text but not forbid it
+ * to do any. Something like 'Unless requested otherwise, use text
+ * sparingly'. It should still be able to draw a treasure map or a confession
+ * letter or a map with a legend."* The reading this comment used to carry —
+ * *"'Use text sparingly' hedges are explicitly NOT the fix — this Avoid list
+ * is the proven mechanism."* — was WRONG and is REVERSED: the hedge IS the
+ * fix (`IMAGE_TEXT_SPARING_CLAUSE`), and the list's BARE text terms were the
+ * defect, because an image model reads `Avoid: text, letters, numbers,
+ * words` as "render no text at all" — which is exactly what stopped the
+ * legend. Those five bare terms are DROPPED; what remains is only the proven
+ * failure modes. The clause is the request-coexistence mechanism: it sets
+ * the default budget, and "unless requested otherwise" keeps a treasure map,
+ * a confession letter or a map with a legend drawable.
  */
 export const IMAGE_TEXT_NEGATIVE =
-  'text, letters, numbers, words, captions, stat block, character sheet, diagram, label, speech bubbles, watermark, signature, plot summary, explanatory text';
+  'long paragraphs of text, captions, explanatory text, plot summary, stat block, character sheet, diagram, speech bubbles, watermark, signature, illegible or garbled or misspelled lettering';
+
+/**
+ * The positive text-budget clause (docs/17 row 224) — the OWNER's wording,
+ * verbatim: *"Something like 'Unless requested otherwise, use text
+ * sparingly'."* It rides the COMPOSED PROMPT, never the Avoid list, because
+ * the two are read differently: the list names failure modes, while this
+ * clause sets the DEFAULT budget and leaves "unless requested otherwise" as
+ * the escape hatch for text the request actually asks for.
+ *
+ * Wired into both `buildImagePrompt` branches (the `appearance` shortcut and
+ * the name/summary/description grounding) and into the classic-stylize
+ * battlemap prompt (`runEngine`). NOT wired into the vision dungeon path:
+ * `buildLabeledMapPrompt`'s "no written text anywhere except the N letter
+ * plaques" clause is LOAD-BEARING for its locate pass (the vision camera
+ * reads exactly those plaques), so the owner's "map with a legend" need is
+ * served by the generic illustration paths instead — docs/17 row 224.
+ */
+export const IMAGE_TEXT_SPARING_CLAUSE = 'Unless requested otherwise, use text sparingly.';
 
 /**
  * The mob-portrait name for the shared guard (docs/11 D5): the portrait
@@ -163,9 +206,13 @@ export function portraitGroundingForChunk(chunk: PortraitGroundingChunk): string
 
 /**
  * Builds the image prompt for one artifact — a pure function, same input →
- * same prompt. When the artifact data carries a non-empty `appearance`, the
+ * same prompt. Both branches carry the owner's `IMAGE_TEXT_SPARING_CLAUSE`
+ * (docs/17 row 224) between the grounding and any `extraInstruction`, so a
+ * request that asks for text is the "unless requested otherwise" exception.
+ * When the artifact data carries a non-empty `appearance`, the
  * shortcut prompt `"${systemLabel}=>${appearance}"` is used verbatim (the
- * extra instruction, when set, rides on a second line). Otherwise the prompt
+ * clause and the extra instruction, when set, ride on following lines).
+ * Otherwise the prompt
  * grounds on the artifact's own text — name + kind, summary, and the
  * markdown-stripped body — styled with the game system. With nothing to
  * ground on (no appearance, summary, AND body) it throws: a blank image of
@@ -181,10 +228,18 @@ export function buildImagePrompt(
       ? data.appearance.trim()
       : '';
   if (appearance !== '') {
-    const prompt =
+    const prompt = [
+      `${opts.systemLabel}=>${appearance}`,
+      // The owner's text budget rides BEFORE any trailing instruction, so a
+      // request that asks for text ("…a map with a legend") follows the
+      // "unless requested otherwise" it is the exception to.
+      IMAGE_TEXT_SPARING_CLAUSE,
       opts.extraInstruction === undefined || opts.extraInstruction === ''
-        ? `${opts.systemLabel}=>${appearance}`
-        : `${opts.systemLabel}=>${appearance}\n${opts.extraInstruction}`;
+        ? null
+        : opts.extraInstruction,
+    ]
+      .filter((part) => part !== null)
+      .join('\n');
     return { prompt, negative: opts.negative ?? IMAGE_TEXT_NEGATIVE, styleNotes: '' };
   }
 
@@ -210,6 +265,10 @@ export function buildImagePrompt(
     `A ${opts.systemLabel} illustration of ${target.name} (${target.kind}).`,
     summary === '' ? null : `Summary: ${summary}`,
     description === '' ? null : `Description: ${description.slice(0, IMAGE_PROMPT_GROUNDING_MAX_CHARS)}`,
+    // The owner's text budget rides BEFORE any trailing instruction, so a
+    // request that asks for text ("…a map with a legend") follows the
+    // "unless requested otherwise" it is the exception to.
+    IMAGE_TEXT_SPARING_CLAUSE,
     opts.extraInstruction === undefined || opts.extraInstruction === ''
       ? null
       : opts.extraInstruction,

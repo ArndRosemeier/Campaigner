@@ -7813,3 +7813,41 @@ that."* Unchanged and named in the ledger: the cut is still SILENT when it bites
 the `appearance` shortcut stays uncapped, and the non-image length budgets (`runEngine` persona-context 800 /
 encounter-pool 600, `wikilinks.surroundingParagraphs` 1200) were deliberately NOT touched — they are different
 seams with their own markers.
+
+### The image text-render guard no longer forbids text wholesale (docs/17 row 224, docs/11 §D5)
+
+The owner reported that the guard he had asked for had become a BAN — a model he
+instructed to make a legend refused to draw one. The bare Avoid terms `text`,
+`letters`, `numbers`, `words`, `label` are DROPPED (an image model reads them as
+"no text at all"), and the owner's positive clause `IMAGE_TEXT_SPARING_CLAUSE`
+("Unless requested otherwise, use text sparingly.") rides the COMPOSED prompt of
+both `buildImagePrompt` branches and of the classic-stylize battlemap template.
+`long paragraphs of text` and `illegible or garbled or misspelled lettering` were
+ADDED, so the original incident (the model captioning the whole plot) stays
+guarded. The vision dungeon path's plaque clause and the classic battlemap's
+owner-ratified usability hard-bans are deliberately NOT softened — both are
+load-bearing in their own paths (below).
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `rides the composed prompt in BOTH builder branches, verbatim` (`tests/llm/imageTextGuard.test.ts`; the clause also rides the classic-stylize capture in the same file) | the owner's clause is present, with its exact words, in the `appearance` shortcut AND the name/summary/description grounding, and is NOT in the Avoid list; the classic battlemap prompt carries it too | removing the clause from either branch, or from the classic template, or moving it into `IMAGE_TEXT_NEGATIVE` |
+| `forbids no text wholesale: no bare text/letters/numbers/words/label item` (same file) | a STRUCTURAL assertion over the Avoid list's comma-separated items — no bare `text`/`letters`/`numbers`/`words`/`label` item survives, with a non-vacuity floor on the item count. `toContain` over the whole string is NOT enough (`long paragraphs of text` contains the substring "text"), which is why the split is the assertion | restoring any bare item (the pin that would have stopped the reported defect) |
+| `still names the proven failure modes` (same file) | the list still names the original incident's shapes — `long paragraphs of text`, `captions`, `explanatory text`, `plot summary`, `stat block`, `character sheet`, `watermark`, `signature`, `illegible or garbled or misspelled lettering` | deleting the guard instead of narrowing it ("no guard at all") |
+| `lets a requested treasure map / legend / letter coexist with the guard` (same file) | for three requests (treasure map, labelled map with a legend, confession letter) and BOTH branches: the request is present, the clause VERBATIM (`Unless requested otherwise, use text sparingly.`) is present, and no forbidding Avoid item is | dropping the clause's "unless requested otherwise" half — the contradiction case |
+| `puts the text-budget clause before the trailing instruction` (`tests/llm/imagePromptDraft.test.ts`) | the clause sits BETWEEN the grounding and `extraInstruction`, so a request that asks for text follows the "unless requested otherwise" it is the exception to | moving the clause after the instruction |
+| `unifies the mob portrait name as an alias` + `keeps an explicit negative as the override (the option stays the seam)` (both `imageTextGuard.test.ts` and `imagePromptDraft.test.ts`) | `MOB_PORTRAIT_TEXT_NEGATIVE` is identical by identity to `IMAGE_TEXT_NEGATIVE`; a caller's own `negative` wins and an explicit `''` opts out | a second list for portraits; closing the override seam |
+| the vision carve-out (`imageTextGuard.test.ts`, `keeps the room plaques while the blanket list stays ABSENT`) | the vision map still carries `no written text anywhere except the 2 letter plaques` and neither the blanket list nor `Avoid:` | adding the shared list or the sparing clause to the vision path |
+
+**Moved prompt pins, named rather than blanket-re-baselined:** the four
+`toEqual` prompt literals in `tests/llm/imageRun.test.ts`, the exact-prompt
+literals in `tests/llm/imagePromptDraft.test.ts`, and the six `Avoid:`-prefix
+substrings (`tests/db/mob-portrait-cache.test.ts` ×2,
+`tests/features/portrait-queues.test.ts` ×4) — all moved ONLY by the
+clause line or the list's new first item, and each re-derived from the composed
+prompt. The cap pins now take the FIRST line after `Description: ` (the clause
+rides its own line), so the 10,000-character assertion is unchanged in meaning.
+
+**UNCHANGED and named:** the 10,000-character cap, the five-caller
+`buildImagePrompt` registry, the `negative` override seam, the vision plaque
+mechanism, and the classic battlemap's usability hard-bans (docs/11 D17). No
+PDF/layout dump moved (no PDF-rendering suite or baseline was touched).

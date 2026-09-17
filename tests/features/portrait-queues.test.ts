@@ -2307,7 +2307,7 @@ describe('entity-image-queue.test.ts', () => {
       expect(finalPrompt).toContain(
         'Pathfinder 2e=>Varisian sorceress with blue robes and tattoos',
       );
-      expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
       expect(finalPrompt).toContain('speech bubbles');
       expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
       expect(chatMock).not.toHaveBeenCalled();
@@ -3074,13 +3074,13 @@ describe('mob-portrait-queue.test.ts', () => {
       expect(finalPrompt).not.toContain('AC 17');
       expect(finalPrompt).toContain('Large');
       expect(finalPrompt).toContain('giant');
-      expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
       // Provenance lands on the image row; the queue and dock drain.
       const coverId = await creatureCoverIdOf(campaignId, creatureKey);
       const stored = await getImage(coverId ?? '');
       expect(stored?.source).toBe('generated');
       expect(stored?.prompt).not.toContain(GOBLIN_TEXT);
-      expect(stored?.prompt).toContain('Avoid: text, letters, numbers');
+      expect(stored?.prompt).toContain('Avoid: long paragraphs of text');
       expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
       expect(useMobPortraitQueue.getState().active).toEqual([]);
       expect(
@@ -3114,7 +3114,7 @@ describe('mob-portrait-queue.test.ts', () => {
       expect(finalPrompt).not.toContain('59');
       expect(finalPrompt).not.toContain('7d10');
       expect(finalPrompt).not.toContain('darkvision 60 ft.');
-      expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
     });
 
     it('skips imaged creatures (no re-generation) and drains — with no artifact in sight (D6)', async () => {

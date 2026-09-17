@@ -26,7 +26,7 @@ import {
 import { enqueueCampaignCover, useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
-import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE, MOB_PORTRAIT_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE, IMAGE_TEXT_SPARING_CLAUSE, MOB_PORTRAIT_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { buildLabeledMapPrompt } from '@/llm/visionDungeon';
 import { sha256Hex } from '@/lib/hash';
@@ -104,24 +104,89 @@ afterEach(() => {
 });
 
 describe('shared text-render guard', () => {
-  it('carries the proven portrait items plus the extended plot-text bans', () => {
+  it('still names the proven failure modes (the original incident cannot return unguarded)', () => {
     for (const item of [
-      'text',
-      'letters',
-      'numbers',
-      'words',
+      'long paragraphs of text',
       'captions',
+      'explanatory text',
+      'plot summary',
       'stat block',
       'character sheet',
       'diagram',
-      'label',
       'speech bubbles',
       'watermark',
       'signature',
-      'plot summary',
-      'explanatory text',
+      'illegible or garbled or misspelled lettering',
     ]) {
       expect(IMAGE_TEXT_NEGATIVE).toContain(item);
+    }
+  });
+
+  /**
+   * PIN 2 (docs/17 row 224) — the pin that would have stopped the reported
+   * defect. The list is asserted STRUCTURALLY (split on commas), because
+   * `toContain` over the whole string is not enough: `long paragraphs of
+   * text` contains the substring "text" while forbidding nothing wholesale.
+   */
+  it('forbids no text wholesale: no bare text/letters/numbers/words/label item', () => {
+    const items = IMAGE_TEXT_NEGATIVE.split(',').map((item) => item.trim());
+    expect(items.length).toBeGreaterThan(5); // non-vacuity
+    for (const bare of ['text', 'letters', 'numbers', 'words', 'label']) {
+      expect(items, `a blanket no-text item came back: ${bare}`).not.toContain(bare);
+    }
+  });
+
+  /**
+   * PIN 1 (docs/17 row 224) — the owner's own wording rides the COMPOSED
+   * prompt of both builder branches, verbatim, and never the Avoid list.
+   */
+  it('rides the composed prompt in BOTH builder branches, verbatim', () => {
+    const grounded = buildImagePrompt(
+      { name: 'The Lighthouse', kind: 'location', summary: 'A storm-lashed beacon.', body: 'Black cliffs.', data: {} },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(grounded.prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(grounded.prompt).toContain('Unless requested otherwise, use text sparingly.');
+    expect(grounded.negative).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    const shortcut = buildImagePrompt(
+      { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(shortcut.prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(shortcut.prompt).toContain('Unless requested otherwise, use text sparingly.');
+    expect(shortcut.negative).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
+  });
+
+  /**
+   * PIN 3 (docs/17 row 224) — a request that ASKS for text coexists with the
+   * guard: the clause is the mechanism ("unless requested otherwise"), and
+   * nothing in the Avoid list overrides the request. Both branches are
+   * exercised, because the request rides `extraInstruction` on either.
+   */
+  it('lets a requested treasure map / legend / letter coexist with the guard', () => {
+    const requests = [
+      'Draw this as a treasure map.',
+      'A labelled map with a legend down one side.',
+      'A confession letter with visible handwriting.',
+    ];
+    for (const request of requests) {
+      for (const data of [{}, { appearance: 'A ragged chart with a torn corner.' }]) {
+        const draft = buildImagePrompt(
+          { name: 'Ash Gate', kind: 'location', summary: 'A ruined gate.', body: 'Cultists hold it.', data },
+          { systemLabel: 'D&D 5e', extraInstruction: request },
+        );
+        const final = assembleImagePrompt(draft);
+        expect(final).toContain(request);
+        expect(final).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+        // The ESCAPE HATCH is the mechanism, so assert its exact words — a
+        // clause without "unless requested otherwise" would contradict the
+        // request it shares the prompt with.
+        expect(final).toContain('Unless requested otherwise, use text sparingly.');
+        const items = draft.negative.split(',').map((item) => item.trim());
+        for (const bare of ['text', 'letters', 'numbers', 'words', 'label']) {
+          expect(items, `the requested text is forbidden by: ${bare}`).not.toContain(bare);
+        }
+      }
     }
   });
 
@@ -137,7 +202,7 @@ describe('shared text-render guard', () => {
     expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
     const final = assembleImagePrompt(draft);
     expect(final).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(final).toContain('speech bubbles');
+    expect(final).toContain('long paragraphs of text');
   });
 
   it('guards the appearance-shortcut branch by default too', () => {
@@ -145,7 +210,7 @@ describe('shared text-render guard', () => {
       { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
       { systemLabel: 'D&D 5e' },
     );
-    expect(draft.prompt).toBe('D&D 5e=>Small, soot-stained, goggles.');
+    expect(draft.prompt).toBe(`D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_SPARING_CLAUSE}`);
     expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
     expect(assembleImagePrompt(draft)).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
   });
@@ -330,6 +395,13 @@ describe('guarded caller families (prompt capture)', () => {
     const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
     expect(prompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
     expect(prompt).toContain('speech bubbles');
+    // The owner's text budget (docs/17 row 224) rides the classic battlemap
+    // template too. Its own "no map legend / no text labels" hard-ban is the
+    // separate owner-ratified VTT rule (docs/11 D17), asserted as still
+    // present so the boundary is pinned rather than implied.
+    expect(prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(prompt).toContain('no map legend, no scale bar');
+    expect(prompt).toContain('no text labels');
   });
 });
 
@@ -346,8 +418,11 @@ describe('vision carve-out (binding)', () => {
     // The tailored negative is present…
     expect(prompt).toContain('plaque');
     expect(prompt).toContain('no written text anywhere except the 2 letter plaques');
-    // …while the blanket guard is absent (it would fight the plaques).
+    // …while the blanket guard is absent (it would fight the plaques), and
+    // the sparing clause is deliberately absent too: this path's plaque
+    // clause is load-bearing for the locate pass (docs/17 row 224).
     expect(prompt).not.toContain('Avoid:');
+    expect(prompt).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
     for (const blanket of ['speech bubbles', 'watermark', 'signature', 'plot summary', 'explanatory text']) {
       expect(prompt, `blanket item leaked into the vision path: ${blanket}`).not.toContain(blanket);
     }

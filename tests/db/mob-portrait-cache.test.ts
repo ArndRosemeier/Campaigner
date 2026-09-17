@@ -283,7 +283,7 @@ describe('canonical-only invariant', () => {
     expect(finalPrompt).not.toContain('darkvision 60 ft.');
     expect(finalPrompt).toContain('Large');
     expect(finalPrompt).toContain('beast');
-    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+    expect(finalPrompt).toContain('Avoid: long paragraphs of text');
     expect(chatMock).not.toHaveBeenCalled();
     const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry).toBeDefined();
@@ -351,7 +351,7 @@ describe('canonical-only invariant', () => {
     }
     expect(finalPrompt).not.toContain(GIANT_RAT_TEXT);
     // Belt and braces: the text-render negative rides the canonical draft.
-    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+    expect(finalPrompt).toContain('Avoid: long paragraphs of text');
   });
 
   it('a case-insensitive canonical match reuses without generating', async () => {

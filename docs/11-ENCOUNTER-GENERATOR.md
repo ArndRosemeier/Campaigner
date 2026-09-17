@@ -758,19 +758,30 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   helper falls back to raw `chunk.text` verbatim — the loud residual render
   risk, documented on the helper, never silent. Belt and braces: the
   text-render guard is default-on EVERYWHERE (`IMAGE_TEXT_NEGATIVE` →
-  `Avoid: text, letters, … speech bubbles, watermark, signature, plot
-  summary, explanatory text`), wired as the default `negative` of the shared
-  Illustrator contract — covers, entity images, portraits, the run-engine
-  prompt draft, the classic battlemap stylize (empty brief negative falls
-  back to it), and the `appearance` shortcut (which keeps winning AND
-  carries the guard) are all guarded; a caller passes its own list only as
-  an explicit override. The mob-portrait `MOB_PORTRAIT_TEXT_NEGATIVE` name
-  stays as an alias (identical by identity — the general list covers the
-  proven portrait list). The ONE carve-out is the vision dungeon path
+  `Avoid: long paragraphs of text, captions, explanatory text, plot summary,
+  stat block, character sheet, diagram, speech bubbles, watermark, signature,
+  illegible or garbled or misspelled lettering`), wired as the default
+  `negative` of the shared Illustrator contract — covers, entity images,
+  portraits, the run-engine prompt draft, the classic battlemap stylize
+  (empty brief negative falls back to it), and the `appearance` shortcut
+  (which keeps winning AND carries the guard) are all guarded; a caller
+  passes its own list only as an explicit override. The mob-portrait
+  `MOB_PORTRAIT_TEXT_NEGATIVE` name stays as an alias (identical by identity
+  — the general list covers the proven portrait list). **The guard no longer
+  forbids text wholesale (owner reversal, docs/17 row 224):** the bare terms
+  `text`, `letters`, `numbers`, `words`, `label` are DROPPED from the list,
+  and the owner's positive clause `IMAGE_TEXT_SPARING_CLAUSE` — "Unless
+  requested otherwise, use text sparingly." — rides the COMPOSED prompt of
+  both `buildImagePrompt` branches and the classic battlemap template, so a
+  requested treasure map, confession letter or map with a legend can still
+  be drawn while the caption/plot-summary/stat-block failure modes stay
+  guarded. The ONE carve-out is the vision dungeon path
   below: it NEEDS its carved room plaques, so it never routes through the
   Illustrator contract — its tailored "no written text anywhere except the
   N letter plaques" clause is its guard instead (a blanket no-letters Avoid
-  would fight the locate contract). **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
+  would fight the locate contract), and the sparing clause is deliberately
+  NOT added there because that clause is load-bearing for the locate pass.
+  **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
   deterministic — no LLM call ("I dont want that extra LLM call. Just use
   the appearance/body."). Failures report loud per mob (`{name, message}`
   style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
