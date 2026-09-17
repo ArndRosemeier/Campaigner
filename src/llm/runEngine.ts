@@ -3559,6 +3559,13 @@ export class RunEngine {
    * pack re-imported mid-run must reach the very next stat block, and a stale
    * in-memory index would make an invented-spell verdict depend on session
    * age.
+   *
+   * THE OFFER IS A FRESH RANDOM SAMPLE PER BUILD (docs/17 row 211): the
+   * vocabulary is `mobSpellVocabulary`'s per-group sample from `Math.random`,
+   * so two prompts over the same library differ — the owner's
+   * attractor-breaking property. The INDEX is over the FULL corpus and never
+   * sampled: a corpus spell the draw did not offer still resolves when the
+   * model names it.
    */
   private async spellLibraryFor(
     system: GameSystem,
@@ -3567,7 +3574,7 @@ export class RunEngine {
     const entries = spellCorpusEntries(await loadSpellChunksFor(system));
     return {
       index: mobSpellIndex(entries.map((entry) => ({ name: entry.name, spellData: entry.data }))),
-      vocabulary: mobSpellVocabulary(entries, casterLevel),
+      vocabulary: mobSpellVocabulary(entries, casterLevel, Math.random),
     };
   }
 

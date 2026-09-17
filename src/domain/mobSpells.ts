@@ -367,14 +367,6 @@ export function mobSpellWarnings(chips: readonly MobSpellChip[], mobName: string
   );
 }
 
-/**
- * How many spell lines a stat-block prompt may carry. The roster's own 300-line
- * prompt window (`llm/creatorRoster`) is the precedent: the library can hold
- * thousands of spells, and a window that says it is truncated is honest where a
- * silently-shortened list is not.
- */
-export const MOB_SPELL_VOCABULARY_LIMIT = 300;
-
 /** PF2e's maximum castable spell rank for a creature of `level` — the SAME
  *  rule the heightening seam derives a cantrip's own rank with
  *  (`spellHeightening.pf2eCantripRankFor`, row 194), so the vocabulary's
@@ -387,30 +379,94 @@ export function maxCastableRank(level: number): number {
 export interface MobSpellVocabulary {
   /** One `Name — Cantrip` / `Name — Rank N` line per OFFERED spell. */
   lines: string[];
-  /** How many spells the corpus offered BEFORE the window was applied. */
-  total: number;
 }
 
 /**
- * The spells a caster of `casterLevel` may be given, ordered by rank then name
- * (deterministic, and the low ranks a starting caster actually uses come
- * first). A cantrip is always eligible; a ranked spell must be within the
- * caster's maximum rank. An unknown level offers every spell — the honest
- * "nothing to filter by", never a guessed level.
+ * A group of `items` sampled down to `Math.max(1, Math.ceil(items.length / 2))`
+ * members, drawn WITHOUT replacement in draw order — the owner's half rule,
+ * and the floor that keeps a one-spell level visible (docs/17 row 211). The
+ * draw is the ONLY randomness in the vocabulary, and it comes from the
+ * injected source; a source that yields `[0, 1)` never picks outside the pool,
+ * and the clamp keeps a degenerate source from spinning rather than failing.
+ */
+function sampleHalf<T>(items: readonly T[], random: () => number): T[] {
+  const count = Math.max(1, Math.ceil(items.length / 2));
+  const pool = [...items];
+  const picked: T[] = [];
+  while (picked.length < count) {
+    const index = Math.min(pool.length - 1, Math.floor(random() * pool.length));
+    picked.push(...pool.splice(index, 1));
+  }
+  return picked;
+}
+
+/**
+ * The spells a caster of `casterLevel` may be given: for EACH applicable group
+ * — the cantrip group, then every spell rank the caster can reach — a RANDOM
+ * sample of half the group, never fewer than one (docs/17 row 211). A
+ * rank-ordered prefix hid whole ranks in a large corpus, which the owner
+ * refused; a per-group sample keeps every reachable rank present AND breaks
+ * the attractor states a fixed list produces.
+ *
+ * THE GROUPS come from the `cantrip` FLAG first, then the `rank` for every
+ * other spell: a PF2e cantrip is stored at `rank: 1` (upstream's own
+ * `level.value`) and a dnd5e cantrip at `rank: 0`, so a rank key alone would
+ * file a PF2e cantrip beside the rank-1 spells. The flag is the honest key for
+ * both systems. Group order is deterministic (cantrips first, then ranks
+ * ascending); membership and order WITHIN a group come from `random`.
+ *
+ * A cantrip is always eligible; a ranked spell must be within the caster's
+ * maximum rank. An unknown level offers every spell — the honest "nothing to
+ * filter by", never a guessed level. Duplicates are dropped BEFORE sampling by
+ * the ONE name comparison (`domain/artifactAlias.comparableName`, first wins —
+ * the resolver's own rule in `mobSpellIndex`), so the offer never shows the
+ * same spell twice when two books carry it.
+ *
+ * NO CAP AND NO TRUNCATION NOTE. The list is exactly the sampled groups: a
+ * level is never hidden, so a note claiming one was would be a lie.
+ *
+ * PURE: the randomness is injected (a `Math.random`-compatible source
+ * returning `[0, 1)`), so a fixed source makes the whole vocabulary
+ * byte-deterministic while two sources on the same corpus differ. The
+ * production caller (`llm/runEngine.spellLibraryFor`) passes a fresh source
+ * per prompt build — that difference is the attractor-breaking property.
+ * Sampling narrows the OFFER only: the resolver still validates names against
+ * the FULL library index, so a corpus spell outside the sample still resolves
+ * when the model names it.
  */
 export function mobSpellVocabulary(
   entries: readonly { name: string; rank: number; cantrip: boolean }[],
   casterLevel: number | null,
+  random: () => number,
 ): MobSpellVocabulary {
   const maxRank = casterLevel === null ? null : maxCastableRank(casterLevel);
   const eligible = entries.filter(
     (entry) => entry.cantrip || maxRank === null || entry.rank <= maxRank,
   );
-  const sorted = [...eligible].sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name));
-  return {
-    lines: sorted
-      .slice(0, MOB_SPELL_VOCABULARY_LIMIT)
-      .map((entry) => `${entry.name} — ${entry.cantrip ? 'Cantrip' : `Rank ${String(entry.rank)}`}`),
-    total: sorted.length,
-  };
+  const seen = new Set<string>();
+  const unique = eligible.filter((entry) => {
+    const key = comparableName(entry.name);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  // A sentinel below every legal rank (0 in dnd5e, 1 in PF2e) groups cantrips
+  // together whatever rank the corpus stored them at.
+  const CANTRIP_GROUP = -1;
+  const groups = new Map<number, (typeof unique)[number][]>();
+  for (const entry of unique) {
+    const key = entry.cantrip ? CANTRIP_GROUP : entry.rank;
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [entry]);
+    else group.push(entry);
+  }
+  const lines: string[] = [];
+  for (const key of [...groups.keys()].sort((a, b) => a - b)) {
+    const group = groups.get(key);
+    if (group === undefined) continue;
+    for (const entry of sampleHalf(group, random)) {
+      lines.push(`${entry.name} — ${entry.cantrip ? 'Cantrip' : `Rank ${String(entry.rank)}`}`);
+    }
+  }
+  return { lines };
 }

@@ -113,4 +113,23 @@ describe('one spells-shape composer (SOURCE SCAN, docs/17 rows 200/205)', () => 
     expect(engine).not.toMatch(/schemaResponseFormat\(\s*'statblock'/);
     expect(engine).not.toMatch(/z\.object\(\{\s*system:\s*gameSystemSchema/);
   });
+
+  it('the dead 300-line window and its truncation note are GONE (docs/17 row 211)', () => {
+    // A dead limit is how the rank-ordered-prefix defect comes back: the
+    // vocabulary is now a per-group sample with no cap, so neither the constant
+    // nor the note it fed may survive anywhere in `src/` (the behavioural half
+    // lives in tests/domain/mobSpells.test.ts).
+    const dead = [
+      'MOB_SPELL_VOCABULARY_LIMIT',
+      'MOB_SPELL_TRUNCATION_PREFIX',
+      'MOB_SPELL_TRUNCATION_SUFFIX',
+      'the list is TRUNCATED',
+    ];
+    for (const file of sourceFiles(SRC_DIR)) {
+      const text = stripComments(readFileSync(file, 'utf8'));
+      for (const needle of dead) {
+        expect(text, `${rel(file)} still carries ${needle}`).not.toContain(needle);
+      }
+    }
+  });
 });

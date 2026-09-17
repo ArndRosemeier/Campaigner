@@ -11,11 +11,11 @@ import {
   mobSpellIssues,
   mobSpellVocabulary,
   mobSpellWarnings,
-  MOB_SPELL_VOCABULARY_LIMIT,
   maxCastableRank,
 } from '@/domain/mobSpells';
 import { spellDataSchema, type SpellData } from '@/domain/spellData';
 import { pf2eCantripRankFor, PROSE_ONLY_MARKER, spellAtRank } from '@/domain/spellHeightening';
+import { formatMobSpellSection } from '@/llm/mobSpellPrompt';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 
 /**
@@ -342,37 +342,138 @@ describe('the Paizo cantrip-rank rule is ONE number for all three consumers', ()
   });
 });
 
-describe('the prompt vocabulary offers the REAL library, bounded and honest', () => {
-  const entries = [
-    { name: 'Fireball', rank: 3, cantrip: false },
-    { name: 'Ignition', rank: 0, cantrip: true },
-    { name: 'Wish', rank: 10, cantrip: false },
-    { name: 'Magic Missile', rank: 1, cantrip: false },
-  ];
+/** A `Math.random`-compatible source that repeats a fixed sequence — the ONE
+ *  way the sampler's randomness is made deterministic in these pins. */
+function seededRandom(values: readonly number[]): () => number {
+  let index = 0;
+  return () => {
+    const value = values[index % values.length] ?? 0;
+    index += 1;
+    return value;
+  };
+}
 
-  it('keeps cantrips and the ranks a caster of that level can reach', () => {
-    const vocabulary = mobSpellVocabulary(entries, 5);
-    expect(vocabulary.lines).toEqual([
+describe('the prompt vocabulary samples half of every reachable group (docs/17 row 211)', () => {
+  const spell = (name: string, rank: number, cantrip = false) => ({ name, rank, cantrip });
+
+  it('keeps EVERY applicable group — a large corpus never loses a whole rank', () => {
+    // 120 spells at each of ranks 1..6, a rank with a SINGLE spell (the level a
+    // floor or a flat slice drops), plus cantrips stored the two systems' own
+    // way (PF2e at rank 1, dnd5e at rank 0). The old rank-ordered 300-line
+    // prefix showed the low ranks and hid whole high ranks — the owner's
+    // "whole spell levels no longer present" complaint.
+    const cantrips = Array.from({ length: 10 }, (_, i) =>
+      spell(`Cantrip ${String(i)}`, i % 2 === 0 ? 1 : 0, true),
+    );
+    const ranked = [1, 2, 3, 4, 5, 6]
+      .flatMap((rank) =>
+        Array.from({ length: 120 }, (_, i) => spell(`R${String(rank)}-${String(i)}`, rank)),
+      )
+      .concat([spell('R7-Only', 7)]);
+    const vocabulary = mobSpellVocabulary([...cantrips, ...ranked], 20, seededRandom([0.5]));
+    for (let rank = 1; rank <= 6; rank += 1) {
+      const lines = vocabulary.lines.filter((line) => line.endsWith(`Rank ${String(rank)}`));
+      expect(lines.length, `rank ${String(rank)} vanished`).toBeGreaterThan(0);
+      // Each rank is its OWN group: ceil(120 / 2) = 60, not a share of the
+      // whole corpus. A removed per-group floor and a flat slice both red here.
+      expect(lines).toHaveLength(60);
+    }
+    // A level with a SINGLE spell still shows that spell — the core of the
+    // owner's rule, and the line a removed floor drops.
+    expect(vocabulary.lines).toContain('R7-Only — Rank 7');
+    // Cantrips are grouped by the FLAG first: all 10 form ONE group (5 lines)
+    // and none of them is counted as `Rank 1`, though PF2e stores them there.
+    expect(vocabulary.lines.filter((line) => line.endsWith('Cantrip'))).toHaveLength(5);
+    // NO CAP, NO TRUNCATION NOTE: the sampled list is longer than the dead
+    // 300-line window and the composer renders no truncation line (the
+    // constants' absence is source-scanned in one-spells-shape.test.ts).
+    expect(vocabulary.lines.length).toBeGreaterThan(300);
+    expect(formatMobSpellSection(vocabulary, 'pathfinder2e')).not.toContain('TRUNCATED');
+  });
+
+  it('the half rule is max(1, ceil(n / 2)) — a one-spell level still shows that spell', () => {
+    for (const [size, expected] of [
+      [1, 1],
+      [2, 1],
+      [3, 2],
+      [5, 3],
+      [120, 60],
+    ] as const) {
+      const group = Array.from({ length: size }, (_, i) => spell(`Spell ${String(i)}`, 4));
+      expect(mobSpellVocabulary(group, 20, seededRandom([0.5])).lines).toHaveLength(expected);
+    }
+  });
+
+  it('filters by the caster level but offers everything when it is unknown', () => {
+    const corpus = [
+      spell('Ignition', 1, true),
+      spell('Magic Missile', 1),
+      spell('Fireball', 3),
+      spell('Wish', 10),
+    ];
+    // maxCastableRank(5) = 3, so Wish is ineligible; groups of one each.
+    expect(mobSpellVocabulary(corpus, 5, seededRandom([0])).lines).toEqual([
       'Ignition — Cantrip',
       'Magic Missile — Rank 1',
       'Fireball — Rank 3',
     ]);
-    expect(vocabulary.total).toBe(3);
+    // An unknown level offers every spell — the honest "nothing to filter by".
+    expect(mobSpellVocabulary(corpus, null, seededRandom([0])).lines).toHaveLength(4);
   });
 
-  it('offers everything when the caster level is unknown (no guessed level)', () => {
-    expect(mobSpellVocabulary(entries, null).lines).toHaveLength(4);
+  it('is byte-deterministic for a fixed source, and two sources on one corpus DIFFER', () => {
+    // The owner's attractor-breaking property: the same library presented
+    // differently across prompts. The differential is the evidence — a helper
+    // with a hidden global RNG would make the two arms equal.
+    const group = Array.from({ length: 8 }, (_, i) => spell(`Spell ${String(i)}`, 2));
+    const sequence = [0.1, 0.9, 0.4, 0.7, 0.2, 0.6, 0.3, 0.8];
+    const sameA = mobSpellVocabulary(group, 20, seededRandom(sequence));
+    const sameB = mobSpellVocabulary(group, 20, seededRandom(sequence));
+    const other = mobSpellVocabulary(group, 20, seededRandom([0.9, 0.1, 0.6, 0.3, 0.8, 0.2, 0.7, 0.4]));
+    expect(sameA.lines).toEqual(sameB.lines);
+    expect(sameA.lines).not.toEqual(other.lines);
   });
 
-  it('windows a huge corpus deterministically', () => {
-    const many = Array.from({ length: MOB_SPELL_VOCABULARY_LIMIT + 25 }, (_, position) => ({
-      name: `Spell ${String(position).padStart(4, '0')}`,
-      rank: 1,
+  it('dedupes by the ONE comparable-name form BEFORE sampling (first wins)', () => {
+    const corpus = [
+      spell('Animate Dead', 3),
+      spell('animate dead', 3), // a second book's spelling of the same spell
+      spell('Fireball', 3),
+      spell('Haste', 3),
+      spell('Slow', 3),
+    ];
+    const vocabulary = mobSpellVocabulary(corpus, 20, seededRandom([0]));
+    // 5 entries minus the duplicate = 4 unique ⇒ ceil(4 / 2) = 2 lines. A
+    // removed dedupe would offer 3, both spellings among them.
+    expect(vocabulary.lines).toEqual(['Animate Dead — Rank 3', 'Fireball — Rank 3']);
+  });
+
+  it('narrows the OFFER, never the permission — a spell outside the sample still resolves', () => {
+    const corpus = Array.from({ length: 6 }, (_, i) => ({
+      name: `Spell ${String(i)}`,
+      rank: 3,
       cantrip: false,
+      spellData: synthetic({ rank: 3 }),
     }));
-    const vocabulary = mobSpellVocabulary(many, 20);
-    expect(vocabulary.lines).toHaveLength(MOB_SPELL_VOCABULARY_LIMIT);
-    expect(vocabulary.total).toBe(MOB_SPELL_VOCABULARY_LIMIT + 25);
+    const vocabulary = mobSpellVocabulary(corpus, 20, seededRandom([0]));
+    const offered = vocabulary.lines.map((line) => line.slice(0, line.indexOf(' — ')));
+    const unseen = corpus.find((entry) => !offered.includes(entry.name));
+    if (unseen === undefined) throw new Error('the sample covered the whole corpus');
+    // The resolver's index is built over the FULL corpus, exactly as
+    // `runEngine.spellLibraryFor` builds it — the sample touched only the offer.
+    const index = mobSpellIndex(
+      corpus.map((entry) => ({ name: entry.name, spellData: entry.spellData })),
+    );
+    const resolved = mobSpellChips([{ name: unseen.name }], 20, index);
+    expect(resolved[0]?.resolved).toBe(true);
+    expect(resolved[0]?.issues).toEqual([]);
+    // An invented name is still a LOUD unresolved issue.
+    const invented = mobSpellChips([{ name: 'Wishful Thinking' }], 20, index);
+    expect(invented[0]?.resolved).toBe(false);
+    const issues = mobSpellIssues(invented, 'Grix');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain('Wishful Thinking');
+    expect(issues[0]).toContain('Grix');
   });
 });
 

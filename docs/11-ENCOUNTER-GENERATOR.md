@@ -174,11 +174,15 @@ caster the REAL imported spells through the ONE corpus read
 (`db/spellRepo.loadSpellChunksFor` → `db/rulebookRepo.readyBookIds`
 (defined beside the rows it filters and re-exported by `@/search` since docs/17
 row 184 — its only spelling) + `chunkRepo.listChunksByType('spell')`, docs/17
-rows 182/184), windowed by
-`mobSpellVocabulary` (300 lines, rank then name, filtered to the ranks the
-hinted caster level can reach, truncation stated in the prompt) and rendered
-only when the corpus is non-empty — so a dnd5e (spell-less) prompt keeps its
-pre-arc bytes. Every returned name is then checked at the parse boundary
+rows 182/184), offered as `mobSpellVocabulary`'s per-group random sample
+(docs/17 row 211: cantrips are one group and every rank the caster can reach
+another, each contributing `Math.max(1, Math.ceil(n / 2))` of its deduped
+spells, with NO cap and no truncation note — a large library never loses a
+whole rank, and a fresh draw per prompt build breaks the attractor states a
+fixed list produced) and rendered only when the corpus is non-empty — so a
+dnd5e (spell-less) prompt keeps its pre-arc bytes. The sample narrows the
+OFFER only: `runEngine.spellLibraryFor` still indexes the FULL corpus, so a
+corpus spell the draw did not offer still RESOLVES when the model names it. Every returned name is then checked at the parse boundary
 through `domain/mobSpells.mobSpellChips` + `mobSpellIssues`, matched with the
 ONE comparable-name form (`domain/artifactAlias.comparableName`): the Smith's
 `runStatblock` and an encounter draft's inline monster blocks each spend ONE
@@ -261,16 +265,26 @@ library is not the same as asking for a caster: a module that presents a level-7
 necromancer must come out AS a caster, with a spell list AND the numbers a GM
 plays the spell from. `llm/promptScaffolding.MOB_SPELL_CASTER_CLAUSE` is the ONE
 clause — *when this creature's concept, name or intent implies a spellcaster it
-MUST be given spells: cantrips plus the spells its level allows, chosen for the
-role from the model's own knowledge* — and `llm/mobSpellPrompt.formatMobSpellCasterClause`
+MUST be given spells: 2 cantrips, then 2 spells of each rank (spell level) up
+to the highest it can cast, chosen from the campaign's imported spell list* —
+and `llm/mobSpellPrompt.formatMobSpellCasterClause`
 renders it through the SAME corpus gate as the vocabulary, so a system with no
 imported spells gets neither. It reaches BOTH NPC steps: `runDraft`'s npc arm
 (where the identity and prose are written) and `runStatblock` (where the spells
 and the DC are written). The ENCOUNTER draft and the Cartographer keep their
-existing OPTIONAL invitation and never render it (owner's scope). There is NO
+existing OPTIONAL invitation and never render it (owner's scope). The count is
+the owner's SIMPLIFIED rule (docs/17 row 211, verbatim: *"Instruct to give
+casters just 2 spells of each applicable level. We do not need to be
+considering how many spells this caster actually would get, a simplified
+version is good for easier mastering."*) — 2 cantrips, then 2 of each rank up
+to the highest the creature can cast, not a derivation of its real spell
+allotment. There is NO
 theme or school filter: a spell that merely SOUNDS necromantic is acceptable
 (owner, verbatim: *"Its ok if the model takes spells that just sound
-necromantic, thats not a problem"*).
+necromantic, thats not a problem"*). A consequence the owner accepted: the
+per-group random sample can leave a spell the module names off the offered
+list (the trade-off is recorded in docs/17 row 211, not patched with a
+salience rule).
 
 `domain/statblock.ts` gains three additive nullable fields — `spellDC`,
 `spellAttack` (stored as the d20 MODIFIER, printed `+17`) and `tradition` (a free

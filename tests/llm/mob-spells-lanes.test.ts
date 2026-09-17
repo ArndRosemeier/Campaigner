@@ -371,6 +371,8 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(present).toContain('MUST be given spells');
     expect(present).toContain('necromancer');
+    // The count is STATED (docs/17 row 211): 2 cantrips, then 2 per rank.
+    expect(present).toContain('2 cantrips, then 2 spells of each rank');
     expect(present).toContain('Fireball — Rank 3');
     expect(present).toContain('Ignition — Cantrip');
     // The contract line offers the field the vocabulary invites: row 184's defect.
@@ -398,9 +400,26 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     const present = await npcDraftPrompt(true);
     expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
     expect(present).toContain('MUST be given spells');
+    expect(present).toContain('2 cantrips, then 2 spells of each rank');
     // The draft authors no stat block, so it is offered the RULE, not the list.
     expect(present).not.toContain(MOB_SPELL_SECTION_PREFIX);
   }, 60000);
+
+  it('the caster clause states the 2-per-level count and keeps the contract fields (docs/17 row 211)', () => {
+    // THE bytes the model reads, pinned: 2 cantrips, then 2 of each rank up to
+    // the highest it can cast, chosen from the imported list.
+    expect(MOB_SPELL_CASTER_CLAUSE).toContain(
+      '2 cantrips, then 2 spells of each rank (spell level) up to the highest it can cast',
+    );
+    expect(MOB_SPELL_CASTER_CLAUSE).toContain("chosen from the campaign's imported spell list");
+    // The DC / attack / tradition fields are byte-unchanged (docs/17 row 201).
+    expect(MOB_SPELL_CASTER_CLAUSE).toContain('"spellDC"');
+    expect(MOB_SPELL_CASTER_CLAUSE).toContain('"spellAttack"');
+    expect(MOB_SPELL_CASTER_CLAUSE).toContain('"tradition"');
+    // The old open-ended count is GONE — no derivation of the creature's real
+    // spell allotment survives in the clause.
+    expect(MOB_SPELL_CASTER_CLAUSE).not.toContain('cantrips plus the spells its level allows');
+  });
 
   it('the NPC DRAFT step keeps its PRE-ARC bytes without a corpus', async () => {
     // BYTE-IDENTITY: the pre-arc draft prompt, captured at HEAD before the

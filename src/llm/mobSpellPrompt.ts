@@ -4,13 +4,12 @@ import {
   MOB_SPELL_REPAIR_LEAD_IN,
   MOB_SPELL_SECTION_PREFIX,
   MOB_SPELL_SECTION_SUFFIX,
-  MOB_SPELL_TRUNCATION_PREFIX,
-  MOB_SPELL_TRUNCATION_SUFFIX,
 } from '@/llm/promptScaffolding';
 import { spellEntryShape } from '@/llm/statBlockContract';
 
 /**
- * The mob-spells prompt section (docs/17 rows 184, 200 and 205, docs/18 §2.2).
+ * The mob-spells prompt section (docs/17 rows 184, 200, 205 and 211, docs/18
+ * §2.2).
  *
  * ONE composer for the ONE vocabulary the AI-authored mob paths are offered —
  * the NPC stat-block step, an encounter draft's inline monster block and the
@@ -21,6 +20,11 @@ import { spellEntryShape } from '@/llm/statBlockContract';
  * comes from the ONE builder (`llm/statBlockContract.spellEntryShape`), the
  * SAME builder the strict response schema is built from, so the prose and the
  * contract cannot disagree (row 205's defect).
+ *
+ * The vocabulary itself is the PER-GROUP RANDOM SAMPLE built by
+ * `domain/mobSpells.mobSpellVocabulary` (row 211): it is emitted verbatim,
+ * with NO truncation note, because there is no window to truncate — every
+ * applicable group is present.
  *
  * NULL WHEN THERE IS NOTHING TO OFFER. A campaign with no imported spells has
  * an empty window, so the section is omitted and those prompts keep their
@@ -48,13 +52,9 @@ export function formatMobSpellSection(
 ): string | null {
   if (!mobSpellVocabularyRenders(vocabulary)) return null;
   const header = `${MOB_SPELL_SECTION_PREFIX}${spellEntryShape(system)}${MOB_SPELL_SECTION_SUFFIX}`;
-  const parts = [header, ...vocabulary.lines];
-  if (vocabulary.total > vocabulary.lines.length) {
-    parts.push(
-      `${MOB_SPELL_TRUNCATION_PREFIX}${String(vocabulary.lines.length)} of ${String(vocabulary.total)}${MOB_SPELL_TRUNCATION_SUFFIX}`,
-    );
-  }
-  return parts.join('\n');
+  // No truncation note (docs/17 row 211): the vocabulary is a per-group sample
+  // with no cap, so every applicable level is already present.
+  return [header, ...vocabulary.lines].join('\n');
 }
 
 /**

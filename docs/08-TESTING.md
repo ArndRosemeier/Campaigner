@@ -6995,6 +6995,74 @@ already-scoped reads (spell corpus, encounter roster, item pool) and the
 already-recorded citation resolution are deliberately UNCHANGED and stay pinned
 by their pre-existing suites.**
 
+### The spell vocabulary is a per-group random sample, and the caster clause counts 2 per level (docs/17 row 211, docs/11 §Mob spells, docs/18 §2.2)
+
+The owner refused the 300-line prefix — *"limiting to 300 leads to whole spell
+levels no longer present"* — and asked for *"a random sample of half the
+available spells"* for each applicable level, plus *"just 2 spells of each
+applicable level"*. The prefix is gone; the per-group sample and the count are
+the pins.
+
+- `tests/domain/mobSpells.test.ts` (EXTENDED; node project, `nodeTestGlobs`):
+  - **no hidden level**: 120 spells at each of ranks 1–6 plus a ONE-spell rank 7
+    (and cantrips stored at rank 1/0) — every rank has a line, each full rank
+    exactly `ceil(120 / 2) = 60`, and `R7-Only — Rank 7` survives; the 10
+    cantrips form ONE group (5 lines) and none of them counts as `Rank 1`,
+    though PF2e stores it there.
+  - **the half rule**: groups of n = 1/2/3/5/120 yield 1/1/2/3/60.
+  - **no cap, no note**: the sampled list exceeds 300 lines and
+    `formatMobSpellSection` renders no `TRUNCATED`.
+  - **injected randomness**: two identical fixed sources are byte-identical;
+    two different sources over one corpus differ — the owner's
+    attractor-breaking property, asserted as a DIFFERENCE so an accidentally
+    equal pair cannot pass.
+  - **dedupe**: a corpus carrying "Animate Dead" from two books (different
+    casing) offers it once, first wins; a removed dedupe offers three lines
+    where two are due.
+  - **offer vs permission**: a corpus spell the draw did not offer still
+    resolves through the FULL-corpus index with no issue, while an invented name
+    is still a loud unresolved issue naming the spell and the mob.
+- `tests/architecture/one-spells-shape.test.ts` (EXTENDED, SOURCE SCAN):
+  `MOB_SPELL_VOCABULARY_LIMIT`, `MOB_SPELL_TRUNCATION_PREFIX`,
+  `MOB_SPELL_TRUNCATION_SUFFIX` and `the list is TRUNCATED` appear in NO `src/`
+  file — the dead window cannot return unnoticed.
+- `tests/llm/mob-spells-lanes.test.ts` (EXTENDED): the caster clause the model
+  sees states `2 cantrips, then 2 spells of each rank (spell level) up to the
+  highest it can cast`, keeps the `spellDC`/`spellAttack`/`tradition` fields,
+  and no longer carries the open-ended `cantrips plus the spells its level
+  allows`. The no-corpus goldens (`statblock-no-corpus.txt`,
+  `npc-draft-no-corpus.txt`) stay byte-identical. The encounter-draft and
+  Cartographer WITH-corpus goldens were re-verified, NOT regenerated: their
+  seeded corpus is one cantrip group of one and one rank group of one, where the
+  half rule is a no-op and the group order is unchanged — the brief's
+  expectation that those goldens move did not hold, and regenerating them would
+  have hidden that the lane corpus is too small to exercise the sample at all.
+
+**Injected RED, watched (hash-printed arms under one lock; the tree restored
+from a saved baseline by `trap` and the restoration PROVED by hash;
+`src/domain/mobSpells.ts` baseline `f151f5d2d72206752e2d514022ebddc87ad5cd87`):**
+A baseline **GREEN 41**; B the `max(1, …)` guard removed (`bcfaf681…`) →
+**GREEN 41, VOID** — `ceil(n / 2) ≥ 1` for every `n ≥ 1`, so the guard is
+redundant and its removal changes no behaviour (the brief's arm premise is
+wrong; the meaningful probe is the ceiling); B2 `Math.floor(n / 2)` with NO
+guard (`05c49f6e…`) → **RED 3**: the one-spell rank 7 gone, the half rule's
+n = 1 group empty, and the single-spell corpus empty; C all groups flattened to
+one key (`34b9cab5…`) → **RED 2**: rank 1 vanished and the group sizes became
+corpus shares instead of per-group halves; D the dedupe removed (`37968670…`) →
+**RED 1**: the duplicate spelling appears (3 lines where 2 are due); E `ceil` →
+`floor` with the guard kept (`073d7775…`) → **RED 1**: the half-rule sizes 3/5
+come out 1/2. The restored hash after every arm and at the end is
+`f151f5d2…`, byte-identical.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves a live model
+picks a good (or even a legal) two-per-level set from the sample — it proves the
+bytes the model was offered, the count the clause states, and that the
+resolver's permission is untouched; the random sample is exercised through its
+pure function with injected sources, never through a real `Math.random` draw (a
+statistical property is not provable in a unit test); and the recorded trade-off
+(a module-named spell can fall outside the draw) is the owner's choice, not a
+defect this suite can measure.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

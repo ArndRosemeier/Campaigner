@@ -230,20 +230,24 @@ export const MOB_SPELL_SECTION_PREFIX =
 export const MOB_SPELL_SECTION_SUFFIX =
   ". Assign ONLY names from this list of the campaign's imported spells: the app checks every name against the library and reports any spell it cannot find.";
 
-/** The honest truncation note (a slot-free literal pair around the counts). */
-export const MOB_SPELL_TRUNCATION_PREFIX = '(the list is TRUNCATED — showing ';
-export const MOB_SPELL_TRUNCATION_SUFFIX =
-  '; assign only from the names listed above)';
-
 /** The spell repair lead-in: same form as the schema/source repairs. */
 export const MOB_SPELL_REPAIR_LEAD_IN =
   'Your previous reply assigned spells that are not in this campaign\'s imported spell library:';
 
 /**
- * THE caster-awareness clause (docs/17 row 201). Row 200 made every mob lane
- * OFFER the library; this is the other half — the instruction that a creature
- * the module presents as a caster actually comes out as one, so a level-7
- * necromancer is not a mundane smith with a spell list bolted on.
+ * THE caster-awareness clause (docs/17 rows 201 and 211). Row 200 made every
+ * mob lane OFFER the library; this is the other half — the instruction that a
+ * creature the module presents as a caster actually comes out as one, so a
+ * level-7 necromancer is not a mundane smith with a spell list bolted on.
+ *
+ * THE COUNT IS 2 PER LEVEL (docs/17 row 211, owner-directed: *"Instruct to give
+ * casters just 2 spells of each applicable level. We do not need to be
+ * considering how many spells this caster actually would get, a simplified
+ * version is good for easier mastering."*): 2 cantrips, then 2 of each rank up
+ * to the highest it can cast, chosen from the list the vocabulary section
+ * prints. The owner deliberately REPLACED the "casters get the whole list for
+ * their level" reading with this fixed count — it is the simplified shape a GM
+ * can master, not a derivation of the creature's real spell slots.
  *
  * It is ONE literal rendered by ONE composer (`llm/mobSpellPrompt`,
  * `formatMobSpellCasterClause`) through the SAME corpus gate as the vocabulary,
@@ -253,14 +257,15 @@ export const MOB_SPELL_REPAIR_LEAD_IN =
  * invitation and never render it (owner's scope).
  *
  * NO THEME FILTERING (owner: *"Its ok if the model takes spells that just
- * sound necromantic, thats not a problem"*) — the clause tells the model to use
- * its own knowledge of the role, never to filter the imported list by school or
- * theme. The field names it states are the EXACT keys the shared
- * `domain/statblock` schema carries; the numbers themselves are only ever the
- * model's own (a caster that states none is a LOUD render, never a computed DC).
+ * sound necromantic, thats not a problem"*) — the clause tells the model not to
+ * narrow the imported list by school or theme; the random sample already
+ * decides which spells are on offer. The field names it states are the EXACT
+ * keys the shared `domain/statblock` schema carries; the numbers themselves are
+ * only ever the model's own (a caster that states none is a LOUD render, never
+ * a computed DC).
  */
 export const MOB_SPELL_CASTER_CLAUSE =
-  'Caster awareness: when this creature\'s concept, name or intent implies a spellcaster — a wizard, priest, necromancer, druid, witch, shaman or any other spellcasting role — it MUST be given spells: cantrips plus the spells its level allows, chosen for the role from your own knowledge of what that role means (never narrow them by theme or school). A spellcaster also needs a stat block that states its spell save DC ("spellDC"), its spell attack bonus ("spellAttack") and its magical tradition ("tradition") where the system has one — the GM plays the spell from those numbers, and the app never invents them. Never present a spellcaster as a mundane creature.';
+  'Caster awareness: when this creature\'s concept, name or intent implies a spellcaster — a wizard, priest, necromancer, druid, witch, shaman or any other spellcasting role — it MUST be given spells: 2 cantrips, then 2 spells of each rank (spell level) up to the highest it can cast, chosen from the campaign\'s imported spell list (never narrow them by theme or school). A spellcaster also needs a stat block that states its spell save DC ("spellDC"), its spell attack bonus ("spellAttack") and its magical tradition ("tradition") where the system has one — the GM plays the spell from those numbers, and the app never invents them. Never present a spellcaster as a mundane creature.';
 
 /* -------------------------------------------------------------------------
  * The detector
