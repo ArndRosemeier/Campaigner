@@ -7713,3 +7713,22 @@ suite is file-parallel and was leaving half the machine idle); row 94 superseded
 that with the bound above, after a bare unbounded run twice outlived its writer —
 and because jsdom plus PDF/image workers otherwise starve event loops on
 constrained CI/agent VMs.
+
+### The image prompt's grounding cap is ONE owner-set constant (docs/17 row 223)
+
+The 800-character cap the composer had inherited is gone: `IMAGE_PROMPT_GROUNDING_MAX_CHARS = 10_000`
+(`src/llm/imagePromptDraft.ts`) is used by BOTH capped sites — the composed prompt's `Description:` line and
+`portraitGroundingForChunk` — and both pins now assert against the constant, not a literal.
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `caps the stripped description at the ONE owner-raised cap` (`tests/llm/imagePromptDraft.test.ts`) | a body longer than the cap yields exactly `IMAGE_PROMPT_GROUNDING_MAX_CHARS` characters in the prompt | re-hardcoding a smaller number at the slice site |
+| `keeps a grounding shorter than the cap COMPLETE` (same file) | a 1,000-character body is present VERBATIM — the reported regression: it used to lose its last 200 characters | restoring an 800 cap anywhere |
+| `caps the composed grounding deterministically at the ONE owner-raised cap` (same file) | the portrait grounding is pure and exactly the constant long when it overflows | a second cap value, or a non-deterministic build |
+
+Owner decision, verbatim (2026-09-17): *"I never authorized a cap and i would have vehemently opposed such a low
+one. So thats why some details get ignored. Please raise the cap to 10k. Most image models can do much more than
+that."* Unchanged and named in the ledger: the cut is still SILENT when it bites (surfacing it is its own slice),
+the `appearance` shortcut stays uncapped, and the non-image length budgets (`runEngine` persona-context 800 /
+encounter-pool 600, `wikilinks.surroundingParagraphs` 1200) were deliberately NOT touched — they are different
+seams with their own markers.

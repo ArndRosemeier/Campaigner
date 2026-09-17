@@ -747,7 +747,10 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   2026-09-08, owner-ordered):** `portraitGroundingForChunk`
   (`src/llm/imagePromptDraft.ts`) composes the grounding ONLY from stat-free
   material — size + creatureType identity plus the traits / actions /
-  reactions / legendary named-text prose (names + texts), capped at 800 chars.
+  reactions / legendary named-text prose (names + texts), capped at
+  `IMAGE_PROMPT_GROUNDING_MAX_CHARS` — 10,000 characters since docs/17 row 223
+  (the owner raised it: the 800 value was never authorized and silently dropped
+  the tail of long groundings).
   ALL numeric fields stay out by FIELD (level, ac, acNote, hp, hpFormula,
   speed, abilities, saves, skills, senses, languages, extras, system — `level`
   is borderline and deliberately excluded): smart image models RENDER chunk

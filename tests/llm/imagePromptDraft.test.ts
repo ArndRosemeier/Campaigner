@@ -5,6 +5,7 @@ import { markdownToDisplayText } from '@/lib/markdown';
 import {
   assembleImagePrompt,
   buildImagePrompt,
+  IMAGE_PROMPT_GROUNDING_MAX_CHARS,
   IMAGE_TEXT_NEGATIVE,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
@@ -105,19 +106,33 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
     );
   });
 
-  it('caps the stripped description at 800 characters', () => {
+  it('caps the stripped description at the ONE owner-raised cap (docs/17 row 223)', () => {
     const draft = buildImagePrompt(
       {
         name: 'Long',
         kind: 'note',
         summary: '',
-        body: 'x'.repeat(1000),
+        // Longer than the cap, so the cut is what is asserted — and the body a
+        // module cover really passes is not truncated any more (the whole point
+        // of raising it from the never-authorized 800).
+        body: 'x'.repeat(IMAGE_PROMPT_GROUNDING_MAX_CHARS + 1_000),
         data: null,
       },
       { systemLabel: 'D&D 5e' },
     );
     const description = draft.prompt.split('Description: ')[1] ?? '';
-    expect(description).toHaveLength(800);
+    expect(description).toHaveLength(IMAGE_PROMPT_GROUNDING_MAX_CHARS);
+  });
+
+  it('keeps a grounding shorter than the cap COMPLETE — nothing is trimmed at 800 any more', () => {
+    // The regression the owner reported: 1,000 characters used to lose 200 of
+    // its own characters. Measured against the constant, not a literal.
+    const body = 'y'.repeat(1_000);
+    const draft = buildImagePrompt(
+      { name: 'Medium', kind: 'note', summary: '', body, data: null },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(draft.prompt).toContain(body);
   });
 
   it('throws loudly when there is no appearance, summary, or body to ground on', () => {
@@ -214,15 +229,15 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
     expect(portraitGroundingForChunk({ text: RAW_TEXT, statBlock: null })).toBe(RAW_TEXT);
   });
 
-  it('caps the composed grounding deterministically at 800 chars', () => {
+  it('caps the composed grounding deterministically at the ONE owner-raised cap', () => {
     const long = statBlockSchema.parse({
       ...STAT_FIXTURE,
-      traits: [{ name: 'Verbose', text: 'y'.repeat(2000) }],
+      traits: [{ name: 'Verbose', text: 'y'.repeat(IMAGE_PROMPT_GROUNDING_MAX_CHARS + 500) }],
     });
     const first = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: long });
     const second = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: long });
     expect(first).toBe(second);
-    expect(first.length).toBeLessThanOrEqual(800);
+    expect(first.length).toBe(IMAGE_PROMPT_GROUNDING_MAX_CHARS);
   });
 
   it('carries the mob text-render negative into the draft and the Avoid line', () => {

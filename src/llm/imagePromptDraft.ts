@@ -21,6 +21,27 @@ import type { NamedText, StatBlock } from '@/domain/statblock';
  * never routes through this contract).
  */
 
+/**
+ * How much GROUNDING TEXT one image prompt may carry (docs/17 row 223).
+ *
+ * OWNER DECISION, verbatim (2026-09-17): *"I never authorized a cap and i
+ * would have vehemently opposed such a low one. So thats why some details get
+ * ignored. Please raise the cap to 10k. Most image models can do much more
+ * than that."* The 800-character value this replaces was never an owner
+ * decision — it was written into the composer and into two pins as a
+ * convention — and it silently dropped the tail of every long body, which is
+ * why details went missing from module covers (whose grounding is the whole
+ * document text) and from long-bodied entities with no `appearance`.
+ *
+ * ONE constant, used by BOTH capped sites below (`buildImagePrompt`'s
+ * `Description:` line and `portraitGroundingForChunk`), so the two can never
+ * drift apart again. The cut is still silent when it bites — a 10k grounding
+ * is far beyond any image model's useful attention, so it should not bite in
+ * practice; if it ever does, surfacing the truncation is its own slice, not a
+ * reason to trim here.
+ */
+export const IMAGE_PROMPT_GROUNDING_MAX_CHARS = 10_000;
+
 /** The final image-API prompt: draft prompt + style notes + avoid list. */
 export function assembleImagePrompt(draft: ImagePromptDraft): string {
   return [
@@ -102,8 +123,10 @@ export interface PortraitGroundingChunk {
  *   `speed` dice like "darkvision 60 ft.") carry digits by nature, so the
  *   rule excludes them by FIELD, not by digit-sniffing the prose.
  *
- * Capped deterministically at 800 chars (the `buildImagePrompt` convention).
- * Pure: same chunk → same grounding.
+ * Capped deterministically at `IMAGE_PROMPT_GROUNDING_MAX_CHARS` (the ONE
+ * constant this file exports, docs/17 row 223 — the owner raised it from 800
+ * to 10,000 on 2026-09-17 because the old value silently dropped the tail of
+ * long groundings). Pure: same chunk → same grounding.
  *
  * RESIDUAL RENDER RISK (loud, not silent): when `statBlock` is null
  * (unparsed chunks) there is no stat-free material to compose, so this
@@ -135,7 +158,7 @@ export function portraitGroundingForChunk(chunk: PortraitGroundingChunk): string
       `${group.label}: ${group.entries.map((entry) => `${entry.name}: ${entry.text}`).join('; ')}`,
     );
   }
-  return parts.join('\n').slice(0, 800);
+  return parts.join('\n').slice(0, IMAGE_PROMPT_GROUNDING_MAX_CHARS);
 }
 
 /**
@@ -168,7 +191,7 @@ export function buildImagePrompt(
   const summary = target.summary.trim();
   // The body is markdown (artifact content): strip the syntax so the image
   // API receives prose, and cap it deterministically (the drafted
-  // instruction grounded on ≤800 chars too).
+  // instruction grounded on the SAME cap too).
   //
   // DELIBERATELY `markdownToText`, not `markdownToDisplayText` (docs/17 row
   // 105): this is a MODEL PROMPT, not a rendering — nothing here is read by
@@ -186,7 +209,7 @@ export function buildImagePrompt(
   const prompt = [
     `A ${opts.systemLabel} illustration of ${target.name} (${target.kind}).`,
     summary === '' ? null : `Summary: ${summary}`,
-    description === '' ? null : `Description: ${description.slice(0, 800)}`,
+    description === '' ? null : `Description: ${description.slice(0, IMAGE_PROMPT_GROUNDING_MAX_CHARS)}`,
     opts.extraInstruction === undefined || opts.extraInstruction === ''
       ? null
       : opts.extraInstruction,
