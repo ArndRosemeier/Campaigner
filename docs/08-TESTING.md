@@ -6479,6 +6479,58 @@ test can prove the school is the axis a player would want (class lists are not
 in these documents at all, and inventing them was refused); and no test proves
 the rendering reads well to a person — it proves the bytes.
 
+### A resolved mob spell chip opens the spell's description (docs/17 row 216, docs/11 §Mob spells, docs/18 §2.3)
+
+The owner reported that a caster's spell chips were not clickable. The chips now
+open the spell's description through the app's ONE detail renderer — no second
+detail component, no navigation away from the stat block, and no second corpus
+read:
+
+- `tests/features/mob-spell-chips.test.tsx` (EXTENDED; jsdom): the pins through
+  the EXISTING `StatBlockCard`/`SpellChip`/Dexie harness (the shared `seedSpells`
+  helper gains an optional per-spell `text`, so a description fragment is
+  distinctive). (1) clicking a RESOLVED chip opens `mob-spell-dialog`, whose
+  `spell-card` shows the spell's name, the SEEDED chunk's stored description and
+  a cast fact (Fireball's `500 feet`); (2) Escape AND the close control both
+  dismiss it, and the chip is still there; (3) clicking an UNRESOLVED chip opens
+  NOTHING — asserted as ABSENCE of `mob-spell-dialog` and `spell-card`, with the
+  resolved sibling opening the same dialog as NON-VACUITY; (4) the resolved
+  chip's `title` EQUALS `mobSpellChipDetail`'s bytes for the same chip resolved
+  through `mobSpellChips`/`mobSpellIndex` (a DIFFERENTIAL against the ONE
+  composer), and both testids plus `data-spell-unresolved` are unchanged;
+  (5) a mob storing `fireball` against a library `Fireball` opens the LIBRARY
+  spell's card and its description — a lookup by the raw stored name reds — and
+  (6) the existing dnd5e block opens the 5e Fire Bolt card through the SAME
+  path, printing the 5e payload's own `Cantrip`/`Evocation` wording.
+- `tests/architecture/one-spell-card.test.ts` (NEW; node — the
+  `tests/architecture/**` glob is already in `nodeTestGlobs`): the
+  EXACTLY-ONE-DETAIL-RENDERER source scan. The `spell-card` testid is declared
+  in exactly `src/features/spells/spell-card.tsx`, and `SpellCard` is imported
+  by exactly the TWO declared hosts — `SpellsPage.tsx` (the list's pane) and
+  `mob-spell-chips.tsx` (the chip's dialog). A second detail view that claims
+  the testid, or a THIRD host, reds by file; the walk is Node's recursive
+  `readdirSync` with the counting INLINE, so no named helper body is added to
+  the tripwire's test-tree inventory (docs/17 row 212).
+
+**Injected RED, watched (raw logs kept; every arm's `git hash-object` printed,
+each restored from HEAD by a `trap`):** the baseline arm (hash
+`1eb7165ceb98c509386f6292bf0f52731c3f26d3`) ran 16 passed. Making the chip click
+a no-op (hash `81bae019597783c03a8373b0582caa3edfd85d5f`) reds pins 1, 2, 3, 5
+and 6 (5 failed / 11 passed). Giving the UNRESOLVED chip the same dialog (hash
+`f3bd4d0eb8d6ccac375ec7df0e20bee8ea5d99c6`) reds pin 3 ALONE (1 failed / 15
+passed). Passing the description as `''` (hash
+`dd4bb6a1c704cc10485221be9a7412857cd9ab62`) reds the three description
+assertions — pin 1's `Expected element to have text content: A roaring blast of
+fire detonates at the spot you designate.` beside the card's real `Received`
+text, with pins 5 and 6 — so the pin reaches the CHUNK TEXT, not merely the
+payload. The restored hash equals the baseline hash, and no arm is VOID (all
+four hashes differ). **WHAT THESE PINS DO NOT PROVE:** no test proves the
+dialog reads well to a person (it proves the bytes and the dismissal); the
+description a real library carries is the ingest lane's output, proven in its
+own lane, not here; and the source scan catches a second HOST or a second
+`spell-card` testid owner, not a paraphrased second renderer under a new testid
+(the source scan is a tripwire, not a proof).
+
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 
 The owner asked for a picker for the global first-try chat model ("the picker

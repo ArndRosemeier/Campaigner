@@ -313,6 +313,23 @@ inside `statBoxContent` (the ONE box both exporters share) and
 `lib/pdfExport.statBlockSection`; a `buildModulePdfDocument` caller with no
 corpus prints a loud "resolved none" line rather than dropping the spells.
 
+**A resolved chip opens the spell's description (docs/17 row 216).** The owner
+reported the chips were not clickable: *"the spell chips are not clickable, they
+do not open the spell description."* Clicking a RESOLVED chip now opens that
+spell's card in the shared `components/ui/dialog`, rendered by the SAME
+`features/spells/spell-card.SpellCard` the Spells page's pane uses — the chunk's
+stored `text` from the SAME `db/spellRepo.loadSpellChunksFor` read the chips
+already make, joined by the RESOLVED library name (`MobSpellChip.libraryName`),
+so a stored name that resolves to a differently-spelled library name
+(`fireball` → `Fireball`) shows the LIBRARY spell, with no second query and no
+second detail renderer. An UNRESOLVED chip opens NOTHING — the name resolved to
+no library entry, so there is no description to show and none is invented
+(AGENTS rule 1) — and stays the dashed muted token with its existing tooltip.
+The dialog lives inside `MobSpellChips` (never at a `StatBlockCard` call site),
+so the ONE stat-block card reaches every surface at once, and its label
+(`DialogTitle` with the spell's name), Escape and close control are the dialog
+primitive's own.
+
 **The LIBRARY half is LANDED for BOTH systems (docs/17 rows 189/191 for PF2e,
 row 194 for dnd5e).** What a LIBRARY creature's own stat block prints when it
 carries spells (the "standard mobs" half of the owner's request) is no longer a

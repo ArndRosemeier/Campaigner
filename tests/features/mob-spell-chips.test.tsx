@@ -3,12 +3,16 @@ import 'fake-indexeddb/auto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import {
+  mobSpellChipDetail,
+  mobSpellChips,
+  mobSpellIndex,
   ruleChunkSchema,
   spellDataSchema,
   stampNewEntity,
@@ -53,7 +57,7 @@ async function realSpell(file: string, packRelative: string): Promise<SpellData>
 
 let seq = 0;
 async function seedSpells(
-  spells: readonly { name: string; data: SpellData }[],
+  spells: readonly { name: string; data: SpellData; text?: string }[],
   system: 'pathfinder2e' | 'dnd5e' = 'pathfinder2e',
 ): Promise<Id> {
   const book = await createPackBook({
@@ -77,7 +81,7 @@ async function seedSpells(
       pageEnd: 1,
       chunkType: 'spell',
       headingPath: ['Spells', spell.name],
-      text: `${spell.name}\nSource: Pathfinder Player Core (ORC)`,
+      text: spell.text ?? `${spell.name}\nSource: Pathfinder Player Core (ORC)`,
       statBlock: null,
       contentHash: 'c'.repeat(63) + String(seq % 10),
       spellData: spell.data,
@@ -344,6 +348,200 @@ describe('a mob stat block renders its spells as chips (docs/17 row 184)', () =>
 });
 
 /**
+ * A resolved mob spell chip OPENS THE SPELL'S DESCRIPTION (docs/17 row 216).
+ *
+ * The owner's report, verbatim: *"When i open the card of that caster, the
+ * spell chips are not clickable, they do not open the spell description."* The
+ * destination is the app's OWN `features/spells/spell-card.SpellCard` — the ONE
+ * spell-detail renderer the Spells page already mounts — inside the shared
+ * `components/ui/dialog`. The description is the chunk's stored `text` from the
+ * SAME corpus read the chips already make, joined by the RESOLVED library name
+ * (`MobSpellChip.libraryName`), never a second query and never a lookup by the
+ * raw stored spelling.
+ */
+describe('a resolved mob spell chip opens the spell description (docs/17 row 216)', () => {
+  it('opens the ONE SpellCard in a dialog with the name, the stored description and a cast fact', async () => {
+    const user = userEvent.setup();
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    await seedSpells([
+      {
+        name: 'Fireball',
+        data: fireball,
+        text: 'Fireball\nA roaring blast of fire detonates at the spot you designate.\nSource: Pathfinder Player Core (ORC)',
+      },
+    ]);
+
+    render(
+      <StatBlockCard
+        name="Grix"
+        statBlock={block({ spells: [{ name: 'Fireball', castRank: 5 }] })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const chip = await within(section).findByTestId('spell-chip');
+    // Nothing is open until the chip is clicked.
+    expect(screen.queryByTestId('mob-spell-dialog')).not.toBeInTheDocument();
+
+    await user.click(chip);
+
+    const dialog = await screen.findByTestId('mob-spell-dialog');
+    // THE one detail renderer's own testid: the mount assertion reds if the
+    // dialog ships a heading and a second hand-rolled body instead.
+    const card = within(dialog).getByTestId('spell-card');
+    expect(card).toHaveTextContent('Fireball');
+    // The chunk's STORED description, not a heading with no body.
+    expect(card).toHaveTextContent('A roaring blast of fire detonates at the spot you designate.');
+    // A cast fact from the validated payload (Fireball's own range).
+    expect(card).toHaveTextContent('500 feet');
+    // The dialog is labelled with the spell's name.
+    expect(dialog).toHaveTextContent('Fireball');
+  });
+
+  it('closes on Escape and via its close control, and the chip survives both', async () => {
+    const user = userEvent.setup();
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    await seedSpells([{ name: 'Fireball', data: fireball }]);
+
+    render(
+      <StatBlockCard
+        name="Grix"
+        statBlock={block({ spells: [{ name: 'Fireball', castRank: 5 }] })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const chip = await within(section).findByTestId('spell-chip');
+
+    await user.click(chip);
+    await screen.findByTestId('mob-spell-dialog');
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByTestId('mob-spell-dialog')).not.toBeInTheDocument();
+    });
+
+    await user.click(chip);
+    await screen.findByTestId('mob-spell-dialog');
+    // The dialog primitive's OWN close control — not a hand-rolled one.
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('mob-spell-dialog')).not.toBeInTheDocument();
+    });
+
+    // The chip is untouched by the dialog's life cycle.
+    const after = within(section).getByTestId('spell-chip');
+    expect(after).toHaveTextContent('Fireball');
+    expect(after).toHaveAttribute('data-spell-name', 'Fireball');
+  });
+
+  it('leaves an UNRESOLVED chip inert — no dialog is opened', async () => {
+    const user = userEvent.setup();
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    await seedSpells([{ name: 'Fireball', data: fireball }]);
+
+    render(
+      <StatBlockCard
+        name="Grix"
+        statBlock={block({
+          spells: [
+            { name: 'Fireball', castRank: 5 },
+            { name: 'Flameball', castRank: 3 },
+          ],
+        })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const resolvedChip = await within(section).findByTestId('spell-chip');
+    const unresolved = within(section).getByTestId('spell-chip-unresolved');
+    // The unresolved chip keeps its name visible and its dashed state — there
+    // is no library entry, so there is no description to open and none is
+    // invented (AGENTS rule 1).
+    expect(unresolved).toHaveTextContent('Flameball');
+
+    await user.click(unresolved);
+    expect(screen.queryByTestId('mob-spell-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('spell-card')).not.toBeInTheDocument();
+
+    // NON-VACUITY: the absence above is the unresolved chip's own — the
+    // resolved sibling opens the SAME dialog through the same host.
+    await user.click(resolvedChip);
+    expect(await screen.findByTestId('mob-spell-dialog')).toBeInTheDocument();
+  });
+
+  it('keeps the chip contract byte-identical: the shared detail bytes and both testids', async () => {
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    await seedSpells([{ name: 'Fireball', data: fireball }]);
+
+    render(
+      <StatBlockCard
+        name="Grix"
+        statBlock={block({
+          spells: [
+            { name: 'Fireball', castRank: 5 },
+            { name: 'Flameball' },
+          ],
+        })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const resolvedChip = await within(section).findByTestId('spell-chip');
+    const expected = mobSpellChips(
+      [{ name: 'Fireball', castRank: 5 }],
+      5,
+      mobSpellIndex([{ name: 'Fireball', spellData: fireball }]),
+    )[0];
+    if (expected === undefined) throw new Error('the Fireball assignment did not resolve');
+
+    // The tooltip IS `mobSpellChipDetail`'s bytes — the chip's title and the
+    // PDF's printed line cannot drift.
+    expect(resolvedChip.getAttribute('title')).toBe(mobSpellChipDetail(expected));
+    expect(resolvedChip).toHaveAttribute('data-testid', 'spell-chip');
+    expect(resolvedChip).toHaveAttribute('data-spell-name', 'Fireball');
+
+    const unresolved = within(section).getByTestId('spell-chip-unresolved');
+    expect(unresolved).toHaveAttribute('data-testid', 'spell-chip-unresolved');
+    expect(unresolved).toHaveAttribute('data-spell-unresolved', 'Flameball');
+    expect(unresolved).toHaveAttribute('data-spell-name', 'Flameball');
+  });
+
+  it('shows the LIBRARY spell when the stored name resolves to a differently-spelled library name', async () => {
+    const user = userEvent.setup();
+    const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
+    await seedSpells([
+      {
+        name: 'Fireball',
+        data: fireball,
+        text: 'Fireball\nTHE LIBRARY COPY of the fireball.\nSource: Pathfinder Player Core (ORC)',
+      },
+    ]);
+
+    render(
+      <StatBlockCard
+        name="Grix"
+        statBlock={block({ spells: [{ name: 'fireball', castRank: 3 }] })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const chip = await within(section).findByTestId('spell-chip');
+    // The chip shows the LIBRARY's spelling and keeps the stored one in its hook.
+    expect(chip).toHaveTextContent('Fireball');
+    expect(chip).toHaveAttribute('data-spell-name', 'fireball');
+
+    await user.click(chip);
+
+    const dialog = await screen.findByTestId('mob-spell-dialog');
+    const card = within(dialog).getByTestId('spell-card');
+    // A lookup by the RAW stored name ('fireball') finds no chunk and would
+    // show nothing; the RESOLVED library name finds the real spell.
+    expect(card).toHaveTextContent('Fireball');
+    expect(card).toHaveTextContent('THE LIBRARY COPY of the fireball.');
+  });
+});
+
+/**
  * The dnd5e library-mob half (docs/17 row 194). The CREATURE fixture is a real
  * carve of the upstream `6.0.x` Mage (two embedded spell items at levels 0 and
  * 3 — see its header comment), and the library spells are the REAL Fire Bolt
@@ -460,5 +658,42 @@ describe('a dnd5e library creature renders its OWN spells as chips (row 194)', (
     render(<StatBlockCard name="Cult Mage" statBlock={dnd5eBlock()} />);
     expect(await screen.findByText('Level 9')).toBeInTheDocument();
     expect(screen.queryByTestId('mob-spells')).not.toBeInTheDocument();
+  });
+
+  it('opens the 5e spell\'s card through the SAME chip dialog (docs/17 row 216)', async () => {
+    const user = userEvent.setup();
+    const fireBolt = await realDnd5eSpell('spells/cantrip-fire-bolt.yml', 'spells/cantrip/fire-bolt.yml');
+    await seedSpells(
+      [
+        {
+          name: 'Fire Bolt',
+          data: fireBolt,
+          text: 'Fire Bolt\nYou hurl a mote of fire at a creature or object.\nSource: SRD 5.1 (CC-BY-4.0)',
+        },
+      ],
+      'dnd5e',
+    );
+
+    render(
+      <StatBlockCard
+        name="Cult Mage"
+        statBlock={dnd5eBlock({
+          spells: [{ name: 'Fire Bolt', casterLevel: 9, characterLevel: 9 }],
+        })}
+      />,
+    );
+
+    const section = await screen.findByTestId('mob-spells');
+    const chip = await within(section).findByTestId('spell-chip');
+    await user.click(chip);
+
+    const dialog = await screen.findByTestId('mob-spell-dialog');
+    const card = within(dialog).getByTestId('spell-card');
+    expect(card).toHaveTextContent('Fire Bolt');
+    expect(card).toHaveTextContent('You hurl a mote of fire at a creature or object.');
+    // The 5e payload's OWN wording through the SAME renderer: a cantrip and
+    // its school — never the PF2e rank noun.
+    expect(card).toHaveTextContent('Cantrip');
+    expect(card).toHaveTextContent('Evocation');
   });
 });
