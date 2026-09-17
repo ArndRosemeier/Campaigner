@@ -2532,7 +2532,14 @@ owner-ratified principle is **WHO HOLDS GROUND TRUTH**:
   the keep-walls/openings/structure clause. KEPT verbatim: the usability
   hard-bans (no title/legend/grid/text/characters/tokens; no white or pale
   boxes/rectangles/plaques/discs/signposts) — they are the anti-hallucination
-  floor, not a style opinion. The entrance clause softens to "a visible
+  floor, not a style opinion. **OWNER DECISION, 2026-09-17, verbatim: "Battlemaps
+  do not need text, so that restriction can stay."** The question came from row
+  224's reversal of the SHARED image guard (which now allows requested text in
+  illustrations, handouts, covers and entity images); the battlemap's OWN
+  hard-ban is a different rule and it STANDS — a legend on an encounter map
+  stays impossible, deliberately, because label-like geometry painted pale
+  rectangles over the terrain (the failure D17 exists for). A requested
+  legend belongs on an illustration or a handout, not on the battlemap. The entrance clause softens to "a visible
   approach path at the marked spot"; the marker mechanics (one triangle,
   canonical hue, keep it) are unchanged.
 - **Brief prompt**: the Cartographer's reply contract already lists
