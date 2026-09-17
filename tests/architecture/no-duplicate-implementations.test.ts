@@ -29,8 +29,12 @@
  * themselves — because a copy-pasted helper or factory in a test is exactly the
  * same defect one layer up. The exclusion and the scope are stated in the tests
  * inventory's own header and pinned as data, never left silent (docs/17 row
- * 212); the union scan carries the SAME exclusion for the same reason, or the
- * fixture goldens flood its cross-tree population (measured, docs/17 row 215).
+ * 212); the union scan carries the SAME exclusion. It is a FORWARD GUARD rather
+ * than a load-bearing one at HEAD, and that is MEASURED rather than assumed:
+ * `tests/fixtures/` holds ZERO `.ts`/`.tsx` files today (67 data files), so the
+ * union population is byte-identical with and without the exclusion (docs/17
+ * row 215; docs/08-TESTING records the arm). It exists so that a fixture which
+ * IS TypeScript cannot flood the population later.
  *
  * WHAT IT EXTRACTS. NAMED functions/methods only, through the TypeScript
  * compiler API (`node.getText()`/the scanner are used for correctness — a
