@@ -15,10 +15,13 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "board.sh: not insid
 BOARD="${BOARD:-docs/20-ORCHESTRATION.md}"
 [ -f "$BOARD" ] || { echo "board.sh: BOARD MISSING — $BOARD"; exit 2; }
 
-# The suite lock the gate takes. It lives on a SHARED path (the repo), never
-# /tmp: /tmp is a per-call, read-only tmpfs in this harness, so a /tmp lock
-# cannot exclude a second gate at all.
-LOCK="${GATE_LOCK:-$PWD/.gate-lock}"
+# The suite lock the gate takes. It must resolve to the SAME path from every
+# shell and every worktree: /tmp is a per-call, read-only tmpfs in this harness,
+# and `$PWD/...` would differ per worktree. The git common dir is the one path
+# identical in both — same derivation as gate.sh.
+_common="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)"
+case "$_common" in /*) ;; *) _common="$PWD/$_common" ;; esac
+LOCK="${GATE_LOCK:-$(dirname "$_common")/.campaigner-lock}"
 stale=0
 note() { printf '  !! %s\n' "$1"; stale=1; }
 field() { printf '%s\n' "$1" | grep -o "$2=[^ |]*" | head -1 | cut -d= -f2-; }

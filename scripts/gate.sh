@@ -62,8 +62,9 @@
 #      build-config diff), GATE_DIFF_BASE (default origin/main),
 #      GATE_LOGDIR (default <repo>/.gate-logs/gate-<pid> — IN THE WORKSPACE, so a
 #      background run's evidence outlives the process; /tmp is per-call here),
-#      GATE_LOCK (default <repo>/.gate-lock — the ONE suite lock, on a SHARED
-#      path; a /tmp lock is invisible across calls in this harness)
+#      GATE_LOCK (default <workspace>/.campaigner-lock — the ONE suite lock, on a
+#      path shared by every shell AND every worktree, derived from the git common
+#      dir; a /tmp lock is invisible across calls in this harness)
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -71,12 +72,18 @@ TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
 LOGDIR="${GATE_LOGDIR:-$PWD/.gate-logs/gate-$$}"
-# The lock MUST be on a path shared by every shell. In this harness /tmp is a
-# per-call, read-only tmpfs (`mount` shows `tmpfs on /tmp ... (ro)` from the
-# second call on), so a /tmp lock is not merely non-atomic — it is invisible, and
-# two gates started from two shells would both believe they held it. The repo
-# worktree is the shared location; GATE_LOCK overrides.
-LOCK="${GATE_LOCK:-$PWD/.gate-lock}"
+# The lock MUST be on a path shared by every shell AND every worktree, and it
+# must be derivable identically from the main tree and from a worktree.
+#   * /tmp is out: per-call and read-only in this harness.
+#   * $PWD is out: each worktree would get its own lock.
+# `git rev-parse --git-common-dir` is the ONE path identical in both (the main
+# tree's .git), so resolve it to an absolute path and take its parent — the repo
+# root — giving <repo>/.campaigner-lock everywhere. GATE_LOCK overrides.
+_common="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)"
+case "$_common" in /*) ;; *) _common="$PWD/$_common" ;; esac
+LOCK_BASE="$(dirname "$_common")"
+[ -d "$LOCK_BASE" ] || LOCK_BASE="$PWD"
+LOCK="${GATE_LOCK:-$LOCK_BASE/.campaigner-lock}"
 DIFF_BASE="${GATE_DIFF_BASE:-origin/main}"
 PARALLEL_REQUESTED="${GATE_PARALLEL_CHUNKS:-2}"
 case "$PARALLEL_REQUESTED" in

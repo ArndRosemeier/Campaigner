@@ -7,7 +7,10 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'coverage', 'node_modules', '.pnpm-home'],
+    // `worktrees` holds writers' git worktrees (in-repo because /tmp is a
+    // per-call read-only tmpfs here and the workspace parent is read-only); an
+    // unignored one would be swept into the main tree's lint run.
+    ignores: ['dist', 'coverage', 'node_modules', '.pnpm-home', 'worktrees'],
   },
 
   // Plain JS files (project tooling) — no type information available.

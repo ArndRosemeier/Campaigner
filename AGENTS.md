@@ -280,19 +280,31 @@ used:
    report instead of resolving.
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
-5. **Worktree setup (verified recipe).** Put the worktree under `/tmp`,
-   never inside the repo: an in-repo worktree gets swept into the main
-   tree's `eslint .` run and corrupts the other writer's gate. Symlinking
-   the main tree's `node_modules` does NOT work — 28 test files fail with
-   `Denied ID …/pdfjs-dist/legacy/build/pdf.worker.mjs?url` from Vite's
-   `server.fs.allow` while lint and typecheck still pass, so it reads as a
-   real regression. `pnpm install --offline` fails with
-   `ERR_PNPM_NO_OFFLINE_META`; a plain `pnpm install --frozen-lockfile`
-   succeeds in seconds from the local pnpm store.
+5. **Worktree setup (verified recipe — REWRITTEN 2026-09-17 for this harness).**
+   Put the worktree INSIDE the repo, under `<repo>/worktrees/<slice>`. The old
+   `/tmp/<slice>` recipe is IMPOSSIBLE here and was measured to be: `/tmp` is a
+   per-call, READ-ONLY tmpfs (`mount` from a second bash call shows
+   `tmpfs on /tmp ... (ro)`), so a worktree created in one call does not exist for
+   the next — a writer following the old recipe would edit the MAIN tree and
+   destroy the parallel-writer guarantee. Outside-the-repo is impossible too: the
+   workspace's PARENT is read-only. In-repo is the only writable location, so
+   `eslint.config.js` ignores `worktrees` (an unignored in-repo worktree would be
+   swept into the main tree's `eslint .` run — the hazard the old warning named,
+   now handled at the source instead of by moving the worktree). `worktrees/` is
+   gitignored, so the main tree stays clean. Symlinking the main tree's
+   `node_modules` still does NOT work — 28 test files fail with `Denied ID
+   …/pdfjs-dist/legacy/build/pdf.worker.mjs?url` from Vite's `server.fs.allow`
+   while lint and typecheck still pass, so it reads as a real regression.
+   `pnpm install --offline` fails with `ERR_PNPM_NO_OFFLINE_META`; a plain
+   `pnpm install --frozen-lockfile` succeeds in seconds from the local pnpm
+   store. The gate and the suite lock both resolve correctly from inside a
+   worktree (verified: `git rev-parse --git-common-dir` is the SAME absolute path
+   from the main tree and from a worktree, which is what makes the lock one lock
+   across writers — see the lock derivation in `scripts/gate.sh`).
 6. **A worktree instruction is not self-enforcing (real incident).** Every
    bash call runs in a fresh shell whose working directory is the session
    workspace, and the file tools resolve RELATIVE paths against that same
-   workspace — so a writer told to work in `/tmp/<worktree>` edits the MAIN
+   workspace — so a writer told to work in `<repo>/worktrees/<slice>` edits the MAIN
    tree unless every call passes an absolute path (or `workdir`). A writer's
    six-file slice landed in the main tree while its own worktree sat clean
    and commitless, and the other writer's gates kept failing on half-finished
