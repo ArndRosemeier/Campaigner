@@ -224,6 +224,106 @@ describe('shared text-render guard', () => {
   });
 });
 
+/**
+ * ONE classic-stylize capture harness for BOTH mode contracts (docs/11 D17).
+ * It runs a full Cartographer classic pipeline (brief → layout → schematic →
+ * stylize) to the `pick` pause and returns the prompt the stylize step actually
+ * handed `encounterRunAdapters.generateImages`. The only fixture fields the two
+ * mode pins vary are the brief's `environment` and its prose, because on a
+ * fresh run (no `target` ⇒ no owner `mapMode` override, no persisted
+ * `locationKind`) `resolveEncounterMapMode` derives the mode from
+ * `environment` alone: `'outdoor'` ⇒ natural, `'dungeon'` (the schema default)
+ * ⇒ architectural. Extracted from the original architectural-only capture so
+ * the two branches share one setup and cannot drift (AGENTS §Centralization).
+ */
+async function captureClassicStylizePrompt(brief: {
+  environment: 'dungeon' | 'outdoor';
+  theme: string;
+  terrain: string;
+  summary: string;
+  styleNotes: string;
+}): Promise<string> {
+  const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
+  const cartographer = createPersona({
+    slug: 'encounter-cartographer-guard',
+    name: 'Encounter Cartographer',
+    description: '',
+    systemPrompt: 'Return encounter JSON.',
+    mode: 'encounter',
+    producesKind: 'encounter',
+    builtIn: true,
+  });
+  const { db } = await import('@/db');
+  await db.personas.put(cartographer);
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  // The brief carries NO negative (empty string): the stylize step must still
+  // guard — only an explicit custom list overrides. (A custom brief negative is
+  // pinned by the existing cartographer contract tests.)
+  chatMock.mockResolvedValueOnce({
+    text: JSON.stringify({
+      name: 'Ash Gate Ambush',
+      summary: brief.summary,
+      body: '# Ash Gate\nA room-by-room battle.',
+      difficulty: 'hard',
+      levelHint: '4',
+      terrain: brief.terrain,
+      tactics: 'fall back through the gate',
+      treasure: 'obsidian key',
+      theme: brief.theme,
+      styleNotes: brief.styleNotes,
+      negative: '',
+      environment: brief.environment,
+      monsters: [
+        {
+          name: 'Ash Cultist',
+          count: 2,
+          notes: '',
+          treasure: 'Robes: 2 gp',
+          statBlock: {
+            system: 'dnd5e', level: '1', size: 'Medium', creatureType: 'humanoid', ac: 12,
+            acNote: '', hp: 7, hpFormula: '2d6', speed: '30 ft.',
+            abilities: { str: 10, dex: 12, con: 10, int: 10, wis: 10, cha: 10 },
+            saves: '', skills: '', senses: '', languages: '', traits: [], actions: [], reactions: [], legendary: [], extras: {},
+          },
+        },
+      ],
+      rooms: [
+        { name: 'Entry', description: 'Broken doors', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
+      ],
+      entryRoomIndex: 0,
+    }),
+    modelUsed: 'test-model',
+    fallback: null,
+  });
+  const runInput: StartRunInput = {
+    campaign,
+    persona: cartographer,
+    autonomy: 'manual',
+    brief: 'A temple gate encounter',
+    pinnedChunkIds: [],
+    encounterMapAspect: '4:3',
+  };
+  const runId = await runEngine.startRun(runInput);
+  await waitFor(
+    async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+      expect(run?.steps.at(-1)?.name).toBe('brief');
+    },
+    { timeout: 15000 },
+  );
+  await runEngine.approve(runId, runInput);
+  await waitFor(
+    async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+      expect(run?.steps.at(-1)?.name).toBe('pick');
+    },
+    { timeout: 15000 },
+  );
+  return vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+}
+
 describe('guarded caller families (prompt capture)', () => {
   it('covers carry the Avoid list in the final assembled prompt', async () => {
     const campaign = await createCampaign({ name: 'Ember', description: 'A city of ash and bells.', system: 'dnd5e' });
@@ -314,85 +414,14 @@ describe('guarded caller families (prompt capture)', () => {
     expect(finalPrompt).toContain('speech bubbles');
   });
 
-  it('classic stylize falls back to the guard when the brief wrote no negative', async () => {
-    const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
-    const cartographer = createPersona({
-      slug: 'encounter-cartographer-guard',
-      name: 'Encounter Cartographer',
-      description: '',
-      systemPrompt: 'Return encounter JSON.',
-      mode: 'encounter',
-      producesKind: 'encounter',
-      builtIn: true,
+  it('classic stylize (architectural) falls back to the guard when the brief wrote no negative', async () => {
+    const prompt = await captureClassicStylizePrompt({
+      environment: 'dungeon',
+      theme: 'ash-choked temple',
+      terrain: 'broken pillars',
+      summary: 'Cultists guard a ruined gate.',
+      styleNotes: 'inked fantasy map, volcanic stone',
     });
-    const { db } = await import('@/db');
-    await db.personas.put(cartographer);
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
-    // The brief carries NO negative (empty string): the stylize step must
-    // still guard — only an explicit custom list overrides. (A custom brief
-    // negative is pinned by the existing cartographer contract tests.)
-    chatMock.mockResolvedValueOnce({
-      text: JSON.stringify({
-        name: 'Ash Gate Ambush',
-        summary: 'Cultists guard a ruined gate.',
-        body: '# Ash Gate\nA room-by-room battle.',
-        difficulty: 'hard',
-        levelHint: '4',
-        terrain: 'broken pillars',
-        tactics: 'fall back through the gate',
-        treasure: 'obsidian key',
-        theme: 'ash-choked temple',
-        styleNotes: 'inked fantasy map, volcanic stone',
-        negative: '',
-        monsters: [
-          {
-            name: 'Ash Cultist',
-            count: 2,
-            notes: '',
-            treasure: 'Robes: 2 gp',
-            statBlock: {
-              system: 'dnd5e', level: '1', size: 'Medium', creatureType: 'humanoid', ac: 12,
-              acNote: '', hp: 7, hpFormula: '2d6', speed: '30 ft.',
-              abilities: { str: 10, dex: 12, con: 10, int: 10, wis: 10, cha: 10 },
-              saves: '', skills: '', senses: '', languages: '', traits: [], actions: [], reactions: [], legendary: [], extras: {},
-            },
-          },
-        ],
-        rooms: [
-          { name: 'Entry', description: 'Broken doors', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
-        ],
-        entryRoomIndex: 0,
-      }),
-      modelUsed: 'test-model',
-      fallback: null,
-    });
-    const runInput: StartRunInput = {
-      campaign,
-      persona: cartographer,
-      autonomy: 'manual',
-      brief: 'A temple gate encounter',
-      pinnedChunkIds: [],
-      encounterMapAspect: '4:3',
-    };
-    const runId = await runEngine.startRun(runInput);
-    await waitFor(
-      async () => {
-        const run = await getRun(runId);
-        expect(run?.status).toBe('awaiting_user');
-        expect(run?.steps.at(-1)?.name).toBe('brief');
-      },
-      { timeout: 15000 },
-    );
-    await runEngine.approve(runId, runInput);
-    await waitFor(
-      async () => {
-        const run = await getRun(runId);
-        expect(run?.status).toBe('awaiting_user');
-        expect(run?.steps.at(-1)?.name).toBe('pick');
-      },
-      { timeout: 15000 },
-    );
-    const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
     expect(prompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
     expect(prompt).toContain('speech bubbles');
     // The owner's text budget (docs/17 row 224) rides the classic battlemap
@@ -402,6 +431,57 @@ describe('guarded caller families (prompt capture)', () => {
     expect(prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
     expect(prompt).toContain('no map legend, no scale bar');
     expect(prompt).toContain('no text labels');
+    // The architectural contract proper: the materials line and the
+    // keep-structure clause are what make the layout ground truth.
+    expect(prompt).toContain('Environment materials: desaturated stone, wood, dirt.');
+    expect(prompt).toContain('Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.');
+    expect(prompt).not.toContain('the reference image only marks placement');
+  });
+
+  /**
+   * docs/17 row 225 — the NATURAL-site arm of the classic-stylize template is
+   * DRIVEN, not assumed. Verifying row 224, removing
+   * `IMAGE_TEXT_SPARING_CLAUSE` from the `natural ? [...]` arm alone
+   * (`runEngine.ts` hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`) left every
+   * focused guard/draft test GREEN, because the architectural capture above was
+   * the only one that reached the template. This pin flips the SAME harness to
+   * `environment: 'outdoor'` — the one mode signal a fresh run derives from —
+   * and asserts the composed prompt the engine actually hands the image model.
+   */
+  it('classic stylize (natural site) carries the sparing clause and its own prose contract, and never the architectural clauses', async () => {
+    const prompt = await captureClassicStylizePrompt({
+      environment: 'outdoor',
+      theme: 'moonlit pinewood',
+      terrain: 'forest clearing',
+      summary: 'Bandits ambush the trade road through the pines.',
+      styleNotes: 'inked fantasy map, moonlit greens',
+    });
+    // The owner's text budget (docs/17 row 224) rides BOTH battlemap modes.
+    expect(prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    // The natural contract leads with the encounter's OWN prose …
+    expect(prompt).toContain('Theme: moonlit pinewood.');
+    expect(prompt).toContain('Site: forest clearing.');
+    expect(prompt).toContain('Scene: Bandits ambush the trade road through the pines.');
+    // … and explains the reference image as PLACEMENT ONLY: patches where the
+    // creatures gather plus the single approach triangle (the natural entrance
+    // clause softens to the visible approach path).
+    expect(prompt).toContain('the reference image only marks placement');
+    expect(prompt).toContain("its soft darker patches show where the encounter's creatures gather");
+    expect(prompt).toContain("single neon triangle marks the party's approach");
+    expect(prompt).toContain('paint a visible approach path at the marked spot');
+    // The architectural branch's clauses are ABSENT — that distinction IS the
+    // two-mode contract (docs/11 D17), so a copy-paste of either is a red.
+    expect(prompt).not.toContain('Environment materials: desaturated stone, wood, dirt.');
+    expect(prompt).not.toContain('Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.');
+    expect(prompt).not.toContain('The party enters the map through a single open gap');
+    // The usability hard-bans survive BOTH modes (owner decision 2026-09-17,
+    // verbatim: "Battlemaps do not need text, so that restriction can stay.").
+    expect(prompt).toContain('no map legend');
+    expect(prompt).toContain('no text labels');
+    expect(prompt).toContain('No white or pale boxes, rectangles, plaques, discs, signposts');
+    expect(prompt).toContain('continuous natural terrain with no discrete light-colored sub-rectangles');
+    // The shared fallback Avoid line still guards the natural arm too.
+    expect(prompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
   });
 });
 

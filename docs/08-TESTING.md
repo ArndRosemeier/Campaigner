@@ -7851,3 +7851,22 @@ rides its own line), so the 10,000-character assertion is unchanged in meaning.
 `buildImagePrompt` registry, the `negative` override seam, the vision plaque
 mechanism, and the classic battlemap's usability hard-bans (docs/11 D17). No
 PDF/layout dump moved (no PDF-rendering suite or baseline was touched).
+
+### The natural-site classic-stylize arm is pinned (docs/17 row 225, docs/11 §D17)
+
+Row 224's verification found the gap: the classic-stylize template has TWO mode
+contracts (architectural vs natural, docs/11 D17) and the only capture drove the
+ARCHITECTURAL arm, so `IMAGE_TEXT_SPARING_CLAUSE` could be removed from the
+`natural ? [...]` arm alone and the focused guard/draft suite stayed green
+(34 passed; injected `runEngine.ts` hash
+`dde93a76a52195e210f8d1b18ac8086fff1759f5`). On a fresh run `natural` is derived
+from the Cartographer brief's `environment: 'outdoor'` through
+`resolveEncounterMapMode` (no target ⇒ no owner `mapMode` override and no
+persisted `locationKind`), so the capture is now ONE named helper
+(`captureClassicStylizePrompt`) and a second pin drives it outdoors.
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `classic stylize (natural site) carries the sparing clause and its own prose contract, and never the architectural clauses` (`tests/llm/imageTextGuard.test.ts`) | the prompt the engine actually hands `encounterRunAdapters.generateImages` for a brief with `environment: 'outdoor'` carries `IMAGE_TEXT_SPARING_CLAUSE` VERBATIM; carries the natural `Theme:`/`Site:`/`Scene:` prose lead and the placement-only clause (the soft patches where creatures gather, the single approach triangle, the softened visible-approach-path entrance clause); and does NOT carry the architectural materials line, keep-walls clause or architectural entrance wording | removing the clause from the natural arm alone (arm hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`), pasting the architectural materials/keep-structure line into it, or breaking the `environment: 'outdoor'` derivation |
+| same pin, hard-ban half | the usability hard-bans survive in the natural arm — `no map legend`, `no text labels`, the pale-box/plaque clause and the continuous-terrain sentence — the owner's 2026-09-17 decision ("Battlemaps do not need text, so that restriction can stay.") | removing or softening any hard-ban in the natural arm |
+| `classic stylize (architectural) falls back to the guard when the brief wrote no negative` (same file; the renamed original) | the architectural capture is unchanged and now also asserts the materials + keep-structure contract is present and the placement-only clause absent | removing the clause from the architectural arm, or leaking the natural clause into it |
