@@ -13,6 +13,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
 import { CollapsibleRow, EncounterCard, NpcCard } from '@/features/play/artifact-cards';
+import { PeekModal } from '@/features/modules/peek-modal';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -233,6 +234,113 @@ describe('a model-prose field renders through the ONE wiki renderer', () => {
     for (const chip of within(dialog).getAllByTestId('wiki-chip-unresolved')) {
       expect(chip.getAttribute('title')).toContain(`[[${UNRESOLVED}]]`);
     }
+    await flushAsyncUpdates();
+  }, 20_000);
+});
+
+/**
+ * THE INTEGRATION PIN (docs/17 row 219): the component pins above render
+ * `NpcCard`/`EncounterCard` DIRECTLY and hand each one its own pool, so they
+ * cannot see whether the PEEK MODAL — the module reader's entity card, the very
+ * screen the owner reported — threads its own pool and breadcrumb push down. The
+ * dispatcher's arm D (`artifacts={artifacts}` → `artifacts={[]}` inside
+ * `peek-modal.tsx`) left every component-level pin GREEN, which is the measured
+ * gap this block closes: the card is mounted by the MODAL here, with the modal's
+ * own pool, and opening a resolved chip must run the MODAL's breadcrumb push.
+ */
+describe('the peek modal (the module reader’s entity card) threads its own pool and breadcrumb push', () => {
+  it('NpcCard: the modal’s pool resolves the npc summary token, and the click pushes the linked artifact onto the modal’s own breadcrumb', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const gate = await seedPool(campaign.id);
+    const npc = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Silt Warden',
+      summary: `Collects the toll at [[${RESOLVED}]].`,
+    });
+    if (npc.kind !== 'npc') throw new Error('npc artifact expected');
+
+    render(
+      <MemoryRouter>
+        <PeekModal
+          artifact={npc}
+          artifacts={[gate, npc]}
+          open
+          onOpenChange={vi.fn()}
+          campaignId={campaign.id}
+        />
+      </MemoryRouter>,
+    );
+
+    const peek = await screen.findByTestId('peek-modal');
+    const card = within(peek).getByTestId('play-npc-card');
+    // The modal handed its OWN pool down: the chip is RESOLVED against the pool
+    // row (not the dashed unresolved chip an empty pool would produce).
+    const chip = within(card).getByTestId('wiki-chip');
+    expect(chip.getAttribute('data-wiki-artifact-id')).toBe(gate.id);
+    expect(within(peek).queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+
+    // The click runs the MODAL's breadcrumb push (there is no caller callback on
+    // this mount): the title becomes the linked artifact and Back appears, i.e.
+    // the stack really moved to the pool row the chip named.
+    await userEvent.setup().click(chip);
+    await waitFor(() => {
+      expect(peek.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(RESOLVED);
+    });
+    expect(within(peek).getByTestId('peek-back')).toBeInTheDocument();
+    expect(within(peek).queryByTestId('play-npc-card')).not.toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('EncounterCard: the modal’s pool resolves the encounter summary token, and the click pushes the linked artifact onto the modal’s own breadcrumb', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const gate = await seedPool(campaign.id);
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Ford Ambush',
+      summary: `They spring it at [[${RESOLVED}]].`,
+      data: {
+        difficulty: 'hard',
+        levelHint: '4',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    if (encounter.kind !== 'encounter') throw new Error('encounter artifact expected');
+
+    render(
+      <MemoryRouter>
+        <PeekModal
+          artifact={encounter}
+          artifacts={[gate, encounter]}
+          open
+          onOpenChange={vi.fn()}
+          campaignId={campaign.id}
+        />
+      </MemoryRouter>,
+    );
+
+    const peek = await screen.findByTestId('peek-modal');
+    const card = within(peek).getByTestId('play-encounter-card');
+    const chip = within(card).getByTestId('wiki-chip');
+    expect(chip.getAttribute('data-wiki-artifact-id')).toBe(gate.id);
+    expect(within(peek).queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+
+    await userEvent.setup().click(chip);
+    await waitFor(() => {
+      expect(peek.querySelector('[data-slot="dialog-title"]')?.textContent).toBe(RESOLVED);
+    });
+    expect(within(peek).getByTestId('peek-back')).toBeInTheDocument();
+    expect(within(peek).queryByTestId('play-encounter-card')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 });

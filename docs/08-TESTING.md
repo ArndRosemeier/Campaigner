@@ -6608,6 +6608,73 @@ is established by the write path (docs/17 row 217), not by a fixture; and no pin
 asserts how a chip reads to a person — it proves the bytes, the destination and
 the raw-byte absence.
 
+### The peek modal's pool threading is pinned as an integration (docs/17 row 219, docs/05 §The chip, docs/18 §2.3)
+
+Row 217 routed every model-prose surface through the ONE `WikiMarkdown`, but its
+behaviour pins render `NpcCard`/`EncounterCard` DIRECTLY and hand each one its own
+pool — so nothing held the PEEK MODAL's threading, and the modal is the module
+reader's entity card, the exact screen the owner reported (*"This was the npc view
+from the model entities"*). Measured at `4f9728b`: emptying the modal's
+`artifacts={artifacts}` on its `NpcCard` (`peek-modal.tsx` hash
+`cc6d42c1668cc5c14508dd568cbd2d7b54257b8c` → `65f59c19a8f9671043c48946e81d0b83c6a511ef`)
+left every rendering test green. These pins mount the MODAL with a real pool: its
+own pool must resolve the summary token, and its own breadcrumb push must run on
+the click. NO src change was needed. The reader's source scan
+(`reader-encounter-roster.test.tsx`) is deliberately NOT extended — it sees the
+`artifacts={artifacts}` bytes but not whether the value is threaded, which is the
+break arm D measures.
+
+**Matrix**
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| **`PeekModal` → `NpcCard`** (the reader's entity card): the modal's `artifacts` pool resolves the summary `[[Ash Gate]]` to the resolved `wiki-chip` carrying the pool row's id (`wiki-chip-unresolved` absent), and the click pushes the linked artifact (`dialog-title` becomes its name, `peek-back` appears, the root card is gone) | `tests/features/model-prose-rendering.test.tsx` (new `describe`, 2 pins) | ✅ REVERT-PROVEN (arms B and C) |
+| **`PeekModal` → `EncounterCard`**: the same threading for the encounter summary and the same breadcrumb push | same | ✅ REVERT-PROVEN (arms C and D) |
+| **The row-217 component pins stay as they are** (they pin the cards, not the modal) and the reader's source scan is not restated | same file, the 6 existing pins unchanged | ✅ |
+| **No src change, whole suite green** | the full gate | ✅ |
+
+**Pin table**
+
+| Pin | File | What it would catch |
+| --- | --- | --- |
+| `NpcCard: the modal’s pool resolves the npc summary token, and the click pushes the linked artifact onto the modal’s own breadcrumb` | `tests/features/model-prose-rendering.test.tsx` | the modal handing an EMPTY pool to the card — the dispatcher's arm-D break (`artifacts={[]}`), red as the missing resolved chip |
+| `EncounterCard: the modal’s pool resolves the encounter summary token, and the click pushes the linked artifact onto the modal’s own breadcrumb` | same | the same break on the encounter arm |
+| (both) the click assertion | same | the modal's internal `onOpenArtifact` breadcrumb push replaced by a no-op — red on the unchanged dialog title |
+
+**REVERT-PROVEN** (each injection applied under the suite lock, its changed
+file's `git hash-object` PRINTED, restored by a `trap` from HEAD — never a bare
+`git checkout --` — and every arm's hash distinct, so no arm is VOID; raw logs in
+`/tmp/entity-pin-logs/`):
+
+- **A — baseline.** `tests/features/model-prose-rendering.test.tsx` through the
+  gate runner → **1 file / 8 tests passed** (the 6 row-217 pins plus the 2 new),
+  gate GREEN.
+- **B — the dispatcher's own arm reproduced exactly.** `peek-modal.tsx` baseline
+  `cc6d42c1668cc5c14508dd568cbd2d7b54257b8c` → injected
+  `65f59c19a8f9671043c48946e81d0b83c6a511ef` (`<NpcCard … artifacts={artifacts}`
+  → `artifacts={[]}`) → **1 failed / 7 passed**: only the Npc integration pin,
+  `Unable to find an element by: [data-testid="wiki-chip"]` (the dashed
+  unresolved chip is the only chip). This is the whole point of the slice.
+- **C — the modal's breadcrumb push is a no-op.** `peek-modal.tsx` injected hash
+  `5e5915ce60d4edccf338bdb1dbbfb199d6bd61f8` (`onOpenArtifact={(next) =>
+  {push(next.id)}}` → `() => {}`) → **2 failed / 6 passed**: BOTH integration
+  pins red on `expected 'Silt Warden'/'Ford Ambush' to be 'Ash Gate'` — the chip
+  resolved and the push never ran.
+- **D — the encounter arm's pool emptied.** `peek-modal.tsx` injected hash
+  `7fe97c28ffa8551e11ad775eb8b990772d836f85` → **1 failed / 7 passed**: the
+  Encounter integration pin alone (the Npc pin stays green because its call was
+  not touched).
+- Each arm restored `peek-modal.tsx` to `cc6d42c1668cc5c14508dd568cbd2d7b54257b8c`
+  and released the lock; `git status` is clean.
+
+**WHAT THESE PINS DO NOT PROVE:** they mount the modal directly, not through
+`ModuleReaderPage`, so the ROUTE's own `setPeekId(artifact.id)` hand-off is still
+held only by `reader-encounter-roster.test.tsx`'s source scan plus
+`module-reader.test.tsx`; they assert the modal's pool and breadcrumb push, not
+how a chip reads to a person; and the pool is a direct fixture, so "a real model
+echoes a token into this field" remains established by the write path (docs/17
+row 217), not here.
+
 ### The top-bar chat-model picker and its recency list (docs/17 row 193, docs/05 §Top bar/§Settings, docs/18 §2.1/§2.3)
 
 The owner asked for a picker for the global first-try chat model ("the picker
