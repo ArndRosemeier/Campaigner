@@ -15,7 +15,6 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "board.sh: not insid
 BOARD="${BOARD:-docs/20-ORCHESTRATION.md}"
 [ -f "$BOARD" ] || { echo "board.sh: BOARD MISSING — $BOARD"; exit 2; }
 
-SESSROOT="${DSH_HOME:-$HOME/.dsh}/sessions/--home-box-Harness-Campaigner--"
 LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
 stale=0
 note() { printf '  !! %s\n' "$1"; stale=1; }
@@ -24,6 +23,33 @@ field() { printf '%s\n' "$1" | grep -o "$2=[^ |]*" | head -1 | cut -d= -f2-; }
 # "IN-FLIGHT: row" for a compact record. Everything after `note=` is the note.
 noteof() { printf '%s\n' "$1" | sed 's/.*note=//'; }
 age_min() { find "$1" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1; }
+
+# The session root is DERIVED from this repo's own path, never hardcoded to a
+# box layout: the directory's name is this workspace's absolute path with each
+# `/` turned into a `-`, so a box whose workspace lives elsewhere (or a moved
+# workspace) silently pointed every session read at a directory that does not
+# exist — the writer-liveness line, the session-log size budget and the
+# unrecorded-live-state scan all went quiet while the board still printed
+# RECONCILED. MEASURED: DSH writes a LEADING dash too (`/home/x/y` →
+# `--home-x-y--`), which is why the head is matched loosely and the full suffixed
+# path strictly; a fresh /tmp worktree legitimately has NO session dir, so a
+# missing root is REPORTED (it disables the live-state scan) rather than treated
+# as a defect, and the legacy box path stays a fallback.
+sess_base="${DSH_HOME:-$HOME/.dsh}/sessions"
+top="${PWD##*/}"; top="${top//[^A-Za-z0-9._-]/-}"
+SESSROOT=""
+for c in "$sess_base"/*-"$top"-- "$sess_base"/*-"$top" "$(dirname "$PWD")"/*/sessions/*-"$top"; do
+  if [ -d "$c" ]; then SESSROOT="$c"; break; fi
+done
+if [ -z "$SESSROOT" ] && [ -d "$sess_base/--home-box-Harness-Campaigner--" ]; then
+  SESSROOT="$sess_base/--home-box-Harness-Campaigner--"
+fi
+echo "=== session root ==="
+if [ -n "$SESSROOT" ]; then
+  echo "  $SESSROOT"
+else
+  echo "  NOT FOUND for $PWD (looked under $sess_base and $(dirname "$PWD")/*/sessions) — the session-liveness, log-size and unrecorded-live-state checks below CANNOT LOOK, so their silence is not evidence"
+fi
 
 echo "=== git ==="
 head_sha="$(git rev-parse --short HEAD)"
@@ -183,12 +209,17 @@ while read -r d; do
   b="$(basename "$d" | sed 's/^session-//')"
   printf '%s\n' "$recorded" | grep -qx "$b" && continue
   # The LOG is the liveness signal, not the dir: a projection cache is rebuilt by
-  # a mere recovery read, so a long-dead session can look freshly written.
-  if [ -e "$d/session.jsonl.zstd" ]; then
-    last="$(stat -c %Y "$d/session.jsonl.zstd")"
-  else
-    last="$(age_min "$d")"
-  fi
+  # a mere recovery read, so a long-dead session can look freshly written. The
+  # filename is GLOBBED: DSH writes `session.v3.jsonl.zstd` today, and the older
+  # literal `session.jsonl.zstd` matched nothing, so the stat silently missed and
+  # fell through to a slower mtime walk.
+  last=""
+  for f in "$d"/session*.jsonl.zst*; do
+    [ -e "$f" ] || continue
+    t="$(stat -c %Y "$f")"
+    if [ -z "$last" ] || [ "$t" -gt "$last" ]; then last="$t"; fi
+  done
+  [ -n "$last" ] || last="$(age_min "$d")"
   [ -n "$last" ] && [ "$last" -ge "$recent" ] || continue
   note "session log written in the last 6h and NOT named on the board: $b (registry + its log are the authority)"
 done < <(find "$SESSROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
