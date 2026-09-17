@@ -7151,6 +7151,73 @@ statistical property is not provable in a unit test); and the recorded trade-off
 (a module-named spell can fall outside the draw) is the owner's choice, not a
 defect this suite can measure.
 
+### A module's NAME is editable at creation — the field, the ONE seam, the additive draft (docs/17 row 213, docs/08-MODULE-DESIGNER §M4-B, docs/18 §2.3)
+
+The owner's report — every new module was called "New Module" and the creation
+dialog had no way to name it — is pinned at the dialog, the schema and the
+source, using the EXISTING harnesses (no new fixture set):
+
+- `tests/features/new-module-draft.test.tsx` (the draft prefill/persist/flush
+  suite): (1) the `new-module-title` field renders pre-filled with
+  `defaultModuleTitle()` and typing changes it; (2) a typed name reaches the
+  `NewModule` input the dialog hands `createModuleAndRun` as the title (the
+  harness intercepts that input — `@/llm/moduleGen` is mocked) AND the stored
+  draft carries the same value; (3) a whitespace-only field creates
+  `defaultModuleTitle()`, never `''`, with no toast, and the draft stores the
+  RESOLVED value so `title: min(1)` cannot fail on a debounce; (4) the typed
+  name survives the close/reopen draft cycle and PREFILLS; (5) a
+  `newModuleDraftSchema` parse of an object with NO `title` key yields the
+  placeholder while a WITH-title draft keeps it, and a dialog opened on such a
+  legacy row prefills the placeholder with no "could not be read" toast;
+  (5b) deleting a MODULE leaves the draft intact, so the next open prefills the
+  name (the owner-ratified regeneration workflow — measured: only campaign
+  deletion clears the tagged draft); plus the row-162 pin that
+  `defaultModuleTitle()` still returns `'New Module'`.
+- `tests/features/module-ui-toast.test.tsx` (the dialog-open/start suite): the
+  dialog renders the Name field with the placeholder — visibly editable, with a
+  testid distinct from the reader's `module-title`.
+- `tests/architecture/module-title-seam.test.ts` (NEW, source scan): the
+  "exactly one" pin (AGENTS §Centralization 2) — `export function
+  resolveModuleTitle(` is defined in exactly ONE file, `resolveModuleTitle(` is
+  called from exactly TWO sites in `new-module-dialog.tsx` (the draft's saved
+  value and the creation input), and the dialog contains no
+  `title: 'New Module'`/`title: "New Module"` literal, so a re-inlined literal
+  or a second resolver reds.
+
+**Injected RED, watched (each arm's changed file hash printed by `git hash-object`,
+the tree restored from an OUT-OF-TREE copy under a `trap` with the post-restore
+hash re-verified equal to the baseline — the slice was still uncommitted, so a
+`git checkout HEAD --` would have restored the WRONG bytes; the row-210
+precedent):** A baseline — `domain/module.ts`
+`e5b48f27a1edd50dc9af8ce36bd320ade05b1f5f`, `domain/settings.ts`
+`4e0aafc4850132d50f43a2853de1682cba28a3ec`, `new-module-dialog.tsx`
+`f2cba85989e01c172fe71e872dec6bc54ae5d466` → **GREEN 3 files / 57 tests**. B the
+resolver's blank arm forced to `''` → `module.ts`
+`c03d914d5a56e43dec2ac33c4af69ea65a3dc710`, **RED 1 test (pin 3) with 2 failed
+assertions**: the creation input title is `''`, and — the coupling worth naming —
+the debounced draft write fails LOUDLY (`toastError('The New Module draft could
+not be saved', …)` carrying a ZodError `too_small` on `newModuleDraft.title`),
+which is the pin's `expect.soft` no-toast half. C the dialog's creation arm
+re-inlined to `title: 'New Module'` → `new-module-dialog.tsx`
+`9aba588dba4429106773087860835c8267e9f95b`, **RED 3** = the carry pin (the typed
+name no longer reaches the input) plus BOTH seam-scan tests (the dialog call-site
+count drops to 1 and the literal is found). D the schema's `.default` removed →
+`settings.ts` `386052b3e1377c11214db6cd65b5c0795d3c7c14`, **RED 2** = both halves
+of pin 5 (the bare parse throws on the missing key, and the dialog's
+legacy-prefill pin — which waits for the stored CONCEPT to prove the read really
+happened — times out because the refused draft opens at defaults). No arm was
+VOID (four distinct changed-file hashes, four distinct red sets) and every
+restored hash matched its baseline exactly.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** no test proves the owner sees
+the field where he looks (it is asserted present and pre-filled, not
+screenshotted); no test proves a live `createModuleAndRun` beyond the input the
+dialog hands the mocked generator (that the real `createModule` stamps the title
+on the row is covered by the rows above; the dialog's own seam stops at the
+input); and the prefill-is-good call is the owner's, so the suite pins the
+BEHAVIOUR he ratified, not that a second module starting from the previous name
+is desirable in general.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

@@ -30,6 +30,7 @@ import type {
 import {
   defaultEncounterBudgetPolicy,
   defaultEncounterFloorGuardrail,
+  defaultModuleTitle,
   defaultNewModuleDraft,
   DEFAULT_MODULE_DIFFICULTY,
   ENCOUNTER_BUDGET_POLICIES,
@@ -37,6 +38,7 @@ import {
   ENTITY_KINDS,
   MODULE_SIZE_LABELS,
   PROMPT_STYLE_FREESTYLE_ID,
+  resolveModuleTitle,
 } from '@/domain';
 import { ModuleDifficultyControl } from '@/features/modules/module-difficulty-control';
 import { modulePath } from '@/app/routes';
@@ -55,11 +57,18 @@ import { toastError } from '@/lib/toast';
 import { registerPageFlush } from '@/lib/pageFlush';
 
 /**
- * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): concept, level
+ * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): name, concept, level
  * range (two steppers, max ≥ min), tone, size dial, the opt-in cross-module
  * continuity checkbox. Creates the Module row and navigates to the reader
  * immediately — the spine draft runs there, with its live streaming card,
  * Stop button and progress dock; the dialog never blocks on the LLM.
+ *
+ * The NAME field (owner report, docs/17 row 213) is pre-filled with the
+ * placeholder `defaultModuleTitle()` and resolves through the ONE
+ * `domain/module.resolveModuleTitle`, so a blank field creates the placeholder,
+ * never an empty title. It rides the persisted draft like every other field —
+ * an owner-ratified GOOD: a new creation is often a regeneration after deleting
+ * an old module, so the name must not have to be retyped.
  *
  * PERSISTED DRAFT (owner request, docs/17): every value this dialog holds —
  * concept included — is saved to the settings row's `newModuleDraft`, tagged
@@ -110,6 +119,7 @@ function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
     left.length === right.length && left.every((kind, index) => kind === right[index]);
   return (
     a.campaignId === b.campaignId &&
+    a.title === b.title &&
     a.concept === b.concept &&
     a.levelMin === b.levelMin &&
     a.levelMax === b.levelMax &&
@@ -175,6 +185,10 @@ function NewModuleDialogContent({
   onOpenChange,
 }: NewModuleDialogProps): JSX.Element {
   const navigate = useNavigate();
+  // The module's name (docs/17 row 213). Pre-filled with the placeholder, so an
+  // untouched dialog creates exactly what it created before the field existed;
+  // the persisted draft carries it (resolved, never blank — `resolveModuleTitle`).
+  const [title, setTitle] = useState(defaultModuleTitle());
   const [concept, setConcept] = useState('');
   const [levelMin, setLevelMin] = useState(1);
   const [levelMax, setLevelMax] = useState(3);
@@ -320,6 +334,7 @@ function NewModuleDialogContent({
       const matches = stored?.campaignId === campaign.id;
       const draft = matches ? stored : defaultNewModuleDraft(campaign.id);
       draftRef.current = draft;
+      setTitle(draft.title);
       setConcept(draft.concept);
       setLevelMin(draft.levelMin);
       setLevelMax(draft.levelMax);
@@ -414,6 +429,9 @@ function NewModuleDialogContent({
   useEffect(() => {
     const next: NewModuleDraft = {
       campaignId: campaign.id,
+      // RESOLVED (never the raw field): a blank/whitespace-only name is the
+      // placeholder, so the saved draft can never fail `title: min(1)`.
+      title: resolveModuleTitle(title),
       concept,
       levelMin,
       levelMax: Math.max(levelMax, levelMin),
@@ -448,6 +466,7 @@ function NewModuleDialogContent({
     }, DRAFT_DEBOUNCE_MS);
   }, [
     campaign.id,
+    title,
     concept,
     levelMin,
     levelMax,
@@ -557,7 +576,10 @@ function NewModuleDialogContent({
       // so the additive automation fields and the guardrails ride along.
       const input: NewModule & { tone: string; promptStyleId: string } = {
         campaignId: campaign.id,
-        title: 'New Module',
+        // The typed name through the ONE resolver, so a blank field creates the
+        // placeholder rather than an empty title (`moduleSchema.title` is
+        // `min(1)`) — the same value the draft saved.
+        title: resolveModuleTitle(title),
         concept: concept.trim(),
         levelMin,
         levelMax: Math.max(levelMax, levelMin),
@@ -608,6 +630,19 @@ function NewModuleDialogContent({
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="module-title">Name</Label>
+            <Input
+              id="module-title"
+              data-testid="new-module-title"
+              value={title}
+              onChange={(event) => {
+                markEdited();
+                setTitle(event.target.value);
+              }}
+            />
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="module-concept">Concept</Label>
             <Textarea

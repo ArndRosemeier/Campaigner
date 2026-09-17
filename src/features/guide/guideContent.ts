@@ -120,7 +120,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'The creation dialog',
         markdown:
-          'Press "Module" in the top bar (or "New Module" on the Modules page). Fields:\n- **Concept** — one vivid sentence: "smugglers\' cove gone eldritch — the party raids a smuggling den that has dug into something older."\n- **Level from/to** — the band the parts are written for.\n- **Tone** (optional) — "grim", "folk-horror", "swashbuckling" steer the prose.\n- **Size** — sketch ≈ 400–700 words per part, standard ≈ 800–1500, detailed ≈ 1500–2500.',
+          'Press "Module" in the top bar (or "New Module" on the Modules page). Fields:\n- **Name** — what the module is called; it comes pre-filled from your last creation (a fresh run is often a regeneration after deleting the old module) and the reader renames it any time.\n- **Concept** — one vivid sentence: "smugglers\' cove gone eldritch — the party raids a smuggling den that has dug into something older."\n- **Level from/to** — the band the parts are written for.\n- **Tone** (optional) — "grim", "folk-horror", "swashbuckling" steer the prose.\n- **Size** — sketch ≈ 400–700 words per part, standard ≈ 800–1500, detailed ≈ 1500–2500.',
       },
       {
         heading: 'Leave the pass automation off — the first time',

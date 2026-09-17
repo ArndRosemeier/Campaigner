@@ -8,6 +8,7 @@ import {
 } from '@/domain/encounterMap/schema';
 import {
   defaultEncounterFloorGuardrail,
+  defaultModuleTitle,
   encounterFloorGuardrailSchema,
   ENTITY_KINDS,
   moduleSizeDialSchema,
@@ -297,6 +298,17 @@ export const newModuleDraftSchema = z
   .object({
     /** The campaign this draft was written in — the prefill tag. */
     campaignId: z.uuid(),
+    /**
+     * The module name the dialog's Name field holds (docs/17 row 213). Stored
+     * RESOLVED — blank/whitespace-only text was folded to `defaultModuleTitle()`
+     * by `domain/module.resolveModuleTitle` before the save, so the field can
+     * never make the draft fail validation. `.default(defaultModuleTitle())`
+     * makes the field ADDITIVE: a draft written before the Name field existed
+     * carries no `title` key, still parses, and prefills the placeholder,
+     * while `z.infer` keeps `title: string` (never an optional branch threaded
+     * through the dialog).
+     */
+    title: z.string().min(1).default(defaultModuleTitle()),
     concept: z.string(),
     levelMin: z.number().int().min(1).max(20),
     levelMax: z.number().int().min(1).max(20),
@@ -359,6 +371,7 @@ export type NewModuleDraft = z.infer<typeof newModuleDraftSchema>;
 export function defaultNewModuleDraft(campaignId: string): NewModuleDraft {
   return {
     campaignId,
+    title: defaultModuleTitle(),
     concept: '',
     levelMin: 1,
     levelMax: 3,

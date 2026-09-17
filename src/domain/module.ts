@@ -1200,3 +1200,25 @@ export function moduleDocumentText(module: Module): string {
 export function defaultModuleTitle(): string {
   return 'New Module';
 }
+
+/**
+ * THE one resolution of a typed CREATION name to a module title (docs/17 row
+ * 213). A blank or whitespace-only field means "no name given" and resolves to
+ * the placeholder `defaultModuleTitle()`; otherwise the trimmed text. The
+ * result is always a non-empty string, because `moduleSchema.title` is
+ * `z.string().min(1)` and the persisted draft must never fail validation on a
+ * whitespace-only field. BOTH places that turn the dialog's Name field into a
+ * title call this — the draft's saved value and the `NewModule` input the
+ * creation sends — so the two can never disagree.
+ *
+ * This is NOT the reader's rename rule (`ModuleReaderPage.ModuleTitleInput`):
+ * there a blank field means "revert to the STORED title" — a write refusal, not
+ * a default. The two stay two questions: creation has no stored title to revert
+ * to, and a rename must never silently become the placeholder (a cleared title
+ * on an existing module is a mistake to undo, not a request to rename it "New
+ * Module").
+ */
+export function resolveModuleTitle(name: string): string {
+  const trimmed = name.trim();
+  return trimmed === '' ? defaultModuleTitle() : trimmed;
+}

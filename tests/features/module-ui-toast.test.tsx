@@ -49,6 +49,7 @@ import {
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
+  defaultModuleTitle,
   encounterDataSchema,
   modulePartSchema,
   moduleSpineSchema,
@@ -289,6 +290,9 @@ describe('modules-list.test.tsx', () => {
       await user.click(screen.getByTestId('new-module'));
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
       expect(within(dialog).getByRole('heading', { name: 'New Module' })).toBeInTheDocument();
+      // The Name field is visibly present and pre-filled (docs/17 row 213),
+      // distinct from the reader's `module-title` testid.
+      expect(within(dialog).getByTestId('new-module-title')).toHaveValue(defaultModuleTitle());
       expect(createModuleAndRunMock).not.toHaveBeenCalled();
 
       // Cancel closes the dialog; still no generator call.

@@ -1005,7 +1005,11 @@ from the constant, this section documents it.
 ### Creation UI
 
 "New Module" (modules list page `/c/:campaignId/modules`, plus entry in the
-top bar next to Play): dialog with concept textarea, level range (two numeric
+top bar next to Play): dialog with a **Name** input at the TOP of the form
+(docs/17 row 213 — pre-filled with the `defaultModuleTitle()` placeholder and
+resolved through the ONE `domain/module.resolveModuleTitle`, so a blank field
+creates the placeholder, never an empty title; editable at creation and still
+renameable in the reader), concept textarea, level range (two numeric
 steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), and the
 opt-in **"Continue from previous modules"** checkbox (disabled with a hint
 until some other module of the campaign has text; the flag persists on the
@@ -1024,7 +1028,8 @@ not read as a hang. The dialog never blocks on the LLM. A failed first spine
 shows its recorded error in the reader with an in-place **Retry spine draft**.
 
 **Persisted draft** (owner request, docs/17 row 70): every value the dialog
-holds — the concept included — is saved to the settings row's
+holds — the name (docs/17 row 213) and the concept included — is saved to the
+settings row's
 `newModuleDraft`, TAGGED with the campaign it was written in, so deleting a
 module and trying again (or resetting and starting over) does not cost a retype.
 The write is debounced (500 ms) on change, flushed synchronously when the run

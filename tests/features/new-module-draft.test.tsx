@@ -12,6 +12,7 @@ import {
   removeAllGeneratedContent,
 } from '@/db/campaignRepo';
 import { deleteCampaignWorkspace } from '@/db/maintenance';
+import { deleteModule, saveModule } from '@/db/moduleRepo';
 import { db } from '@/db/db';
 import {
   getSettings,
@@ -24,10 +25,12 @@ import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import {
   createModule,
   defaultEncounterFloorGuardrail,
+  defaultModuleTitle,
   defaultNewModuleDraft,
   MODULE_DIFFICULTIES,
   MODULE_DIFFICULTY_LABELS,
   newId,
+  newModuleDraftSchema,
   type Campaign,
   type NewModuleDraft,
 } from '@/domain';
@@ -245,6 +248,124 @@ describe('the draft round-trips through the settings row', () => {
     );
     const reopenedFloor = within(dialog).getByTestId('guardrail-floor-per-level');
     expect(reopenedFloor).toHaveValue(2);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('renders an editable Name field pre-filled with the placeholder, and the typed name becomes the title', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    const name = within(dialog).getByTestId('new-module-title');
+    // Pre-filled with the placeholder: an untouched dialog creates exactly what
+    // it created before the Name field existed.
+    expect(name).toHaveValue(defaultModuleTitle());
+    await user.clear(name);
+    await user.type(name, 'The Sunken Bell');
+    expect(name).toHaveValue('The Sunken Bell');
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'A bell rings underwater.');
+    await user.click(within(dialog).getByTestId('start-module'));
+
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    // The harness intercepts the `NewModule` input the dialog hands
+    // `createModuleAndRun` (moduleGen is mocked): the typed name IS the title.
+    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: 'The Sunken Bell' }),
+    );
+    // The draft saved the same value the creation sent (ONE resolver).
+    await flushAsyncUpdates();
+    const settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.title).toBe('The Sunken Bell');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('resolves a whitespace-only name to the placeholder — never an empty title, never a validation failure', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    const name = within(dialog).getByTestId('new-module-title');
+    await user.clear(name);
+    await user.type(name, '   ');
+    await user.type(within(dialog).getByLabelText('Concept'), 'No name given.');
+
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    // BOTH halves of pin 3 are asserted in ONE run (soft, so a broken resolver
+    // shows the coupling): an empty title fails the assertion below AND makes
+    // the draft write fail `title: min(1)`, which `persist` reports loudly.
+    expect.soft(toastError).not.toHaveBeenCalled();
+    expect(input).toMatchObject({ title: defaultModuleTitle() });
+    expect(input?.title).not.toBe('');
+
+    // The RESOLVED value is what the draft stores, so a whitespace-only field
+    // can never make `title: min(1)` fail (which would toast on every debounce).
+    await flushAsyncUpdates();
+    const settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.title).toBe(defaultModuleTitle());
+    expect(toastError).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('persists the typed name through the draft cycle and PREFILLS it on the next open', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    let dialog = await openDialog(campaign);
+
+    await user.clear(within(dialog).getByTestId('new-module-title'));
+    await user.type(within(dialog).getByTestId('new-module-title'), 'The Sunken Bell');
+    await user.type(within(dialog).getByLabelText('Concept'), 'A bell rings underwater.');
+
+    dialog = await reopenDialog(user);
+    await waitFor(() => {
+      expect(within(dialog).getByTestId('new-module-title')).toHaveValue('The Sunken Bell');
+    });
+    const settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.title).toBe('The Sunken Bell');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('prefills the placeholder from a draft stored before the Name field existed, with no read failure', async () => {
+    const campaign = await seedCampaign();
+    // A row written by a build that predates the field: the stored draft has NO
+    // `title` key at all (the additive-schema contract).
+    await actDrained(async () => {
+      await getSettings();
+      const row = await db.settings.get('settings');
+      if (row === undefined) throw new Error('settings row missing');
+      const legacy = {
+        ...defaultNewModuleDraft(campaign.id),
+        concept: 'Legacy draft',
+      } as Record<string, unknown>;
+      delete legacy.title;
+      // The typed escape is the point: a pre-field row cannot be represented in
+      // `NewModuleDraft` (title is required), which is exactly why the schema's
+      // `.default` is what keeps it readable.
+      await db.settings.put({
+        ...row,
+        newModuleDraft: legacy as unknown as NewModuleDraft,
+      });
+    });
+
+    const dialog = await openDialog(campaign);
+    // Wait for the stored draft to have really been READ: the concept it carries
+    // is the proof (a draft the schema refuses opens at the defaults instead).
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('Concept')).toHaveValue('Legacy draft');
+    });
+    expect(within(dialog).getByTestId('new-module-title')).toHaveValue(defaultModuleTitle());
+    // The absent key is ADDITIVE, not corrupt: no loud "could not be read".
+    expect(toastError).not.toHaveBeenCalledWith(
+      'The stored New Module draft could not be read',
+      expect.anything(),
+    );
     await flushAsyncUpdates();
   }, 30_000);
 
@@ -665,6 +786,34 @@ describe('draft lifecycle across the campaign delete paths', () => {
     expect((await readSettings()).newModuleDraft).toBeNull();
     await flushAsyncUpdates();
   }, 30_000);
+
+  it('is KEPT when a MODULE is deleted, so the next creation prefills the name (owner-ratified)', async () => {
+    const campaign = await seedCampaign();
+    await updateSettings({
+      newModuleDraft: { ...defaultNewModuleDraft(campaign.id), title: 'The Sunken Bell' },
+    });
+
+    // The common workflow the owner named: a creation run is often a
+    // regeneration after deleting an old module. Deleting a MODULE is not a
+    // draft writer — only campaign deletion clears the tagged draft
+    // (`db/campaignRepo.ts`, and the two campaign wipes KEEP it).
+    const module = createModule({
+      campaignId: campaign.id,
+      title: 'The Sunken Bell',
+      concept: 'A bell rings underwater.',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'standard',
+    });
+    const saved = await saveModule(module);
+    await deleteModule(saved.id, 'cascade');
+
+    const dialog = await openDialog(campaign);
+    await waitFor(() => {
+      expect(within(dialog).getByTestId('new-module-title')).toHaveValue('The Sunken Bell');
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
 });
 
 describe('a corrupt stored draft: scoped to the draft, reported loudly', () => {
@@ -737,10 +886,17 @@ describe('a corrupt stored draft: scoped to the draft, reported loudly', () => {
 });
 
 describe('draft schema', () => {
+  it('keeps the English placeholder the owner ratified (docs/17 row 162)', () => {
+    // The row-162 owner decision: the app's own copy stays English for now, so
+    // `defaultModuleTitle()` is NOT localized and its string does not change.
+    expect(defaultModuleTitle()).toBe('New Module');
+  });
+
   it('defaults carry today’s dialog values and the default floor', () => {
     const id = newId();
     expect(defaultNewModuleDraft(id)).toEqual({
       campaignId: id,
+      title: defaultModuleTitle(),
       concept: '',
       levelMin: 1,
       levelMax: 3,
@@ -754,6 +910,31 @@ describe('draft schema', () => {
       autoGenerateMobImages: false,
       encounterFloorGuardrail: { enabled: true, perLevel: 1 },
     });
+  });
+
+  it('accepts a draft stored before the Name field existed, defaulting to the placeholder', () => {
+    // A row written before the field carries NO `title` key: the `.default`
+    // makes it parse and materialize a string, so `z.infer` stays `title: string`.
+    const legacy = {
+      campaignId: newId(),
+      concept: 'Legacy draft',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      includePriorModules: false,
+      autoApproveSpine: false,
+      autoGenerateKinds: [],
+      autoImageKinds: [],
+      autoGenerateBattlemaps: true,
+      autoGenerateMobImages: false,
+      encounterFloorGuardrail: { enabled: true, perLevel: 1 },
+    };
+    expect(newModuleDraftSchema.parse(legacy).title).toBe(defaultModuleTitle());
+    // A draft that carries a title keeps it.
+    expect(newModuleDraftSchema.parse({ ...legacy, title: 'The Sunken Bell' }).title).toBe(
+      'The Sunken Bell',
+    );
   });
 
   it('refuses a stored draft with an inverted level range', async () => {
