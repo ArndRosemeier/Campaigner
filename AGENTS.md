@@ -143,13 +143,22 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
    for: the same rule landing at three separate surfaces, one slice each, and
    **seven identical `isRecord` helpers** (one per pack adapter) that no test
    could see until a task happened to grep the right word.
-   The generic detector is **LANDED** (docs/17 row 172):
-   `tests/architecture/no-duplicate-implementations.test.ts` scans every
-   `src/**/*.ts(x)` named function body through the TypeScript parser, normalizes
-   it (comments stripped, formatting collapsed, the function's own and parameter
-   names blanked so a rename cannot hide a copy) and requires the 2+-site
-   population to equal `tests/architecture/duplicateImplementationsBaseline.json`
-   exactly. The floor is **75 normalized characters** — the largest floor that
+   The generic detector is **LANDED** (docs/17 row 172, extended to the test
+   tree by row 212): `tests/architecture/no-duplicate-implementations.test.ts`
+   scans every named function body under `src/**/*.ts(x)` AND under
+   `tests/**/*.ts(x)` except `tests/fixtures/**` (captured upstream documents
+   and prompt goldens repeat legitimately) through the TypeScript parser,
+   normalizes it (comments stripped, formatting collapsed, the function's own
+   and parameter names blanked so a rename cannot hide a copy) and requires each
+   2+-site population to equal ITS OWN inventory exactly —
+   `tests/architecture/duplicateImplementationsBaseline.json` for `src/` and
+   `tests/architecture/duplicateImplementationsTestsBaseline.json` for the test
+   tree (136 groups / 390 sites at row 212; both scopes at the same floor, and
+   `tests/fixtures/**` is the ONLY exclusion, pinned as data). Known gap, being
+   closed: the two inventories are scoped, so a copy that spans BOTH trees (a
+   production body re-implemented in a test) is a single site in each and
+   invisible to both — measured, docs/17 row 215 carries the fix.
+   The floor is **75 normalized characters** — the largest floor that
    still sees the seven-copy `isRecord` case this rule was born from, so the
    floor is MEASURED, not guessed (a 120-char floor cannot see it). A NEW copy
    reds naming every site; a FOLDED copy reds as a stale entry until its baseline
