@@ -555,6 +555,7 @@ test) · ❌ gap.
 | Editor: surviving kind forms (pc/npc/location/faction/note/encounter/plotarc) | `editor-autosave`, `encounter-form`, `m2kinds`, `ui-smoke` | 🟡 forms beyond npc/encounter |
 | Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
 | **Structured text renders as PARAGRAPHS in the app AND the PDF**: a blank line is a paragraph break and a single newline a line break, both consumers drawing the ONE rule's own blocks, on a stored row no migration touched (docs/17 row 146) | `text-blocks.test` (12 pins, NEW) | ✅ |
+| **The single-artifact GM export's own stat-block prose draws the ONE rule's blocks too**: a multi-paragraph appearance/trait body prints as separate pdfmake nodes, a single-block value is byte-identical to the pre-fold node, and the other label/value rows are untouched (docs/17 row 220) | `text-blocks.test` (+4 pins), `pdfExport.test` (10, unchanged) | ✅ |
 | Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: images, cover/lightbox, encounter generator handoff | `images-ui.test` | ✅ |
 | Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
@@ -3361,6 +3362,7 @@ definition or assertion moved.
 | **Nothing is lost and the order holds**: every section's LABEL run survives (`Grasping Antennae: `, `Mandible: `, `Reactive Snap: `, `Skitter Away: `, `Perception: `) and their relative order is asserted (`extras` in the labeled column before the named sections, then traits → actions → reactions → legendary) | `lib/text-blocks.test.tsx` (`every section still prints, in the same order, after the block change`) |
 | **A row generated BEFORE the change heals**: a stored npc row with a `\n\n` inside its trait text (the bytes a pre-change generator wrote — asserted byte-exact) is READ through `getArtifact` and renders as paragraphs in the app and as two runs in the PDF, and the row's JSON is IDENTICAL before and after the render — no write, no content hash, no citation, no migration | `lib/text-blocks.test.tsx` (`a row generated BEFORE the change renders with paragraphs after it`) |
 | **EXACTLY ONE implementation** (AGENTS rule 4, made mechanical): `export function textBlocks` exists in exactly one file; the files that reach the rule are exactly the REGISTERED four (the rule, the presenter, `modulePdf`, `stat-block`) — a new consumer must edit the pin deliberately; neither consumer splits text on a blank line or holds a paragraph regex; the presenter holds no `.split(` at all | `lib/text-blocks.test.tsx` (`EXACTLY ONE text→blocks implementation`, 3 source pins, comments stripped) |
+| **The single-artifact GM export draws the SAME blocks (docs/17 row 220)**: a multi-paragraph `appearance` and a multi-paragraph trait body print as SEPARATE nodes (the label on the first, the later blocks `margin: [110,0,0,0]`), and NO single run carries the blob; a SINGLE-block value is `toEqual` the byte-identical pre-fold `columns` node; the other label/value rows keep their one-column shape (the label literal appears exactly once) and an empty/null field still prints NO row | `lib/text-blocks.test.tsx` (`the single-artifact GM export draws the SAME blocks`, 4 pins) |
 | **REGRESSION GUARD — the PDF definition pins did not move**: 15 files / 199 tests in the PDF and stat-block neighbourhood, including every `modulePdf`/`modulePdfPlan`/`pdfExport` definition dump, green with the single-block body byte-identical | that run, kept in the landing's raw output |
 
 **REVERT-PROVEN** (each injection printed with `git diff --stat` (or `diff -u` for
@@ -3382,12 +3384,26 @@ page — the box is pinned as DATA, so a pdfmake behaviour change would need a r
 render to notice); that a future component will not re-implement the block
 splitter (the source pin is a GUARD over the four registered files, not a proof —
 a consumer that splits text and never names the seam is caught only by the
-`.split(`/regex checks inside those files); and that `lib/pdfExport`'s OWN
-`statBlockSection`/`labelValue` rows (the single-artifact export's stat block for
-a pc/npc) split paragraphs — they do not go through this rule yet, recorded as
-known debt in docs/18 §5 rather than folded here (folding them re-pins every
-GM-notes definition dump in the same landing, which is more expensive than the
-defect on the path the owner reads).
+`.split(`/regex checks inside those files); and that a future consumer will not re-implement the
+block splitter (the source pin is a GUARD over the FIVE registered files, not a
+proof). `lib/pdfExport`'s OWN `statBlockSection`/`labelValue` rows — the
+single-artifact export's stat block for a pc/npc — were the last path outside
+the rule and are FOLDED (docs/17 row 220): no definition dump moved, because no
+existing fixture carried a multi-paragraph value, so the fold's own pins carry
+the multi-block case.
+
+**Row 220's own revert-proof, four arms, all hashes printed (`src/lib/pdfExport.ts`
+`33b08bb11444d7b50f426692945385692caf658d`), one lock held across every arm, each
+restored from an OUT-OF-TREE copy:**
+
+| arm | injection | RED | GREEN |
+|---|---|---|---|
+| **A** | none (the landed fold) | — | **2 files / 26 tests** |
+| **B** | the fold reverted to the one-run blob (`blocks.join('\n\n')`) | **1** — pin 1 (the multi-paragraph appearance) | 25 |
+| **C-original** | `if (rest.length === 0)` → `if (false)` | **VOID — 0** (identical output: removing the early return changes nothing when `rest` is empty, so the probe was discarded, never read as evidence) | 26 |
+| **C2** | every value answered as the multi-block shape (continuation margin changed) | **1** — pin 2 (the byte-identical single-block node) | 25 |
+| **C3** | the `columns` head gains a `margin` | **1** — pin 2, by a second, mechanically different move | 25 |
+| **D** | the seam bypassed by a local `splitBlob` in `pdfExport` | **2** — BOTH source pins (the registered population loses the file; the no-local-split arm catches `.split(`) | 24 |
 
 ### One document-parser seam for the ingest layer (docs/17 row 147, docs/18 §2.2/§5)
 

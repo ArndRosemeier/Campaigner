@@ -353,17 +353,20 @@ describe('the single-artifact GM export draws the SAME blocks (docs/17 row 146, 
     const definition = buildGmNotesDefinition(
       npc({ appearance: 'Soot-stained', personality: 'Cruel' }),
     );
-    const appearance = nodeContaining(definition, 'Appearance:');
-    const personality = nodeContaining(definition, 'Personality:');
-    // The exact node this template printed before the fold: one `columns` node,
-    // the value as ONE run, no margin and no continuation node.
-    expect(appearance).toEqual({
+    const content = definition.content as object[];
+    const at = content.findIndex((node) => JSON.stringify(node).includes('"Appearance:"'));
+    if (at === -1) throw new Error('the export printed no Appearance row');
+
+    // The section runs `Appearance:` then `Personality:` — and NOTHING between
+    // them: the pre-fold node byte for byte, with no continuation node, no
+    // `margin` and no extra column.
+    expect(content[at]).toEqual({
       columns: [
         { text: 'Appearance:', style: 'label', width: 110 },
         { text: 'Soot-stained', style: 'value' },
       ],
     });
-    expect(personality).toEqual({
+    expect(content[at + 1]).toEqual({
       columns: [
         { text: 'Personality:', style: 'label', width: 110 },
         { text: 'Cruel', style: 'value' },
@@ -371,7 +374,7 @@ describe('the single-artifact GM export draws the SAME blocks (docs/17 row 146, 
     });
     // The single-block trait entry is the ONE run it always was — the fold did
     // not split it and did not add a continuation node.
-    expect(definition.content as object[]).toContainEqual({
+    expect(content).toContainEqual({
       text: [{ text: 'Cold Focus. ', bold: true }, { text: 'It does not blink.' }],
       style: 'value',
     });
