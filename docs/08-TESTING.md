@@ -7901,6 +7901,21 @@ its write is a whole-row compare-and-swap on the single `ideaBoards` row; a
 shared parameterisation would be vague. The shared part is the PERSISTENCE seam
 (`saveIdeaBoard`) and the dialog primitive, not the orchestration.
 
+**REVERT-PROVEN, four arms, every arm's file hash PRINTED (`git hash-object`),
+no two arms identical:** (A) baseline GREEN — `store.ts`
+`792ea4df8352b3da076ed8283e75435a92af68ea`, `IdeaBoardPage.tsx`
+`19c7bd3a87753093a72a6e99d8592036b13af790`; (B) the persisted clear REMOVED
+(store only: `const next = cleared`) → `store.ts`
+`0d2cb80b4d737ea280ee44af8acf1ace1c8e7a0e`, pin 3 (confirm empties the row) AND
+pin 5 (a failed write is loud) red — with no row write there is nothing to
+reject; (C) the clear also wiping the content (`document: '', versions: []`) →
+`store.ts` `a3e6e8608092aff28c1f63e2f0bc113887cdc607`, pin 4 red; (D) the CANCEL
+path wired to the clear → `IdeaBoardPage.tsx`
+`d6c6a8aba81c0c9d0c519a6c05e98c3aab763848`, pin 2 red. Every arm was restored
+from HEAD between runs (`git checkout --`) and the tree verified back at the
+baseline hashes; the focused file ran under the suite lock, one worker,
+`--max-old-space-size=2048`, raw logs `/tmp/arm-{A,B,C,D}.log`.
+
 **UNCHANGED and named:** the board's send/stream/stop path and its 500 ms
 debounced persistence (this adds a control, not a second chat), the repo's
 compare-and-swap and its backup/export behaviour, and the canvas chat's own
