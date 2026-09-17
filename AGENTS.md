@@ -181,6 +181,11 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
 - Start every task at `docs/18-ARCHITECTURE.md` (the seam index: layer map,
   "the one way to do X", gotchas, known debt), then read the feature spec for
   the area you are touching.
+- The PROCESS itself — the roles, the board and its record vocabulary, the gate,
+  the verification doctrine, the brief template and the porting checklist — is
+  described self-containedly in `docs/22-DEVELOPMENT-PROCESS.md`. Read it when
+  you are new to this workflow, and take it with you when starting another
+  project.
 - Any arc that adds or changes a seam, convention, gotcha or known-debt entry
   amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
   spec — an unamended seam is treated as missing.

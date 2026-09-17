@@ -8,6 +8,10 @@ owner's decision queue. It is **overwritten in place, never appended**, and it
 must stay ONE SCREEN — a record that no longer describes the present belongs in
 `docs/17` (if it decided something) or nowhere.
 
+The PROCESS this board serves — roles, record vocabulary, the gate, the
+verification doctrine, the brief template and the porting checklist — is
+described self-containedly in `docs/22-DEVELOPMENT-PROCESS.md`.
+
 ## The contract
 
 1. **Record grammar: one line per fact, stable prefix, `field=value` pairs.**
