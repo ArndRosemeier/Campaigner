@@ -145,6 +145,59 @@ export function discardIdeaProposal(): void {
 }
 
 /**
+ * Clears the board's CONVERSATION — the Idea Board's Clear-chat control
+ * (docs/21 §The chat's controls; docs/18 §2.3): the persisted transcript on
+ * the row goes to `[]` through the SAME `saveIdeaBoard` compare-and-swap the
+ * debounced writer uses (no second persistence path), and only THEN is the
+ * live store's transcript emptied.
+ *
+ * Order is load-bearing, exactly as in the canvas chat's clear
+ * (`features/modules/canvas/clearChat.clearModuleChat`): THE ROW GOES FIRST,
+ * awaited. The persisted transcript is the half that survives a reload, so a
+ * failure there ABORTS the whole clear — the throw propagates, the caller
+ * `toastError`s and NOTHING is cleared. Emptying the store first would leave
+ * the row holding the old conversation while the screen showed none, and the
+ * next board open would restore it whole.
+ *
+ * Two deliberate details:
+ * - a pending debounced `flushIdeaBoard` is CANCELLED first, because its
+ *   trailing fire would re-serialize the pre-clear board (transcript AND
+ *   document) and put the cleared conversation straight back on the row;
+ * - the write carries the LIVE draft, not the last saved row, so unsaved
+ *   typing at the moment of the clear survives it.
+ *
+ * What this does NOT touch (the dialog copy states it): the board's `document`
+ * and its `versions` (Previous drafts). The document is the owner's writing —
+ * content, not conversation — and Previous drafts is the board's own record of
+ * MODEL writes; neither is chat state, so the clear is never an undo. The
+ * pending `proposal` is likewise left alone: it is a suggestion about the
+ * document, not a message.
+ *
+ * Deliberately NOT folded onto the canvas seam: `clearPersistedChatThread` is
+ * module-row/field-keyed (`patchModule(moduleId, { chatThread: [] })`), while a
+ * board has no module id and its one write is a WHOLE-ROW compare-and-swap on
+ * the single `ideaBoards` row. A shared parameterisation of those two
+ * mechanisms would be vague, so the honest split is: same persistence SEAM
+ * (`saveIdeaBoard`), different clear ORCHESTRATION (this store owns every slice
+ * of its own state; `clearModuleChat` spans three canvas stores).
+ */
+export async function clearIdeaBoardChat(): Promise<void> {
+  clearTimeout(saveTimer);
+  const { board, saved } = useIdeaBoard.getState();
+  if (board === null || saved === null) throw new Error('The Idea Board is not loaded yet.');
+  const cleared: IdeaBoard = { ...board, messages: [] };
+  const next = await saveIdeaBoard(cleared, saved);
+  const current = useIdeaBoard.getState().board;
+  useIdeaBoard.setState({
+    // A save that settles while the owner typed keeps the newer draft (the
+    // `flushIdeaBoard` rule), with the transcript still cleared.
+    board: current === null || current === board ? next : { ...current, messages: [] },
+    saved: next,
+    error: null,
+  });
+}
+
+/**
  * Runs one refinement turn: the owner's instruction is recorded FIRST (so a
  * failed or stopped turn never discards what they typed — the module chat's
  * rule), the model is grounded on the document and conversation AS OF SEND

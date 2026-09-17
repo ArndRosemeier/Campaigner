@@ -45,6 +45,30 @@ workspace, and the text never becomes part of a module.
   typing). There is deliberately no cloud of versions — one flat list on the
   row.
 
+## The chat's controls
+
+- **Clear chat** — a small button in the chat column's header (beside the
+  `Refinement chat` label) opens the shared `AlertDialog` primitive for one
+  confirmation, then returns the CONVERSATION to a pristine state through ONE
+  seam, `clearIdeaBoardChat` (docs/18 §2.3). The ordering is the point and it
+  is the module canvas chat's rule: the PERSISTED transcript on the board row
+  is written FIRST through the same `saveIdeaBoard` compare-and-swap the
+  debounced writer uses, and is AWAITED — so a failed write aborts the whole
+  clear, toasts loudly, and leaves the conversation intact; only after the row
+  is clear does the live store empty. A pending debounced save is cancelled
+  first, because its trailing fire would put the cleared transcript straight
+  back on the row.
+- **What it does NOT clear** (the dialog's copy says it in the owner's face):
+  the board's DOCUMENT, its Previous drafts, and a suggested replacement that
+  has not been accepted. Those are content, not conversation — clearing the
+  chat is not an undo, and it never deletes the owner's writing. It also
+  cannot reach another board or any module chat thread: there is one board row,
+  and the write is a whole-row compare-and-swap.
+- **While a refinement reply is in flight** the clear REFUSES LOUDLY with a
+  toast and clears nothing (the canvas chat's rule): the reply would land its
+  own message moments later, so the pristine state the control advertises could
+  not be promised.
+
 ## What it is NOT, and why the module chat is not reused wholesale
 
 `llm/canvasChat`, `features/modules/canvas/chatTurn` and its store are
@@ -195,6 +219,7 @@ Two honest notes about the diagnosis:
 | a stopped turn applies nothing and records no reply, but keeps the instruction | same |
 | a failed reply keeps the instruction and toasts loudly | same |
 | copy goes through the one clipboard seam (success and unavailable-clipboard failure) | same |
+| the `Clear chat` control lives in the chat column and its dialog states the boundary; cancelling clears NOTHING (store AND row); confirming empties the live transcript AND the persisted row (and survives a later flush); the document and Previous drafts survive byte-unchanged; a rejected row write is loud and clears nothing; an in-flight reply refuses the clear | same (docs/17 row 227) |
 | the editor mounts on the app theme, is wired to THE extension seam, and the page root carries `h-full` with a ring-edged surface | same (the owner-reported white square / unused height, docs/17 row 174) |
 | the REAL editor builds from the seam, is labelled, and undo works — plus the seam installs no markdown language and no wiki decoration | `tests/features/idea-board-editor.test.tsx` |
 | one board across concurrent opens; a conflicting save is refused | `tests/db/ideaBoard.test.ts` |

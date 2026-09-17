@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { saveIdeaBoard } from '@/db/ideaBoardRepo';
-import { newIdeaBoard } from '@/domain/ideaBoard';
+import { newIdeaBoard, type IdeaBoard } from '@/domain/ideaBoard';
+import { stampNewEntity } from '@/domain/entity';
 import { IdeaBoardPage } from '@/features/idea-board/IdeaBoardPage';
 import { flushIdeaBoard, stopIdeaBoard, useIdeaBoard } from '@/features/idea-board/store';
 import { refineIdeaBoard } from '@/llm/ideaBoard';
@@ -67,9 +68,30 @@ function deferredRefinement(): (value: {
   };
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  const board = newIdeaBoard();
+/**
+ * The row the mocked persistence seam has on "disk". The board's repo is mocked
+ * at the boundary (`getIdeaBoard`/`saveIdeaBoard`), so THIS is the stored row
+ * the reload-survival pins assert against — never just the store.
+ */
+let persistedRow: IdeaBoard;
+
+/** A board carrying a conversation AND content (the non-vacuity base). */
+function seededBoard(): IdeaBoard {
+  return {
+    ...newIdeaBoard(),
+    document: "The owner's ideas — [[literal]]",
+    messages: [
+      { ...stampNewEntity(), role: 'user', text: 'Talk this through', modelUsed: null },
+      { ...stampNewEntity(), role: 'assistant', text: 'Here is a thought', modelUsed: 'test/model' },
+    ],
+    versions: [{ ...stampNewEntity(), document: 'An earlier idea', modelUsed: null }],
+    model: 'board/model',
+  };
+}
+
+/** Mounts the page over a board with that exact stored row. */
+function seedBoard(board: IdeaBoard): void {
+  persistedRow = board;
   useIdeaBoard.setState({
     board,
     saved: board,
@@ -79,7 +101,15 @@ beforeEach(() => {
     error: null,
     proposal: null,
   });
-  vi.mocked(saveIdeaBoard).mockImplementation((next) => Promise.resolve(next));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  seedBoard(newIdeaBoard());
+  vi.mocked(saveIdeaBoard).mockImplementation((next) => {
+    persistedRow = next;
+    return Promise.resolve(next);
+  });
   vi.mocked(copyText).mockResolvedValue();
 });
 
@@ -228,4 +258,138 @@ it('copies the document through the one clipboard seam and reports an unavailabl
     'Could not copy — select the text and copy it manually',
     expect.any(Error),
   );
+});
+
+/**
+ * Clear chat (docs/21 §The chat's controls; docs/18 §2.3): ONE action returns
+ * the board's CONVERSATION to a pristine state — the live transcript and the
+ * persisted transcript on the row — while the board's DOCUMENT and Previous
+ * drafts are content, not conversation, and survive byte-unchanged.
+ */
+const CLEARED_TOAST = 'Chat cleared — the board document was not changed';
+
+it('offers a Clear chat control in the chat surface, and its dialog states the boundary', async () => {
+  render(<IdeaBoardPage />);
+  const chat = screen.getByTestId('idea-board-chat');
+  // The accessible label names what it does, and the control lives INSIDE the
+  // board's conversation column (not on the header bar, not on the document).
+  const clear = within(chat).getByRole('button', { name: 'Clear chat' });
+  expect(clear).toHaveAttribute('data-testid', 'idea-board-clear');
+
+  fireEvent.click(clear);
+  const description = await screen.findByTestId('idea-board-clear-description');
+  // The boundary is unmistakable in the copy: what goes, and what stays.
+  expect(description.textContent).toContain('saved conversation on the board');
+  expect(description.textContent).toContain('NOT cleared');
+  expect(description.textContent).toContain('DOCUMENT');
+  expect(description.textContent).toContain('Previous drafts');
+  expect(description.textContent).toContain('content, not conversation');
+  expect(description.textContent).toContain('not an undo');
+});
+
+it('cancelling clears NOTHING — the store AND the persisted row are unchanged', async () => {
+  seedBoard(seededBoard());
+  render(<IdeaBoardPage />);
+  fireEvent.click(screen.getByTestId('idea-board-clear'));
+  await screen.findByTestId('idea-board-clear-dialog');
+  fireEvent.click(screen.getByTestId('idea-board-clear-cancel'));
+  await waitFor(() => {
+    expect(screen.queryByTestId('idea-board-clear-dialog')).toBeNull();
+  });
+  // A dialog that clears on OPEN (the classic bug here) reds both lines.
+  expect(useIdeaBoard.getState().board?.messages).toHaveLength(2);
+  expect(persistedRow.messages).toHaveLength(2);
+  expect(saveIdeaBoard).not.toHaveBeenCalled();
+});
+
+it('confirming empties the conversation in memory AND on the persisted row, surviving a later flush', async () => {
+  const seeded = seededBoard();
+  seedBoard(seeded);
+  render(<IdeaBoardPage />);
+  fireEvent.click(screen.getByTestId('idea-board-clear'));
+  fireEvent.click(await screen.findByTestId('idea-board-clear-confirm'));
+  await waitFor(() => {
+    expect(useIdeaBoard.getState().board?.messages).toEqual([]);
+  });
+  // The UI is back to its front door…
+  expect(within(screen.getByTestId('idea-board-chat')).getByText('Nothing asked yet.')).toBeInTheDocument();
+  // …and the half that survives a reload is cleared too: the ROW write carried
+  // `messages: []` against the snapshot the session loaded.
+  expect(persistedRow.messages).toEqual([]);
+  expect(saveIdeaBoard).toHaveBeenCalledWith(expect.objectContaining({ messages: [] }), seeded);
+  // The cancelled debounce can never re-serialize the cleared conversation.
+  await act(async () => {
+    flushIdeaBoard();
+    await Promise.resolve();
+  });
+  expect(persistedRow.messages).toEqual([]);
+  expect(toastSuccess).toHaveBeenCalledWith(CLEARED_TOAST);
+});
+
+it('leaves the board DOCUMENT and Previous drafts byte-unchanged (a clear that wipes the board reds)', async () => {
+  const seeded = seededBoard();
+  seedBoard(seeded);
+  render(<IdeaBoardPage />);
+  fireEvent.click(screen.getByTestId('idea-board-clear'));
+  fireEvent.click(await screen.findByTestId('idea-board-clear-confirm'));
+  await waitFor(() => {
+    expect(useIdeaBoard.getState().board?.messages).toEqual([]);
+  });
+  const after = useIdeaBoard.getState().board;
+  // Content, not conversation: the writing and its drafts are the same bytes.
+  expect(after?.document).toBe(seeded.document);
+  expect(after?.versions).toEqual(seeded.versions);
+  expect(after?.model).toBe(seeded.model);
+  expect(persistedRow.document).toBe(seeded.document);
+  expect(persistedRow.versions).toEqual(seeded.versions);
+});
+
+it('a failed clear write is LOUD and leaves the conversation intact', async () => {
+  const seeded = seededBoard();
+  seedBoard(seeded);
+  render(<IdeaBoardPage />);
+  vi.mocked(saveIdeaBoard).mockRejectedValueOnce(new Error('disk full'));
+  fireEvent.click(screen.getByTestId('idea-board-clear'));
+  fireEvent.click(await screen.findByTestId('idea-board-clear-confirm'));
+  await waitFor(() => {
+    expect(toastError).toHaveBeenCalledWith(
+      'Could not clear the chat — nothing was cleared; the saved conversation is still on the board',
+      expect.any(Error),
+    );
+  });
+  // Row first, AWAITED: the rejected write aborted the whole action, so the
+  // store was never emptied and the row still holds the old thread.
+  expect(useIdeaBoard.getState().board?.messages).toHaveLength(2);
+  expect(persistedRow.messages).toHaveLength(2);
+  expect(toastSuccess).not.toHaveBeenCalled();
+});
+
+it('refuses LOUDLY while a refinement reply is in flight — nothing is cleared', async () => {
+  const resolve = deferredRefinement();
+  seedBoard(seededBoard());
+  render(<IdeaBoardPage />);
+  fireEvent.change(screen.getByLabelText('Message to Idea Board'), {
+    target: { value: 'Keep going' },
+  });
+  fireEvent.click(screen.getByText('Send'));
+  expect(useIdeaBoard.getState().busy).toBe(true);
+
+  fireEvent.click(screen.getByTestId('idea-board-clear'));
+  fireEvent.click(await screen.findByTestId('idea-board-clear-confirm'));
+  await waitFor(() => {
+    expect(toastError).toHaveBeenCalledWith(
+      'A reply is still in flight — stop it or let it settle before clearing the chat',
+      expect.any(Error),
+    );
+  });
+  // The instruction the owner typed (recorded before the call) is still there,
+  // the stored conversation is untouched, and no success was reported.
+  expect(useIdeaBoard.getState().board?.messages).toHaveLength(3);
+  expect(persistedRow.messages).toHaveLength(2);
+  expect(toastSuccess).not.toHaveBeenCalled();
+
+  await act(async () => {
+    resolve({ reply: 'Settled', document: null, modelUsed: 'test/model' });
+    await Promise.resolve();
+  });
 });

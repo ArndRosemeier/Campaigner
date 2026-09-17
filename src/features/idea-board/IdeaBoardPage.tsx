@@ -2,13 +2,24 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import type { EditorView } from '@codemirror/view';
 import { redo, undo } from '@codemirror/commands';
-import { CopyIcon } from 'lucide-react';
+import { CopyIcon, EraserIcon } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelWidget } from '@/features/settings/model-widget';
 import { ideaBoardEditorExtensions } from '@/features/idea-board/editor';
 import {
+  clearIdeaBoardChat,
   discardIdeaProposal,
   editIdeaBoard,
   flushIdeaBoard,
@@ -31,6 +42,14 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * parts or scaffolding, and a refinement NEVER writes the board by itself. The
  * model's replacement arrives as a suggestion the owner accepts or discards,
  * and accepting snapshots the draft it replaced into Previous drafts.
+ *
+ * CLEAR CHAT (chat column header → alert-dialog confirm): returns the board's
+ * CONVERSATION to a pristine state through the one seam,
+ * `clearIdeaBoardChat` — the persisted transcript on the row first (awaited,
+ * aborting the whole action on failure), then the live store. It NEVER touches
+ * the DOCUMENT or Previous drafts: those are content, not conversation (the
+ * dialog copy says so), and a reply in flight REFUSES the clear loudly instead
+ * of clearing under a running turn.
  */
 
 /** Plain text only — the extension set lives in `idea-board/editor.ts` so it
@@ -40,6 +59,7 @@ import { toastError, toastSuccess } from '@/lib/toast';
 export function IdeaBoardPage(): JSX.Element {
   const state = useIdeaBoard();
   const [instruction, setInstruction] = useState('');
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const editorRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
@@ -78,6 +98,38 @@ export function IdeaBoardPage(): JSX.Element {
       : saved
         ? 'Saved'
         : 'Unsaved changes';
+
+  /**
+   * Confirms Clear chat (the chat column's header): the transcript goes
+   * through `clearIdeaBoardChat`, which writes the row FIRST and awaited.
+   *
+   * REFUSE LOUDLY, never cancel-then-clear: while a refinement reply is in
+   * flight a clear could not promise the pristine conversation it advertises
+   * (the reply would land its own message moments later), so the action is
+   * refused with a toast and NOTHING is cleared. A failed row write is the
+   * same shape: `clearIdeaBoardChat` throws before touching the live store,
+   * the toast names it, and the conversation is intact.
+   */
+  async function confirmClearChat(): Promise<void> {
+    setClearConfirmOpen(false);
+    if (state.busy) {
+      toastError(
+        'A reply is still in flight — stop it or let it settle before clearing the chat',
+        new Error('idea board chat clear refused while a reply is in flight'),
+      );
+      return;
+    }
+    try {
+      await clearIdeaBoardChat();
+    } catch (error) {
+      toastError(
+        'Could not clear the chat — nothing was cleared; the saved conversation is still on the board',
+        error,
+      );
+      return;
+    }
+    toastSuccess('Chat cleared — the board document was not changed');
+  }
 
   return (
     // `h-full` (not `flex-1`): the shell's <main> is a plain block that only
@@ -146,6 +198,21 @@ export function IdeaBoardPage(): JSX.Element {
           className="flex min-h-0 w-full flex-col gap-3 overflow-auto border-b p-3 md:w-80 md:shrink-0 md:border-r md:border-b-0"
           data-testid="idea-board-chat"
         >
+          <div className="flex items-center gap-2">
+            <span className="font-heading text-sm font-semibold">Refinement chat</span>
+            <Button
+              variant="ghost"
+              size="xs"
+              className="ml-auto"
+              data-testid="idea-board-clear"
+              onClick={() => {
+                setClearConfirmOpen(true);
+              }}
+            >
+              <EraserIcon aria-hidden data-icon="inline-start" />
+              Clear chat
+            </Button>
+          </div>
           <p className="text-sm text-muted-foreground">
             Write freely. Ask for ideas, talk them through, or ask for a new draft — a
             suggested draft is never applied until you accept it.
@@ -215,6 +282,35 @@ export function IdeaBoardPage(): JSX.Element {
               </Button>
             )}
           </form>
+          <AlertDialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+            <AlertDialogContent data-testid="idea-board-clear-dialog">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear the Idea Board chat?</AlertDialogTitle>
+                <AlertDialogDescription data-testid="idea-board-clear-description">
+                  Cleared: the whole conversation with the model — in this session and in the
+                  saved conversation on the board.
+                  <span className="mt-2 block font-medium text-foreground">
+                    NOT cleared: the board&apos;s DOCUMENT (the text you wrote), its Previous
+                    drafts, or a suggested replacement you have not accepted. Those are content,
+                    not conversation — clearing the chat is not an undo and never deletes your
+                    writing.
+                  </span>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="idea-board-clear-cancel">Keep chat</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  data-testid="idea-board-clear-confirm"
+                  onClick={() => {
+                    void confirmClearChat();
+                  }}
+                >
+                  Clear chat
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </aside>
 
         <section

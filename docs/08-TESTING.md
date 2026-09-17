@@ -7870,3 +7870,38 @@ persisted `locationKind`), so the capture is now ONE named helper
 | `classic stylize (natural site) carries the sparing clause and its own prose contract, and never the architectural clauses` (`tests/llm/imageTextGuard.test.ts`) | the prompt the engine actually hands `encounterRunAdapters.generateImages` for a brief with `environment: 'outdoor'` carries `IMAGE_TEXT_SPARING_CLAUSE` VERBATIM; carries the natural `Theme:`/`Site:`/`Scene:` prose lead and the placement-only clause (the soft patches where creatures gather, the single approach triangle, the softened visible-approach-path entrance clause); and does NOT carry the architectural materials line, keep-walls clause or architectural entrance wording | removing the clause from the natural arm alone (arm hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`), pasting the architectural materials/keep-structure line into it, or breaking the `environment: 'outdoor'` derivation |
 | same pin, hard-ban half | the usability hard-bans survive in the natural arm — `no map legend`, `no text labels`, the pale-box/plaque clause and the continuous-terrain sentence — the owner's 2026-09-17 decision ("Battlemaps do not need text, so that restriction can stay.") | removing or softening any hard-ban in the natural arm |
 | `classic stylize (architectural) falls back to the guard when the brief wrote no negative` (same file; the renamed original) | the architectural capture is unchanged and now also asserts the materials + keep-structure contract is present and the placement-only clause absent | removing the clause from the architectural arm, or leaking the natural clause into it |
+
+### The Idea Board's conversation clears ROW FIRST, and its content survives (docs/17 row 227, docs/21 §The chat's controls, docs/18 §2.3)
+
+The owner reported there was no clear-chat control on the Idea Board. The
+control now lives in the chat column's header (`Clear chat`, accessible name
+"Clear chat") and confirms through the shared `AlertDialog` primitive; the
+clear itself is ONE seam, `features/idea-board/store.clearIdeaBoardChat()`,
+which writes the persisted transcript to `[]` through the SAME
+`saveIdeaBoard(next, expected)` compare-and-swap `flushIdeaBoard` uses — AWAITED,
+row first — and only then empties the live store, cancelling the pending debounce
+so it cannot re-serialize the cleared conversation. Six pins live in the EXISTING
+idea-board page harness (`tests/features/idea-board.test.tsx`, whose mocked repo
+keeps a `persistedRow`, so "the stored row" is asserted and not merely the
+store).
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `offers a Clear chat control in the chat surface, and its dialog states the boundary` | the button's accessible name is `Clear chat` and it sits INSIDE the `idea-board-chat` column; the dialog copy names the saved conversation, `NOT cleared`, `DOCUMENT`, `Previous drafts`, `content, not conversation` and "not an undo" | removing the control, moving it out of the chat surface, or a dialog that does not state the boundary |
+| `cancelling clears NOTHING — the store AND the persisted row are unchanged` | the cancel path leaves both `useIdeaBoard`'s transcript and `persistedRow.messages` at 2 entries and calls `saveIdeaBoard` ZERO times | a dialog that clears on OPEN (the classic bug), or a cancel wired to the clear |
+| `confirming empties the conversation in memory AND on the persisted row, surviving a later flush` | the store transcript is `[]`, the UI is back to `Nothing asked yet.`, `saveIdeaBoard` was called with `messages: []` against the loaded snapshot, `persistedRow.messages` is `[]`, and a later `flushIdeaBoard()` cannot restore it | a store-only clear (the reload half), or a clear that leaves the pending debounce armed |
+| `leaves the board DOCUMENT and Previous drafts byte-unchanged (a clear that wipes the board reds)` | `document`, `versions` and `model` are identical in the store AND on `persistedRow` after the clear | a clear that resets the board to a blank one (the non-vacuity arm: "clearing the chat" must not be "wiping the board") |
+| `a failed clear write is LOUD and leaves the conversation intact` | `saveIdeaBoard` rejects once → `toastError` carries the exact "nothing was cleared" sentence, the store transcript keeps 2 entries, `persistedRow` keeps 2, and no success toast fires | a clear that empties the store before (or despite) a failed row write; a swallowed failure |
+| `refuses LOUDLY while a refinement reply is in flight — nothing is cleared` | with a refinement parked, confirm toasts "still in flight", the typed instruction (3 entries) and the stored row (2) are untouched, and nothing succeeds | a clear that runs under a streaming reply (the canvas chat's refusal rule) |
+
+**The seam is deliberately forked from the canvas chat, and the reason is in
+the store's doc comment:** `clearChat.clearModuleChat` is module-keyed to
+`patchModule(moduleId, { chatThread: [] })`, while a board has no module id and
+its write is a whole-row compare-and-swap on the single `ideaBoards` row; a
+shared parameterisation would be vague. The shared part is the PERSISTENCE seam
+(`saveIdeaBoard`) and the dialog primitive, not the orchestration.
+
+**UNCHANGED and named:** the board's send/stream/stop path and its 500 ms
+debounced persistence (this adds a control, not a second chat), the repo's
+compare-and-swap and its backup/export behaviour, and the canvas chat's own
+clear (bytes untouched).
