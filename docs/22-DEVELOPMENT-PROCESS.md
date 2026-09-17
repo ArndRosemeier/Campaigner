@@ -360,6 +360,14 @@ writer's word is a claim; the following is the check:
      and run THAT file.
    - **Restore from HEAD, never from the index**: a bare `git checkout -- <path>`
      restores the INDEX and has silently left injected code in a tree.
+   - **Restore from HEAD only the bytes HEAD actually holds.** In the shared tree
+     the landing is committed, so `git checkout HEAD -- <path>` is right. In a
+     WRITER's tree mid-slice the change is UNCOMMITTED and the same command WIPES
+     it — real incident (row 221): a writer's first arm run restored two uncommitted
+     source files from HEAD and destroyed the work, recovered only because it could
+     re-apply it. The brief must say either "commit the slice first, then inject" or
+     "take an out-of-tree copy and restore from the COPY". A trap restores
+     *something*; make sure it is the thing you meant.
    - The first arm is the untouched baseline, and its hash should match the
      writer's own reported baseline — that is provenance, and it has caught
      verification against the wrong tree.
@@ -420,7 +428,8 @@ the existing test harnesses; never build a second fixture set.
 1. The ONE gate command; exit 9 = lock busy → WAIT and retry, never reap another
    actor's processes; keep the RAW log.
 2. Your own differential with every arm's file hash printed; lock held before
-   injecting; restore from HEAD in a trap; identical arms are VOID.
+   injecting; restore from HEAD in a trap (or from an out-of-tree copy while the slice is
+   still uncommitted — HEAD does not hold it yet); identical arms are VOID.
 3. Commit style; rebase before push.
 4. If you cannot finish, COMMIT the coherent partial state and report BLOCKED
    with the reasoning.
