@@ -200,5 +200,10 @@ describe('spell labels', () => {
     expect(spellHeighteningLabel({ kind: 'increment', increment: 1, text: 'x' })).toBe(
       'Heightened (+1)',
     );
+    // The bare notes-only shape prints the source's own heading, with no
+    // rank/interval invented (docs/17 row 221).
+    expect(spellHeighteningLabel({ kind: 'note', text: 'As listed in the summon trait.' })).toBe(
+      'Heightened',
+    );
   });
 });

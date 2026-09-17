@@ -389,6 +389,26 @@ describe('spellAtRank — prose-only heightening (displayed, never computed)', (
     expect(result.notes).toEqual(['The damage increases by 1d6.']);
   });
 
+  it('prints a notes-only entry at every rank and computes NOTHING from it (docs/17 row 221)', () => {
+    const notesOnly = makeSpell({
+      rank: 3,
+      damage: { a: { formula: '2d6', type: 'fire', category: null, materials: [] } },
+      heightening: null,
+      heighteningEntries: [{ kind: 'note', text: 'As listed in the summon trait.' }],
+    });
+    for (const castRank of [3, 4, 10]) {
+      const result = spellAtRank(notesOnly, { castRank });
+      // No rank, no interval: no step count and no formula may move.
+      expect(result.values.damage.map((entry) => entry.formula)).toEqual(['2d6']);
+      expect(result.appliedSteps).toBeNull();
+      expect(result.stepRemainder).toBeNull();
+      expect(result.valuesSource).toBe('base');
+      expect(result.source).toBe('prose-only');
+      expect(result.notes).toEqual(['As listed in the summon trait.']);
+      expect(result.warnings).toContain(PROSE_ONLY_MARKER);
+    }
+  });
+
   it('surfaces heighteningUnparsed loudly and still returns base values', () => {
     const unparsed = makeSpell({
       rank: 3,

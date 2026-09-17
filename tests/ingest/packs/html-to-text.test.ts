@@ -111,11 +111,12 @@ type BehaviourId = keyof typeof BEHAVIOURS;
 
 /**
  * The seven adapter files and the style each DECLARES. This is the whole point
- * of the refactor stated as data: eleven call sites, two styles, no site with
+ * of the refactor stated as data: twelve call sites, two styles, no site with
  * a body of its own. `callCount` is exact (2 for the creature adapter, which
- * strips both a melee item's and an action's description, 2 for the rules
- * adapter — its document strip plus the heightening-note segments, docs/12
- * §15 / ledger 181 — and 3 for the dnd5e creature+spell adapter: a feature's
+ * strips both a melee item's and an action's description, 3 for the rules
+ * adapter — its document strip, the heightening-note segments (docs/12
+ * §15 / ledger 181) and the unparsed fallback's per-line strip (row 221) — and
+ * 3 for the dnd5e creature+spell adapter: a feature's
  * description, a spell's description and a spell's "At Higher Levels"
  * paragraph, row 194) so reverting ONE of a file's sites fails rather than
  * hiding behind the others.
@@ -126,6 +127,12 @@ type BehaviourId = keyof typeof BEHAVIOURS;
  * AMENDED by docs/17 row 181 (the spells arc): `pf2e-rules` gained a SECOND
  * call to this same seam — `parseHeighteningEntries` strips each heightening
  * note's segment; still ONE stripper, used twice.
+ *
+ * AMENDED by docs/17 row 221 (the bare `Heightened` shape, the summon-spell
+ * family): `pf2e-rules` gained a THIRD call to this SAME seam —
+ * `parseHeighteningEntries`' unparsed fallback strips each offending
+ * description line before it is stored, so a line the parser cannot classify
+ * is LOUD but PLAIN PROSE (no markup, no `@UUID[…]`). Still ONE stripper.
  *
  * AMENDED by docs/17 row 194 (the dnd5e spell lane): `dnd5e-foundry` gained
  * TWO more calls to the SAME seam — `higherLevelSentence` strips the source's
@@ -141,7 +148,7 @@ const CALL_SITES: readonly {
   { file: 'pf2e-equipment.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
   { file: 'dnd5e-foundry.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 3 },
   { file: 'dnd5e-equipment.ts', style: 'BRACKET_LINKS_LINE_BREAKS', callCount: 1 },
-  { file: 'pf2e-rules.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 2 },
+  { file: 'pf2e-rules.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 3 },
   { file: 'pf2e-journal.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
   { file: 'pf2e-conditions.ts', style: 'AT_BRACE_LABEL_BLOCK_AND_TABLE', callCount: 1 },
 ];
@@ -584,7 +591,7 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('has every one of the eleven call sites routing through the seam with its declared style', () => {
+  it('has every one of the twelve call sites routing through the seam with its declared style', () => {
     expect(CALL_SITES).toHaveLength(7);
     let calls = 0;
     for (const { file, style, callCount } of CALL_SITES) {
@@ -613,11 +620,11 @@ describe('the ingest HTML→text seam is the ONLY one (SOURCE SCAN)', () => {
       expect(styled.length, `${file}: calls passing ${style}`).toBe(callCount);
       calls += callCount;
     }
-    // Eleven call sites over seven files (pf2e-foundry has two, pf2e-rules
-    // two since ledger 181, dnd5e-foundry three since row 194), counted as one
-    // number too, so a site that migrates to another style cannot hide in the
-    // per-file counts above.
-    expect(calls).toBe(11);
+    // Twelve call sites over seven files (pf2e-foundry has two, pf2e-rules
+    // three since ledger 181 + row 221, dnd5e-foundry three since row 194),
+    // counted as one number too, so a site that migrates to another style
+    // cannot hide in the per-file counts above.
+    expect(calls).toBe(12);
   });
 
   it('declares exactly two styles, and every one of them is used by a site above', () => {

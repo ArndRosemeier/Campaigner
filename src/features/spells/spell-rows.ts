@@ -104,14 +104,21 @@ function ordinal(value: number): string {
 
 /**
  * The heading a heightening note renders under — the corpus's own shape
- * (`Heightened (3rd)` for a fixed rank, `Heightened (+1)` for an interval).
- * It labels the entry's OWN rank/interval; it never computes a cast rank (the
- * mob arc's policy), so no number here is invented.
+ * (`Heightened (3rd)` for a fixed rank, `Heightened (+1)` for an interval,
+ * `Heightened` for the bare notes-only shape, docs/17 row 221). It labels the
+ * entry's OWN rank/interval; it never computes a cast rank (the mob arc's
+ * policy), so no number here is invented — and a `note` has no number to
+ * print.
  */
 export function spellHeighteningLabel(entry: SpellHeighteningEntry): string {
-  return entry.kind === 'fixed'
-    ? `Heightened (${ordinal(entry.rank)})`
-    : `Heightened (+${String(entry.increment)})`;
+  switch (entry.kind) {
+    case 'fixed':
+      return `Heightened (${ordinal(entry.rank)})`;
+    case 'increment':
+      return `Heightened (+${String(entry.increment)})`;
+    case 'note':
+      return 'Heightened';
+  }
 }
 
 export function buildSpellRows(

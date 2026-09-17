@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { SpellData } from '@/domain/spellData';
-import { spellAtRank, type SpellAtRankRequest } from '@/domain/spellHeightening';
+import { PROSE_ONLY_MARKER, spellAtRank, type SpellAtRankRequest } from '@/domain/spellHeightening';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+import { sha256Hex } from '@/lib/hash';
 
 /**
  * PF2e heightening end to end on the REAL corpus (docs/17 ledger 183): the
@@ -23,7 +24,17 @@ import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
  * - `packs/pf2e/spells/spells/cantrip/ignition.json` — remaster cantrip, base
  *   `2d4` at `level.value: 1`, `interval 1` delta `1d4` (the cantrip RULES base
  *   rank is 1, not the list rank 0).
+ * - `packs/pf2e/spells/spells/rank-1/summon-undead.json` (fetched 2026-09-17,
+ *   sha256 `ac16988320dfd9e6ea2157d1f9ea89a9dd1c452b537389d6f1f496a0495757f4`,
+ *   1,494 B) — the THIRD heading shape, a bare `<strong>Heightened</strong>`
+ *   with NO rank and NO interval, delegating the scaling to the `summon` trait
+ *   (`docs/17` row 221). It carries `heightening: null` and `damage: {}`, so
+ *   the parsed `note` is prose only and computes NOTHING. Its sibling
+ *   `rank-1/summon-animal.json` (`69245404394b1ee414781cadb1c54678dd08d0a357422b39e541115ed60b82a5`,
+ *   1,475 B) carries the SAME shape, which is why this is named a FAMILY
+ *   rather than a one-off.
  */
+
 
 const PACK_FIXTURES = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'pf2e-rules');
 const SPELL_FIXTURES = join(import.meta.dirname, '..', '..', 'fixtures', 'spells');
@@ -42,6 +53,10 @@ const acidSplash = (): Promise<SpellData> =>
 const fireball = (): Promise<SpellData> =>
   payload(SPELL_FIXTURES, 'fireball.json', 'spells/spells/rank-3/fireball.json');
 const ignition = (): Promise<SpellData> => payload(SPELL_FIXTURES, 'ignition.json', 'spells/spells/cantrip/ignition.json');
+const summonUndead = (): Promise<SpellData> =>
+  payload(SPELL_FIXTURES, 'summon-undead.json', 'spells/spells/rank-1/summon-undead.json');
+
+const SUMMON_UNDEAD_SHA256 = 'ac16988320dfd9e6ea2157d1f9ea89a9dd1c452b537389d6f1f496a0495757f4';
 
 function formulasAt(spell: SpellData, request: SpellAtRankRequest): string[] {
   return spellAtRank(spell, request).values.damage.map((entry) => `${entry.key}=${entry.formula}`);
@@ -110,5 +125,49 @@ describe('heightening on the real corpus (the Paizo rule, source numbers only)',
     expect(rank5.appliedSteps).toBe(4);
     expect(rank5.source).toBe('cantrip-auto');
     expect(rank5.valuesSource).toBe('interval');
+  });
+});
+
+describe('the bare Heightened shape — a NOTES-ONLY entry that computes nothing (docs/17 row 221)', () => {
+  it('Summon Undead: the REAL upstream bytes are the pinned fixture', async () => {
+    const fixture = readFileSync(join(SPELL_FIXTURES, 'summon-undead.json'), 'utf8');
+    // The fixture is the fetched document byte-for-byte (never synthesised):
+    // a drift REDS by name here.
+    expect(await sha256Hex(fixture)).toBe(SUMMON_UNDEAD_SHA256);
+  });
+
+  it('parses the bare heading as ONE readable note and leaves the fallback EMPTY', async () => {
+    const spell = await summonUndead();
+    // The source carries NO structured heightening and no base damage — the
+    // scaling lives in the `summon` trait's own journal page.
+    expect(spell.heightening).toBeNull();
+    expect(spell.damage).toEqual({});
+    expect(spell.heighteningEntries).toEqual([
+      { kind: 'note', text: 'As listed in the summon trait.' },
+    ]);
+    // Pin 1: NO unparsed entry, and the GM-readable text carries neither the
+    // raw `<strong>`/`<p>` markup nor the Foundry `@UUID[…]` notation.
+    expect(spell.heighteningUnparsed).toEqual([]);
+    const text = spell.heighteningEntries[0]?.text ?? '';
+    expect(text).not.toContain('<');
+    expect(text).not.toContain('@UUID[');
+    expect(text).toBe('As listed in the summon trait.');
+  });
+
+  it('computes NO numbers from the note at any cast rank (the loud cannot-compute path)', async () => {
+    const spell = await summonUndead();
+    for (const castRank of [1, 2, 5]) {
+      const result = spellAtRank(spell, { castRank });
+      // A note names no rank and no interval, so no number and no step is
+      // derived from it — the source's sentence is printed behind the marker.
+      expect(result.values.damage).toEqual([]);
+      expect(result.appliedSteps).toBeNull();
+      expect(result.stepRemainder).toBeNull();
+      expect(result.valuesSource).toBe('base');
+      expect(result.structured).toBe(false);
+      expect(result.source).toBe('prose-only');
+      expect(result.notes).toEqual(['As listed in the summon trait.']);
+      expect(result.warnings).toContain(PROSE_ONLY_MARKER);
+    }
   });
 });

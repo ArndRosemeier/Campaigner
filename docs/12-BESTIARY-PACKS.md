@@ -1172,11 +1172,16 @@ on the book, network-free adapters, loud per-entry failures.
   `system.heightening` object VERBATIM — never normalized, `.nullish()` when
   the document carries none); `heighteningEntries` (notes parsed out of the
   RAW description HTML before it is stripped, in document order —
-  `{kind:'fixed', rank:N, text}` from `<strong>Heightened (3rd)</strong> …`
-  and `{kind:'increment', increment:N, text}` from
-  `<strong>Heightened (+1)</strong> …`); and `heighteningUnparsed` (the raw
-  description line(s) that mention "Heightened" but matched NEITHER shape —
-  LOUD DATA, never a run failure and never a silent drop). The payload ALSO
+  `{kind:'fixed', rank:N, text}` from `<strong>Heightened (3rd)</strong> …`,
+  `{kind:'increment', increment:N, text}` from
+  `<strong>Heightened (+1)</strong> …`, and the NOTES-ONLY
+  `{kind:'note', text}` from a bare `<strong>Heightened</strong> …` with
+  neither — the summon-spell family's shape, docs/17 row 221, where the
+  scaling is delegated to a trait and NOTHING is computed); and
+  `heighteningUnparsed` (the description line(s) that mention "Heightened" but
+  matched NONE of the three shapes, each stripped by the same HTML→text seam
+  so it is PLAIN PROSE — never markup, never `@UUID[…]` notation — LOUD DATA,
+  never a run failure and never a silent drop). The payload ALSO
   carries the BASE numbers a heightening delta is combined against (ledger
   183, amendment): `damage` (the source's own `system.damage` record
   VERBATIM — each entry's `formula`/`type`/`category`/`materials`, keys
@@ -1319,8 +1324,10 @@ on the book, network-free adapters, loud per-entry failures.
   `rank: 0` + `cantrip: true` (the trait), the traditions, the four cast
   facts, the OGL publication, the source `system.heightening` object
   deep-equal to the fixture's, and its FOUR fixed heightening notes (3rd,
-  5th, 7th, 9th) verbatim in document order; a synthetic increment heading
-  and a synthetic unparsed `Heightened` line are pinned too, and the emitted
+  5th, 7th, 9th) verbatim in document order; a synthetic increment heading,
+  a bare notes-only `Heightened` heading (docs/17 row 221) and a synthetic
+  unclassifiable `Heightened` line are pinned too (the unclassifiable line as
+  the seam's PLAIN PROSE, never raw HTML), and the emitted
   text sha256 is unchanged from the arc base.
 - The structured data is RENDERED (docs/17 row 182): the campaign spell list
   shows only the campaign system's ready books' `spell` chunks (a ready

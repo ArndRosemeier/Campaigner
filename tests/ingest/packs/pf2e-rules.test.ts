@@ -271,18 +271,21 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(entry?.spell?.heighteningUnparsed).toEqual([]);
   });
 
-  it('captures an unrecognized Heightened line as LOUD unparsed data (never dropped)', async () => {
+  it('captures an unrecognized Heightened line as LOUD unparsed PLAIN PROSE (never dropped, never markup)', async () => {
     const parsed = await foundryPf2eRulesAdapter.parseFile(
       'spells/spells/rank-2/synthetic-bolt.json',
       syntheticSpellBytes(
-        '<p>Base text.</p>\n<p><strong>Heightened (special)</strong> Something unusual.</p>',
+        `<p>Base text.</p>\n<p><strong>Heightened (special)</strong> As listed in the @UUID[Compendium.pf2e.journals.JournalEntry.S55aqwWIzpQRFhcq.JournalEntryPage.8gcp880pEWZ9VPnF]{summon} trait.</p>`,
       ),
     );
     expect(parsed.failures).toEqual([]);
     const entry = (parsed.sections ?? [])[0];
     expect(entry?.spell?.heighteningEntries).toEqual([]);
+    // The line is STILL LOUD (stored) but it is the ingest HTML→text seam's
+    // plain prose: no `<strong>`/`<p>` markup and no `@UUID[…]` notation
+    // reaches a GM (docs/17 row 221).
     expect(entry?.spell?.heighteningUnparsed).toEqual([
-      '<p><strong>Heightened (special)</strong> Something unusual.</p>',
+      'Heightened (special) As listed in the summon trait.',
     ]);
   });
 

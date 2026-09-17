@@ -251,13 +251,15 @@ function castLine(doc: ParsedRulesDoc): string | null {
 }
 
 /**
- * A `Heightened (Nth)` heading (an exact rank) or `Heightened (+N)` heading
- * (an interval), as the PF2e corpus writes it. Case-insensitive and
- * whitespace-tolerant; ordinals are `st|nd|rd|th`. Anything that mentions
- * Heightened but does not match is captured unparsed, never dropped.
+ * A PF2e `Heightened` heading as the corpus writes it, in THREE shapes:
+ * `Heightened (Nth)` (an exact rank), `Heightened (+N)` (an interval) and a
+ * bare `Heightened` with neither (the summon-spell family, which delegates the
+ * scaling to a trait). Case-insensitive and whitespace-tolerant; ordinals are
+ * `st|nd|rd|th`. A description that mentions Heightened but matches none of
+ * these is captured unparsed, never dropped.
  */
 const HEIGHTENING_HEADING =
-  /<strong>\s*Heightened\s*\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\)\s*<\/strong>/gi;
+  /<strong>\s*Heightened\s*(?:\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\))?\s*<\/strong>/gi;
 
 /** The description mentions heightening at all (case-insensitive). */
 const HEIGHTENING_MENTION = /heightened/i;
@@ -267,9 +269,12 @@ const HEIGHTENING_MENTION = /heightened/i;
  * is stripped (the tags are the only place the rank/interval lives). Notes are
  * returned in document order; each note's `text` is the prose between its
  * heading and the next one, stripped by the lane's ONE HTML→text seam. A
- * description that mentions Heightened but matches NEITHER shape yields no
- * entries and its offending raw line(s) in `unparsed` — loud data, not a
- * failure and not a silent drop.
+ * heading that names no rank and no interval is a `note` — the source's own
+ * prose, from which NOTHING is computed (docs/17 row 221). A description that
+ * mentions Heightened but matches NO shape yields no entries and its offending
+ * line(s) in `unparsed`, each stripped by that SAME seam so a GM reads prose
+ * and never markup or `@UUID[…]` notation — loud data, not a failure and not a
+ * silent drop.
  */
 function parseHeighteningEntries(html: string): {
   entries: SpellHeighteningEntry[];
@@ -287,6 +292,10 @@ function parseHeighteningEntries(html: string): {
       entries.push({ kind: 'fixed', rank: Number(rank), text });
     } else if (increment !== undefined) {
       entries.push({ kind: 'increment', increment: Number(increment), text });
+    } else {
+      // A bare `<strong>Heightened</strong>`: no rank, no interval, nothing to
+      // compute — the note is printed as the source's own prose.
+      entries.push({ kind: 'note', text });
     }
   }
   if (entries.length === 0 && HEIGHTENING_MENTION.test(html)) {
@@ -295,7 +304,12 @@ function parseHeighteningEntries(html: string): {
       unparsed: html
         .split('\n')
         .map((line) => line.trim())
-        .filter((line) => line !== '' && HEIGHTENING_MENTION.test(line)),
+        .filter((line) => line !== '' && HEIGHTENING_MENTION.test(line))
+        // The mention is found on the RAW line (no raw mention is ever
+        // dropped) and the STORED line is the seam's plain prose, so a GM
+        // reads the source's words and never its markup (docs/17 row 221).
+        .map((line) => htmlToText(line, AT_BRACE_LABEL_BLOCK_AND_TABLE).trim())
+        .filter((line) => line !== ''),
     };
   }
   return { entries, unparsed: [] };

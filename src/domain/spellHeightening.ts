@@ -56,7 +56,10 @@ import {
  *   and an EXPLICIT `castRank` wins over every derived one.
  * - prose only: a source with NO structured `heightening` but WITH parsed notes
  *   returns the applicable note text VERBATIM and a loud marker — no numbers
- *   are computed from prose.
+ *   are computed from prose. A `note` entry (a bare `<strong>Heightened</strong>`
+ *   with no rank and no interval, the summon-spell family's shape — docs/17 row
+ *   221) is always such prose: it contributes NO number and NO cast rank, and
+ *   it is exactly what puts a structured-less summon spell on this arm.
  *
  * NO INVENTED NUMBERS: every formula comes from the payload's own structure
  * (`spell.damage` plus the `heightening` object). Formulae are combined
@@ -653,9 +656,13 @@ function applicableNotes(
   const chosen = new Set<SpellHeighteningEntry>();
   for (const entry of entries) {
     // The single highest applicable `fixed` note (each states the complete
-    // increase at that rank); every `increment` note applies once heightened.
+    // increase at that rank); every `increment` note applies once heightened;
+    // a `note` names NO rank and NO interval, so it is the source's general
+    // heightening prose and is printed VERBATIM at every rank (docs/17 row
+    // 221) — it contributes no number anywhere.
     if (entry.kind === 'fixed' && entry.rank === highest) chosen.add(entry);
     if (entry.kind === 'increment' && appliedRank > baseRank) chosen.add(entry);
+    if (entry.kind === 'note') chosen.add(entry);
   }
   return entries.filter((entry) => chosen.has(entry)).map((entry) => entry.text);
 }

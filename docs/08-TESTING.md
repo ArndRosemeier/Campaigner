@@ -5773,8 +5773,11 @@ bytes. The pins, and the injected failure each one catches:
   heightening notes — 3rd/5th/7th/9th — verbatim in document order). Two
   synthetic documents pin the other heightening shapes in the same real lane:
   `<strong>Heightened (+1)</strong>` yields ONE `increment` note, and a
-  `Heightened (special)` heading (matched by neither shape) lands VERBATIM in
-  `heighteningUnparsed` — loud data, never a silent drop. The same file's
+  `Heightened (special)` heading (matched by NONE of the three shapes — the
+  third arrived with row 221) lands in `heighteningUnparsed` as the HTML→text
+  seam's PLAIN PROSE: HTML-stripped and `@UUID[…]`-free, still LOUD, never a
+  silent drop (AMENDED by row 221, which used to store the raw line). The same
+  file's
   import pin asserts the four documents land
   `['section','section','spell','section']` with the lane count unchanged,
   that non-spell chunks carry no `spellData` key, and that the feat's
@@ -5809,8 +5812,10 @@ bytes. The pins, and the injected failure each one catches:
   AMENDED not weakened): the scan's exact per-file `htmlToText` call count for
   `pf2e-rules.ts` moves 1 → 2 and the summed total 8 → 9, because
   `parseHeighteningEntries` strips each heightening note's segment with the
-  SAME seam — still ONE stripper, used twice. A third call in that file would
-  red the scan exactly as a second one used to.
+  SAME seam — still ONE stripper, used twice. (Row 221 later added a THIRD
+  call in that file — the unparsed fallback's per-line strip, taking the file
+  to 3 and the total to 12 — which the scan now declares; still ONE seam, and
+  a call in any OTHER shape or file would still red it.)
 
 **WHAT THESE PINS DO NOT PROVE, stated plainly:** no test can prove an
 existing on-disk library gained structured spells — it cannot, because there
@@ -5948,6 +5953,66 @@ mob-spells UI is the follow-up slice) and no test can prove a model chooses a
 legal rank for the mob. And no test can prove an existing library recomputes
 heightening until its rules pack is re-imported — row 181's no-migration
 decision still stands.
+
+### The third heightening shape + the readable fallback (docs/17 row 221, docs/12 §15.4, docs/18 §2.1/§2.3)
+
+The owner read raw `<p><strong>Heightened</strong> … @UUID[…]` in the summon
+undead spell. The source is legitimate Foundry data; the parser knew only the
+two parenthesised headings and the fallback stored the raw line. The pins, and
+the injected failure each one catches:
+
+- `tests/fixtures/spells/summon-undead.json` (NEW) is the fetched
+  `packs/pf2e/spells/spells/rank-1/summon-undead.json` @ `v14-dev`
+  byte-for-byte — sha256
+  `ac16988320dfd9e6ea2157d1f9ea89a9dd1c452b537389d6f1f496a0495757f4`, 1,494 B —
+  recorded in the test file and ASSERTED there, so a drifted fixture REDS by
+  name. Its sibling `rank-1/summon-animal.json`
+  (`69245404394b1ee414781cadb1c54678dd08d0a357422b39e541115ed60b82a5`, 1,475 B)
+  was fetched only to show the shape is a FAMILY.
+- `tests/ingest/packs/pf2e-rules-heightening.test.ts` (extended; **pin 1**):
+  the real fixture maps to exactly ONE `{kind:'note', text:'As listed in the
+  summon trait.'}` with `heightening: null`, `damage: {}` and
+  `heighteningUnparsed: []`, and the note's text contains neither `<` nor
+  `@UUID[`. A regex without the optional parenthetical (the pre-slice parser)
+  REDS this: the entry is `[]` and the raw line lands in `heighteningUnparsed`.
+- `tests/ingest/packs/pf2e-rules.test.ts` (amended; **pin 2**): a synthetic
+  `Heightened (special)` line carrying an `@UUID[…]` stores
+  `['Heightened (special) As listed in the summon trait.']` — the mention is
+  found on the RAW line, the STORED line is the ONE HTML→text seam's prose.
+  Reverting the fallback to the raw line REDS it.
+- `tests/domain/spellHeightening.test.ts` (extended; **pin 5**): a notes-only
+  entry computes NOTHING at cast ranks 3/4/10 — `damage` unchanged,
+  `appliedSteps`/`stepRemainder` `null`, `valuesSource: 'base'`,
+  `source: 'prose-only'`, `PROSE_ONLY_MARKER` in `warnings`, the note text in
+  `notes`. Making a note contribute a step number REDS it (`+0` vs `null`).
+- `tests/domain/spellData.test.ts` / `tests/features/spell-rows.test.ts`
+  (amended): the schema accepts the three kinds (and still refuses a `note`
+  with no `text`), and `spellHeighteningLabel` prints the bare `Heightened` for
+  a note while the fixed/increment labels are byte-identical.
+- `tests/ingest/packs/html-to-text.test.ts` (amended): the declared call sites
+  move `pf2e-rules.ts` 2 → 3 and the summed total 11 → 12 — the fallback's
+  per-line strip is the SAME seam, so the "one stripper" claim is restated as
+  data rather than relaxed (a fourth call, or a call in any other file, still
+  reds).
+
+**Injected RED, watched (raw logs kept; every injected file's `git hash-object`
+printed; each arm restored from HEAD under the suite lock):** arm A baseline
+GREEN; arm B the bare shape removed from the regex → pin 1 red
+(`expected [] to deeply equal [ { kind: 'note', … } ]`); arm C the fallback
+left raw → pin 2 red (the raw HTML line is the stored string); arm D a note
+made to contribute a step number → pin 5 red (`expected +0 to be null`). No
+two arms produced identical output. **PDF caveat (the concurrent row-220
+writer):** no PDF/layout dump moved — `pdfLayout`, `modulePdf`, `pdfExport`
+and `mob-spells-pdf` pass and `tests/lib/pdfLayoutBaseline.json` is untouched.
+
+**WHAT THESE PINS DO NOT PROVE, stated plainly:** the owner's own imported
+pack lives in his browser and is not reachable by a test, and all 1,994
+upstream spell documents were not fetched — a heading shape outside the three
+is still possible, and its honest outcome is the unchanged LOUD unparsed entry
+(now readable). No test proves that every other corpus shape is covered; only
+the three known ones are. And an already-imported library keeps its stored
+`heighteningUnparsed` bytes until the rules pack is RE-IMPORTED: there is no
+migration and no render-time stripper, by design.
 
 ### Mob spells on an AI-authored stat block (docs/17 row 184, docs/11 §Mob spells, docs/18 §2.1/§2.2/§2.3)
 

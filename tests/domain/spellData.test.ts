@@ -74,7 +74,7 @@ describe('spellDataSchema (docs/12 §15)', () => {
     expect(() => spellDataSchema.parse({ system: 'pathfinder2e', rank: 0, cast: {} })).toThrow();
   });
 
-  it('validates the two heightening note shapes and rejects a bad rank/interval', () => {
+  it('validates the THREE heightening note shapes and rejects a bad rank/interval', () => {
     expect(
       spellDataSchema.parse({
         system: 'pathfinder2e',
@@ -84,11 +84,13 @@ describe('spellDataSchema (docs/12 §15)', () => {
         heighteningEntries: [
           { kind: 'fixed', rank: 3, text: 'Heightened at rank 3.' },
           { kind: 'increment', increment: 1, text: 'Heightened every rank.' },
+          { kind: 'note', text: 'As listed in the summon trait.' },
         ],
       }).heighteningEntries,
     ).toEqual([
       { kind: 'fixed', rank: 3, text: 'Heightened at rank 3.' },
       { kind: 'increment', increment: 1, text: 'Heightened every rank.' },
+      { kind: 'note', text: 'As listed in the summon trait.' },
     ]);
     expect(() =>
       spellDataSchema.parse({
@@ -106,6 +108,16 @@ describe('spellDataSchema (docs/12 §15)', () => {
         cantrip: false,
         cast: {},
         heighteningEntries: [{ kind: 'increment', increment: -1, text: 'nope' }],
+      }),
+    ).toThrow();
+    // A `note` carries no numeric field to reject — but it must carry text.
+    expect(() =>
+      spellDataSchema.parse({
+        system: 'pathfinder2e',
+        rank: 2,
+        cantrip: false,
+        cast: {},
+        heighteningEntries: [{ kind: 'note' }],
       }),
     ).toThrow();
   });

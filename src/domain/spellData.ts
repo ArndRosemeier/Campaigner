@@ -185,10 +185,17 @@ export type SpellArea = z.infer<typeof spellAreaSchema>;
  * document order (the next arc renders a spell at the rank a mob actually
  * casts it, so the notes are captured here rather than re-parsed later):
  * - `fixed` from `<strong>Heightened (3rd)</strong> …` (an exact rank),
- * - `increment` from `<strong>Heightened (+1)</strong> …` (an interval).
+ * - `increment` from `<strong>Heightened (+1)</strong> …` (an interval),
+ * - `note` from a bare `<strong>Heightened</strong> …` — the shape the
+ *   summon-spell family writes (docs/17 row 221), where the scaling is
+ *   delegated to a trait ("As listed in the … summon trait"). It names NO
+ *   rank and NO interval, so NOTHING is computed from it: it carries its
+ *   `text` and is printed as the source's own prose (the `prose-only`
+ *   provenance in `domain/spellHeightening` is the same "we print, we do not
+ *   compute" boundary).
  * `text` is the note's prose, stripped by the ingest lane's ONE HTML→text
- * seam. A description that mentions Heightened in NEITHER shape is captured
- * in `heighteningUnparsed` instead — loud data, never a silent drop.
+ * seam. A description that mentions Heightened in NONE of the three shapes is
+ * captured in `heighteningUnparsed` instead — loud data, never a silent drop.
  */
 export const spellHeighteningEntrySchema = z.discriminatedUnion('kind', [
   z.object({
@@ -199,6 +206,10 @@ export const spellHeighteningEntrySchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('increment'),
     increment: z.number().int().positive(),
+    text: z.string(),
+  }),
+  z.object({
+    kind: z.literal('note'),
     text: z.string(),
   }),
 ]);
@@ -276,9 +287,12 @@ const spellDataObjectSchema = z.object({
   /** Parsed heightening notes, document order; `[]` when the spell has none. */
   heighteningEntries: z.array(spellHeighteningEntrySchema).default([]),
   /**
-   * Raw description line(s) that mention "Heightened" but matched NEITHER
-   * shape — stored, never silently dropped (AGENTS rule 1). `[]` when nothing
-   * was left unparsed.
+   * Description line(s) that mention "Heightened" but matched NONE of the
+   * three shapes — stored, never silently dropped (AGENTS rule 1). Each line
+   * is stripped by the SAME ingest HTML→text seam as every other stored
+   * string here, so it is PLAIN PROSE: no markup and no `@UUID[…]` notation
+   * ever reaches a GM through it (docs/17 row 221). `[]` when nothing was
+   * left unparsed.
    */
   heighteningUnparsed: z.array(z.string()).default([]),
   /**

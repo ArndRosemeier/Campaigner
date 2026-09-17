@@ -18,9 +18,13 @@ import { spellHeighteningLabel } from '@/features/spells/spell-rows';
  * rarity, the four cast facts, then the heightening notes VERBATIM — labelled
  * with the entry's own rank/interval through `spellHeighteningLabel`, which
  * computes NOTHING (choosing the rank a mob casts at is the next arc's policy,
- * so this slice never prints a cast-rank number). A `heighteningUnparsed` list
- * renders LOUDLY: the ingest lane stored those lines precisely because it could
- * not classify them, and a silent drop here would hide real source data.
+ * so this slice never prints a cast-rank number), or with the bare
+ * `Heightened` heading for a notes-only entry (docs/17 row 221). A
+ * `heighteningUnparsed` list renders LOUDLY: the ingest lane stored those lines
+ * precisely because it could not classify them, and a silent drop here would
+ * hide real source data — the lines are the ingest seam's plain prose (no
+ * markup, no `@UUID[…]` notation), so this component renders them as stored
+ * and re-cleans nothing.
  *
  * THE LICENCE LINE IS THE STORED TEXT'S OWN. The description IS the chunk's
  * stored `text` — the ingest mapping's byte-exact output — and that output ends
