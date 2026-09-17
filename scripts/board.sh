@@ -15,7 +15,10 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "board.sh: not insid
 BOARD="${BOARD:-docs/20-ORCHESTRATION.md}"
 [ -f "$BOARD" ] || { echo "board.sh: BOARD MISSING — $BOARD"; exit 2; }
 
-LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
+# The suite lock the gate takes. It lives on a SHARED path (the repo), never
+# /tmp: /tmp is a per-call, read-only tmpfs in this harness, so a /tmp lock
+# cannot exclude a second gate at all.
+LOCK="${GATE_LOCK:-$PWD/.gate-lock}"
 stale=0
 note() { printf '  !! %s\n' "$1"; stale=1; }
 field() { printf '%s\n' "$1" | grep -o "$2=[^ |]*" | head -1 | cut -d= -f2-; }

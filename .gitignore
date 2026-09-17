@@ -4,6 +4,9 @@ logs
 # Gate run logs: the gate writes them INTO the workspace (GATE_LOGDIR) so a
 # background run's evidence survives — /tmp is private per call in this harness.
 .gate-logs/
+# The suite lock. It MUST live on a shared path: /tmp is a per-call, read-only
+# tmpfs in this harness, so a /tmp lock cannot exclude a second gate at all.
+.gate-lock/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

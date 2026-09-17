@@ -61,7 +61,9 @@
 #      typecheck, compile tier only), GATE_BUILD (1|0, default 1: build on a
 #      build-config diff), GATE_DIFF_BASE (default origin/main),
 #      GATE_LOGDIR (default <repo>/.gate-logs/gate-<pid> — IN THE WORKSPACE, so a
-#      background run's evidence outlives the process; /tmp is per-call here)
+#      background run's evidence outlives the process; /tmp is per-call here),
+#      GATE_LOCK (default <repo>/.gate-lock — the ONE suite lock, on a SHARED
+#      path; a /tmp lock is invisible across calls in this harness)
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -69,7 +71,12 @@ TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
 AVAIL_FLOOR_MB="${GATE_AVAIL_FLOOR_MB:-2500}"
 LOGDIR="${GATE_LOGDIR:-$PWD/.gate-logs/gate-$$}"
-LOCK="${GATE_LOCK:-/tmp/campaigner-suite.lock}"
+# The lock MUST be on a path shared by every shell. In this harness /tmp is a
+# per-call, read-only tmpfs (`mount` shows `tmpfs on /tmp ... (ro)` from the
+# second call on), so a /tmp lock is not merely non-atomic — it is invisible, and
+# two gates started from two shells would both believe they held it. The repo
+# worktree is the shared location; GATE_LOCK overrides.
+LOCK="${GATE_LOCK:-$PWD/.gate-lock}"
 DIFF_BASE="${GATE_DIFF_BASE:-origin/main}"
 PARALLEL_REQUESTED="${GATE_PARALLEL_CHUNKS:-2}"
 case "$PARALLEL_REQUESTED" in
@@ -127,10 +134,13 @@ command -v setsid >/dev/null 2>&1 || {
 self=$$
 foreign() { pgrep -af 'vites[t]|playwrigh[t]' 2>/dev/null | grep -v 'bash -c' | grep -v " $self " | grep -v "^$self "; }
 
-# Plan scratch. The LOCK, by contrast, is trapped only once it is OURS: a trap
-# that removed a lock we do not own would delete a sibling gate's lock.
-PLAN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/gate-plan-XXXXXX")" || {
-  echo "!! GATE: cannot create a plan dir" >&2
+# Plan scratch lives in the WORKSPACE, not /tmp: the chunk jobs are separate
+# processes and a per-call, read-only /tmp would leave them unable to read the
+# file lists. The LOCK, by contrast, is trapped only once it is OURS: a trap that
+# removed a lock we do not own would delete a sibling gate's lock.
+mkdir -p "$PWD/.gate-logs"
+PLAN_DIR="$(mktemp -d "$PWD/.gate-logs/plan-XXXXXX")" || {
+  echo "!! GATE: cannot create a plan dir under $PWD/.gate-logs" >&2
   exit 2
 }
 JOBS_DIR="$PLAN_DIR/jobs"
@@ -354,8 +364,8 @@ fi
 printf '%s %s %s\n' "$self" "$(date +%s)" "$PWD" > "$LOCK/owner"
 trap 'rm -rf "$LOCK" "$PLAN_DIR"' EXIT
 # The log dir is created only once the lock is OURS: a refused attempt (a foreign
-# suite, or the lock held by a sibling) used to leave an empty /tmp/gate-<pid>
-# behind, and retry loops accumulated them by the hundred.
+# suite, or the lock held by a sibling) used to leave an empty log dir behind,
+# and retry loops accumulated them by the hundred.
 mkdir -p "$LOGDIR"
 echo "gate: cap ${RSS_CAP_MB}MB RSS / floor ${AVAIL_FLOOR_MB}MB available; up to ${PARALLEL_REQUESTED} chunk(s) at once (soft fallback ${SOFT_FALLBACK_MB}MB, void retries ${MAX_VOID_RETRIES}); logs in $LOGDIR"
 
