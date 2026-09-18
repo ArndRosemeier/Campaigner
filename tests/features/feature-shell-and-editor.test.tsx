@@ -501,7 +501,6 @@ describe('editor-run-battle.test.tsx', () => {
       renderEditor(encounter, campaignId, [encounter, other]);
 
       await user.click(screen.getByTestId('run-battle-picker'));
-      const tideRow = () => screen.getByTestId(`run-battle-module-${tide.id}`);
       await user.click(
         within(await screen.findByTestId(`run-battle-module-${tide.id}`)).getByRole('button', {
           name: 'Open battle',

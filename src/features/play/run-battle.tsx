@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
+import type { JSX } from 'react';
 import { SwordsIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
