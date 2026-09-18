@@ -232,7 +232,12 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    button — it offers **Open battle**, a plain navigation onto the persisted
    board. Re-seeding the same encounter is the explicit **Re-run battle** →
    "Replace running battle?" two-step; a battle from a different encounter
-   keeps the confirm-first replace.* Amended 2026-09-06 (encounter-resume
+   keeps the confirm-first replace.* Amended 2026-09-18 (docs/17 row 240,
+   owner-directed): *superseded — the button no longer re-seeds AT ALL. A
+   module with an existing battle OPENS it unchanged, WHATEVER encounter it
+   was seeded from, its state kept; only a module with NO battle seeds. The
+   **Re-run battle** → "Replace running battle?" path is REMOVED, and starting
+   fresh is the in-battle **Re-seed** alone.* Amended 2026-09-06 (encounter-resume
    arc, reseed provenance): *every REPLACE now stamps an additive
    `battle.reseed` line on the row — `{ at, encounterArtifactId,
    encounterName }` (`null` for the original seed, epoch-ms `at` matching the

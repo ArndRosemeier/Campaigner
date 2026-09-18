@@ -898,8 +898,10 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   old text, and a reload mid-proposal leaves the engine-written text on the
   row (`edited: false`) with the staging gone — documented, do not invent
   persistence.
-- **The battle board is a FROZEN COPY of the encounter map; Open battle never
-  reseeds.** Seeding copies `mapImageId` + `mapLayout` onto the board, and
+- **The battle board is a FROZEN COPY of the encounter map; the run-battle
+  button never reseeds — any existing battle opens unchanged, and only the
+  in-battle Re-seed starts fresh (docs/17 row 240).** Seeding copies
+  `mapImageId` + `mapLayout` onto the board, and
   from then on the two evolve independently: regenerate swaps the
   encounter's slot (docs/11 D16) and only never-live boards converge — a
   live board keeps playing the old map until the GM explicitly re-runs the
