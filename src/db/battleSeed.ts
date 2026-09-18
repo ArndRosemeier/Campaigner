@@ -59,12 +59,13 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
  * question asked once, for every roster shape and whether or not the entry's
  * numbers resolved (docs/17 row 165).
  */
-async function creatureIdentityForEntry(
-  entry: MonsterEntry,
-): Promise<ReturnType<typeof rosterEntryCreatureIdentity>> {
+async function creatureIdentityForEntry(entry: MonsterEntry): Promise<{
+  linked: AnyArtifact | undefined;
+  identity: ReturnType<typeof rosterEntryCreatureIdentity>;
+}> {
   const linked =
     entry.source.type === 'npc-ref' ? await getAnyArtifact(entry.source.artifactId) : undefined;
-  return rosterEntryCreatureIdentity(entry, linked);
+  return { linked, identity: rosterEntryCreatureIdentity(entry, linked) };
 }
 
 /**
@@ -168,7 +169,7 @@ export async function expandRosterEntries(
     // for BOTH token paths below (docs/17 row 165): a cited creature whose
     // library row did not resolve keeps the portrait its citation names, and an
     // invented mob keys on the block its own row carries.
-    const identity = await creatureIdentityForEntry(entry);
+    const { linked, identity } = await creatureIdentityForEntry(entry);
     const numberStart = options.numberFrom ?? 1;
     for (let index = 1; index <= entry.count; index += 1) {
       const number = numberStart + index - 1;
@@ -209,9 +210,26 @@ export async function expandRosterEntries(
       const bonus = abilityModifier(resolved.statBlock.abilities.dex);
       let artifactId: Id;
       if (entry.source.type === 'npc-ref') {
-        // npc-ref tokens resolve stats through the real artifact — no seed
-        // copy to drift (the artifact must NEVER store current HP).
         artifactId = entry.source.artifactId;
+        // A DERIVED npc (a `creatureRef` with no stored stat block) has no
+        // numbers the battle lookup can read: `fighterStatsFromNpc` reads only
+        // `artifact.data.statBlock`, while the roster derives the block from
+        // the cited library creature. Freeze the DERIVED stats onto a seed row
+        // keyed by the artifact id (the rulebook-citation precedent), so every
+        // lookup — `use-battle`'s and the repo's three — resolves the cast
+        // creature instead of badging it "No combat stats — excluded from
+        // initiative". An AUTHORED npc (its own stat block) is NOT frozen: it
+        // keeps resolving through its row, so a later edit still reaches the
+        // table. The artifact must still NEVER store current HP.
+        if (
+          linked !== undefined &&
+          linked.kind === 'npc' &&
+          linked.data.statBlock === null &&
+          linked.data.creatureRef !== undefined &&
+          !seedFighters.some((seed) => seed.id === artifactId)
+        ) {
+          seedFighters.push({ id: artifactId, name: entry.name, maxHp, initiativeBonus: bonus });
+        }
       } else if (entry.source.type === 'rulebook') {
         // A LIBRARY CREATURE CITATION (docs/11 D5 amendment): no row is created
         // for it, so the creature identity is the token's portrait handle. ONE

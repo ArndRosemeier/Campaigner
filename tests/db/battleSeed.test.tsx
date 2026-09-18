@@ -104,6 +104,17 @@ async function addNpc(name: string, withStats: boolean): Promise<Artifact> {
   });
 }
 
+/** A CAST creature (docs/11 D3): no stored stat block, stats derived from the
+ * cited library chunk. The schema forbids carrying both. */
+async function addCastNpc(name: string, chunkId: Id): Promise<Artifact> {
+  return createArtifact({
+    campaignId,
+    kind: 'npc',
+    name,
+    data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+  });
+}
+
 interface SeedOptions {
   mapImageId?: Id | null;
   monsters?: { name: string; count: number; treasure?: string; source: Record<string, unknown> }[];
@@ -212,6 +223,35 @@ describe('roster expansion', () => {
     if (firstSeed === undefined) throw new Error('no seed fighters');
     expect(stats(firstSeed.id)?.maxHp).toBe(7);
     expect(stats(npc.id)?.maxHp).toBe(84);
+  });
+
+  /**
+   * The owner's report: two of three stat-identical encounter mobs were badged
+   * "No combat stats — excluded from initiative". The affected mobs are CAST
+   * creatures (`creatureRef`, no stored block): the roster DERIVES their stats
+   * so the card looks fine, but the battle lookup read only the stored block.
+   * The seed now freezes the DERIVED stats under the artifact id, so the cast
+   * creature resolves exactly like a rulebook citation (docs/17 row 239).
+   *
+   * Revert-proof: drop the freeze in `expandRosterEntries` and `stats(cast.id)`
+   * is undefined again (the token keeps its derived maxHp but is excluded).
+   */
+  it('resolves a CAST creature (creatureRef) instead of badging it statless (docs/17 row 239)', async () => {
+    const chunkId = await seedGoblinChunk();
+    const cast = await addCastNpc('Bog Zombie', chunkId);
+    const encounter = await addEncounter({
+      monsters: [{ name: 'Bog Zombie', count: 1, source: { type: 'npc-ref', artifactId: cast.id } }],
+    });
+    const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    // The roster derived the stats, so the seed reports nothing statless.
+    expect(statless).toEqual([]);
+    // The battle lookup resolves them too: the derived block is frozen under
+    // the artifact id (the artifact stores no block of its own).
+    expect(battle.seedFighters).toEqual([
+      expect.objectContaining({ id: cast.id, maxHp: 21, initiativeBonus: 2 }),
+    ]);
+    const stats = buildFighterStatsLookup(battle, await listArtifactsByCampaign(campaignId));
+    expect(stats(cast.id)).toMatchObject({ maxHp: 21, initiativeBonus: 2, currentHp: null });
   });
 
   /**
