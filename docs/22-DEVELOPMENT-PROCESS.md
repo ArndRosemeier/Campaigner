@@ -649,9 +649,13 @@ worktree, gate, pins, docs, BLOCKED clause) → dispatch (≤2 writers) → veri
 - Paths, the lock's name, chunk names, the reconciler's specific checks, and the
   docs numbering are repo-specific.
 - The **harness** matters: this process was run on an agent harness with
-  subagents, a subagent registry, a session board and a goal mechanism. The
-  roles need equivalents: a way to run a second agent with its own context, a way
-  to see which agents are live, and a way to delete them. Without a registry, the
+  subagents and a session board. The roles need equivalents: a way to run a
+  second agent with its own context, and a way to see which agents are live. On
+  the OpenCode harness this repo now runs on, that registry is the
+  `list_subagents` tool (global `ocm-list-subagents` plugin: the CURRENT
+  session's child sessions; the predecessor's DSH `list_agents`/`send_message`
+  and its goal mechanism do not exist here, and there is NO agent-facing
+  subagent-delete — cleanup is OpenCode Manager's). Without a registry, the
   board's `IN-FLIGHT` records become your only liveness signal — check them
   against the filesystem instead.
 - The **host limits**: replace the 3000 MB cap and the two-writer ceiling with
