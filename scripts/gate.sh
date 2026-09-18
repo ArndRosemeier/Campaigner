@@ -67,6 +67,18 @@
 #      dir; a /tmp lock is invisible across calls in this harness)
 set -uo pipefail
 
+# pnpm runs a deps PREFLIGHT before every script, and when it decides the
+# modules dir must be purged it refuses without a TTY:
+#   [ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules
+#   directory due to no TTY
+# That aborts `pnpm typecheck` — and so the whole gate — in this non-interactive
+# harness (MEASURED at session start, 2026-09-18: `pnpm typecheck` died there
+# while `./node_modules/.bin/tsc -b` compiled clean). CI=true is pnpm's OWN
+# documented switch for a non-interactive run; no test or config in this repo
+# reads process.env.CI, so it only changes pnpm's prompt behaviour, never the
+# suite's.
+export CI="${CI:-true}"
+
 cd "$(git rev-parse --show-toplevel)" || exit 2
 TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"

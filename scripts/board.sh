@@ -11,6 +11,14 @@
 # Env:   BOARD=<path> (default docs/20-ORCHESTRATION.md), GATE_LOCK=<path>
 set -uo pipefail
 
+# This session's id is set by the harness, but a plain child shell or another
+# box may not export it — and a bare `$DSH_SESSION_ID` under `set -u` killed the
+# reconciler on the first SESSION record, before its verdict (the "a check that
+# cannot look is not a check" failure this script exists to prevent). Default it
+# empty ONCE here so every read is safe; the "am I named?" check still skips when
+# it is genuinely absent.
+DSH_SESSION_ID="${DSH_SESSION_ID:-}"
+
 cd "$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "board.sh: not inside a git work tree"; exit 2; }
 BOARD="${BOARD:-docs/20-ORCHESTRATION.md}"
 [ -f "$BOARD" ] || { echo "board.sh: BOARD MISSING — $BOARD"; exit 2; }
