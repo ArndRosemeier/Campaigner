@@ -222,8 +222,7 @@ export async function expandRosterEntries(
         // keeps resolving through its row, so a later edit still reaches the
         // table. The artifact must still NEVER store current HP.
         if (
-          linked !== undefined &&
-          linked.kind === 'npc' &&
+          linked?.kind === 'npc' &&
           linked.data.statBlock === null &&
           linked.data.creatureRef !== undefined &&
           !seedFighters.some((seed) => seed.id === artifactId)
