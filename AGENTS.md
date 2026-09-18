@@ -569,7 +569,10 @@ once found by the owner instead of the agent.
 
 An armed goal's round ticks are NOT work orders. (Under the chief-of-staff
 standing rule below, the session's ONE goal stays paused — ticks then never
-arrive; this section governs the rare explicitly-armed case.) Real incident
+arrive; this section governs the rare explicitly-armed case.) **On this OpenCode
+harness there is no goal tool, so no ticks ever arrive and the section is
+dormant — but the anti-churn rules it teaches still bind a dispatcher that would
+otherwise treat a timer as a work order.** Real incident
 (twice in
 one day): with two writers mid-flight, the dispatcher treated successive
 round ticks as license to churn — first deleting a writer whose registry
@@ -613,7 +616,11 @@ death, not a description of a job.
   designation authorizes exactly those two touches. Afterwards NEVER edit,
   resume, re-scope, or complete it: a paused goal never ticks, and every
   goal update burns the session's shared goal budget (a previous chat died
-  at the goal limit from per-task goal churn). Work is driven by wake
+  at the goal limit from per-task goal churn). **On this OpenCode harness there
+  is no `update_goal` tool**, so the rule's INTENT binds instead of its
+  mechanism: the frozen goal is represented by ONE long-lived todo that is never
+  churned, task state lives in the todo list and the `list_subagents` sessions,
+  and no goal state is touched at all. Work is driven by wake
   events only: an owner message, a writer's landing/BLOCKED report, or a
   runtime failure notice. A tick that still arrives while work is
   delegated gets silence (rules 2–5 above bind unchanged). Re-arming the
