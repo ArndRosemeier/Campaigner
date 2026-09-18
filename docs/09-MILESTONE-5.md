@@ -276,6 +276,15 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    entries keep per-instance synthetic ids; statless entries are unchanged.
    Portraits ride the existing `coverImageId` token path (11 §"D5 amendment
    — mob portraits").*
+   Amended 2026-09-18 (docs/17 row 239): *a CAST creature — an `npc-ref` to
+   an npc carrying `creatureRef` with `statBlock: null` — resolves its stats
+   by DERIVING them from the cited library chunk, so the roster and its card
+   showed the numbers while the battle's fighter-stats lookup (which reads
+   only the artifact's STORED block) found none, badging the token "No combat
+   stats — excluded from initiative". The roster expansion now freezes the
+   DERIVED block onto a `seedFighters` row keyed by the artifact id (the
+   rulebook-citation precedent), so every lookup resolves the cast creature;
+   an AUTHORED npc-ref keeps resolving through its own row, unchanged.*
 4. Ensure PC tokens: every `pc` artifact of the campaign spawns row-major in
    the staging ground (default center of the board). Statless PCs are
    skipped with the same loud badge.

@@ -575,6 +575,7 @@ test) · ❌ gap.
 | Battle engine goldens: HP split, initiative, veils, legacy/layout snapping, staging ground | `battle-engine.test` | ✅ |
 | Battle persistence: module lifecycle, v10→v11 clearing, v11→v12 layout defaults | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
 | Battle seeding: roster expansion, room placement/veils, entry-room PCs, map fallback | `battleSeed.test`, `entity-panel.test` | ✅ |
+| A CAST creature (`creatureRef`, no stored block) in an encounter resolves in battle — the DERIVED stats are frozen under the artifact id, `statless` stays empty, and the fighter-stats lookup returns them (docs/17 row 239) | `battleSeed.test` (`resolves a CAST creature (creatureRef) instead of badging it statless`) | ✅ REVERT-PROVEN (stashing the freeze reds it `expected [] to deeply equal [ObjectContaining{…}]`) |
 | Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
 | Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `settings-page.test`, `images-ui.test` | ✅ |
 | Encounter clients: input references, exact aspect (the verify machinery was removed — docs/11 D14) | `image-caps.test`, `imageAspect.test` | ✅ |
