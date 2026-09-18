@@ -499,6 +499,23 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   `process.execArgv` arm, because the gate's own `NODE_OPTIONS=1536` masks the
   limit arm (1584 MB either way) exactly where the suite runs.
 
+- **An ambient `NODE_ENV=production` reds the ENTIRE suite; vitest sets
+  `NODE_ENV=test` only when it is UNSET (docs/17 row 235, 2026-09-18).** This
+  box's harness exports `NODE_ENV=production`, so every worker loaded React's
+  production build (render tests died `act(...) is not supported in production
+  builds of React`) and Vite transformed the jsdom project differently (tests
+  importing a `node:` builtin failed `No such built-in module: node:`). The
+  first full gate on the box was RED in all 7 chunks; `NODE_ENV=test vitest run`
+  on the same file passed 10/10. The rule: a test run must not depend on ambient
+  `NODE_ENV` — `vite.config.ts` forces `NODE_ENV=test` when `mode === 'test'`,
+  the ONE seam every runner (the gate, a bare bounded run, `pnpm test`) goes
+  through, while `vite build`/`vite dev` keep their real value. Same class, same
+  slice: pnpm's deps preflight refuses to purge `node_modules` without a TTY
+  (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`), and `board.sh` used
+  `$DSH_SESSION_ID` bare under `set -u` and died before its verdict. A tool or a
+  test that reads ambient state (env, TTY, box path, Node version) must DEFEND
+  itself or fail loudly — it must never inherit silently.
+
 - **Merging test files that share a background puts them in ONE module
   registry — the `--no-isolate` failure mode, inside one file (docs/17 row 176,
   docs/08 §Tests that share one background belong in one file).** Vitest gives
