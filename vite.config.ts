@@ -114,6 +114,18 @@ export function testMaxWorkers(): number {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
+  // A TEST RUN MUST NOT BE AT THE MERCY OF AN AMBIENT NODE_ENV. Vitest sets
+  // NODE_ENV to 'test' only when it is UNSET, so a harness or container that
+  // exports NODE_ENV=production leaks straight in: React resolves its
+  // production build ("act(...) is not supported in production builds of
+  // React") and Vite transforms the jsdom project differently, so `node:`
+  // built-ins imported by a test fail as "No such built-in module: node:".
+  // MEASURED on this box 2026-09-18: under the ambient NODE_ENV=production the
+  // gate was RED across every chunk; `NODE_ENV=test vitest run` on the same
+  // file passed 10/10. Forcing it here covers EVERY entry point (the gate, a
+  // bare `pnpm exec vitest run`, and `pnpm test`) instead of one command, and
+  // `mode === 'test'` keeps `vite build`/`vite dev` on their real NODE_ENV.
+  if (mode === 'test') process.env.NODE_ENV = 'test';
   const maxWorkers = testMaxWorkers();
   // Spelled ONCE, referenced at the root and in every project: the number lives
   // in TEST_WORKER_HEAP_CAP_MB, never as a literal at a call site.
