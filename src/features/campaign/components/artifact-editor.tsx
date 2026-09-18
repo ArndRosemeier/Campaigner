@@ -900,7 +900,9 @@ function EncounterRegenControls({
  * D10): a module-owned encounter runs through the module view's own
  * `RunBattleButton`, anchored to its own module; a campaign- or
  * library-scoped encounter opens a module picker whose rows render the same
- * button — one two-step replace confirm, never a fork.
+ * button — one open/seed split, never a fork (owner-directed 2026-09-18: an
+ * existing battle is always opened unchanged; only the in-battle Reseed
+ * starts fresh).
  */
 function EncounterRunAction({
   artifact,

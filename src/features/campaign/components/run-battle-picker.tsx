@@ -29,10 +29,11 @@ export interface ModuleBattlePickerProps {
  * Module picker for encounters without their own module (owner-ratified
  * "own-module anchor + picker fallback"): battles still anchor per module
  * (10-MILESTONE-6 D10), the picker only chooses which. Each row renders the
- * module view's own `RunBattleButton`, so the two-step "Replace running
- * battle?" confirm is the one shared implementation — a picked module with a
- * running board asks before replacing, exactly like the entity panel. Zero
- * modules is a named empty state, never a silent no-op.
+ * module view's own `RunBattleButton`, so the open/seed split is the one shared
+ * implementation — a picked module with an existing battle OPENS it unchanged
+ * (any encounter, state kept; re-seeding is the in-battle Reseed alone), and
+ * only a module with no battle seeds. Zero modules is a named empty state,
+ * never a silent no-op.
  */
 export function ModuleBattlePicker({
   campaignId,
@@ -64,8 +65,8 @@ export function ModuleBattlePicker({
           <DialogTitle>Run battle in which module?</DialogTitle>
           <DialogDescription>
             Battles anchor to a module — the picked module’s battle table is seeded with
-            “{encounter.name}”. A module already running this encounter reopens it instead of
-            replacing the board.
+            “{encounter.name}” only when it has none. A module that already has a battle opens it
+            unchanged (state kept); start fresh from the Reseed inside the battle.
           </DialogDescription>
         </DialogHeader>
         {modules === undefined ? (

@@ -254,11 +254,11 @@ describe('editor-run-battle.test.tsx', () => {
    * picker fallback): module-scoped encounters run through the module view's
    * own RunBattleButton anchored to their own module; campaign-scoped ones
    * pick a module; zero modules is a named empty state; non-encounter kinds
-   * stay untouched. Owner-ratified resume-by-default (encounter-resume arc): a
-   * module already running THIS encounter offers "Open battle" — a plain
-   * navigation that reattaches the persisted board — while a different
-   * encounter keeps the two-step replace confirm. A successful seed navigates
-   * straight to the seeded module's battle table.
+   * stay untouched. Owner-directed (2026-09-18): the button NEVER re-seeds — a
+   * module with an existing battle OPENS it unchanged (whatever encounter, its
+   * state kept), and only a module with NO battle seeds. Re-seeding is the
+   * in-battle Reseed alone. A seed or an open navigates straight to the
+   * module's battle table.
    */
 
   /** Renders the current router location so tests can assert the navigation. */
@@ -418,7 +418,7 @@ describe('editor-run-battle.test.tsx', () => {
       await flushAsyncUpdates();
     });
 
-    it('keeps the two-step replace confirm for the direct module-anchored path', async () => {
+    it('a battle from a DIFFERENT encounter is OPENED, never replaced (state kept)', async () => {
       const user = userEvent.setup();
       const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt']);
       const crypt = requireModule(modules, 0);
@@ -429,23 +429,28 @@ describe('editor-run-battle.test.tsx', () => {
         name: 'Crypt Gate',
       });
       await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
+      // Drift the running board: an open must keep it verbatim.
+      const running = await getBattleByModule(crypt.id);
+      if (running === undefined) throw new Error('running battle missing');
+      await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
       renderEditor(owned, campaignId, [encounter, owned]);
       await flushAsyncUpdates();
 
+      // The label is Open battle even though the running battle came from the
+      // OTHER encounter — no confirm, no destructive path.
       await waitFor(() =>
-        expect(screen.getByTestId('run-battle')).toHaveTextContent('Re-run battle'),
+        expect(screen.getByTestId('run-battle')).toHaveTextContent('Open battle'),
       );
       await user.click(screen.getByTestId('run-battle'));
-      // Armed only — the running board is not replaced yet.
-      expect(screen.getByTestId('run-battle')).toHaveTextContent('Replace running battle?');
-      const before = await db.battles.where('moduleId').equals(crypt.id).first();
-      expect(before?.encounterArtifactId).toBe(encounter.id);
-
-      await user.click(screen.getByTestId('run-battle'));
-      await waitFor(async () => {
-        const battle = await db.battles.where('moduleId').equals(crypt.id).first();
-        expect(battle?.encounterArtifactId).toBe(owned.id);
+      await waitFor(() => {
+        expect(screen.getByTestId('route-location')).toHaveTextContent(
+          battlePath(campaignId, crypt.id),
+        );
       });
+      const battle = await getBattleByModule(crypt.id);
+      // Provenance is still the other encounter and the drift survived.
+      expect(battle?.encounterArtifactId).toBe(encounter.id);
+      expect(battle?.board.activeIndex).toBe(2);
       await flushAsyncUpdates();
     });
 
@@ -480,7 +485,7 @@ describe('editor-run-battle.test.tsx', () => {
       await flushAsyncUpdates();
     });
 
-    it('picker path asks before replacing a picked module’s running battle', async () => {
+    it('picker path OPENS a picked module’s existing battle without replacing it', async () => {
       const user = userEvent.setup();
       const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt', 'Tide Bell']);
       const tide = requireModule(modules, 1);
@@ -490,30 +495,25 @@ describe('editor-run-battle.test.tsx', () => {
         name: 'Crypt Gate',
       });
       await seedBattleFromEncounter(campaignId, tide.id, other.id);
+      const running = await getBattleByModule(tide.id);
+      if (running === undefined) throw new Error('running battle missing');
+      await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
       renderEditor(encounter, campaignId, [encounter, other]);
 
       await user.click(screen.getByTestId('run-battle-picker'));
       const tideRow = () => screen.getByTestId(`run-battle-module-${tide.id}`);
       await user.click(
         within(await screen.findByTestId(`run-battle-module-${tide.id}`)).getByRole('button', {
-          name: 'Re-run battle',
+          name: 'Open battle',
         }),
       );
-      // Armed only — the running board is not replaced yet.
-      expect(
-        within(tideRow()).getByRole('button', { name: 'Replace running battle?' }),
-      ).toBeInTheDocument();
-      const before = await db.battles.where('moduleId').equals(tide.id).first();
-      expect(before?.encounterArtifactId).toBe(other.id);
-
-      await user.click(within(tideRow()).getByRole('button', { name: 'Replace running battle?' }));
-      await waitFor(async () => {
-        const battle = await db.battles.where('moduleId').equals(tide.id).first();
-        expect(battle?.encounterArtifactId).toBe(encounter.id);
-      });
       await waitFor(() => {
         expect(screen.queryByTestId('run-battle-module-picker')).toBeNull();
       });
+      const battle = await getBattleByModule(tide.id);
+      // Still the other encounter's battle, drift intact — nothing re-seeded.
+      expect(battle?.encounterArtifactId).toBe(other.id);
+      expect(battle?.board.activeIndex).toBe(2);
       await flushAsyncUpdates();
     });
 

@@ -4,8 +4,9 @@ import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Seeds a module's live battle from an encounter — the ACTION behind
- * `RunBattleButton` (`run-battle.tsx`, which owns the resume/replace button
- * and the navigation) and behind the battle surface's destructive re-seed.
+ * `RunBattleButton` ONLY when the module has no battle yet (the button OPENS
+ * an existing battle instead; re-seeding is the in-battle Reseed alone), and
+ * behind the battle surface's destructive re-seed.
  * A statless roster member toasts loudly (AGENTS rule 1: never dummy numbers).
  */
 export async function runBattle(

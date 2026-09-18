@@ -1,5 +1,3 @@
-import { useState } from 'react';
-import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { SwordsIcon } from 'lucide-react';
@@ -11,18 +9,18 @@ import { battlePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 
 /**
- * Seeds a module's live battle from an encounter. The module reader is the
- * only play view (M6-E). Owner-ratified resume-by-default (encounter-resume
- * arc): a module whose running battle was seeded from THIS encounter offers
- * "Open battle" — a plain navigation that reattaches the persisted board —
- * and re-seeding becomes an explicit destructive act ("Re-run battle", then
- * the two-step "Replace running battle?" confirm). A battle from a DIFFERENT
- * encounter (or with no provenance) keeps the two-step replace confirm.
- * The artifact editor reuses this exact button — directly for module-owned
- * encounters, inside a module picker for campaign-scoped ones — so the
- * resume/replace split stays one shared implementation. A successful seed
- * NAVIGATES straight to that module's battle table (the toast only confirms
- * the seed — it never tells the user to go open it themselves).
+ * Opens a module's battle, or seeds it the FIRST time. Owner-directed
+ * (2026-09-18): this button NEVER re-seeds a battle that exists — every
+ * existing battle opens as-is and keeps its state, whatever encounter it was
+ * seeded from; starting fresh is the IN-BATTLE Reseed alone. That is why there
+ * is no confirm state and no destructive label here any more: a running board
+ * can no longer be destroyed from this affordance.
+ *
+ * A successful first seed, or an open, navigates straight to that module's
+ * battle table (the toast only confirms a seed — it never tells the user to go
+ * open it themselves). The artifact editor reuses this exact button (directly
+ * for module-owned encounters, inside a module picker for campaign-scoped
+ * ones), so the open/seed split is one shared implementation.
  *
  * The seed action itself (`runBattle`) lives in the `run-battle-seed.ts`
  * sibling.
@@ -41,14 +39,12 @@ export function RunBattleButton({
   moduleId: Id;
   encounter: AnyArtifact & { kind: 'encounter' };
   /**
-   * Fired when a press commits a navigation — a successful seed OR a resume
-   * "Open battle" press — so the editor's module picker closes its dialog on
-   * it. A press that merely arms the replace confirm does not count. The
-   * module view passes nothing.
+   * Fired when a press commits a navigation (an open OR a successful seed) so
+   * the editor's module picker closes its dialog on it. The module view passes
+   * nothing.
    */
   onRun?: (() => void) | undefined;
 }): JSX.Element {
-  const [confirming, setConfirming] = useState(false);
   const navigate = useNavigate();
   const existingBattle = useLiveQuery(
     async () => getBattleByModule(moduleId),
@@ -56,37 +52,29 @@ export function RunBattleButton({
     undefined,
   );
   const running = isRunning(existingBattle);
-  // Resume-by-default: the running battle carries THIS encounter's
-  // provenance, so opening it loses nothing — never seed through it.
-  const resumes = existingBattle?.encounterArtifactId === encounter.id;
   return (
     <Button
       size="sm"
-      variant={!resumes && confirming ? 'destructive' : 'outline'}
+      variant="outline"
       data-testid="run-battle"
       onClick={() => {
-        if (resumes) {
+        // A battle exists: OPEN it. Never seed over it — its state is the
+        // table's, and only the in-battle Reseed may replace it.
+        if (running) {
           onRun?.();
           navigate(battlePath(campaignId, moduleId));
           return;
         }
-        if (running && !confirming) {
-          setConfirming(true);
-          return;
-        }
-        setConfirming(false);
+        // No battle yet: seed this encounter, then open it.
         void runBattle(campaignId, moduleId, encounter).then((report) => {
           if (report === null) return;
           onRun?.();
           navigate(battlePath(campaignId, moduleId));
         });
       }}
-      onBlur={() => {
-        setConfirming(false);
-      }}
     >
       <SwordsIcon aria-hidden data-icon="inline-start" />
-      {resumes ? 'Open battle' : confirming ? 'Replace running battle?' : running ? 'Re-run battle' : 'Run battle'}
+      {running ? 'Open battle' : 'Run battle'}
     </Button>
   );
 }
