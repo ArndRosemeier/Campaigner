@@ -29,7 +29,7 @@ a one-screen board — so the session that holds the role is disposable.
      │        ┌──────────────────────────────────┘       └───────────────┐
      │        ▼                                                          ▼
      │   WRITERS (≤2 in flight)                                  PROBES (read-only, parallel)
-     │   one slice each, own /tmp worktree                       "what does the code actually do?"
+     │   one slice each, own worktree                            "what does the code actually do?"
      │        │
      └────────┴──► DURABLE STATE (survives any death):
                    docs/17 decisions · docs/18 seams · docs/20 board · git branches/worktrees
@@ -107,7 +107,9 @@ a query is a `grep` and the answer is a line, not a paragraph.
 | `GUARD` | a mechanism protecting the process (host, RAM, compaction), and how to verify it |
 | `RECOVERY` | where a successor finds lost context |
 
-Example records (real, trimmed):
+Example records (real, trimmed). The `/tmp` worktree and log paths in these
+historical samples PREDATE the in-repo recipe (§Parallel writers 5, rows 231/232)
+— do not copy them:
 
 ```
 IN-FLIGHT | row=216 | writer=session-f6ae… | model=<provider>/<model> | worktree=/tmp/p-spell-peek
@@ -238,17 +240,24 @@ The human's instruction is INTENT, not design.
 **Separate worktrees, always.** Two writers in one tree share one git index, and
 `git commit` commits the whole index — file disjointness does NOT protect the
 commit phase (a real purge commit swept a concurrent writer's staged feature
-work under the wrong subject). So: one worktree per writer, under `/tmp`, never
-inside the repo (an in-repo worktree gets swept into the main tree's lint run).
-Symlinked `node_modules` does not work; install into the worktree.
+work under the wrong subject). So: one worktree per writer. WHERE it lives is
+harness-specific, and getting it wrong is measured, not theoretical: on this
+harness `/tmp` is a per-call, READ-ONLY tmpfs, so a worktree created there in
+one call does not exist for the next — the recipe is IN-REPO, under
+`<repo>/worktrees/<slice>` (gitignored, and ignored by `eslint.config.js`, so it
+is NOT swept into the main tree's lint run), installed with a plain
+`pnpm install --frozen-lockfile`. Symlinked `node_modules` does NOT work (28 test
+files fail on `pdfjs-dist` under Vite's `server.fs.allow`) even though lint and
+typecheck pass. AGENTS §Parallel writers 5 is the binding recipe; this paragraph
+states the principle it implements.
 
 **Absolute paths, stated twice in every brief.** Every shell call runs in a
 fresh shell whose working directory is the session workspace, and file tools
 resolve relative paths against that same workspace — so a writer told to work in
-`/tmp/<slice>` edits the MAIN tree unless every path is absolute (or the call
-passes a working directory). Real incident: a writer's six-file slice landed in
-the main tree while its own worktree sat clean and commitless, and the other
-writer's gates kept failing on half-finished foreign files.
+`<repo>/worktrees/<slice>` edits the MAIN tree unless every path is absolute (or
+the call passes a working directory). Real incident: a writer's six-file slice
+landed in the main tree while its own worktree sat clean and commitless, and the
+other writer's gates kept failing on half-finished foreign files.
 
 **File disjointness holds for source files and CANNOT hold for the docs.** Every
 landing amends the ledger, the testing doc and usually the seam index. So:
@@ -462,7 +471,8 @@ the binding rules, §critique the instruction, §Centralization, §host hygiene,
 §parallel writers. Then read <the specs and ledger rows for this area>.
 
 # Where you work (READ THIS TWICE)
-Your worktree is <ABSOLUTE /tmp path> on branch <branch>, based on origin/main =
+Your worktree is <ABSOLUTE in-repo path, `<repo>/worktrees/<slice>`> on branch
+<branch>, based on origin/main =
 <sha>, deps installed. Every bash call runs in a fresh shell whose cwd is the MAIN
 repo and file tools resolve RELATIVE paths against it — so EVERY read/edit/write/
 bash call MUST use an ABSOLUTE path under <worktree> (or pass a workdir). Never

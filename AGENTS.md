@@ -404,9 +404,10 @@ the config default, and it holds for whoever forgets. Binding rules:
    itself), so use a self-excluding pattern (`pgrep -af "vites[t]"`) and kill
    by PID.
 5. **Nothing outlives the writer.** Scratch harnesses live under that
-   writer's own `/tmp/<worktree>` directory, every process it starts is
-   foreground or killed before it reports, and load-generating scripts are
-   DELETED rather than left executable.
+   writer's own worktree (or the gate's workspace `.gate-logs`), never `/tmp`
+   — `/tmp` is per-call and read-only here (§Parallel writers 5); every process
+   it starts is foreground or killed before it reports, and load-generating
+   scripts are DELETED rather than left executable.
 6. **The dispatcher verifies the host, not just the diff**: `uptime` and a
    process scan (`pgrep -af "vitest|loadgen"`) before dispatching and after
    every landing; it cleans up its own writers' leftovers and reports the
@@ -425,10 +426,12 @@ the config default, and it holds for whoever forgets. Binding rules:
      LOCK, not a snapshot.** `pgrep` is only a diagnostic: two of our agents
      can look in the same instant, both see "free", and both start. Acquire an
      atomic lock instead (`mkdir` succeeds or it does not), and keep `pgrep`
-     for the foreign suites we cannot lock out (the owner's other DSH project):
-     `L=/tmp/campaigner-suite.lock; mkdir "$L" 2>/dev/null || exit 9;
-     printf '%s %s %s\n' "$$" "$(date +%s)" "$PWD" > "$L/owner";
-     trap 'rm -rf "$L"' EXIT`
+     for the foreign suites we cannot lock out (the owner's other DSH project).
+     **The lock is NOT `/tmp`**: `/tmp` is per-call and read-only here, so a
+     `/tmp` lock is invisible and excludes nothing (row 232). The lock is
+     `<repo>/.campaigner-lock`, derived from the git common dir so it is the SAME
+     path from the main tree and every worktree, and `scripts/gate.sh` /
+     `scripts/board.sh` take it themselves — use the gate, never hand-roll a lock.
      A lock whose owner file is older than 30 minutes AND with no `vites[t]`
      process alive is STALE (a killed run): remove it and say so. Keep the
      `pgrep` check in its OWN call — a combined one-liner self-matches, because
@@ -505,7 +508,8 @@ the config default, and it holds for whoever forgets. Binding rules:
      for processes owned by subagent sessions, so the cwd test silently matches
      nothing (a kill attempt written that way did nothing at all while a suite
      kept growing). What does identify a run is its argv: a writer's suite names
-     its own worktree (`… /tmp/campaigner-<slice>/node_modules/.bin/../vitest/vitest.mjs`).
+     its own worktree (`… <repo>/worktrees/<slice>/node_modules/.bin/../vitest/vitest.mjs`,
+     §Parallel writers 5).
      Kill BY PID, matched on a pattern BUILT AT RUNTIME so the killer's own
      command line cannot match it (row 94: a pattern kill SIGTERMed its own
      shell). Foreign suites — the owner's other DSH project — are waited for, not
@@ -620,8 +624,10 @@ death, not a description of a job.
   (a) read `docs/20-ORCHESTRATION.md` — in-flight writers, unlanded branches,
   the owner's decision queue; (b) run `bash scripts/board.sh`: the board is
   prose about state, so it is CHECKED, never believed; (c) compare its writer
-  records against the live registry (`list_subagents`) and the host (`uptime`,
-  orphan `vites[t]`, suite lock); (d) fix the board where it lied, report ONE
+  records against the live subagent sessions — the `list_subagents` tool (the
+  global `ocm-list-subagents` plugin) lists the CURRENT session's child sessions
+  with id/title/agent/model/age — and the host (`uptime`, orphan `vites[t]`,
+  suite lock); (d) fix the board where it lied, report ONE
   line, then wait for a request. No dispatch before this pass. **Reconcile
   against `origin/main`, never local `main`** — real error: row 167 read as
   "unlanded" for hours while it was pushed, deployed, and 5 commits ahead of a
@@ -632,7 +638,8 @@ death, not a description of a job.
   brief (the ONE seam it extends, the ledger row YOU assign at brief time from
   `docs/17`, worktree, gate, cadence contract, "commit the coherent partial
   state or report BLOCKED at every green milestone") → dispatch (≤2 writers in
-  flight, separate `/tmp` worktrees, ABSOLUTE paths) → verify every landing
+  flight, separate in-repo worktrees — `<repo>/worktrees/<slice>`, §Parallel
+  writers 5 — with ABSOLUTE paths) → verify every landing
   YOURSELF (SHA on `origin/main`, own gate with raw output kept, own injection
   WATCHED RED against a NAMED pin, docs amended in the same landing) → retire
   (session, worktree, branch — §Subagent hygiene; a recovered or silent
