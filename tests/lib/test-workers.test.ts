@@ -77,9 +77,13 @@ describe('the per-worker heap cap', () => {
     // cap, and `poolOptions` is absent from vitest's own types — so neither the
     // suite nor `tsc -b` (which DOES typecheck vite.config.ts) could see that
     // AGENTS §Host hygiene 7's "caps each worker's heap at 1536 MB" had become
-    // false. MEASURED on this box while writing the pin: the declared cap →
-    // 1584 MB `heap_size_limit`, the dead spelling → 4144 MB, i.e. no cap at all
-    // (V8's default for this machine).
+    // false. MEASURED on this box while writing the pin (older Node): the
+    // declared cap → 1584 MB `heap_size_limit`, the dead spelling → 4144 MB,
+    // i.e. no cap at all (V8's default for this machine). RE-MEASURED on Node
+    // 24.13.0 (2026-09-18): the declared cap → 1728 MB, no cap → 4288 MB. V8's
+    // rounding of the SAME flag moved with the Node major, so the ceiling below
+    // is 1.25× the declared cap — still ~2.5× below the no-cap default, which is
+    // the gap this arm exists to catch.
     //
     // The probe measures the LIVE limit of the worker the file runs in, so it
     // reds whichever way the cap stops reaching the workers — a resurrected
@@ -94,9 +98,10 @@ describe('the per-worker heap cap', () => {
     // limit arm is the one that reds for a bare run (measured: 4144 MB).
     const limitMb = getHeapStatistics().heap_size_limit / (1024 * 1024);
 
-    // V8 rounds the request up a little (1536 → 1584 measured), so this is a
-    // ceiling just above it — and far below the 4144 MB of no cap at all.
-    expect(limitMb).toBeLessThan(TEST_WORKER_HEAP_CAP_MB * 1.1);
+    // V8 rounds the request up (1536 → 1584 measured on older Node, 1728 on
+    // Node 24.13.0), so this is a ceiling above the rounding — and still far
+    // below the ~4200-4300 MB of no cap at all.
+    expect(limitMb).toBeLessThan(TEST_WORKER_HEAP_CAP_MB * 1.25);
     expect(process.execArgv).toContain(
       `--max-old-space-size=${String(TEST_WORKER_HEAP_CAP_MB)}`,
     );
