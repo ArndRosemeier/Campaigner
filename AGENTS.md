@@ -630,7 +630,9 @@ death, not a description of a job.
 - **1 · Session start — reconcile before anything else.** In this order:
   (a) read `docs/20-ORCHESTRATION.md` — in-flight writers, unlanded branches,
   the owner's decision queue; (b) run `bash scripts/board.sh`: the board is
-  prose about state, so it is CHECKED, never believed; (c) compare its writer
+  prose about state, so it is CHECKED, never believed — it validates git, the
+  OpenCode session API (`GET /session`, the harness's live session registry) and
+  the host, and says LOUDLY when a check cannot look; (c) compare its writer
   records against the live subagent sessions — the `list_subagents` tool (the
   global `ocm-list-subagents` plugin) lists the CURRENT session's child sessions
   with id/title/agent/model/age — and the host (`uptime`, orphan `vites[t]`,

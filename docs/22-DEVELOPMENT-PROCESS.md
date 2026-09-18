@@ -130,12 +130,15 @@ bash scripts/board.sh      # → BOARD RECONCILED  |  BOARD STALE — fix docs/2
 ```
 
 The script compares every claim against reality: does each `LANDED` sha exist on
-`origin/main`; is a claimed `IN-FLIGHT` writer still in the registry; does a
-branch claimed as retired still exist; is the suite lock held and by whom; are
-there session logs written in the last hours that the board does not name; is
-`reconciled:` an ancestor of HEAD; does a `LANDED` row still carry an `IN-FLIGHT`
-line (a classic stale pair). It also prints host load, available memory and any
-orphan test processes.
+`origin/main`; is a claimed `IN-FLIGHT` writer still a live session in the
+OpenCode session API; does a branch claimed as retired still exist; is the suite
+lock held and by whom; is there a child session under this repo updated in the
+last hours that the board does not name; is `reconciled:` an ancestor of HEAD;
+does a `LANDED` row still carry an `IN-FLIGHT` line (a classic stale pair). It
+also prints host load, available memory and any orphan test processes. The
+registry source is the OpenCode server (`OPENCODE_API_URL`, default
+`http://127.0.0.1:5551/session`); when it cannot be reached the run SAYS SO in
+its `=== sessions ===` header rather than passing silently.
 
 **Rules that make the board trustworthy**
 
