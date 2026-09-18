@@ -8,7 +8,8 @@
 # the exit status stays 0 and the last line says which it is.
 #
 # Usage: bash scripts/board.sh
-# Env:   BOARD=<path> (default docs/20-ORCHESTRATION.md), GATE_LOCK=<path>
+# Env:   BOARD=<path> (default docs/20-ORCHESTRATION.md), GATE_LOCK=<path>,
+#        OPENCODE_API_URL=<url> (default the OpenCode Manager server)
 set -uo pipefail
 
 # This session's id is set by the harness, but a plain child shell or another
@@ -38,6 +39,36 @@ field() { printf '%s\n' "$1" | grep -o "$2=[^ |]*" | head -1 | cut -d= -f2-; }
 noteof() { printf '%s\n' "$1" | sed 's/.*note=//'; }
 age_min() { find "$1" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1; }
 
+# ── Live sessions: the OpenCode API (this harness) ──────────────────────────
+# On this harness a "session" is an OpenCode session, NOT a DSH session dir: the
+# server exposes GET /session with each session's id, slug, parentID, directory,
+# agent and time.updated. That is the authority for "is a writer live" and for
+# "is something live the board does not name". OPENCODE_API_URL overrides; the
+# default is the reserved OpenCode Manager server port. If curl/jq are missing or
+# the API is unreachable we SAY SO LOUDLY below — a check that cannot look is not
+# a check (rows 231/232).
+OPENCODE_API_URL="${OPENCODE_API_URL:-http://127.0.0.1:5551}"
+oc_api_ok=0
+oc_sessions=""
+if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  if oc_sessions="$(curl -fsS --max-time 5 "$OPENCODE_API_URL/session" 2>/dev/null)" && [ -n "$oc_sessions" ]; then
+    oc_api_ok=1
+  fi
+fi
+# A session named on the board may be spelled by id (`ses_…`) or slug; match
+# either. Prints id<TAB>slug<TAB>agent<TAB>updated-epoch-seconds.
+oc_find_session() {
+  printf '%s' "$oc_sessions" | jq -r --arg w "$1" \
+    '.[] | select(.id==$w or .slug==$w) | [.id,.slug,(.agent//"?"),(((.time.updated//0)/1000|floor)|tostring)] | @tsv' 2>/dev/null | head -1
+}
+# Child sessions (a `task` subagent carries a parentID) whose directory is under
+# this repo and which were updated since an epoch-seconds cutoff. The CoS's own
+# ROOT session has no parentID, so it never flags itself.
+oc_recent_children() {
+  printf '%s' "$oc_sessions" | jq -r --arg d "$1" --argjson t "$2" \
+    '.[] | select((.parentID//"")!="" and ((.directory//"")|startswith($d)) and ((.time.updated//0) > ($t*1000))) | [.id,.slug,(.agent//"?"),(.title//"")] | @tsv' 2>/dev/null
+}
+
 # The session root is DERIVED from this repo's own path, never hardcoded to a
 # box layout: the directory's name is this workspace's absolute path with each
 # `/` turned into a `-`, so a box whose workspace lives elsewhere (or a moved
@@ -58,11 +89,15 @@ done
 if [ -z "$SESSROOT" ] && [ -d "$sess_base/--home-box-Harness-Campaigner--" ]; then
   SESSROOT="$sess_base/--home-box-Harness-Campaigner--"
 fi
-echo "=== session root ==="
-if [ -n "$SESSROOT" ]; then
-  echo "  $SESSROOT"
+echo "=== sessions ==="
+if [ "$oc_api_ok" -eq 1 ]; then
+  echo "  source: OpenCode API $OPENCODE_API_URL ($(printf '%s' "$oc_sessions" | jq 'length' 2>/dev/null) session(s) server-wide)"
+elif ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  echo "  source: NONE — curl and/or jq is missing, so the OpenCode session API cannot be queried; the writer-liveness and unrecorded-live-state checks CANNOT LOOK, so their silence is not evidence"
+elif [ -n "$SESSROOT" ]; then
+  echo "  source: DSH session dir $SESSROOT (fallback — the OpenCode API at $OPENCODE_API_URL was unreachable)"
 else
-  echo "  NOT FOUND for $PWD (looked under $sess_base and $(dirname "$PWD")/*/sessions) — the session-liveness, log-size and unrecorded-live-state checks below CANNOT LOOK, so their silence is not evidence"
+  echo "  source: NONE — the OpenCode API at $OPENCODE_API_URL is unreachable/unparseable and no DSH session dir exists; the writer-liveness and unrecorded-live-state checks CANNOT LOOK, so their silence is not evidence"
 fi
 
 echo "=== git ==="
@@ -150,17 +185,27 @@ while IFS= read -r line; do
       case "$writer" in
         ''|none*|dead*) echo "  writer: ${writer:-<unset>}";;
         *)
-          d=""
-          for c in "$SESSROOT/$writer" "$SESSROOT/session-$writer"; do [ -d "$c" ] && d="$c"; done
-          if [ -n "$d" ]; then
-            last="$(age_min "$d")"
-            if [ -n "$last" ]; then
-              echo "  writer log: $(basename "$d") (last write $(( ( $(date +%s) - last ) / 60 ))m ago — age is evidence, the live registry is proof)"
+          if [ "$oc_api_ok" -eq 1 ]; then
+            ws="$(oc_find_session "$writer")"
+            if [ -n "$ws" ]; then
+              w_id="$(printf '%s' "$ws" | cut -f1)"; w_agent="$(printf '%s' "$ws" | cut -f3)"; w_upd="$(printf '%s' "$ws" | cut -f4)"
+              echo "  writer session (OpenCode): $w_id agent=$w_agent (updated $(( ( $(date +%s) - w_upd ) / 60 ))m ago — the live API is proof)"
             else
-              echo "  writer log: $(basename "$d") (no files)"
+              note "writer $writer is named on the board but is NOT a session the OpenCode API knows — a stopped/typo'd id, or the wrong harness"
             fi
           else
-            echo "  writer: $writer (no session dir under $SESSROOT)"
+            d=""
+            for c in "$SESSROOT/$writer" "$SESSROOT/session-$writer"; do [ -d "$c" ] && d="$c"; done
+            if [ -n "$d" ]; then
+              last="$(age_min "$d")"
+              if [ -n "$last" ]; then
+                echo "  writer log: $(basename "$d") (last write $(( ( $(date +%s) - last ) / 60 ))m ago — age is evidence, the live registry is proof)"
+              else
+                echo "  writer log: $(basename "$d") (no files)"
+              fi
+            else
+              echo "  writer: $writer (no session dir under $SESSROOT)"
+            fi
           fi
           ;;
       esac
@@ -203,13 +248,13 @@ if [ -n "${DSH_SESSION_ID:-}" ]; then
   fi
 fi
 
-# UNRECORDED LIVE STATE — the dispatch-window hole. A writer exists on disk (its
-# worktree, its session log) from the moment it is dispatched, while the board is
+# UNRECORDED LIVE STATE — the dispatch-window hole. A writer exists (its
+# worktree, its session) from the moment it is dispatched, while the board is
 # only written at a landing. The predecessor died in exactly that window, so the
-# board is not the source of truth here: git and the session dirs are, and
+# board is not the source of truth here: git and the live sessions are, and
 # anything live that the board does not name is reported as a finding.
 echo
-echo "=== unrecorded live state (git + session dirs vs the board) ==="
+echo "=== unrecorded live state (git + sessions vs the board) ==="
 recorded="$(grep -oE '(worktree|branch|writer|cos|session)=[^ |]*' "$BOARD" | cut -d= -f2- | sed 's/^session-//' | sort -u)"
 while read -r w; do
   [ -z "$w" ] && continue
@@ -217,26 +262,38 @@ while read -r w; do
   printf '%s\n' "$recorded" | grep -qx "$w" || note "worktree not named on the board (a writer may be live): $w"
 done < <(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}')
 recent=$(( $(date +%s) - 6*3600 ))
-while read -r d; do
-  # A board record may spell a session id with or without the `session-`
-  # prefix; the directory uses the bare uuid, so normalize both sides.
-  b="$(basename "$d" | sed 's/^session-//')"
-  printf '%s\n' "$recorded" | grep -qx "$b" && continue
-  # The LOG is the liveness signal, not the dir: a projection cache is rebuilt by
-  # a mere recovery read, so a long-dead session can look freshly written. The
-  # filename is GLOBBED: DSH writes `session.v3.jsonl.zstd` today, and the older
-  # literal `session.jsonl.zstd` matched nothing, so the stat silently missed and
-  # fell through to a slower mtime walk.
-  last=""
-  for f in "$d"/session*.jsonl.zst*; do
-    [ -e "$f" ] || continue
-    t="$(stat -c %Y "$f")"
-    if [ -z "$last" ] || [ "$t" -gt "$last" ]; then last="$t"; fi
-  done
-  [ -n "$last" ] || last="$(age_min "$d")"
-  [ -n "$last" ] && [ "$last" -ge "$recent" ] || continue
-  note "session log written in the last 6h and NOT named on the board: $b (registry + its log are the authority)"
-done < <(find "$SESSROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+if [ "$oc_api_ok" -eq 1 ]; then
+  # A child session (parentID set) under this repo updated in the last 6h and
+  # not named on the board is a live writer/probe the board omits. The root CoS
+  # session has no parentID, so it is never flagged.
+  while IFS=$'\t' read -r oc_id oc_slug oc_agent oc_title; do
+    [ -z "$oc_id" ] && continue
+    printf '%s\n' "$recorded" | grep -qx "$oc_id" && continue
+    printf '%s\n' "$recorded" | grep -qx "$oc_slug" && continue
+    note "a child session under this repo was updated in the last 6h and is NOT named on the board: $oc_id ($oc_slug, agent $oc_agent) — $(printf '%s' "$oc_title" | cut -c1-80)"
+  done < <(oc_recent_children "$PWD" "$recent")
+else
+  while read -r d; do
+    # A board record may spell a session id with or without the `session-`
+    # prefix; the directory uses the bare uuid, so normalize both sides.
+    b="$(basename "$d" | sed 's/^session-//')"
+    printf '%s\n' "$recorded" | grep -qx "$b" && continue
+    # The LOG is the liveness signal, not the dir: a projection cache is rebuilt by
+    # a mere recovery read, so a long-dead session can look freshly written. The
+    # filename is GLOBBED: DSH writes `session.v3.jsonl.zstd` today, and the older
+    # literal `session.jsonl.zstd` matched nothing, so the stat silently missed and
+    # fell through to a slower mtime walk.
+    last=""
+    for f in "$d"/session*.jsonl.zst*; do
+      [ -e "$f" ] || continue
+      t="$(stat -c %Y "$f")"
+      if [ -z "$last" ] || [ "$t" -gt "$last" ]; then last="$t"; fi
+    done
+    [ -n "$last" ] || last="$(age_min "$d")"
+    [ -n "$last" ] && [ "$last" -ge "$recent" ] || continue
+    note "session log written in the last 6h and NOT named on the board: $b (registry + its log are the authority)"
+  done < <(find "$SESSROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+fi
 [ "$stale" -eq 0 ] && echo "  nothing live that the board does not name"
 
 echo
