@@ -40,13 +40,35 @@ export function formatMobCopyRepair(report: MobCopyRepairReport): string {
       ? 'Mobs were converted to carry their own stats.'
       : `Mobs now carry their own stats: ${parts.join('; ')}.`;
   if (report.unconverted.length === 0) return head;
-  const detail = report.unconverted
-    .map((entry) => `“${entry.name}” (${entry.where}): ${entry.reason}`)
-    .join('; ');
-  const count = report.unconverted.length;
-  return `${head} ${plural(count, 'mob', 'mobs')} could NOT be copied and ${
-    count === 1 ? 'keeps its citation' : 'keep their citations'
-  } — install the missing pack and it ${
-    count === 1 ? 'will be copied' : 'they will be copied'
-  } on the next launch — ${detail}.`;
+  // The two populations are told apart deliberately (docs/17 row 248's per-row
+  // guard): a row the library cannot supply is WORK for the next launch after
+  // the pack is installed, while a row whose conversion THREW is a code defect
+  // the owner must be able to report — so the second is named as such and its
+  // error text is printed, never folded into the bland "could not be copied".
+  const expected = report.unconverted.filter((entry) => !entry.unexpected);
+  const unexpected = report.unconverted.filter((entry) => entry.unexpected);
+  const sentences: string[] = [];
+  if (expected.length > 0) {
+    const detail = expected
+      .map((entry) => `“${entry.name}” (${entry.where}): ${entry.reason}`)
+      .join('; ');
+    const count = expected.length;
+    sentences.push(
+      `${plural(count, 'mob', 'mobs')} could NOT be copied and ${
+        count === 1 ? 'keeps its citation' : 'keep their citations'
+      } — install the missing pack and it ${
+        count === 1 ? 'will be copied' : 'they will be copied'
+      } on the next launch — ${detail}.`,
+    );
+  }
+  if (unexpected.length > 0) {
+    const detail = unexpected
+      .map((entry) => `“${entry.name}” (${entry.where}): ${entry.reason}`)
+      .join('; ');
+    const count = unexpected.length;
+    sentences.push(
+      `${plural(count, 'mob', 'mobs')} could not be copied because the conversion threw an unexpected error — this is a defect, not a missing pack, so please report it — ${detail}.`,
+    );
+  }
+  return `${head} ${sentences.join(' ')}`;
 }

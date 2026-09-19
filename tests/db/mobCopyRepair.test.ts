@@ -377,11 +377,13 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
           where: 'the encounter “Ash Gate”',
           name: 'Ghost',
           reason: 'the cited stat-block chunk is not in this workspace — install the pack that carries it',
+          unexpected: false,
         },
         {
           where: 'an authored NPC',
           name: 'Aunt Agatha',
           reason: 'the cited stat-block chunk is not in this workspace — install the pack that carries it',
+          unexpected: false,
         },
       ],
       notified: false,
@@ -514,5 +516,83 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     const { db } = await import('@/db/db');
     await expect(db.open()).rejects.toThrow(/refusing to migrate silently/);
     await Dexie.delete('campaigner');
+  }, 20000);
+
+  it('isolates an UNEXPECTED throw to its row: the run COMPLETES and the report names it', async () => {
+    // A RESOLVABLE roster mob whose conversion throws where the seam did not
+    // predict it — the exact shape that used to abort the whole Dexie upgrade
+    // and lock the app shut (docs/18 §5). The throw is injected at the book
+    // read inside `creatureOriginLabel`, which is BEHIND every explicit
+    // data-condition check, so the row reaches the guard rather than one of the
+    // named `continue`s.
+    await seedLegacyV23({
+      resolvedRoster: true,
+      unresolvedRoster: false,
+      resolvedNpc: false,
+      unresolvedNpc: false,
+      settingsRow: true,
+    });
+    const { db } = await import('@/db/db');
+    await db.open();
+    const { repairMobCopies } = await import('@/db/mobCopyRepair');
+    const { setBookReadFault } = await import('@/db/mobCopyRepair');
+    // The fixture's own v24 upgrade already converted this row, so put the
+    // POINTER BACK — a row that is resolvable (its chunk is present) but whose
+    // conversion is about to throw. Re-converting it is then the only thing the
+    // seam has left to do.
+    const before = await db.artifacts.get(ENCOUNTER);
+    if (before?.kind !== 'encounter') throw new Error('encounter missing');
+    await db.artifacts.put({
+      ...before,
+      data: {
+        ...before.data,
+        monsters: [
+          {
+            name: 'Owlbear',
+            count: 2,
+            notes: '',
+            treasure: '',
+            source: { type: 'rulebook', chunkId: CHUNK, contentHash: 'hash-owlbear', creatureName: 'Owlbear' },
+          },
+        ],
+      },
+    });
+    setBookReadFault(() => new Error('the book table exploded'));
+    try {
+      const report = await db.transaction(
+        'rw',
+        [db.artifacts, db.chunks, db.rulebooks, db.settings],
+        (tx) => repairMobCopies({ tx, reason: 'upgrade' }),
+      );
+      // NON-VACUITY: the throw is NAMED with its own error text and flagged as
+      // the code-defect population rather than the missing-pack one.
+      expect(report.unconverted).toHaveLength(1);
+      expect(report.unconverted[0]).toMatchObject({
+        where: 'the encounter “Ash Gate”',
+        name: 'Owlbear',
+        unexpected: true,
+      });
+      expect(report.unconverted[0]?.reason).toContain('the book table exploded');
+      // ...and the run COMPLETED: the guard swallowed nothing — the entry names
+      // the row — and the rest of the workspace was still processed.
+      expect(report.rosterMobsCopied).toBe(0);
+      const encounter = await db.artifacts.get(ENCOUNTER);
+      if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+      // The row kept its pointer, so the startup retry can still heal it.
+      expect(encounter.data.monsters[0]?.source).toEqual({
+        type: 'rulebook',
+        chunkId: CHUNK,
+        contentHash: 'hash-owlbear',
+        creatureName: 'Owlbear',
+      });
+      // ...and the ONE report sentence says so in its own register.
+      const { formatMobCopyRepair } = await import('@/domain/mobCopyRepair');
+      const sentence = formatMobCopyRepair(report);
+      expect(sentence).toContain('unexpected error');
+      expect(sentence).toContain('the book table exploded');
+    } finally {
+      setBookReadFault(null);
+      await db.delete();
+    }
   }, 20000);
 });

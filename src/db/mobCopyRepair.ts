@@ -40,6 +40,26 @@ import {
  * survives on exactly the rows that could not be converted, and only until the
  * retry heals them.
  *
+ * PER-ROW ISOLATION. The seam names every KNOWN data condition with an explicit
+ * `continue`; anything else — a genuinely unexpected throw inside one row's
+ * conversion — used to propagate and abort the Dexie upgrade, which means the
+ * app does not open (`db.open()` rejects; the transaction rolls back, so there
+ * is no data loss, but the owner is locked out until a fix ships). That is the
+ * "refuse to open" shape the owner REJECTED for this arc, so ONE bad row is now
+ * isolated: the upgrade COMPLETES, the row keeps its pointer (it is the retry's
+ * handle either way) and the report NAMES it with the error's own message.
+ *
+ * THE TENSION THE GUARD MUST NOT FLATTEN. A caught error may be a DATA
+ * condition or a CODE DEFECT, and silently swallowing the second is forbidden
+ * (AGENTS rule 1 forbids `catch`-and-continue around parsing). So the guard is
+ * deliberately NOT a swallow: the entry carries the error's `message` and it is
+ * `unexpected: true`, which the ONE report sentence renders in its own register
+ * (`domain/mobCopyRepair.formatMobCopyRepair`) so the owner reads the error text
+ * rather than a bland "could not be copied". The guard is also unreachable for
+ * the conditions the explicit checks already name — those `continue` BEFORE it —
+ * so a row reported `unexpected: true` is, by construction, one the seam did not
+ * predict.
+ *
  * THE TRANSACTION, NEVER THE `db` SINGLETON. Like the v20 citation repair it
  * mirrors, the function takes the Dexie transaction: a `version(N).upgrade`
  * body runs before the upgraded `db` instance is usable, and a nested
@@ -76,6 +96,34 @@ function citationOf(raw: RawCitation): CreatureCitation {
     ...(typeof raw.creatureName === 'string' ? { creatureName: raw.creatureName } : {}),
     ...(typeof raw.bookTitle === 'string' ? { bookTitle: raw.bookTitle } : {}),
   };
+}
+
+/** The error text a caught throw carries — the `message` when it has one, the
+ * value's own string otherwise. Never a placeholder: a value with neither is
+ * described by `String`, and the entry still names the ROW it came from. */
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string' && error.trim() !== '') return error;
+  return String(error);
+}
+
+/**
+ * THE book-read fault hook (docs/17 row 248's per-row guard).
+ *
+ * The guard only ever runs when a row throws for a reason the seam did NOT
+ * predict, and no hand-written fixture can produce that on demand: the explicit
+ * data conditions are checked first, and the remaining conversion is the same
+ * pure domain call the happy path uses. So the guard's own pin injects a throw
+ * at the ONE read between a resolved chunk and the stamped line — the book
+ * lookup — and asserts BOTH that the run COMPLETES and that the report names the
+ * row with the error text. Production never sets it (`null`).
+ */
+let bookReadFault: (() => Error) | null = null;
+
+/** Install (or clear, with `null`) the book-read fault for the guard's pin.
+ * Test-only: no production path calls this. */
+export function setBookReadFault(fault: (() => Error) | null): void {
+  bookReadFault = fault;
 }
 
 export interface MobCopyRepairOptions {
@@ -116,9 +164,37 @@ export async function repairMobCopies(
     getChunkByContentHash: (contentHash: string): Promise<RuleChunk | undefined> =>
       chunks.where('contentHash').equals(contentHash).first(),
   };
-  const getRulebook = (bookId: Id): Promise<Rulebook | undefined> => rulebooks.get(bookId);
-
+  const getRulebook = (bookId: Id): Promise<Rulebook | undefined> => {
+    if (bookReadFault !== null) return Promise.reject(bookReadFault());
+    return rulebooks.get(bookId);
+  };
   const all = (await artifacts.toArray()) as unknown[];
+
+  /**
+   * THE PER-ROW GUARD. One row's unexpected throw becomes a NAMED unresolved
+   * entry and the pass continues — never an aborted upgrade. The row is handed
+   * in so the entry names it (`where`), and the error text is preserved so a
+   * CODE defect stays diagnosable rather than hidden behind "could not
+   * convert".
+   */
+  const guard = async (
+    where: string,
+    name: string,
+    convert: () => Promise<void>,
+  ): Promise<void> => {
+    try {
+      await convert();
+    } catch (error) {
+      report.unconverted.push({
+        where,
+        name,
+        reason:
+          'the conversion threw an unexpected error — the row was left untouched and keeps its citation: ' +
+          errorText(error),
+        unexpected: true,
+      });
+    }
+  };
 
   // ROSTER ARM — an encounter roster entry citing a library creature.
   for (const raw of all) {
@@ -130,6 +206,7 @@ export async function repairMobCopies(
     if (row.kind !== 'encounter') continue;
     if (row.data === undefined || !Array.isArray(row.data.monsters)) continue;
     const encounterName = typeof row.name === 'string' ? row.name : 'unnamed encounter';
+    const where = `the encounter “${encounterName}”`;
     let changed = false;
     const monsters: unknown[] = [];
     for (const entryRaw of row.data.monsters) {
@@ -143,32 +220,49 @@ export async function repairMobCopies(
       const chunk = await resolveCreatureChunk(citation, lookups);
       if (chunk?.statBlock == null) {
         report.unconverted.push({
-          where: `the encounter “${encounterName}”`,
+          where,
           name: entry.name,
           reason:
             chunk === undefined
               ? 'the cited stat-block chunk is not in this workspace — install the pack that carries it'
               : 'the cited chunk carries no stat block — re-import the book it came from',
+          unexpected: false,
         });
         monsters.push(entryRaw);
         continue;
       }
-      const sourceLine = await creatureOriginLabel(
-        chunk,
-        creatureCitationName(citation, entry.name),
-        { getRulebook },
-      );
+      // The conversion is the part that can throw for a reason the checks above
+      // did not name (`creatureOriginLabel`'s book read, a malformed stored
+      // row). Isolated PER ENTRY, so one bad mob does not cost the encounter's
+      // other entries and the entry's ORIGINAL bytes are what the catch keeps.
+      let converted: Record<string, unknown> | undefined;
+      await guard(where, typeof entry.name === 'string' ? entry.name : 'unnamed mob', async () => {
+        const sourceLine = await creatureOriginLabel(
+          chunk,
+          creatureCitationName(citation, entry.name),
+          { getRulebook },
+        );
+        converted = {
+          ...entry,
+          source: { type: 'inline', statBlock: chunk.statBlock },
+          sourceLine,
+          originToken: libraryCreatureKey(chunk.id),
+        };
+      });
+      if (converted === undefined) {
+        monsters.push(entryRaw);
+        continue;
+      }
       report.rosterMobsCopied += 1;
       changed = true;
-      monsters.push({
-        ...entry,
-        source: { type: 'inline', statBlock: chunk.statBlock },
-        sourceLine,
-        originToken: libraryCreatureKey(chunk.id),
-      });
+      monsters.push(converted);
     }
     if (!changed) continue;
-    await artifacts.put({ ...(row as Record<string, unknown>), data: { ...row.data, monsters } });
+    // The ROW write is guarded too: a row whose `data` cannot be rewritten must
+    // not take the whole upgrade down with it.
+    await guard(where, encounterName, async () => {
+      await artifacts.put({ ...(row as Record<string, unknown>), data: { ...row.data, monsters } });
+    });
   }
 
   // NPC ARM — an authored NPC whose stats were borrowed from a library
@@ -185,48 +279,53 @@ export async function repairMobCopies(
     const rawRef = data?.creatureRef;
     if (data === undefined || typeof rawRef !== 'object' || rawRef === null) continue;
     const npcName = typeof row.name === 'string' ? row.name : 'unnamed npc';
+    const where = 'an authored NPC';
     const citation = citationOf(rawRef);
     if (citation.chunkId === undefined && citation.contentHash === undefined) {
       report.unconverted.push({
-        where: 'an authored NPC',
+        where,
         name: npcName,
-        reason: 'its creature citation carries neither a chunk id nor a content hash — nothing can be copied',
+        reason:
+          'its creature citation carries neither a chunk id nor a content hash — nothing can be copied',
+        unexpected: false,
       });
       continue;
     }
     const chunk = await resolveCreatureChunk(citation, lookups);
     if (chunk?.statBlock == null) {
       report.unconverted.push({
-        where: 'an authored NPC',
+        where,
         name: npcName,
         reason:
           chunk === undefined
             ? 'the cited stat-block chunk is not in this workspace — install the pack that carries it'
             : 'the cited chunk carries no stat block — re-import the book it came from',
+        unexpected: false,
       });
       continue;
     }
-    const sourceLine = await creatureOriginLabel(
-      chunk,
-      creatureCitationName(citation, npcName),
-      { getRulebook },
-    );
-    // `creatureRef` is dropped, never left beside the copied block: the schema
-    // refine forbids the pair, and a second reader of the pointer would be the
-    // fragmentation this arc removes.
-    const { creatureRef: _dropped, ...rest } = data;
-    await artifacts.put({
-      ...(row as Record<string, unknown>),
-      data: { ...rest, statBlock: chunk.statBlock, sourceLine },
+    await guard(where, npcName, async () => {
+      const sourceLine = await creatureOriginLabel(
+        chunk,
+        creatureCitationName(citation, npcName),
+        { getRulebook },
+      );
+      // `creatureRef` is dropped, never left beside the copied block: the schema
+      // refine forbids the pair, and a second reader of the pointer would be the
+      // fragmentation this arc removes.
+      const { creatureRef: _dropped, ...rest } = data;
+      await artifacts.put({
+        ...(row as Record<string, unknown>),
+        data: { ...rest, statBlock: chunk.statBlock, sourceLine },
+      });
+      report.npcCreaturesCopied += 1;
     });
-    report.npcCreaturesCopied += 1;
   }
 
   const converted = report.rosterMobsCopied + report.npcCreaturesCopied;
   const shouldPersist =
     options.reason === 'upgrade' ? converted > 0 || report.unconverted.length > 0 : converted > 0;
   if (!shouldPersist) return report;
-
   const existing = (await settings.get('settings')) as Record<string, unknown> | undefined;
   if (existing === undefined) {
     // No settings row and yet there was something to say means the report has

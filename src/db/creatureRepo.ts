@@ -4,6 +4,7 @@ import type {
   CreatureRef,
   Id,
   NpcArtifact,
+  Rulebook,
   RuleChunk,
   StatBlock,
   WikiLinkCreature,
@@ -18,6 +19,7 @@ import {
   npcCreatureRef,
   sameAliasName,
 } from '@/domain';
+import { libraryCreaturePool } from '@/domain/libraryCreature';
 import type { GameSystem } from '@/domain/gameSystem';
 import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import {
@@ -291,34 +293,20 @@ export async function listLibraryCreatures(system?: GameSystem): Promise<Library
   // its stat block's `system` is the ADAPTER's reading (a dnd5e-shaped block
   // stored in a pf2e book would answer the wrong question) — the book is the
   // row that really knows. `bulkGet` over the unique ids the pool names keeps
-  // this ONE read whatever the creature count.
-  const systemOfBook = new Map<Id, GameSystem>();
+  // this ONE read whatever the creature count. The BOOK INDEX is built here
+  // because this is the only caller with a live `db`; the filter and the sort
+  // are the domain seam's (`domain/libraryCreature.libraryCreaturePool`), which
+  // is also what the v24 migration's tx-backed arm calls — a second copy of
+  // either would let the live pool and the migration's pool drift (docs/17 row
+  // 248).
+  const books = new Map<Id, Rulebook>();
   if (system !== undefined) {
-    const books = await db.rulebooks.bulkGet([...new Set(chunks.map((chunk) => chunk.bookId))]);
-    for (const book of books) {
-      if (book !== undefined) systemOfBook.set(book.id, book.system);
+    const rows = await db.rulebooks.bulkGet([...new Set(chunks.map((chunk) => chunk.bookId))]);
+    for (const book of rows) {
+      if (book !== undefined) books.set(book.id, book);
     }
   }
-  const creatures: LibraryCreature[] = [];
-  for (const chunk of chunks) {
-    if (chunk.statBlock === null) continue;
-    if (system !== undefined && systemOfBook.get(chunk.bookId) !== system) continue;
-    const name = canonicalCreatureName(chunk);
-    if (name === null) continue;
-    creatures.push({
-      chunkId: chunk.id,
-      name,
-      contentHash: chunk.contentHash,
-      headingPath: chunk.headingPath,
-      statBlock: chunk.statBlock,
-      bookId: chunk.bookId,
-    });
-  }
-  creatures.sort((left, right) => {
-    const byName = left.name.trim().toLowerCase().localeCompare(right.name.trim().toLowerCase());
-    return byName !== 0 ? byName : left.chunkId.localeCompare(right.chunkId);
-  });
-  return creatures;
+  return libraryCreaturePool(chunks, { system, books });
 }
 
 /** The same pool in the shape `lib/wikilinks` resolves against (the ONE

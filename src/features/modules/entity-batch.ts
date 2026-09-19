@@ -1,18 +1,14 @@
-import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, ModuleEntityKind, PersonaRun } from '@/domain';
-import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, sameCreatureName, unmatchedEntityLevelHints, aliasCollisionSentence, type AliasCollision } from '@/domain';
+import type { Campaign, EntityBestiarySlot, FailureKind, Id, Module, ModuleEntityKind, PersonaRun, Rulebook } from '@/domain';
+import { bestiarySlotForEntity, entityIntentFor, entityLevelHintFor, mergeAliasNames, moduleDocumentText, moduleTagFor, sameAliasName, unmatchedEntityLevelHints, aliasCollisionSentence, type AliasCollision } from '@/domain';
 import type { CreatureCitation } from '@/domain/encounterResolve';
 import type { GameSystem } from '@/domain/gameSystem';
-import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import {
-  citationBookTitle,
-  contentIdentityFor,
-  rulebookDisplayTitle,
-} from '@/domain/encounterResolve';
+import { citationBookTitle, rulebookDisplayTitle } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign, foreignAliasNames } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
-import { castCreatureAsNpc, listLibraryCreatures, type LibraryCreature } from '@/db/creatureRepo';
+import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { getRulebook } from '@/db/rulebookRepo';
+import { libraryCitationForSlot } from '@/domain/libraryCreature';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -137,212 +133,67 @@ export async function alignEntityName(
   return refused;
 }
 
-/** The library's OWN disclosure of where one candidate creature comes from:
- * the rulebook's title exactly as an origin label renders it (a pack's title,
- * or the 'Rulebook' placeholder when the row's own title is empty — the ONE
- * reading, `domain/encounterResolve.rulebookDisplayTitle`, which
- * `creatureOriginLabel` itself uses). ONE reading of "which book is this
- * creature from", and the same one every creature surface shows, so a slot's
- * `book` is matched against what the owner can actually read on screen. */
-async function creatureBookTitle(chunkId: Id): Promise<string> {
-  const chunk = await db.chunks.get(chunkId);
-  if (chunk === undefined) return 'Rulebook';
-  return rulebookDisplayTitle(await getRulebook(chunk.bookId));
-}
-
-/** The book title a citation written here STAMPS (docs/17 row 155) —
- * `undefined` when the chunk (or its book) is gone, the honest "not recorded"
- * rather than a placeholder. The stamping sibling of `creatureBookTitle`
- * above. */
-async function citationBookTitleFor(chunkId: Id): Promise<string | undefined> {
-  const chunk = await db.chunks.get(chunkId);
-  if (chunk === undefined) return undefined;
-  return citationBookTitle(await getRulebook(chunk.bookId));
-}
 
 /**
  * The cast an entity's BESTIARY SLOT asked for, resolved against the library
  * (docs/17 row 107, "The Aunt Agatha case").
  *
- * This is a NAME lookup over the library pool the rest of the app already reads
- * (`db/creatureRepo.listLibraryCreatures` — the ONE stat-block pool, the same
- * one the wiki-link resolver and the bestiary browser use). It is NOT a second
- * creature lookup: it answers "which chunk does this name mean?", and
- * everything after that — the citation's identity, the derived stats, the
- * portrait key — is `castCreatureAsNpc`'s, unchanged.
+ * This is a thin LIVE-READ wrapper around THE ONE resolution seam,
+ * `domain/libraryCreature.libraryCitationForSlot` (docs/17 row 248's remaining
+ * slice): the algorithm — the exact name match, the book disambiguation, the
+ * loud refusals, the citation identity — lives there ONCE and is called from
+ * here AND from inside the v24 migration's Dexie transaction. The read that
+ * cannot live in the transaction is this wrapper's job: `listLibraryCreatures`
+ * (the ONE stat-block pool) and the two book-title readers.
  *
- * **SCOPED TO THE CAMPAIGN'S GAME SYSTEM (docs/17 row 207).** `system` is the
- * campaign the module belongs to, passed straight to the ONE pool read, so a
- * Pathfinder 2e module can never resolve a dnd5e creature's stat block into one
- * of its NPCs — the dangerous half of the owner's "D&D imports should not be
- * active when the campaign is pathfinder" question. It is the SAME read (and
- * the same `system` value) the creator window uses, so the vocabulary the model
- * was shown and the resolution that judges its answer describe one population.
- * The global surfaces stay unscoped on purpose (the Rules page, the bestiary
- * browser, the wiki-link publisher — an explicit user reference is an explicit
- * act); a caller that omits `system` gets the pre-207 every-creature pool.
- * A citation that RESOLVES to another system's creature is never touched here:
- * `domain/encounterResolve`/`db/monsterResolve` resolve what was RECORDED, and
- * this seam only decides a NEW cast.
- *
- * EVERY failure is LOUD and NAMES both halves (AGENTS rules 1-3), because the
- * alternative is the exact defect this path must not have: a guess, or a silent
- * drop of the prose the model wrote:
- *
- * - no creature of that name in the workspace (a module designed before the
- *   bestiary was imported, a typo, a creature the owner deleted, or — since
- *   row 207 — a creature that exists only in ANOTHER game system's books, which
- *   the refusal names) — the message also names the nearest creatures the
- *   library DOES hold, so the failure is actionable rather than a dead end;
- * - the name is ambiguous — two or more creatures share it, which happens the
- *   moment two books are installed — and the slot's book does not narrow the
- *   pool to exactly one of them (no book named, a book that holds several, or
- *   a book that holds none).
- *
- * **THE BOOK IS A DISAMBIGUATOR, NEVER A VETO** (docs/17 row 161). Exactly one
- * creature of that name means there is nothing to disambiguate: the library's
- * one candidate IS the creature the entity asked for, whatever book the slot
- * named, and using it is not a guess — it is the only answer the library has.
- * The check that made this refuse was self-defeating: a module is authored in
- * the owner's own language, so a model routinely localises the pack titles it
- * was shown ("Monsterkern" for Monster Core) and the veto rejected a cast whose
- * answer was unique, naming the very creature it refused to use. What a slot's
- * `book` is NEVER allowed to do is decide the citation's identity: the stamp is
- * the LIBRARY's own title (`citationBookTitleFor`, docs/17 row 155), so
- * `missing ref` reporting keeps naming the pack that actually has to be
- * installed and the model's string is never trusted as a book.
- *
- * The matching rule itself is EXACT and stays that way: the same pool is now
- * also the VOCABULARY the spine prompt carries (`llm/creatorRoster`, docs/17
- * row 114), so the model is shown the names it may copy — and a fuzzy match
- * here would silently cast a different creature than the module asked for. The
- * suggestion half runs ONLY for the message.
- *
- * EXACT means the app's ONE comparable form, not a spelling of it (docs/17 row
- * 166): the comparison is `domain/creatureName.sameCreatureName`, i.e. Unicode
- * canonical composition (NFC) + trim + case fold — the SAME strictness the wiki
- * resolver and the alias tier apply, so "is this the same creature name?" has
- * one answer everywhere. It is NOT `normalizeCreatureName`, which is the LOOSE
- * form and folds far more (diacritics, punctuation, a trailing qualifier) and
- * must never resolve. Before row 166 this one line was the last hand-rolled
- * `name.trim().toLowerCase() === wanted.toLowerCase()` in the app, so a
- * DECOMPOSED slot name (a Mac-authored `Müller` written `u` + U+0308) missed a
- * precomposed library name — the same string to a reader, different bytes — and
- * the cast refused a creature the library holds. Row 161's exactness pins still
- * hold through it: a one-edit near miss is still a refusal.
+ * It is NOT a second creature lookup. It answers "which chunk does this name
+ * mean?", and everything after that — the citation's identity, the derived
+ * stats, the portrait key — is `castCreatureAsNpc`'s, unchanged. Scoping to the
+ * campaign's game system (docs/17 row 207) is passed straight through to the
+ * pool read, so a Pathfinder 2e module can never resolve a dnd5e creature's
+ * stat block into one of its NPCs.
  *
  * Exported so the resolution rule is pinnable where it lives (docs/18 §2): this
- * is the ONE seam that answers "which library creature does the module's
- * bestiary slot mean?", and a second implementation of it is the defect this
- * export makes visible.
+ * is the ONE live caller of the seam, and a second implementation of the name
+ * match is the defect the separation makes visible.
  */
 export async function libraryCitationForEntity(
   entityName: string,
   slot: EntityBestiarySlot,
   system?: GameSystem,
 ): Promise<CreatureCitation> {
-  const wanted = slot.creature.trim();
-  const book = slot.book?.trim() ?? '';
-  const named = `the entity «${entityName}» asks to borrow the stats of «${wanted}»`;
   const pool = await listLibraryCreatures(system);
-  // The ONE creature-name comparison (docs/17 row 166, never re-stated here).
-  const sameName = pool.filter((creature) => sameCreatureName(creature.name, wanted));
-  // The library's own disclosure of which book each candidate comes from. Read
-  // for the candidates ONLY, and only when the name is AMBIGUOUS (or a failure
-  // has to name them) — never on the unique-name arm, so the common
-  // unambiguous case costs nothing and a slot's book cannot veto it.
-  const titleOf = new Map<string, string>();
-  const titleFor = async (chunkId: string): Promise<string> => {
-    const cached = titleOf.get(chunkId);
+  // The books the candidates come from, read ONCE (never one read per
+  // candidate — the pool's chunk ids, deduped). Built from the live chunk table
+  // and passed to the seam so the disambiguation and the citation stamp read the
+  // same rows the pool did.
+  const books = new Map<Id, Rulebook>();
+  const bookIndexFor = async (chunkId: Id): Promise<Rulebook | undefined> => {
+    const chunk = await db.chunks.get(chunkId);
+    if (chunk === undefined) return undefined;
+    const cached = books.get(chunk.bookId);
     if (cached !== undefined) return cached;
-    const title = await creatureBookTitle(chunkId);
-    titleOf.set(chunkId, title);
-    return title;
+    const book = await getRulebook(chunk.bookId);
+    if (book !== undefined) books.set(book.id, book);
+    return book;
   };
-  const describe = async (entries: typeof pool): Promise<string> => {
-    const lines = await Promise.all(
-      entries.map(async (entry) => `${entry.name} (${await titleFor(entry.chunkId)})`),
-    );
-    return lines.join(', ');
-  };
-  if (sameName.length === 0) {
+  return libraryCitationForSlot(entityName, slot, pool, {
+    system,
+    // The reader-facing title a slot's `book` is matched against — the ONE
+    // reading (`domain/encounterResolve.rulebookDisplayTitle`, which
+    // `creatureOriginLabel` itself uses), so a slot's book is compared against
+    // what the owner can actually read on screen.
+    bookTitleOf: async (chunkId) => rulebookDisplayTitle(await bookIndexFor(chunkId)),
+    // ...and the title a citation STAMPS (docs/17 row 155): the row's own title,
+    // `undefined` when it is gone or blank — the honest "not recorded" rather
+    // than the placeholder (AGENTS rule 1).
+    stampBookTitleOf: async (chunkId) => citationBookTitle(await bookIndexFor(chunkId)),
     // The nearest names the library holds, over a normalization that forgives
     // case, whitespace, umlauts/diacritics, hyphen-vs-space and a trailing
     // "(…)" qualifier (docs/17 row 114). A query with nothing close yields an
-    // empty list, and then the sentence is byte-identical to the pre-114
-    // refusal: saying nothing beats misleading, because a "did you mean" that
-    // names a creature nothing like the request is a second wrong answer.
-    const nearest = nearestLibraryCreatures(wanted, pool);
-    const suggestion =
-      nearest.length === 0
-        ? ''
-        : ` — the nearest creatures this library holds: ${await describe(nearest)}`;
-    throw new Error(
-      `bestiary cast: ${named}, but this workspace's library holds no creature of that name` +
-        `${system === undefined ? '' : ` for ${GAME_SYSTEM_LABELS[system]}`} — ` +
-        'import the book it comes from, or name a creature the library has (never a guess)' +
-        suggestion,
-    );
-  }
-  // The candidate this slot resolves to. Every arm below either sets it or
-  // throws; the single `return` at the bottom is the ONE place a citation is
-  // built, whichever arm answered.
-  let resolved: LibraryCreature | undefined;
-  if (sameName.length === 1) {
-    // EXACTLY ONE — RESOLVE IT (docs/17 row 161, rule 2). Nothing is
-    // ambiguous here, so the slot's book has nothing to disambiguate and is
-    // not consulted at all: the library's one candidate is the creature the
-    // entity asked for. A model writing a module in another language localises
-    // the pack titles it was shown, and that string must not be able to refuse
-    // a cast whose answer is unique.
-    resolved = sameName[0];
-  } else {
-    // TWO OR MORE — the book narrows, and only a narrowing to EXACTLY ONE
-    // resolves. A book that matches no candidate is an unsolved ambiguity, not
-    // a refusal of the cast: the pool was ambiguous before the book was
-    // considered and stays ambiguous after, so the loud failure below lists
-    // every candidate WITH the book it really comes from — which is the whole
-    // remedy, since naming the book is what the slot is for.
-    let candidates = sameName;
-    if (book !== '') {
-      candidates = [];
-      for (const entry of sameName) {
-        if ((await titleFor(entry.chunkId)).toLowerCase() === book.toLowerCase()) {
-          candidates.push(entry);
-        }
-      }
-    }
-    if (candidates.length !== 1) {
-      throw new Error(
-        `bestiary cast: ${named}, but this workspace's library holds ${String(sameName.length)} creatures ` +
-          `of that name (${await describe(sameName)}) — name the book in the entity's bestiary slot ` +
-          '("book": the book\'s title) so the cast is unambiguous',
-      );
-    }
-    resolved = candidates[0];
-  }
-  if (resolved === undefined) {
-    // Unreachable: the empty case threw above and the ambiguous arm only ever
-    // assigns a proven-single candidate. Stated rather than asserted so the
-    // compiler proves it too.
-    throw new Error(`bestiary cast: ${named}, and no library creature answered the name`);
-  }
-  // Built the way every other citation site builds one — through the ONE
-  // `contentIdentityFor` constructor: the chunk, its content hash at citation
-  // birth, the library's own spelling of the creature's name and the book the
-  // creature comes from (docs/17 row 155) — so a cast made here and a cast
-  // made from the bestiary browser share ONE identity and therefore one reuse
-  // rule (docs/11 D4/D9). It was a hand-written copy of that shape before,
-  // which is exactly why it also missed the book stamp.
-  return {
-    chunkId: resolved.chunkId,
-    ...contentIdentityFor(
-      resolved.contentHash,
-      resolved.name,
-      resolved.name,
-      await citationBookTitleFor(resolved.chunkId),
-    ),
-  };
+    // empty list, and the seam then says nothing rather than misleading.
+    nearest: nearestLibraryCreatures,
+  });
 }
 
 /**

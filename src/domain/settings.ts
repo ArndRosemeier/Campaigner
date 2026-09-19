@@ -75,7 +75,22 @@ export const mobCopyRepairReportSchema = z.object({
   /** Mobs that could NOT be converted, by name, with the reason — the retry
    * worklist. Their pointers are deliberately left in place. */
   unconverted: z
-    .array(z.object({ where: z.string(), name: z.string(), reason: z.string() }))
+    .array(
+      z.object({
+        where: z.string(),
+        name: z.string(),
+        reason: z.string(),
+        /**
+         * `true` when the row failed with an UNEXPECTED throw rather than one of
+         * the seam's own named data conditions (docs/17 row 248's per-row
+         * guard). The per-row isolation keeps the upgrade from aborting, but a
+         * thrown error may be a CODE DEFECT rather than a data condition, so
+         * the report says WHICH it was — the sentence AppShell shows names the
+         * error text, never hiding it (AGENTS rules 1/2).
+         */
+        unexpected: z.boolean().default(false),
+      }),
+    )
     .default([]),
   /** Whether AppShell has already told the user about this report. */
   notified: z.boolean().default(false),
