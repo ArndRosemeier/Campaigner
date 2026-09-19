@@ -295,7 +295,7 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     });
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(24);
+    expect(db.verno).toBe(25);
 
     const encounter = await db.artifacts.get(ENCOUNTER);
     if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
@@ -510,9 +510,9 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     });
     const { db } = await import('@/db/db');
     await db.open();
-    // The non-vacuity zero case: the upgrade ran (verno 24) and had nothing to
+    // The non-vacuity zero case: the upgrade ran (verno 25) and had nothing to
     // do, so it wrote no report at all — `null` is the shell's "no toast" state.
-    expect(db.verno).toBe(24);
+    expect(db.verno).toBe(25);
     const settings = await db.settings.get('settings');
     expect(settings?.mobCopyRepair).toBeUndefined();
     await db.delete();

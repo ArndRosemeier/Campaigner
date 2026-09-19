@@ -30,7 +30,7 @@ import {
   planMobPortraitBatch,
   useMobPortraitQueue,
 } from '@/features/campaign/mob-portrait-queue';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 
 /**
  * Encounter Smith stat sources (07-MILESTONE-3 M3-B + fix-02): the retrieve
@@ -80,6 +80,7 @@ const { drawFillGrade } = await import('@/domain/artifact');
 const drawFillGradeMock = vi.mocked(drawFillGrade);
 
 const TROLL_TEXT = 'Troll, regenerates unless burned.';
+
 
 function monsterBlock(overrides: Partial<StatBlock> = {}): StatBlock {
   return statBlockSchema.parse({
@@ -459,7 +460,7 @@ describe('encounter runs (M3-B)', () => {
     // D10 amendment: the draft's own classification persists on the artifact.
     expect(artifact.data.locationKind).toBe('dungeon');
     const monsters = artifact.data.monsters;
-    expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll', bookTitle: 'Bestiary' });
+    await expectCopiedRosterEntry(monsters[0], trollChunkId, 'Troll');
     // fix-02 (decision 1): the uncited monster's inline block materializes
     // into a REAL NPC artifact linked via npc-ref — never inline, never none.
     expect(monsters[1]?.source.type).toBe('npc-ref');
@@ -616,34 +617,34 @@ describe('encounter runs (M3-B)', () => {
     expect((await getArtifact(campaignLevel.id))?.moduleId).toBeNull();
   });
 
-  it('two runs citing the same chunk create NOTHING — the citation IS the reference (D5)', async () => {
+  it('two runs citing the same chunk create NOTHING — the COPY is the reference (D5)', async () => {
     const { campaign, persona } = await seed();
     const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
     searchRulesMock.mockResolvedValue([]);
     const first = await runSmithAgainst(campaign, persona, { levelHint: '1' }, 'Goblin Boss');
     const second = await runSmithAgainst(campaign, persona, { levelHint: '2' }, 'Goblin Boss');
 
-    async function rulebookSourceOf(runId: Id) {
+    async function copiedEntryOf(runId: Id) {
       const stored = await getRun(runId);
       const artifact = await getArtifact(stored?.resultArtifactId ?? '');
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      const source = artifact.data.monsters[0]?.source;
-      if (source?.type !== 'rulebook') throw new Error('not a rulebook source');
-      return source;
+      const entry = artifact.data.monsters[0];
+      if (entry?.source.type !== 'inline') throw new Error('not a copied source');
+      return entry;
     }
-    const firstSource = await rulebookSourceOf(first.runId);
-    const secondSource = await rulebookSourceOf(second.runId);
-    expect(firstSource.chunkId).toBe(goblinChunkId);
-    // REWRITTEN (ledger row 106): the citation carries the chunk and its
-    // content identity, and NOTHING ELSE. The old model stamped a
-    // `mobArtifactId` here and materialized one hidden `npc` per chunk; that
-    // artifact is exactly the row that went to a permanent `missing ref` when
-    // it was deleted out from under a live roster. Identity is the citation
-    // now, so the SAME chunk yields the byte-identical source on both runs and
-    // no artifact at all.
-    expect(secondSource).toEqual(firstSource);
-    expect(Object.keys(firstSource)).not.toContain('mobArtifactId');
-    expect(firstSource.creatureName).toBe('Goblin Boss');
+    const firstEntry = await copiedEntryOf(first.runId);
+    const secondEntry = await copiedEntryOf(second.runId);
+    expect(firstEntry.originToken).toBe(`chunk:${goblinChunkId}`);
+    // REWRITTEN (docs/17 row 255a): the row carries an authored COPY — the
+    // library block, the stamped origin and the opaque token — and NOTHING
+    // else. The old model stamped a `mobArtifactId` here and materialized one
+    // hidden `npc` per chunk; that artifact is exactly the row that went to a
+    // permanent `missing ref` when it was deleted out from under a live roster.
+    // Identity is the copy now, so the SAME chunk yields a byte-identical entry
+    // on both runs and no artifact at all.
+    expect(secondEntry).toEqual(firstEntry);
+    expect(firstEntry.sourceLine).not.toBe('');
+    expect(firstEntry.source.type).toBe('inline');
     expect(await listArtifactsByCampaign(campaign.id)).toHaveLength(2);
   });
 
@@ -735,7 +736,7 @@ describe('encounter runs (M3-B)', () => {
     expect(updated.summary).toBe(DRAFT.summary);
     expect(updated.body).toBe(DRAFT.body);
     expect(updated.data.difficulty).toBe('deadly');
-    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll', bookTitle: 'Bestiary' });
+    await expectCopiedRosterEntry(updated.data.monsters[0], trollChunkId, 'Troll');
     // fix-02 (decision 1): the IN-PLACE Smith path materializes too.
     expect(updated.data.monsters[1]?.source.type).toBe('npc-ref');
     const npcsAfter = (await listArtifactsByCampaign(campaign.id)).filter(
@@ -792,13 +793,7 @@ describe('encounter runs (M3-B)', () => {
     const storedRun = await getRun(runId);
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    expect(artifact.data.monsters[0]?.source).toEqual({
-      type: 'rulebook',
-      chunkId: goblinChunkId,
-      contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
-      creatureName: 'Goblin Boss',
-      bookTitle: 'Dnd5e Bestiary Pack',
-    });
+    await expectCopiedRosterEntry(artifact.data.monsters[0], goblinChunkId, 'Goblin Boss');
   });
 
   it('renders no item pool section without item books (prompt byte-identical to the pre-arc shape)', async () => {
@@ -1504,7 +1499,7 @@ describe('encounter runs (M3-B)', () => {
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // …and sourceChunkIndex 0 resolved through finalize to the pinned chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll', bookTitle: 'Bestiary' });
+    await expectCopiedRosterEntry(artifact.data.monsters[0], trollChunkId, 'Troll');
   });
 
   it('a pinned null-statBlock chunk stays excerpt-context-only (fix-02 pool exclusion)', async () => {
@@ -1627,8 +1622,8 @@ describe('encounter runs (M3-B)', () => {
     ]);
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss', bookTitle: 'Dnd5e Bestiary Pack' });
-    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll', bookTitle: 'Bestiary' });
+    await expectCopiedRosterEntry(artifact.data.monsters[0], goblinChunkId, 'Goblin Boss');
+    await expectCopiedRosterEntry(artifact.data.monsters[1], trollChunkId, 'Troll');
   });
 
   describe('roster prompt-window ordering (12-BESTIARY-PACKS §7 ratified chain)', () => {
@@ -1668,7 +1663,8 @@ describe('encounter runs (M3-B)', () => {
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
       const { db } = await import('@/db/db');
       const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 001');
-      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id, contentHash: await sha256Hex('Creature 001, a ladder creature at level 1.'), creatureName: 'Creature 001', bookTitle: 'Huge Bestiary Pack' });
+      if (cited === undefined) throw new Error('cited chunk missing');
+      await expectCopiedRosterEntry(artifact.data.monsters[0], cited.id, 'Creature 001');
     });
 
     it('parses levelHint variants at the run-engine boundary (first digit run wins)', async () => {

@@ -266,8 +266,21 @@ export async function expandRosterEntries(
         // own beyond their content: freeze the resolved stats onto the battle
         // row under a synthetic per-instance id and key their portrait on the
         // content identity (docs/11 D5) so the invented mob still gets a look.
+        // A COPIED library mob is the exception (docs/17 row 255a): it carries
+        // an opaque `chunk:<id>` origin token, which is its stable creature
+        // identity — the same one a `rulebook` citation froze here before the
+        // copy-on-write arc — so the frozen row keeps it (`foldCreatureKey`
+        // returns id keys unchanged, so no stored battle row needs remapping).
         artifactId = newId();
-        seedFighters.push({ id: artifactId, name: label, maxHp, initiativeBonus: bonus });
+        seedFighters.push({
+          id: artifactId,
+          name: label,
+          maxHp,
+          initiativeBonus: bonus,
+          ...(entry.originToken === undefined || identity === null
+            ? {}
+            : { creatureKey: identity.key }),
+        });
       }
       // tokenFromFighter gives a fresh NPC instance max HP and empty
       // initiative — exactly the seeding rule. The roster entry's treasure

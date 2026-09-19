@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest';
+
+/**
+ * THE ONE COPY OPERATION (docs/17 row 255a, AGENTS §Centralization obligation 2).
+ *
+ * The owner's rule is *"Core items should always ever only be copied"*, and the
+ * discovery that shaped this slice is that the app keeps MINTING pointers at live
+ * write sites — so the copy is born at WRITE time and the Dexie migration is its
+ * BACKFILL half. Two mechanisms for one copy would drift silently (each is
+ * correct where it was written), which is exactly the fragmentation the
+ * centralization rule forbids. This pin holds the facts that drift invisibly:
+ *
+ * 1. the copy's ORIGIN TOKEN (`chunk:<id>`, the portrait identity) is minted by
+ *    the identity layer and the copy seam alone — never re-composed at a write
+ *    site;
+ * 2. the pure copy operation is DEFINED once, and the write paths reach it
+ *    through the live wrapper rather than re-implementing a resolution;
+ * 3. a write path takes the stamped line from the copy — it composes no origin
+ *    label of its own (`creatureOriginLabel` is a READ-path formatter now).
+ *
+ * The source list comes from Vite's own `import.meta.glob` with `?raw` — the
+ * hand-rolled source walker (`codeOf`) is a BASELINED multi-site population in
+ * this suite (docs/17 row 212), and adding a second copy of it would be the very
+ * defect this file exists to pin.
+ */
+
+const RAW: Record<string, string> = import.meta.glob('/src/**/*.{ts,tsx}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+/** Comment-stripped, whitespace-collapsed source per repo-relative path. */
+const CODE: Record<string, string> = Object.fromEntries(
+  Object.entries(RAW).map(([path, text]) => [
+    path.replace(/^\//, ''),
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+      .replace(/\s+/g, ' '),
+  ]),
+);
+
+/** The `src/` files whose CODE contains the needle. */
+function filesWith(needle: string): string[] {
+  return Object.keys(CODE)
+    .filter((path) => CODE[path]?.includes(needle) === true)
+    .sort();
+}
+
+describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
+  it('mints the origin token in the identity layer and the copy seam alone', () => {
+    // Non-vacuity: the glob sees the whole source tree.
+    expect(Object.keys(CODE).length).toBeGreaterThan(300);
+    expect(filesWith('libraryCreatureKey(')).toEqual([
+      'src/db/creatureRepo.ts',
+      'src/domain/creature.ts',
+      'src/domain/libraryCopy.ts',
+    ]);
+  });
+
+  it('DEFINES the copy operation once and routes every write path through it', () => {
+    const definitions = filesWith('export async function copyCreatureStats(');
+    expect(definitions).toEqual(['src/domain/libraryCopy.ts']);
+    // The live wrapper is the one DB-bound door, and it delegates rather than
+    // resolving for itself.
+    expect(filesWith('creatureOriginLabel(')).toContain('src/domain/libraryCopy.ts');
+    // The declared callers: the migration's backfill (twice — roster + NPC) and
+    // the three write paths, each through the live wrapper.
+    expect(filesWith('copyCreatureStats(')).toEqual([
+      'src/db/libraryCopy.ts',
+      'src/db/mobCopyRepair.ts',
+      'src/domain/libraryCopy.ts',
+    ]);
+    expect(filesWith('copyCreatureStatsFromDb(')).toEqual([
+      'src/db/libraryCopy.ts',
+      'src/features/campaign/components/monster-source.tsx',
+      'src/features/play/battle/spawn-picker-logic.ts',
+      'src/llm/runEngine.ts',
+    ]);
+  });
+
+  it('composes no origin label at a write path — the stamped line comes from the copy', () => {
+    const writePaths = [
+      'src/features/campaign/components/monster-source.tsx',
+      'src/features/play/battle/spawn-picker-logic.ts',
+      'src/llm/runEngine.ts',
+    ];
+    const offenders = writePaths.filter(
+      (path) =>
+        CODE[path]?.includes('creatureOriginLabel(') === true ||
+        CODE[path]?.includes('contentIdentityFor(') === true,
+    );
+    expect(offenders).toEqual([]);
+  });
+});

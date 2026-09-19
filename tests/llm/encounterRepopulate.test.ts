@@ -30,7 +30,7 @@ import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEn
 import { rejectionIssues } from '@/llm/rejectionReason';
 import { chat } from '@/llm/openrouter';
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
 
 /**
@@ -375,7 +375,7 @@ describe('complex Repopulate (roster-only Cartographer pass)', () => {
       ['Goblin Boss', 'Goblin Boss', 'Goblin Boss', 'Goblin Boss'],
     );
     for (const monster of after.data.monsters) {
-      expect(monster.source.type).toBe('rulebook');
+      await expectCopiedRosterEntry(monster, goblinChunkId, 'Goblin Boss');
     }
 
     // EVERY room covered: each room holds exactly one roster entry, each

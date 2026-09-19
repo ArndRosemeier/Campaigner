@@ -16,7 +16,7 @@ import { rejectionIssues } from '@/llm/rejectionReason';
 import { chat } from '@/llm/openrouter';
 import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, createModule, type Artifact, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -372,12 +372,12 @@ describe('Encounter Cartographer run', () => {
     const run = await getRun(runId);
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    // The map finalize remapped the roster citation to the pack chunk —
-    // stamped with content identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss', bookTitle: 'Dnd5e Bestiary Pack' });
+    // The map finalize remapped the roster entry to the pack chunk — COPIED at
+    // birth through the ONE copy seam (docs/17 row 255a).
+    await expectCopiedRosterEntry(artifact.data.monsters[0], goblinChunkId, 'Goblin Boss');
   });
 
-  it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
+  it('finalizes a brief citing a pinned statblock chunk to a COPIED inline block', async () => {
     const { campaign, cartographer } = await setup();
     const goblinChunkId = await seedPackBook();
     // The pinned chunk does NOT rank (searches are mocked empty) — only the
@@ -408,9 +408,9 @@ describe('Encounter Cartographer run', () => {
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The pinned citation (persisted with the brief through the pick pause)
-    // resolved in map finalize to the pinned chunk — stamped with content
-    // identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss', bookTitle: 'Dnd5e Bestiary Pack' });
+    // resolved in map finalize to the pinned chunk — COPIED at birth through
+    // the ONE copy seam (docs/17 row 255a).
+    await expectCopiedRosterEntry(artifact.data.monsters[0], goblinChunkId, 'Goblin Boss');
   });
 
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
@@ -1618,13 +1618,7 @@ describe('Encounter Cartographer run', () => {
       expect(artifact.data.monsters[0]?.name).toBe('Tomb Ogre');
       expect(artifact.data.monsters[0]?.treasure).toBe('Ogre pocket: 4 gp');
       for (const index of [0, 1, 2, 3]) {
-        expect(artifact.data.monsters[index]?.source).toEqual({
-          type: 'rulebook',
-          chunkId: goblinChunkId,
-          contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
-          creatureName: 'Goblin Boss',
-          bookTitle: 'Dnd5e Bestiary Pack',
-        });
+        await expectCopiedRosterEntry(artifact.data.monsters[index], goblinChunkId, 'Goblin Boss');
       }
       // packRooms may ROTATE the rooms array — resolve by name, never by position.
       const roomByName = new Map((artifact.data.layout?.rooms ?? []).map((room) => [room.name, room]));
@@ -1914,13 +1908,7 @@ describe('Encounter Cartographer run', () => {
       expect(artifact.data.monsters).toHaveLength(4);
       expect(artifact.data.monsters[0]).toEqual(target.data.monsters[0]);
       for (const index of [1, 2, 3]) {
-        expect(artifact.data.monsters[index]?.source).toEqual({
-          type: 'rulebook',
-          chunkId: goblinChunkId,
-          contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
-          creatureName: 'Goblin Boss',
-          bookTitle: 'Dnd5e Bestiary Pack',
-        });
+        await expectCopiedRosterEntry(artifact.data.monsters[index], goblinChunkId, 'Goblin Boss');
       }
       // Advisory paths unchanged: the under-stocked rooms ship the LOUD
       // 'under' advisory on the artifact.

@@ -75,7 +75,8 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import { creatureCopyRefusal } from '@/domain/libraryCopy';
 import { additionalInstructionOf, additionalInstructionSection } from '@/llm/additionalInstruction';
 import {
   backgroundActivityLabel,
@@ -135,7 +136,7 @@ import {
   substitutionAdvisories,
   type EncounterBudget,
 } from '@/llm/roomBudget';
-import { getRulebook, listRulebooks } from '@/db/rulebookRepo';
+import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
@@ -1537,40 +1538,40 @@ function resolveEncounterMonsterSource(
 }
 
 /**
- * Stamps a rulebook citation with content identity at birth
- * (chunk-hash-fallback arc — the shared `contentIdentityFor` shape, so all
- * births agree).
+ * THE encounter generator's roster MINT (docs/17 row 255a): the stats of a
+ * library creature the run cited, COPIED onto the roster entry at write time.
  *
- * Loud on a vanished chunk (AGENTS rule 1): validation upstream rejected
- * unresolvable citations, so a chunk that is gone between retrieve and
- * finalize is a real gap — refusing to write a dangling citation instead of
- * saving a row that renders 'missing ref' on arrival.
+ * It used to return a `rulebook` CITATION — a POINTER into the library the
+ * entry resolved at read time — which is exactly what the owner's rule forbids:
+ * *"stop all references to core items inside modules. Core items should always
+ * ever only be copied."* The migration alone could never satisfy it, because this
+ * function mints a fresh pointer on every generated encounter and the start-up
+ * retry only runs on a row the migration could not convert.
+ *
+ * The copy is the ONE operation `domain/libraryCopy.copyCreatureStats` (the
+ * migration's backfill calls the same seam with its Dexie transaction's tables):
+ * the library's block, the STAMPED origin line, and the opaque `chunk:<id>`
+ * token that keeps the creature's portrait identity. Loud on a vanished chunk
+ * (AGENTS rule 1): refusing to write a pointer-shaped row instead of copying is
+ * the rule; refusing to write ANY row whose stats cannot be copied is the honest
+ * failure, never a placeholder block.
  */
-export async function rulebookSourceFor(
+export interface RosterMobCopyFields {
+  source: Extract<MonsterEntry['source'], { type: 'inline' }>;
+  sourceLine: string;
+  originToken: string;
+}
+
+export async function rosterMobCopyFor(
   chunkId: Id,
   entryName: string,
-): Promise<Extract<MonsterEntry['source'], { type: 'rulebook' }>> {
-  const chunk = (await getChunksByIds([chunkId]))[0];
-  if (chunk === undefined) {
-    throw new Error(
-      `finalize: cited rulebook chunk ${chunkId} no longer exists — refusing to save a dangling citation`,
-    );
-  }
+): Promise<RosterMobCopyFields> {
+  const result = await copyCreatureStatsFromDb({ chunkId }, entryName);
+  if (result.status === 'unresolved') throw creatureCopyRefusal(entryName, result.reason);
   return {
-    // A CITATION of a read-only library creature (docs/11 D5 amendment): it
-    // names the chunk, the content identity that lets a re-ingest still answer
-    // it, the creature's own name and the book it comes from — never a campaign
-    // row, because no such row exists. The book title is stamped here as well
-    // as in the other citation writers (docs/17 row 155), so a strand this run
-    // creates can name its pack.
-    type: 'rulebook',
-    chunkId,
-    ...contentIdentityFor(
-      chunk.contentHash,
-      chunk.headingPath[0],
-      entryName,
-      citationBookTitle(await getRulebook(chunk.bookId)),
-    ),
+    source: { type: 'inline', statBlock: result.copy.statBlock },
+    sourceLine: result.copy.sourceLine,
+    originToken: result.copy.originToken,
   };
 }
 
@@ -6340,7 +6341,7 @@ export class RunEngine {
         count: monster.count,
         notes: monster.notes,
         treasure: monster.treasure,
-        source: await rulebookSourceFor(chunkId, monster.name),
+        ...(await rosterMobCopyFor(chunkId, monster.name)),
       });
     }
     return entries;
@@ -6633,7 +6634,7 @@ export class RunEngine {
             count: monster.count,
             notes: monster.notes,
             treasure: monster.treasure,
-            source: await rulebookSourceFor(chunkId, monster.name),
+            ...(await rosterMobCopyFor(chunkId, monster.name)),
           });
           continue;
         }

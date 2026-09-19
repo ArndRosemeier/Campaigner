@@ -1569,26 +1569,23 @@ describe('spawn-picker.test.tsx', () => {
       await expect(spawnPickedEntry(newId(), entry)).rejects.toThrow();
     });
 
-    it('buildMobPickEntry stamps content identity at citation birth', async () => {
+    it('buildMobPickEntry COPIES the pick — the block, the stamped book line, the chunk token, no pointer', async () => {
       const entry = await buildMobPickEntry(goblinChunkId, 'Goblin Boss');
-      if (entry.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
-      expect(entry.source.chunkId).toBe(goblinChunkId);
-      expect(entry.source.contentHash).toBe(
-        await sha256Hex('Goblin Boss, a test creature of level 1.'),
-      );
-      expect(entry.source.creatureName).toBe('Goblin Boss');
-      // The pack too (docs/17 row 155): a strand this pick leaves behind names
-      // the book to install, read off the chunk's own book row.
-      expect(entry.source.bookTitle).toBe('Core Bestiary');
+      if (entry.source.type !== 'inline') throw new Error('expected a copied inline block');
+      const { db } = await import('@/db/db');
+      const chunk = await db.chunks.get(goblinChunkId);
+      // The library bytes, copied in full.
+      expect(entry.source.statBlock).toEqual(chunk?.statBlock);
+      // The label was composed at READ time before this arc; now it is STAMPED.
+      expect(entry.sourceLine).toBe('Core Bestiary p.1');
+      // The opaque identity token keeps the creature's portrait slot.
+      expect(entry.originToken).toBe(`chunk:${goblinChunkId}`);
+      // No citation spelling is born: the pick is self-contained.
+      expect(JSON.stringify(entry)).not.toContain('rulebook');
     });
 
-    it('buildMobPickEntry stays uuid-only for a vanished chunk (statless toast stays loud)', async () => {
-      const entry = await buildMobPickEntry(newId(), 'Ghost');
-      if (entry.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
-      expect(entry.source.contentHash).toBeUndefined();
-      expect(entry.source.creatureName).toBe('Ghost');
-      // Nothing is known about a chunk that is not here — not even its pack.
-      expect(entry.source.bookTitle).toBeUndefined();
+    it('buildMobPickEntry REFUSES a vanished chunk — no pointer is minted as a consolation', async () => {
+      await expect(buildMobPickEntry(newId(), 'Ghost')).rejects.toThrow(/not in this workspace/);
     });
   });
 });

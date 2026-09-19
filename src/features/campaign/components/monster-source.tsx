@@ -38,9 +38,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import { creatureCopyRefusal } from '@/domain/libraryCopy';
 import { getRulebook } from '@/db/rulebookRepo';
-import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
+import { citationBookTitle } from '@/domain/encounterResolve';
 import { searchRules } from '@/search';
+import { toastError } from '@/lib/toast';
 
 /**
  * Monster source controls + resolved roster panel (07-MILESTONE-3 M3-B): each
@@ -109,7 +112,51 @@ export function MonsterSourceControls({
       : npcCandidates.find((artifact) => artifact.id === selectedNpcId);
 
   function setSource(source: MonsterSource): void {
-    onChange({ ...entry, source });
+    if (source.type === 'inline') {
+      // Editing or replacing the block keeps an existing copy's provenance: the
+      // `chunk:<id>` token is the portrait cache's identity key, and re-keying it
+      // would orphan the creature's art (the hazard docs/17 row 248 measured).
+      onChange({ ...entry, source });
+      return;
+    }
+    // Any OTHER source change drops the previous copy's provenance: a
+    // `sourceLine`/`originToken` left on a name-only or npc-ref row would print
+    // an origin (and re-route a portrait) the row's numbers no longer have.
+    const { sourceLine: _sourceLine, originToken: _originToken, ...rest } = entry;
+    onChange({ ...rest, source });
+  }
+
+  /**
+   * The library pick is a COPY-ON-WRITE (docs/17 row 255a): the stats, the
+   * STAMPED origin line and the opaque `chunk:<id>` token come off the ONE copy
+   * seam, and no `rulebook` pointer is born. A pick whose chunk vanished is a
+   * LOUD refusal (AGENTS rule 2) — there is nothing to copy, and minting a
+   * reference is exactly what the owner's rule forbids.
+   */
+  async function applyRulebookPick(pick: {
+    chunkId: Id;
+    contentHash: string;
+    creatureHeading: string;
+    bookTitle: string | undefined;
+  }): Promise<void> {
+    const result = await copyCreatureStatsFromDb(
+      {
+        chunkId: pick.chunkId,
+        ...(pick.contentHash === '' ? {} : { contentHash: pick.contentHash }),
+      },
+      entry.name,
+    );
+    if (result.status === 'unresolved') {
+      toastError(creatureCopyRefusal(entry.name, result.reason).message);
+      return;
+    }
+    onChange({
+      ...entry,
+      source: { type: 'inline', statBlock: result.copy.statBlock },
+      sourceLine: result.copy.sourceLine,
+      originToken: result.copy.originToken,
+    });
+    setRulebookOpen(false);
   }
 
   return (
@@ -210,19 +257,7 @@ export function MonsterSourceControls({
         onOpenChange={setRulebookOpen}
         campaignSystem={campaignSystem}
         onPick={(pick) => {
-          // Content identity stamped at citation birth (chunk-hash-fallback
-          // arc): the uuid alone breaks on re-ingest; the hash survives it.
-          setSource({
-            type: 'rulebook',
-            chunkId: pick.chunkId,
-            ...contentIdentityFor(
-              pick.contentHash,
-              pick.creatureHeading,
-              entry.name,
-              pick.bookTitle,
-            ),
-          });
-          setRulebookOpen(false);
+          void applyRulebookPick(pick);
         }}
       />
 

@@ -3,8 +3,8 @@ import { monsterEntrySchema } from '@/domain';
 import { fallbackSpawnPoint, spawnPointInStagingGround } from '@/domain/battle/board';
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
-import { db } from '@/db/db';
-import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import { creatureCopyRefusal } from '@/domain/libraryCopy';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { NotFoundError } from '@/lib/errors';
 
@@ -103,34 +103,28 @@ export function nextFreeSpawnPoint(
 
 /**
  * Builds the synthetic single-instance entry for a core-mob pick (the
- * bestiary spawn path): content identity stamped at citation birth
- * (chunk-hash-fallback arc) so the shared expansion resolves it exactly
- * like a persisted citation. A vanished chunk stays uuid-only with the
- * pick name as creature — the statless toast stays loud. Exported
- * for tests (SpawnPicker.tsx's click handler is UI-only).
+ * bestiary spawn path): the library creature's stats are COPIED onto the entry
+ * at write time through the ONE copy seam (docs/17 row 255a) — the library
+ * block, the STAMPED origin line, the opaque `chunk:<id>` token. No pointer is
+ * born, so the spawned token's numbers do not depend on the pack staying
+ * installed.
+ *
+ * A vanished chunk is a LOUD refusal (`creatureCopyRefusal`), never a
+ * uuid-only pointer: there is nothing to copy, and minting a reference is
+ * exactly what the owner's rule forbids. Exported for tests (SpawnPicker.tsx's
+ * click handler is UI-only).
  */
 export async function buildMobPickEntry(chunkId: Id, entryName: string): Promise<MonsterEntry> {
-  const chunk = await db.chunks.get(chunkId);
+  const result = await copyCreatureStatsFromDb({ chunkId }, entryName);
+  if (result.status === 'unresolved') throw creatureCopyRefusal(entryName, result.reason);
   return monsterEntrySchema.parse({
     name: entryName,
     count: 1,
     notes: '',
     treasure: '',
-    source: chunk === undefined
-      ? { type: 'rulebook', chunkId, creatureName: entryName }
-      : {
-        type: 'rulebook',
-        chunkId,
-        // The book title rides along exactly like the hash and the creature
-        // name (docs/17 row 155): a pick made here names its pack if the
-        // citation is ever stranded.
-        ...contentIdentityFor(
-          chunk.contentHash,
-          chunk.headingPath[0],
-          entryName,
-          citationBookTitle(await db.rulebooks.get(chunk.bookId)),
-        ),
-      },
+    source: { type: 'inline', statBlock: result.copy.statBlock },
+    sourceLine: result.copy.sourceLine,
+    originToken: result.copy.originToken,
   });
 }
 

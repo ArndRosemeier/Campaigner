@@ -276,7 +276,7 @@ describe('encounter form monster sources', () => {
     expect(within(dialog).queryByText('Kobold Warrior')).not.toBeInTheDocument();
   });
 
-  it('stamps content identity when the rulebook-link dialog cites a chunk', async () => {
+  it('COPIES the cited chunk when the rulebook-link dialog picks one', async () => {
     const user = userEvent.setup();
     await createCampaign({ name: 'C', system: 'dnd5e' });
     const book = await createRulebook({
@@ -334,17 +334,17 @@ describe('encounter form monster sources', () => {
     await user.type(within(dialog).getByPlaceholderText('Search stat blocks…'), 'giant');
     await user.click(await within(dialog).findByText('Hill Giant'));
 
-    // Citation birth carries content identity, not just the uuid — and since
-    // docs/17 row 155 the book the chunk came from, read off the library row
-    // the dialog's search hit carried.
+    // COPY-ON-WRITE (docs/17 row 255a): the pick copies the library block, the
+    // STAMPED origin line and the opaque `chunk:<id>` token — it mints no
+    // `rulebook` pointer, so the row does not depend on the pack staying
+    // installed.
     await waitFor(() => {
       expect(latest?.monsters[0]?.source).toEqual({
-        type: 'rulebook',
-        chunkId: parsed.id,
-        contentHash,
-        creatureName: 'Hill Giant',
-        bookTitle: 'Bestiary',
+        type: 'inline',
+        statBlock: parsed.statBlock,
       });
+      expect(latest?.monsters[0]?.sourceLine).toBe('Bestiary p.1');
+      expect(latest?.monsters[0]?.originToken).toBe(`chunk:${parsed.id}`);
     });
   });
 });

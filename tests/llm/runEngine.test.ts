@@ -3,7 +3,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule as createModuleSchema, moduleSchema, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Persona, type StatBlock } from '@/domain';
+import { createModule as createModuleSchema, moduleSchema, monsterEntrySchema, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, blankStatBlock, type Persona, type StatBlock } from '@/domain';
+import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -14,7 +15,7 @@ import {
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { failRunningRuns, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
-import { runEngine, rulebookSourceFor } from '@/llm/runEngine';
+import { runEngine, rosterMobCopyFor } from '@/llm/runEngine';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { sha256Hex } from '@/lib/hash';
@@ -1785,14 +1786,17 @@ describe('runEngine', () => {
 });
 
 /**
- * Finalize stamps content identity at citation birth (chunk-hash-fallback
- * arc): both Smith paths (fresh-draft creation and the in-place remap)
- * share `rulebookSourceFor`, so one test pins both.
+ * WRITE-TIME COPY-ON-WRITE (docs/17 row 255a): the encounter generator used to
+ * mint a `rulebook` POINTER on every generated roster entry
+ * (`rulebookSourceFor`), and the v24 migration's one-shot backfill could never
+ * catch those fresh pointers. The generator now COPIES — the library block, the
+ * STAMPED origin line, the opaque `chunk:<id>` token — through the ONE copy
+ * operation the migration also calls.
  */
-describe('rulebookSourceFor', () => {
+describe('rosterMobCopyFor', () => {
   beforeEach(clearDatabase);
 
-  async function installChunk(): Promise<{ chunkId: string; contentHash: string }> {
+  async function installChunk(): Promise<{ chunkId: string; statBlock: StatBlock }> {
     const book = await createPackBook({
       title: 'Monster Core',
       system: 'pathfinder2e',
@@ -1805,67 +1809,76 @@ describe('rulebookSourceFor', () => {
       entriesSkipped: 0,
       entriesFailed: 0,
     });
+    const statBlock = statBlockSchema.parse({ ...blankStatBlock('pathfinder2e'), hp: 20 });
     const text = 'Goblin Warrior stat block';
     const contentHash = await sha256Hex(text);
-    const [chunk] = await (async () => {
-      await putChunks([
-        ruleChunkSchema.parse({
-          ...stampNewEntity(),
-          bookId: book.id,
-          pageStart: 1,
-          pageEnd: 1,
-          chunkType: 'statblock',
-          headingPath: ['Goblin Warrior'],
-          text,
-          statBlock: null,
-          contentHash,
-        }),
-      ]);
-      const { db } = await import('@/db/db');
-      return db.chunks.toArray();
-    })();
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock,
+        contentHash,
+      }),
+    ]);
+    const { db } = await import('@/db/db');
+    const [chunk] = await db.chunks.toArray();
     if (chunk === undefined) throw new Error('chunk missing');
-    return { chunkId: chunk.id, contentHash };
+    return { chunkId: chunk.id, statBlock };
   }
 
-  it('stamps the cited chunk hash, creature name AND the pack it came from alongside the uuid — and NO artifact identity', async () => {
-    const { chunkId, contentHash } = await installChunk();
+  it('COPIES the block, the STAMPED pack line and the opaque chunk token — and writes NO pointer', async () => {
+    const { chunkId, statBlock } = await installChunk();
 
-    const source = await rulebookSourceFor(chunkId, 'Goblin Warrior');
-    // REWRITTEN (ledger row 106): the citation names the LIBRARY row and its
-    // content identity, never a campaign artifact. The retired `mobArtifactId`
-    // was the field that turned a deleted bestiary row into two encounters
-    // stuck on a permanent `missing ref`.
-    // EXTENDED (docs/17 row 155): the citation also carries the title of the
-    // book its chunk came from — the identity a stranded strand is REPORTED
-    // with (the campaign banner names the pack to install). Asserted as the
-    // book row's own title, so this pin follows the library rather than a
-    // literal this file invented.
-    expect(source).toEqual({
-      type: 'rulebook',
-      chunkId,
-      contentHash,
-      creatureName: 'Goblin Warrior',
-      bookTitle: 'Monster Core',
-    });
-    expect(Object.keys(source)).not.toContain('mobArtifactId');
-    // Creating the citation created NOTHING: no artifact is a creature.
+    const fields = await rosterMobCopyFor(chunkId, 'Goblin Warrior');
+    // The library bytes, copied in full.
+    expect(fields.source).toEqual({ type: 'inline', statBlock });
+    // The label `creatureOriginLabel` used to compose at READ time is STAMPED:
+    // a pack book has no page numbers, so it names the creature.
+    expect(fields.sourceLine).toBe('Monster Core: Goblin Warrior');
+    // The opaque identity token keeps the creature's portrait slot (no
+    // `mobPortraits`/`creatureImages` remap).
+    expect(fields.originToken).toBe(`chunk:${chunkId}`);
+    // The minted fields carry no citation spelling at all.
+    expect(JSON.stringify(fields)).not.toContain('rulebook');
+    expect(JSON.stringify(fields)).not.toContain('contentHash');
+    // Creating the copy created NOTHING: no artifact is a creature.
     const { db } = await import('@/db/db');
     expect(await db.artifacts.count()).toBe(0);
   });
 
-  it('omits the pack when the cited book row is gone — a citation never carries a placeholder', async () => {
-    const { chunkId } = await installChunk();
+  it('reads back without the library: the stamped copy is the row (every lookup can throw)', async () => {
+    const { chunkId, statBlock } = await installChunk();
+    const fields = await rosterMobCopyFor(chunkId, 'Goblin Warrior');
+    const entry = monsterEntrySchema.parse({
+      name: 'Goblin Warrior',
+      count: 1,
+      notes: '',
+      treasure: '',
+      ...fields,
+    });
+    // Delete the pack the copy came from: the row still resolves in full.
     const { db } = await import('@/db/db');
     await db.rulebooks.clear();
-
-    const source = await rulebookSourceFor(chunkId, 'Goblin Warrior');
-    expect(source.creatureName).toBe('Goblin Warrior');
-    expect('bookTitle' in source).toBe(false);
+    await db.chunks.clear();
+    const resolved = await resolveStoredMonsterEntry(entry, {
+      getArtifact: () => Promise.reject(new Error('library read attempted')),
+      getChunk: () => Promise.reject(new Error('library read attempted')),
+      getChunkByContentHash: () => Promise.reject(new Error('library read attempted')),
+      getRulebook: () => Promise.reject(new Error('library read attempted')),
+    });
+    expect(resolved.statBlock).toEqual(statBlock);
+    expect(resolved.origin).toBe('Monster Core: Goblin Warrior');
   });
 
-  it('throws loudly for a chunk that vanished between retrieve and finalize', async () => {
-    await expect(rulebookSourceFor(newId(), 'Goblin Warrior')).rejects.toThrow(/no longer exists/);
+  it('refuses to copy a vanished chunk — never a minted pointer or a placeholder block', async () => {
+    await expect(rosterMobCopyFor(newId(), 'Goblin Warrior')).rejects.toThrow(
+      /not in this workspace/,
+    );
   });
 });
 

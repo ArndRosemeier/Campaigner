@@ -2,8 +2,9 @@ import { expect } from 'vitest';
 
 import { isNotFoundError } from '@/lib/errors';
 import { db } from '@/db/db';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { moduleDocumentVersionSchema, stampNewEntity, type Id } from '@/domain';
+import { moduleDocumentVersionSchema, stampNewEntity, type Id, type MonsterEntry } from '@/domain';
 
 /** Clears every table so each test starts from an empty DB. */
 export async function clearDatabase(): Promise<void> {
@@ -55,6 +56,27 @@ export async function expectNotFound(promise: Promise<unknown>): Promise<void> {
     (rejection: unknown) => rejection,
   );
   expect(isNotFoundError(error)).toBe(true);
+}
+
+/**
+ * The COPY-ON-WRITE shape a generated roster entry must carry (docs/17 row
+ * 255a): the library's block, the STAMPED origin line and the opaque
+ * `chunk:<id>` token — never a `rulebook` pointer. `entry` is the STORED
+ * `MonsterEntry` a write path produced; the expectation comes from the SAME one
+ * copy seam the write path calls, so this asserts the write went THROUGH that
+ * seam rather than re-deriving a literal in the test (AGENTS §Centralization
+ * obligation 2 — a differential, not a paraphrase).
+ */
+export async function expectCopiedRosterEntry(
+  entry: MonsterEntry | undefined,
+  chunkId: Id,
+  name: string,
+): Promise<void> {
+  const copy = await copyCreatureStatsFromDb({ chunkId }, name);
+  if (copy.status !== 'copied') throw new Error('the fixture chunk must be copyable');
+  expect(entry?.source).toEqual({ type: 'inline', statBlock: copy.copy.statBlock });
+  expect(entry?.sourceLine).toBe(copy.copy.sourceLine);
+  expect(entry?.originToken).toBe(copy.copy.originToken);
 }
 
 /**

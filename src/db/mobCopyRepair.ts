@@ -2,12 +2,7 @@ import type { Transaction } from 'dexie';
 
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import type { MobCopyRepairReport } from '@/domain/settings';
-import { libraryCreatureKey } from '@/domain/creature';
-import {
-  creatureCitationName,
-  creatureOriginLabel,
-  resolveCreatureChunk,
-} from '@/domain/encounterResolve';
+import { copyCreatureStats } from '@/domain/libraryCopy';
 import {
   storedNpcCitation,
   storedRulebookCitation,
@@ -141,19 +136,20 @@ export async function repairMobCopies(
     notified: false,
   };
 
-  // TX-BACKED lookups for the DOMAIN resolution rule (LOUD UNKNOWN (a)/(c),
+  // TX-BACKED lookups for the ONE copy operation (LOUD UNKNOWN (a)/(c),
   // resolved by measurement in `tests/db/mobCopyRepair.test.ts`): the pure
-  // `resolveCreatureChunk` / `creatureOriginLabel` are awaitable inside the
-  // upgrade transaction when their lookups are the transaction's own tables —
-  // the `db`-bound wrappers are NOT used here, exactly as the recipe requires.
+  // `domain/libraryCopy.copyCreatureStats` is awaitable inside the upgrade
+  // transaction when its lookups are the transaction's own tables — the
+  // `db`-bound wrapper (`db/libraryCopy`) is NOT used here, exactly as the
+  // recipe requires.
   const lookups = {
     getChunk: (id: Id): Promise<RuleChunk | undefined> => chunks.get(id),
     getChunkByContentHash: (contentHash: string): Promise<RuleChunk | undefined> =>
       chunks.where('contentHash').equals(contentHash).first(),
-  };
-  const getRulebook = (bookId: Id): Promise<Rulebook | undefined> => {
-    if (bookReadFault !== null) return Promise.reject(bookReadFault());
-    return rulebooks.get(bookId);
+    getRulebook: (bookId: Id): Promise<Rulebook | undefined> => {
+      if (bookReadFault !== null) return Promise.reject(bookReadFault());
+      return rulebooks.get(bookId);
+    },
   };
   const all = (await artifacts.toArray()) as unknown[];
 
@@ -205,39 +201,40 @@ export async function repairMobCopies(
         monsters.push(entryRaw);
         continue;
       }
-      const chunk = await resolveCreatureChunk(citation, lookups);
-      if (chunk?.statBlock == null) {
+      const entryLabel = typeof entry.name === 'string' ? entry.name : 'unnamed mob';
+      // The conversion is the part that can throw for a reason the copy
+      // operation's own checks did not name (`creatureOriginLabel`'s book read,
+      // a malformed stored row). Isolated PER ENTRY, so one bad mob does not
+      // cost the encounter's other entries and the entry's ORIGINAL bytes are
+      // what the catch keeps.
+      let unresolved: string | undefined;
+      let converted: Record<string, unknown> | undefined;
+      await guard(where, entryLabel, async () => {
+        const result = await copyCreatureStats(citation, entryLabel, lookups);
+        if (result.status === 'unresolved') {
+          unresolved = result.reason;
+          return;
+        }
+        converted = {
+          ...entry,
+          source: { type: 'inline', statBlock: result.copy.statBlock },
+          sourceLine: result.copy.sourceLine,
+          originToken: result.copy.originToken,
+        };
+      });
+      if (unresolved !== undefined) {
         report.unconverted.push({
           where,
-          name: entry.name,
-          reason:
-            chunk === undefined
-              ? 'the cited stat-block chunk is not in this workspace — install the pack that carries it'
-              : 'the cited chunk carries no stat block — re-import the book it came from',
+          name: entryLabel,
+          reason: unresolved,
           unexpected: false,
         });
         monsters.push(entryRaw);
         continue;
       }
-      // The conversion is the part that can throw for a reason the checks above
-      // did not name (`creatureOriginLabel`'s book read, a malformed stored
-      // row). Isolated PER ENTRY, so one bad mob does not cost the encounter's
-      // other entries and the entry's ORIGINAL bytes are what the catch keeps.
-      let converted: Record<string, unknown> | undefined;
-      await guard(where, typeof entry.name === 'string' ? entry.name : 'unnamed mob', async () => {
-        const sourceLine = await creatureOriginLabel(
-          chunk,
-          creatureCitationName(citation, entry.name),
-          { getRulebook },
-        );
-        converted = {
-          ...entry,
-          source: { type: 'inline', statBlock: chunk.statBlock },
-          sourceLine,
-          originToken: libraryCreatureKey(chunk.id),
-        };
-      });
       if (converted === undefined) {
+        // The guard caught an unexpected throw: the row keeps its pointer (the
+        // retry's handle) and is already named in the report.
         monsters.push(entryRaw);
         continue;
       }
@@ -270,35 +267,13 @@ export async function repairMobCopies(
     if (citation === undefined) continue;
     const npcName = typeof row.name === 'string' ? row.name : 'unnamed npc';
     const where = 'an authored NPC';
-    if (citation.chunkId === undefined && citation.contentHash === undefined) {
-      report.unconverted.push({
-        where,
-        name: npcName,
-        reason:
-          'its creature citation carries neither a chunk id nor a content hash — nothing can be copied',
-        unexpected: false,
-      });
-      continue;
-    }
-    const chunk = await resolveCreatureChunk(citation, lookups);
-    if (chunk?.statBlock == null) {
-      report.unconverted.push({
-        where,
-        name: npcName,
-        reason:
-          chunk === undefined
-            ? 'the cited stat-block chunk is not in this workspace — install the pack that carries it'
-            : 'the cited chunk carries no stat block — re-import the book it came from',
-        unexpected: false,
-      });
-      continue;
-    }
+    let unresolved: string | undefined;
     await guard(where, npcName, async () => {
-      const sourceLine = await creatureOriginLabel(
-        chunk,
-        creatureCitationName(citation, npcName),
-        { getRulebook },
-      );
+      const result = await copyCreatureStats(citation, npcName, lookups);
+      if (result.status === 'unresolved') {
+        unresolved = result.reason;
+        return;
+      }
       // The legacy pointer is dropped, never left beside the copied block: the
       // schema refine forbids the pair, and a second reader of it would be the
       // fragmentation this arc removes. The FIELD NAME lives in the seam, so
@@ -306,10 +281,21 @@ export async function repairMobCopies(
       const rest = withoutLegacyNpcPointer(data);
       await artifacts.put({
         ...(row as Record<string, unknown>),
-        data: { ...rest, statBlock: chunk.statBlock, sourceLine },
+        data: { ...rest, statBlock: result.copy.statBlock, sourceLine: result.copy.sourceLine },
       });
+      // Counted only after the WRITE returns: a row whose `put` throws is named
+      // by the guard as unresolved and must not be reported as converted.
       report.npcCreaturesCopied += 1;
     });
+    if (unresolved !== undefined) {
+      report.unconverted.push({
+        where,
+        name: npcName,
+        reason: unresolved,
+        unexpected: false,
+      });
+      continue;
+    }
   }
 
   const converted = report.rosterMobsCopied + report.npcCreaturesCopied;
