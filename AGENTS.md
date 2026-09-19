@@ -283,9 +283,10 @@ used:
 5. **Worktree setup (verified recipe — REWRITTEN 2026-09-17 for this harness).**
    Put the worktree INSIDE the repo, under `<repo>/worktrees/<slice>`. The old
    `/tmp/<slice>` recipe is IMPOSSIBLE here and was measured to be: `/tmp` is a
-   per-call, READ-ONLY tmpfs (`mount` from a second bash call shows
-   `tmpfs on /tmp ... (ro)`), so a worktree created in one call does not exist for
-   the next — a writer following the old recipe would edit the MAIN tree and
+   per-call tmpfs — it ACCEPTS a write, and the file is GONE in the next bash
+   call (measured 2026-09-19; the earlier note read "read-only", which is the
+   safer half of the truth) — so a worktree created in one call does not exist
+   for the next — a writer following the old recipe would edit the MAIN tree and
    destroy the parallel-writer guarantee. Outside-the-repo is impossible too: the
    workspace's PARENT is read-only. In-repo is the only writable location, so
    `eslint.config.js` ignores `worktrees` (an unignored in-repo worktree would be
@@ -405,7 +406,8 @@ the config default, and it holds for whoever forgets. Binding rules:
    by PID.
 5. **Nothing outlives the writer.** Scratch harnesses live under that
    writer's own worktree (or the gate's workspace `.gate-logs`), never `/tmp`
-   — `/tmp` is per-call and read-only here (§Parallel writers 5); every process
+   — `/tmp` is per-call here (a write succeeds and then vanishes, §Parallel
+   writers 5); every process
    it starts is foreground or killed before it reports, and load-generating
    scripts are DELETED rather than left executable.
 6. **The dispatcher verifies the host, not just the diff**: `uptime` and a
@@ -427,8 +429,8 @@ the config default, and it holds for whoever forgets. Binding rules:
      can look in the same instant, both see "free", and both start. Acquire an
      atomic lock instead (`mkdir` succeeds or it does not), and keep `pgrep`
      for the foreign suites we cannot lock out (the owner's other DSH project).
-     **The lock is NOT `/tmp`**: `/tmp` is per-call and read-only here, so a
-     `/tmp` lock is invisible and excludes nothing (row 232). The lock is
+     **The lock is NOT `/tmp`**: `/tmp` is per-call, so a `/tmp` lock is
+     invisible to the next bash call and excludes nothing (row 232). The lock is
      `<repo>/.campaigner-lock`, derived from the git common dir so it is the SAME
      path from the main tree and every worktree, and `scripts/gate.sh` /
      `scripts/board.sh` take it themselves — use the gate, never hand-roll a lock.
@@ -569,10 +571,7 @@ once found by the owner instead of the agent.
 
 An armed goal's round ticks are NOT work orders. (Under the chief-of-staff
 standing rule below, the session's ONE goal stays paused — ticks then never
-arrive; this section governs the rare explicitly-armed case.) **On this OpenCode
-harness there is no goal tool, so no ticks ever arrive and the section is
-dormant — but the anti-churn rules it teaches still bind a dispatcher that would
-otherwise treat a timer as a work order.** Real incident
+arrive; this section governs the rare explicitly-armed case.) Real incident
 (twice in
 one day): with two writers mid-flight, the dispatcher treated successive
 round ticks as license to churn — first deleting a writer whose registry
@@ -616,11 +615,7 @@ death, not a description of a job.
   designation authorizes exactly those two touches. Afterwards NEVER edit,
   resume, re-scope, or complete it: a paused goal never ticks, and every
   goal update burns the session's shared goal budget (a previous chat died
-  at the goal limit from per-task goal churn). **On this OpenCode harness there
-  is no `update_goal` tool**, so the rule's INTENT binds instead of its
-  mechanism: the frozen goal is represented by ONE long-lived todo that is never
-  churned, task state lives in the todo list and the `list_subagents` sessions,
-  and no goal state is touched at all. Work is driven by wake
+  at the goal limit from per-task goal churn). Work is driven by wake
   events only: an owner message, a writer's landing/BLOCKED report, or a
   runtime failure notice. A tick that still arrives while work is
   delegated gets silence (rules 2–5 above bind unchanged). Re-arming the
@@ -631,12 +626,11 @@ death, not a description of a job.
   (a) read `docs/20-ORCHESTRATION.md` — in-flight writers, unlanded branches,
   the owner's decision queue; (b) run `bash scripts/board.sh`: the board is
   prose about state, so it is CHECKED, never believed — it validates git, the
-  OpenCode session API (`GET /session`, the harness's live session registry) and
-  the host, and says LOUDLY when a check cannot look; (c) compare its writer
-  records against the live subagent sessions — the `list_subagents` tool (the
-  global `ocm-list-subagents` plugin) lists the CURRENT session's child sessions
-  with id/title/agent/model/age — and the host (`uptime`, orphan `vites[t]`,
-  suite lock); (d) fix the board where it lied, report ONE
+  DSH session registry (`~/.dsh/sessions/<this repo's slug>`) and the host, and
+  says LOUDLY when a check cannot look; (c) compare its writer records against
+  the live registry — `list_agents` lists this session's subagents with id,
+  label and status — and the host (`uptime`, orphan `vites[t]`, suite lock);
+  (d) fix the board where it lied, report ONE
   line, then wait for a request. No dispatch before this pass. **Reconcile
   against `origin/main`, never local `main`** — real error: row 167 read as
   "unlanded" for hours while it was pushed, deployed, and 5 commits ahead of a

@@ -130,15 +130,16 @@ bash scripts/board.sh      # → BOARD RECONCILED  |  BOARD STALE — fix docs/2
 ```
 
 The script compares every claim against reality: does each `LANDED` sha exist on
-`origin/main`; is a claimed `IN-FLIGHT` writer still a live session in the
-OpenCode session API; does a branch claimed as retired still exist; is the suite
-lock held and by whom; is there a child session under this repo updated in the
-last hours that the board does not name; is `reconciled:` an ancestor of HEAD;
+`origin/main`; is a claimed `IN-FLIGHT` writer still a live session under
+`~/.dsh/sessions/<this repo's slug>`; does a branch claimed as retired still
+exist; is the suite
+lock held and by whom; is there a session log written in the last hours that the
+board does not name; is `reconciled:` an ancestor of HEAD;
 does a `LANDED` row still carry an `IN-FLIGHT` line (a classic stale pair). It
 also prints host load, available memory and any orphan test processes. The
-registry source is the OpenCode server (`OPENCODE_API_URL`, default
-`http://127.0.0.1:5551/session`); when it cannot be reached the run SAYS SO in
-its `=== sessions ===` header rather than passing silently.
+registry source is the DSH session directory, resolved from the repo's OWN path
+(the exact slug first, then looser candidates); when no root resolves the run
+SAYS SO in its `=== session root ===` header rather than passing silently.
 
 **Rules that make the board trustworthy**
 
@@ -245,7 +246,8 @@ The human's instruction is INTENT, not design.
 commit phase (a real purge commit swept a concurrent writer's staged feature
 work under the wrong subject). So: one worktree per writer. WHERE it lives is
 harness-specific, and getting it wrong is measured, not theoretical: on this
-harness `/tmp` is a per-call, READ-ONLY tmpfs, so a worktree created there in
+harness `/tmp` is a per-call tmpfs (a write succeeds, then vanishes — measured
+2026-09-19), so a worktree created there in
 one call does not exist for the next — the recipe is IN-REPO, under
 `<repo>/worktrees/<slice>` (gitignored, and ignored by `eslint.config.js`, so it
 is NOT swept into the main tree's lint run), installed with a plain
@@ -651,14 +653,17 @@ worktree, gate, pins, docs, BLOCKED clause) → dispatch (≤2 writers) → veri
 
 - Paths, the lock's name, chunk names, the reconciler's specific checks, and the
   docs numbering are repo-specific.
-- The **harness** matters: this process was run on an agent harness with
-  subagents and a session board. The roles need equivalents: a way to run a
-  second agent with its own context, and a way to see which agents are live. On
-  the OpenCode harness this repo now runs on, that registry is the
-  `list_subagents` tool (global `ocm-list-subagents` plugin: the CURRENT
-  session's child sessions; the predecessor's DSH `list_agents`/`send_message`
-  and its goal mechanism do not exist here, and there is NO agent-facing
-  subagent-delete — cleanup is OpenCode Manager's). Without a registry, the
+- The **harness** matters: this process was run on DSH, an agent harness with
+  subagents, a subagent registry, a session board and a goal mechanism. The
+  roles need equivalents: a way to run a second agent with its own context, a
+  way to see which agents are live (`list_agents` here, plus the on-disk
+  `~/.dsh/sessions/<slug>` registry the reconciler reads), and a way to retire
+  them. **Know which of those your harness actually has**: on this box the core
+  provides `send_message`/`interrupt_agent`/`list_agents` and the goal tools,
+  but there is NO agent-facing subagent-delete (the vendored
+  `dsh-plugin-subagent-delete` is absent), so a finished writer is retired by
+  removing its branch and worktree, and its registry entry is the runtime's to
+  drop. Without a registry, the
   board's `IN-FLIGHT` records become your only liveness signal — check them
   against the filesystem instead.
 - The **host limits**: replace the 3000 MB cap and the two-writer ceiling with

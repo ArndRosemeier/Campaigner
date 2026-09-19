@@ -516,6 +516,44 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   test that reads ambient state (env, TTY, box path, Node version) must DEFEND
   itself or fail loudly — it must never inherit silently.
 
+- **The board reconciler's session root must be the EXACT slug, because one box
+  can hold several workspaces sharing a basename (docs/17 row 242, 2026-09-19).**
+  `scripts/board.sh` derives the DSH session directory from the repo's own path,
+  and matching on the BASENAME alone silently read the WRONG tree: this box's
+  `~/.dsh/sessions` holds both
+  `--home-administrator-dsh-workspace-Campaigner--` (7 dead sessions) and
+  `--home-administrator-projects-Campaigner--` (the live one), and the glob
+  picked the dead one — so the writer-liveness, session-log-size and
+  unrecorded-live-state checks reported on a real directory belonging to another
+  workspace, the row-231 failure shape one step worse, because such a check
+  returns a verdict it did not earn. The EXACT slug is now tried FIRST, derived
+  from the git COMMON dir so a worktree resolves to the MAIN tree, with the loose
+  candidates behind it so a moved workspace still resolves. Same seam, measured
+  the same day: `/tmp` on this box ACCEPTS a write and loses the file in the next
+  bash call, so the correct statement is "per-call", not "read-only".
+
+- **This box has no `pnpm` on PATH, and its default pnpm STORE is on a
+  read-only filesystem (docs/17 row 242, 2026-09-19).** `pnpm` exists nowhere
+  here (`~/.local/share/pnpm` holds only a store); corepack can supply
+  `pnpm@11.26.0` but needs a writable `COREPACK_HOME`, and `~/.cache` is outside
+  the writable workspace. The default store `~/.local/share/pnpm/store/v11`
+  cannot be written, so pnpm's SQLite store index fails to open and EVERY `pnpm`
+  invocation dies before the gate's first step — while `node_modules/.bin` is
+  fully populated. The repo already gitignores `.pnpm-home/` and `.pnpm-store/`
+  for exactly this: run the gate with `.pnpm-home/bin/pnpm` on PATH, a
+  sandbox-local corepack shim that points pnpm at a workspace store and disables
+  pnpm's deps PREFLIGHT (its nested `install` does not inherit `--store-dir`, so
+  it keeps hitting the read-only default). That is a SANDBOX workaround, not repo
+  config: disclosed here, never committed, and it skips a consistency RE-CHECK,
+  not the install. Related, same session: a gate LOCK outlived its killed run,
+  twice — once from the dead row-241 writer's box and once from a run a harness
+  restart killed mid-flight. **Judge staleness from FILE EVIDENCE, not `pgrep`:**
+  each bash call on this box runs in its OWN PID namespace, so a `pgrep` from a
+  later call CANNOT see a suite an earlier call started, while the lock owner
+  file and the chunk logs sit on the shared filesystem and can be aged. A lock
+  whose chunk writes stopped 30+ minutes ago is stale, and removing it must be
+  said out loud.
+
 - **Merging test files that share a background puts them in ONE module
   registry — the `--no-isolate` failure mode, inside one file (docs/17 row 176,
   docs/08 §Tests that share one background belong in one file).** Vitest gives

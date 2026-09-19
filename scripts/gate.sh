@@ -373,6 +373,13 @@ if [ "$MODE" = caller ]; then
 elif [ "$MODE" != "compile-only" ]; then
   select_order
   check_arithmetic || status_arith=1
+else
+  # The compile tier selects NO chunk, but print_plan still reports the diff —
+  # and it read "changed=0 file(s)" on the very gate that BLOCKS A PUSH, which is
+  # the one place an empty-looking diff is least affordable (MEASURED 2026-09-19:
+  # six changed files, plan said 0). Populate the list WITHOUT re-selecting chunks
+  # or overwriting MODE, so the compile tier keeps saying what it is.
+  mapfile -t CHANGED < <(changed_files)
 fi
 print_plan
 
