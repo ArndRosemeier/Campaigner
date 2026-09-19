@@ -8,6 +8,7 @@ import { artifactRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
+import { adoptDraftLibraryReferences } from '@/db/libraryAdoptLive';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { modulePath } from '@/app/routes';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -238,11 +239,29 @@ export function ArtifactEditor({
    */
   const saveDraft = useCallback(async (): Promise<boolean> => {
     const current = draftRef.current;
-    const effective: ArtifactDraft =
+    let effective: ArtifactDraft =
       current.name.trim() === '' ? { ...current, name: lastSavedRef.current.name } : current;
     if (deepEqual(effective, lastSavedRef.current)) return false;
     setSaveState('saving');
+    let referencesAdopted = false;
     try {
+      // LIBRARY ADOPTION AT THE MOMENT THE REFERENCE WOULD BE BORN (docs/17
+      // row 257, the owner's rule: *"core items should always ever only be
+      // copied"*). A draft that cites a GLOBAL library artifact (the roster
+      // "Link NPC…" picker, the Relations editor) is saved pointing at the
+      // campaign's OWN COPY: the copy is made first, in its own transaction by
+      // the ONE adoption seam, and the patch carries the rewritten references —
+      // so a library reference is never written, and the campaign export no
+      // longer depends on the shared library. A draft citing nothing from the
+      // library pays two reads and no transaction.
+      if (artifact.campaignId !== null) {
+        const adopted = await adoptDraftLibraryReferences(artifact.campaignId, effective);
+        // The rewriter only swaps ids, so the draft's data shape is preserved.
+        if (adopted !== null) {
+          effective = { ...effective, ...adopted } as ArtifactDraft;
+          referencesAdopted = true;
+        }
+      }
       await artifactRepo.updateArtifact(artifact.id, draftPatch(effective));
       // ROSTER hook (monster-source picker commit path): the saved roster
       // may now cite another module's npc/mob artifact — a second-module use
@@ -252,6 +271,11 @@ export function ArtifactEditor({
         await promoteRosterUses(artifact.moduleId, effective.data.monsters);
       }
       lastSavedRef.current = effective;
+      // When adoption rewrote the references, the LOCAL draft must follow them
+      // or the editor would keep displaying (and re-saving) the library id the
+      // stored row no longer holds. Setting the saved shape here also keeps the
+      // autosave effect's equality check from firing a second, no-op pass.
+      if (referencesAdopted) setDraft(effective);
       setSaveState('saved');
       return true;
     } catch (error) {
@@ -259,7 +283,7 @@ export function ArtifactEditor({
       toastError('Autosave failed', error);
       return false;
     }
-  }, [artifact.id, artifact.moduleId, adoptExternalRow]);
+  }, [artifact.id, artifact.moduleId, artifact.campaignId, adoptExternalRow]);
 
   // Debounced autosave: every draft change restarts the 800 ms timer.
   useEffect(() => {

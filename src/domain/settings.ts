@@ -99,6 +99,58 @@ export const mobCopyRepairReportSchema = z.object({
 export type MobCopyRepairReport = z.infer<typeof mobCopyRepairReportSchema>;
 
 /**
+ * The library-ADOPTION report (docs/17 row 257) — the ONE record of what the
+ * v26 backfill (and its startup retry) copied out of the shared library into
+ * the campaigns that referenced it, and of every reference it could NOT
+ * repoint.
+ *
+ * It exists for the same reason the mob-copy report does: the migration runs
+ * inside a Dexie `version(N).upgrade`, before React mounts, so it cannot reach
+ * a toast — it writes what it did into settings and AppShell reads it once. The
+ * adoption is an owner-visible change (his encounters now carry their own rows
+ * instead of citing the library), so the report states the counts in the open
+ * and NAMES every reference it left alone, with the reason. `unresolved` is the
+ * retry worklist; `notified` is what keeps it from re-toasting on every launch.
+ */
+export const libraryAdoptReportSchema = z.object({
+  /** The library rows bound to a campaign COPY in this pass, each with its
+   * copy id. `reused` marks the entries whose campaign already owned a copy
+   * (the idempotence arm) — a reused entry is NOT a new copy. */
+  adopted: z
+    .array(
+      z.object({
+        globalId: z.string(),
+        copyId: z.string(),
+        name: z.string(),
+        kind: z.string(),
+        reused: z.boolean().default(false),
+      }),
+    )
+    .default([]),
+  /** The campaign rows whose references were rewritten to point at a copy. */
+  repointed: z.number().int().nonnegative().default(0),
+  /** References that could NOT be repointed, by name, with the reason — the
+   * retry worklist. The reference is deliberately left in place. */
+  unresolved: z
+    .array(
+      z.object({
+        where: z.string(),
+        name: z.string(),
+        reason: z.string(),
+        /** `true` when the row failed with an UNEXPECTED throw rather than one
+         * of the seam's own named data conditions (the row-248 guard's
+         * vocabulary, applied here). */
+        unexpected: z.boolean().default(false),
+      }),
+    )
+    .default([]),
+  /** Whether AppShell has already told the user about this report. */
+  notified: z.boolean().default(false),
+});
+
+export type LibraryAdoptReport = z.infer<typeof libraryAdoptReportSchema>;
+
+/**
  * A creature row the v22 key fold had to DROP because the same creature was
  * already stored under the other Unicode composition (docs/17 row 168). The
  * dropped `imageId` is recorded — not deleted, and named in the one-shot
@@ -587,6 +639,12 @@ export const settingsSchema = z.object({
    * `unconverted` to know there is still work. `null` = nothing to report.
    */
   mobCopyRepair: mobCopyRepairReportSchema.nullable().default(null),
+  /**
+   * The library-ADOPTION report (docs/17 row 257), consumed ONCE by AppShell
+   * (`notified`) and then re-read only by the startup retry, which needs
+   * `unresolved` to know there is still work. `null` = nothing to report.
+   */
+  libraryAdopt: libraryAdoptReportSchema.nullable().default(null),
   /** First-run setup wizard (see onboardingSchema above). */
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
   /** Last-used module shortcut (see lastModuleSchema above). */
@@ -664,6 +722,7 @@ export function defaultSettings(): Settings {
     creatureKeyFold: null,
     creatureCitationRepair: null,
     mobCopyRepair: null,
+    libraryAdopt: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,

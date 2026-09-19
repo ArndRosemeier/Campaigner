@@ -86,6 +86,7 @@ const SETTINGS = {
   deliverablesRemoved: 0,
   creatureCitationRepair: null,
   mobCopyRepair: null,
+  libraryAdopt: null,
   creatureKeyFold: null,
   language: 'en' as const,
   onboarding: { status: 'fresh' as const, stepState: [] },

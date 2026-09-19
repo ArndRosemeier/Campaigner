@@ -28,6 +28,7 @@ import {
   normalizeEncounterShapeData,
 } from '@/domain';
 import { repairCreatureCitations } from '@/db/creatureRepair';
+import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { repairMobCopies } from '@/db/mobCopyRepair';
 
 /** Separator between the scope (a campaign id) and the folded key in the v22
@@ -1101,6 +1102,51 @@ export class CampaignerDB extends Dexie {
       ideaBoards: 'id, updatedAt',
       settings: 'id',
     });
+    // Version 26 (docs/17 row 257): family E of the owner's rule — *"Core items
+    // should always ever only be copied"* — the last reference family. A
+    // campaign's references to a GLOBAL LIBRARY artifact (a roster `npc-ref`
+    // target, an artifact `links[].targetId`) become references to a
+    // CAMPAIGN-SCOPED COPY with a fresh id, CLONED role-preserving images and a
+    // STORED origin id (`copiedFromArtifactId`), so the reference — and the
+    // campaign export that carries it — no longer depends on the shared library.
+    // The LIBRARY ROW SURVIVES: the library is shared, and moving a row out of
+    // it would strand every other campaign pointing at the same entry, which is
+    // why `moveScope`/`adoptIntoCampaign` are deliberately NOT extended here.
+    //
+    // The store shape is UNCHANGED (the origin field is an additive optional
+    // artifact field, not an index) — this is a data conversion only, and the
+    // whole thing is ONE transaction calling the seam that takes it
+    // (`db/libraryAdopt.adoptLibraryArtifacts`), exactly like the v20 citation
+    // repair and the v24 mob copy above. The copy and the repoint land in the
+    // SAME transaction, so a reference is never left without its target. A
+    // library row that is GONE leaves its reference untouched (the existing
+    // loud missing arm stays in charge), and is named in the settings report
+    // the shell reads once; the startup retry (`db/libraryAdoptRetry`) heals
+    // those when the row appears later.
+    this.version(26)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId, encounterArtifactId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
+      });
   }
 }
 

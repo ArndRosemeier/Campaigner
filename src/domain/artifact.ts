@@ -157,6 +157,32 @@ const artifactBaseShape = {
    * (docs/01 §Artifact, docs/18 §2.2).
    */
   writerModel: z.string().default(''),
+  /**
+   * THE STORED ORIGIN of a CAMPAIGN COPY of a global library artifact
+   * (docs/17 row 257). The owner's rule — *"Core items should always ever only
+   * be copied"* — means a module/campaign reference to a LIBRARY row is
+   * replaced by a campaign-scoped COPY, and the library row SURVIVES beside it
+   * (the library is shared; moving a row out of it would strand every other
+   * campaign pointing at the same entry, which is why `moveScope`/
+   * `adoptIntoCampaign` are deliberately NOT extended by this field).
+   *
+   * Because both rows coexist, the copy's PRIMARY key must be a fresh uuid —
+   * so the only way to answer "has this campaign already adopted that library
+   * artifact?" is a STORED fact, and this is it: the global row's id at the
+   * moment of adoption. Adoption is idempotent on it (a second adoption
+   * REUSES the existing copy and only repoints newly-born references), and it
+   * is the only thing that names where the copy came from once the reference
+   * that triggered it is gone.
+   *
+   * Additive `.optional()`: no Dexie `.stores()` change (the field is not
+   * indexed — a campaign-scoped full scan decides, the `listGlobalArtifacts`
+   * precedent), and every row written before this field parses unchanged.
+   * `undefined` on a global library row, on an authored row, and on a row
+   * duplicated from an adopted copy (`db/artifactRepo.duplicateArtifact` drops
+   * the stamp: a duplicate's origin is the campaign row it copied, not the
+   * library).
+   */
+  copiedFromArtifactId: z.uuid().optional(),
 };
 
 /** Fields shared by every artifact kind. */
@@ -180,6 +206,9 @@ export interface ArtifactBase extends BaseEntity {
   /** The model that wrote this artifact's text; `''` = not recorded (see
    * `artifactBaseShape.writerModel`). */
   writerModel: string;
+  /** The library row this artifact was COPIED from, if it was adopted
+   * (see `artifactBaseShape.copiedFromArtifactId`). */
+  copiedFromArtifactId?: Id;
 }
 
 // --- Kind-specific structured data -----------------------------------------

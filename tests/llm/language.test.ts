@@ -54,6 +54,7 @@ const SETTINGS_BASE = {
   deliverablesRemoved: 0,
   creatureCitationRepair: null,
   mobCopyRepair: null,
+  libraryAdopt: null,
   creatureKeyFold: null,
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,

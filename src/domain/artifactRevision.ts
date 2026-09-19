@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { anyArtifactSchema } from '@/domain/artifact';
-import { BaseEntitySchema } from '@/domain/entity';
+import { anyArtifactSchema, type AnyArtifact } from '@/domain/artifact';
+import { BaseEntitySchema, stampNewEntity } from '@/domain/entity';
 
 export const revisionSourceSchema = z.enum(['user', 'persona']);
 
@@ -25,6 +25,32 @@ export const artifactRevisionSchema = z.object({
 });
 
 export type ArtifactRevision = z.infer<typeof artifactRevisionSchema>;
+
+/**
+ * ONE revision snapshot row for a written artifact (docs/17 row 257).
+ *
+ * It lives in the DOMAIN, not in `db/artifactRepo`, because the row shape is
+ * pure: `writeRevision` (the live writer) and the migration seam that writes
+ * inside a `version(N).upgrade` transaction both need EXACTLY this row, and a
+ * second copy of it in the migration would be a revision contract that can
+ * drift from the one the app writes at runtime. The live `revisionRowFor`
+ * delegates here; the tx-taking adoption seam calls it with the
+ * transaction's own tables.
+ */
+export function artifactRevisionRow(
+  valid: AnyArtifact,
+  source: RevisionSource = 'user',
+  runId: string | null = null,
+): ArtifactRevision {
+  return {
+    ...stampNewEntity(valid.updatedAt),
+    artifactId: valid.id,
+    revision: valid.currentRevision,
+    snapshot: structuredClone(valid),
+    source,
+    runId,
+  };
+}
 
 /** Max revisions kept per artifact; the oldest are deleted beyond this. */
 export const MAX_REVISIONS_PER_ARTIFACT = 50;

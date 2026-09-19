@@ -9,6 +9,7 @@ import {
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { db } from '@/db/db';
 import { comparableName } from '@/domain/artifactAlias';
+import { rosterArtifactIds } from '@/domain/rosterRefs';
 import { buildWikiGraph } from '@/domain/wikiGraph';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -229,14 +230,14 @@ export type ReferenceVia = 'link' | 'relation' | 'roster' | 'battle';
  * (docs/11 D5 amendment): it names a read-only chunk, not a row this app owns,
  * which is exactly why the incident this arc closes cannot recur — a roster
  * can only ever dangle through an authored NPC the GM can see and restore.
+ *
+ * It LIVES in `domain/rosterRefs` now (docs/17 row 257): the adoption seam's
+ * migration half runs inside a `version(N).upgrade` body and therefore must not
+ * import this `db`-bound module, and the rewriter that pairs with this detector
+ * (`repointRosterArtifactIds`) lives beside it, so the `npc-ref` shape is
+ * spelled in exactly ONE file.
  */
-export function rosterArtifactIds(monsters: readonly MonsterEntry[]): Id[] {
-  const ids: Id[] = [];
-  for (const monster of monsters) {
-    if (monster.source.type === 'npc-ref') ids.push(monster.source.artifactId);
-  }
-  return ids;
-}
+export { rosterArtifactIds };
 
 export interface ReferencedOwnedArtifact {
   artifact: AnyArtifact;

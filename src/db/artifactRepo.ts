@@ -1,10 +1,10 @@
 import {
   anyArtifactSchema,
+  artifactRevisionRow,
   artifactRevisionSchema,
   artifactSchema,
   createArtifact as buildArtifact,
   newId,
-  stampNewEntity,
   ARTIFACT_KIND_LABELS,
   BULK_REMOVE_EXCLUDED_KINDS,
   type AnyArtifact,
@@ -687,13 +687,21 @@ export async function restoreRevision(artifactId: Id, revision: number): Promise
 /**
  * Duplicates an artifact (tree context menu): fresh identity, "(copy)" name
  * suffix, and its own revision-1 snapshot.
+ *
+ * THE ADOPTION ORIGIN STAMP IS DROPPED (docs/17 row 257). `copiedFromArtifactId`
+ * answers "this campaign already adopted THAT LIBRARY ROW", which is the
+ * idempotence key of the adoption seam. A duplicate of an adopted copy is a
+ * duplicate of the CAMPAIGN's own row — its origin is that row, not the library
+ * — so carrying the stamp over would make one library row look adopted twice
+ * and leave the seam with two candidate copies to choose between.
  */
 export async function duplicateArtifact(id: Id): Promise<Artifact> {
   const source = await db.artifacts.get(id);
   if (!source) throw new NotFoundError('Artifact', id);
   const now = Date.now();
+  const { copiedFromArtifactId: _adoptedFrom, ...unadopted } = structuredClone(source);
   const copy = artifactSchema.parse({
-    ...structuredClone(source),
+    ...unadopted,
     id: newId(),
     createdAt: now,
     updatedAt: now,
@@ -1087,16 +1095,13 @@ async function writeRevision(valid: AnyArtifact, meta: RevisionMeta): Promise<vo
 }
 
 /** One revision snapshot row for a written artifact (the writeRevision shape,
- * extracted so the in-transaction scope path records the SAME row). */
+ * extracted so the in-transaction scope path records the SAME row). The ROW
+ * SHAPE lives in `domain/artifactRevision.artifactRevisionRow` (docs/17 row
+ * 257) because the adoption migration writes the same row from inside a Dexie
+ * upgrade transaction, where this `db`-bound module is unusable — one
+ * revision contract, two transports. */
 function revisionRowFor(valid: AnyArtifact, meta: RevisionMeta): ArtifactRevision {
-  return {
-    ...stampNewEntity(valid.updatedAt),
-    artifactId: valid.id,
-    revision: valid.currentRevision,
-    snapshot: structuredClone(valid),
-    source: meta.source,
-    runId: meta.runId ?? null,
-  };
+  return artifactRevisionRow(valid, meta.source, meta.runId ?? null);
 }
 
 /**

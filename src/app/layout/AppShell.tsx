@@ -28,7 +28,9 @@ import { useHelpStore } from '@/help/helpStore';
 import { useLibraryCreaturePool } from '@/app/use-library-creatures';
 import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
 import { formatCreatureKeyFold } from '@/domain/creatureKeyFold';
+import { formatLibraryAdopt } from '@/domain/libraryAdoptRepair';
 import { formatMobCopyRepair } from '@/domain/mobCopyRepair';
+import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
 import { retryMobCopies } from '@/db/mobCopyRetry';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
@@ -199,6 +201,44 @@ export function AppShell(): JSX.Element {
       })
       .catch((error: unknown) => {
         toastError('Could not report the mob copy migration', error);
+      });
+  }, []);
+
+  useEffect(() => {
+    // ONE loud migration report (docs/17 row 257): the v26 Dexie upgrade copied
+    // every referenced GLOBAL LIBRARY artifact into the campaign that cited it
+    // (fresh id, cloned images, stored origin), leaving the shared library row
+    // in place — the last family of the owner's *"core items are only ever
+    // copied"* rule. Like the mob-copy migration it cannot toast from inside
+    // Dexie, so it wrote the outcome into settings; this reads it ONCE and NAMES
+    // every reference it could not repoint (AGENTS rules 1/2).
+    //
+    // The unresolved list doubles as the RETRY WORKLIST: a library row that was
+    // gone at upgrade time left its reference untouched, so re-running the seam
+    // here adopts it the moment the row exists. `notified` keeps the sentence
+    // from repeating on every launch.
+    void readSettings()
+      .then(async (settings) => {
+        const pending = settings.libraryAdopt;
+        if (pending === null) return;
+        if (pending.unresolved.length > 0) {
+          await retryLibraryAdoptions();
+          // The retry writes a FRESH report only when it healed something, so
+          // re-read: the toast must state what this launch did, not the stale
+          // upgrade counts.
+          const after = await readSettings();
+          const report = after.libraryAdopt;
+          if (report === null || report.notified) return;
+          toastInfo(formatLibraryAdopt(report));
+          await updateSettings({ libraryAdopt: { ...report, notified: true } });
+          return;
+        }
+        if (pending.notified) return;
+        toastInfo(formatLibraryAdopt(pending));
+        await updateSettings({ libraryAdopt: { ...pending, notified: true } });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the library adoption migration', error);
       });
   }, []);
 
