@@ -24,9 +24,6 @@ dist
 dist-ssr
 coverage
 
-# Sandbox-local pnpm caches (not part of the project)
-.pnpm-home
-
 *.local
 
 # Editor directories and files
@@ -48,9 +45,6 @@ campaigner-backup-*.zip
 
 # Python bytecode from local deploy scripts
 __pycache__/
-
-# pnpm local store (offline installs)
-.pnpm-store/
 
 # Owner-local files: campaign exports + deploy tooling, never commit.
 balu-*.zip

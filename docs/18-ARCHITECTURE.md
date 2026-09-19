@@ -535,27 +535,28 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   workspace and the git common dir instead is that those work in EVERY sandbox
   mode (docs/17 row 244).
 
-- **THIS BOX'S pnpm IS NOW A REAL INSTALL — the sandbox workaround it needed is
-  GONE (docs/17 rows 242 and 244; the workaround existed only on 2026-09-19).**
-  While the file policy was `workspace-write`, `pnpm` was absent from PATH,
-  `~/.cache` and the default store `~/.local/share/pnpm/store/v11` were
-  unwritable, and pnpm's SQLite store index could not open — so every `pnpm`
-  invocation died before the gate's first step while `node_modules/.bin` was
-  fully populated. That was a SANDBOX artifact, and it MASKED a real defect:
-  `node_modules` had been installed on the OpenCode box and recorded
-  `storeDir: /workspace/.opencode/state/pnpm/store/v11`. Under
-  `danger-full-access` the repair is the ordinary one and it is DONE: pnpm
-  11.26.0 (the version `package.json` pins) is installed at
-  `~/.npm-global/bin/pnpm`, which is already on PATH; the default store is
-  writable; and `node_modules/.modules.yaml` records the DEFAULT store again.
-  `pnpm typecheck`, `pnpm exec vitest run` and a bare `bash scripts/gate.sh` all
-  work with NO shim and NO disabled preflight — VERIFIED by a full native gate
-  (344 files / 4483 tests, GATE GREEN). `.pnpm-home/` and `.pnpm-store/` stay
-  gitignored in case a restricted sandbox returns, but nothing uses them.
+- **ONE pnpm, the HOST's, on the shared store — never a project-local copy
+  (docs/17 rows 242, 244 and 246).** The host mounts `pnpm` 11.26.0 at
+  `~/.local/bin/pnpm` (a symlink into `~/.local/lib/node_modules`), with the
+  shared content-addressable store at `~/.local/share/pnpm/store` (~491 MB) and
+  `~/.local/bin` on PATH — see the user-global `$DSH_HOME/AGENTS.md`, which also
+  forbids project-local stores, `.pnpm-home` shims and duplicate caches, because
+  the store must be shared across projects. Before 2026-09-19 the SANDBOX hid
+  this: `~/.local/bin` was not on PATH, so `pnpm` looked absent while the binary
+  had been on disk since Sep 17, and the default store was mounted read-only.
+  That masked a REAL defect — `node_modules` had been installed on the OpenCode
+  box and recorded `storeDir: /workspace/.opencode/state/pnpm/store/v11`, so
+  pnpm wanted a purge on every script run. The repair is ordinary and DONE:
+  `node_modules` was rebuilt against the SHARED store, `.modules.yaml` names it,
+  a duplicate `~/.npm-global/bin/pnpm` that briefly shadowed the host's copy was
+  REMOVED, and `pnpm typecheck` / `pnpm exec vitest run` / a bare
+  `bash scripts/gate.sh` all work with no shim and no disabled preflight —
+  VERIFIED by a full native gate (344 files / 4483 tests, GATE GREEN).
   **THE LESSON, which outlives the repair:** a restricted sandbox can hide a
-  REAL environment defect behind an infrastructure error, and a workaround is
-  not a repair. So diagnose the MODE first — `mount | grep ' /tmp '` and the
-  writability of the pnpm store tell you which one you are in.
+  REAL environment defect behind an infrastructure error, AND it can fake an
+  absence — "not on PATH" is not "not installed". Diagnose the MODE and the
+  PATHS before concluding anything, and never answer an environment gap with a
+  per-project workaround.
   Related, same day: a gate LOCK outlived its killed run, twice — once from the
   dead row-241 writer's box and once from a run a harness restart killed
   mid-flight. **Judge staleness from FILE EVIDENCE, not `pgrep`:** under the
