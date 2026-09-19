@@ -534,3 +534,37 @@ describe('battle-card mob portrait action', () => {
     await flushAsyncUpdates();
   });
 });
+
+/**
+ * THE BATTLE CARD READS THE SEEDED COPY (docs/17 row 255b). The token's
+ * `chunk:<id>` key used to make the card re-resolve the library, so a seeded
+ * battle lost its AC and attacks the moment the pack was uninstalled. The seed
+ * row now freezes the block, and the surface reads THAT — proved here with the
+ * chunk DELETED, through the real render path (not a repo call).
+ */
+describe('battle-card stat block with the library uninstalled', () => {
+  it('keeps AC and HP from the frozen seed row after the chunk is deleted', async () => {
+    const { moduleId, chunkId } = await seedRulebookBattle();
+    // UNINSTALL the pack the mob came from.
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    await renderSurface(campaignId, moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapToken('Goblin Boss', moduleId);
+
+    const card = screen.getByTestId('selection-card');
+    const statBlock = within(card).getByTestId('selection-card-statblock');
+    expect(within(statBlock).getByText('AC').parentElement?.textContent).toContain('11');
+    expect(within(statBlock).getByText('HP').parentElement?.textContent).toContain('59');
+    // The token still identifies its creature by the frozen identity token —
+    // the copy keeps the portrait slot without the library.
+    const token = (await currentBattle(moduleId)).board.tokens.find(
+      (entry) => entry.label === 'Goblin Boss',
+    );
+    expect(token?.creatureKey).toBe(libraryCreatureKey(chunkId));
+    await flushAsyncUpdates();
+  });
+});

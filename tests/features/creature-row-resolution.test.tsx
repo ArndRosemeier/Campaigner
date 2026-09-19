@@ -592,8 +592,13 @@ describe('the generation the verdict unlocks', () => {
     });
     const npc = landed[0];
     if (npc?.kind !== 'npc') throw new Error('no npc of that name landed');
-    // CAST, not generated: the row cites the library creature (docs/11 D4).
-    expect(npc.data.creatureRef).toBeDefined();
+    // CAST, not generated: the row OWNS the library creature's copy — the block,
+    // the stamped origin line and the opaque identity token — and mints no
+    // pointer (docs/17 row 255b).
+    expect(npc.data.creatureRef).toBeUndefined();
+    expect(npc.data.statBlock?.hp).toBe(22);
+    expect(npc.data.sourceLine).toBeDefined();
+    expect(npc.data.originToken).toMatch(/^chunk:/);
     // ALSO a description run, and exactly ONE transport call: the statblock
     // step is skipped with its reason before any model call (the cited row's
     // refill), so a second call here would mean the refused pair was built.

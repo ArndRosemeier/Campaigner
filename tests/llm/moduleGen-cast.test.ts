@@ -482,7 +482,7 @@ describe('the encounter-generation side cannot express a cast (docs/11 D5, docs/
 });
 
 describe('finalize: the cast path', () => {
-  it('ONE npc artifact carries the entity’s prose and the creature’s stats, and no authored stat block', async () => {
+  it('ONE npc artifact carries the entity’s prose and a COPY of the creature’s stats, and no pointer', async () => {
     const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
     const saved = await runSpineWith(moduleId, campaign);
@@ -546,12 +546,13 @@ describe('finalize: the cast path', () => {
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
     // The run was aimed AT the row the cast made — a refill, never a twin.
     expect(runInput.targetArtifactId).toBe(npc.id);
-    // Her stats are the LIBRARY creature's, cited by identity — and she carries
-    // no stat block of her own (the schema refuses that pair by name).
-    const ref = npcCreatureRef(npc);
-    expect(ref?.chunkId).toBe(zombieChunkId);
-    expect(ref?.creatureName).toBe(ZOMBIE);
-    expect(npc.data.statBlock).toBeNull();
+    // Her stats are the LIBRARY creature's — COPIED onto the row (docs/17 row
+    // 255b), with the origin line stamped and the portrait token kept — and she
+    // mints no pointer.
+    expect(npcCreatureRef(npc)).toBeUndefined();
+    expect(npc.data.originToken).toBe(`chunk:${zombieChunkId}`);
+    expect(npc.data.statBlock?.hp).toBe(22);
+    expect(npc.data.sourceLine).toBe('Bestiary p.316');
     // Her OWN name and the prose the cast born her with (the faked engine wrote
     // nothing over it).
     expect(npc.name).toBe(AGATHA);
@@ -701,7 +702,9 @@ describe('finalize: the cast path', () => {
     );
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
     const tomeChunk = (await db.chunks.toArray()).find((chunk) => chunk.statBlock?.hp === 40);
-    expect(npcCreatureRef(npc)?.chunkId).toBe(tomeChunk?.id);
+    // The book slot disambiguated the name: the copy came off the Tome chunk,
+    // which its origin token names (docs/17 row 255b).
+    expect(npc.data.originToken).toBe(`chunk:${tomeChunk?.id}`);
   });
 
   it('the owner’s case: a LOCALISED book title on a UNIQUE creature RESOLVES, stamped with the LIBRARY’s book', async () => {
@@ -743,12 +746,11 @@ describe('finalize: the cast path', () => {
     expect(result.cast).toEqual([AGATHA]);
     const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
-    const ref = npcCreatureRef(npc);
-    expect(ref?.chunkId).toBe(chunkId);
+    expect(npc.data.originToken).toBe(`chunk:${chunkId}`);
     // THE STAMP IS THE LIBRARY'S TITLE, never the model's «Monsterkern»
-    // (docs/17 row 155): the `missing ref` banner has to name a pack that
-    // actually exists, so a slot's book can never become a citation's book.
-    expect(ref?.bookTitle).toBe('Pathfinder Monster Core');
+    // (docs/17 row 155): the disclosure has to name a pack that actually
+    // exists, so a slot's book can never become the copy's origin line.
+    expect(npc.data.sourceLine).toBe('Pathfinder Monster Core p.316');
   });
 
   it('a NON-matching book on an AMBIGUOUS name is refused, listing the candidates and their real books', async () => {
@@ -1085,11 +1087,11 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     expect(result.cast).toEqual([AGATHA]);
     const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
     if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
-    expect(npcCreatureRef(npc)?.chunkId).toBe(zombieChunkId);
-    expect(npcCreatureRef(npc)?.creatureName).toBe(listed);
-    // The title the window PRINTED is the title the citation RECORDS, byte for
-    // byte — which is what makes a copied title a working disambiguator.
-    expect(npcCreatureRef(npc)?.bookTitle).toBe(printedTitle);
+    expect(npc.data.originToken).toBe(`chunk:${zombieChunkId}`);
+    // The title the window PRINTED is the title the stamped origin line
+    // RECORDS, byte for byte — which is what makes a copied title a working
+    // disambiguator (docs/17 rows 114/155/255b).
+    expect(npc.data.sourceLine).toBe(`${printedTitle} p.316`);
   });
 
   it('refuses a NEAR MISS by naming the nearest creatures, and stays silent when nothing is close', async () => {

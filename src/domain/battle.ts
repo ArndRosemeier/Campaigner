@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { layoutEntranceSideSchema } from '@/domain/encounterMap/schema';
 import { BaseEntitySchema, type Id } from '@/domain/entity';
+import { statBlockSchema } from '@/domain/statblock';
 
 /**
  * Battle domain (09-MILESTONE-5 M5-B, retyped from GM Cockpit's
@@ -287,6 +288,26 @@ export const battleSchema = z.object({
          * which resolve through a real artifact instead.
          */
         creatureKey: z.string().optional(),
+        /**
+         * The FROZEN STAT BLOCK for a row with no artifact behind it (docs/17
+         * row 255b). A roster copy owns its library bytes (the owner's rule:
+         * core items are only ever copied), so the battle's card is read off
+         * THIS row — not re-resolved through the `chunk:<id>` identity token,
+         * which used to make an uninstalled pack cost an already-seeded battle
+         * its AC and attacks. `maxHp`/`initiativeBonus` above stay the numeric
+         * view the engine consumes; this is the full block the card prints.
+         * Optional because a battle seeded before the field existed still
+         * parses (and its row genuinely has no frozen copy).
+         */
+        statBlock: statBlockSchema.optional(),
+        /**
+         * The STAMPED origin line the card discloses with the frozen block
+         * ("Bestiary p.132", or `NPC: X (stats from …)` for a borrowed row) —
+         * `tokenCreature`'s `identityLabel`, frozen at seed time for the same
+         * reason the block is: the label used to be composed from a LIVE
+         * library read, which an uninstalled pack takes away.
+         */
+        originLabel: z.string().optional(),
       }),
     )
     .default([]),

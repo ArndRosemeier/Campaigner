@@ -332,7 +332,9 @@ async function seedLibraryCreature(): Promise<string> {
   return chunk.id;
 }
 
-/** The owner's row: an authored npc cast out of the library creature. */
+/** The owner's row: an authored npc cast out of the library creature. Since
+ * docs/17 row 255b it OWNS the copy — block, stamped origin line, opaque token
+ * — and carries no pointer. */
 async function seedCastRow(campaignId: string): Promise<Artifact> {
   const chunkId = await seedLibraryCreature();
   const cast = await castCreatureAsNpc({
@@ -347,6 +349,23 @@ async function seedCastRow(campaignId: string): Promise<Artifact> {
   return artifact;
 }
 
+/** A LEGACY pointer row: the shape the v24 migration leaves when its pack was
+ * missing at upgrade time (docs/17 row 248). It still resolves live, and its
+ * failure arm is still the loud named one. */
+async function seedLegacyCitedRow(campaignId: string, chunkId: string): Promise<Artifact> {
+  return createArtifact({
+    campaignId,
+    kind: 'npc',
+    name: 'Aunt Agatha',
+    data: {
+      appearance: '',
+      personality: '',
+      statBlock: null,
+      creatureRef: { chunkId, creatureName: 'Bog Zombie' },
+    },
+  });
+}
+
 function renderEditor(artifact: Artifact, campaignId: string): void {
   render(
     <ArtifactEditor
@@ -358,23 +377,31 @@ function renderEditor(artifact: Artifact, campaignId: string): void {
   );
 }
 
-describe('a cited row renders its BORROWED numbers', () => {
-  it('renders the library creature’s real numbers, labelled as borrowed, with no authored-block affordance', async () => {
+describe('a cast row renders its COPIED numbers', () => {
+  it('renders the library creature’s copied numbers, labelled with their source, with no authored-block affordance', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const artifact = await seedCastRow(campaign.id);
     if (artifact.kind !== 'npc') throw new Error('not an npc');
-    expect(artifact.data.statBlock).toBeNull();
-    expect(artifact.data.creatureRef).toBeDefined();
+    // The row OWNS the copy (docs/17 row 255b): the library's numbers, the
+    // stamped origin line and the opaque token — and NO pointer.
+    expect(artifact.data.statBlock?.hp).toBe(22);
+    expect(artifact.data.sourceLine).toBe('Bestiary p.4');
+    expect(artifact.data.originToken).toBeDefined();
+    expect(artifact.data.creatureRef).toBeUndefined();
 
     renderEditor(artifact, campaign.id);
+    // A COPIED row renders SYNCHRONOUSLY (no library read at all), so the
+    // editor's own live queries need an explicit drain before the assertions.
+    await flushAsyncUpdates();
 
     const borrowed = await screen.findByTestId('borrowed-stat-block');
     // The VALUES come from the library fixture, not from "something rendered".
     expect(within(borrowed).getByText('AC').parentElement?.textContent).toContain('14');
     expect(within(borrowed).getByText('HP').parentElement?.textContent).toContain('22');
     expect(within(borrowed).getByText('Grave Bite.')).toBeInTheDocument();
-    // Borrowed numbers are never mistaken for an authored block: the card is
-    // labelled from the library AND carries the disclosed origin label.
+    // The numbers are never mistaken for an authored block: the card is
+    // labelled AND carries the disclosed origin label, byte-identical to what
+    // the old derived read composed.
     expect(within(borrowed).getByTestId('borrowed-stat-block-badge')).toHaveTextContent(
       'Borrowed from the library',
     );
@@ -384,15 +411,16 @@ describe('a cited row renders its BORROWED numbers', () => {
     // READ-ONLY: not one control inside the borrowed card.
     expect(within(borrowed).queryAllByRole('button')).toHaveLength(0);
 
-    // The impossible affordance is GONE (the cited-row refill refuses such a
-    // block and `npcDataSchema` refuses to keep it).
+    // The impossible affordance is GONE (the cast-row refill refuses such a
+    // block).
     expect(screen.queryByRole('button', { name: 'Add stat block' })).toBeNull();
 
-    // And the render WROTE nothing: the row keeps its citation and its null block.
+    // And the render WROTE nothing: the row keeps its copy byte for byte.
     const stored = await getArtifact(artifact.id);
     if (stored?.kind !== 'npc') throw new Error('not an npc');
-    expect(stored.data.statBlock).toBeNull();
-    expect(stored.data.creatureRef?.chunkId).toBe(artifact.data.creatureRef?.chunkId);
+    expect(stored.data.statBlock).toEqual(artifact.data.statBlock);
+    expect(stored.data.sourceLine).toBe(artifact.data.sourceLine);
+    expect(stored.data.originToken).toBe(artifact.data.originToken);
     await flushAsyncUpdates();
   });
 
@@ -463,14 +491,36 @@ describe('a non-cited npc is unchanged', () => {
 });
 
 describe('an unresolvable library creature is LOUD, never blank', () => {
-  it('names the missing creature in place and offers no authored block', async () => {
+  it('a COPIED row keeps its numbers when the library loses the creature (the copy is the row)', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const artifact = await seedCastRow(campaign.id);
     if (artifact.kind !== 'npc') throw new Error('not an npc');
-    // The library loses the creature the row cites (a re-ingest under a new row
-    // id, a removed book): the ONE failure mode, named.
-    const chunkId = artifact.data.creatureRef?.chunkId;
-    if (chunkId === undefined) throw new Error('the cast row carries no citation');
+    // The pack goes away (a re-ingest under a new row id, a removed book). A
+    // COPIED row is unaffected — that is the owner's rule (docs/17 row 255b):
+    // the campaign owns these bytes, so nothing the library does can blank them.
+    const chunkId = artifact.data.originToken?.replace('chunk:', '') ?? '';
+    if (chunkId === '') throw new Error('the cast row carries no origin token');
+    await db.chunks.delete(chunkId);
+
+    renderEditor(artifact, campaign.id);
+
+    const borrowed = await screen.findByTestId('borrowed-stat-block');
+    expect(within(borrowed).getByText('HP').parentElement?.textContent).toContain('22');
+    expect(within(borrowed).getByText('AC').parentElement?.textContent).toContain('14');
+    // The STAMPED origin line is what discloses the source now — it survives
+    // with the bytes it was stamped beside.
+    expect(within(borrowed).getByTestId('borrowed-stat-block-origin')).toHaveTextContent(
+      'NPC: Aunt Agatha (stats from Bestiary p.4)',
+    );
+    expect(screen.queryByTestId('borrowed-stat-block-missing')).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('an UNCONVERTED pointer row names the missing creature in place and offers no authored block', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const chunkId = await seedLibraryCreature();
+    const artifact = await seedLegacyCitedRow(campaign.id, chunkId);
+    // The legacy pointer's library row is gone: the ONE failure mode, named.
     await db.chunks.delete(chunkId);
 
     renderEditor(artifact, campaign.id);
@@ -480,8 +530,7 @@ describe('an unresolvable library creature is LOUD, never blank', () => {
       'missing ref (Bog Zombie)',
     );
     expect(missing.textContent).toContain('Aunt Agatha draws its numbers from a library creature');
-    // Never a blank/greyish stat area, and never the impossible affordance the
-    // cited refill refuses.
+    // Never a blank/greyish stat area, and never the impossible affordance.
     expect(screen.queryByText('AC')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add stat block' })).toBeNull();
     await flushAsyncUpdates();
@@ -528,11 +577,11 @@ describe('the encounter side reads the SAME numbers (one rule, two readers)', ()
     expect(resolved.statBlock?.hp).toBe(22);
   });
 
-  it('a vanished library creature is named the same way on both readers', async () => {
+  it('a vanished library creature is named the same way on both readers for an UNCONVERTED row', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    const artifact = await seedCastRow(campaign.id);
-    if (artifact.kind !== 'npc') throw new Error('not an npc');
-    await db.chunks.delete(artifact.data.creatureRef?.chunkId ?? '');
+    const chunkId = await seedLibraryCreature();
+    const artifact = await seedLegacyCitedRow(campaign.id, chunkId);
+    await db.chunks.delete(chunkId);
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Aunt Agatha',
@@ -573,21 +622,23 @@ describe('the refused pair stays unconstructible', () => {
     ).toBe(true);
   });
 
-  it('a cited row whose block is cleared by hand is RE-READ as borrowed, not as an empty block', async () => {
+  it('a LEGACY pointer row refuses a hand-written block, so its numbers stay the library’s', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    const artifact = await seedCastRow(campaign.id);
-    if (artifact.kind !== 'npc') throw new Error('not an npc');
+    const chunkId = await seedLibraryCreature();
+    const artifact = await seedLegacyCitedRow(campaign.id, chunkId);
     // The editor's autosave path is the only writer here, and it can never set
-    // a block on a cited row (the schema would refuse the write); a stray
-    // authored value is refused at the repo boundary instead of being kept.
-    if (artifact.data.creatureRef === undefined) throw new Error('no citation');
+    // a block on such a row (the schema refuses the pair); a stray authored
+    // value is refused at the repo boundary instead of being kept. (A CONVERTED
+    // row carries no citation at all any more — its block IS the copy — so the
+    // refused pair is a legacy-only shape, which is precisely why it stays
+    // pinned.)
     await expect(
       updateArtifact(artifact.id, {
         data: {
           appearance: '',
           personality: '',
           statBlock: blankStatBlock('dnd5e'),
-          creatureRef: artifact.data.creatureRef,
+          creatureRef: { chunkId, creatureName: 'Bog Zombie' },
         },
       }),
     ).rejects.toThrow();

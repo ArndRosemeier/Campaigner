@@ -1,4 +1,4 @@
-import type { AnyArtifact, MonsterEntry, MonsterSource, NpcArtifact } from '@/domain/artifact';
+import type { AnyArtifact, MonsterEntry, MonsterSource, NpcArtifact, NpcArtifactData } from '@/domain/artifact';
 import { z } from 'zod';
 
 import { comparableName } from '@/domain/artifactAlias';
@@ -74,16 +74,38 @@ export interface WikiLinkCreature {
 }
 
 /**
- * Is this NPC a CAST CREATURE — an authored NPC that carries a library
- * creature's stats (`domain/artifact`'s `npcDataSchema.creatureRef`)? The ONE
- * classification of "this npc stands for a library creature", used where a
- * surface must not silently take such an NPC over (a rename would sever the
- * citation), and nowhere else. There is deliberately no counterpart for
- * "is this a creature ROW": under the ratified model no such row exists
- * (docs/11 D1/D8), so a caller that asks the question has the wrong model.
+ * Is this NPC a CAST CREATURE — an authored NPC that OWNS a library creature's
+ * stats? The ONE classification of "this npc stands for a library creature",
+ * used where a surface must not silently take such an NPC over (a rename would
+ * sever the module's own name for the creature), and nowhere else. There is
+ * deliberately no counterpart for "is this a creature ROW": under the ratified
+ * model no such row exists (docs/11 D1/D8), so a caller that asks the question
+ * has the wrong model.
+ *
+ * TWO SPELLINGS, ONE MEANING (docs/17 row 255b). Until row 255b a cast NPC held
+ * a `creatureRef` POINTER and resolved its numbers live. The owner's rule is
+ * that core items are only ever COPIED, so the cast now writes its own block
+ * plus the stamped `sourceLine` and the opaque `originToken` — and the migration
+ * (`db/mobCopyRepair`) already converts an older pointer row to exactly that
+ * shape. Both are the same thing (a cast creature npc), so both classify here:
+ * a row still carrying the legacy pointer, and a row carrying the copy's stamp.
  */
 export function isCastCreatureNpc(artifact: AnyArtifact | NpcArtifact): boolean {
-  return artifact.kind === 'npc' && artifact.data.creatureRef !== undefined;
+  return artifact.kind === 'npc' && npcDataIsCastCreature(artifact.data);
+}
+
+/**
+ * The same classification for a surface that holds only the NPC's DATA (the
+ * editor's `NpcForm` is handed `NpcArtifactData`, never the row): ONE rule, so
+ * a form and a card cannot disagree about whether the numbers are the row's own
+ * authored block or a cast creature's copy.
+ */
+export function npcDataIsCastCreature(data: NpcArtifactData): boolean {
+  return (
+    data.creatureRef !== undefined ||
+    data.sourceLine !== undefined ||
+    data.originToken !== undefined
+  );
 }
 
 /**
@@ -103,13 +125,55 @@ export function castCreatureLabel(name: string): string {
  * looking at a toast.
  */
 export function castCreatureWriteRefusal(artifactName: string, wouldBeName: string): string {
-  return `${castCreatureLabel(artifactName)} is this campaign's own npc for a library creature — its stats are derived from that creature and its name is the citation's. Renaming or overwriting it as «${wouldBeName}» would stop every encounter and battle that cites the creature from finding it. Edit its prose instead, or make a separate npc of that name.`;
+  return `${castCreatureLabel(artifactName)} is this campaign's own npc for a library creature — its stat block is the copy of that creature the module owns, and its name is the one the module's text uses. Renaming or overwriting it as «${wouldBeName}» would stop every encounter and battle that cites the creature from finding it. Edit its prose instead, or make a separate npc of that name.`;
 }
 
 /** The `creatureRef` an NPC carries, or undefined — the ONE read of the field
- * (callers never reach into `data` for it). */
+ * (callers never reach into `data` for it). A row born under the copy model has
+ * none; this is the LEGACY pointer of an unconverted row. */
 export function npcCreatureRef(artifact: AnyArtifact | NpcArtifact): CreatureRef | undefined {
   return artifact.kind === 'npc' ? artifact.data.creatureRef : undefined;
+}
+
+/**
+ * The opaque ORIGIN TOKEN a copied NPC carries (`chunk:<id>`, the portrait and
+ * reuse identity the copy kept — docs/17 row 255b), or undefined for a row that
+ * carries none. THE one read of the field, beside `npcCreatureRef` so a caller
+ * asks the identity question in one place for both spellings.
+ */
+export function npcOriginToken(artifact: AnyArtifact | NpcArtifact): string | undefined {
+  return artifact.kind === 'npc' ? artifact.data.originToken : undefined;
+}
+
+/**
+ * THE creature identity of one authored NPC artifact — the ONE rule for both
+ * spellings a cast creature row can take (docs/17 row 255b):
+ *
+ * - a COPIED row carries the opaque `originToken` and its identity is that
+ *   token (the `chunk:` key of the library row the copy came from);
+ * - a LEGACY row still carrying `creatureRef` resolves exactly as it always
+ *   has (`creatureIdentityForCitation`; a ref that names no chunk keys on the
+ *   row's own content — a stranded citation has no library id to key on);
+ * - a row with neither is an ordinary authored NPC: no creature identity at
+ *   all, so its portrait is its own cover.
+ *
+ * It lives here, beside `rosterEntryCreatureIdentity`, because the ROSTER
+ * answer, the battle-card answer and the reuse answer must be the same answer:
+ * before this helper the cast's idempotency compared refs while the roster
+ * compared tokens, and the two could disagree about one row.
+ */
+export function npcCreatureIdentity(artifact: AnyArtifact | NpcArtifact): CreatureIdentity | null {
+  if (artifact.kind !== 'npc') return null;
+  const token = artifact.data.originToken?.trim();
+  if (token !== undefined && token !== '') {
+    const chunkId = chunkIdOfOriginToken(token);
+    return { kind: 'library', key: token, ref: chunkId === null ? {} : { chunkId } };
+  }
+  const ref = artifact.data.creatureRef;
+  if (ref === undefined) return null;
+  return ref.chunkId === undefined
+    ? contentCreatureIdentity(artifact.name, undefined)
+    : creatureIdentityForCitation(ref, ref.chunkId);
 }
 
 /** The ONE portrait key for a library creature: its cited chunk. */
@@ -312,11 +376,12 @@ export function rosterEntryCreatureIdentity(
   }
   if (source.type === 'npc-ref') {
     if (linked?.kind !== 'npc') return null;
-    const ref = npcCreatureRef(linked);
-    if (ref === undefined) return null;
-    return ref.chunkId === undefined
-      ? contentCreatureIdentity(linked.name, undefined)
-      : creatureIdentityForCitation(ref, ref.chunkId);
+    // A CONVERTED CAST NPC keeps its identity on the copy's origin token (docs/17
+    // row 255b): its `creatureRef` is gone, so without this the roster entry that
+    // links it would lose its creature — and with it the portrait the campaign's
+    // presentation row is keyed by. The ONE artifact-identity rule answers for
+    // both spellings.
+    return npcCreatureIdentity(linked);
   }
   return contentCreatureIdentity(entry.name, source.type === 'inline' ? source.statBlock : null);
 }

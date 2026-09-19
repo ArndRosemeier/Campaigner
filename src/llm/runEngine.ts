@@ -1455,45 +1455,47 @@ function mergeRefillData(
     const citation = previous.creatureRef;
     // THE REFUSED PAIR IS NEVER CONSTRUCTED (docs/11 §A cited row's REFILL,
     // docs/17 row 112).
-    // `npcDataSchema`'s refine refuses a citation beside an authored stat block
-    // BY NAME, and that parse is what `updateArtifact` runs — so a merge that
-    // assembled both would throw a zod issue dump out of a Dexie transaction
-    // instead of saying what happened. The statblock step is forced off for a
-    // cited target (`runStatblock`), so this is unreachable from the pipeline
-    // it just ran; it is reachable from a run PERSISTED before that rule
-    // (resumed, or with an edited statblock step), which is exactly why the
-    // refusal is here rather than assumed away. Corrected 2026-09-13 by
-    // docs/17 row 137: this is NOT the only place in `src/` that could put the
-    // two fields on one row — `materializeMonsterNpc`'s reuse branch could and
-    // did (a roster monster named like a cast creature row), and it now LINKS
-    // that row instead of writing (`isCastCreatureNpc`, the comment there).
-    // Both sites are recorded in docs/18 §4.
+    // A CAST CREATURE's numbers are never a run's to author — under the
+    // one-representation model (docs/17 row 255b) the row OWNS the copy of the
+    // library's block, where it used to carry the `creatureRef` citation that
+    // the schema refused to sit beside an authored block. The rule is the same
+    // for both spellings (`isCastCreatureNpc`): the statblock step is forced off
+    // for such a target (`runStatblock`), so this refusal is unreachable from
+    // the pipeline it just ran; it is reachable from a run PERSISTED before that
+    // rule (resumed, or with an edited statblock step), which is exactly why the
+    // refusal is here rather than assumed away (docs/17 row 137 recorded the
+    // second constructor this guard closes).
     //
-    // LOUD, and by neither precedence nor omission: dropping the citation
-    // would sever the identity that states where the numbers come from, and
-    // dropping the block would discard what a (user-edited) step produced.
-    if (citation !== undefined && draftData.statBlock !== null) {
+    // LOUD, and by neither precedence nor omission: dropping the copy would
+    // discard the numbers the module owns as "the library's" and sever the
+    // disclosed origin, and keeping both would put an authored block beside a
+    // row the whole arc says is a copy.
+    if (isCastCreatureNpc(target) && draftData.statBlock !== null) {
+      const origin =
+        previous.sourceLine ??
+        (citation?.creatureName === undefined ? undefined : `the library creature «${citation.creatureName}»`);
       throw new Error(
-        `Refusing to write «${target.name}»: it draws its stat block from ` +
-          `${citation.creatureName === undefined ? 'the library creature it cites' : `the library creature «${citation.creatureName}»`} ` +
-          `(creatureRef), so no run may author a stat block beside that citation. ` +
-          `Nothing was written — its prose is unchanged and the citation stands.`,
+        `Refusing to write «${target.name}»: it is a cast creature — its numbers are the copy this ` +
+          `module owns of ${origin ?? 'a library creature'} ` +
+          `(creatureRef/originToken), so no run may author a stat block over it. ` +
+          `Nothing was written — its prose is unchanged and the copy stands.`,
       );
     }
     return {
       appearance: draftData.appearance,
       personality: draftData.personality,
-      // A refill that skipped its statblock step keeps the target's curated
-      // block. On a CITED row `previous.statBlock` is null by construction —
-      // the ONE cast function (`db/creatureRepo`) births such a row that way,
-      // and `npcDataSchema` refuses the pair on every read — so this cannot
-      // smuggle a block in beside the citation; the refusal above is what
-      // makes that structural rather than assumed.
-      statBlock: draftData.statBlock ?? previous.statBlock,
-      // The creature citation survives the refill (IDENTITY, not content): a
-      // smith writing an Aunt Agatha's prose must not also delete the fact
-      // that her numbers are the library zombie's.
+      // A refill that skipped its statblock step keeps the target's frozen
+      // COPY. On a cast creature `draftData.statBlock` is null by construction
+      // (the step never asks), so a block can only arrive on a resumed pre-fix
+      // run — the refusal above is what makes that structural rather than
+      // assumed.
+      statBlock: isCastCreatureNpc(target) ? previous.statBlock : draftData.statBlock ?? previous.statBlock,
+      // The creature identity survives the refill (IDENTITY, not content): a
+      // smith writing an Aunt Agatha's prose must not also delete the fact that
+      // her numbers are the library zombie's copy — nor move her portrait slot.
       ...(citation === undefined ? {} : { creatureRef: citation }),
+      ...(previous.sourceLine === undefined ? {} : { sourceLine: previous.sourceLine }),
+      ...(previous.originToken === undefined ? {} : { originToken: previous.originToken }),
       // The run stamp survives only while the row is still MACHINE-owned: it
       // is what tells a later cast that this row has not been written in yet
       // (docs/11 D4). A refill IS the writing-in, so it is cleared here and
@@ -3783,18 +3785,21 @@ export class RunEngine {
     if (input.targetArtifactId !== undefined) {
       const refillTarget = await getAnyArtifact(input.targetArtifactId);
       if (refillTarget !== undefined && isCastCreatureNpc(refillTarget)) {
-        // The field is read through its ONE accessor (`domain/creature`), never
-        // by reaching into `data` here.
+        // The identity is read through its ONE accessor (`domain/creature`),
+        // never by reaching into `data` here. A row born under the copy model
+        // (docs/17 row 255b) names its origin by the STAMPED line; an old row
+        // still carrying the pointer names the creature it cites.
         const citation = npcCreatureRef(refillTarget);
-        debugLog('run', 'statblock skipped: the refill target cites a library creature');
+        const copied = refillTarget.kind === 'npc' ? refillTarget.data.sourceLine : undefined;
+        const origin = copied ?? citation?.creatureName ?? 'creatureRef';
+        debugLog('run', 'statblock skipped: the refill target is a cast creature');
         return {
           step: this.finishStep(
             steps[stepIndex],
             {
               skipped:
-                `this npc draws its stat block from the library creature it cites ` +
-                `(${citation?.creatureName === undefined ? 'creatureRef' : `«${citation.creatureName}»`}) — ` +
-                `the numbers are the library's and are never authored here`,
+                `this npc is a cast creature: its stat block is the copy this module owns of a ` +
+                `library creature (${origin}) — the numbers are the library's and are never authored here`,
             },
             'skipped',
           ),

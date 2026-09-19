@@ -21,6 +21,7 @@ import {
   creatureIdentityForCitation,
   creatureRefSchema,
   libraryCreatureKey,
+  npcCreatureIdentity,
   npcDataSchema,
   ruleChunkSchema,
   statBlockSchema,
@@ -240,7 +241,7 @@ describe('D4 — casting is idempotent per identity, and a rival is refused loud
     ).toHaveLength(1);
   });
 
-  it('the cast row cites the creature, owns its prose, and carries no authored stat block', async () => {
+  it('the cast row OWNS the copied block and its stamped origin, and carries no pointer', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const chunkId = await seedCreep('Bog Zombie', 22);
     const cast = await castCreatureAsNpc({
@@ -252,15 +253,23 @@ describe('D4 — casting is idempotent per identity, and a rival is refused loud
     });
     const row = await getAnyArtifact(cast.artifactId);
     if (row?.kind !== 'npc') throw new Error('the cast row is not an npc');
-    expect(row.data.creatureRef).toEqual({ chunkId, creatureName: 'Bog Zombie' });
-    expect(row.data.statBlock).toBeNull();
+    // NO POINTER (docs/17 row 255b): the owner's rule is that a core item is
+    // only ever COPIED, so the row owns the library bytes, the stamped origin
+    // line and the opaque identity token instead of a `creatureRef`.
+    expect(row.data.creatureRef).toBeUndefined();
+    expect(row.data.statBlock?.hp).toBe(22);
+    expect(row.data.statBlock?.ac).toBe(8);
+    expect(row.data.sourceLine).toBe('Bestiary p.4');
+    expect(row.data.originToken).toBe(`chunk:${chunkId}`);
     expect(row.summary).toBe('Zombie numbers, her own words.');
     expect(row.data.appearance).toBe('Sunday best.');
-    // The identity is the LIBRARY one — the portrait key, not the row id and
-    // not the name: `creatureIdentityForCitation` takes the RESOLVED chunk id,
-    // which is what makes a cast share the creature's canonical portrait.
+    // The identity is still the LIBRARY one — the portrait key, not the row id
+    // and not the name. The copy's token IS `libraryCreatureKey(resolvedChunkId)`
+    // (the resolved chunk, which is what makes a cast share the creature's
+    // canonical portrait), and the ONE artifact-identity rule reads it back.
     const identity = creatureIdentityForCitation({ chunkId, creatureName: 'Bog Zombie' }, chunkId);
     expect(identity.key).toBe(libraryCreatureKey(chunkId));
+    expect(npcCreatureIdentity(row)?.key).toBe(identity.key);
     expect(identity.ref).toEqual({ chunkId, creatureName: 'Bog Zombie' });
   });
 
@@ -327,7 +336,10 @@ describe('D4 — casting is idempotent per identity, and a rival is refused loud
         citation: { chunkId: crypto.randomUUID(), creatureName: 'Nothing' },
         name: 'Nothing',
       }),
-    ).rejects.toThrow(/refusing to cast «Nothing» — the cited library creature is not in this workspace/);
+      // The refusal is the ONE copy seam's own (docs/17 row 255a/255b): the
+      // cast no longer resolves for itself, so it refuses in the same words
+      // every other copy path uses.
+    ).rejects.toThrow(/copy creature stats: refusing to copy «Nothing» — the cited stat-block chunk is not in this workspace/);
     expect(await listArtifactsByCampaign(campaign.id)).toEqual([]);
   });
 

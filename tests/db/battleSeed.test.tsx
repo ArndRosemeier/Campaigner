@@ -7,6 +7,7 @@ import {
   creatureCoverImageId,
   creaturePortraitArt,
   setCreatureCover,
+  tokenCreature,
 } from '@/db/creatureRepo';
 import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
 import {
@@ -123,7 +124,14 @@ async function addCastNpc(name: string, chunkId: Id): Promise<Artifact> {
 
 interface SeedOptions {
   mapImageId?: Id | null;
-  monsters?: { name: string; count: number; treasure?: string; source: Record<string, unknown> }[];
+  monsters?: {
+    name: string;
+    count: number;
+    treasure?: string;
+    source: Record<string, unknown>;
+    /** Extra entry fields (a copied mob's `sourceLine`/`originToken`). */
+    entry?: Record<string, unknown>;
+  }[];
   linkLocationId?: Id;
   layout?: EncounterLayout | null;
 }
@@ -137,6 +145,7 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
       difficulty: 'medium',
       levelHint: '3',
       monsters: (over.monsters ?? []).map((monster) => ({
+        ...(monster.entry ?? {}),
         name: monster.name,
         count: monster.count,
         notes: '',
@@ -258,6 +267,67 @@ describe('roster expansion', () => {
     ]);
     const stats = buildFighterStatsLookup(battle, await listArtifactsByCampaign(campaignId));
     expect(stats(cast.id)).toMatchObject({ maxHp: 21, initiativeBonus: 2, currentHp: null });
+  });
+
+  /**
+   * THE BATTLE CARD READS THE FROZEN COPY (docs/17 row 255b). A mob seeded from
+   * a copied library creature carries its own bytes now — the library is not a
+   * dependency of a battle that has already been seeded. The differential arm is
+   * the second half: WITHOUT the frozen row the same call finds nothing once the
+   * pack is gone, which is exactly the defect this row closes.
+   */
+  it('a copied mob keeps its AC and attacks with the pack UNINSTALLED — the seed row carries the copy', async () => {
+    const chunkId = await seedGoblinChunk();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(chunkId);
+    if (chunk?.statBlock == null) throw new Error('the fixture chunk carries no block');
+    const encounter = await addEncounter({
+      monsters: [
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          source: { type: 'inline', statBlock: chunk.statBlock },
+          entry: { sourceLine: 'Bestiary p.12', originToken: libraryCreatureKey(chunkId) },
+        },
+      ],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const seed = battle.seedFighters.find((row) => row.creatureKey === libraryCreatureKey(chunkId));
+    if (seed === undefined) throw new Error('the copied mob froze no seed row');
+    // The seed row carries the COPY, not only the identity token.
+    expect(seed.statBlock).toEqual(chunk.statBlock);
+    expect(seed.originLabel).toBe('Bestiary p.12');
+    const token = battle.board.tokens[0];
+    if (token === undefined) throw new Error('the copied mob seeded no token');
+    expect(token.creatureKey).toBe(libraryCreatureKey(chunkId));
+
+    // UNINSTALL the pack: the library row and its book are gone.
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const card = await tokenCreature({
+      campaignId,
+      creatureKey: token.creatureKey,
+      artifactId: token.artifactId,
+      name: token.label,
+      frozen: seed,
+    });
+    expect(card?.statBlock).toEqual(chunk.statBlock);
+    expect(card?.statBlock?.ac).toBe(17);
+    expect(card?.statBlock?.hp).toBe(21);
+    expect(card?.chunkId).toBe(chunkId);
+    expect(card?.identityLabel).toBe('Bestiary p.12');
+
+    // THE DIFFERENTIAL ARM: the same question without the frozen row loses the
+    // numbers — this is the read chain the row fixes, kept visible so a future
+    // edit that drops `frozen` from the surface reds here.
+    const live = await tokenCreature({
+      campaignId,
+      creatureKey: token.creatureKey,
+      artifactId: token.artifactId,
+      name: token.label,
+    });
+    expect(live?.statBlock).toBeNull();
   });
 
   /**

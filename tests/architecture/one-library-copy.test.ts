@@ -65,9 +65,13 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
     // The live wrapper is the one DB-bound door, and it delegates rather than
     // resolving for itself.
     expect(filesWith('creatureOriginLabel(')).toContain('src/domain/libraryCopy.ts');
-    // The declared callers: the migration's backfill (twice — roster + NPC) and
-    // the three write paths, each through the live wrapper.
+    // The declared callers: the migration's backfill (twice — roster + NPC), the
+    // CAST path (`db/creatureRepo.castCreatureAsNpc`, which owns
+    // `creatureLookups` and therefore calls the PURE seam directly — importing
+    // the live wrapper from the module the wrapper imports would be a cycle),
+    // and the three ROSTER write paths, each through the live wrapper.
     expect(filesWith('copyCreatureStats(')).toEqual([
+      'src/db/creatureRepo.ts',
       'src/db/libraryCopy.ts',
       'src/db/mobCopyRepair.ts',
       'src/domain/libraryCopy.ts',

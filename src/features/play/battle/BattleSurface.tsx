@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
-import { CANONICAL_ROOM_MARKERS } from '@/domain';
+import { CANONICAL_ROOM_MARKERS, isCastCreatureNpc } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
@@ -532,12 +532,20 @@ export function BattleSurface(): JSX.Element {
   const selectedArtifact = selectedToken?.artifactId === null || selectedToken === null
     ? undefined
     : artifactById.get(selectedToken.artifactId);
+  // The selected token's FROZEN SEED ROW, when the battle has one (docs/17 row
+  // 255b): a token with no artifact behind it carries the synthetic seed-row id,
+  // and that row owns the copy the card must read — so an uninstalled pack
+  // cannot strip an already-seeded battle of its AC and attacks.
+  const selectedFrozenSeed = selectedToken === null
+    ? undefined
+    : battle?.seedFighters.find((seed) => seed.id === selectedToken.artifactId);
   // The selected token's CREATURE (docs/11 D5 amendment / D10): the board
   // resolves a token's stat block by the creature IDENTITY the token carries
   // (`token.creatureKey`, stamped by seeding) — never by an artifact that a
-  // creature no longer has. A cast creature npc resolves through its own
-  // `creatureRef`; a plain authored npc has no creature identity, and its own
-  // card already carries everything about it.
+  // creature no longer has. A cast creature npc reads its own COPY (or, for an
+  // unconverted row, still resolves through its `creatureRef`); a plain
+  // authored npc has no creature identity, and its own card already carries
+  // everything about it.
   const selectedCreature = useLiveQuery(
     async () => {
       if (selectedToken === null) return null;
@@ -546,9 +554,17 @@ export function BattleSurface(): JSX.Element {
         creatureKey: selectedToken.creatureKey,
         artifactId: selectedToken.artifactId,
         name: selectedArtifact?.name ?? selectedToken.label,
+        frozen: selectedFrozenSeed,
       });
     },
-    [selectedToken?.id, selectedToken?.creatureKey, selectedToken?.artifactId, selectedArtifact?.id, campaignId],
+    [
+      selectedToken?.id,
+      selectedToken?.creatureKey,
+      selectedToken?.artifactId,
+      selectedArtifact?.id,
+      selectedFrozenSeed?.id,
+      campaignId,
+    ],
     null,
   );
   const selectedStatBlock: StatBlock | null = !playerSafe && selectedToken !== null
@@ -592,10 +608,11 @@ export function BattleSurface(): JSX.Element {
         name: citedName,
         ...(selectedCreature.chunkId === undefined ? {} : { chunkId: selectedCreature.chunkId }),
         // A CAST creature npc keeps its portrait on its own cover, so the
-        // token names the artifact when the row is one; a library or invented
-        // creature's portrait is the campaign's presentation row, which needs
-        // no artifact at all.
-        ...(selectedArtifact?.kind === 'npc' && selectedArtifact.data.creatureRef !== undefined
+        // token names the artifact when the row is one (a copied row carries
+        // the stamp, an unconverted one its pointer — one predicate); a library
+        // or invented creature's portrait is the campaign's presentation row,
+        // which needs no artifact at all.
+        ...(selectedArtifact !== undefined && isCastCreatureNpc(selectedArtifact)
           ? { artifactId: selectedArtifact.id }
           : {}),
       },

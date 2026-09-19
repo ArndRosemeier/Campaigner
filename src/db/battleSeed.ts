@@ -230,7 +230,17 @@ export async function expandRosterEntries(
           linked.data.creatureRef !== undefined &&
           !seedFighters.some((seed) => seed.id === artifactId)
         ) {
-          seedFighters.push({ id: artifactId, name: entry.name, maxHp, initiativeBonus: bonus });
+          // The DERIVED block is frozen with the numbers (docs/17 row 255b):
+          // the card reads the row, never the library — so an uninstalled pack
+          // cannot cost an already-seeded legacy cast its AC and attacks.
+          seedFighters.push({
+            id: artifactId,
+            name: entry.name,
+            maxHp,
+            initiativeBonus: bonus,
+            statBlock: resolved.statBlock,
+            originLabel: resolved.origin,
+          });
         }
       } else if (entry.source.type === 'rulebook') {
         // A LIBRARY CREATURE CITATION (docs/11 D5 amendment): no row is created
@@ -257,6 +267,11 @@ export async function expandRosterEntries(
             maxHp,
             initiativeBonus: bonus,
             creatureKey: identity.key,
+            // The library block is frozen ON the row (docs/17 row 255b): the
+            // card reads this, so uninstalling the pack cannot strip an
+            // already-seeded battle of its AC and attacks.
+            statBlock: resolved.statBlock,
+            originLabel: resolved.origin,
           });
         } else {
           artifactId = known;
@@ -277,6 +292,9 @@ export async function expandRosterEntries(
           name: label,
           maxHp,
           initiativeBonus: bonus,
+          // The copy's own bytes are frozen on the row (docs/17 row 255b).
+          statBlock: resolved.statBlock,
+          originLabel: resolved.origin,
           ...(entry.originToken === undefined || identity === null
             ? {}
             : { creatureKey: identity.key }),

@@ -68,6 +68,9 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
 
     const holders = files.filter((file) => source(file).includes(LABEL_CALL));
     expect(holders, 'files composing the derived-stats label').toEqual([
+      // The battle card reads a copied cast row's own block and discloses it
+      // with the same composer (docs/17 row 255b).
+      'db/creatureRepo.ts',
       'domain/encounterResolve.ts',
       // The legacy-read seam composes the ONE label for a MIGRATED cast row
       // (docs/17 row 248c): that disclosure moved here with the `npc-ref` arm
@@ -75,6 +78,15 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
       // called from the module that owns the pointer read — not a second
       // implementation, which the holder list is what guards against.
       'domain/mobCopyLegacy.ts',
+      // The ONE renderer CALLS it too (docs/17 row 255b) for the copy a cast
+      // row now owns: its label is the stamped `sourceLine` plus the row's own
+      // name, composed by the same seam rather than re-worded in the component.
+      'features/campaign/components/borrowed-stats.tsx',
+    ]);
+    // The COMPOSER is what must stay one (the holder list above pins every
+    // caller, this pins the single definition).
+    expect(files.filter((file) => source(file).includes('export function derivedStatOrigin('))).toEqual([
+      'domain/encounterResolve.ts',
     ]);
     // …its own definition plus ONE call inside the rule file: the live
     // derived-stats rule (`resolveDerivedNpcStats`). The migrated-cast-row call
@@ -91,7 +103,10 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
     // of the label beside it.
     expect(occurrences(creatureRepo, DERIVED_DELEGATION), 'creatureRepo: domain-rule calls').toBe(1);
     expect(creatureRepo).toContain('return derivedNpcStats(npcName, citation, creatureLookups());');
-    expect(creatureRepo.includes(LABEL_CALL), 'creatureRepo composes the label itself').toBe(false);
+    // The repo no longer composes the sentence itself: the ONE place it needs
+    // the label — a copied cast row's battle card (docs/17 row 255b) — CALLS the
+    // domain composer, whose single definition the test above pins.
+    expect(creatureRepo).toContain('derivedStatOrigin(artifact.name, sourceLine)');
 
     // The derivation has exactly FOUR holders in `src/`: the domain rule
     // itself, the repo-wired read top code calls, the ONE component that draws
@@ -107,13 +122,19 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
       'features/campaign/components/borrowed-stats.tsx',
     ]);
 
-    // Both surfaces MOUNT that component, with the row's own citation.
-    expect(source('features/campaign/components/kind-forms.tsx')).toContain(
-      '<BorrowedStatBlock npcName={artifactName} citation={data.creatureRef} />',
-    );
-    expect(source('features/play/artifact-cards.tsx')).toContain(
-      '<BorrowedStatBlock npcName={npc.name} citation={data.creatureRef} />',
-    );
+    // Both surfaces MOUNT that component, handing it the row's own COPY and the
+    // legacy pointer (docs/17 row 255b) — the renderer decides which one the row
+    // actually carries.
+    const editor = source('features/campaign/components/kind-forms.tsx');
+    expect(editor).toContain('<BorrowedStatBlock');
+    expect(editor).toContain('npcName={artifactName}');
+    expect(editor).toContain('copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}');
+    expect(editor).toContain('citation={data.creatureRef}');
+    const card = source('features/play/artifact-cards.tsx');
+    expect(card).toContain('<BorrowedStatBlock');
+    expect(card).toContain('npcName={npc.name}');
+    expect(card).toContain('copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}');
+    expect(card).toContain('citation={data.creatureRef}');
     const renderers = srcFiles().filter((file) => source(file).includes(BORROWED_RENDERER));
     expect(renderers, 'files naming the borrowed-stats renderer').toEqual([
       'features/campaign/components/borrowed-stats.tsx',

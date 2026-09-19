@@ -281,7 +281,16 @@ export async function repairMobCopies(
       const rest = withoutLegacyNpcPointer(data);
       await artifacts.put({
         ...(row as Record<string, unknown>),
-        data: { ...rest, statBlock: result.copy.statBlock, sourceLine: result.copy.sourceLine },
+        data: {
+          ...rest,
+          statBlock: result.copy.statBlock,
+          sourceLine: result.copy.sourceLine,
+          // The token is stamped too (docs/17 row 255b): it is the row's
+          // portrait AND reuse identity now that the pointer is gone, exactly as
+          // the roster arm keeps it. Without it a converted cast row would fall
+          // to a content key, orphaning the creature's portrait slot.
+          originToken: result.copy.originToken,
+        },
       });
       // Counted only after the WRITE returns: a row whose `put` throws is named
       // by the guard as unresolved and must not be reported as converted.

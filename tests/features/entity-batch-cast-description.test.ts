@@ -55,12 +55,12 @@ import { clearDatabase } from '../db/helpers';
  *   description. Row 133's `describesEntity` seam and its
  *   `ENTITY_DESCRIPTION_FLOOR` are DELETED, and the shape scan at the bottom of
  *   this file is the tombstone;
- * - the cast is KEPT — the library numbers, the citation identity, the portrait
- *   — and the description is written through the cited row's existing REFILL
- *   (the only sanctioned write into a cast row): the run targets the row it was
- *   just cast into, the stat block step is skipped with its reason BEFORE any
- *   model call, the citation survives byte-identically and `statBlock` stays
- *   null;
+ * - the cast is KEPT — the library's numbers COPIED onto the row (docs/17 row
+ *   255b), the stamped origin line, the portrait identity — and the description
+ *   is written through the cast row's existing REFILL (the only sanctioned write
+ *   into such a row): the run targets the row it was just cast into, the stat
+ *   block step is skipped with its reason BEFORE any model call, and the copy
+ *   survives byte-identically (a refill writes prose, never numbers);
  * - the module's own paragraphs still reach the run, as CONTEXT (the same brief
  *   the ordinary npc arm builds). The anchor is the LINK, not a bare search for
  *   the name string: `surroundingParagraphs` normalizes every wiki token to its
@@ -272,18 +272,16 @@ async function seedModule(partMarkdown: string): Promise<{
   return { campaign, module };
 }
 
-/** The citation is IDENTITY, not content: the chunk the numbers come from and
- * the library's own spelling of the creature's name. (`contentHash` is stamped
- * at citation birth by the ONE cast function, so it is asserted as PRESENT and
- * not as a literal this file would have to re-derive.) The BOOK is asserted by
- * its title, because it is the identity a stranded citation is reported with
- * (docs/17 row 155) — and it is read off the fixture's own book row. */
-function expectCitation(row: NpcArtifact): void {
-  const ref = npcCreatureRef(row);
-  expect(ref?.chunkId).toBe(CHUNK_ID);
-  expect(ref?.creatureName).toBe(ZOMBIE);
-  expect(ref?.contentHash).toBeDefined();
-  expect(ref?.bookTitle).toBe('Bestiary');
+/** The COPY is IDENTITY, not content (docs/17 row 255b): the library's own
+ * numbers, the stamped origin line and the opaque `chunk:` token that keeps the
+ * creature's portrait slot — and NO pointer. (The row used to carry a
+ * `creatureRef`; the one-representation model says a core item is only ever
+ * copied, so the pointer is gone.) */
+function expectCopiedCreature(row: NpcArtifact): void {
+  expect(npcCreatureRef(row)).toBeUndefined();
+  expect(row.data.statBlock).toEqual(STAT_BLOCK);
+  expect(row.data.sourceLine).toBe('Bestiary p.316');
+  expect(row.data.originToken).toBe(`chunk:${CHUNK_ID}`);
 }
 
 /** The row the batch produced for `AGATHA` — asserted to be an npc row. */
@@ -306,9 +304,9 @@ async function batchRun(campaignId: Id) {
   return run;
 }
 
-/** The cited-row step-off, asserted wherever a description run happened: the
- * statblock step `'skipped'` WITH its reason, one transport call, the citation
- * untouched and `statBlock` null. */
+/** The cast-row step-off, asserted wherever a description run happened: the
+ * statblock step `'skipped'` WITH its reason, one transport call, the COPY
+ * untouched (a refill writes prose, never numbers). */
 async function expectCastRefill(
   campaignId: Id,
   row: NpcArtifact,
@@ -322,8 +320,7 @@ async function expectCastRefill(
   expect((statblockStep?.output as { skipped?: string }).skipped).toContain('library creature');
   // A REFILL of the row that exists, not a new artifact.
   expect(run.targetArtifactId).toBe(row.id);
-  expectCitation(row);
-  expect(row.data.statBlock).toBeNull();
+  expectCopiedCreature(row);
 }
 
 beforeEach(async () => {
@@ -556,14 +553,13 @@ describe('a description run that does not complete is loud, and the cast still s
     expect(records[0]?.kind).toBe('run-not-completed');
     expect(records[0]?.batchKind).toBe('npc');
 
-    // The row keeps everything the cast gave it: the citation, the numbers'
+    // The row keeps everything the cast gave it: the copied numbers and their
     // identity — and the thin birth prose, because the description never
     // arrived. The name is now a DETAILED entity, so it is no longer a batch
     // target: a retry means dropping the row and generating the entity again,
     // not re-running this same target.
     const row = await castRow(campaign.id);
-    expectCitation(row);
-    expect(row.data.statBlock).toBeNull();
+    expectCopiedCreature(row);
     expect(row.body).toBe(NAMED_ONLY_PROSE);
     expect(batchTargets(module, await listArtifactsByCampaign(campaign.id), 'npc')).toEqual([]);
     consoleSpy.mockRestore();

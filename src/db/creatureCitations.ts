@@ -80,14 +80,18 @@ function citedCreatures(
         // is missing, not the library entry (docs/11 D9).
         cited = { name: entry.name, libraryRef: true };
       } else if (target.kind === 'npc' && target.data.creatureRef !== undefined) {
-        // A CAST npc (docs/11 D3): its own prose, the library's stats — so the
-        // creature it cites IS a library creature, and this census speaks of it
-        // under the LIBRARY's name, which is what the dialog must name.
+        // An UNCONVERTED cast npc (docs/11 D3): its own prose, the library's
+        // stats — so the creature it cites IS a library creature, and this
+        // census speaks of it under the LIBRARY's name, which is what the
+        // dialog must name.
         cited = { name: target.name, citation: target.data.creatureRef, libraryRef: true };
       } else {
-        // A hand-authored NPC cites no library creature at all: it is this
-        // module's OWN row (already the ownership half of the census), so it
-        // must not appear as a library reference.
+        // A HAND-AUTHORED npc — and, since docs/17 row 255b, a COPIED cast npc
+        // too — cites no library creature at all: a copy is this campaign's own
+        // row (the owner's rule is that core items are only ever copied), so it
+        // must not appear as a library reference. It is already the ownership
+        // half of the census, and it is deleted with the module, not left in
+        // the bestiary.
         cited = { name: target.name, libraryRef: false };
       }
     }

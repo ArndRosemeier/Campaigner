@@ -242,6 +242,19 @@ export const npcDataSchema = z
      */
     sourceLine: z.string().optional(),
     /**
+     * The opaque ORIGIN TOKEN of a copied library creature (`chunk:<id>`,
+     * `domain/creature.libraryCreatureKey`) — docs/17 row 255b. The encounter
+     * roster entry has carried one since row 248; the CAST path writes the same
+     * thing now that it copies instead of citing, because the token is BOTH the
+     * portrait identity (so no `mobPortraits`/`creatureImages` row needs
+     * remapping) and the REUSE identity a re-cast compares against — the
+     * `creatureRef` it replaced was that identity before. Additive + optional:
+     * a row cast before row 255b (or converted by the v24 migration's NPC arm
+     * before it stamped tokens) carries none, and then its identity falls to the
+     * content key.
+     */
+    originToken: z.string().optional(),
+    /**
      * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
      * one did: the GENERATION seam's own provenance, so a later pass can tell a
      * freshly cast, prose-less row from one a module designer has since written

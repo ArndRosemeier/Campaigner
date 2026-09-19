@@ -6,25 +6,32 @@ import type {
   NpcArtifact,
   Rulebook,
   RuleChunk,
+  SeedFighter,
   StatBlock,
   WikiLinkCreature,
 } from '@/domain';
 import {
   chunkIdOfOriginToken,
   contentCreatureIdentity,
+  contentCreatureKey,
   creatureIdentityForCitation,
   creatureRefIsEmpty,
+  isCastCreatureNpc,
   libraryCreatureKey,
   moduleTagFor,
+  npcCreatureIdentity,
   npcCreatureRef,
+  npcOriginToken,
   sameAliasName,
 } from '@/domain';
 import { libraryCreaturePool } from '@/domain/libraryCreature';
+import { copyCreatureStats, creatureCopyRefusal } from '@/domain/libraryCopy';
 import type { GameSystem } from '@/domain/gameSystem';
 import { setLibraryCreaturePool } from '@/lib/wikilinks';
 import {
   creatureCitationName,
   creatureOriginLabel,
+  derivedStatOrigin,
   missingCreatureOrigin,
   resolveCreatureChunk,
   resolveDerivedNpcStats as derivedNpcStats,
@@ -437,15 +444,31 @@ export function creaturePortraitImageIn(options: {
  * stamps it (`db/battleSeed`) for a `rulebook` citation and for an invented
  * creature, so the board never has to re-derive an identity from an artifact
  * that may not exist. An `npc-ref` token resolves through its artifact: a CAST
- * creature npc carries its `creatureRef` (its own prose, the library's stats),
- * a plain authored npc has no creature identity at all and yields `null` — its
- * portrait is its own cover, managed in the editor, never on the board.
+ * creature npc carries its own COPY (docs/17 row 255b: its `statBlock` + the
+ * stamped `sourceLine` + the opaque `originToken`; a legacy row still carries
+ * `creatureRef`), a plain authored npc has no creature identity at all and
+ * yields `null` — its portrait is its own cover, managed in the editor, never on
+ * the board.
+ *
+ * THE BATTLE'S FROZEN ROW WINS over a live library read (`frozen`, docs/17 row
+ * 255b). A token whose creature came from the library is a COPY the battle owns
+ * — `db/battleSeed` freezes the block on its seed row — so the card must read
+ * the row and never re-resolve the `chunk:<id>` identity against the library.
+ * Otherwise uninstalling a pack strips an already-seeded battle of its AC and
+ * attacks, which is the read-side half of the owner's rule that core items are
+ * only ever copied.
  */
 export async function tokenCreature(options: {
   campaignId: Id;
   creatureKey?: string | undefined;
   artifactId: Id | null | undefined;
   name: string;
+  /**
+   * The battle's frozen seed row for this token, when it has one (the token's
+   * `artifactId` is that row's synthetic id). Only the two fields the card
+   * reads are taken, so the caller passes the row rather than a projection.
+   */
+  frozen?: Pick<SeedFighter, 'statBlock' | 'originLabel'> | undefined;
 }): Promise<{
   creatureKey: string;
   name: string;
@@ -453,15 +476,28 @@ export async function tokenCreature(options: {
   statBlock: StatBlock | null;
   identityLabel: string | null;
 } | null> {
+  const frozen = options.frozen;
   if (options.creatureKey !== undefined && options.creatureKey !== '') {
     const chunkId = chunkIdOfCreatureKey(options.creatureKey);
     if (chunkId === null) {
+      // A content identity: the battle's frozen block IS the invented mob's
+      // stats (nothing else stores them), so the card reads the row.
       return {
         creatureKey: options.creatureKey,
         name: options.name,
         chunkId: undefined,
-        statBlock: null,
-        identityLabel: null,
+        statBlock: frozen?.statBlock ?? null,
+        identityLabel: frozen?.originLabel ?? null,
+      };
+    }
+    if (frozen?.statBlock != null) {
+      // THE FROZEN COPY IS THE ROW (docs/17 row 255b): no library read at all.
+      return {
+        creatureKey: options.creatureKey,
+        name: options.name,
+        chunkId,
+        statBlock: frozen.statBlock,
+        identityLabel: frozen.originLabel ?? null,
       };
     }
     const listing = await resolveCreatureCitation({ chunkId }, options.name);
@@ -476,6 +512,32 @@ export async function tokenCreature(options: {
   if (options.artifactId === null || options.artifactId === undefined) return null;
   const artifact = await getAnyArtifact(options.artifactId);
   if (artifact?.kind !== 'npc') return null;
+  // A CAST creature npc that OWNS its numbers (docs/17 row 255b) carries the
+  // copy's stamp: its own block is the card's answer, under the identity its
+  // origin token preserves (so the portrait does not move). This is the case
+  // the roster's own `npc-ref` row reaches after part 1 converted the cast —
+  // the artifact fallback in `BattleSurface` would also cover the block, but
+  // this is where the card's identity and name come from.
+  if (artifact.data.sourceLine !== undefined || npcOriginToken(artifact) !== undefined) {
+    const rawToken = npcOriginToken(artifact);
+    const token = rawToken === undefined ? undefined : rawToken.trim();
+    const sourceLine = artifact.data.sourceLine?.trim();
+    return {
+      creatureKey:
+        npcCreatureIdentity(artifact)?.key ??
+        contentCreatureKey(artifact.name, artifact.data.statBlock),
+      name: artifact.name,
+      chunkId:
+        token === undefined || token === ''
+          ? undefined
+          : chunkIdOfCreatureKey(token) ?? undefined,
+      statBlock: artifact.data.statBlock,
+      identityLabel:
+        sourceLine === undefined || sourceLine === ''
+          ? null
+          : derivedStatOrigin(artifact.name, sourceLine),
+    };
+  }
   const citation = npcCreatureRef(artifact);
   if (citation === undefined || creatureRefIsEmpty(citation)) return null;
   const listing = await resolveCreatureCitation(citation, artifact.name);
@@ -483,7 +545,7 @@ export async function tokenCreature(options: {
     creatureKey: listing.identity.key,
     name: artifact.name,
     chunkId: listing.chunk?.id ?? listing.identity.ref.chunkId ?? undefined,
-    statBlock: listing.chunk?.statBlock ?? null,
+    statBlock: frozen?.statBlock ?? listing.chunk?.statBlock ?? null,
     identityLabel: listing.origin,
   };
 }
@@ -586,10 +648,19 @@ export type CastCreatureOutcome =
 /**
  * THE ONE WAY an authored NPC comes out of a creature (docs/11 D4). Given a
  * campaign (and module), a library creature and authored prose, it creates a
- * REAL `npc` artifact carrying that prose plus a `creatureRef` — so the NPC's
- * stat block is DERIVED from the creature and the derivation is disclosed in
- * the origin label. The creature's cached portrait is seeded onto the NPC as
- * its cover when one exists, through the existing clone machinery.
+ * REAL `npc` artifact carrying that prose plus a COPY of the creature's stat
+ * block — the library bytes, the STAMPED origin line and the opaque
+ * `originToken` — so the NPC's numbers are its own and the derivation is
+ * disclosed in the origin label. The creature's cached portrait is seeded onto
+ * the NPC as its cover when one exists, through the existing clone machinery.
+ *
+ * THE COPY IS THE ONE SEAM'S (docs/17 row 255b). The row used to carry a
+ * `creatureRef` POINTER resolved at read time; the owner's rule is that core
+ * items are only ever COPIED, so the cast now calls
+ * `domain/libraryCopy.copyCreatureStats` — the same operation the v24 backfill
+ * and the roster write paths call — with the repo's own lookups. A creature the
+ * library cannot supply is the seam's LOUD refusal, never a pointer minted as a
+ * consolation (AGENTS rule 1).
  *
  * Nothing else in the app may create an NPC from a creature: the encounter
  * generator cannot reach this module at all (docs/11 D5), which is how the
@@ -598,9 +669,13 @@ export type CastCreatureOutcome =
  * REUSE, never duplication (AGENTS rule 1: no silent overwrite): an existing
  * cast of the SAME creature under the same name in the same scope is returned
  * as-is — a second cast writes NOTHING to it, so prose a designer has since
- * written in can never be clobbered by a re-run. A name already taken in that
- * scope by anything else (an authored NPC, or a cast of a different creature)
- * is a LOUD error naming the collision, never a silent merge or takeover.
+ * written in can never be clobbered by a re-run. "The same creature" is now
+ * answered by the copy's identity (`npcCreatureIdentity` — the `originToken`
+ * for a copy, the legacy `creatureRef` for an unconverted row), so the row's
+ * history of how it stores its numbers cannot change which creature it IS. A
+ * name already taken in that scope by anything else (an authored NPC, or a cast
+ * of a different creature) is a LOUD error naming the collision, never a silent
+ * merge or takeover.
  */
 export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<CastCreatureOutcome> {
   const name = options.name.trim();
@@ -622,14 +697,14 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
     }
     moduleTag = moduleTagFor(module.title);
   }
-  const listing = await resolveCreatureCitation(options.citation, name);
-  if (listing.chunk === null) {
+  const result = await copyCreatureStats(options.citation, name, creatureLookups());
+  if (result.status === 'unresolved') {
     // Loud (AGENTS rule 1): casting a creature the library cannot supply would
-    // mint an NPC whose numbers are a silent hole.
-    throw new Error(
-      `cast creature as npc: refusing to cast «${name}» — the cited library creature is not in this workspace (${listing.origin})`,
-    );
+    // mint an NPC whose numbers are a silent hole. The reason is the ONE copy
+    // seam's own, never re-worded here.
+    throw creatureCopyRefusal(name, result.reason);
   }
+  const copy = result.copy;
   const owned = await listArtifactsByCampaign(options.campaignId);
   // "Is this row already the cast of THIS name?" — the ONE name comparison
   // (docs/17 row 166), which also trims the queried side: the hand-rolled
@@ -644,10 +719,13 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
   );
   // Idempotency is per (campaign, module, name, IDENTITY): a second cast of the
   // SAME creature reuses its row rather than minting a twin, and a candidate
-  // that already points somewhere else is a rival — taking it over would
-  // silently re-stat an NPC the owner authored.
+  // that draws from a DIFFERENT creature is a rival — taking it over would
+  // silently re-stat an NPC the owner authored. The identity question is asked
+  // through the ONE artifact-identity rule, so a row that still points
+  // (`creatureRef`) and a row that already owns a copy (`originToken`) answer it
+  // the same way.
   const sameIdentity = (artifact: NpcArtifact): boolean =>
-    creatureRefIdentical(artifact.data.creatureRef, listing.identity.ref);
+    npcCreatureIdentity(artifact)?.key === copy.originToken;
   const match = candidates.find(sameIdentity);
 
   let artifactId: Id;
@@ -667,7 +745,7 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
     const rival = candidates[0];
     if (rival !== undefined) {
       throw new Error(
-        rival.data.creatureRef !== undefined
+        isCastCreatureNpc(rival)
           ? `cast creature as npc: «${name}» already exists in this scope drawing its stats from a DIFFERENT library creature — drop one of the two instead of casting over it`
           : `cast creature as npc: «${name}» already exists in this scope as an authored NPC — drop one of the two instead of casting over it`,
       );
@@ -684,8 +762,12 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
         data: {
           appearance: prose.appearance ?? '',
           personality: prose.personality ?? '',
-          statBlock: null,
-          creatureRef: listing.identity.ref,
+          // The COPY, in full (docs/17 row 255b): the library bytes, the
+          // stamped origin line and the opaque identity token. No `creatureRef`
+          // is minted — that is the pointer this slice removes.
+          statBlock: copy.statBlock,
+          sourceLine: copy.sourceLine,
+          originToken: copy.originToken,
           ...(options.runId === undefined ? {} : { castByRunId: options.runId }),
         },
         ...(options.writerModel === undefined ? {} : { writerModel: options.writerModel }),
@@ -697,8 +779,11 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
   }
 
   // Seed the cover from the creature's canonical portrait when one exists —
-  // skip-if-imaged, so a portrait the owner set is never overwritten.
-  const slot = await getMobPortraitCacheEntry(listing.identity.key);
+  // skip-if-imaged, so a portrait the owner set is never overwritten. The key
+  // is the copy's own token, which IS the library identity key the portrait
+  // cache mints (`libraryCreatureKey(resolvedChunkId)`), so a cast still shares
+  // the creature's canonical portrait with no remap.
+  const slot = await getMobPortraitCacheEntry(copy.originToken);
   if (slot !== undefined) {
     await cloneCachedPortraitToArtifact({
       artifactId,

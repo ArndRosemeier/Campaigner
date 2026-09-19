@@ -10,6 +10,7 @@ import type {
   NpcArtifactData,
   StatBlock,
 } from '@/domain';
+import { npcDataIsCastCreature } from '@/domain';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { WriterModelId } from '@/components/writer-model-id';
 import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
@@ -97,18 +98,22 @@ export function NpcCard({
             <WikiMarkdown value={data.personality} artifacts={pool} onOpenArtifact={onOpenArtifact} />
           </div>
         )}
-        {data.statBlock !== null && (
+        {/* A CAST creature's numbers are the copy the campaign owns (docs/17
+            row 255b) — read-only and labelled, the SAME render the editor's
+            details panel makes (ledger row 134), so this card never shows a
+            named zombie with a portrait and nothing else. An unconverted row
+            still resolves through its legacy `creatureRef` inside that render. */}
+        {npcDataIsCastCreature(data) ? (
+          <BorrowedStatBlock
+            npcName={npc.name}
+            copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
+            citation={data.creatureRef}
+          />
+        ) : data.statBlock !== null ? (
           <div className="text-base">
             <StatsCard statBlock={data.statBlock} name={npc.name} />
           </div>
-        )}
-        {/* A CITED row (docs/11 D3): no block of its own, its numbers are the
-            library creature's — the SAME read the editor's details panel makes
-            (ledger row 134), so this read-only card never shows a named zombie
-            with a portrait and nothing else. */}
-        {data.statBlock === null && data.creatureRef !== undefined && (
-          <BorrowedStatBlock npcName={npc.name} citation={data.creatureRef} />
-        )}
+        ) : null}
       </div>
       {showWriterModel && (
         <WriterModelId model={npc.writerModel} testId="npc-card-writer-model" />
