@@ -27,12 +27,23 @@ import { describe, expect, it } from 'vitest';
  * call site that rebuilds `StartRunInput` reads correctly today and silently
  * loses the level the day a caller is added, and a second `level N` regex
  * anywhere is a second answer to the same question.
+ *
+ * THE THIRD (row 253) was an ASYMMETRY, not a copy count: the app GENERATES in
+ * eleven languages (`llm/language.ts` carries the directive) while the ONE
+ * reader asked only for the English word `level`, so a German module's own
+ * `Stufe 5` reached NOTHING and the entity fell through to the module's band.
+ * The vocabulary now lives in ONE map in the language seam (`LEVEL_WORDS`, one
+ * entry per `GENERATION_LANGUAGES` code, machine-enforced complete) and the
+ * reader is its ONE caller, so the pre-253 English-only regex is pinned ABSENT
+ * rather than renamed: a level word list is a language fact, and a second one
+ * is how the reader goes monolingual again (docs/17 row 162 is the same class).
  */
 
 const SRC_DIR = join(process.cwd(), 'src');
 const ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const MODULE_GEN = 'src/llm/moduleGen.ts';
+const LANGUAGE = 'src/llm/language.ts';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -65,7 +76,7 @@ function filesContaining(needle: string): string[] {
     .map(([file]) => file);
 }
 
-describe('ONE seam resolves the entity level (docs/17 rows 206/247)', () => {
+describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => {
   it('states the precedence chain at exactly one site, and only in the engine', () => {
     const files = sourceFiles(SRC_DIR);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
@@ -79,17 +90,47 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247)', () => {
     expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([ENGINE]);
   });
 
-  it('reads `level N` out of prose through ONE reader, defined once', () => {
+  it('reads a level out of prose through ONE reader, fed by ONE language vocabulary', () => {
     // The reader itself…
     expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
-    // …and NO other `level N` regex anywhere in the tree: a second spelling of
-    // the same question is exactly how the party-line trap came back. The needle
-    // is the regex SOURCE as `roomBudget.ts` spells it, matched as text.
-    const levelRegexNeedle = '\\blevel\\s*(\\d{1,2})\\b';
-    const regexIn = scanned()
-      .filter(([, text]) => text.includes(levelRegexNeedle))
+    // …and the level-WORD vocabulary lives in exactly ONE place (docs/17 row
+    // 253): the language seam, beside the directive that makes the app GENERATE
+    // in eleven languages. A new language is added to ONE map, not to a regex.
+    expect(filesContaining('export const LEVEL_WORDS')).toEqual([LANGUAGE]);
+    expect(filesContaining('export function levelWordsPattern')).toEqual([LANGUAGE]);
+    // The reader is the ONLY caller of that pattern — a second caller would be
+    // a second answer to "what does this text say the level is".
+    expect(filesContaining('levelWordsPattern()').sort()).toEqual([ROOM_BUDGET, LANGUAGE].sort());
+    // The PRE-253 English-only regex is GONE from `src/`, in BOTH spellings a
+    // reader could be re-born as: a regex LITERAL (`/\blevel\s*(\d{1,2})\b/i`)
+    // and the escaped SOURCE-string spelling, whose backslashes DOUBLE in the
+    // source text (`'\\blevel\\s*(\\d{1,2})\\b'`). Whitespace is stripped
+    // from each file first, so a literal wrapped across lines or re-spaced
+    // (`` / \blevel \s* ( \d{1,2} ) \b / ``) is caught too. Non-vacuity: the
+    // detector must fire on both source spellings, which is why each is
+    // asserted against a synthetic text below. NOTE THE SCOPE: like every scan
+    // in this file it walks `src/` ONLY, so an injection into the TEST tree is
+    // invisible to it by construction — measured the hard way while proving
+    // this pin: the first attempt injected in `tests/` and read the green as a
+    // dead pin; the real injection went into `src/llm/language.ts` and red.
+    const stripWhitespace = (text: string): string => text.replace(/\s+/g, '');
+    const englishOnlyNeedle = String.raw`\blevel\s*(\d{1,2})\b`;
+    const escapedNeedle = String.raw`\\blevel\\s*(\\d{1,2})\\b`;
+    expect(
+      stripWhitespace(String.raw`const a = /\blevel\s*(\d{1,2})\b/i;`),
+      'the detector fires on a regex LITERAL',
+    ).toContain(englishOnlyNeedle);
+    expect(
+      stripWhitespace(String.raw`const a = '\\blevel\\s*(\\d{1,2})\\b';`),
+      'and on the escaped SOURCE-string spelling',
+    ).toContain(escapedNeedle);
+    const englishOnly = scanned()
+      .filter(([, text]) => {
+        const code = stripWhitespace(text);
+        return code.includes(englishOnlyNeedle) || code.includes(escapedNeedle);
+      })
       .map(([file]) => file);
-    expect(regexIn).toEqual([ROOM_BUDGET]);
+    expect(englishOnly).toEqual([]);
   });
 
   it('derives the module’s own stated level once, for the spine recording and the engine resolution', () => {

@@ -12,6 +12,7 @@ import { comparableName } from '@/domain/artifactAlias';
 import { creatureRefIsEmpty, npcCreatureRef, sameAliasName } from '@/domain';
 import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { parseLevelSort, parseRosterTargetLevel } from '@/llm/encounterRoster';
+import { levelWordsPattern } from '@/llm/language';
 import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
 import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -125,9 +126,10 @@ export function withoutPartyLevelLines(brief: string): string {
 }
 
 /**
- * The FIRST `level N` a piece of text states, or `undefined` when it states
- * none — the app's ONE free-text level reader (docs/17 row 247). Every reader
- * of a level out of prose goes through THIS function:
+ * The FIRST level a piece of text states, in ANY generation language, or
+ * `undefined` when it states none — the app's ONE free-text level reader
+ * (docs/17 rows 247, 253). Every reader of a level out of prose goes through
+ * THIS function:
  *
  * - the legacy brief fallback in `runEngine.runStatblock` (fed the brief with
  *   the generated party lines removed, `withoutPartyLevelLines`);
@@ -135,15 +137,26 @@ export function withoutPartyLevelLines(brief: string): string {
  * - the explicit-instruction reader (`instructionLevel`).
  *
  * WHY ONE READER, NOT THREE REGEXES. The three callers ask the same question
- * of different text, and a second `/level\s*(\d{1,2})/i` is exactly how the
- * party-level trap came back once already (docs/17 row 206): a copy that
- * forgot the exclusion, or that read `(\d+)` instead of the two-digit form,
- * would disagree with the others about what "level 5" means in the same
- * sentence. The `1..20` bound is the app's level domain (`ENTITY_LEVEL_HINT_*`),
- * so a stray four-digit number is NOT read as a level.
+ * of different text, and a second level regex is exactly how the party-level
+ * trap came back once already (docs/17 row 206): a copy that forgot the
+ * exclusion, or that read `(\d+)` instead of the two-digit form, would
+ * disagree with the others about what "level 5" means in the same sentence.
+ * The `1..20` bound is the app's level domain (`ENTITY_LEVEL_HINT_*`), so a
+ * stray four-digit number is NOT read as a level.
+ *
+ * WHY IT IS NO LONGER ENGLISH-ONLY (docs/17 row 253). The app GENERATES in
+ * eleven languages (`languageDirective`), but this reader asked only for the
+ * English word, so a German module's own `Stufe 5` was invisible to every
+ * level source and the entity fell through to the module's band — the owner's
+ * level-5 mob in a level-3 module. The vocabulary now comes from
+ * `language.levelWordsPattern()` (the ONE place a language's level wording
+ * lives) as a UNION over every supported language, so no caller threads the
+ * active language and a caller that forgets an argument cannot lose the level.
+ * English still resolves for English text regardless of the campaign's
+ * setting, and a CJK spelling with no space (`レベル5`) resolves too.
  */
 export function firstLevelInText(text: string): number | undefined {
-  const digits = /\blevel\s*(\d{1,2})\b/i.exec(text)?.[1];
+  const digits = levelWordsPattern().exec(text)?.[2];
   if (digits === undefined) return undefined;
   const value = Number(digits);
   return value >= 1 && value <= 20 ? value : undefined;
@@ -174,32 +187,39 @@ export function instructionLevel(text: string): number | undefined {
  * THREE SOURCES, in the module's own order of specificity — and deliberately
  * NOT the `levelMin`/`levelMax` RANGE:
  *
- * 1. **The premise's own `level N`.** The module author's prose is where the
- *    owner's report lives ("i have a level 5 mob in a module (its described
- *    that way)"), and the premise is the module-wide statement of it.
- * 2. **The level of the part that mentions the entity** (`partLevelForMention`
- *    — the spine's own structured `partPlan[].levelBand`). This is a MODULE
- *    statement read by NAME from the plan, never the rendered party-level line
- *    the brief carries; docs/17 row 206 keeps the generated LINE out of the
- *    fallback regex, and this function never touches that line.
+ * 1. **The level of the part that mentions the entity** (`partLevelForMention`
+ *    — the spine's own structured `partPlan[].levelBand`), WHEN the caller
+ *    names the entity. A statement about THIS entity outranks the module-wide
+ *    one: this order is the function's whole point (its callers describe it as
+ *    "the module's order of specificity"), and docs/17 row 253 is the owner's
+ *    measured failure of the old order — a module whose premise stated the
+ *    MODULE's own level 3 shadowed the part that described the mob at level 5,
+ *    so `name` was nearly dead code and the mob shipped at 3. This is a
+ *    MODULE statement read by NAME from the plan, never the rendered
+ *    party-level line the brief carries; docs/17 row 206 keeps the generated
+ *    LINE out of the fallback regex, and this function never touches it.
+ * 2. **The premise's own `level N`.** The module author's prose is where the
+ *    owner's first report lived ("i have a level 5 mob in a module (its
+ *    described that way)"), and the premise is the module-wide statement of
+ *    it — the right answer for an entity no part names.
  * 3. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
  *    stated level; a range is not, and inventing a number from it (a midpoint,
  *    a maximum) is the guessing AGENTS rule 1 forbids. So a range `undefined`s
  *    here and the engine refuses loudly instead of letting the model pick.
  *
  * `name` may be omitted for the SPINE-TIME call, where the module has no parts
- * yet: sources 1 and 3 still apply, and source 2 genuinely does not exist.
+ * yet: sources 2 and 3 still apply, and source 1 genuinely does not exist.
  */
 export function moduleStatedLevel(
   module: Pick<Module, 'spine' | 'parts' | 'levelMin' | 'levelMax'>,
   name = '',
 ): number | undefined {
-  const fromPremise = firstLevelInText(module.spine?.premise ?? '');
-  if (fromPremise !== undefined) return fromPremise;
   if (name.trim() !== '') {
     const fromPart = partLevelForMention(module, name);
     if (fromPart !== undefined) return fromPart;
   }
+  const fromPremise = firstLevelInText(module.spine?.premise ?? '');
+  if (fromPremise !== undefined) return fromPremise;
   return module.levelMin === module.levelMax ? module.levelMin : undefined;
 }
 

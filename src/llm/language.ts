@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/llm/openrouter';
-import { generationLanguageLabel } from '@/domain/settings';
+import { GENERATION_LANGUAGES, generationLanguageLabel } from '@/domain/settings';
+import type { GenerationLanguage } from '@/domain/settings';
 
 /**
  * Generation-language enforcement: every LLM prompt sent through the
@@ -55,4 +56,81 @@ export function applyLanguageDirective<M extends DirectiveMessage>(
         : [...message.content, { type: 'text' as const, text: directive }];
     return { ...message, content };
   });
+}
+
+/**
+ * How each generation language SPELLS "level" in generated prose — the ONE
+ * place a language's level wording lives (docs/17 row 253).
+ *
+ * WHY THIS EXISTS. The WRITE side has been language-aware since
+ * `languageDirective` above (a German campaign's prose, premises and module
+ * text all come back in German), while the READ side asked for the English
+ * word: the app's ONE free-text level reader was `/\blevel\s*(\d{1,2})\b/i`,
+ * so a German campaign's own `Stufe 5` was invisible to EVERY level source —
+ * the user's redo instruction, the module's premise, the legacy brief
+ * fallback — and the entity fell through to the module's band. That asymmetry
+ * was the whole defect (docs/17 row 253, the owner's level-5 mob in a level-3
+ * module).
+ *
+ * A UNION, NOT A THREADED ARGUMENT — deliberately. The reader is asked about
+ * text whose language is NOT the setting: an owner types an English redo
+ * instruction about a German module, and a module written in one language can
+ * carry a premise in another. Reading every language's word means no caller
+ * has to know or pass the active language, so a caller that forgets the
+ * argument cannot regress it — which is exactly the bug class that produced
+ * docs/17 row 206 (a caller-rebuilt input that lost a field). The generated
+ * party-level line (`roomBudget.partyLevelLine`) is always ENGLISH, never
+ * localized, so the union does not re-open the party-level trap either.
+ *
+ * EVERY code in `GENERATION_LANGUAGES` must appear here:
+ * `tests/architecture/one-level-resolution.test.ts` fails when one is missing,
+ * so adding a language cannot silently reintroduce this defect.
+ *
+ * Ordering within a list matters for overlapping spellings (the pattern tries
+ * them in declared order); keep the more specific word first.
+ */
+export const LEVEL_WORDS: Readonly<Record<GenerationLanguage, readonly string[]>> = {
+  en: ['level'],
+  de: ['Stufe'],
+  fr: ['niveau'],
+  es: ['nivel'],
+  it: ['livello'],
+  pt: ['nível'],
+  nl: ['niveau'],
+  pl: ['poziom'],
+  ru: ['уровень'],
+  ja: ['レベル'],
+  // Both spellings a model actually reaches for: 等级 is the dictionary term,
+  // 级别 the common TTRPG one (verified against generated German/Chinese usage
+  // rather than trusted from the brief alone — docs/17 row 253).
+  zh: ['等级', '级别'],
+};
+
+/**
+ * The ONE regex source that finds a level word in ANY supported language,
+ * anchored so a level word is a standalone token in BOTH scripts
+ * (docs/17 row 253).
+ *
+ * THE BOUNDARY IS THE WHOLE PROBLEM FOR CJK. A leading `\b` (the English
+ * reader's anchor) can NEVER match before a kana/ideograph: JavaScript's `\w`
+ * is ASCII-only, so `レ` is a NON-word character, no boundary exists between
+ * it and the start of the string, and `\bレベル` therefore matches nothing —
+ * measured, not reasoned. The trailing `\b` stays (ASCI digits ARE `\w`, so a
+ * boundary after them always exists), and it is what keeps the app's level
+ * domain honest: `level 2024` captures `20`, which the 1..20 bound then
+ * rejects, so a four-digit year is never read as a level.
+ *
+ * The leading anchor is therefore a negative lookbehind over `[A-Za-z0-9_]` —
+ * NOT over `\p{L}`: a Unicode property escape would also forbid the kana
+ * immediately before the CJK word (`高レベル5` would stop resolving), trading
+ * a false positive for a false negative in the very script this exists for.
+ * The ASCII class reproduces the OLD reader's standalone-word intent exactly
+ * (`counterlevel 5` / `levelup 5` still resolve nothing) while allowing a CJK
+ * prefix. `i` case-folds the Latin words; `u` lets non-ASCII sources compile.
+ * The caller applies the level DOMAIN (1..20) — this pattern only finds the
+ * number.
+ */
+export function levelWordsPattern(): RegExp {
+  const words = GENERATION_LANGUAGES.flatMap(({ code }) => [...LEVEL_WORDS[code]]);
+  return new RegExp(`(?<![A-Za-z0-9_])(${words.join('|')})\\s*(\\d{1,2})\\b`, 'iu');
 }

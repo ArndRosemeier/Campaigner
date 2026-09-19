@@ -319,9 +319,10 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/llm/canvasChat.ts': 1,
     'src/llm/canvasRefine.ts': 3,
     'src/llm/imageGen.ts': 1,
-    // docs/17 row 247: the ONE `level N` reader over the module's own premise /
-    // part prose and over a user's change instruction.
-    'src/llm/roomBudget.ts': 1,
+    // docs/17 rows 247 and 253: the ONE level reader (in `roomBudget.ts`) is
+    // fed by the ONE level-WORD vocabulary (in `language.ts`), and the ASCII
+    // shape moved with the regex when the reader became language-aware.
+    'src/llm/language.ts': 1,
     'src/llm/strictSchema.ts': 1,
     'src/llm/visionDungeon.ts': 1,
   };
@@ -346,8 +347,8 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
       'the `@Type[…]{…}` inline-notation grammar of the Foundry pack format: machine syntax',
     'src/ingest/statblock.ts':
       'the d20 STAT BLOCK vocabulary (Armor Class, Hit Points, Speed, STR/DEX/CON, Challenge, Level) and its numbers — English format keywords by the systems\u2019 own spec. A stat block written with non-ASCII digits MISSES detection (the chunk is simply not classified), it is never corrupted, and a citation that then finds no chunk fails loudly (docs/17 row 155)',
-    'src/llm/roomBudget.ts':
-      'the `level N` reader (`firstLevelInText`) over the module\u2019s own premise / part prose and over a user\u2019s change instruction: the English word `level` plus ASCII digits, which is the RAW MATERIAL of a level rather than prose to classify. Its failure mode is a MISSING level, never corrupted text \u2014 with no exact statement the module\u2019s band BOUNDS the block, and a module-owned run with no band refuses loudly (docs/17 row 247). Residual and accepted: prose written in another language (\u201eStufe 5\u201c) states no `level`, so the structured `levelHint` / exact band is the channel that must carry it',
+    'src/llm/language.ts':
+      'the level-READER pattern (`levelWordsPattern`, docs/17 rows 247 and 253) over the module\u2019s own premise / part prose and over a user\u2019s change instruction: the ASCII digits plus the leading `[A-Za-z0-9_]` lookbehind are the RAW MATERIAL of a level rather than prose to classify. The language assumption this scan hunts is NOT here — the alternation is the UNION of all eleven `GENERATION_LANGUAGES` level words (`LEVEL_WORDS`, machine-enforced complete), CJK included — which is exactly why this file is an ASCII SHAPE and not a bug. Its failure mode is a MISSING level, never corrupted text \u2014 with no exact statement the module\u2019s band BOUNDS the block, and a module-owned run with no band refuses loudly (docs/17 row 247). Residual and accepted: an ASCII-letter lookbehind also declines a kanji immediately prefixing the CJK word (\u201e\u9ad8\u30ec\u30d9\u30eb5\u201c), because the alternative \u2014 a `\\p{L}` lookbehind \u2014 would decline the ordinary CJK spelling `\u30ec\u30d9\u30eb5` itself',
     'src/lib/base64.ts': 'charCodeAt over a BINARY string (base64 bytes), not over text',
     'src/lib/encodingHygiene.ts':
       'the DEBRIS DETECTOR itself: `?` + two lowercase hex, and the literal `\\uXXXX` escape. ASCII is the POINT — the defect it finds IS a mangled non-ASCII character (docs/18 §2, row 177)',
