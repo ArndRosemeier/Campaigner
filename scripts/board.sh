@@ -49,10 +49,26 @@ age_min() { find "$1" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1 |
 # a check (rows 231/232).
 OPENCODE_API_URL="${OPENCODE_API_URL:-http://127.0.0.1:5551}"
 oc_api_ok=0
-oc_sessions=""
+oc_sessions="[]"
 if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  if oc_sessions="$(curl -fsS --max-time 5 "$OPENCODE_API_URL/session" 2>/dev/null)" && [ -n "$oc_sessions" ]; then
+  # Sessions are DIRECTORY-SCOPED: `GET /session` with NO directory returns the
+  # server's own default project, NOT this repo's — MEASURED on 2026-09-19: a
+  # just-spawned Campaigner child was ABSENT from the no-directory list but
+  # present under `?directory=$PWD`. So query the main tree AND every in-repo
+  # worktree (a `task`-launched writer can run under a worktree directory) and
+  # merge. Reachability is decided by the MAIN query (an all-failed merge would
+  # otherwise look like a reachable-but-empty API).
+  if main_json="$(curl -fsS --max-time 5 --get --data-urlencode "directory=$PWD" "$OPENCODE_API_URL/session" 2>/dev/null)"; then
     oc_api_ok=1
+    oc_sessions="$main_json"
+    while IFS= read -r wt; do
+      [ -z "$wt" ] && continue
+      [ "$wt" = "$PWD" ] && continue
+      if wt_json="$(curl -fsS --max-time 5 --get --data-urlencode "directory=$wt" "$OPENCODE_API_URL/session" 2>/dev/null)"; then
+        oc_sessions="$(jq -s 'add // []' <<<"$oc_sessions
+$wt_json" 2>/dev/null || printf '%s' "$oc_sessions")"
+      fi
+    done < <(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}')
   fi
 fi
 # A session named on the board may be spelled by id (`ses_…`) or slug; match
