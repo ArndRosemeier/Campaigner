@@ -1,4 +1,5 @@
-import { resolveMonsterEntry, type ResolvedMonster } from '@/domain/encounterResolve';
+import { type ResolvedMonster } from '@/domain/encounterResolve';
+import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
 import type { Id, MonsterEntry } from '@/domain';
 import { getArtifact } from '@/db/artifactRepo';
 import { getChunksByContentHash } from '@/db/chunkRepo';
@@ -6,8 +7,15 @@ import { db } from '@/db/db';
 
 /**
  * Repo-wired monster resolution (07-MILESTONE-3 M3-B): the UI-facing variant
- * of `resolveMonsterEntry` (pure logic lives in
- * `/src/domain/encounterResolve.ts` with injected lookups).
+ * of the pure resolver (pure logic lives in `/src/domain/encounterResolve.ts`
+ * with injected lookups, and the ONE legacy read in
+ * `/src/domain/mobCopyLegacy.ts`).
+ *
+ * Since docs/17 row 248c it dispatches through `resolveStoredMonsterEntry`: the
+ * LIVE model has one representation (`inline` / `none`) and the pure resolver
+ * carries no legacy arm, so a stored pointer the v24 migration could not
+ * convert — the start-up retry's handle — is read and resolved by the seam
+ * rather than by every consumer.
  *
  * Content-hash fallback (chunk-hash-fallback arc): several local chunks may
  * share one hash (re-ingests) — prefer the one that actually carries stats,
@@ -15,7 +23,7 @@ import { db } from '@/db/db';
  * never satisfies).
  */
 export function resolveMonsterEntryWithRepos(entry: MonsterEntry): Promise<ResolvedMonster> {
-  return resolveMonsterEntry(entry, {
+  return resolveStoredMonsterEntry(entry, {
     getArtifact,
     getChunk: (id: Id) => db.chunks.get(id),
     getChunkByContentHash: async (contentHash: string) => {

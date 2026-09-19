@@ -7,8 +7,12 @@ import {
   creatureCitationName,
   creatureOriginLabel,
   resolveCreatureChunk,
-  type CreatureCitation,
 } from '@/domain/encounterResolve';
+import {
+  storedNpcCitation,
+  storedRulebookCitation,
+  withoutLegacyNpcPointer,
+} from '@/domain/mobCopyLegacy';
 
 /**
  * THE one loud, idempotent mob-COPY migration (docs/17 row 248) — the seam
@@ -72,30 +76,13 @@ import {
  * runs it twice pins this.
  */
 
-/** The five fields a citation can carry, read from an untyped stored row. */
-interface RawCitation {
-  chunkId?: unknown;
-  contentHash?: unknown;
-  creatureName?: unknown;
-  bookTitle?: unknown;
-}
-
 /** One roster entry as the migration reads it: the two fields it inspects, with
  * `source` possibly absent on a row no schema ever validated. The spread that
  * writes the entry back copies every ORIGINAL key at runtime — this type only
  * narrows what the seam itself reads. */
 interface EncounterEntryLike {
   name: string;
-  source?: { type?: unknown } & RawCitation;
-}
-
-function citationOf(raw: RawCitation): CreatureCitation {
-  return {
-    ...(typeof raw.chunkId === 'string' ? { chunkId: raw.chunkId } : {}),
-    ...(typeof raw.contentHash === 'string' ? { contentHash: raw.contentHash } : {}),
-    ...(typeof raw.creatureName === 'string' ? { creatureName: raw.creatureName } : {}),
-    ...(typeof raw.bookTitle === 'string' ? { bookTitle: raw.bookTitle } : {}),
-  };
+  source?: unknown;
 }
 
 /** The error text a caught throw carries — the `message` when it has one, the
@@ -211,12 +198,13 @@ export async function repairMobCopies(
     const monsters: unknown[] = [];
     for (const entryRaw of row.data.monsters) {
       const entry = entryRaw as EncounterEntryLike;
-      const source = entry.source;
-      if (source?.type !== 'rulebook') {
+      // THE one legacy read of a roster pointer (docs/17 row 248c): the seam
+      // owns the stored shape, so this module spells no citation field itself.
+      const citation = storedRulebookCitation(entry.source);
+      if (citation === undefined) {
         monsters.push(entryRaw);
         continue;
       }
-      const citation = citationOf(source);
       const chunk = await resolveCreatureChunk(citation, lookups);
       if (chunk?.statBlock == null) {
         report.unconverted.push({
@@ -276,11 +264,12 @@ export async function repairMobCopies(
     };
     if (row.kind !== 'npc') continue;
     const data = row.data;
-    const rawRef = data?.creatureRef;
-    if (data === undefined || typeof rawRef !== 'object' || rawRef === null) continue;
+    if (data === undefined) continue;
+    // THE one legacy read of an NPC pointer (docs/17 row 248c).
+    const citation = storedNpcCitation(data);
+    if (citation === undefined) continue;
     const npcName = typeof row.name === 'string' ? row.name : 'unnamed npc';
     const where = 'an authored NPC';
-    const citation = citationOf(rawRef);
     if (citation.chunkId === undefined && citation.contentHash === undefined) {
       report.unconverted.push({
         where,
@@ -310,10 +299,11 @@ export async function repairMobCopies(
         creatureCitationName(citation, npcName),
         { getRulebook },
       );
-      // `creatureRef` is dropped, never left beside the copied block: the schema
-      // refine forbids the pair, and a second reader of the pointer would be the
-      // fragmentation this arc removes.
-      const { creatureRef: _dropped, ...rest } = data;
+      // The legacy pointer is dropped, never left beside the copied block: the
+      // schema refine forbids the pair, and a second reader of it would be the
+      // fragmentation this arc removes. The FIELD NAME lives in the seam, so
+      // this module reads and removes a stored pointer nowhere itself.
+      const rest = withoutLegacyNpcPointer(data);
       await artifacts.put({
         ...(row as Record<string, unknown>),
         data: { ...rest, statBlock: chunk.statBlock, sourceLine },

@@ -69,15 +69,19 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
     const holders = files.filter((file) => source(file).includes(LABEL_CALL));
     expect(holders, 'files composing the derived-stats label').toEqual([
       'domain/encounterResolve.ts',
+      // The legacy-read seam composes the ONE label for a MIGRATED cast row
+      // (docs/17 row 248c): that disclosure moved here with the `npc-ref` arm
+      // when the live resolver lost its legacy branch. It is the same composer,
+      // called from the module that owns the pointer read — not a second
+      // implementation, which the holder list is what guards against.
+      'domain/mobCopyLegacy.ts',
     ]);
-    // …its own definition plus TWO calls, BOTH inside the one file and BOTH
-    // through this ONE composer: the live derived-stats rule
-    // (`resolveDerivedNpcStats`) and — added by the mob-copy migration, docs/17
-    // row 248 — the arm that discloses a CONVERTED cast NPC from its STAMPED
-    // `sourceLine`. The count moved 2→3 because a second legitimate CALLER
-    // appeared, not because a second implementation did: the single-holder
-    // assertion above is the guard against that, and it is unchanged.
-    expect(occurrences(source('domain/encounterResolve.ts'), LABEL_CALL)).toBe(3);
+    // …its own definition plus ONE call inside the rule file: the live
+    // derived-stats rule (`resolveDerivedNpcStats`). The migrated-cast-row call
+    // moved to the seam with the arm (docs/17 row 248c), so this count moved
+    // 3→2 for the same reason the holder list grew: the ONE composer has one
+    // more module calling it, never a second implementation.
+    expect(occurrences(source('domain/encounterResolve.ts'), LABEL_CALL)).toBe(2);
   });
 
   it('scan: the repo-wired read DELEGATES to the domain rule, and every surface MOUNTS the ONE renderer', () => {
@@ -89,15 +93,17 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
     expect(creatureRepo).toContain('return derivedNpcStats(npcName, citation, creatureLookups());');
     expect(creatureRepo.includes(LABEL_CALL), 'creatureRepo composes the label itself').toBe(false);
 
-    // The derivation has exactly THREE holders in `src/`: the domain rule
-    // itself, the repo-wired read top code calls, and the ONE component that
-    // draws it. A FOURTH file asking the derivation directly is a second
-    // rendering of the same numbers — the duplication this pin exists to make
-    // visible.
+    // The derivation has exactly FOUR holders in `src/`: the domain rule
+    // itself, the repo-wired read top code calls, the ONE component that draws
+    // it, and — since docs/17 row 248c — the legacy-read seam that resolves a
+    // stored `creatureRef` for a row the v24 migration could not convert. A
+    // FIFTH file asking the derivation directly is a second rendering of the
+    // same numbers — the duplication this pin exists to make visible.
     const holders = srcFiles().filter((file) => source(file).includes(DERIVED_READ));
     expect(holders, 'files reading the derived stats').toEqual([
       'db/creatureRepo.ts',
       'domain/encounterResolve.ts',
+      'domain/mobCopyLegacy.ts',
       'features/campaign/components/borrowed-stats.tsx',
     ]);
 

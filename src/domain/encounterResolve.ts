@@ -1,4 +1,4 @@
-import type { AnyArtifact, Id, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
+import type { AnyArtifact, Id, LiveMonsterEntry, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
 import { creatureRefIsEmpty } from '@/domain/creature';
 
 /**
@@ -513,10 +513,17 @@ export function rosterTreasureFor(entry: MonsterEntry): MonsterTreasure | null {
   return { text, printed: `${TREASURE_LABEL}${text}` };
 }
 
-export async function resolveMonsterEntry(
-  entry: MonsterEntry,
-  lookups: MonsterLookups,
-): Promise<ResolvedMonster> {
+/**
+ * Resolve a LIVE roster entry — the two representations the model has left
+ * (docs/17 row 248): an authored COPY (or authored block), and a name-only
+ * entry. This function deliberately carries NO legacy arm: a stored legacy
+ * pointer is read and resolved by the ONE seam
+ * `domain/mobCopyLegacy.resolveStoredMonsterEntry`, which `db/monsterResolve`
+ * dispatches through. Handing this function a legacy entry is a programming
+ * error the narrowed `LiveMonsterEntry` type makes unrepresentable rather than
+ * a silent wrong answer (AGENTS rule 1).
+ */
+export function resolveMonsterEntry(entry: LiveMonsterEntry): ResolvedMonster {
   // The entry's own STAMPED origin line, when it is a migrated copy (docs/17
   // row 248) — read once, so the inline arm below and every other reader of
   // this entry agree about what it says.
@@ -531,45 +538,6 @@ export async function resolveMonsterEntry(
         statBlock: entry.source.statBlock,
         origin: stamped === undefined || stamped === '' ? 'inline' : stamped,
       };
-    case 'npc-ref': {
-      const artifact = await lookups.getArtifact(entry.source.artifactId);
-      // An authored NPC whose row is gone is a real dangling reference — a
-      // campaign row the GM can see and restore. No CREATURE citation can
-      // reach this branch (docs/11 D9): it is the artifact row that is absent,
-      // not a library one. The spelling is still the ONE shared reason, named
-      // by the roster entry, so a reader never has to learn a second phrase to
-      // find out WHAT is missing.
-      if (artifact === undefined) {
-        return { statBlock: null, ...missingRefReason(entry.name) };
-      }
-      if (artifact.kind !== 'npc') return { statBlock: null, origin: `NPC: ${artifact.name}` };
-      const creatureRef = artifact.data.creatureRef;
-      if (creatureRef !== undefined) {
-        // D3, the Aunt Agatha path: her prose, the library creature's stats —
-        // ONE rule with the row's own details surface (docs/17 row 134):
-        // `resolveDerivedNpcStats` above is what both call, so an encounter
-        // can never list numbers the npc's own panel does not show.
-        return resolveDerivedNpcStats(artifact.name, creatureRef, lookups);
-      }
-      // A MIGRATED cast row (docs/17 row 248): the library's numbers were
-      // COPIED onto the row and the disclosure line stamped with them, so the
-      // NPC still shows "stats from Bestiary p.132" even though nothing
-      // resolves any more. An authored NPC has no stamp and keeps its own name.
-      const npcStamped = artifact.data.sourceLine?.trim();
-      return {
-        statBlock: artifact.data.statBlock,
-        origin:
-          npcStamped === undefined || npcStamped === ''
-            ? `NPC: ${artifact.name}`
-            : derivedStatOrigin(artifact.name, npcStamped),
-      };
-    }
-    case 'rulebook':
-      return resolveCreatureCitation(
-        entry.source,
-        creatureCitationName(entry.source, entry.name),
-        lookups,
-      );
     case 'none':
       return { statBlock: null, origin: '' };
   }

@@ -107,7 +107,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
 | Cite a library creature from an encounter roster (no artifact, nothing created; **the CITATION half is being retired — docs/17 row 248**) | The roster's `source` (`rulebook` / `npc-ref` / `inline` / `none`) + `db/creatureRepo.resolveCreatureCitation` — a citation names the BESTIARY (chunk id, else the content hash recorded at citation birth) and materializes nothing. **Since Dexie v24 the migration `db/mobCopyRepair.repairMobCopies` CONVERTS a resolvable `rulebook` citation into an `inline` COPY of the chunk's `statBlock`, STAMPS the origin line onto `monsterEntry.sourceLine` (the label used to be composed at read time) and keeps the portrait identity as the opaque `monsterEntry.originToken`; `rosterEntryCreatureIdentity` reads the token FIRST, so a copy is still the SAME creature and no `mobPortraits`/`creatureImages` row needs remapping. A row that could NOT be converted KEEPS its `rulebook` source — the start-up retry's handle — and is named in `settings.mobCopyRepair`** | the retired `mobArtifacts.getOrCreateMobArtifact` (docs/17 row 106)ing it away from the first module | scan-then-`createArtifact` in separate txs (splits token identity); moving a placed mob artifact to another module; **composing a copied mob's origin line from a live chunk read** (the stamp IS the data — `tests/db/mobCopyRepair.test.ts` proves the line reads with every library lookup throwing); **dropping the `chunk:` origin token when a pointer is copied** (it would orphan the creature's portrait and re-label it hand-written) |
 | Cast a library creature as this campaign's OWN npc (the Aunt Agatha path) | `db/creatureRepo.castCreatureAsNpc` — ONE function, idempotent per (campaign, module, name, IDENTITY): it creates the row on first cast, REUSES it on the second (writing nothing), refuses a same-named rival that draws from a different creature, refuses to cast over an authored npc, and refuses a creature the library cannot supply. Only the MODULE generator and the bestiary spawn dialog hold it | `createArtifact` plus a hand-written `creatureRef` at a call site; any cast attempt from the encounter side (structurally impossible — the roster schema cannot express one) |
-| **Convert a mob's library citation into an authored COPY (the one-representation migration)** (docs/17 row 248) | `db/mobCopyRepair.repairMobCopies({ tx, reason })` — THE one seam, taking the Dexie TRANSACTION and never the `db` singleton (the v20 `creatureRepair` precedent: an upgrade body runs before the upgraded instance is usable). Dexie **v24** calls it with `reason: 'upgrade'`; `db/mobCopyRetry.retryMobCopies()` calls it in an ordinary transaction from AppShell's start-up effect when `settings.mobCopyRepair.unconverted` is non-empty (the owner-decided failure arm). ROSTER arm: `resolveCreatureChunk` + `creatureOriginLabel` over TX-BACKED lookups, writing `{type:'inline', statBlock}`, `sourceLine` and `originToken`. NPC arm: `data.creatureRef` → `statBlock` + `sourceLine`, the ref DROPPED. A row that cannot resolve KEEPS its pointer and is reported BY NAME in `settings.mobCopyRepair`; `domain/mobCopyRepair.formatMobCopyRepair` is the ONE sentence and AppShell says it once (`notified`). IDEMPOTENT: a second run finds nothing and reports all-zero | a second copy mechanism at a render/read site; a `db`-bound wrapper called inside the upgrade tx; a placeholder or empty stat block for a row that did not resolve (the pointer survives instead); dropping the pointer on a row that could not be converted (it is the retry's only handle); **a `catch` around the whole pass instead of the per-row `guard`** (it would lose the row identity and the error text); **a second name-matching implementation** — `domain/libraryCreature` is the ONE (the row below) |
+| **Read and resolve a STORED legacy mob pointer — the ONE legacy-read seam** (docs/17 row 248c) | `domain/mobCopyLegacy` is THE one module that can read a stored pointer AND resolve it. It DECLARES the legacy shape (`LEGACY_NPC_REF_SOURCE_SCHEMA` / `LEGACY_RULEBOOK_SOURCE_SCHEMA`, exported as `LEGACY_MONSTER_SOURCE_ARMS` and composed into `domain/artifact.monsterSourceSchema`, so a row the v24 migration could not convert still PARSES at `db/artifactRepo.parseArtifactRow` — the property that makes the pointer-arm deletion safe); it READS a raw row (`storedRulebookCitation`, `storedNpcCitation`, `withoutLegacyNpcPointer` — the v24 migration's own handle); and it RESOLVES (`resolveLegacyMonsterEntry`, the moved `rulebook` + `npc-ref` arms; `resolveStoredMonsterEntry` dispatches legacy→seam, live→`resolveMonsterEntry`). `domain/encounterResolve.resolveMonsterEntry` takes the narrowed `LiveMonsterEntry` (`inline` / `none`) and carries NO legacy arm, so `db/monsterResolve.resolveMonsterEntryWithRepos` — the one reader the missing-refs banner, battle seeding, canvas chat and export import all call — reaches the seam for every stored entry. `tests/architecture/one-legacy-mob-read.test.ts` is the pin: the legacy `z.literal` arms exist in the seam alone; `resolveMonsterEntry(` has exactly ONE caller (the seam); the migration and the banner spell no pointer read; and every `src/` module that STILL spells a pointer is DECLARED as the deletion's worklist (rot-checked, so cleaning one deletes its entry). Pinned behaviourally by `tests/db/mobCopyRepair.test.ts`: a stored legacy row LOADS through `artifactRepo.getArtifact`, the seam resolves it to the named missing-ref reason, and a source that is neither live nor legacy still THROWS | a second resolution of a stored pointer outside the seam; the migration or the banner spelling a pointer field itself; a permissive read that lets an unknown source through (the boundary still throws — AGENTS rule 1); **treating the legacy arms as part of the LIVE model** — they exist in `MonsterSource` only because it describes what can be READ off a row, and `LiveMonsterEntry` is the live shape |
+| **Convert a mob's library citation into an authored COPY (the one-representation migration)** (docs/17 row 248) | `db/mobCopyRepair.repairMobCopies({ tx, reason })` — THE one seam, taking the Dexie TRANSACTION and never the `db` singleton (the v20 `creatureRepair` precedent: an upgrade body runs before the upgraded instance is usable). Dexie **v24** calls it with `reason: 'upgrade'`; `db/mobCopyRetry.retryMobCopies()` calls it in an ordinary transaction from AppShell's start-up effect when `settings.mobCopyRepair.unconverted` is non-empty (the owner-decided failure arm). ROSTER arm: `resolveCreatureChunk` + `creatureOriginLabel` over TX-BACKED lookups, writing `{type:'inline', statBlock}`, `sourceLine` and `originToken`. NPC arm: `data.creatureRef` → `statBlock` + `sourceLine`, the ref DROPPED. A row that cannot resolve KEEPS its pointer and is reported BY NAME in `settings.mobCopyRepair`; `domain/mobCopyRepair.formatMobCopyRepair` is the ONE sentence and AppShell says it once (`notified`). IDEMPOTENT: a second run finds nothing and reports all-zero. Its pointer READS go through the legacy seam above (`storedRulebookCitation` / `storedNpcCitation` / `withoutLegacyNpcPointer`), so this module spells no pointer field itself | a second copy mechanism at a render/read site; a `db`-bound wrapper called inside the upgrade tx; a placeholder or empty stat block for a row that did not resolve (the pointer survives instead); dropping the pointer on a row that could not be converted (it is the retry's only handle); **a `catch` around the whole pass instead of the per-row `guard`** (it would lose the row identity and the error text); **a second name-matching implementation** — `domain/libraryCreature` is the ONE (the row below) |
 | **Resolve a module entity's `bestiary` slot to a library creature CITATION — from a live read OR from inside a Dexie transaction** (docs/17 row 248's remaining slice) | `domain/libraryCreature.libraryCitationForSlot(entityName, slot, pool, { bookTitleOf, stampBookTitleOf, system?, nearest? })` is THE name match: the exact comparison (`domain/creatureName.sameCreatureName`), the book disambiguation, the two loud refusals (no such name, still ambiguous) and the citation built through the ONE `contentIdentityFor`. It owns NO IO — the caller hands in the pool and the two book-title reads — which is what makes it callable from `db/mobCopyRepair`'s upgrade transaction. The POOL is derived by the sibling `libraryCreaturePool(chunks, { system?, books? })`, and `db/creatureRepo.listLibraryCreatures` now DELEGATES to it, so the live pool and a tx-backed one cannot drift. `features/modules/entity-batch.libraryCitationForEntity` is the live wrapper (it does the `db` reads and passes `nearestLibraryCreatures`) and the ONE production caller. `tests/architecture/one-library-name-match.test.ts` is the exactly-one pin: it reds a second `filter(… => sameCreatureName(` anywhere in `src/`, a second `contentIdentityFor(` in the cast/migration lanes, and a second pool derivation | **a second name-matching implementation for a tx path** (the defect this seam exists to make impossible); reading `db` from the seam (it would stop being tx-callable); a hand-rolled `name.trim().toLowerCase()` comparison beside `sameCreatureName` (docs/17 row 166); filtering/sorting the library pool anywhere but `libraryCreaturePool` |
 | Ask the MODULE GENERATOR for a cast (the Aunt Agatha path, docs/17 row 107) | The entity record's optional `bestiary` slot (`domain/module.ts` — `{ creature, book? }`, the creature's name as the library spells it, `book` only when two books share it) + the spine clause `llm/promptStyles.spineEntityKindsClause` (rendered ONLY when `db/creatureRepo.listLibraryCreatures` is non-empty, so an empty library composes the pre-change prompt byte for byte) + `features/modules/entity-batch.libraryCitationForEntity` resolving the NAME to a citation at finalize and casting through `castCreatureAsNpc`. A persona run IS started for that entity, ALWAYS, since docs/17 row 135 — the module's paragraphs are its context, never its description (see the row below) — and the stats are never the run's, they stay the library's. **THE SLOT'S `book` IS A DISAMBIGUATOR, NEVER A VETO (docs/17 row 161): exactly ONE library creature of that name RESOLVES whatever book the slot named — the book is not even read on that arm; two or more need a book that matches EXACTLY ONE candidate; and the name match is EXACT, because the pool is the prompt's own VOCABULARY (row 114) and a fuzzy match would cast a different creature than the module asked for.** A name the library cannot supply, or one whose ambiguity its book does not narrow to one candidate, FAILS the entity loudly by name into the batch's existing `failed[]` — the no-such-name arm byte-identical to before (nearest-name suggestions included), the ambiguity arm listing every candidate WITH the book it really comes from. The citation ALWAYS stamps the LIBRARY's title (`domain/encounterResolve.citationBookTitle`), never the slot's string | writing `creatureRef` by hand at a call site; a second creature lookup or a second cast function; **a FUZZY or nearest name match at resolve** (the pool is the prompt's vocabulary — a suggestion is a MESSAGE, never a cast); **a silent pick among ambiguous candidates**; **a book title taken from the MODEL rather than the library** (the slot's `book` is a hint the model may have localised — it must never become the citation's `bookTitle`, or `missing ref` names a pack that does not exist); **a second copy of the lookup** (a source pin in `tests/features/entity-batch-creature-book.test.ts` holds `listLibraryCreatures`'s call sites to `db/creatureRepo` / `llm/creatorRoster` / `entity-batch`, and the definition of `libraryCitationForEntity` to ONE file); guessing between two candidates; dropping the prose into a statless twin; making the clause unconditional (an unconditional clause changes the prompt for every workspace that has no bestiary) |
 | **Decide whether a cast entity has a DESCRIPTION at all** — **CLOSED by docs/17 row 135** (opened at row 133): there is no such decision, and the seam that made it is DELETED from `src/` | NOTHING decides it: every NPC the module's text produced gets an authored description, because a batch target is BY CONSTRUCTION a wiki-link of the module text (`post-generation.namesOfKind` = `extractWikiLinks(moduleDocumentText)`, filtered by the recorded kind) and the link IS the name — the owner, verbatim: *"An NPC is named if its a wikilink in the module text. Because that link IS the name."* / *"Author a description anyway."* The entity's own persona runs TARGETING the cast row (`targetArtifactId`, no placement) so the ratified cited-row REFILL does the write: statblock step `'skipped'` with its reason before the model call, citation byte-identical, `statBlock` null. The module's own paragraphs ride the SAME brief the ordinary npc arm builds, as CONTEXT — the anchor is the LINK, not a search for the name string: `surroundingParagraphs` normalizes every wiki token to its TARGET name before matching, so an aliased `[[Aunt Agatha\|Müllerin]]`, whose name never appears in the rendered prose, is still found and its raw token still reaches the model. The no-clobber guarantee is the TARGET SET now: `batchTargets` filters on `hasDetailedEntity`, so a name that already has an authored row of its own — exactly what a description makes it — is not a target at all, and `castCreatureAsNpc` refuses (never takes over) a same-named row that is not the same creature | re-introducing a threshold, a length check, a word count, a name-strip or any "is this passage descriptive enough?" seam — `lib/wikilinks.describesEntity` and its floor `ENTITY_DESCRIPTION_FLOOR` are GONE and a source scan holds their absence (a textual scan cannot see a dead condition, so the behaviour is pinned through the REAL engine as well); letting the module's mention stand in for a description; reading the module's paragraphs as anything but context; asking the cast row's OWN body whether to write (row 133's second ask, deleted — the target set is the guarantee); authoring a stat block for a cast row, or minting an ordinary npc beside the cast; writing the description through anything but the cited-row refill |
@@ -2382,19 +2383,28 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   Pinned by `tests/db/mobCopyRepair.test.ts`'s injected-fault arm, which asserts BOTH that
   the run completes and that the report names the row with the error text.
 - **STILL OPEN — the pointer ARMS are not deleted, and the module arm is not converted
-  (docs/17 row 248's remaining slice, measured at `366d140`).** The name-matching
-  centralization LANDED (`domain/libraryCreature`, §2.1): the ONE seam is tx-callable and
-  `db/creatureRepo.listLibraryCreatures` delegates to its pure pool derivation. What did
-  NOT land, and why:
-  1. **Deleting `monsterSourceSchema`'s `rulebook`/`npc-ref` arms and
-     `npcDataSchema.creatureRef` is blocked on a LEGACY READ that does not exist yet.** An
-     unconvertible row still HOLDS its legacy pointer (the owner-forced exception, above),
-     and `anyArtifactSchema` parses every artifact read (`db/artifactRepo.parseRow`), so
-     deleting the arms makes those rows throw — the failure arm destroying the data it
-     exists to preserve. The required shape is exactly ONE narrow seam that can read a
-     stored legacy pointer (consumed only by the start-up retry and the missing-ref banner)
-     so every other consumer carries one representation; that seam is designed in docs/17
-     row 248 and not built.
+  (docs/17 row 248c, measured at HEAD).** TWO of the three blockers have LANDED. The
+  name-matching centralization (`domain/libraryCreature`, §2.1) is the ONE tx-callable
+  name match, and the LEGACY READ now EXISTS (`domain/mobCopyLegacy`, §2.1, docs/17 row
+  248c): the legacy shape is declared there and composed into the read schema, the v24
+  migration reads its pointers through it, `db/monsterResolve` dispatches every stored
+  entry through `resolveStoredMonsterEntry`, and the live resolver
+  (`domain/encounterResolve.resolveMonsterEntry`) carries NO legacy arm. What did NOT
+  land, and why:
+  1. **The pointer arms are not yet DELETED from the live model — and the deletion is now
+     a TYPE-STRADDLE decision, not a search for consumers.** `monsterSourceSchema` must
+     keep ACCEPTING `rulebook`/`npc-ref` (and `npcDataSchema` its `creatureRef`) so a row
+     the migration could not convert still PARSES — that is what the legacy seam buys, and
+     it is pinned by `tests/db/mobCopyRepair.test.ts` ("LOADS a stored legacy pointer
+     through the app read path"). What remains is that the CMS-facing TYPE `MonsterSource`
+     still contains the legacy arms, so `tsc` cannot yet name the consumers that handle
+     them: narrowing the exported type while the read boundary stays tolerant means the
+     parsed row can be a legacy pointer the type says is impossible — an unsound type
+     unless the seam is the ONLY reader, which is why this is a design decision (a
+     separate read-schema type vs. canonicalising at parse) and not a mechanical arm
+     removal. The worklist is DECLARED and rot-checked in
+     `tests/architecture/one-legacy-mob-read.test.ts` (29 `src/` files still spell a
+     pointer; the migration and the banner no longer do).
   2. **Converting `entityKinds[].bestiary` to a copy is a FORK, not a code change.** The
      slot is a cast REQUEST whose only fulfilment is the npc artifact's `creatureRef`, which
      the migration's NPC arm ALREADY converts; the module slot itself stores no stats, so
@@ -2405,11 +2415,26 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      the name match tx-callable, which was the recipe's stated blocker; the representation
      decision is the owner's.
   3. The renderers' attribution rewrite (`BorrowedStatBlock`'s async citation arm, and the
-     pointer branches in `rosterReferenceFor` / `rosterStatBlockFor` / `resolveMonsterEntry`)
-     is unchanged and still serves the unconverted rows.
-  The measured blast radius at `366d140` is unchanged from slice 1: `'rulebook'` 41
-  hits/23 files, `'npc-ref'` 35/21, `creatureRef` 84 refs, 20 `src/` files and ~10 test
-  files touch the union.
+     pointer branches in `rosterReferenceFor` / `rosterStatBlockFor`) is unchanged and still
+     serves the unconverted rows; `resolveMonsterEntry` is the one that DID move (its
+     `rulebook` / `npc-ref` arms now live in the legacy seam).
+  4. **THE BATTLE-TOKEN CHAIN STILL RESOLVES THE `chunk:` TOKEN — the one place the
+     "identity, not a resolver" statement is FALSE (row 248c's discovery, corrected here
+     rather than left standing).** `db/battleSeed` stamps `token.creatureKey` from
+     `rosterEntryCreatureIdentity` (the migrated copy's preserved `chunk:<id>` token), and
+     `db/creatureRepo.tokenCreature` maps a `chunk:` key straight to a LIVE
+     `resolveCreatureCitation` read, which `features/play/battle/BattleSurface` prints as the
+     token card's stat block. For a MIGRATED roster mob the token's synthetic per-instance
+     `artifactId` has no artifact row behind it, so the `?? selectedArtifact.data.statBlock`
+     fallback cannot save it: uninstall the pack and the battle card loses its numbers even
+     though the encounter's own copy keeps them. A converted CAST NPC is unaffected (its
+     token resolves through the NPC artifact's COPIED `data.statBlock`). The fix is to make
+     the token card read the STAMPED copy — the token is an identity, not a resolver, and
+     `tokenCreature` must stop treating it as one — which is a battle-seeding/surface slice
+     of its own, NOT part of the legacy-read seam.
+  The measured blast radius at HEAD is `'rulebook'` 41 hits/23 files, `'npc-ref'` 35/21,
+  `creatureRef` 84 refs — 29 `src/` files in the declared union (the third figure, and the
+  file list, are the pin's own data rather than a remembered count).
 - **A LANDED row whose `sha=` is not on `origin/main` is DROPPED SILENTLY by the deploy's badge resolver**
   (docs/17 rows 250, 253). `scripts/buildStatus.mjs` takes the newest GATE GREEN LANDED record off
   `docs/20` and resolves that commit on HEAD's ancestry; when the sha was rebased away between the
@@ -2424,43 +2449,15 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   (`sha=68a401b (rebased from 98a935b; …)`). A board-wide audit on 2026-09-19 checked all 77 LANDED rows
   against `origin/main` and found exactly this one offender, now corrected. NOT yet hardened in code:
   the resolver could NAME a verified claim it had to drop rather than passing over it in silence.
-- **THE MOB-COPY ARC'S REMAINING SLICE (docs/17 row 248, landed as the v24
-  migration only).** The one-representation model is only HALF landed: the
-  migration converts what resolves and every CONVERTED row is now an authored
-  copy (no pointer), but the pointer ARMS still exist in code and are still read
-  by three populations, deliberately:
-  1. **A mob the migration could not convert KEEPS its `rulebook` source /
-     `creatureRef`** — that pointer is the start-up retry's only handle
-     (`settings.mobCopyRepair.unconverted`, `db/mobCopyRetry`). Deleting it would
-     lose the ability to heal the row when the pack is installed; the alternative
-     arm was rejected by the owner. So `resolveCreatureChunk`,
-     `resolveDerivedNpcStats`, `monsterSourceSchema`'s `rulebook` arm and the
-     `creatureRef` field CANNOT be deleted while the retry exists.
-  2. **`entityKinds[].bestiary` (the MODULE arm) is NOT converted — and the
-     name-matching blocker is RESOLVED.** It is a cast REQUEST whose fulfilment is
-     the npc artifact's `creatureRef` (which the NPC arm above already converts),
-     and the recipe's LOUD UNKNOWN (b) is CONFIRMED by measurement:
-     `features/modules/entity-batch.libraryCitationForEntity` reaches
-     `db/creatureRepo.listLibraryCreatures` → `db.rulebooks`, which is not
-     callable inside the upgrade transaction. **docs/17 row 248's remaining slice
-     LANDED the in-tx path**: `domain/libraryCreature.libraryCitationForSlot` +
-     `libraryCreaturePool` are the ONE name match and pool derivation, pure and
-     IO-free, and the live cast now delegates to them; the exactly-one pin is
-     `tests/architecture/one-library-name-match.test.ts`. What remains is a
-     REPRESENTATION decision, not a centralization one: converting the module
-     slot means either storing the library's block on a module entity record (a
-     SECOND stat representation beside the already-converted cast row — the
-     fragmentation this arc removes) or minting a cast artifact for an entity
-     that may never be generated (duplicating `castCreatureAsNpc`, the ONE cast
-     seam). The measured blast radius at `366d140`: `'rulebook'` 41 hits/23
-     files, `'npc-ref'` 35/21, `creatureRef` 84 refs, 20 `src/` files and ~10
-     test files touch the union.
-  3. **The renderers' attribution rewrite is not done**: `BorrowedStatBlock` still
-     has its async citation arm (a converted cast NPC renders its copied block and
-     disclosure through `resolveMonsterEntry` instead), and the pointer branches in
-     `rosterReferenceFor` / `rosterStatBlockFor` / `resolveMonsterEntry` remain for
-     unconverted rows. A successor brief must carry the "converted rows only"
-     boundary above, or it will delete the retry's handle.
+- **SUPERSEDED — the mob-copy arc's remaining-slice debt is stated ONCE in the
+  "STILL OPEN" bullet above (docs/17 rows 248b, 248c).** This entry duplicated it
+  after the slice-1 landing and is kept only as a pointer: the legacy READ it said
+  was missing now EXISTS (`domain/mobCopyLegacy`, §2.1), so the sentence that
+  "`monsterSourceSchema`'s `rulebook` arm and the `creatureRef` field CANNOT be
+  deleted while the retry exists" is TRUE of the READ SHAPE and no longer true of
+  the RESOLUTION — the retry heals through the seam. The one-representation arc's
+  unbuilt half (the type-straddle deletion and the module arm's representation
+  fork) is enumerated above.
 - **FOLDED (docs/17 row 220): the single-artifact GM export's OWN stat block
   now goes through the text→blocks rule** (§2.3, docs/17 row 146). The history
   is kept because the deferral's reason was right and is why the fix had to be a

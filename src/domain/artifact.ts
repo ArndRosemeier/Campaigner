@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { creatureRefSchema } from '@/domain/creature';
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
-import { sha256HexSchema } from '@/domain/rulebook';
+import { LEGACY_MONSTER_SOURCE_ARMS } from '@/domain/mobCopyLegacy';
 import { statBlockSchema } from '@/domain/statblock';
 import {
   encounterLayoutSchema,
@@ -294,59 +294,39 @@ export const noteDataSchema = z.record(z.string(), z.never());
 export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 
 /**
- * Where a monster's stats come from (07-MILESTONE-3 M3-B; re-based on the
- * library tier by the owner-ratified core-mob arc, docs/11 D5 amendment):
- * - npc-ref: links an authored NPC artifact — stats live with it (or are
- *   DERIVED from a library creature through that NPC's own `creatureRef`);
- * - inline: a one-off embedded StatBlock;
- * - rulebook: **a library creature citation.** A read-only bestiary creature
- *   addressed by IDENTITY (chunk uuid, then its content hash) — never a row
- *   this app owns, never orphaned, never deletable, never authored;
+ * Where a monster's stats come from. The LIVE model has exactly TWO arms
+ * (docs/17 row 248, the one-representation arc):
+ * - inline: the mob's OWN stat block — an authored block, or the authored COPY
+ *   the v24 migration made of a library creature;
  * - none: name-only entry (pre-M3 rows migrate to this).
  *
- * The `rulebook` variant name is PERSISTED and deliberately kept (docs/11
- * D2): a legacy `rulebook` citation already IS exactly this form, and zod
- * strips the two dropped fields, so old rows keep parsing and resolving with
- * zero migration. Renaming it to `creature` would rewrite every stored
- * citation for no behavioural gain.
+ * The LEGACY pointer arms (`rulebook`, `npc-ref`) are accepted by this schema
+ * SOLELY so a stored row the migration could not convert still PARSES — an
+ * unconvertible row keeps its pointer as the start-up retry's handle (the
+ * owner-forced exception, docs/17 row 248), and `anyArtifactSchema` parses
+ * every artifact read. They are declared in `domain/mobCopyLegacy` (THE one
+ * legacy-read seam) and composed here; nothing in this module resolves them.
+ *
+ * `MonsterSource` still contains the legacy arms because it describes what can
+ * be READ off a row; `LiveMonsterSource` / `LiveMonsterEntry` are the narrowed
+ * live shapes the live resolver takes.
  */
 export const monsterSourceSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('npc-ref'), artifactId: z.uuid() }),
   z.object({ type: z.literal('inline'), statBlock: statBlockSchema }),
-  z.object({
-    type: z.literal('rulebook'),
-    chunkId: z.uuid(),
-    /**
-     * Content identity (chunk-hash-fallback arc): SHA-256 of the cited
-     * chunk's text at citation birth. `resolveMonsterEntry` falls back to a
-     * content-hash lookup when the uuid misses (a re-ingest lands the same
-     * bytes under a new row id), so byte-identical installs clear
-     * 'missing ref'. Additive + optional: old rows parse unchanged and
-     * heal at import from the v2 manifest.
-     */
-    contentHash: sha256HexSchema.optional(),
-    /**
-     * The creature's own name — `chunk.headingPath[0]` trimmed, roster
-     * entry-name fallback — stamped at citation birth, and the name the
-     * portrait key's grounding and the citation's display prefer. NOT a
-     * resolution key (`resolveMonsterEntry` resolves by chunk uuid, then by
-     * content hash, exactly as documented in docs/11 D9).
-     */
-    creatureName: z.string().optional(),
-    /**
-     * The BOOK the cited chunk came from — its row's own title, stamped at
-     * citation birth (docs/17 row 155). NOT a resolution key: it is the
-     * identity a report of a STRANDED citation names, so a GM is told which
-     * pack to install. Additive + optional: a citation written before the
-     * stamp, or healed from a manifest that never resolved the book, simply
-     * carries none — and a surface that must name the pack says so.
-     */
-    bookTitle: z.string().optional(),
-  }),
   z.object({ type: z.literal('none') }),
+  ...LEGACY_MONSTER_SOURCE_ARMS,
 ]);
 
 export type MonsterSource = z.infer<typeof monsterSourceSchema>;
+
+/** The LIVE representation: a copy the row owns, or a name-only entry. */
+export type LiveMonsterSource = Extract<
+  MonsterSource,
+  { type: 'inline' } | { type: 'none' }
+>;
+
+/** A roster entry that carries no legacy pointer — what the live resolver takes. */
+export type LiveMonsterEntry = Omit<MonsterEntry, 'source'> & { source: LiveMonsterSource };
 
 export const monsterEntrySchema = z.object({
   name: z.string(),
@@ -375,14 +355,28 @@ export const monsterEntrySchema = z.object({
   /**
    * The OPAQUE ORIGIN TOKEN of a mob COPY (docs/17 row 248): the creature
    * identity the row's portrait/image cache is keyed by, preserved across the
-   * migration as an identity key and NOT a resolver. It keeps the `chunk:<id>`
-   * spelling (`domain/creature.libraryCreatureKey`) precisely so no
-   * `mobPortraits` / `creatureImages` row needs remapping — `foldCreatureKey`
-   * returns id keys unchanged — and so one bestiary creature still shares one
-   * portrait across every encounter that copied it. Nothing resolves through
-   * it: `rosterEntryCreatureIdentity` reads it as the identity and the copy's
-   * own `source.statBlock` is the numbers. Unset on an authored block (its
-   * identity is its content) and on a row the migration could not convert.
+   * migration as an identity key. It keeps the `chunk:<id>` spelling
+   * (`domain/creature.libraryCreatureKey`) precisely so no `mobPortraits` /
+   * `creatureImages` row needs remapping — `foldCreatureKey` returns id keys
+   * unchanged — and so one bestiary creature still shares one portrait across
+   * every encounter that copied it. The LIVE readers take the copy's own
+   * `source.statBlock` / `sourceLine` (`rosterStatBlockFor` / `rosterReferenceFor`
+   * / `resolveMonsterEntry`), never the token.
+   *
+   * IT IS NOT INERT EVERYWHERE, and the exception is recorded rather than
+   * glossed (docs/18 §5, found by the row-248c discovery): the BATTLE-TOKEN
+   * chain still treats the key as a RESOLVER —
+   * `db/creatureRepo.tokenCreature` maps a `chunk:<id>` key to a LIVE
+   * `resolveCreatureCitation` read, and `BattleSurface` prints the stat block it
+   * returns. For a MIGRATED roster mob (whose token artifactId is a synthetic
+   * per-instance id with no row behind it) that means the battle card still
+   * depends on the pack being installed, even though the encounter's own copy
+   * no longer does. A converted CAST NPC is unaffected: its token resolves
+   * through the NPC artifact's COPIED `data.statBlock`. Making the battle card
+   * read the stamped copy is the recorded follow-up.
+   *
+   * Unset on an authored block (its identity is its content) and on a row the
+   * migration could not convert.
    */
   originToken: z.string().optional(),
 });

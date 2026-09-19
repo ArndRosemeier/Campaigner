@@ -2,8 +2,8 @@ import Dexie from 'dexie';
 import { describe, expect, it } from 'vitest';
 
 import { rosterEntryCreatureIdentity } from '@/domain';
-import { resolveMonsterEntry } from '@/domain/encounterResolve';
 import { rosterReferenceFor } from '@/domain/encounterResolve';
+import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
 import { rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
 
 /**
@@ -207,6 +207,9 @@ async function seedLegacyV23(options: {
     links: [],
     imageIds: [],
     coverImageId: null,
+    // A real v23 row carries this; the read-path pin parses the row through
+    // `anyArtifactSchema`, which requires it.
+    currentRevision: 1,
     data: {
       difficulty: 'medium',
       levelHint: '3',
@@ -238,6 +241,7 @@ async function seedLegacyV23(options: {
       links: [],
       imageIds: [],
       coverImageId: null,
+      currentRevision: 1,
       data: {
         appearance: '',
         personality: '',
@@ -271,6 +275,15 @@ const LIBRARY_MUST_NOT_BE_READ = {
   },
 };
 
+/** The lookups a stored-pointer read answers against when the library genuinely
+ * lacks the row — every table empty, nothing throws. */
+const LIBRARY_IS_ABSENT = {
+  getArtifact: (): Promise<undefined> => Promise.resolve(undefined),
+  getChunk: (): Promise<undefined> => Promise.resolve(undefined),
+  getChunkByContentHash: (): Promise<undefined> => Promise.resolve(undefined),
+  getRulebook: (): Promise<undefined> => Promise.resolve(undefined),
+};
+
 describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
   it('copies a roster mob and a cast NPC, stamps the origin line and keeps the chunk: token', async () => {
     await seedLegacyV23({
@@ -298,7 +311,7 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
 
     // 2. The stamp is the mob's own data: with the library UNREADABLE the
     //    origin still reads. A line composed from a live chunk read fails here.
-    const origin = await resolveMonsterEntry(entry, LIBRARY_MUST_NOT_BE_READ);
+    const origin = await resolveStoredMonsterEntry(entry, LIBRARY_MUST_NOT_BE_READ);
     expect(origin.origin).toBe('Bestiary p.132');
     expect(origin.statBlock).toEqual(OWLBEAR);
     expect(rosterReferenceFor(entry, undefined).text).toBe('Bestiary p.132');
@@ -322,7 +335,7 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     expect(npc.data.sourceLine).toBe('Tome of Beasts: Zombie');
     // The row itself is the ONE thing a converted cast NPC may read; every
     // LIBRARY lookup still throws, so its disclosure cannot be a live read.
-    const derived = await resolveMonsterEntry(
+    const derived = await resolveStoredMonsterEntry(
       { name: 'Aunt Agatha', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: NPC } },
       { ...LIBRARY_MUST_NOT_BE_READ, getArtifact: () => Promise.resolve(npc) },
     );
@@ -594,5 +607,76 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
       setBookReadFault(null);
       await db.delete();
     }
+  }, 20000);
+
+  it('LOADS a stored legacy pointer through the app read path, and the ONE seam resolves it', async () => {
+    // The upgrade cannot convert these rows (the pack is absent), so the LEGACY
+    // POINTER stays on disk — exactly the shape the failure arm exists to
+    // preserve, and exactly what the artifact read path must keep parsing.
+    await seedLegacyV23({
+      resolvedRoster: false,
+      unresolvedRoster: true,
+      resolvedNpc: false,
+      unresolvedNpc: true,
+      settingsRow: true,
+    });
+    const { db } = await import('@/db/db');
+    await db.open();
+    const { getArtifact } = await import('@/db/artifactRepo');
+
+    // THE PROPERTY THE ORDER PROTECTS: `getArtifact` parses through
+    // `anyArtifactSchema` (`db/artifactRepo.parseArtifactRow`), so a read that
+    // no longer accepted the legacy shape would THROW right here — the cure
+    // destroying the data the retry needs.
+    const encounter = await getArtifact(ENCOUNTER);
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(encounter.data.monsters[0]?.source).toEqual({
+      type: 'rulebook',
+      chunkId: '00000000-0000-4000-8000-0000000000ff',
+    });
+    const npc = await getArtifact(NPC);
+    if (npc?.kind !== 'npc') throw new Error('npc missing');
+    expect(npc.data.creatureRef).toEqual({ chunkId: '00000000-0000-4000-8000-0000000000ee' });
+
+    // ...and the ONE legacy-read seam reads and resolves it: the entry is
+    // dispatched to the legacy arm and answers the NAMED missing-ref reason,
+    // because the library genuinely lacks the chunk.
+    const entry = encounter.data.monsters[0];
+    if (entry === undefined) throw new Error('roster entry missing');
+    const resolved = await resolveStoredMonsterEntry(entry, LIBRARY_IS_ABSENT);
+    expect(resolved.statBlock).toBeNull();
+    expect(resolved.origin).toBe('missing ref (Ghost)');
+    expect(resolved.missingRef).toEqual({ creature: 'Ghost' });
+    await db.delete();
+  }, 20000);
+
+  it('still THROWS on a row that is neither the live shape nor a legacy pointer', async () => {
+    await seedLegacyV23({
+      resolvedRoster: false,
+      unresolvedRoster: true,
+      resolvedNpc: false,
+      unresolvedNpc: false,
+      settingsRow: true,
+    });
+    const { db } = await import('@/db/db');
+    await db.open();
+    const { anyArtifactSchema } = await import('@/domain');
+    const row = await db.artifacts.get(ENCOUNTER);
+    if (row?.kind !== 'encounter') throw new Error('encounter missing');
+    const entry = row.data.monsters[0];
+    if (entry === undefined) throw new Error('roster entry missing');
+    // A source the model has never known. The legacy read is NOT a permissive
+    // free-for-all parser: the read boundary must fail LOUDLY (AGENTS rule 1)
+    // rather than fall through to a name-only row that silently loses the mob.
+    expect(() =>
+      anyArtifactSchema.parse({
+        ...row,
+        data: {
+          ...row.data,
+          monsters: [{ ...entry, source: { type: 'borrowed', chunkId: CHUNK } }],
+        },
+      }),
+    ).toThrow();
+    await db.delete();
   }, 20000);
 });
