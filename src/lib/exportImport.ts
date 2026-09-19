@@ -389,6 +389,21 @@ export function formatRetiredTableRows(counts: Readonly<Record<string, number>>)
   return `Skipped ${parts.join(' and ')} — that table is gone (a module PDF is generated from the module itself now), so those rows had nowhere to land. Everything else imported.`;
 }
 
+/**
+ * The ONE sentence a version-drift import becomes (docs/17 row 261), so the
+ * campaign picker reports it in the same words the retired-table skip uses
+ * (AGENTS rule 2). `null` when there is no drift to report — an empty count is
+ * never announced. A drift does NOT block the import (the same creature is
+ * here under another version of the book), but it may never go silent: the
+ * counts land in this sentence, the reason is named, and the residual state
+ * (the citation resolves as `missing ref`) is stated rather than hidden.
+ */
+export function formatDriftedCitations(count: number): string | null {
+  if (count <= 0) return null;
+  const plural = count === 1 ? '' : 's';
+  return `Imported ${String(count)} stat block citation${plural} from a DIFFERENT version of a book than the one installed here — that version's text is not in this library, so ${count === 1 ? 'that encounter lands' : 'those encounters land'} as 'missing ref' until the matching version is installed. Everything else imported.`;
+}
+
 export interface ImportResult {
   campaignId: Id;
   createdArtifacts: number;
@@ -408,14 +423,26 @@ export interface ImportResult {
    * `formatRetiredTableRows` whenever this is non-empty.
    */
   retiredRows: Record<string, number>;
+  /**
+   * Statblock citations that resolved to `version-drift` (docs/17 row 261):
+   * the same creature under a DIFFERENT version of the same book. The import
+   * PROCEEDED over them (a drift is not `missing`, so it does not abort), and
+   * because it proceeded the count is reported HERE and the picker toasts
+   * `formatDriftedCitations` — an unblocking that said nothing would be the
+   * silent fallback AGENTS rule 1 forbids. Zero on a clean or fully-missing
+   * import.
+   */
+  driftedCitations: number;
 }
 
 /** Dependency policy for `importExport`/`importZip` (07-MILESTONE-3 M3-E
  *  slice B, owner-confirmed): `abort` (default) refuses an import whose
- *  statblock citations or NPC refs have no local counterpart — before the
- *  transaction opens, so there is nothing to roll back; `import-anyway`
- *  lands the encounters as-is, where they resolve to the existing
- *  `missing ref` markers until the content is installed. */
+ *  statblock citations are MISSING or whose NPC refs have no local
+ *  counterpart — before the transaction opens, so there is nothing to roll
+ *  back; `import-anyway` lands the encounters as-is, where they resolve to the
+ *  existing `missing ref` markers until the content is installed. A
+ *  `version-drift` citation is neither: it imports under the default policy
+ *  and is reported (`formatDriftedCitations`, docs/17 row 261). */
 export type DependencyPolicy = 'abort' | 'import-anyway';
 
 export interface ImportOptions {
@@ -430,10 +457,13 @@ export interface ImportOptions {
  *
  * The message itself reads as STEPS (not a paragraph) because it also
  * surfaces in non-dialog contexts (any `importExport`/`importZip` caller
- * outside the picker): 1. the Rules install surface naming the missing
+ * outside the picker): 1. the Rules install surface naming the MISSING
  * book titles from the blocking citations' L1 identity (the same titles
  * the dialog lists — never invented), 2. retry, or the import-anyway
- * consequence.
+ * consequence. A `version-drift` citation is EXCLUDED from that install list
+ * (docs/17 row 261): that book is already here, under another version, so
+ * naming it as something to install would send the user after content they
+ * already have.
  */
 export class MissingDependenciesError extends Error {
   readonly analysis: DependencyAnalysis;
@@ -455,7 +485,7 @@ export class MissingDependenciesError extends Error {
     const titles = [
       ...new Set(
         analysis.citations
-          .filter((entry) => entry.verdict !== 'present')
+          .filter((entry) => entry.verdict === 'missing')
           .map((entry) => entry.citation.bookTitle)
           .filter((title): title is string => title !== undefined),
       ),
@@ -633,18 +663,24 @@ function healRulebookSources(
  * module (a scope change only the explicit `moveScope` family may make) and
  * hide a corrupt or hand-edited export behind a plausible-looking row.
  *
- * Dependency enforcement (M3-E slice B): unless `options.dependencyPolicy`
- * is `'import-anyway'`, the manifest is checked against the local library
- * FIRST (`checkImportDependencies` — Dexie reads only) and an unmet
- * statblock citation or unmet NPC ref throws `MissingDependenciesError`
- * BEFORE the transaction opens (nothing to roll back). Rulebook chunkIds
+ * Dependency enforcement (M3-E slice B; the drift split is docs/17 row 261):
+ * the manifest is checked against the local library FIRST
+ * (`checkImportDependencies` — Dexie reads only) and a MISSING statblock
+ * citation or an unmet NPC ref throws `MissingDependenciesError` BEFORE the
+ * transaction opens (nothing to roll back). A `version-drift` citation does
+ * NOT abort: the same creature is here under a different version of the same
+ * book, and blocking on it refused exactly the cross-machine import the
+ * verdict exists to describe. The analysis is computed under every policy
+ * (an `import-anyway` file may drift too) and its `driftedCitations` count
+ * rides `ImportResult`, which the picker toasts — unblocking without saying
+ * so would be the silent fallback AGENTS rule 1 forbids. Rulebook chunkIds
  * are KEPT as-is either way, so encounters that land without their content
- * resolve to the existing `missing ref` markers — truthful, never
- * invented. Pre-stamp entries additionally heal their content identity from
- * the manifest (`healRulebookSources`): a later byte-identical install
- * clears those markers through the hash fallback. Skipped retired rows
- * never trip this check: their citations leave with them
- * (`parseExportTolerant` filters the manifest).
+ * (including a drifted citation, which has no local id or hash) resolve to
+ * the existing `missing ref` markers — truthful, never invented. Pre-stamp
+ * entries additionally heal their content identity from the manifest
+ * (`healRulebookSources`): a later byte-identical install clears those markers
+ * through the hash fallback. Skipped retired rows never trip this check: their
+ * citations leave with them (`parseExportTolerant` filters the manifest).
  *
  * Retired-row tolerance (M2 import rules): legacy exports carrying retired
  * `session` artifacts or session-anchored pre-v11 battles (or live rows that
@@ -668,10 +704,18 @@ export async function importExport(
   const retiredRows = retiredTableRows(raw);
   const { export: parsed, skippedRetired, skippedNames } = parseExportTolerant(raw);
 
-  if (options.dependencyPolicy !== 'import-anyway') {
-    const analysis = await checkImportDependencies(parsed.dependencies);
-    if (!analysis.clean) throw new MissingDependenciesError(analysis);
+  // Dependency enforcement (M3-E slice B; amended by docs/17 row 261): the
+  // manifest is read against the local library BEFORE the tx opens. Only a
+  // `missing` citation or an unmet NPC ref aborts — a `version-drift` is the
+  // same creature under another version of the same book, so it must not stop
+  // the cross-machine import it describes. The analysis is therefore computed
+  // under EVERY policy (an `import-anyway` file may drift too), and its drift
+  // count rides the result so a successful import still SAYS SO.
+  const analysis = await checkImportDependencies(parsed.dependencies);
+  if (!analysis.clean && options.dependencyPolicy !== 'import-anyway') {
+    throw new MissingDependenciesError(analysis);
   }
+  const driftedCitations = analysis.driftedCitations;
 
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
@@ -942,6 +986,7 @@ export async function importExport(
     skippedRetired,
     skippedNames,
     retiredRows,
+    driftedCitations,
   };
 }
 

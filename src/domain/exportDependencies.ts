@@ -196,11 +196,26 @@ export interface DependencyAnalysis {
   unmetLibraryRefs: ExportUnmetRef[];
   /** Pins whose chunk/book is gone — ADVISORY, never blocking. */
   pinnedMissing: ExportPinnedChunk[];
-  /** True ⇔ every statblock citation is L0-present and no unmet NPC refs:
-   *  the import may proceed on today's one-click path. */
+  /** True ⇔ no BLOCKING citation (every statblock citation is `present` or a
+   *  `version-drift`) and no unmet NPC refs: the import may proceed on
+   *  today's one-click path. A drift alone leaves this true — see
+   *  `driftedCitations`. */
   clean: boolean;
-  /** Citations with a verdict other than `present` (the abort trigger). */
+  /** Citations with a `missing` verdict — content this library does not hold
+   *  at all. THE abort trigger (docs/17 row 261): a `version-drift` is NOT
+   *  counted here, because the same creature IS here under a different
+   *  version of the book, and blocking on it refused exactly the
+   *  cross-machine import the verdict exists to describe. */
   blockingCitations: number;
+  /** Citations that resolved to `version-drift` — the SAME book (system and
+   *  title) holds the same creature under a DIFFERENT hash. ADVISORY, never
+   *  blocking: the import proceeds, and it must still SAY SO, so
+   *  `lib/exportImport` carries the count on `ImportResult` and the picker
+   *  toasts it (AGENTS rule 1 — an unblocked fallback may never go silent).
+   *  Only `present` is content identity; a drift is a NAMED near-miss that
+   *  lands as `missing ref` until the matching version is installed, never a
+   *  silent substitution of the other version's stats. */
+  driftedCitations: number;
 }
 
 /**
@@ -249,7 +264,15 @@ export function analyzeDependencies(
   library: DependencyLibrarySnapshot,
 ): DependencyAnalysis {
   if (manifest === undefined) {
-    return { citations: [], books: [], unmetLibraryRefs: [], pinnedMissing: [], clean: true, blockingCitations: 0 };
+    return {
+      citations: [],
+      books: [],
+      unmetLibraryRefs: [],
+      pinnedMissing: [],
+      clean: true,
+      blockingCitations: 0,
+      driftedCitations: 0,
+    };
   }
   const booksById = new Map<Id, Rulebook>(library.books.map((book) => [book.id, book] as const));
   const pooled = [...library.chunksByHash.values()].flat();
@@ -377,7 +400,12 @@ export function analyzeDependencies(
   });
 
   const pinnedMissing = manifest.pinnedChunks.filter((pin) => pin.status !== 'resolved');
-  const blockingCitations = citations.filter((entry) => entry.verdict !== 'present').length;
+  // Split BY VERDICT (docs/17 row 261): `missing` is content this library does
+  // not hold — the ONE abort trigger; `version-drift` is the same creature
+  // under a different version of the same book — it must not block, but it
+  // must be COUNTED so the import can say so.
+  const blockingCitations = citations.filter((entry) => entry.verdict === 'missing').length;
+  const driftedCitations = citations.filter((entry) => entry.verdict === 'version-drift').length;
   return {
     citations,
     books,
@@ -385,6 +413,7 @@ export function analyzeDependencies(
     pinnedMissing,
     clean: blockingCitations === 0 && manifest.unmetLibraryRefs.length === 0,
     blockingCitations,
+    driftedCitations,
   };
 }
 

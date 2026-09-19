@@ -68,6 +68,7 @@ import {
   parseZipExport,
   withImportMitigation,
   type DependencyPolicy,
+  formatDriftedCitations,
   formatRetiredTableRows,
 } from '@/lib/exportImport';
 import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
@@ -91,10 +92,13 @@ type PendingImport = { kind: 'json'; raw: unknown } | { kind: 'zip'; bytes: Uint
  *
  * Import (07-MILESTONE-3 M3-E slice B) is parse-first: the file is parsed
  * and its dependency manifest analyzed BEFORE the import transaction opens.
- * A clean manifest keeps today's one-click path byte-identical; unmet
- * statblock citations or NPC refs open the dep-summary dialog instead —
+ * A clean manifest keeps today's one-click path byte-identical; MISSING
+ * statblock citations or unmet NPC refs open the dep-summary dialog instead —
  * Abort (default) never enters the transaction, "Import anyway" lands the
- * encounters with `missing ref` markers plus the campaign banner.
+ * encounters with `missing ref` markers plus the campaign banner. A
+ * `version-drift` citation (docs/17 row 261) is neither: the import proceeds
+ * and the drift is toasted by count, so the one-click path never goes silent
+ * over content that came from a different version of a book.
  */
 export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
@@ -120,6 +124,12 @@ export function CampaignPickerPage(): JSX.Element {
     // a table this build deleted. Skipped LOUDLY, with the count.
     const retiredNote = formatRetiredTableRows(result.retiredRows);
     if (retiredNote !== null) toastInfo(retiredNote);
+    // Version drift (docs/17 row 261): the import PROCEEDED over citations that
+    // resolved to the same book under a DIFFERENT version. It is not an abort
+    // any more, so the count must ride the success — an unblocked fallback
+    // that said nothing would be the silent failure AGENTS rule 1 forbids.
+    const driftNote = formatDriftedCitations(result.driftedCitations);
+    if (driftNote !== null) toastInfo(driftNote);
     if (result.skippedRetired > 0) {
       // Retired-row tolerance (M2 import rules): the skip is never silent —
       // the count and the skipped record names ride alongside success.

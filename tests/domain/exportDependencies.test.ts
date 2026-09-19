@@ -136,9 +136,10 @@ describe('analyzeDependencies', () => {
     expect(analysis.books[0]?.localTitle).toBe('Monster Core');
     expect(analysis.clean).toBe(true);
     expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(0);
   });
 
-  it('marks the same creature under a new hash version-drift with the book L1', () => {
+  it('marks the same creature under a new hash version-drift with the book L1 — no longer blocking, still counted', () => {
     const local = book();
     // Re-ingest: new row id, new hash, same creature in the same book.
     const reingested = chunk(local.id, { contentHash: HASH_B, text: 'Goblin Warrior, revised' });
@@ -149,8 +150,29 @@ describe('analyzeDependencies', () => {
     expect(analysis.citations[0]?.verdict).toBe('version-drift');
     expect(analysis.books[0]?.matchLevel).toBe('L1');
     expect(analysis.books[0]?.hint).toContain('Goblin Warrior');
+    // docs/17 row 261: a drift is the same creature under another version of
+    // the same book — the import proceeds (clean), and the drift is COUNTED
+    // rather than either blocking or disappearing.
+    expect(analysis.clean).toBe(true);
+    expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(1);
+  });
+
+  it('a missing citation beside a drift still blocks, and only the missing one is counted', () => {
+    const local = book();
+    // Citation 1 ("Goblin Warrior") drifts; citation 2 cites a creature the
+    // book does not hold at all → genuinely missing.
+    const reingested = chunk(local.id, { contentHash: HASH_B, text: 'Goblin Warrior, revised' });
+    const analysis = analyzeDependencies(
+      manifest({
+        citations: [citation(), citation({ creatureName: 'Ancient Red Dragon' })],
+      }),
+      { chunksByHash: new Map([[HASH_B, [reingested]]]), books: [local] },
+    );
+    expect(analysis.citations.map((entry) => entry.verdict)).toEqual(['version-drift', 'missing']);
     expect(analysis.clean).toBe(false);
     expect(analysis.blockingCitations).toBe(1);
+    expect(analysis.driftedCitations).toBe(1);
   });
 
   it('marks a citation missing when the book is gone (book-level missing)', () => {
@@ -159,7 +181,10 @@ describe('analyzeDependencies', () => {
     expect(analysis.citations[0]?.fuzzyHints).toEqual([]);
     expect(analysis.books[0]?.matchLevel).toBe('missing');
     expect(analysis.books[0]?.hint).toContain('Monster Core');
+    // The abort arm: a genuinely absent book blocks (docs/17 row 261 keeps it).
     expect(analysis.clean).toBe(false);
+    expect(analysis.blockingCitations).toBe(1);
+    expect(analysis.driftedCitations).toBe(0);
   });
 
   it('adds the L2 fuzzy advisory when the creature surfaces in another book', () => {
@@ -175,6 +200,7 @@ describe('analyzeDependencies', () => {
     ]);
     // Advisory only: the citation stays missing (still blocking).
     expect(analysis.clean).toBe(false);
+    expect(analysis.blockingCitations).toBe(1);
     expect(analysis.books[0]?.matchLevel).toBe('L2');
   });
 
@@ -211,6 +237,10 @@ describe('analyzeDependencies', () => {
       books: [local],
     });
     expect(analysis.citations[0]?.verdict).toBe('present');
+    // The unmet-ref arm blocks on its OWN (docs/17 row 261 leaves it as the
+    // always-blocking half): zero blocking/drifted citations, still not clean.
+    expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(0);
     expect(analysis.clean).toBe(false);
     expect(analysis.unmetLibraryRefs).toHaveLength(1);
   });
@@ -323,6 +353,7 @@ describe('collectDependencies missing-chunk stamp carry', () => {
     expect(analysis.citations[0]?.verdict).toBe('present');
     expect(analysis.clean).toBe(true);
     expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(0);
   });
 
   it('chunk data wins over a stale entry stamp (no silent override)', () => {
@@ -360,5 +391,6 @@ describe('collectDependencies missing-chunk stamp carry', () => {
     expect(analysis.citations[0]?.verdict).toBe('missing');
     expect(analysis.clean).toBe(false);
     expect(analysis.blockingCitations).toBe(1);
+    expect(analysis.driftedCitations).toBe(0);
   });
 });

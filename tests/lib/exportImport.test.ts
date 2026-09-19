@@ -35,8 +35,10 @@ import {
   buildCampaignExport,
   buildExport,
   buildZip,
+  checkImportDependencies,
   EXPORT_FORMAT_VERSION,
   exportFileName,
+  formatDriftedCitations,
   formatRetiredTableRows,
   importExport,
   importZip,
@@ -877,9 +879,48 @@ describe('import dependency enforcement', () => {
     expect(analysis.citations[0]?.verdict).toBe('missing');
     expect(analysis.books[0]?.matchLevel).toBe('missing');
     expect(analysis.clean).toBe(false);
+    // The abort is specifically the MISSING arm, not a drift leaking in.
+    expect(analysis.blockingCitations).toBe(1);
+    expect(analysis.driftedCitations).toBe(0);
     // Abort-before-tx: nothing to roll back, nothing written.
     expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
     expect(await db.artifacts.count()).toBe(artifactsBefore);
+  });
+
+  it('still aborts on an unmet NPC ref even when every citation is present (docs/17 row 261)', async () => {
+    const { json } = await exportGoblinCampaign();
+    // The library is intact, so the citation is present; only the ref is unmet.
+    const exported = JSON.parse(JSON.stringify(json)) as {
+      dependencies?: Record<string, unknown>;
+    };
+    const dependencies = exported.dependencies;
+    if (dependencies === undefined) throw new Error('export fixture carries no manifest');
+    dependencies.unmetLibraryRefs = [
+      {
+        artifactId: newId(),
+        artifactName: 'Goblin ambush',
+        kind: 'encounter',
+        monsterName: 'Vexra',
+        npcArtifactId: newId(),
+        status: 'not-exported',
+      },
+    ];
+
+    const campaignsBefore = await listCampaigns();
+    let caught: unknown = null;
+    try {
+      await importExport(exported);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(MissingDependenciesError);
+    const analysis = (caught as MissingDependenciesError).analysis;
+    // This arm blocks on its OWN: no blocking/drifted citations at all.
+    expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(0);
+    expect(analysis.unmetLibraryRefs).toHaveLength(1);
+    expect(analysis.clean).toBe(false);
+    expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
   });
 
   it('import-anyway lands the encounter with a truthful `missing ref`', async () => {
@@ -904,7 +945,7 @@ describe('import dependency enforcement', () => {
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
 
-  it('still aborts on version drift (L1) but import-anyway lands it', async () => {
+  it('imports a drift-only manifest under the DEFAULT policy and REPORTS the drift (docs/17 row 261)', async () => {
     const { json } = await exportGoblinCampaign();
     // Same book re-ingested: same title/system/creature, different bytes.
     await db.chunks.clear();
@@ -936,21 +977,46 @@ describe('import dependency enforcement', () => {
       }),
     ]);
 
-    let caught: unknown = null;
-    try {
-      await importExport(json);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(MissingDependenciesError);
-    expect((caught as MissingDependenciesError).analysis.citations[0]?.verdict).toBe(
-      'version-drift',
-    );
-    expect((caught as MissingDependenciesError).analysis.books[0]?.matchLevel).toBe('L1');
-    expect(await listCampaigns()).toHaveLength(1); // source only
+    // The fixture really IS a drift (not present, not missing), proved BEFORE
+    // the policy assertion so the import below cannot pass vacuously.
+    const manifest = parseExportTolerant(json).export.dependencies;
+    const analysis = await checkImportDependencies(manifest);
+    expect(analysis.citations[0]?.verdict).toBe('version-drift');
+    expect(analysis.books[0]?.matchLevel).toBe('L1');
+    expect(analysis.blockingCitations).toBe(0);
+    expect(analysis.driftedCitations).toBe(1);
+    expect(analysis.clean).toBe(true);
 
-    const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
+    // DEFAULT policy: the cross-machine import PROCEEDS — the exact case the
+    // owner hit. No MissingDependenciesError, no 'import-anyway' escape hatch.
+    const result = await importExport(json);
     expect(result.createdArtifacts).toBe(1);
+    expect(result.skippedRetired).toBe(0);
+    // ...and it is NOT silent: the count rides the result and the picker's
+    // sentence names the reason and the residual state.
+    expect(result.driftedCitations).toBe(1);
+    const note = formatDriftedCitations(result.driftedCitations);
+    expect(note).toContain('1 stat block citation');
+    expect(note).toContain('DIFFERENT version');
+    expect(note).toContain('missing ref');
+    // Both campaigns exist: the source and the imported copy.
+    expect(await listCampaigns()).toHaveLength(2);
+
+    // The residual is the repo's existing truthful one: the drifted citation
+    // has no local id and no local hash, so the encounter lands as a NAMED
+    // `missing ref` — never the other version's stats silently substituted.
+    const imported = await db.artifacts
+      .where('campaignId')
+      .equals(result.campaignId)
+      .toArray();
+    const encounter = imported.find((row) => row.kind === 'encounter');
+    if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
+    const first = encounter.data.monsters[0];
+    if (first === undefined) throw new Error('imported roster entry missing');
+    expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
+      statBlock: null,
+      origin: 'missing ref (Goblin Warrior)',
+    });
   });
 
   it('zip imports enforce the same policy', async () => {
@@ -1782,6 +1848,29 @@ describe('retired-table import tolerance', () => {
 });
 
 /**
+ * The drift sentence (docs/17 row 261): the count, the reason, and the honest
+ * residual. An import no longer aborts on a version-drift, so this sentence is
+ * the ONLY surface that tells the user why those encounters landed unresolved —
+ * it may never be empty while the count is positive.
+ */
+describe('drift reporting', () => {
+  it('says nothing for zero drifts (an empty count is never announced)', () => {
+    expect(formatDriftedCitations(0)).toBeNull();
+  });
+
+  it('names the count, the DIFFERENT version and the residual `missing ref`', () => {
+    const one = formatDriftedCitations(1);
+    expect(one).toContain('1 stat block citation');
+    expect(one).toContain('DIFFERENT version');
+    expect(one).toContain('that encounter lands');
+    expect(one).toContain('missing ref');
+    const many = formatDriftedCitations(3);
+    expect(many).toContain('3 stat block citations');
+    expect(many).toContain('those encounters land');
+  });
+});
+
+/**
  * Import-failure readability (error-humanization arc): the
  * `MissingDependenciesError` message itself reads as STEPS (it surfaces in
  * non-dialog contexts too — any `importExport`/`importZip` caller), and
@@ -1800,6 +1889,7 @@ describe('import failure readability', () => {
       citations?: FakeBlockingCitation[];
       unmetLibraryRefs?: DependencyAnalysis['unmetLibraryRefs'];
       blockingCitations?: number;
+      driftedCitations?: number;
     } = {},
   ): DependencyAnalysis {
     return {
@@ -1809,9 +1899,27 @@ describe('import failure readability', () => {
       pinnedMissing: [],
       clean: false,
       blockingCitations: 0,
+      driftedCitations: 0,
       ...overrides,
     } as unknown as DependencyAnalysis;
   }
+
+  it('names only the MISSING book, never a drifted one it already holds (docs/17 row 261)', () => {
+    const error = new MissingDependenciesError(
+      fakeAnalysis({
+        blockingCitations: 1,
+        driftedCitations: 1,
+        citations: [
+          { citation: { bookTitle: 'Monster Core' }, verdict: 'missing', fuzzyHints: [] },
+          // Drift is NOT an install target: Bestiary 2 is already here, under
+          // another version — telling the user to install it would be a lie.
+          { citation: { bookTitle: 'Bestiary 2' }, verdict: 'version-drift', fuzzyHints: [] },
+        ],
+      }),
+    );
+    expect(error.message).toContain('Monster Core');
+    expect(error.message).not.toContain('Bestiary 2');
+  });
 
   it('MissingDependenciesError reads as numbered steps naming the missing titles', () => {
     const error = new MissingDependenciesError(
