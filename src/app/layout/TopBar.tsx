@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowRightIcon } from 'lucide-react';
 
 import { CampaignSwitcher } from '@/app/layout/CampaignSwitcher';
+import { BuildStatusBadge } from '@/app/layout/BuildStatusBadge';
 import { appNavItems } from '@/app/layout/nav';
 import { ThemeToggle } from '@/app/layout/ThemeToggle';
 import { ROUTES, campaignIdFromPath, modulePath } from '@/app/routes';
@@ -17,7 +18,8 @@ import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { cn } from '@/lib/utils';
 
 /**
- * Top bar shown on all routes: app name, campaign switcher, the app-level
+ * Top bar shown on all routes: app name (with the build-status badge beside it,
+ * docs/17 row 250), campaign switcher, the app-level
  * nav (Rules / Settings / last-module shortcut), the GLOBAL first-try chat
  * model picker beside Settings (docs/17 row 193) and the theme toggle
  * (05-UI.md §Top bar). The campaign-level sections (Modules / Workspace /
@@ -44,6 +46,13 @@ export function TopBar(): JSX.Element {
       >
         Campaigner
       </NavLink>
+
+      {/* Is this deployed build suite-verified? The deploy job writes
+          dist/build-status.json after the build; the badge reads it at runtime
+          and shows verified / WIP / cannot-tell (docs/17 row 250). Rendered
+          beside the title so a compile-clean, unverified build can never be
+          mistaken for a verified one during rapid testing. */}
+      <BuildStatusBadge />
 
       <CampaignSwitcher />
 

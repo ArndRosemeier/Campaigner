@@ -12,6 +12,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # FULL history on purpose. The build-status step below asks git
+          # whether everything between the newest gate-verified landing and this
+          # commit is documentation-only; a depth-1 checkout cannot answer that
+          # (the named commit is absent), and the badge would read cannot-tell
+          # forever. See scripts/buildStatus.mjs and docs/17 row 250.
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -55,6 +62,20 @@ jobs:
             echo "dist/index.html is missing after build" >&2
             exit 1
           fi
+
+      # THE BUILD-STATUS STEP IS NON-FATAL BY CONSTRUCTION (docs/17 row 250).
+      # scripts/buildStatus.mjs writes dist/build-status.json (the badge's
+      # verified / WIP / cannot-tell state; it writes cannot-tell itself when
+      # anything about the computation fails), and `continue-on-error` is the
+      # structural guarantee that no failure in this step can stop the deploy —
+      # a deploy that breaks the owner's ability to test the app is the one
+      # failure he cannot work around. A failure still shows THIS step as
+      # failed, so it is visible rather than silent. The step is one command on
+      # purpose: the logic lives in a tested script, never in inline workflow
+      # bash.
+      - name: Write dist/build-status.json (never fails the deploy)
+        continue-on-error: true
+        run: node scripts/buildStatus.mjs --board docs/20-ORCHESTRATION.md --out dist/build-status.json
 
       - name: Upload dist/ via FTP (incremental sync)
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5

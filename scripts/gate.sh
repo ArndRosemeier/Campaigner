@@ -79,6 +79,10 @@ set -uo pipefail
 # suite's.
 export CI="${CI:-true}"
 
+# The gate's own directory, resolved BEFORE the `cd` below: the shared docs-only
+# predicate lives beside this script (scripts/docsOnly.mjs) and must be found
+# whether the gate is invoked from the repo root, a subdirectory or a worktree.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git rev-parse --show-toplevel)" || exit 2
 TOTAL_START=$(date +%s)
 RSS_CAP_MB="${GATE_RSS_CAP_MB:-3000}"
@@ -253,20 +257,38 @@ changed_files() {
   } | sed '/^$/d' | sort -u
 }
 
+# ---------------------------------------------------------------------------
+# The docs-only predicate is NOT spelled here (docs/17 row 250). It lives ONCE
+# in scripts/docsOnly.mjs, because the deploy's build-status script asks the
+# same question about the same paths and the two answers must not drift;
+# tests/architecture/one-docs-only-rule.test.ts reds a second copy by file name.
+# This function is only the shell caller.
+# ---------------------------------------------------------------------------
+docs_only_diff() {
+  # An EMPTY diff is NOT docs-only HERE. That is the gate's own policy, not the
+  # predicate's (AGENTS §The gate and the clock 5, the PARITY trap): at parity
+  # with the diff base the diff is empty, and the WHOLE suite must run.
+  [ "$#" -gt 0 ] || return 1
+  local verdict
+  if ! verdict="$(printf '%s\n' "$@" | node "$SCRIPT_DIR/docsOnly.mjs")"; then
+    echo "!! GATE: the docs-only predicate ($SCRIPT_DIR/docsOnly.mjs) could not be run — treating the diff as NOT docs-only and running the FULL set" >&2
+    return 1
+  fi
+  [ "$verdict" = "docs-only" ]
+}
+
 select_order() {
   mapfile -t CHANGED < <(changed_files)
-  local f c n=0 docs_only=1 tests_only=1
+  local f c
+  local tests_only=1
   for f in "${CHANGED[@]}"; do
-    n=$((n + 1))
-    if [[ ! "$f" =~ ^docs/ && ! "$f" =~ ^[^/]+\.md$ ]]; then docs_only=0; fi
     if [[ ! "$f" =~ ^tests/.+\.test\.tsx?$ ]]; then tests_only=0; fi
   done
-  if [ "$n" -eq 0 ]; then
-    docs_only=0
+  if [ "${#CHANGED[@]}" -eq 0 ]; then
     tests_only=0
   fi
 
-  if [ "$docs_only" -eq 1 ]; then
+  if docs_only_diff "${CHANGED[@]}"; then
     MODE=docs-only
     ORDER=()
     return 0
