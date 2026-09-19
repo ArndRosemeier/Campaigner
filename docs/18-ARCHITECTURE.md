@@ -554,6 +554,18 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   whose chunk writes stopped 30+ minutes ago is stale, and removing it must be
   said out loud.
 
+- **A session LOG must be big enough to be an ACTOR, not merely recent
+  (docs/17 row 243, 2026-09-19).** This harness opens a session record for every
+  bash call, and those logs carry ONLY the header plus the permission/sandbox
+  presets — 332-407 bytes, against 0.8-1.0 MB for a real agent session here. So
+  `board.sh`'s unrecorded-live-state scan, which tested age alone, named a dozen
+  call stubs on every run once row 242 pointed it at the CORRECT session
+  directory; a check that always cries wolf is worse than no check. The scan now
+  requires the globbed `session*.jsonl.zst*` log to reach 4096 bytes to count as
+  an actor, and falls back to the directory mtime ONLY when no log matches the
+  glob at all (a genuinely drifted filename), so that case stays loud rather than
+  being skipped.
+
 - **Merging test files that share a background puts them in ONE module
   registry — the `--no-isolate` failure mode, inside one file (docs/17 row 176,
   docs/08 §Tests that share one background belong in one file).** Vitest gives

@@ -238,13 +238,25 @@ while read -r d; do
   # filename is GLOBBED: DSH writes `session.v3.jsonl.zstd` today, and the older
   # literal `session.jsonl.zstd` matched nothing, so the stat silently missed and
   # fell through to a slower mtime walk.
+  #
+  # A LOG CAN ALSO BE TOO SMALL TO BE AN ACTOR. This harness opens a session
+  # record for every bash call, and those carry ONLY the header plus the
+  # permission/sandbox presets — MEASURED 2026-09-19: 332-407 bytes, while a real
+  # agent session on this box is 0.8-1.0 MB. Age alone therefore flags a dozen
+  # call stubs on every run, and a scan that always cries wolf is worse than no
+  # scan. FLOOR 4096 bytes: 10x above the largest stub, 200x below the smallest
+  # real session. When NO log matches the glob at all the name has drifted, so the
+  # dir mtime is still used — that stays LOUD rather than silently skipping.
   last=""
+  have_log=0
   for f in "$d"/session*.jsonl.zst*; do
     [ -e "$f" ] || continue
+    have_log=1
+    [ "$(stat -c %s "$f")" -ge 4096 ] || continue
     t="$(stat -c %Y "$f")"
     if [ -z "$last" ] || [ "$t" -gt "$last" ]; then last="$t"; fi
   done
-  [ -n "$last" ] || last="$(age_min "$d")"
+  [ "$have_log" -eq 0 ] && last="$(age_min "$d")"
   [ -n "$last" ] && [ "$last" -ge "$recent" ] || continue
   note "session log written in the last 6h and NOT named on the board: $b (registry + its log are the authority)"
 done < <(find "$SESSROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
