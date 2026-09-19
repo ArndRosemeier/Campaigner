@@ -412,6 +412,13 @@ export function rosterReferenceFor(
   if (resolved !== undefined && isMissingRefOrigin(resolved.origin)) {
     return plainReference(resolved.origin);
   }
+  // A mob COPY carries its own stamped origin line (docs/17 row 248): the
+  // migration resolved it from the live chunk+book read before dropping the
+  // citation, so an `inline` copy must PRINT it — that arm used to print
+  // nothing, which would silently drop "Bestiary p.132" from every converted
+  // mob. An authored inline block has no stamp and keeps printing nothing.
+  const stamped = entry.sourceLine?.trim();
+  if (stamped !== undefined && stamped !== '') return plainReference(stamped);
   switch (entry.source.type) {
     case 'inline':
       // The stat box prints immediately below: an origin run here would
@@ -510,9 +517,20 @@ export async function resolveMonsterEntry(
   entry: MonsterEntry,
   lookups: MonsterLookups,
 ): Promise<ResolvedMonster> {
+  // The entry's own STAMPED origin line, when it is a migrated copy (docs/17
+  // row 248) — read once, so the inline arm below and every other reader of
+  // this entry agree about what it says.
+  const stamped = entry.sourceLine?.trim();
   switch (entry.source.type) {
     case 'inline':
-      return { statBlock: entry.source.statBlock, origin: 'inline' };
+      // The stat box prints immediately below: an origin run here would
+      // contradict the block under it. A migrated COPY is the exception — it
+      // carries a stamped `sourceLine` and no citation left to compose one
+      // from, so the origin IS that stored line (docs/17 row 248).
+      return {
+        statBlock: entry.source.statBlock,
+        origin: stamped === undefined || stamped === '' ? 'inline' : stamped,
+      };
     case 'npc-ref': {
       const artifact = await lookups.getArtifact(entry.source.artifactId);
       // An authored NPC whose row is gone is a real dangling reference — a
@@ -533,7 +551,18 @@ export async function resolveMonsterEntry(
         // can never list numbers the npc's own panel does not show.
         return resolveDerivedNpcStats(artifact.name, creatureRef, lookups);
       }
-      return { statBlock: artifact.data.statBlock, origin: `NPC: ${artifact.name}` };
+      // A MIGRATED cast row (docs/17 row 248): the library's numbers were
+      // COPIED onto the row and the disclosure line stamped with them, so the
+      // NPC still shows "stats from Bestiary p.132" even though nothing
+      // resolves any more. An authored NPC has no stamp and keeps its own name.
+      const npcStamped = artifact.data.sourceLine?.trim();
+      return {
+        statBlock: artifact.data.statBlock,
+        origin:
+          npcStamped === undefined || npcStamped === ''
+            ? `NPC: ${artifact.name}`
+            : derivedStatOrigin(artifact.name, npcStamped),
+      };
     }
     case 'rulebook':
       return resolveCreatureCitation(

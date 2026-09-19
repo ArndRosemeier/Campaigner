@@ -70,8 +70,14 @@ describe('a cited row’s borrowed numbers are ONE rule and ONE render (SOURCE S
     expect(holders, 'files composing the derived-stats label').toEqual([
       'domain/encounterResolve.ts',
     ]);
-    // …its own definition plus exactly ONE call, inside the one rule.
-    expect(occurrences(source('domain/encounterResolve.ts'), LABEL_CALL)).toBe(2);
+    // …its own definition plus TWO calls, BOTH inside the one file and BOTH
+    // through this ONE composer: the live derived-stats rule
+    // (`resolveDerivedNpcStats`) and — added by the mob-copy migration, docs/17
+    // row 248 — the arm that discloses a CONVERTED cast NPC from its STAMPED
+    // `sourceLine`. The count moved 2→3 because a second legitimate CALLER
+    // appeared, not because a second implementation did: the single-holder
+    // assertion above is the guard against that, and it is unchanged.
+    expect(occurrences(source('domain/encounterResolve.ts'), LABEL_CALL)).toBe(3);
   });
 
   it('scan: the repo-wired read DELEGATES to the domain rule, and every surface MOUNTS the ONE renderer', () => {

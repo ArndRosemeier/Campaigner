@@ -50,6 +50,40 @@ export const creatureCitationRepairReportSchema = z.object({
 export type CreatureCitationRepairReport = z.infer<typeof creatureCitationRepairReportSchema>;
 
 /**
+ * The report of the mob-copy migration (docs/17 row 248): what the v24 upgrade
+ * (and every later startup retry) COPIED an authored stat block out of a
+ * library citation, and — BY NAME — every mob it could NOT convert because the
+ * library no longer holds the chunk (pack uninstalled, chunk gone, no parseable
+ * stat block).
+ *
+ * The two populations are counted separately because they are asked about
+ * separately: a converted ROSTER MOB and a converted cast NPC are different
+ * rows on different surfaces.
+ *
+ * `unconverted` is the RETRY WORKLIST, not just a notice: the pointer survives
+ * on exactly those rows (the owner-decided failure arm), and a startup retry
+ * re-runs the seam so installing the missing pack heals them later. `notified`
+ * is what keeps that worklist from re-toasting on every launch — AppShell says
+ * the report once and records that it did, while `unconverted` stays readable
+ * for the retry.
+ */
+export const mobCopyRepairReportSchema = z.object({
+  /** Encounter roster mobs whose `rulebook` citation became an authored copy. */
+  rosterMobsCopied: z.number().int().nonnegative(),
+  /** Cast NPCs whose `creatureRef` became an authored copy. */
+  npcCreaturesCopied: z.number().int().nonnegative(),
+  /** Mobs that could NOT be converted, by name, with the reason — the retry
+   * worklist. Their pointers are deliberately left in place. */
+  unconverted: z
+    .array(z.object({ where: z.string(), name: z.string(), reason: z.string() }))
+    .default([]),
+  /** Whether AppShell has already told the user about this report. */
+  notified: z.boolean().default(false),
+});
+
+export type MobCopyRepairReport = z.infer<typeof mobCopyRepairReportSchema>;
+
+/**
  * A creature row the v22 key fold had to DROP because the same creature was
  * already stored under the other Unicode composition (docs/17 row 168). The
  * dropped `imageId` is recorded — not deleted, and named in the one-shot
@@ -532,6 +566,12 @@ export const settingsSchema = z.object({
    * AppShell and then reset to null. `null` = nothing to report.
    */
   creatureCitationRepair: creatureCitationRepairReportSchema.nullable().default(null),
+  /**
+   * The mob-copy migration report (docs/17 row 248), consumed ONCE by AppShell
+   * (`notified`) and then re-read only by the startup retry, which needs
+   * `unconverted` to know there is still work. `null` = nothing to report.
+   */
+  mobCopyRepair: mobCopyRepairReportSchema.nullable().default(null),
   /** First-run setup wizard (see onboardingSchema above). */
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
   /** Last-used module shortcut (see lastModuleSchema above). */
@@ -608,6 +648,7 @@ export function defaultSettings(): Settings {
     deliverablesRemoved: 0,
     creatureKeyFold: null,
     creatureCitationRepair: null,
+    mobCopyRepair: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,

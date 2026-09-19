@@ -100,6 +100,7 @@ async function enableEmbeddings(): Promise<void> {
     retiredSessionNotesRemoved: 0,
   deliverablesRemoved: 0,
     creatureCitationRepair: null,
+    mobCopyRepair: null,
     creatureKeyFold: null,
     language: 'en' as const,
     onboarding: { status: 'fresh' as const, stepState: [] },

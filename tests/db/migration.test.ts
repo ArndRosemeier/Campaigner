@@ -1284,7 +1284,7 @@ describe('v18 → v19 migration (durable module document versions)', () => {
     // these rows.
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(23);
+    expect(db.verno).toBe(24);
 
     const module = await db.modules.get('00000000-0000-4000-8000-000000000b19');
     expect(module?.parts[0]?.markdown).toBe('Pre-undo part text.');
@@ -1473,7 +1473,7 @@ describe('v19 → v20 migration (the creature tier)', () => {
     // (empty here) `deliverables` table without touching creature state, v22
     // folded the persisted creature key (docs/17 row 168), and v23 added the
     // empty Idea Board table (docs/17 row 173).
-    expect(db.verno).toBe(23);
+    expect(db.verno).toBe(24);
 
     // 1. The slot answers to the creature IDENTITY now, not to a chunk id.
     const slot = await db.mobPortraits.get(SLOT);
@@ -1604,7 +1604,7 @@ describe('v20 → v21 migration (the deliverables table is deleted)', () => {
     await seedLegacyV20();
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(23);
+    expect(db.verno).toBe(24);
 
     // The table is GONE from the schema (not merely empty).
     expect(db.tables.map((table) => table.name)).not.toContain('deliverables');

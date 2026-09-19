@@ -9,6 +9,7 @@ import type {
   WikiLinkCreature,
 } from '@/domain';
 import {
+  chunkIdOfOriginToken,
   contentCreatureIdentity,
   creatureIdentityForCitation,
   creatureRefIsEmpty,
@@ -500,9 +501,11 @@ export async function tokenCreature(options: {
 }
 
 /** The chunk a library creature identity key names, or null for a content key.
- * The ONE parse of the `chunk:` prefix (`domain/creature`'s spelling). */
+ * The ONE parse of the `chunk:` prefix lives in `domain/creature`
+ * (`chunkIdOfOriginToken`), beside the mint — this delegates to it rather than
+ * spelling the prefix a second time. */
 export function chunkIdOfCreatureKey(creatureKey: string): Id | null {
-  return creatureKey.startsWith('chunk:') ? creatureKey.slice('chunk:'.length) : null;
+  return chunkIdOfOriginToken(creatureKey);
 }
 
 /** Where one creature's portrait stands, for the batch UI's counts. */

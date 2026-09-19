@@ -230,6 +230,18 @@ export const npcDataSchema = z
      */
     creatureRef: creatureRefSchema.optional(),
     /**
+     * The STAMPED origin line of a mob COPY (docs/17 row 248): a library
+     * creature's numbers used to be derived at read time from a live chunk read,
+     * and the disclosure line ("Bestiary p.132" / "Bestiary: Owlbear") was
+     * composed then, from the chunk and its book. Under the one-representation
+     * model the numbers are COPIED onto the row, so the label has to be copied
+     * with them or the GM silently loses where they came from. The migration
+     * stamps it from the LIVE read BEFORE the pointer drops; a row that still
+     * carries a `creatureRef` leaves it unset. The line is the creature origin
+     * alone — `derivedStatOrigin` adds the NPC's own name at read time.
+     */
+    sourceLine: z.string().optional(),
+    /**
      * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
      * one did: the GENERATION seam's own provenance, so a later pass can tell a
      * freshly cast, prose-less row from one a module designer has since written
@@ -349,6 +361,30 @@ export const monsterEntrySchema = z.object({
    */
   treasure: z.string().default(''),
   source: monsterSourceSchema,
+  /**
+   * The STAMPED origin line of a mob COPY (docs/17 row 248) — the label a
+   * `rulebook` citation used to compose at READ time from a live chunk + book
+   * read ("Bestiary p.132", or "Bestiary: Owlbear" for a pack-origin book).
+   * The migration resolves it from the library BEFORE dropping the pointer and
+   * writes it here, so a copy still tells the GM where its numbers came from;
+   * an authored inline block, and a row the migration could not convert, leave
+   * it unset. `rosterReferenceFor` prints it for an `inline` entry, which is
+   * the one case that used to print no reference at all.
+   */
+  sourceLine: z.string().optional(),
+  /**
+   * The OPAQUE ORIGIN TOKEN of a mob COPY (docs/17 row 248): the creature
+   * identity the row's portrait/image cache is keyed by, preserved across the
+   * migration as an identity key and NOT a resolver. It keeps the `chunk:<id>`
+   * spelling (`domain/creature.libraryCreatureKey`) precisely so no
+   * `mobPortraits` / `creatureImages` row needs remapping — `foldCreatureKey`
+   * returns id keys unchanged — and so one bestiary creature still shares one
+   * portrait across every encounter that copied it. Nothing resolves through
+   * it: `rosterEntryCreatureIdentity` reads it as the identity and the copy's
+   * own `source.statBlock` is the numbers. Unset on an authored block (its
+   * identity is its content) and on a row the migration could not convert.
+   */
+  originToken: z.string().optional(),
 });
 
 export type MonsterEntry = z.infer<typeof monsterEntrySchema>;

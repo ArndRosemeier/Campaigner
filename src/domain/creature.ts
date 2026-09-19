@@ -118,6 +118,17 @@ export function libraryCreatureKey(chunkId: string): string {
 }
 
 /**
+ * The chunk an ORIGIN TOKEN names, or `null` for a token in another key space.
+ * THE one parse of the `chunk:` prefix — the spelling `libraryCreatureKey`
+ * mints and `db/creatureRepo.chunkIdOfCreatureKey` reads; a migrated mob copy
+ * keeps that token (docs/17 row 248), and both the identity rule below and the
+ * repo's own key reader parse it HERE rather than each growing a copy.
+ */
+export function chunkIdOfOriginToken(token: string): string | null {
+  return token.startsWith('chunk:') ? token.slice('chunk:'.length) : null;
+}
+
+/**
  * The ONE portrait key for a creature with NO library row behind it — an
  * encounter-invented mob (an inline stat block or a name-only roster entry,
  * docs/11 D5) or any other creature the bestiary does not carry. Derived from
@@ -285,6 +296,15 @@ export function rosterEntryCreatureIdentity(
   entry: MonsterEntry,
   linked: AnyArtifact | undefined,
 ): CreatureIdentity | null {
+  // A MIGRATED COPY's token is authoritative and checked FIRST (docs/17 row
+  // 248): the row is now `inline`/`none`, so without this an ex-citation would
+  // fall to the content branch below and be a DIFFERENT creature — orphaning
+  // its `chunk:`-keyed portrait and re-labelling it hand-written.
+  const token = entry.originToken?.trim();
+  if (token !== undefined && token !== '') {
+    const chunkId = chunkIdOfOriginToken(token);
+    return { kind: 'library', key: token, ref: chunkId === null ? {} : { chunkId } };
+  }
   const source = entry.source;
   if (source.type === 'rulebook') {
     const citation = creatureRefForRulebookSource(source);

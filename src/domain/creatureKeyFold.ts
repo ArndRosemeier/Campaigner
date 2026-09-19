@@ -1,4 +1,5 @@
 import type { CreatureKeyFoldReport } from '@/domain/settings';
+import { plural } from '@/domain/plural';
 
 /**
  * The ONE sentence the v22 persisted-creature-key fold becomes (docs/17 row
@@ -44,8 +45,4 @@ export function formatCreatureKeyFold(report: CreatureKeyFoldReport): string | n
           .map((entry) => `${entry.table} «${entry.creatureKey}» (image ${entry.imageId})`)
           .join('; ')}.`;
   return `${head} ${merged} merged, keeping the newer portrait.${dropped}`;
-}
-
-function plural(count: number, singular: string, pluralForm: string): string {
-  return `${String(count)} ${count === 1 ? singular : pluralForm}`;
 }

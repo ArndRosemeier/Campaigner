@@ -1,5 +1,6 @@
 import type { AnyArtifact, Artifact, Id, MonsterEntry } from '@/domain';
 import {
+  chunkIdOfOriginToken,
   rosterEntryCreatureIdentity,
   type CreatureIdentity,
 } from '@/domain';
@@ -121,6 +122,21 @@ export function rosterParticipantRoute(
   entry: MonsterEntry,
   linked: AnyArtifact | undefined,
 ): CreaturePortraitRoute {
+  // A MIGRATED COPY's stored origin token is the creature identity (docs/17
+  // row 248): the row is `inline` now, so without this check it would be routed
+  // to the `invented` lane and its `chunk:`-keyed portrait would be abandoned —
+  // the exact cache break the opaque token exists to prevent.
+  const token = entry.originToken?.trim();
+  if (token !== undefined && token !== '') {
+    const chunkId = chunkIdOfOriginToken(token);
+    return {
+      lane: 'creature',
+      creatureKey: token,
+      ...(chunkId === null ? {} : { chunkId }),
+      name: entry.name,
+      artifactId: null,
+    };
+  }
   const source = entry.source;
   if (source.type === 'npc-ref') {
     if (linked === undefined) return { lane: 'missing-ref' };

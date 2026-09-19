@@ -1,4 +1,5 @@
 import type { CreatureCitationRepairReport } from '@/domain/settings';
+import { plural } from '@/domain/plural';
 
 /**
  * The ONE sentence the core-mob arc's migration report becomes (docs/11 D7).
@@ -58,6 +59,3 @@ export function formatCreatureCitationRepair(report: CreatureCitationRepairRepor
   } left as they were — ${detail}.`;
 }
 
-function plural(count: number, singular: string, pluralForm: string): string {
-  return `${String(count)} ${count === 1 ? singular : pluralForm}`;
-}

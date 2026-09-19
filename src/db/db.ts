@@ -28,6 +28,7 @@ import {
   normalizeEncounterShapeData,
 } from '@/domain';
 import { repairCreatureCitations } from '@/db/creatureRepair';
+import { repairMobCopies } from '@/db/mobCopyRepair';
 
 /** Separator between the scope (a campaign id) and the folded key in the v22
  * upgrade's grouping map; a UUID and a JSON key can never contain it. */
@@ -1033,6 +1034,39 @@ export class CampaignerDB extends Dexie {
       ideaBoards: 'id, updatedAt',
       settings: 'id',
     });
+    // Version 24 (the mob simplification, docs/17 row 248): a mob's library
+    // CITATION becomes an authored COPY of the chunk's stats, with the origin
+    // label stamped and the `chunk:` portrait identity preserved as an opaque
+    // token. The store shape is unchanged — this is a data conversion only —
+    // and the whole thing is ONE transaction calling the seam that takes it
+    // (`db/mobCopyRepair.repairMobCopies`), exactly like the v20 citation
+    // repair above. It converts what resolves and KEEPS the failing pointer,
+    // named in the settings report the shell reads once; the startup retry
+    // (`db/mobCopyRetry`) heals those rows when the missing pack is installed.
+    this.version(24)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, &moduleId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await repairMobCopies({ tx, reason: 'upgrade' });
+      });
   }
 }
 

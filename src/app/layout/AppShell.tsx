@@ -28,6 +28,8 @@ import { useHelpStore } from '@/help/helpStore';
 import { useLibraryCreaturePool } from '@/app/use-library-creatures';
 import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
 import { formatCreatureKeyFold } from '@/domain/creatureKeyFold';
+import { formatMobCopyRepair } from '@/domain/mobCopyRepair';
+import { retryMobCopies } from '@/db/mobCopyRetry';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
@@ -159,6 +161,44 @@ export function AppShell(): JSX.Element {
       })
       .catch((error: unknown) => {
         toastError('Could not report the creature key migration', error);
+      });
+  }, []);
+
+  useEffect(() => {
+    // ONE loud migration report (docs/17 row 248): the v24 Dexie upgrade turned
+    // every mob that CITED a library creature into an authored COPY of its
+    // stats, stamping the origin line ("Bestiary p.132") and preserving the
+    // `chunk:` portrait identity as an opaque token. The upgrade body cannot
+    // toast (it runs before React, inside Dexie), so it wrote what it did into
+    // settings; this reads it ONCE, states the counts and NAMES every mob it
+    // could not convert (AGENTS rules 1/2).
+    //
+    // The unresolved list doubles as the RETRY WORKLIST (the owner-decided
+    // failure arm): those rows deliberately KEPT their pointer, so re-running
+    // the seam here copies them the moment the missing pack has been imported.
+    // `notified` keeps that from re-toasting on every launch.
+    void readSettings()
+      .then(async (settings) => {
+        const pending = settings.mobCopyRepair;
+        if (pending === null) return;
+        if (pending.unconverted.length > 0) {
+          await retryMobCopies();
+          // The retry writes a FRESH report only when it healed something, so
+          // re-read: the toast must state what this launch did, not the stale
+          // upgrade counts.
+          const after = await readSettings();
+          const report = after.mobCopyRepair;
+          if (report === null || report.notified) return;
+          toastInfo(formatMobCopyRepair(report));
+          await updateSettings({ mobCopyRepair: { ...report, notified: true } });
+          return;
+        }
+        if (pending.notified) return;
+        toastInfo(formatMobCopyRepair(pending));
+        await updateSettings({ mobCopyRepair: { ...pending, notified: true } });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the mob copy migration', error);
       });
   }, []);
 
