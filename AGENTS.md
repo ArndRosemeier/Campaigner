@@ -360,17 +360,17 @@ chained command, and never leave one uncommitted while a writer is gating.
   largest, which is the harness BOTH projects live in: the discipline below
   protects the other project's sessions as much as ours.
 - **A push to `main` DEPLOYS** (GitHub to the owner's own server), and he then
-  tests it in Chrome on Windows.
+  tests it in Chrome on Windows. So `main` is not a staging area: a red or
+  half-finished landing is user-visible within minutes of the push, which is why
+  the gate runs before every push and why an unverified landing is never
+  "probably fine".
   **A RED DEPLOY IS REPORTED, NEVER SILENTLY RETRIED (owner-directed 2026-09-19).**
   The workflow's last step is an FTP upload; when it fails, the site keeps serving the
   PREVIOUS bundle, so the owner is testing code that was never shipped. Owner,
   verbatim: *"Just tell me so i know the current version is not up."* So a failed
   deploy run is NAMED in the next report to the owner, with the run link and what the
   live version therefore still is. Keep pushing — the next push re-triggers a deploy —
-  but a red deploy never passes unmentioned. So `main` is not a staging area: a red or
-  half-finished landing is user-visible within minutes of the push, which is why
-  the gate runs before every push and why an unverified landing is never
-  "probably fine".
+  but a red deploy never passes unmentioned.
 - Starving this box does not merely slow a build — it costs the owner his
   remote screen and can kill the harness itself (§Host hygiene 7).
 
