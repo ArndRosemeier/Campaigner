@@ -149,7 +149,6 @@ const SPACES: Record<string, Record<string, readonly [string, number][]>> = {
 const BOUNDARIES: Record<string, string> = {
   'domain/artifactAlias.ts': 'the primitive itself — its definition IS the fold',
   'db/mobPortraitCache.ts': "row 165's survivor — `isCanonicalCitation`, the portrait path another slice owns",
-  'db/creatureRepo.ts': 'an ORDERING comparator (localeCompare), not an identity key',
   'domain/module.ts': "sameSlot's BOOK half (a book title is not a name, row 161) + the entity lookups' emptiness probes",
   'llm/roomBudget.ts': 'partLevelForMention — an emptiness probe only; the real comparison beside it is a tier call',
   'llm/schemas.ts': 'a zod enum case coercion — a VALUE transform, not a key',

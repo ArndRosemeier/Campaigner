@@ -1,3 +1,4 @@
+import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { creatureLibraryName, sameCreatureName } from '@/domain/creatureName';
@@ -116,7 +117,7 @@ export function libraryCreaturePool(
     });
   }
   creatures.sort((left, right) => {
-    const byName = left.name.trim().toLowerCase().localeCompare(right.name.trim().toLowerCase());
+    const byName = comparableName(left.name).localeCompare(comparableName(right.name));
     return byName !== 0 ? byName : left.chunkId.localeCompare(right.chunkId);
   });
   return creatures;
