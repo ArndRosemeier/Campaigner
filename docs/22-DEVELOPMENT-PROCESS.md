@@ -42,7 +42,9 @@ Three claims make this work, and each is worth stating plainly:
 2. **A handover must be possible in minutes.** Assume the session can die at any
    moment (it has: a predecessor died of a compaction failure with a 35 MB log).
 3. **Work is only done when it is verified by someone other than its author.**
-   The writer's own gate is necessary and not sufficient.
+   The writer's own COMPILE-tier gate is necessary and not sufficient: it blocks
+   its push, and the DISPATCHER's full gate on the integrated tree is the tier
+   that runs the suite (§7.1 — who runs which tier).
 
 ---
 
@@ -372,6 +374,19 @@ the question each half answers:
 | Question | *does it still build?* | *did behaviour move?* |
 | Blocks | the push | nothing — it follows the push |
 | Verdict | exit 2 (NOT verified) | exit 0 GREEN / exit 1 RED |
+
+**WHO RUNS WHICH TIER (owner-delegated decision, 2026-09-19).** The DISPATCHER
+runs the full gate, ONCE per landing cycle, on the integrated tree. A WRITER does
+not run the suite by default — its landing report carries the COMPILE tier, which
+is the tier that blocks its push. The one exception is a slice that touches the
+**verification machinery itself** (`scripts/gate.sh`, `vite.config.ts`,
+`tsconfig*.json`, `package.json`/the lockfile, the test setup or helpers): only
+running the suite THROUGH those can verify them, so that writer runs the full gate
+in-turn and the dispatcher's integrated gate still follows. The reason is a
+measurement, not a preference: a full suite costs ~9-10 minutes of a SHARED box and
+holds the ONE suite lock, so asking both actors for it runs the same content twice
+and serializes everyone else behind it — one slice in this project ran THREE full
+suites for one landing.
 
 **Why typecheck is the blocking half, and lint is not.** The deploy job runs
 `pnpm build` (= `tsc -b && vite build`). A type error therefore fails the deploy

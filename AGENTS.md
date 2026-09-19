@@ -215,9 +215,24 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
      ONE way the suite runs, §Host hygiene 7) is started in the BACKGROUND right
      after the push, in the SAME session, and its result is OWNED: a green result
      is recorded on the board; a RED one is fixed forward IMMEDIATELY, before any
-     other change lands — never stacked behind a second unverified commit. The
-     writer's own landing report still carries a FULL green gate on its slice;
-     this tier covers the integrated tree. A background run's log MUST go to the
+     other change lands — never stacked behind a second unverified commit.
+     **WHO RUNS THE SUITE (owner-delegated decision, 2026-09-19: "not sure if
+     subagents should do that in general, your call"). The DISPATCHER runs the
+     FULL gate, ONCE per landing cycle, on the integrated tree — that is this
+     tier. A WRITER does NOT run the suite by default: its landing report carries
+     the COMPILE tier (typecheck + lint), which is the tier that BLOCKS its
+     push.** The single exception is a slice that touches the VERIFICATION
+     MACHINERY ITSELF — `scripts/gate.sh`, `vite.config.ts`, `tsconfig*.json`,
+     `package.json`/the lockfile, or the test setup/helpers — because only running
+     the suite THROUGH them can verify them; that writer runs the FULL gate
+     in-turn, and the dispatcher's integrated gate still follows it. The reason is
+     measured rather than stylistic: a full suite costs ~9-10 minutes of a SHARED
+     box and holds the ONE suite lock, so demanding one from the writer AND the
+     dispatcher runs the same content twice and serializes every other actor
+     behind it — one slice in this session ran THREE full suites (~28 minutes) for
+     one landing. The two-tier trade itself is unchanged and remains the owner's:
+     `origin/main` may carry a compile-clean commit for the ~10 minutes until the
+     dispatcher's gate reports. A background run's log MUST go to the
      workspace (the gate's default `GATE_LOGDIR`), never `/tmp` — under the
      restricted sandbox `/tmp` is per-call, so a `/tmp` log dies with the
      process, and a path that is trustworthy only while the sandbox is
