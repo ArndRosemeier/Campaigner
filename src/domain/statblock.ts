@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 import type { GameSystem } from '@/domain/gameSystem';
-import { statBlockBaseFields, storedMobSpellAssignmentSchema } from '@/domain/statblockFields';
+import { spellDataSchema, type SpellData } from '@/domain/spellData';
+import {
+  COPIED_SPELL_ENTRY_KEY,
+  statBlockBaseFields,
+  storedMobSpellAssignmentShape,
+  type MobSpellAssignment,
+} from '@/domain/statblockFields';
 
 /**
  * The field definitions live in `domain/statblockFields` (ONE definition, see
@@ -10,6 +16,9 @@ import { statBlockBaseFields, storedMobSpellAssignmentSchema } from '@/domain/st
  */
 export { abilitiesSchema, namedTextSchema, numericStat } from '@/domain/statblockFields';
 export type { NamedText } from '@/domain/statblockFields';
+/** The copy-only assignment key (docs/17 row 255c) — re-exported so a consumer
+ *  asks this module for it rather than reaching into the field definitions. */
+export { COPIED_SPELL_ENTRY_KEY } from '@/domain/statblockFields';
 
 /**
  * Normalized d20 stat block (01-DATA-MODEL §StatBlock): one shared shape for
@@ -28,15 +37,68 @@ export type { NamedText } from '@/domain/statblockFields';
  * precedent: a stat block written before the arc genuinely lacks the key, and
  * "no field" must stay distinguishable from "authored, no spells" so a legacy
  * row renders exactly as it did (no chip section, no error, no migration).
- * The values a chip shows are never stored here: they come from
- * `domain/mobSpells.mobSpellChips` over the library's own `spellData` at
- * render/validation time, so a re-imported spell row cannot disagree with the
- * mob that names it.
+ * The values a chip shows come from `domain/mobSpells.mobSpellChips` over the
+ * library's own `spellData` at render/validation time, so a re-imported spell
+ * row cannot disagree with the mob that names it — EXCEPT where a COPY carries
+ * the entry itself (docs/17 row 255c, `copiedMobSpellAssignmentSchema` below):
+ * a module's own row must render with the library absent, so its assignment
+ * carries the library payload rather than a name alone.
  */
 export const statBlockSchema = z.object({
   ...statBlockBaseFields(),
-  spells: z.array(storedMobSpellAssignmentSchema()).nullish(),
+  spells: z.array(copiedMobSpellAssignmentSchema()).nullish(),
 });
+
+/**
+ * THE stored assignment a COPY carries (docs/17 row 255c): every key
+ * `storedMobSpellAssignmentSchema()` declares, plus the library entry the
+ * assignment names under `spellData` (the copy-only key, declared in
+ * `domain/statblockFields` so the request contract can deliberately omit it).
+ *
+ * WHY IT IS NOT `storedMobSpellAssignmentSchema()`. That builder is ALSO the
+ * no-corpus arm of the stat-block REQUEST contract (`llm/statBlockContract`),
+ * and the byte-identity promise there is that a system whose library holds no
+ * spells is asked for exactly the pre-arc shape. A model never authors a
+ * library payload — it names a spell from the prompt's own list — so the copy
+ * key is added to STORAGE only. The compatibility pin in
+ * `tests/llm/stat-block-contract.test.ts` names the difference explicitly
+ * rather than comparing the two schemas for equality.
+ *
+ * The added field is OPTIONAL (copies made before this row, and every
+ * model-authored or hand-edited assignment, carry a bare name), so every past
+ * row keeps parsing and the resolver's library arm is unchanged for them.
+ */
+export function copiedMobSpellAssignmentSchema() {
+  return z.object({
+    ...storedMobSpellAssignmentShape(),
+    [COPIED_SPELL_ENTRY_KEY]: spellDataSchema.nullish(),
+  });
+}
+
+/**
+ * One stored assignment — the bare keys plus the copy's library entry. Declared
+ * as an interface EXTENDING the request-facing `MobSpellAssignment` (itself
+ * inferred from the one stored shape) rather than re-listed, so a key added to
+ * the shape reaches the resolver's type too.
+ */
+export interface CopiedMobSpellAssignment extends MobSpellAssignment {
+  spellData?: SpellData | null;
+}
+
+/**
+ * The library entry a copied assignment CARRIES, or `null` when the assignment
+ * is a bare name (a model-authored row, a hand edit, or a copy made before
+ * docs/17 row 255c). THE one read of the copy-only key.
+ *
+ * Typed over `MobSpellAssignment` so BOTH a bare assignment and a copy satisfy
+ * it: the runtime read is the same either way (a bare key answers
+ * `undefined`), and no caller casts. The payload is parsed by the SAME
+ * `spellDataSchema` the library row was, so a copy is a `SpellData` and every
+ * rule reads it without a conversion.
+ */
+export function copiedSpellEntry(assignment: MobSpellAssignment): SpellData | null {
+  return (assignment as CopiedMobSpellAssignment).spellData ?? null;
+}
 
 export type StatBlock = z.infer<typeof statBlockSchema>;
 

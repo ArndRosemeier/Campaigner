@@ -1,5 +1,6 @@
 import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
+import { copiedSpellEntry } from '@/domain/statblock';
 import { spellTraitsAreFocus, type SpellData } from '@/domain/spellData';
 import { pf2eCantripRankFor, spellAtRank, type SpellAtRank } from '@/domain/spellHeightening';
 import {
@@ -153,6 +154,12 @@ function foreignAssignmentWarnings(
  * React — so the run boundary, the stat-block card and the PDF box all ask the
  * SAME question of the SAME inputs (docs/18 §2.3).
  *
+ * WHERE A SPELL'S PAYLOAD COMES FROM, in one order (docs/17 row 255c): the
+ * assignment's OWN copied entry first — a module-scoped row owns its spells, so
+ * it resolves with the imported library absent — then the passed `index`, the
+ * live library read a model-authored or legacy assignment needs. The `index` is
+ * still a parameter for exactly that second arm, and a copied row ignores it.
+ *
  * `casterLevel` is the mob's level (`mobCasterLevel` over the printed level) or
  * `null`; it is passed through to the rule for EVERY spell with no branch on
  * kind, exactly as `spellAtRank`'s request shape intends.
@@ -165,7 +172,18 @@ export function mobSpellChips(
   const chips: MobSpellChip[] = [];
   for (const assignment of spells ?? []) {
     const castRank = assignment.castRank ?? null;
-    const entry = index.get(comparableName(assignment.name));
+    // THE COPY'S OWN ENTRY WINS (docs/17 row 255c). A module-scoped row whose
+    // stats were copied off a library creature carries the library's payload
+    // itself, so it resolves with the library absent — the property the owner's
+    // rule exists for. A bare assignment (a model-authored row, a hand edit, a
+    // pre-255c copy) still resolves against the index, unchanged. The copied
+    // payload's own `system` is what the entry claims, exactly as a library
+    // entry's would be.
+    const copied = copiedSpellEntry(assignment);
+    const entry: { name: string; spellData: SpellData } | undefined =
+      copied === null
+        ? index.get(comparableName(assignment.name))
+        : { name: assignment.name, spellData: copied };
     if (entry === undefined) {
       chips.push({
         name: assignment.name,

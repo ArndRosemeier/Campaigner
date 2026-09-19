@@ -67,3 +67,25 @@ export async function loadSpellIndexesFor(
   }
   return indexes;
 }
+
+/**
+ * THE copy seam's live spell lookup (docs/17 row 255c): the index builder
+ * above, LAZY (a mob with no spell costs no read) and cached per system
+ * (`copyCreatureStats` hydrates a whole block from one read, and the cast path
+ * copies one block per NPC).
+ *
+ * It exists so the two live callers — `db/libraryCopy.copyCreatureStatsFromDb`
+ * and `db/creatureRepo.castCreatureAsNpc` — share ONE spelling of "read the
+ * corpus once for this copy" instead of each caching a promise of its own. A
+ * system with no imported corpus answers `undefined`, which the seam reads as
+ * "no library" rather than an error.
+ */
+export function spellIndexLookup(): (
+  system: GameSystem,
+) => Promise<MobSpellIndex | undefined> {
+  let indexes: Promise<Map<GameSystem, MobSpellIndex>> | null = null;
+  return async (system) => {
+    indexes ??= loadSpellIndexesFor([system]);
+    return (await indexes).get(system);
+  };
+}

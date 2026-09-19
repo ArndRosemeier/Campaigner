@@ -64,14 +64,34 @@ export type NamedText = z.infer<ReturnType<typeof namedTextSchema>>;
  * every builder here.
  */
 export function storedMobSpellAssignmentSchema() {
-  return z.object({
+  return z.object(storedMobSpellAssignmentShape());
+}
+
+/**
+ * THE assignment key set as a plain shape, so a caller can build a variant
+ * without re-spelling a key (docs/17 rows 205/255c). The stored schema and the
+ * copy-bearing stored schema (`domain/statblock.statBlockSchema`) share this:
+ * a key added here reaches both, and neither can drift from the other.
+ */
+export function storedMobSpellAssignmentShape() {
+  return {
     name: z.string(),
     castRank: z.number().int().positive().nullish(),
     autoHeightenLevel: z.number().int().positive().max(10).nullish(),
     casterLevel: z.number().int().positive().nullish(),
     characterLevel: z.number().int().positive().nullish(),
-  });
+  };
 }
+
+/**
+ * THE copy-only assignment key (docs/17 row 255c). It is deliberately NOT
+ * declared by `storedMobSpellAssignmentShape()`: that shape is also a REQUEST
+ * contract's no-corpus arm (`llm/statBlockContract.statBlockSchemaFor`), and a
+ * model never authors a library payload — it names a spell from the prompt's
+ * list. The stored SUPERSET adds it, so a copied assignment carries the whole
+ * library entry without changing one request byte.
+ */
+export const COPIED_SPELL_ENTRY_KEY = 'spellData';
 
 /**
  * The stored assignment's parsed shape — the SUPERSET. `domain/mobSpells` owns

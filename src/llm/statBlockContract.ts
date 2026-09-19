@@ -137,9 +137,15 @@ export function statBlockSchemaFor(
   spellCorpus: boolean,
 ): z.ZodType<StatBlock> {
   if (!spellCorpus) {
-    // The full stored superset, spells included — the SAME assignment builder
-    // `domain/statblock.statBlockSchema` uses, so the no-corpus request can
-    // never drift from what storage parses.
+    // The full pre-arc stored superset, spells included — the SAME assignment
+    // builder `domain/statblock.statBlockSchema` used before docs/17 row 255c,
+    // so the no-corpus request keeps its byte-identity promise. Storage adds
+    // ONE key beside it (the library entry a COPY carries,
+    // `domain/statblock.copiedMobSpellAssignmentSchema`): the app writes that
+    // key, a model never does, so the request does not spend bytes asking for
+    // it — and it could not be expressed here even if it should, because the
+    // payload's free-form records (`heightening`, `damage`) are not in the
+    // strict subset `llm/strictSchema` emits.
     return z.object({
       ...statBlockBaseFields(),
       spells: z.array(storedMobSpellAssignmentSchema()).nullish(),

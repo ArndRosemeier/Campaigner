@@ -6,7 +6,11 @@ import {
   resolveCreatureChunk,
   type MonsterLookups,
 } from '@/domain/encounterResolve';
+import { comparableName } from '@/domain/artifactAlias';
+import { copiedSpellEntry } from '@/domain/statblock';
 import type { StatBlock } from '@/domain/statblock';
+import type { MobSpellIndex } from '@/domain/mobSpells';
+import type { GameSystem } from '@/domain/gameSystem';
 
 /**
  * THE ONE copy-on-write operation for a library creature (docs/17 row 255a,
@@ -74,7 +78,23 @@ export type CreatureCopyResult =
 export type CreatureCopyLookups = Pick<
   MonsterLookups,
   'getChunk' | 'getChunkByContentHash' | 'getRulebook'
->;
+> & {
+  /**
+   * The campaign's spell corpus for one system, or `undefined` when it holds
+   * none (docs/17 row 255c). Injected exactly like the creature lookups, so
+   * the migration's transaction tables and a live read are the same shape, and
+   * so a migrated copy and a live copy carry the SAME spell entries (the
+   * differential pin in `tests/features/mob-spell-copy.test.ts`).
+   *
+   * `undefined` is the honest "no library", never an error: the copy's stat
+   * block then carries the names it names and the resolver reports each one
+   * loudly — the pre-255c behaviour, unchanged.
+   *
+   * It is ASYNC because the live read is a Dexie query; the seam awaits it
+   * ONCE per copy, so a block assigning five spells still costs one read.
+   */
+  spellIndex?: ((system: GameSystem) => Promise<MobSpellIndex | undefined>) | undefined;
+};
 
 export const EMPTY_CREATURE_CITATION_REASON =
   'its creature citation carries neither a chunk id nor a content hash — nothing can be copied';
@@ -108,7 +128,7 @@ export async function copyCreatureStats(
   return {
     status: 'copied',
     copy: {
-      statBlock: chunk.statBlock,
+      statBlock: await copyStatBlockWithSpells(chunk.statBlock, lookups),
       // The citation's own creature name when it stamped one, else the row's
       // name — exactly what `creatureOriginLabel` has always been handed.
       sourceLine: await creatureOriginLabel(
@@ -118,6 +138,53 @@ export async function copyCreatureStats(
       ),
       originToken: libraryCreatureKey(chunk.id),
     },
+  };
+}
+
+/**
+ * THE SPELL HALF OF THE COPY (docs/17 row 255c) — the last content family of
+ * the owner's rule (*"Core items should always ever only be copied"*).
+ *
+ * A library creature's block names its spells; the VALUES a chip shows come
+ * from the campaign's spell library at read time (`domain/mobSpells
+ * .mobSpellChips`). A copy that carried the name alone would therefore still
+ * need the library installed — the exact dependency the rule removes — so the
+ * copy carries the library entry itself, `publication {title, license}`
+ * included (the owner's already-made decision: the text came from his own
+ * imported rulebook, self-containment is the goal, and the publication line
+ * keeps the source named).
+ *
+ * It hydrates through the SAME index the read path resolves against
+ * (`domain/mobSpells.mobSpellIndex`), so a copy and a live read cannot
+ * disagree about which spell a name means, and it exercises the ONE name
+ * comparison (`comparableName`) rather than restating it.
+ *
+ * A NAME THE LIBRARY DOES NOT HOLD IS LEFT AS IT WAS — never dropped, never
+ * placeholder-filled (AGENTS rule 1). That is not a silent hole: the resolver
+ * reports it as the loud unresolved chip it has always been, on the copy
+ * exactly as on the library row.
+ */
+async function copyStatBlockWithSpells(
+  statBlock: StatBlock,
+  lookups: CreatureCopyLookups,
+): Promise<StatBlock> {
+  const assignments = statBlock.spells;
+  if (assignments === null || assignments === undefined) return statBlock;
+  // ONE corpus read for the whole block, not one per assignment (the lookup is
+  // called once and reused), and skipped entirely when every assignment
+  // already carries its entry.
+  const needsLibrary = assignments.some((assignment) => copiedSpellEntry(assignment) === null);
+  const index = needsLibrary ? await lookups.spellIndex?.(statBlock.system) : undefined;
+  return {
+    ...statBlock,
+    spells: assignments.map((assignment) => {
+      // An assignment that ALREADY carries an entry is left byte-identical: a
+      // copy of a copy must not re-resolve (or lose) what the first copy
+      // stamped, and the library may since have been uninstalled.
+      if (copiedSpellEntry(assignment) !== null) return assignment;
+      const entry = index?.get(comparableName(assignment.name));
+      return entry === undefined ? assignment : { ...assignment, spellData: entry.spellData };
+    }),
   };
 }
 

@@ -97,4 +97,55 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
     );
     expect(offenders).toEqual([]);
   });
+
+  /**
+   * THE SPELL HALF (docs/17 row 255c). A copied mob's spells travel with the
+   * copy because this SAME operation stamps them — the last content family of
+   * the owner's rule, and the one a second seam would fragment silently: a copy
+   * and a re-resolution of the same assignment produce the same chip bytes BY
+   * CONSTRUCTION, so only a source scan can see a second spell-copy path.
+   *
+   * These pins live HERE rather than in a file of their own deliberately: the
+   * scan walker above is a BASELINED multi-site population (docs/17 row 212),
+   * and a second copy of it reds the tripewire — which it did on this slice's
+   * first draft, and this is the fold (AGENTS §Centralization obligation 4,
+   * applied to the test tree).
+   */
+  it('stamps a library entry onto an assignment in the copy seam alone', () => {
+    // `spellData` is a FIELD on a corpus row, a spell card and the resolver's
+    // index; only ONE expression puts one onto a stat block's ASSIGNMENT.
+    expect(filesWith('spellData: entry.spellData')).toEqual(['src/domain/libraryCopy.ts']);
+  });
+
+  it('reads a copied entry through the ONE accessor, never the raw key', () => {
+    expect(filesWith('copiedSpellEntry(')).toEqual([
+      'src/domain/libraryCopy.ts',
+      'src/domain/mobSpells.ts',
+      'src/domain/statblock.ts',
+    ]);
+    // …and the raw copy-only key is read in that ONE accessor.
+    expect(filesWith('spellData ?? null')).toEqual(['src/domain/statblock.ts']);
+  });
+
+  it('reads the spell corpus through the ONE seam and builds its index in ONE place', () => {
+    // The copy's live arm builds its lookup from `db/spellRepo`, the module
+    // that owns the corpus read and the index builder — the file list is the
+    // assertion, so a copy that queried chunks itself would red here.
+    expect(filesWith('spellIndexLookup(')).toEqual([
+      'src/db/creatureRepo.ts',
+      'src/db/libraryCopy.ts',
+      'src/db/spellRepo.ts',
+    ]);
+    // The migration's transaction-backed spell arm reuses the ONE corpus
+    // projection instead of reading stored spell rows its own way.
+    expect(filesWith('spellCorpusEntries(')).toEqual([
+      'src/db/mobCopyRepair.ts',
+      'src/db/spellRepo.ts',
+      'src/domain/spellData.ts',
+      'src/features/rules/hooks.ts',
+      'src/features/spells/mob-spell-chips.tsx',
+      'src/ingest/packImport.ts',
+      'src/llm/runEngine.ts',
+    ]);
+  });
 });

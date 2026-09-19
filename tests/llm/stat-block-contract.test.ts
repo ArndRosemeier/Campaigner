@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { statBlockSchema } from '@/domain/statblock';
+import { COPIED_SPELL_ENTRY_KEY, statBlockSchema } from '@/domain/statblock';
 import {
   STORED_ASSIGNMENT_KEYS,
   foreignAssignmentKeys,
@@ -14,7 +14,6 @@ import {
   statBlockSchemaFor,
 } from '@/llm/statBlockContract';
 import { strictJsonSchema } from '@/llm/strictSchema';
-
 /**
  * THE system-aware stat-block request contract (docs/17 row 205).
  *
@@ -35,6 +34,30 @@ import { strictJsonSchema } from '@/llm/strictSchema';
 
 const ENGINE = join(process.cwd(), 'src', 'llm', 'runEngine.ts');
 const CONTRACT = join(process.cwd(), 'src', 'llm', 'statBlockContract.ts');
+
+/** A minimal block satisfying every required stat-block field — the fixture
+ *  every compatibility arm parses, so an arm cannot drift by its own shape. */
+const BASE_BLOCK = {
+  system: 'pathfinder2e' as const,
+  level: '5',
+  size: 'Small',
+  creatureType: 'goblinoid',
+  ac: 20,
+  acNote: '',
+  hp: 60,
+  hpFormula: '',
+  speed: '25 feet',
+  abilities: { str: 14, dex: 16, con: 14, int: 16, wis: 12, cha: 10 },
+  saves: '',
+  skills: '',
+  senses: '',
+  languages: 'Goblin',
+  traits: [],
+  actions: [],
+  reactions: [],
+  legendary: [],
+  extras: {},
+};
 
 interface JsonSchemaNode {
   type?: string | string[];
@@ -58,6 +81,16 @@ function spellsNode(system: 'pathfinder2e' | 'dnd5e', spellCorpus: boolean): Jso
 
 function keysOf(node: JsonSchemaNode): string[] {
   return Object.keys(node.properties ?? {});
+}
+
+/** The assignment key set a WHOLE stat-block schema emits for one `spells`
+ *  entry — the same walk `spellsNode` does, over an already-converted schema. */
+function assignmentKeysOf(schema: Record<string, unknown>): string[] {
+  const spells = (schema as JsonSchemaNode).properties?.spells;
+  if (spells === undefined) throw new Error('the stat-block schema carries no spells property');
+  const array = spells.type === 'array' ? spells : spells.anyOf?.find((node) => node.type === 'array');
+  if (array?.items === undefined) throw new Error('the spells property is not an array');
+  return keysOf(array.items);
 }
 
 describe('the request contract is per system (docs/17 row 205)', () => {
@@ -106,11 +139,28 @@ describe('the request contract is per system (docs/17 row 205)', () => {
     }
   });
 
-  it('a system with NO corpus keeps the stored superset byte-for-byte', () => {
+  it('a system with NO corpus keeps the PRE-ARC stored superset; storage adds only the copy payload', () => {
     for (const system of ['pathfinder2e', 'dnd5e'] as const) {
-      const noCorpus = strictJsonSchema('stat-block', statBlockSchemaFor(system, false));
-      const stored = strictJsonSchema('stat-block', statBlockSchema);
-      expect(noCorpus).toEqual(stored);
+      // The request arm is still the pre-arc assignment builder, key for key.
+      const request = strictJsonSchema('stat-block', statBlockSchemaFor(system, false));
+      const requestKeys = assignmentKeysOf(request.schema);
+      expect(requestKeys).toEqual([...STORED_ASSIGNMENT_KEYS]);
+      // Storage adds EXACTLY the copy-only key (docs/17 row 255c): the library
+      // entry a copied assignment carries. The app writes it, never the model,
+      // so the request does not ask for it — and the difference is asserted by
+      // name below, so a stray key on either side still reds.
+      expect(COPIED_SPELL_ENTRY_KEY).toBe('spellData');
+      // A model's reply to the request arm still parses as STORAGE — the
+      // property the two schemas exist to guarantee, and the reason a
+      // structural difference is allowed at all.
+      const reply = {
+        ...BASE_BLOCK,
+        spells: [{ name: 'Regenerate', castRank: 4, casterLevel: 9, characterLevel: 9 }],
+      };
+      const parsed = statBlockSchema.parse(statBlockSchemaFor(system, false).parse(reply));
+      expect(parsed.spells?.[0]?.name).toBe('Regenerate');
+      // The copy key is ABSENT on such a row (not defaulted to a placeholder).
+      expect(parsed.spells?.[0]?.spellData).toBeUndefined();
     }
     // …and the name stays the pre-arc `statblock` for those systems.
     expect(statBlockResponseFormat('pathfinder2e', false).name).toBe('statblock');
@@ -159,27 +209,7 @@ describe('the prose shape is the SAME statement as the contract', () => {
 });
 
 describe('the STORED schema still parses every past row (compatibility)', () => {
-  const base = {
-    system: 'pathfinder2e' as const,
-    level: '5',
-    size: 'Small',
-    creatureType: 'goblinoid',
-    ac: 20,
-    acNote: '',
-    hp: 60,
-    hpFormula: '',
-    speed: '25 feet',
-    abilities: { str: 14, dex: 16, con: 14, int: 16, wis: 12, cha: 10 },
-    saves: '',
-    skills: '',
-    senses: '',
-    languages: 'Goblin',
-    traits: [],
-    actions: [],
-    reactions: [],
-    legendary: [],
-    extras: {},
-  };
+  const base = BASE_BLOCK;
 
   it('parses a row carrying ANY of the assignment keys, including the other system’s', () => {
     const parsed = statBlockSchema.parse({

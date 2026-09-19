@@ -47,6 +47,7 @@ import {
   type RevisionMeta,
 } from '@/db/artifactRepo';
 import { getChunksByContentHash, listChunksByType } from '@/db/chunkRepo';
+import { spellIndexLookup } from '@/db/spellRepo';
 import {
   creatureImageIdsByKey,
   getCreatureImageRow,
@@ -697,7 +698,13 @@ export async function castCreatureAsNpc(options: CastCreatureOptions): Promise<C
     }
     moduleTag = moduleTagFor(module.title);
   }
-  const result = await copyCreatureStats(options.citation, name, creatureLookups());
+  const result = await copyCreatureStats(options.citation, name, {
+    ...creatureLookups(),
+    // The spell arm (docs/17 row 255c): a cast row owns the library entry of
+    // every spell its block assigns, through the SAME lazy corpus lookup the
+    // live wrapper uses — never a second read spelling.
+    spellIndex: spellIndexLookup(),
+  });
   if (result.status === 'unresolved') {
     // Loud (AGENTS rule 1): casting a creature the library cannot supply would
     // mint an NPC whose numbers are a silent hole. The reason is the ONE copy

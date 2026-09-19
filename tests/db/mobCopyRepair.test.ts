@@ -1,7 +1,12 @@
 import Dexie from 'dexie';
 import { describe, expect, it } from 'vitest';
 
-import { rosterEntryCreatureIdentity } from '@/domain';
+import {
+  copiedSpellEntry,
+  rosterEntryCreatureIdentity,
+  spellDataSchema,
+  type MobSpellAssignment,
+} from '@/domain';
 import { rosterReferenceFor } from '@/domain/encounterResolve';
 import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
 import { rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
@@ -76,6 +81,39 @@ const PACK_ZOMBIE = {
   legendary: [],
   extras: {},
 };
+
+/**
+ * The library creature's OWN embedded spell assignment (a BARE name, as a
+ * creature document carries it) plus the corpus row that name means — the
+ * fixture for the migration's spell arm (docs/17 row 255c).
+ */
+const OWLBEAR_SPELL = 'Fireball';
+const FIREBALL = spellDataSchema.parse({
+  system: 'dnd5e',
+  rank: 3,
+  cantrip: false,
+  traditions: [],
+  school: 'evo',
+  filterAxis: 'school',
+  traits: [],
+  rarity: 'common',
+  cast: { time: '1 action', range: '150 feet', target: '', duration: 'instantaneous' },
+  damage: { 0: { formula: '8d6', type: 'fire', materials: [] } },
+  area: { type: 'sphere', value: 20 },
+  heightening: null,
+  heighteningEntries: [],
+  heighteningUnparsed: [],
+  publication: { title: 'D&D SRD 5.2', license: 'CC-BY-4.0' },
+});
+const OWLBEAR_WITH_SPELLS = {
+  ...OWLBEAR,
+  spells: [{ name: OWLBEAR_SPELL, castRank: 3 }],
+};
+const OWLBEAR_COPIED = {
+  ...OWLBEAR,
+  spells: [{ name: OWLBEAR_SPELL, castRank: 3, spellData: FIREBALL }],
+};
+const SPELL_CHUNK = '00000000-0000-4000-8000-000000000524';
 
 async function seedLegacyV23(options: {
   resolvedRoster: boolean;
@@ -157,7 +195,21 @@ async function seedLegacyV23(options: {
       headingPath: ['Owlbear'],
       text: 'Owlbear. HP 59, AC 13.',
       contentHash: 'hash-owlbear',
-      statBlock: OWLBEAR,
+      statBlock: OWLBEAR_WITH_SPELLS,
+    });
+    // The corpus row the creature's bare assignment names (docs/17 row 255c):
+    // the migration must copy IT onto the converted roster entry, not just the
+    // creature's own block.
+    await legacy.table('chunks').put({
+      id: SPELL_CHUNK,
+      bookId: BOOK,
+      pageStart: 200,
+      pageEnd: 200,
+      chunkType: 'spell',
+      headingPath: ['Spells', OWLBEAR_SPELL],
+      text: OWLBEAR_SPELL,
+      contentHash: 'hash-fireball',
+      spellData: FIREBALL,
     });
   }
   if (options.resolvedNpc) {
@@ -303,9 +355,12 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     if (entry === undefined) throw new Error('roster entry missing');
 
     // 1. ONE representation: the pointer is GONE and the numbers are a copy.
-    expect(entry.source).toEqual({ type: 'inline', statBlock: OWLBEAR });
-    // The label that used to be composed at read time is STAMPED, and the
-    // portrait identity survives as the opaque `chunk:` token.
+    //    The copy carries the library SPELL entry too (docs/17 row 255c), not
+    //    the bare name the creature document stated.
+    expect(entry.source).toEqual({ type: 'inline', statBlock: OWLBEAR_COPIED });
+    if (entry.source.type !== 'inline') throw new Error('the converted entry must be inline');
+    const copiedSpells = entry.source.statBlock.spells ?? [];
+    expect(copiedSpellEntry(copiedSpells[0] as MobSpellAssignment)).toEqual(FIREBALL);
     expect(entry.sourceLine).toBe('Bestiary p.132');
     expect(entry.originToken).toBe(`chunk:${CHUNK}`);
 
@@ -313,7 +368,7 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     //    origin still reads. A line composed from a live chunk read fails here.
     const origin = await resolveStoredMonsterEntry(entry, LIBRARY_MUST_NOT_BE_READ);
     expect(origin.origin).toBe('Bestiary p.132');
-    expect(origin.statBlock).toEqual(OWLBEAR);
+    expect(origin.statBlock).toEqual(OWLBEAR_COPIED);
     expect(rosterReferenceFor(entry, undefined).text).toBe('Bestiary p.132');
 
     // 3. The portrait identity is unchanged, so no mobPortraits/creatureImages

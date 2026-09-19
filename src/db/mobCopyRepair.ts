@@ -1,8 +1,10 @@
 import type { Transaction } from 'dexie';
 
-import type { Id, Rulebook, RuleChunk } from '@/domain';
+import type { GameSystem, Id, Rulebook, RuleChunk } from '@/domain';
 import type { MobCopyRepairReport } from '@/domain/settings';
 import { copyCreatureStats } from '@/domain/libraryCopy';
+import { mobSpellIndex, type MobSpellIndex } from '@/domain/mobSpells';
+import { spellCorpusEntries } from '@/domain/spellData';
 import {
   storedNpcCitation,
   storedRulebookCitation,
@@ -121,6 +123,51 @@ export interface MobCopyRepairOptions {
   reason: 'upgrade' | 'retry';
 }
 
+/**
+ * THE TRANSACTION-BACKED SPELL LOOKUP (docs/17 row 255c): the migration's half
+ * of the copy seam's spell arm, so a converted row carries the SAME library
+ * entry a live write path stamps (`db/libraryCopy`).
+ *
+ * WHY IT CANNOT CALL `db/spellRepo.loadSpellIndexesFor`: that seam reads the
+ * `db` SINGLETON, which is not usable inside a `version(N).upgrade` body. So
+ * the same TWO rules are applied to the transaction's own tables — a book is
+ * READY when its own row says so (`rulebookRepo.listReadyRulebooks`' rule,
+ * the ONE ready-book rule), and a spell's payload/name come from
+ * `domain/spellData.spellCorpusEntries` (the ONE corpus projection) — and only
+ * the transport differs. There is no second name comparison and no second
+ * payload reader.
+ *
+ * LAZY and CACHED PER SYSTEM: the chunks table is read at most once, and only
+ * for a system a copied block actually names a spell in. A migration whose mobs
+ * have no spells pays nothing.
+ */
+function transactionSpellLookup(
+  chunks: { toArray: () => Promise<RuleChunk[]> },
+  rulebooks: { toArray: () => Promise<Rulebook[]> },
+): (system: GameSystem) => Promise<MobSpellIndex | undefined> {
+  const cache = new Map<GameSystem, MobSpellIndex>();
+  let rows: Promise<RuleChunk[]> | null = null;
+  const allChunks = (): Promise<RuleChunk[]> => (rows ??= chunks.toArray());
+  return async (system) => {
+    const cached = cache.get(system);
+    if (cached !== undefined) return cached;
+    const ready = new Set(
+      (await rulebooks.toArray())
+        .filter((book) => book.status === 'ready' && book.system === system)
+        .map((book) => book.id),
+    );
+    const chunksForSystem = (await allChunks()).filter((chunk) => ready.has(chunk.bookId));
+    const index = mobSpellIndex(
+      spellCorpusEntries(chunksForSystem).map((entry) => ({
+        name: entry.name,
+        spellData: entry.data,
+      })),
+    );
+    cache.set(system, index);
+    return index;
+  };
+}
+
 export async function repairMobCopies(
   options: MobCopyRepairOptions,
 ): Promise<MobCopyRepairReport> {
@@ -150,6 +197,9 @@ export async function repairMobCopies(
       if (bookReadFault !== null) return Promise.reject(bookReadFault());
       return rulebooks.get(bookId);
     },
+    // The spell arm (docs/17 row 255c): the SAME copy seam stamps the library
+    // entry on a converted row, from the transaction's own tables.
+    spellIndex: transactionSpellLookup(chunks, rulebooks),
   };
   const all = (await artifacts.toArray()) as unknown[];
 
