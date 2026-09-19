@@ -76,7 +76,6 @@ const STORED_DISPATCH = /resolveStoredMonsterEntry\(/g;
  * blessing.
  */
 const PENDING_DELETION: readonly string[] = [
-  'src/db/artifactAutoPromote.ts',
   'src/db/artifactRepo.ts',
   'src/db/battleSeed.ts',
   'src/db/creatureCitations.ts',
@@ -89,6 +88,14 @@ const PENDING_DELETION: readonly string[] = [
   'src/domain/exportDependencies.ts',
   'src/domain/libraryCopy.ts',
   'src/domain/mobCopyLegacy.ts',
+  // Declared by docs/17 row 257: family E's repoint needs the roster's LIVE
+  // `npc-ref` shape (which artifact ids does this roster point at, and how is one
+  // replaced?). It is a CONSUMER, not a copy of the legacy-read seam — it never
+  // parses a stored pointer — and it moved into `domain/` precisely so the v26
+  // upgrade body could reach it without the `db` singleton. The deletion must
+  // know about it: when the `npc-ref` arm leaves the live model, this is the file
+  // that changes with it.
+  'src/domain/rosterRefs.ts',
   'src/domain/settings.ts',
   'src/features/campaign/components/kind-forms.tsx',
   'src/features/campaign/components/mob-portraits-section.tsx',
