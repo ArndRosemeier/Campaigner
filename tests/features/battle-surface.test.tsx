@@ -4,9 +4,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -27,7 +26,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule, newId, packRooms, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
-import { BattleSurface } from '@/features/play/battle/BattleSurface';
+import { currentBattle, renderSurface } from '../helpers/battle-surface-route';
 import { battleGridStyle } from '@/domain/battle/gridSnap';
 import { isBoardGestureActive } from '@/domain/battle/gestureGate';
 import { clearDatabase } from '../db/helpers';
@@ -303,40 +302,6 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
   return { moduleId: module.id, encounterId: encounter.id, npcId: npc.id, pc1 };
 }
 
-/** A route target that names no battle at all — the surface's empty state. */
-const NO_BATTLE_ENCOUNTER_ID = '00000000-0000-4000-8000-0000000000ff';
-
-/**
- * Renders the ENCOUNTER-scoped table surface (docs/17 row 254) at
- * `/c/:campaignId/m/:moduleId/battle/:encounterId`. With no explicit
- * `encounterId` the target is the encounter the module's battle belongs to; a
- * module with no battle — or a legacy battle with no provenance — routes to the
- * placeholder id, which resolves no battle and renders the empty state.
- * `expectBoard: false` skips the board wait for exactly those cases.
- */
-async function renderSurface(
-  moduleId: string,
-  options: { encounterId?: string; expectBoard?: boolean } = {},
-): Promise<void> {
-  const target =
-    options.encounterId ??
-    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
-    NO_BATTLE_ENCOUNTER_ID;
-  render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
-      <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
-      </Routes>
-    </MemoryRouter>,
-  );
-  if (options.expectBoard !== false) {
-    await waitFor(() => {
-      expect(screen.getByTestId('battle-board')).toBeInTheDocument();
-    });
-  }
-  await flushAsyncUpdates(20);
-}
-
 /**
  * Live-drag frames (batch H throttle): the surface coalesces pointermove
  * renders to requestAnimationFrame, so a mid-drag position only reaches the
@@ -353,27 +318,6 @@ async function flushDragFrames(): Promise<void> {
       });
     });
   });
-}
-
-/**
- * The battle-row read runs inside ONE act with a drain (actDrained, docs/08
- * §Console guard) — for EVERY caller: a bare `await currentBattle()` while
- * the surface is mounted hands fake-indexeddb's timed queue an outside-act
- * window, and a token's image liveQuery that (re)subscribed when a late
- * cascade landed emits its subscribe-time query there (dispatch + re-render
- * outside act — the intermittent act-leak class: first caught in 'tap shows
- * the card…', again in 'GM view: tapping a treasure-carrying token…' under
- * full-suite load). The helper absorbs the window so call sites stay plain
- * awaits; reads are safe to wrap (the spanning-act caveat applies to paired
- * fireEvent pointer sequences, which stay bare everywhere).
- */
-async function currentBattle(moduleId: string) {
-  const battle = await actDrained(async () => {
-    const [row] = await listBattlesByModule(moduleId);
-    if (row === undefined) throw new Error('battle row missing');
-    return row;
-  });
-  return battle;
 }
 
 /** A battle seeded from an encounter WITH a layout (2 keyed rooms) and a
@@ -506,13 +450,13 @@ describe('one battle per encounter (owner repro)', () => {
       screen.getAllByTestId('battle-token').map((element) => element.textContent);
 
     // Open the FIRST encounter's card.
-    await renderSurface(moduleId, { encounterId });
+    await renderSurface(campaignId, moduleId, { encounterId });
     expect(tokenLabels().some((label) => label.includes('Troll'))).toBe(true);
     expect(tokenLabels().some((label) => label.includes('Ogre'))).toBe(false);
     cleanup();
 
     // Open the SECOND encounter's card: its OWN board, never the first's.
-    await renderSurface(moduleId, { encounterId: second.id });
+    await renderSurface(campaignId, moduleId, { encounterId: second.id });
     expect(tokenLabels().some((label) => label.includes('Ogre'))).toBe(true);
     expect(tokenLabels().some((label) => label.includes('Troll'))).toBe(false);
   });
@@ -576,7 +520,7 @@ describe('legacy battle row (pre-effects board)', () => {
         stagingGround: null,
       },
     } as unknown as Battle);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // The board (not the "no battle" empty state) renders, with the legacy
     // stamp token and the fixed-grid viewport — the absent later-arc pieces
@@ -597,7 +541,7 @@ describe('legacy battle row (pre-effects board)', () => {
 describe('token render size', () => {
   it('renders tokens at board.tokenSize — the same number the fog-coverage math uses', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const token = screen.getAllByTestId('battle-token')[0];
     if (token === undefined) throw new Error('token missing');
@@ -644,7 +588,7 @@ describe('token render size', () => {
       createModule({ campaignId, title: 'Fit Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
     );
     await seedBattleFromEncounter(campaignId, module.id, encounter.id);
-    await renderSurface(module.id);
+    await renderSurface(campaignId, module.id);
     // The auto-fit effect re-captures tokenSize from the measured cell via a
     // Dexie round-trip; the rendered width must track whatever tokenSize the
     // row settles on (rendered size ≡ coverage size, no hardcoded 64px).
@@ -660,7 +604,7 @@ describe('token render size', () => {
 describe('player-safe DOM contract', () => {
   it('renders only board pieces: names, HP, initiative — never stat text or secrets', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getByTestId('battle-board')).toBeInTheDocument();
     });
@@ -693,7 +637,7 @@ describe('player-safe DOM contract', () => {
         },
       ],
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // M5-D amendment: the GM sees their own map — the fogged troll STAYS in
     // the DOM in GM view (player-view removal is pinned by the coverage test
@@ -737,7 +681,7 @@ describe('veil coverage hides mobs only', () => {
       });
       await flushAsyncUpdates();
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // GM view: everything under the GM's own veil stays on the board.
     let labels = screen.getAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
@@ -764,7 +708,7 @@ describe('veil coverage hides mobs only', () => {
 describe('veil presentation', () => {
   it('tints veils at ~10% in both views; selection reads via outline, never opacity', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -802,7 +746,7 @@ describe('veil presentation', () => {
 
   it('renders fog OPAQUE and veil transparent, keyed off kind, in both views (ledger 65 supersession)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -858,7 +802,7 @@ describe('veil presentation', () => {
     // the old `bg-zinc-300` slab fails here); the second half reads the rule
     // itself, because the look lives in CSS and jsdom does not compute it.
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -914,7 +858,7 @@ describe('veil presentation', () => {
 
   it('the two toolbar tools stay distinct: veil-tool mints a veil, fog-tool mints a fog', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -949,7 +893,7 @@ describe('veil presentation', () => {
     // that names the wrong object is the bug; its sibling affordance labels
     // (the edge handles' aria-labels) were kind-blind in the same way.
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1001,7 +945,7 @@ describe('veil presentation', () => {
 
   it('gives veil resize handles a 44px touch target and drag-resizes with one commit (T2a/T2b unified)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1105,7 +1049,7 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
 
   it('a tap on a TRANSPARENT veil inside a marker pad opens that room’s key', async () => {
     const { moduleId, markerX, markerY } = await seedMarkerBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     expect(screen.queryByTestId('room-key-card')).toBeNull();
     const veil = parkedVeil();
@@ -1140,7 +1084,7 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
       });
       await flushAsyncUpdates();
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const fog = parkedVeil();
     expect(fog.getAttribute('data-veil-kind')).toBe('fog');
@@ -1156,7 +1100,7 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
 
   it('a veil tap OUTSIDE every marker pad still selects the veil and reaches delete-veil', async () => {
     const { moduleId, markerX, markerY } = await seedMarkerBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // Move the parked veil out from under room A's pad (its own center), so
     // the tap misses: the pass-through is a pad test, never a plain "is
@@ -1232,7 +1176,7 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
       createModule({ campaignId, title: 'Crypt Module', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
     await seedBattleFromEncounter(campaignId, module.id, encounter.id);
-    await renderSurface(module.id);
+    await renderSurface(campaignId, module.id);
     await flushAsyncUpdates();
     const room = layout.rooms[0];
     const mobs = room?.mobsRect;
@@ -1266,7 +1210,7 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
 describe('zoom controls touch targets (T4)', () => {
   it('keeps the zoom toolbar buttons at a 44px touch target', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     for (const label of ['Zoom in', 'Zoom out', 'Reset view'] as const) {
       const button = screen.getByLabelText(label);
       expect(button.className).toContain('min-h-11');
@@ -1278,7 +1222,7 @@ describe('zoom controls touch targets (T4)', () => {
 describe('drag & tap', () => {
   it('drags a token with a live position and commits the snapped spot once', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1311,7 +1255,7 @@ describe('drag & tap', () => {
     // back". Moves bubble to the board, which now follows the active drag,
     // and an off-piece release finishes it with identical commit semantics.
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1339,7 +1283,7 @@ describe('drag & tap', () => {
 
   it('taps to select and shows name + HP only in the controls', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1363,7 +1307,7 @@ describe('drag & tap', () => {
 describe('board touch robustness (batch B — drag-state hardening)', () => {
   it('aborts the token drag when pointer capture fails: no live drag, no commit, gesture closed', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1401,7 +1345,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
 
   it('abandons the live drag with no commit when a second finger starts a pinch mid-drag', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1439,7 +1383,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
 
   it('abandons the live drag with no commit on board pointercancel, closing the gesture', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1466,7 +1410,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
 
   it('abandons a dragged veil on cancel with no commit — cancel never commits (S7)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1500,7 +1444,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
 
   it('abandons a dragged effect on cancel with no commit — cancel never commits (S7)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1535,7 +1479,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
 describe('veil live drag', () => {
   it('tracks the pointer with ZERO Dexie writes and a dragging visual, then commits the snapped drop exactly once', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1587,7 +1531,7 @@ describe('veil live drag', () => {
 
   it('does not commit a veil tap below the screen-space threshold', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1621,7 +1565,7 @@ describe('veil live drag', () => {
 describe('live-drag frame throttle (batch H)', () => {
   it('coalesces a burst of moves to one render and commits the final position exactly once', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1665,7 +1609,7 @@ describe('live-drag frame throttle (batch H)', () => {
 
   it('drops the queued frame on cancel so no stale position commits after release', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1733,7 +1677,7 @@ describe('selection card', () => {
       source: 'generated',
     });
     await updateArtifact(npcId, { coverImageId: image.id });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1754,7 +1698,7 @@ describe('selection card', () => {
 
   it('player-safe mode shows the card but never the full-card button or stat text', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1776,7 +1720,7 @@ describe('selection card', () => {
 
   it('tapping the empty board deselects; panning does not', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1803,7 +1747,7 @@ describe('selection card', () => {
 describe('token HP edge strip', () => {
   it('renders the HP meter as a thin bottom strip whose fill width is the HP ratio — never a full-area wash', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1832,7 +1776,7 @@ describe('token HP edge strip', () => {
       ...battle.board,
       tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1880,7 +1824,7 @@ describe('token portrait lightbox', () => {
   it('GM taps stay select-only: no portrait, and the rail stays usable', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await seedTrollPortrait(npcId);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1902,7 +1846,7 @@ describe('token portrait lightbox', () => {
 
   it('opens with large initials for imageless tokens — no dead taps', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1919,7 +1863,7 @@ describe('token portrait lightbox', () => {
 
   it('never opens on a drag at/above the 8px threshold — the move still commits', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1941,7 +1885,7 @@ describe('token portrait lightbox', () => {
 
   it('board-level release fallback still tap-selects in GM mode without opening the portrait', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1966,7 +1910,7 @@ describe('token portrait lightbox', () => {
 
   it('player-safe tap that lifts off the token node still opens the portrait', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -1991,7 +1935,7 @@ describe('token portrait lightbox', () => {
   it('opens the portrait in player-safe mode with name + image only', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await seedTrollPortrait(npcId);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2014,7 +1958,7 @@ describe('token portrait lightbox', () => {
 
   it('player-safe drag past the threshold never opens the portrait and never moves the token', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2040,7 +1984,7 @@ describe('token portrait lightbox', () => {
 
   it('closes on Escape and returns focus to the previously focused control', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2059,7 +2003,7 @@ describe('token portrait lightbox', () => {
 
   it('closes on tap-outside (backdrop)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2111,7 +2055,7 @@ describe('sidebar portrait fullscreen', () => {
   it('GM mode: the sidebar image opens the same fullscreen portrait (image + name only), Esc returns focus to it', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await seedTrollPortrait(npcId);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2147,7 +2091,7 @@ describe('sidebar portrait fullscreen', () => {
   it('player-safe mode: the sidebar image opens the same fullscreen portrait (image + name only)', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await seedTrollPortrait(npcId);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2182,7 +2126,7 @@ describe('sidebar portrait fullscreen', () => {
 
   it('imageless entries: the initials fallback is not clickable and opens nothing', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2203,7 +2147,7 @@ describe('sidebar portrait fullscreen', () => {
   it('sidebar portrait lightbox closes on backdrop click and on the close button', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await seedTrollPortrait(npcId);
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2258,7 +2202,7 @@ describe('pan from the map', () => {
       await saveBattleBoard(seeded.id, { ...seeded.board, mapImageId: image.id });
       await flushAsyncUpdates();
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getByTestId('battle-map')).toBeInTheDocument();
     });
@@ -2348,7 +2292,7 @@ describe('pan from the map', () => {
 
   it('pans from the mapless viewport board too (fallback gradient is a pan surface)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2376,7 +2320,7 @@ describe('pan from the map', () => {
 describe('content-frame pointer conversion', () => {
   it('commits a token where the pointer was under zoom AND pan', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2423,7 +2367,7 @@ describe('content-frame pointer conversion', () => {
 
   it('snaps y against the content frame under letterbox (72px grid)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2454,7 +2398,7 @@ describe('content-frame pointer conversion', () => {
 
   it('keeps the 8px tap threshold screen-space across zoom', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2518,7 +2462,7 @@ describe('content-frame pointer conversion', () => {
 describe('HP ownership split writes', () => {
   it('rolls damage onto the NPC token instance and the PC artifact (steppers gone — the roller is the only HP path)', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2573,7 +2517,7 @@ describe('HP ownership split writes', () => {
 
   it('mounts Damage/Heal directly below the name, above the lengthy description', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2608,7 +2552,7 @@ describe('HP ownership split writes', () => {
       ...battle.board,
       tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
@@ -2620,7 +2564,7 @@ describe('HP ownership split writes', () => {
 describe('initiative', () => {
   it('rolls every visible fighter when enabled, sorted, with a turn marker', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2645,7 +2589,7 @@ describe('initiative', () => {
 
   it('gates initiative reorder behind GM view: moves in GM mode, hidden in player-safe', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2672,7 +2616,7 @@ describe('initiative', () => {
 
   it('keeps a fogged monster in GM initiative with a veiled marker; player-safe prunes it and the GM re-rolls it back', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2771,7 +2715,7 @@ describe('token removal (token-lifecycle arc)', () => {
       source: 'generated',
     });
     await updateArtifact(npcId, { coverImageId: image.id });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2809,7 +2753,7 @@ describe('token removal (token-lifecycle arc)', () => {
 
   it('refuses PC-backed tokens: no Remove affordance and the token stays', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2827,7 +2771,7 @@ describe('token removal (token-lifecycle arc)', () => {
 describe('Hidden group (token-lifecycle arc)', () => {
   it('lists hidden tokens for the GM; Unhide returns them to the board with a fresh initiative roll', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2875,7 +2819,7 @@ describe('Hidden group (token-lifecycle arc)', () => {
 
   it('shows no Hidden group in player-safe view — hidden fighters stay secret', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2916,7 +2860,7 @@ describe('resume reveal (everLive — encounter-resume arc)', () => {
   it('reveals every token on the first entry, then a Lift → re-enter keeps hidden tokens hidden', async () => {
     const { moduleId } = await seedStandardBattle();
     // First entry after a seed: the prep board goes live and reveals all.
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -2943,7 +2887,7 @@ describe('resume reveal (everLive — encounter-resume arc)', () => {
 
     // Re-entry resumes: live returns, the reveal does NOT re-run — the
     // deliberately hidden troll stays off the board.
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const labels = screen
       .getAllByTestId('battle-token')
@@ -2959,7 +2903,7 @@ describe('resume reveal (everLive — encounter-resume arc)', () => {
 describe('re-seed + provenance (encounter-resume arc)', () => {
   it('shows the seeding provenance, re-seeds destructively after confirm, and stamps the row', async () => {
     const { moduleId, encounterId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3017,7 +2961,7 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
     // the re-seed affordance nor the provenance rail is reachable.
     const bare = await ensureBattleForEncounter(campaignId, module.id, newId());
     await patchBattle(bare.id, { encounterArtifactId: null });
-    await renderSurface(module.id, { expectBoard: false });
+    await renderSurface(campaignId, module.id, { expectBoard: false });
     await flushAsyncUpdates();
     expect(await getBattle(bare.id)).toBeDefined();
     expect(screen.getByTestId('battle-surface-empty')).toBeInTheDocument();
@@ -3030,7 +2974,7 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
 describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => {
   it('adds a disc from the toolbar and renders it in BOTH views at ~70% transparent fill', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3058,7 +3002,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('drags an effect with a live position and commits the snapped drop exactly once', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3101,7 +3045,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('gives effect resize handles a 44px touch target while the visible dot stays small', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3128,7 +3072,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('drags an effect handle with a live preview and commits the final size exactly once', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3173,7 +3117,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('cancelling an effect resize commits nothing and closes the gesture', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3207,7 +3151,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('scenery lock and player-safe hide the effect handles and pin the size', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3235,7 +3179,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('resizes and deletes the selected effect from the rail (GM view only)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3268,7 +3212,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('scenery lock blocks effect drags — no movement, no commit', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3297,7 +3241,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 
   it('stage reset restores removed effects from the snapshot', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3324,7 +3268,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
 describe('in-battle spawn picker (spawn-picker arc)', () => {
   it('shows the roster readout with one Spawn button and appends a roster fighter via the picker', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3361,7 +3305,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
 
   it('auto-rolls a picker-spawned fighter into initiative (late-arrival rule)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3384,7 +3328,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
 
   it('hides the spawn panel and its Spawn button in player view', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3401,7 +3345,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
 describe('stage snapshot', () => {
   it('resets to the saved opening layout through the toolbar', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3435,7 +3379,7 @@ describe('entrance overlay (doc 11)', () => {
       mapLayout: { cols: 12, rows: 12 },
       entrance: { x: 0.125, y: 0.125, side: 'west' },
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
 
     const entrance = screen.getByTestId('battle-entrance');
     // One map cell: centered on the entrance cell, sized 1/cols × 1/rows.
@@ -3455,7 +3399,7 @@ describe('entrance overlay (doc 11)', () => {
 
   it('renders nothing when no entrance is stamped', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     expect(screen.queryByTestId('battle-entrance')).toBeNull();
   });
 });
@@ -3477,7 +3421,7 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
 
   it('opens the roller with the captured intent and applies the total as damage onto the token', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3499,7 +3443,7 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
 
   it('applies a rolled heal through the pc artifact and clamps at max HP', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3525,7 +3469,7 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
 
   it('never renders the roll controls or the roller in player view', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3556,7 +3500,7 @@ describe('rail free-roll dice button (GM-only)', () => {
 
   it('opens the roller in generic free-roll mode and the settled total touches no HP', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3581,7 +3525,7 @@ describe('rail free-roll dice button (GM-only)', () => {
 
   it('a stale HP intent does not leak into the free roll: clearing it keeps HP intact', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3609,7 +3553,7 @@ describe('rail free-roll dice button (GM-only)', () => {
 
   it('player-safe mode shows no free-roll button and never renders the roller', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3627,7 +3571,7 @@ describe('rail free-roll dice button (GM-only)', () => {
 describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
   it('GM view: key markers render at the room mobsRect CENTER (D11 fix) and tapping one opens the key card in the rail', async () => {
     const { moduleId, encounterId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // Only rooms WITH key content get a marker (Sanctum's is empty).
     expect(screen.getByTestId('room-key-marker-A')).toBeInTheDocument();
@@ -3669,7 +3613,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('gives room-key markers a 44px hit pad with the visible badge unchanged at size-6', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const marker = screen.getByTestId('room-key-marker-A');
     // The 44px (size-11) transparent hit pad lives on the button itself…
@@ -3689,7 +3633,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('a seeded encounter’s mob covers are VEILS, rendering the plain-cover tint in both views', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // A generated cover over a MOB AREA is a veil, never a fog (fog-cloud
     // arc, owner-directed: "the mobs should be covered by a veil, not fog").
@@ -3721,7 +3665,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('paints room-key markers BELOW veils and tokens (no z-10, DOM order decides hit-testing)', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const marker = screen.getByTestId('room-key-marker-A');
     // No elevated z-index: markers must lose hit-testing to tokens and
@@ -3752,7 +3696,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('GM view: tapping a treasure-carrying token shows the frozen treasure on the selection card', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -3784,7 +3728,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
       keyTreasure: `Coffers tagged [[${RESOLVED_TOKEN}]].`,
       treasure: `Purse marked [[${UNRESOLVED_TOKEN}]].`,
     });
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
 
     // Room key + room treasure (GM rail card).
@@ -3825,7 +3769,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('player-safe view: no key markers and no key/treasure text anywhere in the DOM', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // GM view shows the marker first; then player view removes ALL of it.
     expect(screen.getByTestId('room-key-marker-A')).toBeInTheDocument();
@@ -3844,7 +3788,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
 
   it('a complex site shows the GM Path rail in path order and Reveal next room lifts the next veil', async () => {
     const { moduleId } = await seedKeyedBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     const rail = screen.getByTestId('path-rail');
     expect(within(rail).getByTestId('path-room-1')).toHaveTextContent('A');
@@ -3904,7 +3848,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
       createModule({ campaignId, title: 'Split Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
     );
     await seedBattleFromEncounter(campaignId, module.id, encounter.id);
-    await renderSurface(module.id);
+    await renderSurface(campaignId, module.id);
     await flushAsyncUpdates();
     // Two spawn rooms ⇒ two veils: Entry primary + Sanctum merged group
     // veil (room id, so the rail resolves it) — Sanctum's adjacent groups
@@ -4017,7 +3961,7 @@ describe('site shape on the surface (docs/11 D11)', () => {
 describe('one-gesture-machine (unified board gesture layer)', () => {
   it('commits exactly once when the release lands on another piece — no cross-consuming finish (S1/R1)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -4055,7 +3999,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
 
   it('ignores a second pointerdown on another piece mid-drag — no overwrite (S2/R4)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -4104,7 +4048,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
 
   it('evaluates the scenery lock BEFORE arming: a locked grab no-ops loudly — no commit, no pan — and works after unlock (S6)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -4153,7 +4097,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
 
   it('resets to idle on capture loss with no commit — and the next grab works (S4)', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -4188,7 +4132,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
 
   it('carries no forbidden-cursor sources and always owns the active grab visually', async () => {
     const { moduleId } = await seedStandardBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });

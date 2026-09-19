@@ -1,13 +1,11 @@
 import 'fake-indexeddb/auto';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
-import { listBattlesByModule } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -24,9 +22,9 @@ import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import type * as MobPortraitQueue from '@/features/campaign/mob-portrait-queue';
 import { __clearPendingMobPortraitGenerationsForTests } from '@/features/campaign/mob-portrait-cache-queue';
 import { useProgressStore } from '@/lib/progress';
-import { BattleSurface } from '@/features/play/battle/BattleSurface';
+import { currentBattle, renderSurface } from '../helpers/battle-surface-route';
 import { clearDatabase } from '../db/helpers';
-import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Battle-card mob portrait action (docs/11 D5): the selection card gains a
@@ -314,34 +312,6 @@ async function seedNpcRefBattle(): Promise<{ moduleId: string; npcId: string; pc
   return { moduleId: module.id, npcId: npc.id, pcId: pc.id };
 }
 
-/** Renders the ENCOUNTER-scoped table surface (docs/17 row 254): the route
- * names the encounter the module's battle belongs to, read off the row. */
-async function renderSurface(moduleId: string): Promise<void> {
-  const target =
-    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
-    '00000000-0000-4000-8000-0000000000ff';
-  render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
-      <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
-      </Routes>
-    </MemoryRouter>,
-  );
-  await waitFor(() => {
-    expect(screen.getByTestId('battle-board')).toBeInTheDocument();
-  });
-  await flushAsyncUpdates(20);
-}
-
-async function currentBattle(moduleId: string) {
-  const battle = await actDrained(async () => {
-    const [row] = await listBattlesByModule(moduleId);
-    if (row === undefined) throw new Error('battle row missing');
-    return row;
-  });
-  return battle;
-}
-
 async function tapToken(label: string, moduleId: string): Promise<void> {
   const battle = await currentBattle(moduleId);
   const token = battle.board.tokens.find((entry) => entry.label === label);
@@ -383,7 +353,7 @@ async function seedCreaturePortrait(chunkId: string, text: string): Promise<stri
 describe('battle-card mob portrait action', () => {
   it('cover-less rulebook mob offers Generate (never Regenerate); clicking enqueues the single job and the cover lands on the token artifact', async () => {
     const { moduleId, chunkId } = await seedRulebookBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -434,7 +404,7 @@ describe('battle-card mob portrait action', () => {
     enqueueSingleMock.mockClear();
     generateImagesMock.mockClear();
 
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -484,7 +454,7 @@ describe('battle-card mob portrait action', () => {
     const { moduleId, chunkId } = await seedRulebookBattle();
     const uploaded = await seedCreaturePortrait(chunkId, 'old');
 
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -506,7 +476,7 @@ describe('battle-card mob portrait action', () => {
 
   it('chunk-less tokens (real NPC, PC) offer no portrait action — no dead affordance', async () => {
     const { moduleId } = await seedNpcRefBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -528,7 +498,7 @@ describe('battle-card mob portrait action', () => {
 
   it('player-safe view hides the portrait action for a cover-less rulebook mob', async () => {
     const { moduleId } = await seedRulebookBattle();
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -550,7 +520,7 @@ describe('battle-card mob portrait action', () => {
     const { moduleId, chunkId } = await seedRulebookBattle();
     await seedCreaturePortrait(chunkId, 'old');
 
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });

@@ -1,8 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getBattleByEncounter } from '@/db/battleRepo';
@@ -27,7 +26,7 @@ import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-part
 import { deriveAutomationDeviation } from '@/features/modules/automation-deviation';
 import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { getModule } from '@/db/moduleRepo';
-import { BattleSurface } from '@/features/play/battle/BattleSurface';
+import { renderSurface } from '../helpers/battle-surface-route';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -186,25 +185,6 @@ async function seedEncounterWith(moduleId: string, monsters: MonsterEntry[]): Pr
   return { moduleId, encounterId: encounter.id };
 }
 
-/** Renders the ENCOUNTER-scoped table surface (docs/17 row 254): the route
- * names the encounter the module's battle belongs to, read off the row. */
-async function renderSurface(moduleId: string): Promise<void> {
-  const target =
-    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
-    '00000000-0000-4000-8000-0000000000ff';
-  render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
-      <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
-      </Routes>
-    </MemoryRouter>,
-  );
-  await waitFor(() => {
-    expect(screen.getByTestId('battle-board')).toBeInTheDocument();
-  });
-  await flushAsyncUpdates(20);
-}
-
 /** The image id a token actually renders, read off the DOM (through the mapped
  * `useImageUrl`) — or null when it renders its initials. */
 function tokenArt(label: string): string | null {
@@ -288,7 +268,7 @@ describe('the token and the module side resolve ONE portrait', () => {
       { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } },
     ]);
 
-    await renderSurface(seededModule);
+    await renderSurface(campaignId, seededModule);
 
     // THE DIFFERENTIAL: the same creature, both surfaces, one portrait.
     expect(tokenArt('Zombie')).toBe(portraitId);
@@ -312,7 +292,7 @@ describe('the token and the module side resolve ONE portrait', () => {
       { name: 'Gustav the Zombie', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: cast.artifactId } },
     ]);
 
-    await renderSurface(seededModule);
+    await renderSurface(campaignId, seededModule);
 
     expect(tokenArt('Gustav the Zombie')).toBe(portraitId);
     expect(await moduleSidePortrait(libraryCreatureKey(chunkId), cast.artifactId)).toBe(portraitId);
@@ -333,7 +313,7 @@ describe('the token and the module side resolve ONE portrait', () => {
       { name: 'Gustav the Zombie', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: cast.artifactId } },
     ]);
 
-    await renderSurface(seededModule);
+    await renderSurface(campaignId, seededModule);
 
     expect(tokenArt('Gustav the Zombie')).toBe(coverId);
     expect(await moduleSidePortrait(libraryCreatureKey(chunkId), cast.artifactId)).toBe(coverId);
@@ -352,7 +332,7 @@ describe('the token and the module side resolve ONE portrait', () => {
     const portraitId = await campaignImage();
     await setCreatureCover({ campaignId, creatureKey: token.creatureKey, imageId: portraitId });
 
-    await renderSurface(seededModule);
+    await renderSurface(campaignId, seededModule);
 
     expect(tokenArt('Bog Thing')).toBe(portraitId);
     expect(await moduleSidePortrait(token.creatureKey)).toBe(portraitId);
@@ -368,7 +348,7 @@ describe('the affordance and the board state the same fact', () => {
       { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } },
     ]);
 
-    await renderSurface(moduleId);
+    await renderSurface(campaignId, moduleId);
 
     // Nothing imaged yet: the board shows initials AND the module-side
     // affordance counts the encounter — the loud direction.

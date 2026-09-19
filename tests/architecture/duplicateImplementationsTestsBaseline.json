@@ -614,15 +614,6 @@
       ]
     },
     {
-      "hash": "84c00a57e45b7b63",
-      "reason": "Three `renderSurface` battle-surface route renders (battle-surface, battle-token-portrait, creature-portrait-agreement); folds onto the shared render-route helper.",
-      "sites": [
-        "tests/features/battle-surface.test.tsx:renderSurface",
-        "tests/features/battle-token-portrait.test.tsx:renderSurface",
-        "tests/features/creature-portrait-agreement.test.tsx:renderSurface"
-      ]
-    },
-    {
       "hash": "84dfb130841fefed",
       "reason": "Two `holdUntilAborted` promise stubs (stop-all-generations, module-gen-and-provenance) that reject unless an AbortSignal arrives; a shared abort-stub helper is a real fold candidate.",
       "sites": [
@@ -678,14 +669,6 @@
       "sites": [
         "tests/features/battle-surface.test.tsx:seedTrollPortrait",
         "tests/features/battle-surface.test.tsx:seedTrollPortrait"
-      ]
-    },
-    {
-      "hash": "900c3b6e8b536aa2",
-      "reason": "Two `currentBattle` act-drained readers (battle-surface, battle-token-portrait); a shared battle test helper carries them.",
-      "sites": [
-        "tests/features/battle-surface.test.tsx:currentBattle",
-        "tests/features/battle-token-portrait.test.tsx:currentBattle"
       ]
     },
     {
