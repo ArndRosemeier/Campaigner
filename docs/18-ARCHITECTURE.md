@@ -2358,6 +2358,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **`monsterEntry.originToken` IS NOT INERT: a MIGRATED mob's battle card still resolves
+  through the library (found 2026-09-19 by a read-only probe, base `14e63fb`; being corrected
+  under docs/17 row 248c).** The §2 rows describe the token as the opaque PORTRAIT identity a
+  copy keeps so nothing needs remapping, and that is true of the portrait path — but it is not
+  the whole story. `domain/creature.rosterEntryCreatureIdentity` (`creature.ts:295-307`) reads
+  the token FIRST and feeds `token.creatureKey` at seed (`db/battleSeed.ts:274`), and
+  `features/play/battle/BattleSurface.tsx:539-555` / `:2181` resolves a token card's stat block
+  through `tokenCreature` → a LIVE chunk read (`db/creatureRepo.ts:444-489`). So a mob whose
+  row WAS migrated still loses its battle card when the pack is uninstalled or the rulebook
+  differs — the migration moved the stored data but left this read chain pointing at the same
+  library. Any statement that "nothing resolves through the token" is FALSE for that chain.
+  The minting half of the same finding is on the board (row 255): the v24 upgrade is a ONE-SHOT
+  backfill while the app keeps MINTING fresh pointers, so no migration-only design can satisfy
+  the owner's "core items are only ever copied" rule.
 - **CLOSED (docs/17 row 248's remaining slice): a per-row throw inside the v24 mob-copy
   migration no longer aborts the Dexie upgrade.** `repairMobCopies` now wraps each row's
   conversion in the ONE private `guard`, so an unexpected throw becomes a NAMED unresolved
