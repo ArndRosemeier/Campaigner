@@ -357,11 +357,20 @@ chained command, and never leave one uncommitted while a writer is gating.
 Learned the hard way in one session; BINDING here, and the portable form lives in
 `docs/22` §The clock and the gate.
 
-1. **A gate NEVER runs in the foreground.** A full run takes minutes, and a
-   foreground run is minutes in which this session cannot act — the owner
-   interrupted one for exactly that reason. Start it as a BACKGROUND job, keep its
-   raw log in the workspace, and act on the harness's completion notice. Never hold
-   a turn open on it.
+1. **A gate NEVER runs in the foreground — in the session the OWNER talks to.**
+   A full run takes minutes, and a foreground run THERE is minutes in which this
+   session cannot act; the owner interrupted one for exactly that reason. Start it
+   as a BACKGROUND job, keep its raw log in the workspace, and act on the harness's
+   completion notice. Never hold that turn open on it.
+   **THE COROLLARY, MEASURED 2026-09-19: a SUBAGENT'S background jobs DIE when its
+   turn ends.** A probe started a background `sleep 240`, ended its turn, and the
+   process was gone ~20 seconds later — with an instrument control proving the
+   check could look (8 bash processes visible, zero `sleep`). **So a WRITER must run
+   its gate IN-TURN; foreground is CORRECT for a writer, because it blocks only its
+   own session and never the owner's.** "Start it in the background and act on the
+   notice" is a pattern that works ONLY for a session that persists between turns —
+   the row-247 writer lost an entire full run to this: its log stops mid-chunk with
+   no summary and the lock was released.
 2. **Never poll.** No `job_output` with `wait`, no sleep-and-check loops, no
    repeated status reads. The harness notifies when a job settles, and that notice
    IS the wake event (§Goal rounds vs. waiting). While waiting, do useful

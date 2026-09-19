@@ -661,10 +661,17 @@ an exit code read as a verdict, and a gate's output piped through `tail` so its
 exit status was lost — after which unverified work was pushed under a message
 claiming a pass.
 
-1. **A long verification NEVER runs in the foreground.** If a check takes minutes,
-   run it as a BACKGROUND job, keep its raw log in the workspace, and act on the
-   completion notice. A foreground run is minutes in which the agent cannot act,
-   which is not a trade the owner will accept.
+1. **A long verification NEVER runs in the foreground — in the session the OWNER
+   talks to.** If a check takes minutes, run it as a BACKGROUND job, keep its raw
+   log in the workspace, and act on the completion notice. A foreground run THERE is
+   minutes in which the agent cannot act, which is not a trade the owner will
+   accept. **MEASURED COROLLARY (2026-09-19): a SUBAGENT'S background jobs DIE when
+   its turn ends** — a probe started a background `sleep`, ended its turn, and the
+   process was gone seconds later. So a WRITER must run its verification IN-TURN,
+   foreground included, because it blocks only its own session; "run it in the
+   background and wait for the notice" is a pattern that works ONLY for a session
+   that persists between turns. A writer that ends its turn on a pending background
+   check loses the run — observed as a log that stops mid-chunk with no summary.
 2. **Never poll.** No blocking reads, no sleep-and-check loops, no repeated status
    peeks. If the harness notifies when work settles, that notice IS the wake event;
    if it does not, say so and choose a different mechanism rather than spinning.
