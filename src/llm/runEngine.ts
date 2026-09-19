@@ -76,7 +76,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { citationBookTitle, contentIdentityFor } from '@/domain/encounterResolve';
-import { additionalInstructionSection } from '@/llm/additionalInstruction';
+import { additionalInstructionOf, additionalInstructionSection } from '@/llm/additionalInstruction';
 import {
   backgroundActivityLabel,
   clearBackgroundActivity,
@@ -117,6 +117,12 @@ import {
   fixedCastAdvisories,
   fixedCastForEncounter,
   fixedCastSectionFor,
+  // THE ONE free-text level reader and the module's own stated level (docs/17
+  // row 247): every level this step resolves out of prose comes through these,
+  // never a second regex at the call site.
+  firstLevelInText,
+  instructionLevel,
+  moduleStatedLevel,
   partLevelForMention,
   partyLevelLine,
   // The ONE exclusion of the generated party line from the stat-block
@@ -262,6 +268,19 @@ const storedModuleGroundingSchema = z.object({
   // parses to `undefined` and behaves exactly as it did — the compatibility
   // promise a resume depends on.
   entityLevelHint: z.number().int().min(1).max(20).optional(),
+  // The MODULE's own stated level for the target's name (docs/17 row 247),
+  // additive and optional like `entityLevelHint`: derived from the module's
+  // premise, its mentioning part's band, or an exact band (`moduleStatedLevel`).
+  // A grounding stored before this field (or a module stating no level) parses
+  // to `undefined` and behaves as it did.
+  statedLevel: z.number().int().min(1).max(20).optional(),
+  // The module's OWN level band (docs/17 row 247), additive and optional like
+  // the two level fields above: with no EXACT statement anywhere, the band is
+  // what BOUNDS the reply (a range can never bind one value, and it can never
+  // cap a stated one). A grounding stored before this field parses to
+  // `undefined`, which is exactly the pre-247 no-band behaviour.
+  levelMin: z.number().int().min(1).max(20).optional(),
+  levelMax: z.number().int().min(1).max(20).optional(),
   // The target artifact's OWN name (docs/17 row 226), additive and optional:
   // the draft states it verbatim so the model answers as the artifact it is
   // regenerating. A grounding stored before this field parses to `undefined`
@@ -352,6 +371,30 @@ export interface TargetModuleGrounding {
    * `startRun` call site (AGENTS rule 4).
    */
   entityLevelHint?: number | undefined;
+  /**
+   * The level the MODULE ITSELF states for the target's name (docs/17 row
+   * 247) — `moduleStatedLevel`: the premise's own `level N`, else the level of
+   * the part that mentions the target, else an EXACT `levelMin === levelMax`
+   * band. `undefined` when the module states none: a multi-level band is a
+   * RANGE, not a level, and this seam never invents one from it (the engine
+   * refuses loudly instead).
+   *
+   * WHY A FIELD BESIDE `entityLevelHint`: the record's hint is the author's
+   * per-entity statement and this is the module's overall one; the owner's mob
+   * had the second and not the first, so without this the premise-stated level
+   * never reached the block. Additive and optional — a grounding stored before
+   * this field parses and behaves exactly as it did.
+   */
+  statedLevel?: number | undefined;
+  /**
+   * The module's `levelMin`/`levelMax` band (docs/17 row 247), present when the
+   * module row exists. Read only when NO exact level resolved: the band then
+   * BOUNDS the accepted reply instead of letting the model pick freely, and it
+   * is deliberately never folded into a single number (a range is not a level —
+   * inventing a midpoint or a maximum is the guessing this slice removes).
+   */
+  levelMin?: number | undefined;
+  levelMax?: number | undefined;
 }
 
 /** The grounding context one retrieve pass computes (and the retrieve step
@@ -652,55 +695,40 @@ function contractRepairNotice(firstTryModel: string, repairTarget: string): stri
 }
 
 /**
- * The step NOTICE for a stat block whose own printed level does not match the
- * module author's recorded level hint (docs/17 row 197) — the NPC lane's
- * honest-deviation route.
+ * Why a stat block's own printed level is NOT the level this step resolved
+ * (docs/17 row 247) — or `null` when it matches.
  *
- * WHY A NOTICE AND NOT A REFUSAL. The stat-block prompt states the hinted level
- * and instructs honouring it, but a model can still print its own level. The
- * hint steers the generator; it is not a contract the reply can be rejected
- * against (a rejection would throw away a complete, usable block over one
- * field), and silently keeping the divergent block is exactly the failure the
- * owner reported. The existing step `notice` convention (the same one the
- * escalation and unresolved-spell notes use) is where a step says what it did
- * differently, and the run panel renders it — so the owner reads *"the module
- * fixed level 7; this block says 1"* instead of meeting the surprise at the
- * table.
+ * THE DEFECT THIS REPLACES. The pre-row-247 route was a NOTICE: the block was
+ * stored at whatever level the model printed and the step said so afterwards,
+ * so the owner's module-created mob stayed at level 3 while every surface
+ * reported success. A wrong value that persists is not a warning state; it is
+ * the silent partial success this slice exists to remove. The issue text is
+ * therefore the REPAIR instruction on the step's one retry, and the rejection
+ * reason when the repair does not take.
  *
  * `parseLevelSort` is the app's ONE level grammar (number, fraction, "—"), so
  * the comparison cannot drift from what the rest of the app reads; a level it
- * cannot parse (a model slip) is reported as un-comparable rather than
- * silently dropped. Pure, returns `null` on a match.
+ * cannot parse (a model slip) is refusable rather than silently accepted.
  */
-function levelHintDeviationNotice(hint: number, printed: string): string | null {
+function statBlockLevelIssue(
+  level: number | undefined,
+  band: { min: number; max: number } | undefined,
+  printed: string,
+): string | null {
+  if (level === undefined && band === undefined) return null;
   const shown = printed.trim() === '' ? '(empty)' : printed.trim();
   let value: number;
   try {
     value = parseLevelSort(printed);
   } catch {
-    return `The module fixed this entity at level ${String(hint)}, but the stat block prints level "${shown}" — a level this app cannot compare, so review it by hand.`;
+    return `The stat block prints level "${shown}", which this app cannot compare with the level this run resolved for the entity.`;
   }
-  if (value === hint) return null;
-  return `The module fixed this entity at level ${String(hint)}, but the stat block was written at level "${shown}" — the hint was not honoured; review or regenerate the block.`;
-}
-
-/**
- * The LOUD absence of a level for a module-OWNED entity (docs/17 row 206): the
- * module never recorded one, so the generator picked it — and that pick must be
- * visible, never a silent unconstrained choice (AGENTS rule 1). Fires only when
- * the run HAS an owning module (`status === 'ok'`) and NEITHER the run input nor
- * the record carried a structured level; a non-module-owned target has no record
- * to be absent from, and a free-text brief (with its own explicit level) stands
- * on its own. It rides the step's EXISTING `notice` seam — a named sentence, not
- * a console line and never a failed generation, because a block without a fixed
- * level is still a usable block, only an unjustified one.
- */
-function moduleLevelHintAbsenceNotice(
-  grounding: TargetModuleGrounding | undefined,
-  structuredLevel: number | undefined,
-): string | null {
-  if (grounding?.status !== 'ok' || structuredLevel !== undefined) return null;
-  return `The module "${grounding.moduleTitle ?? "this entity's owning module"}" records no level for this entity, so the stat block's level was chosen by the generator rather than fixed by the module's author.`;
+  if (level !== undefined) {
+    if (value === level) return null;
+    return `The stat block was written at level "${shown}", not the ${String(level)} this run resolved for the entity.`;
+  }
+  if (band !== undefined && value >= band.min && value <= band.max) return null;
+  return `The stat block was written at level "${shown}", outside the ${String(band?.min)}–${String(band?.max)} this module covers.`;
 }
 
 /**
@@ -3106,6 +3134,10 @@ export class RunEngine {
       return { status: 'module-missing', moduleId: target.moduleId, targetName };
     }
     const recordedLevel = entityLevelHintFor(module.entityKinds, target.name);
+    // The module's OWN statement of this entity's level (docs/17 row 247): the
+    // premise, the mentioning part's band, or an exact band — ONE derivation,
+    // the same one the spine uses to RECORD a hint for a new module.
+    const statedLevel = moduleStatedLevel(module, target.name);
     return {
       status: 'ok',
       targetName,
@@ -3118,6 +3150,11 @@ export class RunEngine {
       // comparison here. Omitted (not `null`) when the record fixes none, so an
       // old stored grounding and a hint-less record stay as they were.
       ...(recordedLevel === null ? {} : { entityLevelHint: recordedLevel }),
+      // ...and the module's own level, omitted the same way (docs/17 row 247).
+      ...(statedLevel === undefined ? {} : { statedLevel }),
+      // ...and the band that BOUNDS the reply when no exact statement exists.
+      levelMin: module.levelMin,
+      levelMax: module.levelMax,
     };
   }
 
@@ -3716,6 +3753,16 @@ export class RunEngine {
     input: StartRunInput,
     signal: AbortSignal,
     extraInstruction: string,
+    /**
+     * The USER's own instruction for this step — `extraInstruction` on the
+     * first pass, and UNCHANGED through the repair recursions below, which
+     * append THEIR text to `extraInstruction` only. The distinction is
+     * load-bearing (docs/17 row 247): an explicit instruction outranks the
+     * module's recorded level and may not be vetoed by the draft's
+     * `needsStatBlock: false`, while a repair continuation is the app talking
+     * to itself and must never look like a user's request.
+     */
+    userInstruction = extraInstruction,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     debugLog('run', 'statblock start');
     // THE AUNT AGATHA RULE (docs/11 §A cited row's REFILL, docs/17 row 112): a
@@ -3753,11 +3800,26 @@ export class RunEngine {
         };
       }
     }
+    // THE USER'S OWN INSTRUCTION, read off the two places it can reach this
+    // step (docs/17 row 247): `extraInstruction` (the Details view's retry /
+    // resume) and the brief's ONE `Additional instruction:` paragraph (the
+    // change seam, `features/modules/change-artifact`). Read BEFORE the draft's
+    // veto below, because an explicit instruction is the owner speaking about
+    // THIS entity and must not be discarded by a draft answer.
+    const statedInstruction = [userInstruction, additionalInstructionOf(input.brief) ?? '']
+      .map((part) => part.trim())
+      .filter((part) => part !== '')
+      .join('\n');
     // M4-C: the draft decides whether this character needs stats at all —
     // generating a full stat block for a contact or merchant is wasted
     // effort. The step is marked skipped (visible in the run row).
+    // AN EXPLICIT INSTRUCTION OUTRANKS THE VETO (docs/17 row 247): "redo this
+    // completely, make it level 5" asks for a NEW block, and a draft that
+    // answered `needsStatBlock: false` while being told to redo the entity must
+    // not turn that into a silent keep of the old one — the owner's second
+    // symptom, "it recreated everything BUT the stat block".
     const draftDecision = this.effectiveDraft(steps);
-    if (draftDecision?.needsStatBlock === false) {
+    if (draftDecision?.needsStatBlock === false && statedInstruction === '') {
       debugLog('run', 'statblock skipped: draft marked needsStatBlock=false');
       return {
         step: this.finishStep(
@@ -3775,48 +3837,128 @@ export class RunEngine {
     // rendered here: statblock filling grounds in rules, not campaign lore
     // (15-GRAPH-RETRIEVAL §3.3).
     const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
-    // THE MODULE AUTHOR'S LEVEL, STRUCTURED — ONE resolution seam (docs/17 row
-    // 197, extended by row 206). Two STRUCTURED sources carry it: the run input
-    // (the entity batch reads the record by name) and the stored module
-    // grounding (the engine already reads the target's owning module for EVERY
-    // targeted generate run, `targetModuleGrounding`). Resolving HERE instead of
-    // patching each caller that rebuilds `StartRunInput` is AGENTS rule 4: the
-    // artifact editor's "Regenerate with AI" hand-off rebuilt it from scratch
-    // without `entityLevelHint`, so the level the module fixed was lost and the
-    // prompt's level clause came out EMPTY — the owner's 7 → 13 regression, and
-    // because the deviation guard was keyed on the same absent field, it came
-    // with no notice at all.
-    const recordedLevel = context.moduleGrounding?.entityLevelHint;
-    const structuredLevel = input.entityLevelHint ?? recordedLevel;
-    // The `level N` regex survives ONLY for callers that carry no structured
-    // level at all (a one-off free-text statblock run, a legacy run row) and it
-    // reads the brief with the app's generated party-level line REMOVED: that
-    // line states the PARTY's level, and reading it as the entity's own is the
-    // second fragility this slice closes (docs/17 row 206). With no structured
-    // level and no party line the clause stays byte-identical to before.
+    // THE ONE LEVEL RESOLUTION (docs/17 row 197, extended by rows 206 and 247).
+    // FOUR sources, in this order, and the winner BINDS the block (below):
+    //
+    // 1. the USER'S EXPLICIT INSTRUCTION — the owner speaking about this entity
+    //    right now outranks everything the data says;
+    // 2. the entity RECORD's `levelHint` — the run input (the entity batch reads
+    //    it by name) or the stored module grounding (read for every targeted
+    //    generate run, `targetModuleGrounding`), so a caller that rebuilds
+    //    `StartRunInput` cannot lose it (docs/17 row 206);
+    // 3. the MODULE'S OWN STATED LEVEL (`moduleStatedLevel`: its premise, else
+    //    the mentioning part's band, else an exact band) — the premise is where
+    //    the owner's "level 5 smith" actually lived, and this is the source
+    //    that makes the module's own prose reach the block (docs/17 row 247).
+    //    Read from the grounding the engine already holds, else from the module
+    //    a CREATE run is placed into (`placementModuleId`) — one derivation for
+    //    both, never a band-derived guess: a RANGE states no level, and
+    //    inventing one is what this slice exists to stop;
+    // 4. the brief's first `level N` with the app's generated party-level lines
+    //    REMOVED (`withoutPartyLevelLines`) — the legacy free-text fallback, the
+    //    LAST word and never the party's level.
+    //
+    // Resolving HERE instead of patching each caller is AGENTS rule 4: the
+    // artifact editor's "Regenerate with AI" hand-off rebuilt the input from
+    // scratch without `entityLevelHint` and its level clause came out EMPTY —
+    // the owner's 7 → 13 regression, with no notice at all.
+    const explicitLevel = instructionLevel(statedInstruction);
+    const recordedLevel = input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint;
+    const placementModule =
+      input.placementModuleId === undefined ? undefined : await getModule(input.placementModuleId);
+    const moduleLevel =
+      context.moduleGrounding?.statedLevel ??
+      (placementModule === undefined
+        ? undefined
+        : moduleStatedLevel(placementModule, asString(draft?.name)));
+    // A run whose entity belongs to a module: the grounding names the owning
+    // module for a targeted refill, and a CREATE run carries the module it is
+    // being born into. Only such a run has a module whose BAND may bound the
+    // reply — and whose absence (the row is gone) refuses loudly (docs/17 row
+    // 247); a one-off campaign-level statblock run has no such author.
+    const moduleOwned =
+      context.moduleGrounding?.status === 'ok' || input.placementModuleId !== undefined;
+    const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel;
+    const levelSource: 'instruction' | 'module' | null =
+      explicitLevel !== undefined
+        ? 'instruction'
+        : resolvedLevel !== undefined
+          ? 'module'
+          : null;
+    // The legacy fallback is consulted only when nothing else resolved, and it
+    // reads the brief through the ONE party-line exclusion. It is NOT a
+    // structured level (its provenance is a sentence), which is why the clause
+    // it produces keeps the pre-197 prompt bytes.
     const briefLevel =
-      /level\s*(\d{1,2})/i.exec(withoutPartyLevelLines(input.brief))?.[1] ?? '';
-    const levelHint = structuredLevel === undefined ? briefLevel : String(structuredLevel);
-    const hintsStructuredLevel = structuredLevel !== undefined;
+      resolvedLevel === undefined ? firstLevelInText(withoutPartyLevelLines(input.brief)) : undefined;
+    const level = resolvedLevel ?? briefLevel;
+    // THE MODULE'S BAND, when nothing EXACT resolved (docs/17 row 247). A range
+    // is NOT a level, so it can never bind one value — but it is the module's own
+    // statement of what its figures are built for, and it BOUNDS the reply
+    // instead of leaving the model to pick freely. This is also why it can never
+    // CAP a stated level: an exact statement (instruction, record, premise, part
+    // or an exact band) always wins first, and the range is consulted only when
+    // there is no exact statement at all — the default 1–4 module whose premise
+    // names no level, whose NPCs must still be generatable.
+    const band =
+      level !== undefined || !moduleOwned
+        ? undefined
+        : context.moduleGrounding?.status === 'ok' &&
+            context.moduleGrounding.levelMin !== undefined &&
+            context.moduleGrounding.levelMax !== undefined
+          ? { min: context.moduleGrounding.levelMin, max: context.moduleGrounding.levelMax }
+          : placementModule === undefined
+            ? undefined
+            : { min: placementModule.levelMin, max: placementModule.levelMax };
+    // A module-OWNED entity with NO level statement AND no band at all is REFUSED
+    // LOUDLY, never left to the model (docs/17 row 247): with the module's row
+    // gone there is nothing to bound the pick, and an unconstrained choice is the
+    // defect this slice exists to remove (AGENTS rule 1).
+    if (level === undefined && band === undefined && moduleOwned) {
+      const title = context.moduleGrounding?.moduleTitle;
+      throw new Error(
+        `The module ${title === undefined ? 'that owns this entity' : `«${title}»`} states no level and no level ` +
+          `band for "${asString(draft?.name) || 'this entity'}", so the stat block's level would be the generator's ` +
+          `own unconstrained guess. Nothing was written. Fix the module it belongs to and retry.`,
+      );
+    }
+    // The level is stated AND carries its instruction; the legacy brief-level
+    // fallback keeps the sentence byte-identical to the one this step always
+    // sent, because nothing structured resolved.
+    const levelClause =
+      level !== undefined
+        ? ` at level ${String(level)}`
+        : band === undefined
+          ? ''
+          : ` at a level within ${String(band.min)}–${String(band.max)}`;
+    const levelInstruction =
+      levelSource === 'instruction'
+        ? " — the instruction for this change fixes this entity's level, so build the block at exactly that level"
+        : levelSource === 'module'
+          ? " — the module's author fixed this entity's level, so build the block at exactly that level"
+          : band === undefined
+            ? ''
+            : ` — this module covers levels ${String(band.min)}–${String(band.max)}, so build the block at a level inside that range`;
     // The ONE spell library this step offers and validates against (docs/17 row
     // 184). The resolved level windows the vocabulary — the level the block is
     // being written for — and the BLOCK's own printed level is what the cantrip
     // rule is fed later, so nothing is assumed about the reply. An absent level
-    // reaches `mobCasterLevel('')` → null → the whole corpus, which is exactly
-    // why the lost hint also offered high-rank spells.
+    // reaches `mobCasterLevel('')` → null → the whole corpus, which is why an
+    // unconstrained level also offered high-rank spells. A BAND windows at its
+    // TOP: the widest offer the module licenses.
     const spellLibrary = await this.spellLibraryFor(
       input.campaign.system,
-      mobCasterLevel(levelHint),
+      mobCasterLevel(level === undefined ? (band === undefined ? '' : String(band.max)) : String(level)),
     );
-    // The author's hint is stated AND carries its instruction; with no hint the
-    // sentence is byte-identical to the one this step always sent.
-    const levelClause = levelHint === '' ? '' : ` at level ${levelHint}`;
-    const levelInstruction = hintsStructuredLevel
-      ? " — the module's author fixed this entity's level, so build the block at exactly that level"
-      : '';
     const instruction = [
       `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelClause}${levelInstruction}, grounded in the rule excerpts.`,
-      input.brief,
+      // THE BRIEF THE STAT-BLOCK STEP READS has the app's generated party-level
+      // line REMOVED (docs/17 row 247): it states the PARTY's level, and leaving
+      // it in the prompt is how the owner's premise-stated level-5 smith came
+      // back at level 3 — the band's maximum. The exclusion is the SAME seam the
+      // fallback uses, so what the prompt omits and what the reader ignores
+      // cannot drift.
+      withoutPartyLevelLines(input.brief),
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
@@ -3878,6 +4020,7 @@ export class RunEngine {
           input,
           signal,
           `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply was invalid JSON for the COMPLETE schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only and include every required field.`,
+          userInstruction,
         );
       }
     }
@@ -3913,12 +4056,57 @@ export class RunEngine {
           input,
           signal,
           `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply printed signed ability values:\n- ${abilityIssues.join('\n- ')}\nReply with corrected JSON only, with every ability written as its d20 SCORE.`,
+          userInstruction,
         );
       }
       this.statblockRetried.delete(runId);
       const rejected = this.finishStep(
         steps[stepIndex],
         rejectedStepOutput(raw, abilityIssues, ['ability-convention']),
+        'rejected',
+      );
+      if (input.autonomy === 'auto') return { step: rejected };
+      if (input.autonomy === 'manual') return { step: rejected, runStatus: 'awaiting_user' };
+      return { step: rejected, runStatus: 'needs_review' };
+    }
+
+    // THE RESOLVED LEVEL BINDS THE BLOCK (docs/17 row 247). THIS is the cure for
+    // the owner's report: a block printed at another level used to be STORED
+    // with a notice while the wrong number persisted, so the mob stayed level 3
+    // and every surface reported success. Now a deviating block is a defect in
+    // the step's output: ONE repair turn names both levels (the block is
+    // otherwise complete and usable, so it deserves the attempt), and a block
+    // that still deviates is REJECTED with a named reason — never persisted.
+    // A run that resolved no level at all (a campaign-level free-text run with
+    // no `level N` anywhere) has nothing to bind and keeps its historical
+    // behaviour.
+    const levelIssue = statBlockLevelIssue(level, band, statBlock.level);
+    // What the repair turn asks for — the exact level when one is fixed, the
+    // module's range when only a band bounds it.
+    const levelTarget =
+      level !== undefined
+        ? `"level" set to exactly "${String(level)}"`
+        : `"level" set to a level between ${String(band?.min)} and ${String(band?.max)}`;
+    if (levelIssue !== null) {
+      if (!this.statblockRetried.has(runId)) {
+        this.statblockRetried.add(runId);
+        debugLog('run', 'statblock reply prints a level other than the resolved one — retrying once', {
+          issue: levelIssue,
+        });
+        return this.runStatblock(
+          runId,
+          stepIndex,
+          steps,
+          input,
+          signal,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${levelIssue}\nReply with corrected JSON only, with ${levelTarget}.`,
+          userInstruction,
+        );
+      }
+      this.statblockRetried.delete(runId);
+      const rejected = this.finishStep(
+        steps[stepIndex],
+        rejectedStepOutput(raw, [levelIssue], ['level-mismatch']),
         'rejected',
       );
       if (input.autonomy === 'auto') return { step: rejected };
@@ -3951,6 +4139,7 @@ export class RunEngine {
         input,
         signal,
         `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${formatMobSpellRepair(spellIssueList)}\nReply with corrected JSON only, assigning ONLY names copied from the spell list in this prompt.`,
+        userInstruction,
       );
     }
     this.statblockRetried.delete(runId);
@@ -3965,26 +4154,13 @@ export class RunEngine {
       spellIssueList.length === 0
         ? null
         : `Unresolved mob spells — ${spellIssueList.join(' ')}`;
-    // The NPC lane's deviation route (docs/17 row 197): when the module fixed a
-    // level and the block printed another, the step SAYS SO on the existing
-    // `notice` seam — never a silent ignore. `null` on a match, and `null`
-    // without a structured level. Keyed on the RESOLVED level (row 206), so a
-    // hint that arrived through the module grounding is guarded exactly like one
-    // that rode the run input.
-    const levelNotice =
-      structuredLevel === undefined
-        ? null
-        : levelHintDeviationNotice(structuredLevel, statBlock.level);
-    // A module-owned entity the record fixes NO level for is LOUD (docs/17 row
-    // 206): the absence is the state that let the owner's regenerated gnome pick
-    // level 13 with no warning, so it now names itself on the same notice seam.
-    const levelAbsenceNotice = moduleLevelHintAbsenceNotice(context.moduleGrounding, structuredLevel);
-    const repairNotes = [
-      contractRepairNotice(firstTryModel, repairTarget),
-      spellNotice,
-      levelNotice,
-      levelAbsenceNotice,
-    ]
+    // NOTHING ABOUT THE LEVEL IS LEFT TO A NOTICE: a deviating block was either
+    // repaired or REJECTED above, and a module that states no level REFUSED the
+    // step before the model was called (docs/17 row 247). The old
+    // `levelHintDeviationNotice` / `moduleLevelHintAbsenceNotice` pair — a
+    // sentence while the wrong level persisted — is gone with the defect it
+    // documented.
+    const repairNotes = [contractRepairNotice(firstTryModel, repairTarget), spellNotice]
       .filter((note): note is string => note !== null)
       .join(' ');
     const step = this.finishStep(
@@ -6999,6 +7175,28 @@ export class RunEngine {
           target.name,
         );
         const aliasDrift = refusedModelName.map(aliasCollisionSentence).join(' ');
+        // A refill that KEEPS the target's already-curated stat block says so
+        // (docs/17 row 247). The draft's "this character needs no stat block" is
+        // a legitimate answer for an ORDINARY prose refill with no instruction —
+        // that path is deliberate and pinned — but the owner must never be told
+        // "changed" while the numbers he asked about were untouched. The step's
+        // OWN record is the evidence (the statblock step was skipped and the row
+        // already carries a block), not a re-derivation of the merge.
+        const statBlockStep = steps.find((candidate) => candidate.name === 'statblock');
+        const keptStatBlock =
+          kind === 'npc' &&
+          target.kind === 'npc' &&
+          target.data.statBlock !== null &&
+          statBlockStep?.status === 'skipped';
+        const refillNotice = [
+          aliasDrift,
+          keptStatBlock
+            ? `The stat block was NOT regenerated: the draft marked «${target.name}» as needing no stat block, ` +
+              `so the one already on the row is kept. Ask for the stat block explicitly (an instruction naming it) to rebuild it.`
+            : '',
+        ]
+          .filter((part) => part !== '')
+          .join(' ');
         await updateArtifact(
           target.id,
           {
@@ -7017,7 +7215,7 @@ export class RunEngine {
         );
         const step = this.finishStep(
           steps[stepIndex],
-          withNotice({ artifactId: target.id }, null, aliasDrift === '' ? null : aliasDrift),
+          withNotice({ artifactId: target.id }, null, refillNotice === '' ? null : refillNotice),
         );
         if (aliasDrift !== '') {
           toastError(

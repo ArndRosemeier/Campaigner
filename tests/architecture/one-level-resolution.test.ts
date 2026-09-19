@@ -4,27 +4,35 @@ import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * ONE seam resolves an entity's level (docs/17 row 206, AGENTS rule 4).
+ * ONE seam resolves an entity's level, and ONE reader reads a level out of
+ * prose (docs/17 rows 206 and 247, AGENTS rule 4).
  *
- * The owner's regression was a MISSING COPY, not a wrong one: the artifact
- * editor's "Regenerate with AI" rebuilt `StartRunInput` without
+ * THE FIRST REGRESSION (row 206) was a MISSING COPY, not a wrong one: the
+ * artifact editor's "Regenerate with AI" rebuilt `StartRunInput` without
  * `entityLevelHint`, so `runStatblock` silently fell back to a regex over a
- * brief whose only `level N` was the PARTY's. The cure is one resolution
- * expression inside `runStatblock` (`input.entityLevelHint ?? the stored module
- * grounding's recorded level`) plus ONE party-line exclusion shared by the
- * fallback — never a per-caller patch of the panel, the chain runner and the
- * change lane.
+ * brief whose only `level N` was the PARTY's.
  *
- * The pin is a SOURCE SCAN because the drift it catches is invisible: a second
+ * THE SECOND (row 247, the owner's level-5 smith) was the same idea again: a
+ * level stated in the module's PREMISE reached nothing, a party-level line
+ * biased the model, and the reply's own level was persisted verbatim — with a
+ * notice beside it. The cure is still ONE site: `runStatblock` resolves FOUR
+ * sources in ONE precedence chain (the user's instruction, the entity record's
+ * hint, the module's own stated level, the brief's party-line-free fallback),
+ * and the resolved value BINDS the parsed block. `moduleStatedLevel` is ONE
+ * derivation (its two consumers — the spine recording the hint and the engine
+ * resolving it — are named here), and `firstLevelInText` is the ONE reader of
+ * `level N` out of any prose.
+ *
+ * The pins are SOURCE SCANS because the drift they catch is invisible: a second
  * call site that rebuilds `StartRunInput` reads correctly today and silently
- * loses the level the day a caller is added. The needles are the resolution
- * expression and the exclusion call; the red is a second reader of the raw
- * brief regex that bypasses the exclusion.
+ * loses the level the day a caller is added, and a second `level N` regex
+ * anywhere is a second answer to the same question.
  */
 
 const SRC_DIR = join(process.cwd(), 'src');
 const ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
+const MODULE_GEN = 'src/llm/moduleGen.ts';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -45,36 +53,68 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 }
 
-describe('ONE seam resolves the entity level (docs/17 row 206)', () => {
-  it('resolves the two structured sources at exactly one site', () => {
+function scanned(): (readonly [string, string])[] {
+  return sourceFiles(SRC_DIR).map(
+    (file) => [rel(file), stripComments(readFileSync(file, 'utf8'))] as const,
+  );
+}
+
+function filesContaining(needle: string): string[] {
+  return scanned()
+    .filter(([, text]) => text.includes(needle))
+    .map(([file]) => file);
+}
+
+describe('ONE seam resolves the entity level (docs/17 rows 206/247)', () => {
+  it('states the precedence chain at exactly one site, and only in the engine', () => {
     const files = sourceFiles(SRC_DIR);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
-    const stripped = files.map((file) => [rel(file), stripComments(readFileSync(file, 'utf8'))] as const);
-    const resolvers = stripped
-      .filter(([, text]) => text.includes('input.entityLevelHint ?? recordedLevel'))
+    expect(
+      filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel'),
+    ).toEqual([ENGINE]);
+    // The user's instruction is read at that same site, and the module's own
+    // level is consulted there too.
+    expect(filesContaining('instructionLevel(statedInstruction)')).toEqual([ENGINE]);
+    expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([ENGINE]);
+  });
+
+  it('reads `level N` out of prose through ONE reader, defined once', () => {
+    // The reader itself…
+    expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
+    // …and NO other `level N` regex anywhere in the tree: a second spelling of
+    // the same question is exactly how the party-line trap came back. The needle
+    // is the regex SOURCE as `roomBudget.ts` spells it, matched as text.
+    const levelRegexNeedle = '\\blevel\\s*(\\d{1,2})\\b';
+    const regexIn = scanned()
+      .filter(([, text]) => text.includes(levelRegexNeedle))
       .map(([file]) => file);
-    expect(resolvers).toEqual([ENGINE]);
+    expect(regexIn).toEqual([ROOM_BUDGET]);
+  });
+
+  it('derives the module’s own stated level once, for the spine recording and the engine resolution', () => {
+    expect(filesContaining('export function moduleStatedLevel')).toEqual([ROOM_BUDGET]);
+    // TWO consumers, both named: the spine records the level onto the entity
+    // records it saves, the engine resolves it for a module-created run.
+    expect(
+      filesContaining('moduleStatedLevel(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([MODULE_GEN, ENGINE]);
   });
 
   it('routes the brief-text fallback through the ONE party-line exclusion, and leaves no raw-brief reader', () => {
-    const files = sourceFiles(SRC_DIR);
-    const stripped = files.map((file) => [rel(file), stripComments(readFileSync(file, 'utf8'))] as const);
     // Defined once, beside `partyLevelLine` whose shape it excludes…
-    const definers = stripped
-      .filter(([, text]) => text.includes('export function withoutPartyLevelLines'))
-      .map(([file]) => file);
-    expect(definers).toEqual([ROOM_BUDGET]);
-    // …and consumed once, by the statblock fallback.
-    const callers = stripped
-      .filter(([, text]) => text.includes('withoutPartyLevelLines(input.brief)'))
-      .map(([file]) => file);
+    expect(filesContaining('export function withoutPartyLevelLines')).toEqual([ROOM_BUDGET]);
+    // …and consumed only by the stat-block step: the fallback read AND the
+    // prompt the step finally sends (docs/17 row 247 removed the party line from
+    // BOTH, so what the reader ignores and what the model sees cannot drift).
+    const callers = filesContaining('withoutPartyLevelLines(').filter(
+      (file) => file !== ROOM_BUDGET,
+    );
     expect(callers).toEqual([ENGINE]);
     // The pre-row-206 raw regex over the brief is GONE: a second reader that
     // bypasses the party-line exclusion reds here.
-    const rawReaders = stripped
-      .filter(([, text]) => text.includes('.exec(input.brief)'))
-      .map(([file]) => file);
-    expect(rawReaders).toEqual([]);
+    expect(filesContaining('.exec(input.brief)')).toEqual([]);
   });
 });

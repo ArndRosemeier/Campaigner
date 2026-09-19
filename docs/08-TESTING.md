@@ -2950,6 +2950,22 @@ differs from the baseline and every injection reds a NAMED pin.**
 | **C — the fallback allowed to read the party line again** (`withoutPartyLevelLines(input.brief)` → `input.brief`) | runEngine `5b68a7c5…` → `5af0a2034926458ec9d36825437e698e767048e0` → `5b68a7c5…` | **RED 2**: the party-line pin (`at level 13, grounded` appears) and the source scan (the exclusion call is gone) |
 | **D — the loud-absence notice removed** (`moduleLevelHintAbsenceNotice(…)` → `null`) | runEngine `5b68a7c5…` → `9ed70f3ab505d50e5bb6136c20f094b0e2e8c379` → `5b68a7c5…` | **RED 2**: the loud-absence pin and the stored-grounding compatibility pin (which asserts the absence is now LOUD on a pre-206 store) |
 
+**SUPERSEDED IN PART by docs/17 row 247** — the loud-absence NOTICE and the deviation
+NOTICE above are DELETED (a sentence beside the wrong number was the owner's defect): a
+module-owned entity with no EXACT level is now BOUNDED by its module's band, and a reply
+that leaves the resolved level (or the band) is repaired once and then REJECTED. The
+party-line exclusion and the ONE-seam resolution introduced here are unchanged and still
+pinned; `one-level-resolution.test.ts` now names the four-source precedence expression and
+the ONE `level N` reader (`roomBudget.firstLevelInText`). The row-247 matrix:
+
+| arm | injected file (sha256 before → injected → after) | observed |
+|---|---|---|
+| **A — baseline** | `src/llm/runEngine.ts` `0a27e1f2ab8194e39b82de9b60482d116bd8cfd510480cf285f6b9191c884e7c` | GREEN: 2 files / 54 tests |
+| **B — the fix removed**: `resolvedLevel` cut back to the recorded hint only, `levelIssue` forced `null`, the `needsStatBlock` veto restored, and the party line back in the prompt | runEngine `0a27e1f2…` → `075e3cb155e2799bb8d66fdbbe8f50797a3a0961425ffaf2764882f576336276` → `0a27e1f2…` | **RED 7**, every acceptance pin by name: the premise-level mob (`at level 5` missing, then `'3'` vs `'5'`), the explicit redo (no clause, no regeneration), the deviating reply (run completed instead of failed), the resolved-hint bind + the grounded refill (`'13'` vs `'7'`), the party line back in the prompt, and the band-bounded module; the ORDINARY-refill file stayed GREEN in BOTH arms (the must-not-break arm) |
+
+Raw log: `.gate-logs/row247-full.out` (the full gate) and
+`revert-proof-row247.log` (this differential), both in the worktree.
+
 ### The refill names its target, and a foreign returned name is refused (docs/17 row 226, docs/18 §2.1/§2.2)
 
 The owner regenerated «Hilde Marben» from the artifact editor and got *"this NPC

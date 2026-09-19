@@ -97,6 +97,9 @@ async function seedNpc(): Promise<{ npcId: string; moduleId: string }> {
     status: 'completed',
     resultArtifactId: npc.id,
     errorMessage: '',
+    // The run's OWN step record: `done` means the stat block was authored
+    // (docs/17 row 247), which is what the change seam now reports.
+    steps: [{ name: 'statblock', status: 'done' }],
   });
   return { npcId: npc.id, moduleId: module.id };
 }
@@ -148,6 +151,41 @@ describe('the instruction reaches the entity brief', () => {
     // did not silently keep a placement on an existing row)
     expect(moduleId).not.toBe('');
   });
+});
+
+describe('the change REPORTS what happened to the stat block (docs/17 row 247)', () => {
+  it('an explicit instruction that regenerates the block reports `regenerated`, and the instruction rides the brief', async () => {
+    const { npcId } = await seedNpc();
+
+    const result = await changeArtifact({
+      artifactId: npcId,
+      instruction: 'redo this completely, this time making it level 5',
+    });
+
+    // The owner's second symptom was a change that said only "changed" while the
+    // stat block was untouched — so the seam states which of the two happened.
+    expect(result).toMatchObject({ status: 'changed', statBlock: 'regenerated' });
+    const input = startRunMock.mock.calls[0]?.[0] as { brief?: string };
+    expect(input.brief).toContain(
+      'Additional instruction: redo this completely, this time making it level 5',
+    );
+  });
+
+  it('a refill whose statblock step was SKIPPED reports `kept` — never a silent "changed"', async () => {
+    const { npcId } = await seedNpc();
+    // The engine's own step record for a refill that kept the row's block.
+    waitForRunStatusMock.mockResolvedValue({
+      status: 'completed',
+      resultArtifactId: npcId,
+      errorMessage: '',
+      steps: [{ name: 'statblock', status: 'skipped' }],
+    });
+
+    const result = await changeArtifact({ artifactId: npcId });
+
+    expect(result).toMatchObject({ status: 'changed', statBlock: 'kept' });
+  });
+
 });
 
 describe('the brief builder itself', () => {

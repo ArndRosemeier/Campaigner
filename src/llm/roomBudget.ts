@@ -125,6 +125,85 @@ export function withoutPartyLevelLines(brief: string): string {
 }
 
 /**
+ * The FIRST `level N` a piece of text states, or `undefined` when it states
+ * none — the app's ONE free-text level reader (docs/17 row 247). Every reader
+ * of a level out of prose goes through THIS function:
+ *
+ * - the legacy brief fallback in `runEngine.runStatblock` (fed the brief with
+ *   the generated party lines removed, `withoutPartyLevelLines`);
+ * - `moduleStatedLevel` below (fed the module's OWN premise);
+ * - the explicit-instruction reader (`instructionLevel`).
+ *
+ * WHY ONE READER, NOT THREE REGEXES. The three callers ask the same question
+ * of different text, and a second `/level\s*(\d{1,2})/i` is exactly how the
+ * party-level trap came back once already (docs/17 row 206): a copy that
+ * forgot the exclusion, or that read `(\d+)` instead of the two-digit form,
+ * would disagree with the others about what "level 5" means in the same
+ * sentence. The `1..20` bound is the app's level domain (`ENTITY_LEVEL_HINT_*`),
+ * so a stray four-digit number is NOT read as a level.
+ */
+export function firstLevelInText(text: string): number | undefined {
+  const digits = /\blevel\s*(\d{1,2})\b/i.exec(text)?.[1];
+  if (digits === undefined) return undefined;
+  const value = Number(digits);
+  return value >= 1 && value <= 20 ? value : undefined;
+}
+
+/**
+ * The level an EXPLICIT user instruction fixes, or `undefined` when it fixes
+ * none (docs/17 row 247). This is the TOP of the stat-block level precedence:
+ * an instruction is the owner speaking about THIS entity right now, so it
+ * outranks the module's recorded hint, the module's own prose and the brief.
+ *
+ * It reads the whole instruction through the ONE text reader, so "make it
+ * level 5", "redo completely, this time at level 5" and "level 5" all resolve
+ * 5; an instruction that names no level resolves nothing and the module's own
+ * sources decide (never an empty string standing in for a level).
+ */
+export function instructionLevel(text: string): number | undefined {
+  return firstLevelInText(text);
+}
+
+/**
+ * The level the MODULE ITSELF states for one entity, or `undefined` when it
+ * states none (docs/17 row 247) — the ONE derivation, used by the run engine's
+ * level resolution AND by the module spine's entity-level recording
+ * (`moduleGen`), so the value a new module RECORDS and the value the engine
+ * READS for an older module cannot disagree.
+ *
+ * THREE SOURCES, in the module's own order of specificity — and deliberately
+ * NOT the `levelMin`/`levelMax` RANGE:
+ *
+ * 1. **The premise's own `level N`.** The module author's prose is where the
+ *    owner's report lives ("i have a level 5 mob in a module (its described
+ *    that way)"), and the premise is the module-wide statement of it.
+ * 2. **The level of the part that mentions the entity** (`partLevelForMention`
+ *    — the spine's own structured `partPlan[].levelBand`). This is a MODULE
+ *    statement read by NAME from the plan, never the rendered party-level line
+ *    the brief carries; docs/17 row 206 keeps the generated LINE out of the
+ *    fallback regex, and this function never touches that line.
+ * 3. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
+ *    stated level; a range is not, and inventing a number from it (a midpoint,
+ *    a maximum) is the guessing AGENTS rule 1 forbids. So a range `undefined`s
+ *    here and the engine refuses loudly instead of letting the model pick.
+ *
+ * `name` may be omitted for the SPINE-TIME call, where the module has no parts
+ * yet: sources 1 and 3 still apply, and source 2 genuinely does not exist.
+ */
+export function moduleStatedLevel(
+  module: Pick<Module, 'spine' | 'parts' | 'levelMin' | 'levelMax'>,
+  name = '',
+): number | undefined {
+  const fromPremise = firstLevelInText(module.spine?.premise ?? '');
+  if (fromPremise !== undefined) return fromPremise;
+  if (name.trim() !== '') {
+    const fromPart = partLevelForMention(module, name);
+    if (fromPart !== undefined) return fromPart;
+  }
+  return module.levelMin === module.levelMax ? module.levelMin : undefined;
+}
+
+/**
  * The referencing part's EXACT level for an encounter mention (docs/11):
  * the first module part (plan order) whose markdown carries the encounter's
  * `[[Name]]` mention supplies its `levelBand` as the exact party level —

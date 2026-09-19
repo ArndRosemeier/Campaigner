@@ -1522,6 +1522,40 @@ inspectable and where the generation it steers is triggered.
 intent field's); no hint driving anything but the level; the encounter generator's own
 level resolution is unchanged (it keeps its part band + artifact `levelHint`).
 
+**AMENDED by docs/17 row 247 (the owner's level-5 smith).** The field, the ONE reader
+(`entityLevelHintFor`), the unmatched-hint report and the panel badge above are unchanged.
+What changed is everything AROUND them, and the two paragraphs above that describe the old
+route are SUPERSEDED:
+
+- **The level is resolved by ONE precedence chain in `runStatblock`**: the user's EXPLICIT
+  instruction (`roomBudget.instructionLevel` over the brief's `Additional instruction:`
+  paragraph and the step's `userInstruction`) → the entity record's `levelHint` → **the
+  MODULE'S OWN STATED LEVEL** (`roomBudget.moduleStatedLevel`: the premise's `level N`,
+  else the mentioning part's band, else an EXACT `levelMin === levelMax` band) → the
+  brief's `level N` through the ONE reader `roomBudget.firstLevelInText`. The premise is
+  where the owner's level actually lived.
+- **The resolved level BINDS the block.** A reply that prints another level is repaired
+  ONCE and then REJECTED (`statBlockLevelIssue` + `RejectionReason` `'level-mismatch'`) —
+  it is never persisted. The old `notice` ("the stat-block step's existing `notice` says
+  so, naming both levels") is DELETED along with `moduleLevelHintAbsenceNotice`: a
+  sentence beside the wrong number was the defect, not the cure.
+- **A band BOUNDS, it never guesses.** When nothing EXACT resolves on a module-owned run,
+  the module's `levelMin`/`levelMax` is stated to the model as a RANGE and the reply must
+  fall inside it; a module-owned run with neither a statement nor a band (its module row
+  is gone) REFUSES loudly before any model call. An unconditional refusal was measured
+  wrong here: the DEFAULT module states only a 1–4 band, so refusing would stop most
+  modules generating an NPC at all.
+- **The party's level is OUT of the stat-block prompt** (`roomBudget.withoutPartyLevelLines`
+  renders it): the generated line could bias the model toward the band's maximum, which is
+  exactly what the owner saw.
+- **The spine records the level now**: `moduleGen.normalizeAndSave` writes
+  `moduleStatedLevel` onto the npc records that state none
+  (`domain/module.withCombatEntityLevelHints`), so a premise-stated level survives the
+  entity boundary as DATA even when the planner answered `"levelHint": null`.
+- **An explicit instruction is not vetoed** by a draft's `needsStatBlock: false`, and a
+  refill that KEEPS the target's block reports it (step notice + the change seam's
+  `statBlock: 'regenerated' | 'kept' | 'none'`) instead of a bare "changed".
+
 ### Caster-aware NPC generation (docs/17 row 201)
 
 The owner's report: *"I guess the NPC smith just needs to be explicitely caster aware.

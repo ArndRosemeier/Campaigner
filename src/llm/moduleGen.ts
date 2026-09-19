@@ -24,6 +24,7 @@ import {
   partWriterModelFor,
   sameAliasName,
   textOriginIsMachineWritten,
+  withCombatEntityLevelHints,
   withEntityBestiarySlots,
   type EncounterBudgetPolicy,
   type EncounterFloorGuardrail,
@@ -56,6 +57,7 @@ import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/
 // through `db/creatureRepo.castCreatureAsNpc`, the ONE cast function
 // (docs/18 §2.2).
 import { collectCreatorRoster } from '@/llm/creatorRoster';
+import { moduleStatedLevel } from '@/llm/roomBudget';
 import { addArtifactAliases, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
@@ -495,7 +497,28 @@ async function runSpinePass(
         // refers to and knows nothing about any of them, so what the model
         // already recorded rides through the substitution rather than being
         // dropped with the variant-keyed records it was written on.
-        normalizedKinds = withEntityBestiarySlots(canonicalEntityRecords(verdicts), nextKinds);
+        //
+        // THE MODULE'S OWN STATED LEVEL IS RECORDED HERE, before the carry
+        // (docs/17 row 247). The planner is ASKED for a per-entity levelHint
+        // but is free to answer `null` — and a name introduced by a LATER part
+        // is only classified by the normalization pass, which can carry a field
+        // and never author one — so a level the premise states could still
+        // reach the generators as nothing. `moduleStatedLevel` reads the module
+        // ITSELF (its just-written premise, else its own exact band; this pass
+        // has no parts yet), and `withCombatEntityLevelHints` writes it onto
+        // the npc records that state none. The planner's own answer is never
+        // overwritten, and a module stating no level leaves every record
+        // byte-identical.
+        const statedLevel = moduleStatedLevel({
+          spine: nextSpine,
+          parts: [],
+          levelMin: module.levelMin,
+          levelMax: module.levelMax,
+        });
+        normalizedKinds = withEntityBestiarySlots(
+          canonicalEntityRecords(verdicts),
+          withCombatEntityLevelHints(nextKinds, statedLevel),
+        );
       }
       const saved = await patchModule(moduleId, {
         // PROVENANCE (docs/17 row 93): the premise's writing model, recorded

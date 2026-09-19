@@ -505,7 +505,7 @@ describe('finalize: the cast path', () => {
       const row = (await listArtifactsByCampaign(campaign.id)).find(
         (artifact) => artifact.name === AGATHA,
       );
-      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
     });
 
     const module = await getModule(moduleId);
@@ -572,7 +572,7 @@ describe('finalize: the cast path', () => {
       const row = (await listArtifactsByCampaign(campaign.id)).find(
         (artifact) => artifact.name === AGATHA,
       );
-      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
     });
 
     const first = await getModule(moduleId);
@@ -728,7 +728,7 @@ describe('finalize: the cast path', () => {
       const row = (await listArtifactsByCampaign(campaign.id)).find(
         (artifact) => artifact.name === AGATHA,
       );
-      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
     });
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('module row is missing');
@@ -798,6 +798,7 @@ describe('finalize: the cast path', () => {
       status: 'completed',
       resultArtifactId: null,
       errorMessage: '',
+      steps: [],
     });
 
     const module = await getModule(moduleId);
@@ -1184,7 +1185,7 @@ describe('a cast row the module text only NAMES is given an authored description
         (artifact) => artifact.name === AGATHA,
       );
       // Exactly what the engine writes for a refill: the row it filled.
-      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '' };
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
     });
 
     const module = await getModule(moduleId);
@@ -1290,6 +1291,7 @@ describe('a cast row the module text only NAMES is given an authored description
       status: 'completed',
       resultArtifactId: earlier.artifactId,
       errorMessage: '',
+      steps: [],
     });
 
     const module = await getModule(moduleId);
@@ -1377,6 +1379,7 @@ describe('a cast row the module text only NAMES is given an authored description
       status: 'completed',
       resultArtifactId: null,
       errorMessage: '',
+      steps: [],
     };
     waitForRunStatusMock.mockResolvedValue(completedEmpty);
 

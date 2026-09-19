@@ -264,6 +264,13 @@ describe('in-place refill parity (module grounding)', () => {
     // existing stat block survives the refill instead of being clobbered.
     if (artifact?.kind !== 'npc') throw new Error('target is not an npc');
     expect(artifact.data.statBlock?.hp).toBe(22);
+    // …and the KEEPING is REPORTED, never silent (docs/17 row 247): the owner's
+    // complaint was a refill that recreated everything "BUT the stat block" while
+    // every surface said only "changed".
+    const finalizeStep = run?.steps.find((step) => step.name === 'finalize');
+    const keptNotice = (finalizeStep?.output as { notice?: string } | null | undefined)?.notice ?? '';
+    expect(keptNotice).toContain('The stat block was NOT regenerated');
+    expect(keptNotice).toContain('Kael');
   }, 30000);
 
   it('names the degrade in prompt and step notice when the owning module row is gone', async () => {

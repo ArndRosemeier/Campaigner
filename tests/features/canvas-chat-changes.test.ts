@@ -23,6 +23,7 @@ import { artifactPath } from '@/app/routes';
 import { useProgressStore } from '@/lib/progress';
 import type { EncounterRegenOptions } from '@/features/campaign/encounterRegen';
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
+import { producedEntityResult as produced } from '../helpers/entityRunFixtures';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -171,12 +172,10 @@ function messagesFor(key: string) {
   return useCanvasChatStore.getState().module(key).messages;
 }
 
-/** What the seam's entity lane returns when it succeeded. `cast: []` — this
- * change ran a persona draft, never the module-side bestiary cast (docs/17 row
- * 107). */
-function produced(name: string, artifactId: Id) {
-  return { generated: [name], cast: [], produced: [{ name, artifactId }], failed: [] };
-}
+/** What the seam's entity lane returns when it succeeded — the SHARED fixture
+ * (`tests/helpers/entityRunFixtures`), folded off the two baselined copies
+ * (docs/17 row 247). `cast: []` — this change ran a persona draft, never the
+ * module-side bestiary cast (docs/17 row 107). */
 
 function changeOf(name: string, instruction: string, operation?: 'repopulate' | 'everything'): string {
   const attribute = operation === undefined ? '' : ` operation="${operation}"`;

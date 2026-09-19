@@ -49,6 +49,10 @@ export const REJECTION_REASONS = [
   /** A stat block printed signed ability values where a d20 score is
    * required (docs/17 row 95). */
   'ability-convention',
+  /** A stat block printed a level other than the one this run RESOLVED for
+   * the entity (docs/17 row 247), after one automatic repair attempt — a
+   * module's own level may not be silently overridden by the generator. */
+  'level-mismatch',
   /** The reply parsed, but broke the encounter brief's own contract: room
    * shape, roster, coverage or level budget. */
   'brief-contract',
@@ -84,6 +88,8 @@ export const REJECTION_CLAUSES: Record<RejectionReason, string> = {
     'the reply cited monsters with no stat source this run could resolve, after one automatic repair attempt',
   'ability-convention':
     'the stat block printed signed ability values where the d20 score is required, after one automatic repair attempt',
+  'level-mismatch':
+    'the stat block printed a level other than the one the run resolved for the entity, after one automatic repair attempt',
   'brief-contract':
     "the reply parsed, but it broke the encounter brief's own contract (room shape, roster, or level budget) after one automatic repair attempt",
   'escape-debris':

@@ -7,7 +7,7 @@ import {
   regenerateEncounterEverything,
   repopulateEncounter,
 } from '@/features/campaign/encounterRegen';
-import { runEntityBatch } from '@/features/modules/entity-batch';
+import { runEntityBatch, type EntityBatchStatBlock } from '@/features/modules/entity-batch';
 import type { StubKind } from '@/features/modules/persona-request';
 import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
 
@@ -150,6 +150,18 @@ export interface ChangeArtifactChanged {
   artifactId: Id;
   kind: ArtifactKind;
   operation: ChangeArtifactOperation;
+  /**
+   * What the change did to the entity's STAT BLOCK (docs/17 row 247), reported
+   * by the ENTITY route from the run engine's own step record. The owner's
+   * second symptom was exactly a change that reported `changed` while the stat
+   * block stayed as it was, so a caller must be able to tell the two apart
+   * instead of reading one sentence that implies a full regeneration.
+   *
+   * `undefined` for the ENCOUNTER route: its regeneration semantics are its own
+   * (docs/11) and this field says nothing about them — an absent field is "not
+   * reported by this operation", never a claim about a block.
+   */
+  statBlock?: EntityBatchStatBlock;
 }
 
 /** A rule says no: nothing was written, nothing was called. */
@@ -370,6 +382,7 @@ async function changeEntityArtifact(
     artifactId: produced.artifactId,
     kind: artifact.kind,
     operation: 'entity-redesign',
+    statBlock: produced.statBlock,
   };
 }
 

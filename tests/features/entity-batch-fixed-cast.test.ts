@@ -16,6 +16,7 @@ import {
 import type * as runEngineModule from '@/llm/runEngine';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { completedRunWith as completedWith } from '../helpers/entityRunFixtures';
 
 /**
  * Fixed-cast glue at the batch seam (docs/11): encounter briefs build after
@@ -122,9 +123,8 @@ async function seedWorld(): Promise<{ campaign: Campaign; module: Module; halvar
   return { campaign, module, halvarId: halvar.id };
 }
 
-function completedWith(artifactId: string): PersonaRun {
-  return { status: 'completed', resultArtifactId: artifactId, errorMessage: '' } as unknown as PersonaRun;
-}
+/** The SHARED completed-run fixture (`tests/helpers/entityRunFixtures`), folded
+ * off the two baselined copies (docs/17 row 247). */
 
 /** A run that died on its own, with the sentence the engine composed. */
 function failedWith(errorMessage: string): PersonaRun {

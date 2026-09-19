@@ -508,6 +508,37 @@ export interface EntityBatchProduced {
   name: string;
   /** The produced artifact's id (name-aligned, module-owned + tagged). */
   artifactId: Id;
+  /**
+   * What the run did to the entity's STAT BLOCK (docs/17 row 247). Read off the
+   * engine's OWN step record — `regenerated` when the statblock step completed,
+   * `kept` when a REFILL's step was skipped (the row keeps the block it already
+   * had), `none` when no block was in play (a create whose draft declined, or a
+   * cast entity whose numbers are the library's).
+   *
+   * WHY IT IS CARRIED rather than left in the run row: the owner's second
+   * symptom was a change that reported `changed` while the stat block was
+   * untouched, so the CHANGE seam (and the chat reading it) must be able to say
+   * which of the two happened instead of implying a full regeneration.
+   */
+  statBlock: EntityBatchStatBlock;
+}
+
+/** See `EntityBatchProduced.statBlock`. */
+export type EntityBatchStatBlock = 'regenerated' | 'kept' | 'none';
+
+/**
+ * The stat-block outcome of ONE finished run, from the engine's own step record
+ * (`statblock`): `done` = a block was authored; `skipped` on a REFILL = the
+ * target's existing block survives by design; anything else = no block in play.
+ * The engine owns the decision, this only names it — no merge rule is
+ * re-implemented here.
+ */
+function statBlockOutcomeOf(run: PersonaRun, isRefill: boolean): EntityBatchStatBlock {
+  const step = run.steps.find((candidate) => candidate.name === 'statblock');
+  if (step === undefined) return 'none';
+  if (step.status === 'done') return 'regenerated';
+  if (step.status === 'skipped') return isRefill ? 'kept' : 'none';
+  return 'none';
 }
 
 export interface EntityBatchResult {
@@ -806,7 +837,9 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           });
           producedIds.push(castOutcome.artifactId);
           cast.push(target.name);
-          produced.push({ name: target.name, artifactId: castOutcome.artifactId });
+          // A cast entity's numbers are the LIBRARY creature's, never authored by
+          // a statblock step — `none` says exactly that (docs/17 row 247).
+          produced.push({ name: target.name, artifactId: castOutcome.artifactId, statBlock: 'none' });
           // THE DESCRIPTION A TEXT-NAMED ROW MUST HAVE (docs/17 rows 133/135).
           // An NPC is named BECAUSE it is a wiki-link in the module text — that
           // link IS the name (the owner's ruling, verbatim in docs/17 row 135) —
@@ -943,7 +976,11 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           } else {
             producedIds.push(outcome.resultArtifactId);
             generated.push(target.name);
-            produced.push({ name: target.name, artifactId: outcome.resultArtifactId });
+            produced.push({
+              name: target.name,
+              artifactId: outcome.resultArtifactId,
+              statBlock: statBlockOutcomeOf(outcome, target.artifactId !== undefined),
+            });
             try {
               // The wiki-link resolves by EXACT name, so an artifact the model
               // named "Kael Ashbound…" would never link back to [[Kael]] —

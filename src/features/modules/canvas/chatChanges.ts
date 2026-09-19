@@ -3,6 +3,7 @@ import { ARTIFACT_KIND_SINGULAR } from '@/domain';
 import { artifactPath } from '@/app/routes';
 import { changeArtifact } from '@/features/modules/change-artifact';
 import type { EncounterChangeOperation } from '@/features/modules/change-artifact';
+import type { EntityBatchStatBlock } from '@/features/modules/entity-batch';
 import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
 import {
@@ -109,6 +110,29 @@ function busyReason(): string {
   return `another generation holds this module's single generation slot right now, so the change was NOT started and nothing was changed. Ask again once that generation finishes — a change is never queued behind it.`;
 }
 
+/**
+ * The STAT-BLOCK half of a changed entity's report (docs/17 row 247), from the
+ * run engine's own step record through the change seam. The owner's report was
+ * a change that recreated everything BUT the stat block while the outcome said
+ * only "changed" — so which of the two happened is stated in as many words.
+ *
+ * `undefined` (the encounter route) contributes NOTHING: the encounter lane's
+ * regeneration semantics are its own, and this clause must never claim a stat
+ * block was regenerated when the operation never touched one.
+ */
+function statBlockClause(statBlock: EntityBatchStatBlock | undefined): string {
+  switch (statBlock) {
+    case 'regenerated':
+      return '; its stat block was REGENERATED at the level this run resolved for the entity';
+    case 'kept':
+      return '; its existing stat block was KEPT — it was NOT regenerated';
+    case 'none':
+      return '; no stat block was authored for it (the entity needs none, or its numbers come from a cited library creature)';
+    default:
+      return '';
+  }
+}
+
 /** The owner-facing noun for a kind, derived from the ONE kind vocabulary
  * (`ARTIFACT_KIND_SINGULAR`) so a rename cannot drift the copy. 'PC' and 'NPC'
  * are initialisms, so their article follows their SOUND ("an NPC"). */
@@ -202,7 +226,7 @@ export async function executeChatChange(
         kind: result.kind,
         detail:
           operation === undefined
-            ? 'the row was redesigned in place by the engine for its kind (identity, links and images kept)'
+            ? `the row was redesigned in place by the engine for its kind (identity, links and images kept)${statBlockClause(result.statBlock)}`
             : `${ENCOUNTER_OPERATION_LABEL[operation]} — ${ENCOUNTER_OPERATION_SCOPE[operation]}`,
       };
     }

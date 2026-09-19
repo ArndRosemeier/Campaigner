@@ -30,10 +30,17 @@
  * stay exactly what the UI handed over.
  */
 
+/**
+ * The ONE spelling of the label (docs/17 row 247). Exported because the READER
+ * below must recognize exactly the bytes the WRITER above produces — a second
+ * literal at the read site is the drift this module exists to prevent.
+ */
+export const ADDITIONAL_INSTRUCTION_LABEL = 'Additional instruction:';
+
 /** The paragraph for `instruction`, or `null` when there is none to render —
  * the form every prompt section list uses (`.filter((part) => part !== null)`). */
 export function additionalInstructionSection(instruction: string): string | null {
-  return instruction === '' ? null : `Additional instruction: ${instruction}`;
+  return instruction === '' ? null : `${ADDITIONAL_INSTRUCTION_LABEL} ${instruction}`;
 }
 
 /** `brief` with the instruction appended as its own final paragraph, or
@@ -41,4 +48,33 @@ export function additionalInstructionSection(instruction: string): string | null
 export function withAdditionalInstruction(brief: string, instruction: string): string {
   const section = additionalInstructionSection(instruction);
   return section === null ? brief : `${brief}\n\n${section}`;
+}
+
+/**
+ * The instruction a brief CARRIES, read back out of it — or `null` when the
+ * brief carries none (docs/17 row 247). The exact inverse of
+ * `withAdditionalInstruction`: `additionalInstructionOf(withAdditionalInstruction(b, i))`
+ * is `i` for every non-empty `i`, and `null` for every brief written without
+ * one.
+ *
+ * WHY A READER EXISTS AT ALL. The change seam (`features/modules/change-artifact`)
+ * hands the user's instruction to the entity batch, which appends it to the
+ * BRIEF through this same paragraph — that is the one channel a chat/change
+ * instruction has. The run engine must be able to tell "the owner asked for
+ * this" (an explicit instruction that OUTRANKS the module's recorded level,
+ * and that a draft's `needsStatBlock: false` may not veto — docs/17 row 247)
+ * from "the module's own text", and the paragraph the brief already carries is
+ * the only place that fact lives on the run input. Reading it here, through the
+ * label the writer uses, keeps the two from drifting.
+ *
+ * The instruction is ALWAYS the brief's final paragraph (the writer appends
+ * it), so the LAST label wins; the returned text is verbatim — a multi-line
+ * instruction survives intact.
+ */
+export function additionalInstructionOf(brief: string): string | null {
+  const marker = `\n\n${ADDITIONAL_INSTRUCTION_LABEL} `;
+  const at = brief.lastIndexOf(marker);
+  if (at !== -1) return brief.slice(at + marker.length);
+  const head = `${ADDITIONAL_INSTRUCTION_LABEL} `;
+  return brief.startsWith(head) ? brief.slice(head.length) : null;
 }

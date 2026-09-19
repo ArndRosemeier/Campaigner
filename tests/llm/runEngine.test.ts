@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule as createModuleSchema, moduleSchema, newId, ruleChunkSchema, stampNewEntity, type Persona } from '@/domain';
+import { createModule as createModuleSchema, moduleSchema, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Persona, type StatBlock } from '@/domain';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -76,6 +76,12 @@ const VALID_STATBLOCK = {
   extras: { CR: '1' },
 };
 
+/** The same block at the module's own level — what a repair turn returns when
+ * it honours the resolved level (docs/17 row 247). */
+const VALID_STATBLOCK_AT_7 = { ...VALID_STATBLOCK, level: '7' };
+
+/** …and at level 5, the owner's mob. */
+const VALID_STATBLOCK_AT_5 = { ...VALID_STATBLOCK, level: '5' };
 
 const VALID_ENCOUNTER_DRAFT = {
   name: 'Goblin Ambush at the Ford',
@@ -417,11 +423,15 @@ describe('runEngine', () => {
    * The reply prints level 3 against the hinted 7, so the same test proves the
    * NPC lane's DEVIATION route: the step's existing `notice` names both levels.
    */
-  it('the structured level hint WINS over a conflicting `level N` sentence in the brief', async () => {
+  it('the structured level hint WINS over a conflicting `level N` sentence in the brief — AND BINDS it (docs/17 row 247)', async () => {
     const { campaignId, persona } = await seed();
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+      // The reply prints level 3 against the hinted 7 …
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
+      // … so the step spends its ONE repair naming the deviation, and this
+      // reply honours the level the module fixed.
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_7), modelUsed: 'test-model', fallback: null });
 
     // AUTO autonomy, exactly like the entity batch: the stat-block step runs off
     // the SAME input object that carried the hint, so this is the production path.
@@ -443,11 +453,19 @@ describe('runEngine', () => {
     expect(statblockPrompt).toContain('at level 7');
     expect(statblockPrompt).toContain("the module's author fixed this entity's level");
     expect(statblockPrompt).not.toContain('at level 3');
+    // The one repair turn states the deviation in as many words.
+    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
+    expect(repair).toContain('written at level "3"');
+    expect(repair).toContain('not the 7 this run resolved');
 
+    // THE BLOCK ITSELF CARRIES THE RESOLVED LEVEL — a notice while the wrong
+    // value persisted was the defect this replaces.
     const run = await getRun(runId);
-    const notice = stepNotice(run?.steps[2]?.output);
-    expect(notice).toContain('fixed this entity at level 7');
-    expect(notice).toContain('written at level "3"');
+    const artifact = await getArtifact(run?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'npc') throw new Error('the run produced no npc artifact');
+    expect(artifact.data.statBlock?.level).toBe('7');
+    // One repair attempt, never a loop.
+    expect(chatMock).toHaveBeenCalledTimes(3);
   }, 20000);
 
   /**
@@ -528,13 +546,23 @@ describe('runEngine', () => {
     campaignId: Id,
     name: string,
     levelHint: number | undefined,
+    // What the MODULE ITSELF states (docs/17 row 247): the premise's own level,
+    // the band, and whether a part mentions the entity. Defaults keep the
+    // pre-247 shape (an exact level-1 band, a level-free premise, a part
+    // mention) so every existing caller is unchanged.
+    options: {
+      levelMax?: number;
+      premise?: string;
+      partMention?: boolean;
+      statBlock?: StatBlock;
+    } = {},
   ): Promise<Id> {
     const draft = createModuleSchema({
       campaignId,
       title: 'The Drowned Bell',
       concept: 'A harbor bell that rings by itself.',
       levelMin: 1,
-      levelMax: 1,
+      levelMax: options.levelMax ?? 1,
       sizeDial: 'standard',
     });
     const module = await createModuleRow(
@@ -544,7 +572,7 @@ describe('runEngine', () => {
           { name, kind: 'npc', absorbed: [], ...(levelHint === undefined ? {} : { levelHint }) },
         ],
         spine: {
-          premise: `The bell rings over [[${name}]].`,
+          premise: options.premise ?? `The bell rings over [[${name}]].`,
           themes: [],
           partPlan: [{ title: 'One', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
           writerModel: '',
@@ -553,7 +581,10 @@ describe('runEngine', () => {
         parts: [
           {
             planIndex: 0,
-            markdown: `The gate is watched by [[${name}]].`,
+            markdown:
+              options.partMention === false
+                ? 'The gate stands unguarded.'
+                : `The gate is watched by [[${name}]].`,
             status: 'ready',
             errorMessage: '',
             edited: false,
@@ -570,8 +601,61 @@ describe('runEngine', () => {
       name,
       summary: '',
       body: '',
+      // A row that ALREADY carries a block: the ordinary-refill arm keeps it,
+      // and the explicit-instruction arm must replace it (docs/17 row 247).
+      ...(options.statBlock === undefined
+        ? {}
+        : { data: { appearance: '', personality: '', statBlock: options.statBlock } }),
     });
     return artifact.id;
+  }
+
+  /**
+   * The OWNER'S SHAPE (docs/17 row 247): a module whose BAND would cap the
+   * figure (1–`levelMax`) and whose entity record fixes NO hint, but whose
+   * PREMISE states the level in prose. Marten Graubruch came out at the band's
+   * maximum (3) because nothing bound the model; this module is what the fix
+   * must read.
+   */
+  async function seedPremiseLevelModule(
+    campaignId: Id,
+    name: string,
+    premiseLevel: number,
+    levelMax: number,
+  ): Promise<Id> {
+    const draft = createModuleSchema({
+      campaignId,
+      title: 'The Graubruch Forge',
+      concept: 'A forge whose smith outlived his guild.',
+      levelMin: 1,
+      levelMax,
+      sizeDial: 'standard',
+    });
+    const module = await createModuleRow(
+      moduleSchema.parse({
+        ...draft,
+        entityKinds: [{ name, kind: 'npc', absorbed: [] }],
+        spine: {
+          premise: `The party reaches [[${name}]], a level ${String(premiseLevel)} smith who remembers the guild.`,
+          themes: [],
+          partPlan: [{ title: 'One', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
+          writerModel: '',
+          origin: null,
+        },
+        parts: [
+          {
+            planIndex: 0,
+            markdown: `The forge of [[${name}]].`,
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+            writerModel: '',
+            origin: null,
+          },
+        ],
+      }),
+    );
+    return module.id;
   }
 
   /** A ready PF2e spell book with a cantrip, a rank-3 spell and a rank-6 spell. */
@@ -629,6 +713,12 @@ describe('runEngine', () => {
         text: statReply({ system: 'pathfinder2e', level: '13' }),
         modelUsed: 'test-model',
         fallback: null,
+      })
+      // The repair turn honours the level the record fixes.
+      .mockResolvedValueOnce({
+        text: statReply({ system: 'pathfinder2e', level: '7' }),
+        modelUsed: 'test-model',
+        fallback: null,
       });
 
     const input = {
@@ -659,10 +749,14 @@ describe('runEngine', () => {
     expect(statblockPrompt).toContain('Fireball — Rank 3');
     expect(statblockPrompt).not.toContain('Disintegrate — Rank 6');
 
-    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
-    expect(notice).toContain('fixed this entity at level 7');
-    expect(notice).toContain('written at level "13"');
-    expect(notice).not.toContain('records no level');
+    // The deviation was REPAIRED, and the persisted block is the module's level
+    // (docs/17 row 247) — not a notice beside a level-13 row.
+    const repaired = await getRun(runId);
+    const artifact = await getArtifact(repaired?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'npc') throw new Error('the targeted refill produced no npc');
+    expect(artifact.data.statBlock?.level).toBe('7');
+    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
+    expect(repair).toContain('written at level "13"');
   }, 20000);
 
   it('the PARTY-level line never satisfies the entity level: only it in the brief leaves the clause empty', async () => {
@@ -695,23 +789,33 @@ describe('runEngine', () => {
     );
 
     const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    // The brief itself rides the prompt (so the phrase is present)…
-    expect(statblockPrompt).toContain('Party of 4 adventurers at level 13.');
-    // …but the LEVEL CLAUSE must not be built from it.
+    // THE PARTY'S LEVEL IS NOT IN THE STAT-BLOCK PROMPT AT ALL (docs/17 row
+    // 247): it is the PARTY's, and leaving it in is how the owner's premise-
+    // stated level-5 smith came back at the band's level. The draft still gets
+    // it (that is pinned in the entity-brief tests); this step does not.
+    expect(statblockPrompt).not.toContain('Party of 4 adventurers at level 13.');
+    // …and no LEVEL CLAUSE is built from it.
     expect(statblockPrompt).not.toContain('at level 13, grounded');
     expect(statblockPrompt).toContain(', grounded in the rule excerpts.');
-    // No structured level and no deviation guard.
+    // Nothing resolved, so there is nothing to bind and no notice to write.
     const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
     expect(notice).not.toContain('fixed this entity at level');
-    expect(notice).not.toContain('records no level');
   }, 20000);
 
-  it('a module-owned target whose record fixes NO level is LOUD, and the run still completes', async () => {
+  it('a module that states no LEVEL still BOUNDS the reply with its band — the model may not pick freely', async () => {
     const { campaignId, persona } = await seed();
-    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', undefined);
+    // The module states no level anywhere: a 1–3 RANGE (not a level), a premise
+    // with no `level N`, and no part mentioning the entity. The band is the
+    // module's own statement, so the reply must fall inside it (docs/17 row 247)
+    // — an exact statement, when one exists, always wins over it.
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', undefined, {
+      levelMax: 3,
+      partMention: false,
+    });
     chatMock
       .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: statReply({ level: '5' }), modelUsed: 'test-model', fallback: null });
+      // Both the first reply and the repair sit OUTSIDE the module's band.
+      .mockResolvedValue({ text: statReply({ level: '5' }), modelUsed: 'test-model', fallback: null });
 
     const input = {
       ...INPUT(campaignId, persona),
@@ -722,17 +826,52 @@ describe('runEngine', () => {
     const runId = await runEngine.startRun(input);
     await waitFor(
       async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
+        expect((await getRun(runId))?.status).toBe('failed');
       },
       { timeout: 20000 },
     );
 
-    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
-    expect(notice).toContain('records no level for this entity');
-    expect(notice).toContain('chosen by the generator');
-    // The absence is a NOTICE, never a failure: the block is kept.
     const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).not.toContain('at level 5, grounded');
+    expect(statblockPrompt).toContain('at a level within 1–3');
+    expect(statblockPrompt).toContain('this module covers levels 1–3');
+    // The level is NOT left to the model: a reply outside the band is repaired
+    // once and then REFUSED, and nothing is written onto the row.
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('outside the 1–3 this module covers');
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock).toBeNull();
+    expect(chatMock).toHaveBeenCalledTimes(3);
+  }, 20000);
+
+  it('a module-owned entity whose module is GONE refuses loudly — nothing can bound the pick', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify(VALID_DRAFT),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // A seed run placed into a module that does not exist: no owner, no band,
+      // no statement — and a brief that states no level either.
+      placementModuleId: newId(),
+      brief: 'Detail the smith of the drowned forge.',
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('failed');
+      },
+      { timeout: 20000 },
+    );
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('states no level and no level band');
+    expect(run?.errorMessage).toContain('Nothing was written');
+    // No stat-block call was spent: the refusal happens before the model call.
+    expect(chatMock).toHaveBeenCalledTimes(1);
   }, 20000);
 
   it('a stored grounding written BEFORE the field still parses and keeps the brief-regex fallback (compatibility)', async () => {
@@ -763,7 +902,17 @@ describe('runEngine', () => {
       if (step.name !== 'retrieve') return step;
       const output = step.output as { moduleGrounding?: Record<string, unknown> } | null;
       if (output?.moduleGrounding === undefined) return step;
-      const { entityLevelHint: _dropped, ...legacy } = output.moduleGrounding;
+      // EVERY level-bearing field is stripped: an old store has none of them
+      // (docs/17 rows 206 and 247), and the module's level is NOT re-derived
+      // from the stored premise — the grounding is the record, exactly as a
+      // resume reads it.
+      const {
+        entityLevelHint: _dropped,
+        statedLevel: _alsoDropped,
+        levelMin: _min,
+        levelMax: _max,
+        ...legacy
+      } = output.moduleGrounding;
       return { ...step, output: { ...output, moduleGrounding: legacy } };
     });
     await updateRun(runId, { steps });
@@ -793,10 +942,142 @@ describe('runEngine', () => {
     expect(statblockPrompt).toContain('at level 3');
     expect(statblockPrompt).not.toContain('at level 7');
     expect(statblockPrompt).not.toContain("the module's author fixed this entity's level");
-    // The absence is now LOUD instead of silent (the intended new behaviour).
-    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
-    expect(notice).toContain('records no level for this entity');
   }, 30000);
+
+  /**
+   * THE OWNER'S REPORT, ARM ONE (docs/17 row 247): a module-created mob must
+   * carry the level the module actually states. His module's band was 1–3 and
+   * its only statement of level 5 was the PREMISE — so the block came out at the
+   * band's maximum. The premise's level must reach resolution and BIND.
+   */
+  it('a module-created mob takes the level the module STATES IN THE PREMISE, not the band', async () => {
+    const { campaignId, persona } = await seed();
+    const moduleId = await seedPremiseLevelModule(campaignId, 'Marten Graubruch', 5, 3);
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      // THE OWNER'S OBSERVED REPLY: the band's level, chosen because nothing
+      // bound the model. The fix must repair it, not store it.
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // A CREATE run placed into the module — the owner's autocreate path.
+      placementModuleId: moduleId,
+      brief: 'Detail the smith [[Marten Graubruch]].',
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 5');
+    expect(statblockPrompt).toContain("the module's author fixed this entity's level");
+    // …and the PARTY's level (the part band, 1) is nowhere near the clause.
+    expect(statblockPrompt).not.toContain('at level 1, grounded');
+
+    // The level-3 reply was repaired once (the prompt named the resolved 5),
+    // and the block that LANDED is the module's level — not a notice beside 3.
+    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
+    expect(repair).toContain('not the 5 this run resolved');
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'npc') throw new Error('the run produced no npc artifact');
+    expect(artifact.data.statBlock?.level).toBe('5');
+  }, 20000);
+
+  /**
+   * THE OWNER'S REPORT, ARM TWO (docs/17 row 247): "redo this completely, this
+   * time making it level 5" on a row that already has a level-3 block. THREE
+   * things must hold at once — the instruction outranks the recorded hint, the
+   * draft's `needsStatBlock: false` may NOT veto the step (that veto is how
+   * "everything recreated BUT the stat block" happened), and the block on the
+   * row is genuinely replaced.
+   */
+  it('an explicit "redo completely, make it level 5" outranks the hint AND survives a `needsStatBlock:false` draft', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 3, {
+      statBlock: statBlockSchema.parse(VALID_STATBLOCK),
+    });
+    chatMock
+      // THE DRAFT DECLINES STATS — the answer that used to drop the whole step.
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_DRAFT, name: 'Kael the Grey', needsStatBlock: false }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief:
+        'Regenerate the full content of this npc.\n\nAdditional instruction: redo this completely, this time making it level 5',
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    // The instruction's level, not the record's 3, and its own instruction
+    // sentence (a user's instruction is not the module's author speaking).
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 5');
+    expect(statblockPrompt).toContain('the instruction for this change fixes');
+    // The step RAN — the veto did not apply — and the row's block is the new one.
+    const run = await getRun(runId);
+    expect(run?.steps.find((step) => step.name === 'statblock')?.status).toBe('done');
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock?.level).toBe('5');
+  }, 20000);
+
+  /**
+   * THE OWNER'S REPORT, ARM THREE (docs/17 row 247): a reply that deviates from
+   * a RESOLVED level must FAIL LOUDLY rather than keep the deviating block. The
+   * step spends its ONE repair naming the deviation; a reply that still
+   * deviates is REJECTED, the run fails with the named reason, and NOTHING is
+   * written onto the row.
+   */
+  it('a reply that deviates from a RESOLVED level is rejected loudly, never persisted', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      // Both the first reply and the repair print level 3 against the fixed 7.
+      .mockResolvedValue({ text: statReply({ level: '3' }), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'Regenerate the full content of this npc — summary, body and details.',
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('failed');
+      },
+      { timeout: 20000 },
+    );
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('Step "statblock" rejected');
+    expect(run?.errorMessage).toContain('written at level "3"');
+    expect(run?.errorMessage).toContain('not the 7 this run resolved');
+    // The deviating block was NOT written onto the row.
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock).toBeNull();
+    // One repair attempt, never a loop.
+    expect(chatMock).toHaveBeenCalledTimes(3);
+  }, 20000);
 
   it('reviews a global target with scope-gated global context and a campaign-anchored run', async () => {
     const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');

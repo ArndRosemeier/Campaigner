@@ -6,12 +6,13 @@ import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
-import { createModule, type Campaign, type Module, type PersonaRun } from '@/domain';
+import { createModule, type Campaign, type Module } from '@/domain';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { buildEntityBrief, type StubKind } from '@/features/modules/persona-request';
 import type * as runEngineModule from '@/llm/runEngine';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { completedRunWith as completedWith } from '../helpers/entityRunFixtures';
 
 /**
  * THE KIND OWNERSHIP BOUNDARY (docs/17 row 140).
@@ -213,9 +214,8 @@ describe('buildEntityBrief: the kinds that own their boundary render the PRE-bou
 
 // --- the production seam: the batch must PASS its kind ----------------------
 
-function completedWith(artifactId: string): PersonaRun {
-  return { status: 'completed', resultArtifactId: artifactId, errorMessage: '' } as unknown as PersonaRun;
-}
+/** The SHARED completed-run fixture (`tests/helpers/entityRunFixtures`), folded
+ * off the two baselined copies (docs/17 row 247). */
 
 function briefs(): string[] {
   return startRunMock.mock.calls.map((call) => {

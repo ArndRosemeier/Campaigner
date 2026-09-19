@@ -3,14 +3,6 @@
   "scope": "Every tests/**/*.ts and tests/**/*.tsx file EXCEPT tests/fixtures/** — captured upstream documents and prompt goldens legitimately repeat, and that directory is excluded (the only exclusion; it is pinned as data by the test, never left silent). Floor: 75 normalized characters, the SAME floor as the src/ inventory, measured and kept (docs/17 row 212): the ladder DOWN only adds noise (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158) and the ladder UP would hide cheap folds a seam could carry (160 = 98 groups, 200 = 85, 300 = 53, 400 = 33 — while the 8-site `walk` scanner normalizes to 349 characters, `completedWith` to 105, `removeEventListener` to 102 and the 8-site `stripComments` to 84). See the test doc comment for the normalization and what the tripwire cannot see (paraphrases and bodies under the floor).",
   "groups": [
     {
-      "hash": "04f9773b75c70119",
-      "reason": "Two local `completedWith` PersonaRun-result builders (entity-batch-fixed-cast, kindOwnershipBoundary); a shared `tests/helpers/personaRun.ts` builder is a real but small fold candidate — recorded, not folded in this inventory slice.",
-      "sites": [
-        "tests/features/entity-batch-fixed-cast.test.ts:completedWith",
-        "tests/llm/kindOwnershipBoundary.test.ts:completedWith"
-      ]
-    },
-    {
       "hash": "063f7540af0f9179",
       "reason": "The same synchronous `walk` readdir scanner pasted into EIGHT source-scan tests (name-key-spaces, alias-merge-seam, cast-row-borrowed-stats-scan, encounter-map-offer-scan, entity-batch-creature-book, fileSlug, oneImage-seam, runNotCompletedReason); ONE `tests/helpers/sourceWalk.ts` can carry it — the clearest fold candidate in this inventory.",
       "sites": [
@@ -373,14 +365,6 @@
       "sites": [
         "tests/features/canvas-chat-changes.test.ts:changeOf",
         "tests/llm/canvasChatChanges.test.ts:changeOf"
-      ]
-    },
-    {
-      "hash": "53f028499b535772",
-      "reason": "Two `produced` command-result builders (canvas-chat-changes, canvasChatChanges); same family as `changeOf` — foldable onto a shared canvas-chat command fixture.",
-      "sites": [
-        "tests/features/canvas-chat-changes.test.ts:produced",
-        "tests/llm/canvasChatChanges.test.ts:produced"
       ]
     },
     {

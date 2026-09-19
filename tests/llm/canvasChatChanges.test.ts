@@ -46,6 +46,7 @@ import {
 } from '@/llm/canvasBusy';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { producedEntityResult as produced } from '../helpers/entityRunFixtures';
 
 /**
  * The WRITE HALF of the canvas chat (docs/17 ledger row 104, docs/18 §2.2). The
@@ -281,10 +282,6 @@ async function rowBytes(artifactId: Id): Promise<string> {
 /** What the seam's entity lane returns when it succeeded. `cast: []` — this
  * change ran a persona draft, never the module-side bestiary cast (docs/17 row
  * 107). */
-function produced(name: string, artifactId: Id) {
-  return { generated: [name], cast: [], produced: [{ name, artifactId }], failed: [] };
-}
-
 function changeReply(...changes: string[]): string {
   return ['On it.', ...changes].join('\n');
 }

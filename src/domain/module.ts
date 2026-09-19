@@ -804,6 +804,44 @@ export function entityLevelHintFor(
 }
 
 /**
+ * Records the MODULE's own stated level on the entity records that get a stat
+ * block authored from scratch (docs/17 row 247) — the spine-time half of "the
+ * premise's level must actually reach resolution".
+ *
+ * THE DEFECT IT CLOSES. `levelHint` was written ONLY by the spine MODEL: when
+ * the planner answered `"levelHint": null` (or when a name was introduced by a
+ * later part and only CLASSIFIED by the normalization pass, which can carry a
+ * field but never author one — docs/17 row 197), the record kept no level at
+ * all, and the entity generator was left to pick one. The owner's module
+ * DESCRIBED a level-5 smith in its premise and the Smith produced a level-3
+ * block.
+ *
+ * WHICH KINDS. `npc` only, and deliberately: a mob IS an npc row in this app,
+ * and `npc` is the one entity kind whose stat block the Smith authors from
+ * scratch. `encounter` carries its own structured level chain (its free-text
+ * `data.levelHint` plus `partLevelForMention`), and location/event/faction/note
+ * author no stat block at all — stamping a level on those would invent a fact
+ * about an entity that has no level semantics.
+ *
+ * A RECORD THAT ALREADY STATES A LEVEL IS UNTOUCHED — the model's own answer is
+ * more specific than the module's overall statement, and this function never
+ * overwrites what the planner fixed. An `undefined` `statedLevel` (a module
+ * whose own sources state no level) leaves every record byte-identical, so the
+ * engine's loud refusal is decided by the engine, never papered over here.
+ */
+export function withCombatEntityLevelHints(
+  records: readonly ModuleEntityKind[],
+  statedLevel: number | undefined,
+): ModuleEntityKind[] {
+  if (statedLevel === undefined) return [...records];
+  return records.map((record) =>
+    record.kind === 'npc' && record.levelHint === undefined
+      ? { ...record, levelHint: statedLevel }
+      : record,
+  );
+}
+
+/**
  * The recorded LEVEL hints whose NAME the module's own text never mentions — the
  * ONE derivation of "this hint can never reach a generator" (docs/17 row 197,
  * AGENTS rules 1/3).

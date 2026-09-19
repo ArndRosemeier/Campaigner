@@ -444,6 +444,51 @@ describe('runSpine', () => {
     expect(userContent).toContain('Party levels 1–3');
   }, 20000);
 
+  /**
+   * THE PREMISE'S LEVEL IS RECORDED (docs/17 row 247). The planner is ASKED for
+   * a per-entity `levelHint` but answers `null` here — the shape the owner's
+   * module had — while its PREMISE states the level. That statement used to
+   * reach nothing: the record kept no level, the generators picked one, and the
+   * owner's smith came out at the band's maximum. The spine now records the
+   * module's own stated level on the npc records that state none, so it survives
+   * the entity boundary as DATA.
+   */
+  it('records the level the PREMISE states as a levelHint on its npc records', async () => {
+    const { campaign, moduleId } = await seedModule();
+    const premiseStated = {
+      ...VALID_SPINE,
+      premise: 'The harbor smith [[Marten Graubruch]] is a level 5 veteran of the guild war.',
+      entities: [
+        { name: 'Marten Graubruch', kind: 'npc' },
+        { name: 'The Drowned Cathedral', kind: 'location' },
+        { name: 'The Bells Below', kind: 'encounter' },
+      ],
+    };
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify(premiseStated),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(
+        normalizationReply([
+          { name: 'Marten Graubruch', kind: 'npc' },
+          { name: 'The Drowned Cathedral', kind: 'location' },
+          { name: 'The Bells Below', kind: 'encounter' },
+        ]),
+      );
+
+    await runSpine(moduleId, campaign);
+
+    const saved = await getModule(moduleId);
+    const byName = new Map((saved?.entityKinds ?? []).map((entry) => [entry.name, entry]));
+    expect(byName.get('Marten Graubruch')?.levelHint).toBe(5);
+    // ONLY the npc lane: a location authors no stat block and an encounter
+    // carries its own level chain, so neither is given a level here.
+    expect(byName.get('The Drowned Cathedral')?.levelHint).toBeUndefined();
+    expect(byName.get('The Bells Below')?.levelHint).toBeUndefined();
+  }, 20000);
+
   it('retries invalid JSON once, then fails the module loudly (row + toast)', async () => {
     const { campaign, moduleId } = await seedModule();
     chatMock.mockResolvedValue({ text: 'not json at all', modelUsed: 'test-model', fallback: null });
