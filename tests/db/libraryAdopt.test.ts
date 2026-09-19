@@ -3,19 +3,26 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  battleSchema,
   campaignSchema,
   encounterDataSchema,
   globalArtifactSchema,
+  newId,
   stampNewEntity,
   storedImageSchema,
   type GlobalArtifact,
   type Artifact,
+  type Battle,
   type Id,
   type MonsterEntry,
 } from '@/domain';
 import { defaultSettings } from '@/domain/settings';
+import { formatLibraryAdopt } from '@/domain/libraryAdoptRepair';
+import { tokenFromFighter } from '@/domain/battle/board';
 import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { adoptDraftLibraryReferences } from '@/db/libraryAdoptLive';
+import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
+import { buildFighterStatsLookup } from '@/db/fighterStats';
 import {
   createArtifact,
   duplicateArtifact,
@@ -150,11 +157,11 @@ function firstRosterEntry(row: Artifact): MonsterEntry {
   return entry;
 }
 
-/** Run the seam exactly as the v26 upgrade body does. */
+/** Run the seam exactly as a Dexie upgrade body does. */
 function adopt(reason: 'upgrade' | 'retry' = 'upgrade') {
   return db.transaction(
     'rw',
-    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings],
+    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
     (tx) => adoptLibraryArtifacts({ tx, reason }),
   );
 }
@@ -549,5 +556,199 @@ describe('the seam stays ONE artifact patch path', () => {
     // An ordinary update still works on the repointed row (one patch contract).
     const patched = await updateArtifact(encounter.id, { summary: 'still editable' });
     expect(patched.currentRevision).toBe(3);
+  });
+});
+
+/**
+ * docs/17 row 259 — THE BATTLE HOLDERS ARE THE LAST DECLARED SHAPE. A battle
+ * token's `artifactId` is a real library reference for an `npc-ref` seed, and
+ * the stage snapshot is the same tokens one revision later. The defect being
+ * closed is SILENT: `db/creatureRepo.tokenCreature` resolves through the
+ * any-scope getter, so deleting the library row leaves the card with nothing
+ * and no named reason — unlike the roster/relation arms, whose loud missing
+ * surfaces this seam leaves in charge. So the pins are: both token carriers
+ * point at the campaign copy afterwards; a second pass writes nothing; and a
+ * token that can be answered by NOTHING is NAMED, never dropped.
+ */
+describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
+  /** One real battle token through the production constructor (a null target
+   * is a geometric stamp, which carries no artifact reference at all). */
+  function tokenFor(artifactId: Id | null, label: string): Battle['board']['tokens'][number] {
+    const token = tokenFromFighter(
+      artifactId ?? newId(),
+      { kind: 'npc', name: label, maxHp: 10 },
+      0,
+      true,
+      null,
+    );
+    return artifactId === null ? { ...token, artifactId: null } : token;
+  }
+
+  /** A stored battle row (the seam reads STORED rows, never a parse). */
+  async function putBattle(
+    campaignId: Id,
+    tokens: Battle['board']['tokens'],
+    stageTokens?: Battle['board']['tokens'],
+  ): Promise<Battle> {
+    const battle = battleSchema.parse({
+      ...stampNewEntity(),
+      campaignId,
+      moduleId: newId(),
+      encounterArtifactId: null,
+      reseed: null,
+      seedFighters: [],
+      board: {
+        tokens,
+        ...(stageTokens === undefined ? {} : { stage: { tokens: stageTokens } }),
+      },
+    });
+    await db.battles.put(battle);
+    return battle;
+  }
+
+  it('repoints BOTH the board token and its stage snapshot, and the library row survives', async () => {
+    const source = globalNpc();
+    await db.artifacts.put(source);
+    const battle = await putBattle(
+      CAMPAIGN,
+      [tokenFor(source.id, 'Sage'), tokenFor(null, 'Stamp')],
+      [tokenFor(source.id, 'Sage')],
+    );
+
+    const report = await adopt();
+    expect(report.adopted).toHaveLength(1);
+    const copyId = report.adopted[0]?.copyId ?? '';
+    // ONE battle row rewritten (the artifact holders are untouched here).
+    expect(report.repointed).toBe(1);
+    expect(report.unresolved).toEqual([]);
+
+    const after = await db.battles.get(battle.id);
+    expect(after?.board.tokens[0]?.artifactId).toBe(copyId);
+    // …the stage snapshot is a live token carrier, so it moves too.
+    expect(after?.board.stage?.tokens[0]?.artifactId).toBe(copyId);
+    // A geometric stamp cites no artifact and is left byte-identical.
+    expect(after?.board.tokens[1]?.artifactId).toBeNull();
+
+    // The library row SURVIVES, byte-identical.
+    expect(await db.artifacts.get(source.id)).toEqual(source);
+
+    // The card reads what the campaign OWNS: with the library row deleted the
+    // token still resolves to the copy's own numbers.
+    await db.artifacts.delete(source.id);
+    const copy = await getAnyArtifact(copyId);
+    expect(copy?.copiedFromArtifactId).toBe(source.id);
+    expect(copy?.kind).toBe('npc');
+    expect(copy?.kind === 'npc' ? copy.data.statBlock : null).toEqual(STAT_BLOCK);
+  });
+
+  it('is IDEMPOTENT: a second pass makes no copy and rewrites no battle row', async () => {
+    const source = globalNpc();
+    await db.artifacts.put(source);
+    const battle = await putBattle(
+      CAMPAIGN,
+      [tokenFor(source.id, 'Sage')],
+      [tokenFor(source.id, 'Sage')],
+    );
+    const first = await adopt();
+    expect(first.repointed).toBe(1);
+    const afterFirst = await db.battles.get(battle.id);
+
+    const second = await adopt();
+    expect(second.adopted).toEqual([]);
+    expect(second.repointed).toBe(0);
+    expect(second.unresolved).toEqual([]);
+    // Byte-identical: the repoint is not a re-put.
+    expect(await db.battles.get(battle.id)).toEqual(afterFirst);
+    expect(
+      (await db.artifacts.toArray()).filter((row) => row.copiedFromArtifactId === source.id),
+    ).toHaveLength(1);
+  });
+
+  it('NAMES a token that resolves to nothing — never silent nothing', async () => {
+    const missingId = '00000000-0000-4000-8000-00000000dead';
+    // The battle's own frozen seed handle: a synthetic id is a legitimate
+    // answer, so it must NOT be reported as a dangling reference.
+    const frozenHandle = newId();
+    const battle = await putBattle(CAMPAIGN, [
+      tokenFor(missingId, 'Ghost'),
+      { ...tokenFor(frozenHandle, 'Cited'), artifactId: frozenHandle },
+    ]);
+    await db.battles.update(battle.id, {
+      seedFighters: [{ id: frozenHandle, name: 'Cited', maxHp: 3, initiativeBonus: 0 }],
+    });
+
+    const report = await adopt();
+    expect(report.adopted).toEqual([]);
+    expect(report.repointed).toBe(0);
+    expect(report.unresolved).toHaveLength(1);
+    expect(report.unresolved[0]?.name).toBe('Ghost');
+    expect(report.unresolved[0]?.unexpected).toBe(false);
+    expect(report.unresolved[0]?.reason).toContain(missingId);
+    // The reference is LEFT as it was — nothing is pointed at a placeholder.
+    expect((await db.battles.get(battle.id))?.board.tokens[0]?.artifactId).toBe(missingId);
+
+    // LOUD: the persisted report carries it to the shell, and the ONE sentence
+    // prints it by name and reason.
+    const settings = await db.settings.get('settings');
+    const persisted = settings?.libraryAdopt;
+    expect(persisted?.unresolved[0]?.name).toBe('Ghost');
+    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
+    expect(formatLibraryAdopt(persisted)).toContain('Ghost');
+    expect(formatLibraryAdopt(persisted)).toContain(missingId);
+  });
+
+  it('the RETRY path heals a battle row, and its second run reports all-zero', async () => {
+    const source = globalNpc();
+    await db.artifacts.put(source);
+    const battle = await putBattle(CAMPAIGN, [tokenFor(source.id, 'Sage')]);
+
+    const first = await retryLibraryAdoptions();
+    expect(first.adopted).toHaveLength(1);
+    expect(first.repointed).toBe(1);
+    const copyId = first.adopted[0]?.copyId ?? '';
+    expect((await db.battles.get(battle.id))?.board.tokens[0]?.artifactId).toBe(copyId);
+    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
+
+    const second = await retryLibraryAdoptions();
+    expect(second.adopted).toEqual([]);
+    expect(second.repointed).toBe(0);
+    expect(second.unresolved).toEqual([]);
+    // A retry that changed nothing persists nothing: the first run's report is
+    // left exactly as it was rather than re-stamped (the shell is not re-toasted).
+    expect((await db.settings.get('settings'))?.libraryAdopt).toEqual(persisted);
+  });
+
+  it('remaps the frozen seed handle of a DERIVED npc-ref, so the token keeps its stats', async () => {
+    // A derived library npc: no stored block of its own, only a `creatureRef`.
+    // `db/battleSeed` freezes its resolved block under the ARTIFACT id, so the
+    // repoint must move that seed row's id with the token's artifactId.
+    const source = globalArtifactSchema.parse({
+      ...globalNpc(),
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: null,
+        creatureRef: { chunkId: '00000000-0000-4000-8000-00000000cafe' },
+      },
+    });
+    await db.artifacts.put(source);
+    const handle = tokenFor(source.id, 'Derived');
+    const battle = await putBattle(CAMPAIGN, [handle]);
+    await db.battles.update(battle.id, {
+      seedFighters: [{ id: source.id, name: 'Derived', maxHp: 21, initiativeBonus: 2 }],
+    });
+
+    const report = await adopt();
+    const copyId = report.adopted[0]?.copyId ?? '';
+    const after = await db.battles.get(battle.id);
+    expect(after?.board.tokens[0]?.artifactId).toBe(copyId);
+    // The frozen row the token keys its stats on moved with it — a repoint that
+    // left it under the library id would silently lose the battle's numbers.
+    expect(after?.seedFighters[0]?.id).toBe(copyId);
+    const stats = buildFighterStatsLookup(
+      { seedFighters: after?.seedFighters ?? [] },
+      await listArtifactsByCampaign(CAMPAIGN),
+    );
+    expect(stats(copyId)).toMatchObject({ maxHp: 21, initiativeBonus: 2 });
   });
 });

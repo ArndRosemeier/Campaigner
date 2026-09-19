@@ -197,9 +197,10 @@ describe('v21 → v22 migration (the persisted creature key is folded)', () => {
     const { db } = await import('@/db/db');
     await db.open();
     // Head of the chain: v22 is the fold this suite pins; the later versions (v23
-    // the Idea Board, v24 the mob copy, v25 the encounter-owned battle) are
-    // additive and touch no creature state.
-    expect(db.verno).toBe(26);
+    // the Idea Board, v24 the mob copy, v25 the encounter-owned battle, v26 the
+    // library-artifact adoption, v27 the battle-token adoption) are additive and
+    // touch no creature state.
+    expect(db.verno).toBe(27);
 
     // 1. The portrait slot is found under the FOLDED key, and the legacy bytes
     //    are gone from the unique index.

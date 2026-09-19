@@ -52,7 +52,7 @@ export async function adoptDraftLibraryReferences(
   if (ids.length === 0) return null;
   const report = await db.transaction(
     'rw',
-    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings],
+    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
     (tx) => adoptLibraryArtifacts({ tx, reason: 'write', pendingRefs: { campaignId, ids } }),
   );
   const copies = new Map(report.adopted.map((entry) => [entry.globalId, entry.copyId]));

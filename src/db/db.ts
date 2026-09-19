@@ -1147,6 +1147,42 @@ export class CampaignerDB extends Dexie {
       .upgrade(async (tx) => {
         await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
       });
+    // Version 27 (docs/17 row 259): the LAST family-E holder — a BATTLE's
+    // tokens. v26 already ran on the owner's install, so the battle rows need
+    // their own version to be backfilled rather than an edited v26 body (a
+    // landed upgrade body never re-runs). `battle.board.tokens[].artifactId`
+    // and its stage snapshot (`battle.board.stage.tokens`) cite an artifact
+    // exactly as a roster row does, and a token still pointing at the LIBRARY
+    // degrades SILENTLY when that row is re-ingested or deleted: the card
+    // resolves through the any-scope getter, so it shows nothing with no named
+    // reason. This body calls the SAME seam (`adoptLibraryArtifacts`) in the
+    // SAME transaction as the copy, so there is no second mechanism; a token
+    // that can be answered by nothing is named in the report rather than
+    // dropped. The store shape is UNCHANGED — this is a data conversion.
+    this.version(27)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId, encounterArtifactId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
+      });
   }
 }
 

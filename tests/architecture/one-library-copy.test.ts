@@ -222,4 +222,44 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
     expect(CODE['src/db/libraryAdopt.ts']?.includes('moveScope(')).toBe(false);
     expect(CODE['src/db/libraryAdopt.ts']?.includes('reanchorImages(')).toBe(false);
   });
+
+  /**
+   * THE BATTLE HOLDER (docs/17 row 259) — the LAST declared shape, and the one
+   * whose write address is `db.battles` rather than an artifact revision. A
+   * battle token's `artifactId` and its stage snapshot are the same reference
+   * one revision apart; the pin holds the two facts that would drift invisibly:
+   * the shape is ON the declared list, and both the discovery and the rewrite
+   * live in the ONE seam rather than at a call site.
+   */
+  it('declares the battle holder and rewrites its tokens through the ONE seam', () => {
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain(
+      "LIBRARY_ADOPT_HOLDER_SHAPES = ['roster', 'links', 'battle']",
+    );
+    expect(filesWith('export function battleLibraryReferenceIds(')).toEqual([
+      'src/domain/libraryAdopt.ts',
+    ]);
+    expect(filesWith('export function repointBattleRow<')).toEqual([
+      'src/domain/libraryAdopt.ts',
+    ]);
+    // The collector, the rewriter and the dangling arm each have exactly ONE
+    // caller — the tx-taking seam — so a fourth shape cannot grow a fourth path.
+    expect(filesWith('battleLibraryReferenceIds')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    expect(filesWith('repointBattleRow')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    expect(filesWith('danglingBattleTokens')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    // THE SAME TRANSACTION: the seam reaches `battles` through the caller's tx,
+    // so the copy and the battle repoint cannot land apart.
+    expect(CODE['src/db/libraryAdopt.ts']).toContain("tx.table('battles')");
+    for (const path of ['src/db/libraryAdoptRetry.ts', 'src/db/libraryAdoptLive.ts']) {
+      expect(CODE[path]).toContain('db.battles');
+    }
+  });
 });

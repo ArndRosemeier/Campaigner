@@ -127,7 +127,9 @@ export const libraryAdoptReportSchema = z.object({
       }),
     )
     .default([]),
-  /** The campaign rows whose references were rewritten to point at a copy. */
+  /** The campaign rows whose references were rewritten to point at a copy —
+   * an artifact row (roster `npc-ref` / `links[]`) or a BATTLE row (its board
+   * tokens and stage snapshot; docs/17 row 259). */
   repointed: z.number().int().nonnegative().default(0),
   /** References that could NOT be repointed, by name, with the reason — the
    * retry worklist. The reference is deliberately left in place. */

@@ -23,7 +23,7 @@ import type { LibraryAdoptReport } from '@/domain/settings';
 export function retryLibraryAdoptions(): Promise<LibraryAdoptReport> {
   return db.transaction(
     'rw',
-    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings],
+    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
     (tx) => adoptLibraryArtifacts({ tx, reason: 'retry' }),
   );
 }

@@ -38,7 +38,10 @@ import { repointRosterArtifactIds, rosterArtifactIds } from '@/domain/rosterRefs
  *    `LIBRARY_ADOPT_HOLDER_SHAPES`. `repointArtifactRow` is the ONE artifact-row
  *    rewrite: roster targets (through the ONE roster rewriter) and `links[]`,
  *    both of which the live app already writes through the ONE
- *    `updateArtifact` patch path.
+ *    `updateArtifact` patch path. `repointBattleRow` is the battle row's
+ *    rewriter (`board.tokens`, the stage snapshot and a derived seed row's id),
+ *    whose write address is `db.battles` — the same operation at a second
+ *    address, never a second copy mechanism.
  *
  * WHY NOT `adoptIntoCampaign`/`moveScope`. That verb MOVES the library row out
  * of the library and empties it (`db/artifactRepo`, whose own doc says "one
@@ -58,12 +61,22 @@ import { repointRosterArtifactIds, rosterArtifactIds } from '@/domain/rosterRefs
  * "which writers must this seam teach?" is a list rather than a hunt for call
  * sites. `roster` covers `encounter.data.monsters[].source.artifactId` and
  * `links` covers every artifact row's top-level `links[].targetId`; both are
- * rewritten by `repointArtifactRow`. Battle rows are the ONE remaining writer,
- * deliberately not yet a member (docs/18 §5): the battle card already resolves
- * through the any-scope getter, so an un-repointed token degrades silently
- * rather than loudly — the honest reason it is deferred rather than pretended.
+ * rewritten by `repointArtifactRow`. `battle` covers a battle row's TOKENS —
+ * `board.tokens[].artifactId` AND the saved stage snapshot
+ * (`board.stage.tokens[].artifactId`), which is the same tokens one revision
+ * later — rewritten by `repointBattleRow`. The battle's writer differs in the
+ * WRITE ADDRESS (`db.battles`, not an artifact revision), which is why the
+ * repoint half is a declared set of writers rather than one generic patch: the
+ * COPY half above stays shape-independent either way.
+ *
+ * `battle` is the LAST writer (docs/17 row 259): a battle seeded from a
+ * library npc kept a pointer to the LIBRARY row, and because the card resolves
+ * through the any-scope getter its degradation was SILENT (the library row
+ * deleted ⇒ nothing on the card, no named reason) rather than the loud arm
+ * this seam preserves. Every shape a battle can cite is now a member, so the
+ * set is closed.
  */
-export const LIBRARY_ADOPT_HOLDER_SHAPES = ['roster', 'links'] as const;
+export const LIBRARY_ADOPT_HOLDER_SHAPES = ['roster', 'links', 'battle'] as const;
 
 export type LibraryAdoptHolderShape = (typeof LIBRARY_ADOPT_HOLDER_SHAPES)[number];
 
@@ -231,4 +244,172 @@ export function repointArtifactRow(
     currentRevision: row.currentRevision + 1,
     updatedAt: now,
   });
+}
+
+/**
+ * THE BATTLE HALF of the adoption seam (docs/17 row 259) — the LAST declared
+ * holder shape, and the one whose write address is not an artifact row.
+ *
+ * A battle token's `artifactId` is a real artifact reference for an `npc-ref`
+ * seed (docs/11 D5 amendment) and a synthetic seed handle for a `rulebook`
+ * citation or an inline mob; a PC token cites its pc artifact. The board list
+ * AND its stage snapshot (`⚑ Set stage` copies the tokens) are both live token
+ * carriers, so a stage snapshot that keeps the old reference would be the same
+ * defect one revision later.
+ *
+ * These functions read the STORED row's shape (every field optional: a legacy
+ * battle row may predate any of them), never a parsed `Battle`, because the
+ * seam runs inside a Dexie upgrade where a parse of historical rows is the one
+ * thing that must not throw.
+ */
+export interface LibraryBattleTokenRef {
+  artifactId?: Id | null | undefined;
+  label?: string | undefined;
+}
+
+export interface LibraryBattleRefs {
+  board?:
+    | {
+        tokens?: readonly LibraryBattleTokenRef[] | undefined;
+        stage?:
+          | (Record<string, unknown> & {
+              tokens?: readonly LibraryBattleTokenRef[] | undefined;
+            })
+          | null
+          | undefined;
+      }
+    | null
+    | undefined;
+  seedFighters?: readonly { id: Id }[] | undefined;
+}
+
+/** THE battle half of the ONE collector: every artifact id the battle's TOKENS
+ * cite — the board list AND the saved stage snapshot. The frozen `seedFighters`
+ * rows are deliberately NOT collected: their `id` is a synthetic per-expansion
+ * handle that only coincides with an artifact id for a DERIVED `npc-ref`, and
+ * that token already names the reference — collecting it twice would decide one
+ * library row twice. `repointBattleRow` still REMAPS a seed row whose id is a
+ * repointed id, so the frozen row a token keys its stats on survives. */
+export function battleLibraryReferenceIds(battle: LibraryBattleRefs): Id[] {
+  const ids: Id[] = [];
+  const collect = (tokens: readonly LibraryBattleTokenRef[]): void => {
+    for (const token of tokens) {
+      const artifactId = token.artifactId;
+      if (artifactId !== null && artifactId !== undefined) ids.push(artifactId);
+    }
+  };
+  collect(battle.board?.tokens ?? []);
+  collect(battle.board?.stage?.tokens ?? []);
+  return ids;
+}
+
+/**
+ * Rewrite a battle row's library references to their campaign copies: the
+ * board tokens, the stage snapshot's tokens AND the frozen seed rows whose id
+ * is a repointed handle (a derived `npc-ref` freezes its seed row under the
+ * artifact id, so the token must keep finding it). Answers `null` when nothing
+ * changed — the arm that makes a second pass write nothing. Immutable: an
+ * unchanged token/seed keeps its identity.
+ */
+export function repointBattleRow<T extends LibraryBattleRefs>(
+  battle: T,
+  resolve: (id: Id) => Id | undefined,
+): T | null {
+  // Change is detected by IDENTITY, never by a captured boolean flag: TS's
+  // control-flow analysis cannot see an assignment made inside a `.map`
+  // callback, so a flag reads as always-false here (`no-unnecessary-condition`)
+  // — the same trap rows 255a/257 hit. Returning the changed bit alongside the
+  // mapped list keeps the truth inside the value.
+  const repointTokens = (
+    tokens: readonly LibraryBattleTokenRef[],
+  ): { tokens: readonly LibraryBattleTokenRef[]; changed: boolean } => {
+    let touched = false;
+    const next = tokens.map((token) => {
+      const artifactId = token.artifactId;
+      if (artifactId === null || artifactId === undefined) return token;
+      const replacement = resolve(artifactId);
+      if (replacement === undefined || replacement === artifactId) return token;
+      touched = true;
+      return { ...token, artifactId: replacement };
+    });
+    return { tokens: next, changed: touched };
+  };
+  const repointSeeds = (
+    seeds: readonly { id: Id }[],
+  ): { seeds: readonly { id: Id }[]; changed: boolean } => {
+    let touched = false;
+    const next = seeds.map((seed) => {
+      const replacement = resolve(seed.id);
+      if (replacement === undefined || replacement === seed.id) return seed;
+      touched = true;
+      return { ...seed, id: replacement };
+    });
+    return { seeds: next, changed: touched };
+  };
+
+  const board = battle.board;
+  const live = board ?? null;
+  const boardTokens = live === null ? null : repointTokens(live.tokens ?? []);
+  const stage = live?.stage ?? null;
+  const stageTokens = stage === null ? null : repointTokens(stage.tokens ?? []);
+  const seeds = repointSeeds(battle.seedFighters ?? []);
+  const changed =
+    (boardTokens?.changed ?? false) || (stageTokens?.changed ?? false) || seeds.changed;
+  if (!changed) return null;
+  const nextBoard =
+    live === null
+      ? null
+      : {
+          ...live,
+          tokens: boardTokens?.tokens ?? [],
+          ...(stage === null ? {} : { stage: { ...stage, tokens: stageTokens?.tokens ?? [] } }),
+        };
+  const next = {
+    ...battle,
+    ...(live === null ? {} : { board: nextBoard }),
+    seedFighters: seeds.seeds,
+  } as T;
+  return next;
+}
+
+/** One token whose target resolves to NOTHING — the genuinely-unresolvable
+ * arm: not an artifact row in any scope, and not one of the battle's own frozen
+ * seed handles. Named in the report, never dropped, because the deletion path
+ * that produces it (`db/artifactRepo.deleteArtifact` scrubs tokens only for an
+ * OWNED row, so deleting a SHARED library row leaves every campaign's tokens
+ * dangling) has no loud surface of its own for battle tokens. */
+export interface DanglingBattleToken {
+  label: string;
+  artifactId: Id;
+}
+
+/**
+ * The battle's tokens whose cite resolves to nothing, board list and stage
+ * snapshot, deduped by label+id. `knownArtifactIds` is every artifact row the
+ * caller can see (any scope) and the seed handles come from the row itself —
+ * the two ways a token's `artifactId` is legitimately answered without a
+ * library read. Everything left is a reference no copy can heal.
+ */
+export function danglingBattleTokens(
+  battle: LibraryBattleRefs,
+  knownArtifactIds: ReadonlySet<Id>,
+): DanglingBattleToken[] {
+  const seedIds = new Set((battle.seedFighters ?? []).map((seed) => seed.id));
+  const seen = new Set<string>();
+  const out: DanglingBattleToken[] = [];
+  const examine = (tokens: readonly LibraryBattleTokenRef[]): void => {
+    for (const token of tokens) {
+      const artifactId = token.artifactId;
+      if (artifactId === null || artifactId === undefined) continue;
+      if (knownArtifactIds.has(artifactId) || seedIds.has(artifactId)) continue;
+      const label = token.label ?? '(unlabelled token)';
+      const key = `${label}\u0000${artifactId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ label, artifactId });
+    }
+  };
+  examine(battle.board?.tokens ?? []);
+  examine(battle.board?.stage?.tokens ?? []);
+  return out;
 }

@@ -11,7 +11,8 @@ import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
 import { creatureCoverImageId, setCreatureCover } from '@/db/creatureRepo';
-import { createModule, statBlockSchema } from '@/domain';
+import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
+import { createModule, globalArtifactSchema, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -565,6 +566,91 @@ describe('battle-card stat block with the library uninstalled', () => {
       (entry) => entry.label === 'Goblin Boss',
     );
     expect(token?.creatureKey).toBe(libraryCreatureKey(chunkId));
+    await flushAsyncUpdates();
+  });
+
+  /**
+   * docs/17 row 259 — THE OWNER'S SCENARIO, through the real render path. A
+   * battle seeded from a LIBRARY npc cites the library row; adoption repoints
+   * the token at the campaign's own copy, and the card then renders with the
+   * library row DELETED (his "i refetch the monster core, references break"
+   * story). Before the repoint the same delete leaves the card with no block at
+   * all — the silent degradation this row closes.
+   */
+  it('renders a token seeded from a LIBRARY npc after adoption, with the library row DELETED', async () => {
+    const libraryNpc = globalArtifactSchema.parse({
+      ...stampNewEntity(),
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Vale Sage',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      writerModel: '',
+      data: { appearance: '', personality: '', statBlock: statBlock({ ac: 16, hp: 84 }) },
+    });
+    await db.artifacts.put(libraryNpc);
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Ford ambush',
+      data: {
+        difficulty: 'medium',
+        levelHint: '5',
+        monsters: [
+          {
+            name: 'Vale Sage',
+            count: 1,
+            notes: '',
+            treasure: '',
+            source: { type: 'npc-ref', artifactId: libraryNpc.id },
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Adopt Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+
+    // BEFORE: the token cites the LIBRARY row.
+    const before = await currentBattle(module.id);
+    expect(before.board.tokens[0]?.artifactId).toBe(libraryNpc.id);
+
+    // ADOPT through the seam's retry caller (the v27 backfill's own entry),
+    // then DELETE the library row.
+    await retryLibraryAdoptions();
+    const copyId = (await currentBattle(module.id)).board.tokens[0]?.artifactId ?? '';
+    expect(copyId).not.toBe(libraryNpc.id);
+    expect((await getAnyArtifact(copyId))?.copiedFromArtifactId).toBe(libraryNpc.id);
+    await db.artifacts.delete(libraryNpc.id);
+    expect(await getAnyArtifact(libraryNpc.id)).toBeUndefined();
+
+    // RENDER: the card reads the campaign's copy.
+    await renderSurface(campaignId, module.id);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapToken('Vale Sage', module.id);
+    const card = screen.getByTestId('selection-card');
+    const block = within(card).getByTestId('selection-card-statblock');
+    expect(within(block).getByText('AC').parentElement?.textContent).toContain('16');
+    expect(within(block).getByText('HP').parentElement?.textContent).toContain('84');
     await flushAsyncUpdates();
   });
 });
