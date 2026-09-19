@@ -21,7 +21,7 @@ import {
 } from '@/domain';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { patchBattle, ensureBattle } from '@/db/battleRepo';
+import { patchBattle, ensureBattleForEncounter } from '@/db/battleRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { saveModule } from '@/db/moduleRepo';
@@ -894,7 +894,11 @@ describe('the encounter map plate (owner: maps belong in the PDF, at the right p
     );
     // A LIVE battle on the module: the board's own map is the encounter's map
     // once the table has been seeded (the encounter ROW keeps its own slot).
-    const battle = await ensureBattle(seeded.campaignId, seeded.module.id);
+    const battle = await ensureBattleForEncounter(
+      seeded.campaignId,
+      seeded.module.id,
+      seeded.encounterId,
+    );
     await patchBattle(battle.id, {
       encounterArtifactId: seeded.encounterId,
       board: { ...battle.board, mapImageId: boardMap },

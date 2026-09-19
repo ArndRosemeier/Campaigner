@@ -12,16 +12,21 @@ import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo'
 import { stampNewEntity } from '@/domain/entity';
 
 /**
- * Battle persistence (10-MILESTONE-6 M6-E): one live battle per module,
- * created lazily on first mutation, deleted when it empties. Every read AND
- * write is PARSE-NORMALIZED through `battleSchema`: a row persisted by an
- * older app version predates later-arc board fields (effects, mapLayout,
- * entrance, everLive, reseed, token treasure), and the schema's
- * `.default(...)` values materialize them at the read boundary — the UI
- * never sees an `undefined` array the type claims exists. Every write is
- * also NORMALIZED (the analog of the source's `normalizeEncounter` /
- * `fillTokenCurrentHp`): NPC token HP re-filled/clamped from the backing
- * stats, PC tokens re-ensured for every statful pc artifact, HP clamped to
+ * Battle persistence (10-MILESTONE-6 M6-E; re-keyed by encounter, docs/17 row
+ * 254): ONE live battle per ENCOUNTER ARTIFACT, created lazily on first
+ * mutation, deleted when it empties. The module id stays on the row (the board
+ * acts on its module and `deleteBattlesByModule` drops a module's boards), but
+ * it is NOT the identity — a module with several encounters has one board per
+ * encounter.
+ *
+ * Every read AND write is PARSE-NORMALIZED through `battleSchema`: a row
+ * persisted by an older app version predates later-arc board fields (effects,
+ * mapLayout, entrance, everLive, reseed, token treasure), and the schema's
+ * `.default(...)` values materialize them at the read boundary — the UI never
+ * sees an `undefined` array the type claims exists. Every write is also
+ * NORMALIZED (the analog of the source's `normalizeEncounter` /
+ * `fillTokenCurrentHp`): NPC token HP re-filled/clamped from the backing stats,
+ * PC tokens re-ensured for every statful pc artifact, HP clamped to
  * [0, maxHp]. UI reads via useLiveQuery; drag commits are single repo calls.
  */
 
@@ -46,77 +51,101 @@ export async function saveBattle(battle: Battle): Promise<Battle> {
   return normalized;
 }
 
-/** Whether `error` is a Dexie unique-index violation (fake-indexeddb
- * surfaces the same name on its DOMException) — the loser of a concurrent
- * get-or-create re-reads the winner's row instead of failing. */
-function isConstraintError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'name' in error &&
-    (error as { name?: unknown }).name === 'ConstraintError'
-  );
+/** The empty board a freshly created battle row starts from (no map, no
+ * tokens, not live). ONE literal — every create path goes through it. */
+function emptyBoard(): BattleBoard {
+  return {
+    mapImageId: null,
+    mapLayout: null,
+    live: false,
+    everLive: false,
+    tokens: [],
+    veils: [],
+    effects: [],
+    gridSize: null,
+    tokenSize: 64,
+    sceneryMovementLocked: false,
+    initiativeEnabled: false,
+    initiativeOrder: [],
+    activeIndex: 0,
+    stage: null,
+    stagingGround: null,
+    entrance: null,
+  };
 }
 
 /**
- * One live battle per module (the module reader is the play view).
- * Returns the existing row or lazily creates an empty prep board.
+ * The ONE battle a given ENCOUNTER owns (docs/17 row 254), or undefined.
+ * `encounterArtifactId` is the identity: two encounters in one module resolve
+ * two independent boards.
  *
- * Concurrency: two seeds racing for the same module both see "no row" and
- * both attempt a save — the UNIQUE `&moduleId` index (Dexie v16) elects one
- * writer and the loser catches the ConstraintError and re-reads the
- * winner's battle (idempotent get-or-create; the index is the arbiter, the
- * re-read keeps every caller on the shared row).
+ * A row whose `encounterArtifactId` is null (a legacy board written before
+ * seeding stamped provenance, or one whose seeding encounter was deleted) has
+ * NO owner and is unreachable from here — it is KEPT, never deleted on a guess
+ * (docs/18 §5).
+ *
+ * Legacy duplicate rows (the same encounter seeded into two modules while the
+ * `moduleId` index was unique, or imported from such an export) are resolved
+ * to the row the index yields first; the others stay in the table and are named
+ * in docs/18 §5 rather than silently dropped.
  */
-export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle> {
-  const existing = await db.battles.where('moduleId').equals(moduleId).first();
-  if (existing !== undefined) {
-    return parseBattleRow(existing);
-  }
-  const stamp = stampNewEntity();
-  const created: Battle = {
-    ...stamp,
-    campaignId,
-    moduleId,
-    encounterArtifactId: null,
-    reseed: null,
-    seedFighters: [],
-    board: {
-      mapImageId: null,
-      mapLayout: null,
-      live: false,
-      everLive: false,
-      tokens: [],
-      veils: [],
-      effects: [],
-      gridSize: null,
-      tokenSize: 64,
-      sceneryMovementLocked: false,
-      initiativeEnabled: false,
-      initiativeOrder: [],
-      activeIndex: 0,
-      stage: null,
-      stagingGround: null,
-      entrance: null,
-    },
-  };
-  try {
-    return await saveBattle(created);
-  } catch (error) {
-    if (!isConstraintError(error)) throw error;
-    const winner = await db.battles.where('moduleId').equals(moduleId).first();
-    if (winner === undefined) throw error;
-    return parseBattleRow(winner);
-  }
+export async function getBattleByEncounter(encounterArtifactId: Id): Promise<Battle | undefined> {
+  const row = await db.battles.where('encounterArtifactId').equals(encounterArtifactId).first();
+  return row === undefined ? undefined : parseBattleRow(row);
+}
+
+/** Every battle row the module holds, one per encounter it seeded from.
+ * The module PDF resolves each encounter's map through this list; nothing
+ * treats the result as "the module's battle" (a module may have several). */
+export async function listBattlesByModule(moduleId: Id): Promise<Battle[]> {
+  const rows = await db.battles.where('moduleId').equals(moduleId).toArray();
+  return rows.map(parseBattleRow);
+}
+
+/**
+ * The one live battle an ENCOUNTER owns, or a lazily created empty prep board
+ * (docs/17 row 254). The module id is stamped for the board's own module-scoped
+ * needs, never as identity.
+ *
+ * Concurrency: the get-or-create runs inside ONE readwrite Dexie transaction
+ * over `battles` (+ `artifacts`, which normalize-on-write reads). Two seeds
+ * racing for the same encounter both issue the read inside their own IndexedDB
+ * transaction, and IndexedDB serializes readwrite transactions over the same
+ * store — the second one's read runs after the first has committed, so it
+ * finds the winner's row instead of materializing a second board. This replaced
+ * the v16 UNIQUE `&moduleId` index as the arbiter: a module now owns one battle
+ * PER ENCOUNTER, so a module-keyed unique index would refuse the second
+ * encounter's board outright.
+ */
+export async function ensureBattleForEncounter(
+  campaignId: Id,
+  moduleId: Id,
+  encounterArtifactId: Id,
+): Promise<Battle> {
+  return db.transaction('rw', [db.battles, db.artifacts], async () => {
+    const existing = await db.battles
+      .where('encounterArtifactId')
+      .equals(encounterArtifactId)
+      .first();
+    if (existing !== undefined) {
+      return parseBattleRow(existing);
+    }
+    const stamp = stampNewEntity();
+    const created: Battle = {
+      ...stamp,
+      campaignId,
+      moduleId,
+      encounterArtifactId,
+      reseed: null,
+      seedFighters: [],
+      board: emptyBoard(),
+    };
+    return saveBattle(created);
+  });
 }
 
 export async function getBattle(id: Id): Promise<Battle | undefined> {
   const row = await db.battles.get(id);
-  return row === undefined ? undefined : parseBattleRow(row);
-}
-
-export async function getBattleByModule(moduleId: Id): Promise<Battle | undefined> {
-  const row = await db.battles.where('moduleId').equals(moduleId).first();
   return row === undefined ? undefined : parseBattleRow(row);
 }
 
@@ -209,7 +238,7 @@ export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): 
   }
 }
 
-/** Deleting a module drops its live battle state. */
+/** Deleting a module drops every live board it owns (one per encounter). */
 export async function deleteBattlesByModule(moduleId: Id): Promise<void> {
   await db.battles.where('moduleId').equals(moduleId).delete();
 }
@@ -229,7 +258,10 @@ export async function convergeBoardsToRegeneratedMap(
   encounterArtifactId: Id,
   map: { mapImageId: Id; mapLayout: BattleBoard['mapLayout'] },
 ): Promise<{ converged: number; liveSkipped: number }> {
-  const rows = await db.battles.filter((battle) => battle.encounterArtifactId === encounterArtifactId).toArray();
+  const rows = await db.battles
+    .where('encounterArtifactId')
+    .equals(encounterArtifactId)
+    .toArray();
   let converged = 0;
   let liveSkipped = 0;
   for (const row of rows) {

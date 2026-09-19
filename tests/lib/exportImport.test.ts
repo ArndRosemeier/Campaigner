@@ -16,7 +16,7 @@ import {
   listModulesByCampaign,
   patchModule,
 } from '@/db/moduleRepo';
-import { ensureBattle, patchBattle } from '@/db/battleRepo';
+import { ensureBattleForEncounter, patchBattle } from '@/db/battleRepo';
 import { insertCreatureImageRow } from '@/db/creatureImages';
 import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import {
@@ -518,7 +518,7 @@ describe('export v2', () => {
       name: 'Ambush',
       data: encounterDataWith([]) as never,
     });
-    const battle = await ensureBattle(campaign.id, module.id);
+    const battle = await ensureBattleForEncounter(campaign.id, module.id, encounter.id);
     await patchBattle(battle.id, {
       encounterArtifactId: encounter.id,
       board: {
@@ -629,7 +629,7 @@ describe('export v2', () => {
         sizeDial: 'standard',
       }),
     );
-    const battle = await ensureBattle(campaign.id, module.id);
+    const battle = await ensureBattleForEncounter(campaign.id, module.id, newId());
     const image = await createImage({
       campaignId: campaign.id,
       blob: new Blob(['portrait-bytes'], { type: 'image/png' }),

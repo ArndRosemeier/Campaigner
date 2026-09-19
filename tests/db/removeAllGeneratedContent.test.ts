@@ -18,7 +18,7 @@ import {
   getCampaign,
   removeAllGeneratedContent,
 } from '@/db/campaignRepo';
-import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
+import { ensureBattleForEncounter, listBattlesByModule } from '@/db/battleRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
 import {
@@ -212,11 +212,11 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
     const campaign = await addCampaign({ name: 'Boards', system: 'dnd5e' });
     const first = await makeModule(campaign.id, 'First Vault');
     const second = await makeModule(campaign.id, 'Second Vault');
-    // The PC exists before the battles, so ensureBattle's normalize-on-write
+    // The PC exists before the battles, so the create path's normalize-on-write
     // seats a PC token on each board (the scrub path alone would keep them).
     const pc = await addPc(campaign.id, 'Mira');
-    const battle = await ensureBattle(campaign.id, first);
-    await ensureBattle(campaign.id, second);
+    const battle = await ensureBattleForEncounter(campaign.id, first, newId());
+    await ensureBattleForEncounter(campaign.id, second, newId());
     expect(battle.board.tokens.map((token) => token.artifactId)).toEqual([pc]);
 
     const removed = await removeAllGeneratedContent(campaign.id);
@@ -225,8 +225,8 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
     expect(removed.modules).toBe(2);
     expect(await db.modules.where('campaignId').equals(campaign.id).count()).toBe(0);
     expect(await db.battles.where('campaignId').equals(campaign.id).count()).toBe(0);
-    expect(await getBattleByModule(first)).toBeUndefined();
-    expect(await getBattleByModule(second)).toBeUndefined();
+    expect(await listBattlesByModule(first)).toEqual([]);
+    expect(await listBattlesByModule(second)).toEqual([]);
   });
 
   it('keeps the campaign row, settings, personas and the global library', async () => {
@@ -430,7 +430,7 @@ describe('removeAllGeneratedContent — failure discipline', () => {
     // Alphabetical disposal order is deterministic: 'Aaa' first, then 'Bbb'.
     const first = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Aaa' });
     const second = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Bbb' });
-    const battle = await ensureBattle(campaign.id, moduleId);
+    const battle = await ensureBattleForEncounter(campaign.id, moduleId, newId());
     const personaId = await makePersona();
     const run = await createRun({
       campaignId: campaign.id,

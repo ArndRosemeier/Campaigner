@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { artifactPath, battlePath, modulePath } from '@/app/routes';
+import { artifactPath, modulePath } from '@/app/routes';
 import { createArtifact, getArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
@@ -204,13 +204,11 @@ describe('ModuleReaderPage', () => {
     expect(screen.getByText('Levels 1–3')).toBeInTheDocument();
     expect(screen.getByText('Standard')).toBeInTheDocument();
     expect(screen.getByText('ready')).toBeInTheDocument();
-    // Play stays reachable from two places: the ToC sidebar and the reader
-    // header (collapsing the sidebar must not hide the battle entry).
-    const battleButtons = screen.getAllByRole('button', { name: 'Battle table' });
-    expect(battleButtons.length).toBeGreaterThanOrEqual(2);
-    for (const button of battleButtons) {
-      expect(button).toHaveAttribute('href', battlePath(campaignId, moduleId));
-    }
+    // There is NO module-level battle entry any more (docs/17 row 254): a
+    // battle belongs to its ENCOUNTER, so the reader — ToC sidebar and header
+    // alike — offers no module-wide "Battle table" link. The encounter card's
+    // own Run battle / Open battle button is the only way in.
+    expect(screen.queryByRole('button', { name: 'Battle table' })).toBeNull();
 
     // Premise: [[Old Tower]] resolves against the seeded artifact, [[Missing
     // Person]] has no artifact yet and stays an unresolved stub chip.

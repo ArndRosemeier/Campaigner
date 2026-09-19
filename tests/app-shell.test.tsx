@@ -313,7 +313,9 @@ describe('campaign bar breadcrumb', () => {
       }),
     );
 
-    renderAppAt(`/c/${campaign.id}/m/${module.id}/battle`);
+    // The route names the ENCOUNTER (docs/17 row 254); the crumb is orientation
+    // for the screen you are on, not a module-wide battle entry.
+    renderAppAt(`/c/${campaign.id}/m/${module.id}/battle/${crypto.randomUUID()}`);
 
     const crumb = await screen.findByTestId('campaign-crumb', {}, { timeout: 10_000 });
     expect(crumb).toHaveTextContent('Battle table');

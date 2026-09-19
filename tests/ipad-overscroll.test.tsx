@@ -300,9 +300,9 @@ describe('battle board layer', () => {
     await seedBattleFromEncounter(campaignId, module.id, encounter.id);
 
     render(
-      <MemoryRouter initialEntries={[`/c/${campaignId}/m/${module.id}/battle`]}>
+      <MemoryRouter initialEntries={[`/c/${campaignId}/m/${module.id}/battle/${encounter.id}`]}>
         <Routes>
-          <Route path="/c/:campaignId/m/:moduleId/battle" element={<BattleSurface />} />
+          <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
         </Routes>
       </MemoryRouter>,
     );

@@ -12,8 +12,10 @@ import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact
 import { toastError, toastSuccess } from '@/lib/toast';
 import { db } from '@/db/db';
 import {
-  ensureBattle,
-  getBattleByModule,
+  ensureBattleForEncounter,
+  getBattle,
+  listBattlesByModule,
+  patchBattle,
   saveBattleBoard,
   saveBattleStage,
 } from '@/db/battleRepo';
@@ -301,17 +303,37 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
   return { moduleId: module.id, encounterId: encounter.id, npcId: npc.id, pc1 };
 }
 
-async function renderSurface(moduleId: string): Promise<void> {
+/** A route target that names no battle at all — the surface's empty state. */
+const NO_BATTLE_ENCOUNTER_ID = '00000000-0000-4000-8000-0000000000ff';
+
+/**
+ * Renders the ENCOUNTER-scoped table surface (docs/17 row 254) at
+ * `/c/:campaignId/m/:moduleId/battle/:encounterId`. With no explicit
+ * `encounterId` the target is the encounter the module's battle belongs to; a
+ * module with no battle — or a legacy battle with no provenance — routes to the
+ * placeholder id, which resolves no battle and renders the empty state.
+ * `expectBoard: false` skips the board wait for exactly those cases.
+ */
+async function renderSurface(
+  moduleId: string,
+  options: { encounterId?: string; expectBoard?: boolean } = {},
+): Promise<void> {
+  const target =
+    options.encounterId ??
+    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
+    NO_BATTLE_ENCOUNTER_ID;
   render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle`]}>
+    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
       <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle" element={<BattleSurface />} />
+        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
       </Routes>
     </MemoryRouter>,
   );
-  await waitFor(() => {
-    expect(screen.getByTestId('battle-board')).toBeInTheDocument();
-  });
+  if (options.expectBoard !== false) {
+    await waitFor(() => {
+      expect(screen.getByTestId('battle-board')).toBeInTheDocument();
+    });
+  }
   await flushAsyncUpdates(20);
 }
 
@@ -347,7 +369,7 @@ async function flushDragFrames(): Promise<void> {
  */
 async function currentBattle(moduleId: string) {
   const battle = await actDrained(async () => {
-    const row = await getBattleByModule(moduleId);
+    const [row] = await listBattlesByModule(moduleId);
     if (row === undefined) throw new Error('battle row missing');
     return row;
   });
@@ -433,6 +455,70 @@ describe('layout-anchored grid rendering', () => {
 });
 
 /**
+ * The owner's repro (docs/17 row 254, 2026-09-19): *"i did the same with
+ * ANOTHER encounter (completely different map) and opened the battle from its
+ * card. I got the OLD encounter again."* TWO ENCOUNTERS IN ONE MODULE must each
+ * open their OWN board. This is the test that would have caught it: every
+ * other seeding test uses one encounter per module, so the module-keyed
+ * singleton passed them all.
+ */
+describe('one battle per encounter (owner repro)', () => {
+  it('two encounters in ONE module each open their OWN board', async () => {
+    const { moduleId, encounterId } = await seedStandardBattle();
+    const ogre = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Ogre',
+      data: { appearance: '', personality: '', statBlock: statBlock({ hp: 40 }) },
+    });
+    const second = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Second ambush',
+      data: {
+        difficulty: 'hard',
+        levelHint: '3',
+        monsters: [
+          {
+            name: 'Ogre',
+            count: 1,
+            notes: '',
+            treasure: '',
+            source: { type: 'npc-ref', artifactId: ogre.id },
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    await seedBattleFromEncounter(campaignId, moduleId, second.id);
+    // Two boards in ONE module, at the same time.
+    expect(await listBattlesByModule(moduleId)).toHaveLength(2);
+
+    const tokenLabels = (): string[] =>
+      screen.getAllByTestId('battle-token').map((element) => element.textContent);
+
+    // Open the FIRST encounter's card.
+    await renderSurface(moduleId, { encounterId });
+    expect(tokenLabels().some((label) => label.includes('Troll'))).toBe(true);
+    expect(tokenLabels().some((label) => label.includes('Ogre'))).toBe(false);
+    cleanup();
+
+    // Open the SECOND encounter's card: its OWN board, never the first's.
+    await renderSurface(moduleId, { encounterId: second.id });
+    expect(tokenLabels().some((label) => label.includes('Ogre'))).toBe(true);
+    expect(tokenLabels().some((label) => label.includes('Troll'))).toBe(false);
+  });
+});
+
+/**
  * Regression pin (deployed-bundle crash `Cannot read properties of undefined
  * (reading 'find')` on the Battle table button): the battle route must render
  * a row written by an OLDER app version — one whose board predates later-arc
@@ -443,16 +529,21 @@ describe('layout-anchored grid rendering', () => {
 describe('legacy battle row (pre-effects board)', () => {
   it('renders a board written before the later-arc fields existed', async () => {
     const moduleId = newId();
+    // The row's PROVENANCE is the route key (docs/17 row 254), so the legacy
+    // shape being pinned here is the BOARD's missing later-arc fields; the
+    // encounter id is what makes the row reachable at all.
+    const encounterId = newId();
+    const battleId = newId();
     const stamp = Date.now();
     // Stored RAW (cast — the missing keys are the point): the pre-arc shape
     // an older app version wrote, which the current type can't express.
     await db.battles.put({
-      id: newId(),
+      id: battleId,
       createdAt: stamp,
       updatedAt: stamp,
       campaignId,
       moduleId,
-      encounterArtifactId: null,
+      encounterArtifactId: encounterId,
       seedFighters: [],
       board: {
         mapImageId: null,
@@ -497,7 +588,7 @@ describe('legacy battle row (pre-effects board)', () => {
     expect(screen.queryByTestId('battle-entrance')).not.toBeInTheDocument();
     // The first-entry reveal write re-persists the board with the
     // materialized defaults — the row leaves the legacy shape on disk.
-    const stored = await getBattleByModule(moduleId);
+    const stored = await getBattle(battleId);
     expect(stored?.board.effects).toEqual([]);
     expect(stored?.board.everLive).toBe(true);
   });
@@ -2909,7 +3000,7 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
     expect(screen.getByTestId('battle-reseed-line').textContent).toContain('Bridge ambush');
   });
 
-  it('hides the re-seed affordance and provenance when the battle has no provenance', async () => {
+  it('keeps a battle with no provenance but makes it UNREACHABLE — the encounter route shows the empty state', async () => {
     const module = await saveModule(
       createModule({
         campaignId,
@@ -2920,9 +3011,16 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
         sizeDial: 'sketch',
       }),
     );
-    await ensureBattle(campaignId, module.id);
-    await renderSurface(module.id);
+    // A legacy row shape (docs/18 §5): a board with no encounter owner. It is
+    // KEPT — never deleted on a guess — but no route can name it (the route's
+    // key is the encounter), so the surface renders the empty state and neither
+    // the re-seed affordance nor the provenance rail is reachable.
+    const bare = await ensureBattleForEncounter(campaignId, module.id, newId());
+    await patchBattle(bare.id, { encounterArtifactId: null });
+    await renderSurface(module.id, { expectBoard: false });
     await flushAsyncUpdates();
+    expect(await getBattle(bare.id)).toBeDefined();
+    expect(screen.getByTestId('battle-surface-empty')).toBeInTheDocument();
     expect(screen.queryByTestId('reseed-battle')).toBeNull();
     expect(screen.queryByTestId('battle-provenance')).toBeNull();
     await flushAsyncUpdates();

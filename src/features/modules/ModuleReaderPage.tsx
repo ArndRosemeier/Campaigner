@@ -12,11 +12,10 @@ import {
   PlayIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-  SwordsIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { battlePath, boardPath, canvasChatPath, modulesPath } from '@/app/routes';
+import { boardPath, canvasChatPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { WriterModelId } from '@/components/writer-model-id';
@@ -326,16 +325,6 @@ export function ModuleReaderPage(): JSX.Element {
             <ArrowLeftIcon aria-hidden data-icon="inline-start" />
             All modules
           </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            className="mb-3 w-full"
-            render={<Link to={battlePath(campaignId, moduleId)} />}
-            nativeButton={false}
-          >
-            <SwordsIcon aria-hidden data-icon="inline-start" />
-            Battle table
-          </Button>
           <p className="mb-1 px-1 text-xs tracking-wide text-muted-foreground uppercase">
             Contents
           </p>
@@ -456,19 +445,12 @@ export function ModuleReaderPage(): JSX.Element {
               <span className="ml-auto flex items-center">
                 <ModulePdfButton module={module} artifacts={readerArtifacts} />
               </span>
-              {/* Play is a mode change, not a scroll target: the battle
-                  entry stays in the header so collapsing the contents
-                  sidebar never hides it. */}
-              <Button
-                variant="outline"
-                size="xs"
-                data-testid="battle-table-header-link"
-                render={<Link to={battlePath(campaignId, moduleId)} />}
-                nativeButton={false}
-              >
-                <SwordsIcon aria-hidden data-icon="inline-start" />
-                Battle table
-              </Button>
+              {/* Play is a mode change, not a scroll target. Since docs/17 row
+                  254 there is NO module-level battle entry here: a battle
+                  belongs to its ENCOUNTER, so it starts from the encounter's
+                  own card (the entity sidebar / artifact editor `RunBattleButton`)
+                  and never from a module-wide affordance — the module has no
+                  single board for a header link to open. */}
               {/* Whole-module board (08 §Module board) — the module's
                   spatial overview: the second module child surface, beside
                   the battle table entry. */}

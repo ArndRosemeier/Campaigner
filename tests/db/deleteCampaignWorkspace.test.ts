@@ -19,7 +19,7 @@ import {
   listModuleVersions,
   listOrphanedModuleVersions,
 } from '@/db/moduleVersionRepo';
-import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
+import { ensureBattleForEncounter, listBattlesByModule } from '@/db/battleRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
 import { createPersona } from '@/db/personaRepo';
@@ -192,7 +192,7 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
       targetArtifactId: npc.id,
       placementModuleId: moduleId,
     });
-    const battle = await ensureBattle(campaign.id, moduleId);
+    const battle = await ensureBattleForEncounter(campaign.id, moduleId, newId());
     // Campaign B's everything — must survive byte-identical.
     const neighbourModule = await makeModule(other.id, 'Neighbour Vault');
     const neighbourArt = await createArtifact({ campaignId: other.id, kind: 'note', name: 'Neighbour note' });
@@ -225,7 +225,7 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
     for (const id of [pc, npc.id, note.id, encounter.id]) {
       expect(await db.revisions.where('artifactId').equals(id).count()).toBe(0);
     }
-    expect(await getBattleByModule(moduleId)).toBeUndefined();
+    expect(await listBattlesByModule(moduleId)).toEqual([]);
     expect(await db.battles.get(battle.id)).toBeUndefined();
     expect(await db.runs.get(run.id)).toBeUndefined();
     // The campaign row itself is byte-identical — premise kept.
@@ -355,7 +355,7 @@ describe('deleteCampaignWorkspace — failure discipline', () => {
     // Alphabetical disposal order is deterministic: 'Aaa' first, then 'Bbb'.
     const first = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Aaa' });
     const second = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Bbb' });
-    const battle = await ensureBattle(campaign.id, moduleId);
+    const battle = await ensureBattleForEncounter(campaign.id, moduleId, newId());
     const personaId = await makePersona();
     const run = await createRun({
       campaignId: campaign.id,

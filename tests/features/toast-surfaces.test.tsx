@@ -61,7 +61,7 @@ import { toastError, toastSuccess } from '@/lib/toast';
 import { flushAsyncUpdates, actDrained } from '../helpers/flush';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { PromptStylesSection } from '@/features/settings/prompt-styles-section';
-import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
+import { listBattlesByModule, saveBattleBoard } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { putChunks } from '@/db/chunkRepo';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
@@ -1311,7 +1311,7 @@ describe('spawn-picker.test.tsx', () => {
     );
     moduleId = module.id;
     await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-    const battle = await getBattleByModule(moduleId);
+    const [battle] = await listBattlesByModule(moduleId);
     if (battle === undefined) throw new Error('battle row missing');
     battleId = battle.id;
   });
@@ -1325,7 +1325,7 @@ describe('spawn-picker.test.tsx', () => {
 
   async function currentBattle() {
     const battle = await actDrained(async () => {
-      const row = await getBattleByModule(moduleId);
+      const [row] = await listBattlesByModule(moduleId);
       if (row === undefined) throw new Error('battle row missing');
       return row;
     });

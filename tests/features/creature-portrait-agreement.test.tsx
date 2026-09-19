@@ -5,7 +5,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { getBattleByModule } from '@/db/battleRepo';
+import { getBattleByEncounter } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -186,11 +186,16 @@ async function seedEncounterWith(moduleId: string, monsters: MonsterEntry[]): Pr
   return { moduleId, encounterId: encounter.id };
 }
 
+/** Renders the ENCOUNTER-scoped table surface (docs/17 row 254): the route
+ * names the encounter the module's battle belongs to, read off the row. */
 async function renderSurface(moduleId: string): Promise<void> {
+  const target =
+    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
+    '00000000-0000-4000-8000-0000000000ff';
   render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle`]}>
+    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
       <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle" element={<BattleSurface />} />
+        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -336,12 +341,12 @@ describe('the token and the module side resolve ONE portrait', () => {
 
   it('an invented mob renders the portrait keyed on its own content', async () => {
     const moduleId = await seedModule('Invented module');
-    const { moduleId: seededModule } = await seedEncounterWith(moduleId, [
+    const { moduleId: seededModule, encounterId: seededEncounterId } = await seedEncounterWith(moduleId, [
       { name: 'Bog Thing', count: 1, notes: 'Wet and hungry.', treasure: '', source: { type: 'inline', statBlock: statBlock() } },
     ]);
     // The batch's own write for an invented mob: the campaign presentation row
     // under the entry's content identity.
-    const battle = await getBattleByModule(seededModule);
+    const battle = await getBattleByEncounter(seededEncounterId);
     const token = battle?.board.tokens.find((entry) => entry.label === 'Bog Thing');
     if (token?.creatureKey === undefined) throw new Error('invented token has no creature key');
     const portraitId = await campaignImage();

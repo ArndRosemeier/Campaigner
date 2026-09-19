@@ -1067,6 +1067,40 @@ export class CampaignerDB extends Dexie {
       .upgrade(async (tx) => {
         await repairMobCopies({ tx, reason: 'upgrade' });
       });
+    // Version 25 (docs/17 row 254): a battle belongs to its ENCOUNTER, not to
+    // its module. The v16 `&moduleId` UNIQUE index is DROPPED (a module now
+    // owns one board PER encounter, and the unique module key would refuse the
+    // second encounter's board), `moduleId` stays as a plain index (`Back to
+    // module` and `deleteBattlesByModule` still need it) and
+    // `encounterArtifactId` becomes an index — the identity every read
+    // resolves by (`getBattleByEncounter`). No upgrade body: ADDING a
+    // non-unique index and DROPPING a unique one are both safe over existing
+    // rows, so the index rebuild itself is the migration. The get-or-create
+    // race is now arbitrated by an IndexedDB transaction, not by the index
+    // (`ensureBattleForEncounter`) — a unique `&encounterArtifactId` would
+    // ABORT this upgrade on any database where the same campaign-scoped
+    // encounter was seeded into two modules, which is exactly the row shape the
+    // index rebuild must survive rather than refuse.
+    this.version(25).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: null,
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId, encounterArtifactId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &creatureKey',
+      moduleVersions: 'id, moduleId, createdAt',
+      creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+      ideaBoards: 'id, updatedAt',
+      settings: 'id',
+    });
   }
 }
 

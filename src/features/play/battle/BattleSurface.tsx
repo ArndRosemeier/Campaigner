@@ -196,7 +196,7 @@ interface LiveDrag {
 }
 
 export function BattleSurface(): JSX.Element {
-  const { campaignId = '', moduleId = '' } = useParams();
+  const { campaignId = '', moduleId = '', encounterId = '' } = useParams();
   const navigate = useNavigate();
 
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 });
@@ -269,9 +269,11 @@ export function BattleSurface(): JSX.Element {
   const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchBaseRef = useRef<{ distance: number; zoom: number } | null>(null);
 
+  // The route names ONE encounter; this surface resolves the battle THAT
+  // encounter owns (docs/17 row 254) — never "the module's".
   const { battle, stats, coveredTokenIds, artifacts } = useBattleState(
     campaignId,
-    moduleId,
+    encounterId,
     contentSize.w,
     contentSize.h,
   );
@@ -1669,9 +1671,9 @@ export function BattleSurface(): JSX.Element {
         className="flex h-full flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-300"
         data-testid="battle-surface-empty"
       >
-        <p>No battle is seeded for this module yet.</p>
+        <p>No battle is seeded for this encounter yet.</p>
         <p className="text-sm text-zinc-500">
-          Open an encounter card in the module reader or the encounter editor and press “Run battle”
+          Open this encounter's card in the module reader or the encounter editor and press “Run battle”
           first.
         </p>
         <Button

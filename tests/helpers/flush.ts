@@ -28,7 +28,7 @@ export async function flushAsyncUpdates(rounds = 20): Promise<void> {
  * (re)subscribed there dispatches its state update outside act (the console
  * guard then fails the test). This is the timing-dependent flake class that
  * hit `battle-surface.test.tsx > selection card`: the tap's bare
- * `await getBattleByModule()` handed the token's image liveQuery — just
+ * `await getBattleByEncounter()` handed the token's image liveQuery — just
  * resubscribed by a late-landing artifacts cascade — that window, and its
  * subscribe-time query emitted outside act.
  *

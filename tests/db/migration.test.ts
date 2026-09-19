@@ -830,8 +830,8 @@ describe('v14 → v15 migration (dungeon preset, docs/11 D10)', () => {
   }, 20000);
 });
 
-describe('v15 → v16 migration (one live battle per module)', () => {
-  it('rebuilds the battles moduleId index as UNIQUE and preserves rows', async () => {
+describe('v15 → v16 → v25 migration (battle identity)', () => {
+  it('preserves the row through the index rebuilds and no longer makes moduleId unique', async () => {
     await Dexie.delete('campaigner');
     const legacy = new Dexie('campaigner');
     legacy.version(15).stores({
@@ -900,11 +900,25 @@ describe('v15 → v16 migration (one live battle per module)', () => {
     const { battleSchema } = await import('@/domain');
     expect(battleSchema.parse(battle).moduleId).toBe(moduleId);
 
-    // The UNIQUE `&moduleId` index is live: a second row claiming the same
-    // module's one live battle is refused by the schema itself.
+    // v25 (docs/17 row 254) DROPPED the v16 UNIQUE `&moduleId` index: a module
+    // now owns one board PER ENCOUNTER, so a second row claiming the same
+    // module is not a constraint violation any more — it is the second
+    // encounter's board.
+    const secondEncounterId = '00000000-0000-4000-8000-0000000000e25';
     await expect(
-      db.battles.put({ ...battle, id: '00000000-0000-4000-8000-00000000f617' } as never),
-    ).rejects.toMatchObject({ name: 'ConstraintError' });
+      db.battles.put({
+        ...battle,
+        id: '00000000-0000-4000-8000-00000000f617',
+        encounterArtifactId: secondEncounterId,
+      } as never),
+    ).resolves.toBeDefined();
+    // `encounterArtifactId` is the live index: the new row resolves by it.
+    const byEncounter = await db.battles
+      .where('encounterArtifactId')
+      .equals(secondEncounterId)
+      .first();
+    expect(byEncounter?.id).toBe('00000000-0000-4000-8000-00000000f617');
+    expect(await db.battles.where('moduleId').equals(moduleId).count()).toBe(2);
     // A different module still gets its own battle.
     await expect(
       db.battles.put({
@@ -1284,7 +1298,7 @@ describe('v18 → v19 migration (durable module document versions)', () => {
     // these rows.
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(24);
+    expect(db.verno).toBe(25);
 
     const module = await db.modules.get('00000000-0000-4000-8000-000000000b19');
     expect(module?.parts[0]?.markdown).toBe('Pre-undo part text.');
@@ -1471,9 +1485,10 @@ describe('v19 → v20 migration (the creature tier)', () => {
     await db.open();
     // The chain walks to its head: v20 repaired the citations, v21 dropped the
     // (empty here) `deliverables` table without touching creature state, v22
-    // folded the persisted creature key (docs/17 row 168), and v23 added the
-    // empty Idea Board table (docs/17 row 173).
-    expect(db.verno).toBe(24);
+    // folded the persisted creature key (docs/17 row 168), v23 added the empty
+    // Idea Board table (docs/17 row 173), v24 converted mob citations and v25
+    // re-keyed the battle identity onto the encounter (docs/17 row 254).
+    expect(db.verno).toBe(25);
 
     // 1. The slot answers to the creature IDENTITY now, not to a chunk id.
     const slot = await db.mobPortraits.get(SLOT);
@@ -1604,7 +1619,7 @@ describe('v20 → v21 migration (the deliverables table is deleted)', () => {
     await seedLegacyV20();
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(24);
+    expect(db.verno).toBe(25);
 
     // The table is GONE from the schema (not merely empty).
     expect(db.tables.map((table) => table.name)).not.toContain('deliverables');

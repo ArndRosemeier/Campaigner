@@ -16,8 +16,14 @@ export const ROUTES = {
   artifact: '/c/:campaignId/a/:artifactId',
   /** Link graph for a campaign (M2). */
   graph: '/c/:campaignId/graph',
-  /** Table surface for a module's live battle (M6-E). */
-  battle: '/c/:campaignId/m/:moduleId/battle',
+  /**
+   * Table surface for ONE encounter's live battle (M6-E; re-keyed by encounter,
+   * docs/17 row 254). The module id stays because the board needs its module
+   * (breadcrumb, spawn ownership, `Back to module`); the encounter id is the
+   * battle's IDENTITY — a module may hold several encounters, each with its own
+   * board.
+   */
+  battle: '/c/:campaignId/m/:moduleId/battle/:encounterId',
   /** Whole-module board for one module (08 §Module board) — the module's
    * spatial overview. */
   board: '/c/:campaignId/m/:moduleId/board',
@@ -58,12 +64,18 @@ export function graphPath(campaignId: string): `/c/${string}/graph` {
   return `/c/${encodeURIComponent(campaignId)}/graph`;
 }
 
-/** Path of the table surface for a module's live battle (M6-E). */
+/**
+ * Path of the table surface for ONE encounter's live battle (M6-E; re-keyed by
+ * encounter, docs/17 row 254). The module id is kept in the path because the
+ * board acts on its module (breadcrumb, spawn ownership, back-link); the
+ * encounter id is what the surface resolves its battle by.
+ */
 export function battlePath(
   campaignId: string,
   moduleId: string,
-): `/c/${string}/m/${string}/battle` {
-  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/battle`;
+  encounterId: string,
+): `/c/${string}/m/${string}/battle/${string}` {
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/battle/${encodeURIComponent(encounterId)}`;
 }
 
 /**

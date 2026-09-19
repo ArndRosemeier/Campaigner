@@ -69,7 +69,7 @@ import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
+import { getBattleByEncounter, saveBattleBoard } from '@/db/battleRepo';
 import { db } from '@/db/db';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { expectBlockedReason } from '../helpers/blocked-reason';
@@ -254,11 +254,13 @@ describe('editor-run-battle.test.tsx', () => {
    * picker fallback): module-scoped encounters run through the module view's
    * own RunBattleButton anchored to their own module; campaign-scoped ones
    * pick a module; zero modules is a named empty state; non-encounter kinds
-   * stay untouched. Owner-directed (2026-09-18): the button NEVER re-seeds — a
-   * module with an existing battle OPENS it unchanged (whatever encounter, its
-   * state kept), and only a module with NO battle seeds. Re-seeding is the
-   * in-battle Reseed alone. A seed or an open navigates straight to the
-   * module's battle table.
+   * stay untouched. Owner-directed (2026-09-18, NOT repealed by the encounter
+   * re-key, docs/17 row 254): the button NEVER re-seeds — an ENCOUNTER with an
+   * existing battle OPENS it unchanged (its state kept), and only an encounter
+   * with NO battle seeds. Two encounters in one module are two independent
+   * boards, so there is nothing to collide with. Re-seeding is the in-battle
+   * Reseed alone. A seed or an open navigates straight to that encounter's
+   * battle table.
    */
 
   /** Renders the current router location so tests can assert the navigation. */
@@ -343,12 +345,15 @@ describe('editor-run-battle.test.tsx', () => {
         const battle = await db.battles.where('moduleId').equals(crypt.id).first();
         expect(battle?.encounterArtifactId).toBe(owned.id);
       });
-      expect(await db.battles.count()).toBe(1);
-      // The seed lands the user on the module's battle table — no toast-estimated
-      // detour telling them to open it themselves.
+      // A bare Dexie read here would re-open the act-leak window and let the
+      // button's pending navigation land outside act (docs/08-TESTING.md
+      // §Console guard) — drain it.
+      expect(await actDrained(() => db.battles.count())).toBe(1);
+      // The seed lands the user on THAT ENCOUNTER's battle table — no
+      // toast-estimated detour telling them to open it themselves.
       await waitFor(() => {
         expect(screen.getByTestId('route-location')).toHaveTextContent(
-          battlePath(campaignId, crypt.id),
+          battlePath(campaignId, crypt.id, owned.id),
         );
       });
       await flushAsyncUpdates();
@@ -367,7 +372,7 @@ describe('editor-run-battle.test.tsx', () => {
       await seedBattleFromEncounter(campaignId, crypt.id, owned.id);
       // Drift the running board: a re-seed would reset activeIndex to 0 and
       // discard the stage — resume must keep it verbatim.
-      const running = await getBattleByModule(crypt.id);
+      const running = await getBattleByEncounter(owned.id);
       if (running === undefined) throw new Error('running battle missing');
       await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
       renderEditor(owned, campaignId, [encounter, owned]);
@@ -378,10 +383,10 @@ describe('editor-run-battle.test.tsx', () => {
       await user.click(screen.getByTestId('run-battle'));
       await waitFor(() => {
         expect(screen.getByTestId('route-location')).toHaveTextContent(
-          battlePath(campaignId, crypt.id),
+          battlePath(campaignId, crypt.id, owned.id),
         );
       });
-      const battle = await getBattleByModule(crypt.id);
+      const battle = await getBattleByEncounter(owned.id);
       expect(battle?.encounterArtifactId).toBe(owned.id);
       // The drift survived — nothing was re-seeded.
       expect(battle?.board.activeIndex).toBe(2);
@@ -393,7 +398,7 @@ describe('editor-run-battle.test.tsx', () => {
       const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt']);
       const crypt = requireModule(modules, 0);
       await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
-      const running = await getBattleByModule(crypt.id);
+      const running = await getBattleByEncounter(encounter.id);
       if (running === undefined) throw new Error('running battle missing');
       await saveBattleBoard(running.id, { ...running.board, activeIndex: 1 });
       renderEditor(encounter, campaignId, [encounter]);
@@ -409,16 +414,16 @@ describe('editor-run-battle.test.tsx', () => {
       });
       await waitFor(() => {
         expect(screen.getByTestId('route-location')).toHaveTextContent(
-          battlePath(campaignId, crypt.id),
+          battlePath(campaignId, crypt.id, encounter.id),
         );
       });
-      const battle = await getBattleByModule(crypt.id);
+      const battle = await getBattleByEncounter(encounter.id);
       expect(battle?.encounterArtifactId).toBe(encounter.id);
       expect(battle?.board.activeIndex).toBe(1);
       await flushAsyncUpdates();
     });
 
-    it('a battle from a DIFFERENT encounter is OPENED, never replaced (state kept)', async () => {
+    it('a SECOND encounter in the same module gets its OWN board and leaves the first untouched (owner repro)', async () => {
       const user = userEvent.setup();
       const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt']);
       const crypt = requireModule(modules, 0);
@@ -428,29 +433,31 @@ describe('editor-run-battle.test.tsx', () => {
         kind: 'encounter',
         name: 'Crypt Gate',
       });
+      // The FIRST encounter is already running in this module, with drift an
+      // open must keep verbatim.
       await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
-      // Drift the running board: an open must keep it verbatim.
-      const running = await getBattleByModule(crypt.id);
+      const running = await getBattleByEncounter(encounter.id);
       if (running === undefined) throw new Error('running battle missing');
       await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
-      renderEditor(owned, campaignId, [encounter, owned]);
-      await flushAsyncUpdates();
 
-      // The label is Open battle even though the running battle came from the
-      // OTHER encounter — no confirm, no destructive path.
+      // Open the SECOND encounter's own card and press ITS button.
+      renderEditor(owned, campaignId, [encounter, owned]);
       await waitFor(() =>
-        expect(screen.getByTestId('run-battle')).toHaveTextContent('Open battle'),
+        expect(screen.getByTestId('run-battle')).toHaveTextContent('Run battle'),
       );
       await user.click(screen.getByTestId('run-battle'));
       await waitFor(() => {
         expect(screen.getByTestId('route-location')).toHaveTextContent(
-          battlePath(campaignId, crypt.id),
+          battlePath(campaignId, crypt.id, owned.id),
         );
       });
-      const battle = await getBattleByModule(crypt.id);
-      // Provenance is still the other encounter and the drift survived.
-      expect(battle?.encounterArtifactId).toBe(encounter.id);
-      expect(battle?.board.activeIndex).toBe(2);
+      // TWO boards in ONE module, each owned by its own encounter…
+      expect(await db.battles.where('moduleId').equals(crypt.id).count()).toBe(2);
+      expect((await getBattleByEncounter(owned.id))?.encounterArtifactId).toBe(owned.id);
+      // …and the first encounter's board is byte-untouched — nothing re-seeded.
+      const first = await getBattleByEncounter(encounter.id);
+      expect(first?.id).toBe(running.id);
+      expect(first?.board.activeIndex).toBe(2);
       await flushAsyncUpdates();
     });
 
@@ -476,16 +483,17 @@ describe('editor-run-battle.test.tsx', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('run-battle-module-picker')).toBeNull();
       });
-      // And the picked module's battle table is where the user ends up.
+      // And the picked module's battle table for THAT encounter is where the
+      // user ends up.
       await waitFor(() => {
         expect(screen.getByTestId('route-location')).toHaveTextContent(
-          battlePath(campaignId, tide.id),
+          battlePath(campaignId, tide.id, encounter.id),
         );
       });
       await flushAsyncUpdates();
     });
 
-    it('picker path OPENS a picked module’s existing battle without replacing it', async () => {
+    it('picker path seeds the picked encounter and leaves another encounter’s board in that module untouched', async () => {
       const user = userEvent.setup();
       const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt', 'Tide Bell']);
       const tide = requireModule(modules, 1);
@@ -495,7 +503,7 @@ describe('editor-run-battle.test.tsx', () => {
         name: 'Crypt Gate',
       });
       await seedBattleFromEncounter(campaignId, tide.id, other.id);
-      const running = await getBattleByModule(tide.id);
+      const running = await getBattleByEncounter(other.id);
       if (running === undefined) throw new Error('running battle missing');
       await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
       renderEditor(encounter, campaignId, [encounter, other]);
@@ -503,16 +511,19 @@ describe('editor-run-battle.test.tsx', () => {
       await user.click(screen.getByTestId('run-battle-picker'));
       await user.click(
         within(await screen.findByTestId(`run-battle-module-${tide.id}`)).getByRole('button', {
-          name: 'Open battle',
+          name: 'Run battle',
         }),
       );
       await waitFor(() => {
         expect(screen.queryByTestId('run-battle-module-picker')).toBeNull();
       });
-      const battle = await getBattleByModule(tide.id);
-      // Still the other encounter's battle, drift intact — nothing re-seeded.
-      expect(battle?.encounterArtifactId).toBe(other.id);
-      expect(battle?.board.activeIndex).toBe(2);
+      // The pressed encounter seeds ITS OWN board in that module…
+      expect((await getBattleByEncounter(encounter.id))?.encounterArtifactId).toBe(encounter.id);
+      expect(await db.battles.where('moduleId').equals(tide.id).count()).toBe(2);
+      // …while the other encounter's board keeps its drift — nothing re-seeded.
+      const unchanged = await getBattleByEncounter(other.id);
+      expect(unchanged?.id).toBe(running.id);
+      expect(unchanged?.board.activeIndex).toBe(2);
       await flushAsyncUpdates();
     });
 

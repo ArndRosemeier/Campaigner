@@ -193,12 +193,14 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
     expect(base[0]?.to).toBe('/c/c1');
     expect(base.find((entry) => entry.label === 'Spells')?.to).toBe('/c/c1/spells');
 
+    // A module reader contributes NO module-wide battle entry (docs/17 row
+    // 254): a battle belongs to its ENCOUNTER, so the quick-find palette must
+    // not re-introduce the module-keyed singleton through its Go-to group.
     const onModule = quickFindGoToEntries('c1', '/c/c1/m/m9');
-    expect(onModule[0]).toEqual({ label: 'Battle table (this module)', to: '/c/c1/m/m9/battle' });
+    expect(onModule.some((entry) => entry.label.startsWith('Battle table'))).toBe(false);
 
-    // Already on the battle table: no second battle entry.
-    const onBattle = quickFindGoToEntries('c1', '/c/c1/m/m9/battle');
-    expect(onBattle.filter((entry) => entry.label.startsWith('Battle table'))).toEqual([]);
+    const onBattle = quickFindGoToEntries('c1', '/c/c1/m/m9/battle/e9');
+    expect(onBattle.some((entry) => entry.label.startsWith('Battle table'))).toBe(false);
   });
 
   it('shows the Go-to group on an empty query and navigates via onGoTo', async () => {

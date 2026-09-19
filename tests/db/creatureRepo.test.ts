@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { getBattleByModule } from '@/db/battleRepo';
+import { listBattlesByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { castCreatureAsNpc, resolveCreatureCitation, resolveDerivedNpcStats } from '@/db/creatureRepo';
@@ -477,6 +477,6 @@ describe('D5/D8 — the encounter side may cite, and the library is read-only', 
     await resolveCreatureCitation({ chunkId }, 'Bog Zombie');
     expect(await listArtifactsByCampaign(campaign.id)).toEqual([]);
     expect(await db.battles.count()).toBe(battles);
-    expect(await getBattleByModule('00000000-0000-4000-8000-000000000000')).toBeUndefined();
+    expect(await listBattlesByModule('00000000-0000-4000-8000-000000000000')).toEqual([]);
   });
 });

@@ -134,7 +134,7 @@ describe('deleteCampaign cascade completeness', () => {
   it('deletes the campaign\'s modules and battles in the same transaction', async () => {
     const { createModule } = await import('@/db/moduleRepo');
     const { createModule: buildModule } = await import('@/domain');
-    const { ensureBattle } = await import('@/db/battleRepo');
+    const { ensureBattleForEncounter } = await import('@/db/battleRepo');
 
     const campaign = await addCampaign({ name: 'Doomed', system: 'dnd5e' });
     const other = await addCampaign({ name: 'Survivor', system: 'dnd5e' });
@@ -144,7 +144,7 @@ describe('deleteCampaign cascade completeness', () => {
     const keptModule = await createModule(
       buildModule({ campaignId: other.id, title: 'Kept Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
-    const battle = await ensureBattle(campaign.id, doomedModule.id);
+    const battle = await ensureBattleForEncounter(campaign.id, doomedModule.id, crypto.randomUUID());
 
     await deleteCampaign(campaign.id);
 

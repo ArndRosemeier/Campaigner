@@ -9,7 +9,13 @@ import {
   setCreatureCover,
 } from '@/db/creatureRepo';
 import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
-import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
+import {
+  ensureBattleForEncounter,
+  getBattle,
+  getBattleByEncounter,
+  listBattlesByModule,
+  patchBattle,
+} from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as createModuleRepo } from '@/db/moduleRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -693,12 +699,12 @@ describe('map resolution', () => {
     expect(seededMapless.battle.board.mapImageId).toBeNull();
   });
 
-  it('keeps the battle row reachable by module after seeding', async () => {
+  it('keeps the battle row reachable by its encounter (and listed under its module) after seeding', async () => {
     const encounter = await addEncounter();
     const moduleId = newId();
     const { battle } = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-    const byModule = await getBattleByModule(moduleId);
-    expect(byModule?.id).toBe(battle.id);
+    expect((await getBattleByEncounter(encounter.id))?.id).toBe(battle.id);
+    expect((await listBattlesByModule(moduleId)).map((row) => row.id)).toEqual([battle.id]);
   });
 
   it('ignores a linked event’s map-role cover — only locations lend battlemaps', async () => {
@@ -877,7 +883,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     const beforeSeedRows = battle.seedFighters.length;
     const report = await spawnRosterInstance(battle.id, 0);
     expect(report.statless).toEqual([]);
-    const after = await getBattleByModule(battle.moduleId);
+    const after = await getBattle(battle.id);
     if (after === undefined) throw new Error('battle missing');
     const fighters = fighterTokens(after.board);
     expect(fighters).toHaveLength(4);
@@ -920,7 +926,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     const rowsBefore = battle.seedFighters.length;
     const report = await spawnRosterInstance(battle.id, 0);
     expect(report.statless).toEqual([]);
-    const after = await getBattleByModule(battle.moduleId);
+    const after = await getBattle(battle.id);
     if (after === undefined) throw new Error('battle missing');
     const fighters = fighterTokens(after.board);
     expect(fighters.map((token) => token.label)).toEqual(['Vexra', 'Vexra 2']);
@@ -938,7 +944,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const report = await spawnRosterInstance(battle.id, 0);
     expect(report.statless).toHaveLength(1);
-    const after = await getBattleByModule(battle.moduleId);
+    const after = await getBattle(battle.id);
     if (after === undefined) throw new Error('battle missing');
     const fighters = fighterTokens(after.board);
     expect(fighters[1]?.label).toBe('Wisp 2');
@@ -947,7 +953,12 @@ describe('in-battle spawn (encounter-resume arc)', () => {
   });
 
   it('throws loudly without provenance — a battle with no seeding encounter cannot spawn', async () => {
-    const bare = await ensureBattle(campaignId, newId());
+    // A legacy row shape: a board with NO provenance (the seam that writes
+    // provenance is seeding; this stands in for a row written before it, or one
+    // whose encounter was deleted). It is UNREACHABLE from the UI (docs/18 §5)
+    // but never deleted on a guess — and spawning still fails loud.
+    const bare = await ensureBattleForEncounter(campaignId, newId(), newId());
+    await patchBattle(bare.id, { encounterArtifactId: null });
     await expect(spawnRosterInstance(bare.id, 0)).rejects.toThrow(
       'This battle has no seeding encounter to spawn from',
     );
@@ -1012,7 +1023,7 @@ describe('auto-promote on battle use', () => {
     await spawnRosterInstance(battle.id, 0);
 
     expect((await getAnyArtifact(npc.id))?.moduleId).toBeNull();
-    const after = await getBattleByModule(hallId);
+    const after = await getBattle(battle.id);
     if (after === undefined) throw new Error('battle missing');
     expect(fighterTokens(after.board).some((token) => token.artifactId === npc.id)).toBe(true);
   });

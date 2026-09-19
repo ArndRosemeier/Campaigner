@@ -21,9 +21,9 @@ import { NotFoundError } from '@/lib/errors';
 import { toastError } from '@/lib/toast';
 import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import {
-  ensureBattle,
+  ensureBattleForEncounter,
   getBattle,
-  getBattleByModule,
+  getBattleByEncounter,
   patchBattle,
 } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
@@ -34,9 +34,12 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
  * Seeding a battle from an encounter artifact (09-MILESTONE-5 M5-C):
  * "Run battle" expands the designed roster into portrait tokens, resolves
  * the battlemap, and hands the board to the table surface (live: false
- * until the table opens). One live battle per module — seeding an already
- * running battle REPLACES it (the UI confirms; the stage snapshot is
- * discarded).
+ * until the table opens). ONE BATTLE PER ENCOUNTER (docs/17 row 254): the
+ * seed writes the battle the clicked encounter owns — two encounters in one
+ * module get two independent boards. This function still REPLACES the board
+ * of the battle it is handed when one exists (the in-battle Reseed's
+ * destructive path); the UI's "Run battle" button never calls it then — an
+ * existing battle is OPENED unchanged (owner-directed 2026-09-18).
  *
  * Library creatures (docs/11 D5 amendment): a statful `rulebook` entry is a
  * CITATION, not a row — it freezes ONE synthetic `seedFighters` row for its
@@ -449,16 +452,17 @@ export async function seedBattleFromEncounter(
     pcFightersOf(artifacts),
   );
 
-  // Seeding REPLACES any running battle for the module (the UI confirms):
-  // fresh board, no stage snapshot, provenance + frozen seed stats stamped
-  // BEFORE the normalized save (the stats lookup drives HP clamping). When a
-  // battle already ran, the row records the destructive re-seed — who (the
-  // acting seed), when, and what replaced the board (encounter-resume arc).
-  // Provenance and board land in ONE patchBattle (it merges + normalizes
+  // Seeding REPLACES the board of the battle THIS encounter owns (the
+  // in-battle Reseed's destructive path; the UI button opens instead): fresh
+  // board, no stage snapshot, provenance + frozen seed stats stamped BEFORE the
+  // normalized save (the stats lookup drives HP clamping). When a board already
+  // existed for this encounter, the row records the destructive re-seed — who
+  // (the acting seed), when, and what replaced the board (encounter-resume
+  // arc). Provenance and board land in ONE patchBattle (it merges + normalizes
   // once) — the previous two-phase patch-then-board-save normalized the row
   // twice and briefly persisted a half-seeded board.
-  const existing = await getBattleByModule(moduleId);
-  const battle = await ensureBattle(campaignId, moduleId);
+  const existing = await getBattleByEncounter(encounterArtifactId);
+  const battle = await ensureBattleForEncounter(campaignId, moduleId, encounterArtifactId);
   const reseed =
     existing === undefined
       ? null

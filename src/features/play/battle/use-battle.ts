@@ -3,16 +3,17 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import type { AnyArtifact, Battle, BattleTokenId, FighterStatsLookup, Id } from '@/domain';
 import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
-import { getBattleByModule } from '@/db/battleRepo';
+import { getBattleByEncounter } from '@/db/battleRepo';
 import { buildFighterStatsLookup, pcFightersOf } from '@/db/fighterStats';
 import { portraitCoveredByVeils } from '@/domain/battle/veil';
 import { veilCellPx } from '@/domain/battle/veil';
 import type { BattleVeil } from '@/domain/battle';
 
 /**
- * Live battle state for the module-anchored table surface (M6-E): the battle
- * row, campaign/module/global fighter stats, and the derived covered-token
- * set. This is the one place Dexie rows become the engine's plain numbers.
+ * Live battle state for the encounter-anchored table surface (M6-E; re-keyed
+ * by encounter, docs/17 row 254): the battle row ITS encounter owns,
+ * campaign/global fighter stats, and the derived covered-token set. This is the
+ * one place Dexie rows become the engine's plain numbers.
  *
  * `contentWidthPx`/`contentHeightPx` MUST be the aspect-fitted CONTENT div's
  * size — the frame tokens and veils are %-positioned in — not the outer
@@ -29,13 +30,13 @@ export interface BattleState {
 
 export function useBattleState(
   campaignId: Id,
-  moduleId: Id,
+  encounterArtifactId: Id,
   contentWidthPx: number,
   contentHeightPx: number,
 ): BattleState {
   const battle = useLiveQuery(
-    async () => (moduleId === '' ? undefined : getBattleByModule(moduleId)),
-    [moduleId],
+    async () => (encounterArtifactId === '' ? undefined : getBattleByEncounter(encounterArtifactId)),
+    [encounterArtifactId],
     undefined,
   );
   const artifacts = useLiveQuery(

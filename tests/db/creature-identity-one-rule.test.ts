@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
-import { getBattleByModule } from '@/db/battleRepo';
+import { getBattleByEncounter } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -114,7 +114,7 @@ async function seedAndRead(
     },
   });
   await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-  const battle = await getBattleByModule(moduleId);
+  const battle = await getBattleByEncounter(encounter.id);
   const row = await db.artifacts.get(encounter.id);
   const data = row?.data;
   if (data === undefined || !('monsters' in data)) throw new Error('encounter data missing');

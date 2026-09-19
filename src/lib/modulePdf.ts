@@ -36,7 +36,7 @@ import {
   rosterTreasureFor,
   type ResolvedMonster,
 } from '@/domain/encounterResolve';
-import { getBattleByModule } from '@/db/battleRepo';
+import { listBattlesByModule } from '@/db/battleRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { loadSpellIndexesFor, statBlockSystems } from '@/db/spellRepo';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -2637,10 +2637,19 @@ export function buildModuleDefinition(input: ModulePdfInput): TDocumentDefinitio
   return buildModulePdfDocument(input).definition;
 }
 
-/** The module's live battle, or none (one live battle per module). */
+/**
+ * The module's live battles — ONE PER ENCOUNTER it owns (docs/17 row 254).
+ *
+ * This used to be the single module-keyed battle row, which made the PDF's
+ * `encounterMapImageId` lookup wrong for the second encounter of a module: the
+ * list held one battle, so only the encounter it was seeded from resolved its
+ * board map and every other encounter fell back to its own `mapImageId`. The
+ * PDF's battle input is a PER-ENCOUNTER lookup table, so it must carry every
+ * board the module owns. A battle with no provenance (a legacy row) is in the
+ * list but matches no encounter and is simply never consulted.
+ */
 async function moduleBattles(module: Module): Promise<Battle[]> {
-  const battle = await getBattleByModule(module.id);
-  return battle === undefined ? [] : [battle];
+  return listBattlesByModule(module.id);
 }
 
 /**

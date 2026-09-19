@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createArtifact,
@@ -11,8 +11,10 @@ import {
 } from '@/db/artifactRepo';
 import {
   deleteBattleIfEmpty,
-  ensureBattle,
-  getBattleByModule,
+  ensureBattleForEncounter,
+  getBattle,
+  getBattleByEncounter,
+  listBattlesByModule,
   patchBattle,
   resetBattleToStage,
   saveBattleBoard,
@@ -26,8 +28,9 @@ import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
 
 /**
- * Battle persistence (10-MILESTONE-6 M6-E): one live battle per module
- * (lazy create), normalize-on-write (PC tokens ensured, NPC instance HP
+ * Battle persistence (10-MILESTONE-6 M6-E; re-keyed by encounter, docs/17 row
+ * 254): ONE battle per ENCOUNTER (lazy create — two encounters in one module
+ * are two boards), normalize-on-write (PC tokens ensured, NPC instance HP
  * re-filled/clamped), scrub-on-delete (empty battles delete themselves), and
  * the stage reset path.
  */
@@ -97,77 +100,50 @@ async function addNpc(name: string, over: Partial<StatBlock> = {}): Promise<stri
   return npc.id;
 }
 
-describe('ensureBattle', () => {
-  it('lazily creates exactly one empty battle per module', async () => {
+describe('ensureBattleForEncounter', () => {
+  it('gives two encounters in ONE module two independent boards, one row each', async () => {
     const moduleId = newId();
-    const first = await ensureBattle(campaignId, moduleId);
+    const firstEncounter = newId();
+    const secondEncounter = newId();
+    const first = await ensureBattleForEncounter(campaignId, moduleId, firstEncounter);
     expect(first.board.live).toBe(false);
     expect(first.board.tokens).toEqual([]);
-    expect(first.encounterArtifactId).toBeNull();
-    const second = await ensureBattle(campaignId, moduleId);
+    expect(first.encounterArtifactId).toBe(firstEncounter);
+    // Same encounter again: the SAME row, never a second board.
+    const again = await ensureBattleForEncounter(campaignId, moduleId, firstEncounter);
+    expect(again.id).toBe(first.id);
+    expect((await getBattleByEncounter(firstEncounter))?.id).toBe(first.id);
+    // The owner's repro (docs/17 row 254): a second encounter in the SAME
+    // module owns its OWN board instead of resolving the first one's.
+    const second = await ensureBattleForEncounter(campaignId, moduleId, secondEncounter);
+    expect(second.id).not.toBe(first.id);
+    expect(second.encounterArtifactId).toBe(secondEncounter);
+    expect((await getBattleByEncounter(secondEncounter))?.id).toBe(second.id);
+    // Both boards coexist under the one module — the module is not a key.
+    expect((await listBattlesByModule(moduleId)).map((row) => row.id).sort()).toEqual(
+      [first.id, second.id].sort(),
+    );
+    expect((await getBattleByEncounter(firstEncounter))?.id).toBe(first.id);
+  });
+
+  /**
+   * Race pin (docs/17 row 254): the arbiter moved from the v16 UNIQUE
+   * `&moduleId` index to the readwrite transaction inside
+   * `ensureBattleForEncounter`. Two seeds racing for ONE encounter must land on
+   * one row: under a bare read-then-put both reads would see an empty table and
+   * both puts would materialize a board; IndexedDB serializes the overlapping
+   * readwrite transactions, so the loser's read runs after the winner commits
+   * and finds its row.
+   */
+  it('two concurrent seeds for one encounter converge on one battle', async () => {
+    const moduleId = newId();
+    const encounterId = newId();
+    const [first, second] = await Promise.all([
+      ensureBattleForEncounter(campaignId, moduleId, encounterId),
+      ensureBattleForEncounter(campaignId, moduleId, encounterId),
+    ]);
     expect(second.id).toBe(first.id);
-    expect(await getBattleByModule(moduleId)).toBeDefined();
-    const other = await ensureBattle(campaignId, newId());
-    expect(other.id).not.toBe(first.id);
-  });
-
-  /**
-   * Race window pin (F5): the UNIQUE `&moduleId` index (Dexie v16) is the
-   * arbiter of "one live battle per module". A stale pre-put read (the
-   * concurrent-seed window) makes the second save hit the unique index —
-   * ensureBattle catches the ConstraintError and re-reads the winner's row
-   * instead of materializing a second battle. The rejection here is a
-   * name-exact ConstraintError; the REAL unique-index violation fires in
-   * the concurrent pin below and in the v15→v16 golden migration test.
-   */
-  it('converges on the winner when a stale read loses the unique race', async () => {
-    const moduleId = newId();
-    const winner = await ensureBattle(campaignId, moduleId);
-
-    const staleViolation = Object.assign(new Error('unique index violation'), {
-      name: 'ConstraintError',
-    });
-    const putSpy = vi.spyOn(db.battles, 'put').mockRejectedValueOnce(staleViolation);
-    try {
-      const raced = await ensureBattle(campaignId, moduleId);
-      expect(raced.id).toBe(winner.id);
-      expect(await db.battles.where('moduleId').equals(moduleId).count()).toBe(1);
-    } finally {
-      putSpy.mockRestore();
-    }
-  });
-
-  /**
-   * Deterministic deferred-promise interleave: both seeds' PUTS are parked
-   * on a gate that opens when the second put registers. By then both pre-put
-   * reads have completed and both saw an empty module — the real unique
-   * index then elects the first writer and the loser converges on its row.
-   */
-  it('two concurrent seeds for one module converge on one battle', async () => {
-    const moduleId = newId();
-    let parkedPuts = 0;
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const realPut = db.battles.put.bind(db.battles);
-    const putSpy = vi
-      .spyOn(db.battles, 'put')
-      .mockImplementation(((value: Battle) => {
-        parkedPuts += 1;
-        if (parkedPuts === 2) release();
-        return gate.then(() => realPut(value));
-      }) as never);
-    try {
-      const [first, second] = await Promise.all([
-        ensureBattle(campaignId, moduleId),
-        ensureBattle(campaignId, moduleId),
-      ]);
-      expect(second.id).toBe(first.id);
-      expect(await db.battles.where('moduleId').equals(moduleId).count()).toBe(1);
-    } finally {
-      putSpy.mockRestore();
-    }
+    expect(await db.battles.where('encounterArtifactId').equals(encounterId).count()).toBe(1);
   });
 });
 
@@ -230,14 +206,16 @@ describe('legacy rows (parse-normalize on read)', () => {
   }
 
   /** Stores the row RAW: the missing keys are the point (a pre-arc write). */
-  async function putLegacyRow(moduleId: string): Promise<void> {
-    await db.battles.put(legacyRow(moduleId) as unknown as Battle);
+  async function putLegacyRow(moduleId: string): Promise<string> {
+    const row = legacyRow(moduleId);
+    await db.battles.put(row as unknown as Battle);
+    return row.id;
   }
 
   it('materializes later-arc fields with their schema defaults on read', async () => {
     const moduleId = newId();
-    await putLegacyRow(moduleId);
-    const battle = await getBattleByModule(moduleId);
+    const id = await putLegacyRow(moduleId);
+    const battle = await getBattle(id);
     expect(battle).toBeDefined();
     expect(battle?.board.effects).toEqual([]);
     expect(battle?.board.entrance).toBeNull();
@@ -252,7 +230,7 @@ describe('legacy rows (parse-normalize on read)', () => {
     const moduleId = newId();
     const row = legacyRow(moduleId);
     await db.battles.put(row as unknown as Battle);
-    const battle = await getBattleByModule(moduleId);
+    const battle = await getBattle(row.id);
     if (battle === undefined) throw new Error('legacy row vanished');
     await patchBattle(battle.id, {});
     const stored = await db.battles.get(battle.id);
@@ -278,7 +256,7 @@ describe('normalize-on-write', () => {
   it('re-ensures a token for every statful PC artifact on every write', async () => {
     const pcId = await addPc('Serren');
     const moduleId = newId();
-    const battle = await ensureBattle(campaignId, moduleId);
+    const battle = await ensureBattleForEncounter(campaignId, moduleId, newId());
     expect(fighterTokens(battle.board).map((token) => token.artifactId)).toEqual([pcId]);
     // A second PC joins the party → the next write spawns it too.
     await addPc('Mira');
@@ -299,13 +277,13 @@ describe('normalize-on-write', () => {
         notes: '',
       },
     });
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     expect(battle.board.tokens).toEqual([]);
   });
 
   it('re-fills null NPC token HP from the artifact and clamps to [0, maxHp]', async () => {
     const npcId = await addNpc('Goblin', { hp: 7 });
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const token: BattleToken = {
       id: newId(),
       artifactId: npcId,
@@ -332,7 +310,7 @@ describe('normalize-on-write', () => {
 
   it('resolves fighter stats through artifacts and the frozen seed roster', async () => {
     const pcId = await addPc('Serren', { hp: 22 });
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
     // dex 14 → +2 modifier.
     const pc = requireStats(stats, pcId);
@@ -357,14 +335,14 @@ describe('normalize-on-write', () => {
       // The real Monster Core Wolf: Str +2, Dex +4, Con +1, Int -4, Wis +2, Cha -2.
       abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
     });
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
     expect(requireStats(stats, npcId).initiativeBonus).toBe(4);
   });
 
   it('never writes PC current HP onto the token — the pc artifact owns it', async () => {
     await addPc('Serren');
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const token = battle.board.tokens[0];
     if (token === undefined) throw new Error('PC token was not spawned');
     expect(token.currentHp).toBeNull();
@@ -380,7 +358,7 @@ describe('scrub on artifact delete', () => {
   it('removes a deleted NPC’s tokens; the battle survives if PCs remain', async () => {
     const pcId = await addPc('Serren');
     const npcId = await addNpc('Goblin');
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const npcToken: BattleToken = {
       id: newId(),
       artifactId: npcId,
@@ -399,20 +377,24 @@ describe('scrub on artifact delete', () => {
     };
     await saveBattleBoard(battle.id, { ...battle.board, tokens: [...battle.board.tokens, npcToken] });
     await deleteArtifact(npcId);
-    const after = await getBattleByModule(battle.moduleId);
+    const after = await getBattle(battle.id);
     expect(after?.board.tokens.map((token) => token.artifactId)).toEqual([pcId]);
     expect(after?.board.initiativeOrder).toEqual([]);
   });
 
-  it('deletes the battle when the last fighter token is gone and there is no map', async () => {
+  it('deletes a board that empties to nothing and has no provenance', async () => {
     const npcId = await addNpc('Goblin');
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    // The empty rule is about a board with NOTHING left — no fighters, no map
+    // and no owning encounter. A board that still names its encounter is that
+    // encounter's board and is never auto-deleted (docs/18 §5).
+    await patchBattle(battle.id, { encounterArtifactId: null });
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Goblin', maxHp: 7 }, 0, true, null);
     await saveBattleBoard(battle.id, { ...battle.board, tokens: [token] });
-    const before = await getBattleByModule(battle.moduleId);
+    const before = await getBattle(battle.id);
     expect(before !== undefined && !isBattleEmpty(before)).toBe(true);
     await deleteArtifact(npcId);
-    expect(await getBattleByModule(battle.moduleId)).toBeUndefined();
+    expect(await getBattle(battle.id)).toBeUndefined();
   });
 
 });
@@ -420,7 +402,7 @@ describe('scrub on artifact delete', () => {
 describe('stage reset', () => {
   it('restores the saved layout against current stats and PC roster', async () => {
     const npcId = await addNpc('Troll', { hp: 84 });
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Troll', maxHp: 84 }, 0, true, null);
     const opened = await saveBattleBoard(battle.id, {
@@ -449,17 +431,17 @@ describe('stage reset', () => {
   });
 
   it('refuses to reset without a saved stage (loud, no silent reset)', async () => {
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     await expect(resetBattleToStage(battle.id)).rejects.toThrow('No stage snapshot saved');
   });
 });
 
 describe('deleteBattleIfEmpty', () => {
   it('keeps battles that still have a map or provenance', async () => {
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     await patchBattle(battle.id, { encounterArtifactId: newId() });
     await deleteBattleIfEmpty(battle.id);
-    expect(await getBattleByModule(battle.moduleId)).toBeDefined();
+    expect(await getBattle(battle.id)).toBeDefined();
   });
 
   it('resolves a global library monster and keeps its HP token-owned (10-MILESTONE-6 C)', async () => {
@@ -481,7 +463,7 @@ describe('deleteBattleIfEmpty', () => {
     expect((await campaignArtifacts()).find((row) => row.id === monster.id)).toBeUndefined();
     const globals = await listGlobalArtifacts();
     expect(globals.map((row) => row.id)).toContain(monster.id);
-    const battle = await ensureBattle(campaignId, newId());
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, [
       ...(await campaignArtifacts()),
       ...(await listGlobalArtifacts()),

@@ -7,7 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
-import { getBattleByModule } from '@/db/battleRepo';
+import { listBattlesByModule } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -314,11 +314,16 @@ async function seedNpcRefBattle(): Promise<{ moduleId: string; npcId: string; pc
   return { moduleId: module.id, npcId: npc.id, pcId: pc.id };
 }
 
+/** Renders the ENCOUNTER-scoped table surface (docs/17 row 254): the route
+ * names the encounter the module's battle belongs to, read off the row. */
 async function renderSurface(moduleId: string): Promise<void> {
+  const target =
+    (await db.battles.where('moduleId').equals(moduleId).first())?.encounterArtifactId ??
+    '00000000-0000-4000-8000-0000000000ff';
   render(
-    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle`]}>
+    <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle/${target}`]}>
       <Routes>
-        <Route path="/c/:campaignId/m/:moduleId/battle" element={<BattleSurface />} />
+        <Route path="/c/:campaignId/m/:moduleId/battle/:encounterId" element={<BattleSurface />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -330,7 +335,7 @@ async function renderSurface(moduleId: string): Promise<void> {
 
 async function currentBattle(moduleId: string) {
   const battle = await actDrained(async () => {
-    const row = await getBattleByModule(moduleId);
+    const [row] = await listBattlesByModule(moduleId);
     if (row === undefined) throw new Error('battle row missing');
     return row;
   });
