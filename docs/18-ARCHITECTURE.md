@@ -2357,6 +2357,16 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **A per-row throw inside the v24 mob-copy migration would abort the Dexie upgrade and
+  lock the app shut** (docs/17 row 248, slice 1 — being closed by that row's remaining
+  slice). `repairMobCopies` names every KNOWN data condition with an explicit `continue`
+  and no catch-all, so an unexpected throw propagates: the upgrade transaction rolls
+  back (NO data loss) and `db.open()` rejects — the "refuse to open" shape the owner
+  explicitly REJECTED for this arc. The brief for the remaining slice requires per-row
+  isolation AND states the tension it must resolve: a caught error may be a DATA
+  condition or a CODE defect, so the unresolved entry must be loud and diagnosable
+  (the row and the error text reach the user's report) rather than a silent swallow —
+  AGENTS rule 1 forbids `catch`-and-continue around parsing.
 - **A LANDED row whose `sha=` is not on `origin/main` is DROPPED SILENTLY by the deploy's badge resolver**
   (docs/17 rows 250, 253). `scripts/buildStatus.mjs` takes the newest GATE GREEN LANDED record off
   `docs/20` and resolves that commit on HEAD's ancestry; when the sha was rebased away between the
