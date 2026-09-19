@@ -352,6 +352,42 @@ chained command, and never leave one uncommitted while a writer is gating.
 - Starving this box does not merely slow a build — it costs the owner his
   remote screen and can kill the harness itself (§Host hygiene 7).
 
+## The gate and the clock (owner-ratified 2026-09-19)
+
+Learned the hard way in one session; BINDING here, and the portable form lives in
+`docs/22` §The clock and the gate.
+
+1. **A gate NEVER runs in the foreground.** A full run takes minutes, and a
+   foreground run is minutes in which this session cannot act — the owner
+   interrupted one for exactly that reason. Start it as a BACKGROUND job, keep its
+   raw log in the workspace, and act on the harness's completion notice. Never hold
+   a turn open on it.
+2. **Never poll.** No `job_output` with `wait`, no sleep-and-check loops, no
+   repeated status reads. The harness notifies when a job settles, and that notice
+   IS the wake event (§Goal rounds vs. waiting). While waiting, do useful
+   non-conflicting work or end the turn.
+3. **Only ONE full gate can be pending.** The lock serializes them, so a second is
+   refused with **exit 9** — that is the lock WORKING, not a failure, and a refused
+   run is VOID. The COMPILE TIER deliberately takes no lock, so typecheck-only runs
+   proceed alongside a full one; never stack two full gates.
+4. **Quote exit codes exactly and never inflate them.** `0` = GATE GREEN. **`2` =
+   compile tier only: typecheck (plus lint under `GATE_CHECKS=all`) clean and the
+   SUITE DID NOT RUN — never report it as "green" and never as "the gate passed".**
+   `9` = refused by the lock, VOID. `1` = a real failure. The gate prints this
+   distinction itself; read it rather than paraphrasing it.
+5. **A docs-only landing has a cheap tier**: `GATE_TESTS=0 GATE_CHECKS=all bash
+   scripts/gate.sh` — typecheck + lint, no suite, no lock. Use it for records and
+   rules; the expensive tier is owed when CODE changes. Note the PARITY case: with
+   nothing ahead of `origin/main` the diff is EMPTY, so the gate classifies it as
+   full and runs the WHOLE suite — an already-pushed docs delta does not get the
+   cheap skip.
+6. **NEVER pipe a gate through `tail`/`head`.** The documented reason was losing a
+   failing assertion; the second reason is worse. A pipeline's exit status is the
+   LAST command's, so `gate | tail` returns 0 whatever the gate did, and an
+   `&& git commit && git push` chain then lands UNVERIFIED work. MEASURED
+   2026-09-19: this session pushed a commit whose message claimed "compile tier
+   GREEN" that had never been read, and had to correct it forward.
+
 ## Host hygiene (load discipline)
 
 Real incident, owner-visible (the host became unusable and DSH had to be
@@ -688,3 +724,30 @@ death, not a description of a job.
   restart this session at any time: that is a handover, not a loss. While all
   work is delegated the goal stays paused and the session waits in silence
   (§Goal rounds vs. waiting).
+- **6 · The field discipline (owner-ratified 2026-09-19).** Six rules that made
+  this role work, each of which cost something to learn:
+  - **A fork goes to the OWNER.** When a probe or a brief uncovers a DECISION — a
+    data-loss-grade arm for rows that cannot be converted, an identity/ownership
+    conflict, a scope boundary — STOP and put it to the owner with the options,
+    ONE recommended, and say which option you REJECT and why. Never choose
+    silently, and never present a fork as a detail. Real cases from one session:
+    the unconvertible-mob arm, the opaque cache token, whether the cast path was
+    in scope.
+  - **A discovery lands on the BOARD before it is reported.** The report to the
+    owner is a SUMMARY of a record that already exists on disk, carrying its
+    evidence, its priced options and its loud unknowns — so a session death loses
+    nothing and a successor can brief from it.
+  - **A running read-only probe is STEERED, not restarted.** New owner evidence
+    goes to it with `send_message` (delivered at its next step boundary), and the
+    probe is deleted the moment its report is consumed.
+  - **Sequencing is PROVEN, not predicted.** Before dispatching a second writer,
+    read the first writer's worktree (`git -C <worktree> status --short`). A
+    shared `src/` file means SERIALIZE, so the overlap is a measurement rather
+    than a surprise at rebase time.
+  - **A tripwire edit has a DIRECTION.** A writer may edit a duplication baseline
+    only to DELETE entries for copies that were folded. An edit that ADDS an entry
+    blesses a new duplicate and is rejected at verification.
+  - **The dispatcher's own errors go in the RECORD.** A masked gate exit code, an
+    inflated result, an unlisted delete — each is written into the commit body or
+    the board, never quietly corrected. The owner cannot calibrate what he cannot
+    see.

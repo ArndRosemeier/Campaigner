@@ -652,6 +652,45 @@ worktree, gate, pins, docs, BLOCKED clause) → dispatch (≤2 writers) → veri
 (sha, own gate, own injection, docs) → retire (session, worktree, branch) → board
 → report.
 
+## The clock and the gate (owner-ratified 2026-09-19)
+
+The dispatcher's contract with the CLOCK, and the part of this document that is
+most portable. Every item was learned by burning one: a foreground gate that
+blocked the session for minutes, a polled job, a second gate refused by the first,
+an exit code read as a verdict, and a gate's output piped through `tail` so its
+exit status was lost — after which unverified work was pushed under a message
+claiming a pass.
+
+1. **A long verification NEVER runs in the foreground.** If a check takes minutes,
+   run it as a BACKGROUND job, keep its raw log in the workspace, and act on the
+   completion notice. A foreground run is minutes in which the agent cannot act,
+   which is not a trade the owner will accept.
+2. **Never poll.** No blocking reads, no sleep-and-check loops, no repeated status
+   peeks. If the harness notifies when work settles, that notice IS the wake event;
+   if it does not, say so and choose a different mechanism rather than spinning.
+   While waiting, do useful non-conflicting work, or end the turn.
+3. **One expensive check at a time, enforced by a LOCK, not a glance.** Two
+   observers can look in the same instant and both see "free", so the second
+   starter must be REFUSED loudly by the lock itself. A refusal is the lock
+   WORKING: never a failure, never evidence, and the refused run is VOID. A cheap
+   check that touches nothing shared should NOT take the lock, so it can run
+   alongside the expensive one.
+4. **Exit codes are the vocabulary, and they must never be inflated.** Write each
+   code's meaning into the runner and quote it exactly: for example `0` = fully
+   verified; `2` = the cheap tier ran and the expensive one DID NOT; a "busy" code
+   = refused and VOID. **"It compiles" is never "it passed."**
+5. **Pick the cheapest tier that answers the question the change actually asks.**
+   Records and prose need the compile/lint tier; behaviour needs the suite. Note
+   the PARITY trap: a diff computed against the remote base is EMPTY once
+   everything is pushed, so a "docs-only" skip can silently become a full run —
+   decide the tier from what CHANGED, not from what happens to be uncommitted.
+6. **Never pipe a check through `tail`/`head`.** Two reasons, the second worse
+   than the first: it destroys the failing evidence (the test's name and its
+   expected/received block), and — because a pipeline's exit status is the LAST
+   command's — `check | tail` returns success whatever the check did, so an
+   `&& commit && push` chain lands unverified work beneath a message claiming a
+   pass. Keep the RAW log and quote from the file.
+
 **What to adapt, not copy**
 
 - Paths, the lock's name, chunk names, the reconciler's specific checks, and the
@@ -661,12 +700,15 @@ worktree, gate, pins, docs, BLOCKED clause) → dispatch (≤2 writers) → veri
   roles need equivalents: a way to run a second agent with its own context, a
   way to see which agents are live (`list_agents` here, plus the on-disk
   `~/.dsh/sessions/<slug>` registry the reconciler reads), and a way to retire
-  them. **Know which of those your harness actually has**: on this box the core
-  provides `send_message`/`interrupt_agent`/`list_agents` and the goal tools,
-  but there is NO agent-facing subagent-delete (the vendored
-  `dsh-plugin-subagent-delete` is absent), so a finished writer is retired by
-  removing its branch and worktree, and its registry entry is the runtime's to
-  drop. Without a registry, the
+  them. **Know which of those your harness actually has, and VERIFY it rather than
+  assuming**: on this box the core provides
+  `send_message`/`interrupt_agent`/`list_agents` and the goal tools, and a
+  community plugin (`dsh-plugin-subagent-delete`, added to the profile with
+  `dsh plugin --profile web add`, docs/17 row 245) supplies the
+  delete/release pair that the core deliberately omits — so a finished writer is
+  retired by BOTH removing its branch and worktree AND deleting its session. On a
+  harness without a delete, the branch and worktree are all you can retire, and
+  the registry entry is the runtime's to drop. Without a registry, the
   board's `IN-FLIGHT` records become your only liveness signal — check them
   against the filesystem instead.
 - The **host limits**: replace the 3000 MB cap and the two-writer ceiling with
