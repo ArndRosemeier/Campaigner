@@ -134,13 +134,12 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
       needles: [
         ['mergeAliasNames(', 1],
         ['sameAliasName(', 1],
-        // docs/17 row 166: the bestiary lookup. This file's creature-name
-        // comparison was the LAST hand-rolled one in `src/`, and the count is
-        // what reds a revert — reverting it to
-        // `creature.name.trim().toLowerCase() === wanted.toLowerCase()` leaves
-        // every behavioural pin green except the two composition pins, and this
-        // count reds too.
-        ['sameCreatureName(', 1],
+        // docs/17 rows 166 → 248b: this file's creature-name comparison MOVED to
+        // the ONE pure library seam when `libraryCitationForEntity` began
+        // delegating to `domain/libraryCreature`. The count is a REVERT pin, so
+        // it moved WITH the behaviour (its new entry is below) instead of being
+        // dropped here: a count that merely disappears stops reddening a
+        // hand-rolled comparison reintroduced at EITHER site.
       ],
     },
     'features/campaign/components/campaign-tree.tsx': {
@@ -185,6 +184,14 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     'domain/entityNormalization.ts': { needles: [['comparableName(', 23]] },
     'llm/roomBudget.ts': { needles: [['sameAliasName(', 1]] },
     'llm/canvasChat.ts': { needles: [['sameAliasName(', 1]] },
+    // The creature-name comparison `features/modules/entity-batch.ts` USED to
+    // carry, MOVED here by docs/17 row 248b when the library name match became
+    // ONE pure, tx-callable seam. Same revert-pin job as every entry above:
+    // reverting this line to
+    // `creature.name.trim().toLowerCase() === wanted.toLowerCase()` keeps every
+    // behavioural pin green (the two spellings agree on ASCII input) and THIS
+    // count reds.
+    'domain/libraryCreature.ts': { needles: [['sameCreatureName(', 1]] },
   };
 
   function srcFiles(): string[] {
