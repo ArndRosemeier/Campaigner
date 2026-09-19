@@ -17,6 +17,7 @@ import {
   patchBattle,
   saveBattleBoard,
   saveBattleStage,
+  saveBattleView,
 } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
 import type * as toastModule from '@/lib/toast';
@@ -31,6 +32,7 @@ import { battleGridStyle } from '@/domain/battle/gridSnap';
 import { isBoardGestureActive } from '@/domain/battle/gestureGate';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { BATTLE_VIEW_PERSIST_DEBOUNCE_MS } from '@/features/play/battle/use-battle-view';
 
 // Wrap (not replace) saveBattleBoard so veil-drag tests can count commits —
 // zero writes while a drag is live, exactly one on release. Every other test
@@ -4167,5 +4169,165 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     await flushAsyncUpdates();
     expect(tokenEl.className).toContain('cursor-grab');
     expect(tokenEl.className).not.toContain('cursor-grabbing');
+  });
+});
+
+/**
+ * The persisted VIEW state (docs/17 row 262b). The failure these guard is
+ * invisible on a desktop: an iOS tab discard or a reload flipped the table back
+ * to GM view with mob cards and NPC stat blocks in front of the players,
+ * because `playerSafe` was component-local `useState`.
+ *
+ * jsdom cannot prove the iOS discard itself — there is no tab to discard. What
+ * is provable here is the property that discard depended on: the view is
+ * restored FROM THE ROW before anything renders from it, so the first paint of
+ * a player-safe table is already player-safe, and a broken stored view fails
+ * safe and loud instead of flipping to the GM's screen.
+ */
+describe('persisted battle view (row 262b)', () => {
+  // The file-level toast mock keeps its call history across tests (the
+  // neighbours clear it by hand before asserting "not called"); scope ours the
+  // same way so one test's loud fallback cannot be read as another's silence.
+  beforeEach(() => {
+    vi.mocked(toastError).mockClear();
+  });
+
+  it('restores player view with its zoom/pan/selection, and NO GM frame is ever committed', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const seeded = await currentBattle(moduleId);
+    const troll = seeded.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll token missing');
+    await actDrained(() =>
+      saveBattleView(seeded.id, {
+        playerSafe: true,
+        zoom: 2,
+        pan: { x: 10, y: -5 },
+        selectedTokenId: troll.id,
+        selectedVeilId: null,
+        selectedEffectId: null,
+        selectedKeyRoomId: null,
+      }),
+    );
+
+    // Every value the surface root's `data-player-safe` ever took, and every
+    // GM-only node React ever inserted. A hydrate-after-mount implementation
+    // commits the root as GM first (or inserts the GM-only dice button), and
+    // both show up here: an attribute record carries the OLD value, which is
+    // what a transition to `true` would otherwise hide.
+    const playerSafeValues: (string | null)[] = [];
+    let gmNodesCommitted = 0;
+    const surfaceSelector = '[data-testid="battle-surface"]';
+    const gmSelector = '[data-testid="open-dice-roller"]';
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === 'attributes') playerSafeValues.push(record.oldValue);
+        for (const node of record.addedNodes) {
+          if (!(node instanceof HTMLElement)) continue;
+          const surface = node.matches(surfaceSelector) ? node : node.querySelector(surfaceSelector);
+          if (surface !== null) playerSafeValues.push(surface.getAttribute('data-player-safe'));
+          if (node.matches(gmSelector) || node.querySelector(gmSelector) !== null) {
+            gmNodesCommitted += 1;
+          }
+        }
+      }
+    });
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeOldValue: true,
+      attributeFilter: ['data-player-safe'],
+    });
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+    observer.disconnect();
+
+    const surface = screen.getByTestId('battle-surface');
+    expect(surface.getAttribute('data-player-safe')).toBe('true');
+    // The whole point: the table was NEVER committed as GM view.
+    expect(playerSafeValues).not.toContain('false');
+    expect(gmNodesCommitted).toBe(0);
+    expect(screen.queryByTestId('open-dice-roller')).toBeNull();
+    // The view itself came back: zoom, pan and the rail selection.
+    expect(screen.getByText('200%')).toBeInTheDocument();
+    const transformed = screen
+      .getByTestId('battle-board')
+      .querySelector('[data-board-background="true"]');
+    expect(transformed?.getAttribute('style')).toContain('translate(10px, -5px)');
+    expect(screen.getByTestId('selection-card-name')).toHaveTextContent('Troll');
+    // …and the selected stat block is still NOT in the players' DOM.
+    expect(screen.queryByTestId('selection-card-statblock')).toBeNull();
+  });
+
+  it('round-trips the flag and zoom through the row, so a reload keeps Player view', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText('Zoom in'));
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+
+    // The gesture write is debounced; the player-safe flag is NOT (it is a
+    // safety state), so the row must already carry both once the window passes.
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, BATTLE_VIEW_PERSIST_DEBOUNCE_MS + 150);
+      });
+      await flushAsyncUpdates();
+    });
+    const persisted = await currentBattle(moduleId);
+    expect(persisted.view).toMatchObject({ playerSafe: true, zoom: 1.25, pan: { x: 0, y: 0 } });
+
+    // The reload: a fresh mount from the same row is player-safe from its first
+    // commit, with the zoom the GM left it at.
+    cleanup();
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('battle-surface').getAttribute('data-player-safe')).toBe('true');
+    expect(screen.getByText('125%')).toBeInTheDocument();
+  });
+
+  it('a CORRUPT stored view is the named player-safe fallback, said out loud — never a silent GM reset', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const seeded = await currentBattle(moduleId);
+    // Bypasses the schema on purpose: a hand-edited or half-written row is
+    // exactly the shape `resolveBattleView` has to survive.
+    await actDrained(() =>
+      db.battles.update(seeded.id, { view: { playerSafe: 'yes', zoom: 'wide' } }),
+    );
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+
+    expect(screen.getByTestId('battle-surface').getAttribute('data-player-safe')).toBe('true');
+    expect(screen.queryByTestId('open-dice-roller')).toBeNull();
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining('saved battle view could not be read'),
+    );
+  });
+
+  it('an ABSENT stored view restores the named default quietly — a fresh board is GM view', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const seeded = await currentBattle(moduleId);
+    expect(seeded.view).toBeNull();
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+
+    expect(screen.getByTestId('battle-surface').getAttribute('data-player-safe')).toBe('false');
+    expect(screen.getByTestId('open-dice-roller')).toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalledWith(
+      expect.stringContaining('saved battle view could not be read'),
+    );
+  });
+
+  it('reports the honest wake-lock status on the surface root (unsupported in jsdom — no pretence)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('battle-surface').getAttribute('data-wake-lock')).toBe('unsupported');
   });
 });

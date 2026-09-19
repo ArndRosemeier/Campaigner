@@ -16,8 +16,10 @@ import { toastError } from '@/lib/toast';
  *
  * ALL FOUR are on this seam now (the board and the artifact editor joined in
  * ledger row 118, via the same pending-gated flush plus one
- * `registerPageFlush` call — nothing else). A fifth debounced writer belongs
- * here too: register it, do not add a second listener.
+ * `registerPageFlush` call — nothing else). A FIFTH joined in docs/17 row 262b:
+ * the battle table's persisted VIEW (`features/play/battle/use-battle-view`),
+ * whose zoom/pan/selection would otherwise be lost to the same freeze.
+ * Register it, do not add a second listener.
  *
  * The browser's own signals for "this page is going away or being put to
  * sleep" are `pagehide` and `visibilitychange` → `hidden`, and they are what

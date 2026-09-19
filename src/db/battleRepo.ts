@@ -1,5 +1,6 @@
 import type { Artifact, Battle, BattleBoard, FighterStatsLookup, Id } from '@/domain';
 import { battleSchema } from '@/domain';
+import type { BattleView } from '@/domain/battle/view';
 import {
   applyStageReset,
   ensurePcTokens,
@@ -139,6 +140,7 @@ export async function ensureBattleForEncounter(
       reseed: null,
       seedFighters: [],
       board: emptyBoard(),
+      view: null,
     };
     return saveBattle(created);
   });
@@ -170,6 +172,19 @@ export async function saveBattleBoard(id: Id, board: BattleBoard): Promise<Battl
 /** Replaces the stage snapshot (⚑ Set stage). */
 export async function saveBattleStage(id: Id, stage: BattleBoard['stage']): Promise<Battle> {
   return patchBattle(id, { board: { ...(await requireBoard(id)), stage } });
+}
+
+/**
+ * Persists the surface's VIEW state (docs/17 row 262b) — the player-safe flag,
+ * zoom/pan and the rail selections. Rides the EXISTING `patchBattle` row path
+ * (never a second persistence mechanism): the board commit path and this one
+ * merge over the row, so a board write and a view write cannot clobber each
+ * other. The caller (`features/play/battle/use-battle-view`) is responsible for
+ * debouncing gestures and for landing the write on the page-hide seam; this is
+ * the ONE typed writer of `Battle['view']`.
+ */
+export async function saveBattleView(id: Id, view: BattleView): Promise<Battle> {
+  return patchBattle(id, { view });
 }
 
 /**

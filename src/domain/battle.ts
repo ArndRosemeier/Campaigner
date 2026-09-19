@@ -264,6 +264,19 @@ export const battleSchema = z.object({
     .default(null),
   board: battleBoardSchema,
   /**
+   * The surface's persisted VIEW state — the player-safe flag, the board's
+   * zoom/pan and the rail selections (docs/17 row 262b). A sibling of `board`,
+   * not part of it: the board is domain material replaced wholesale by the
+   * drag commit path, while this is presentation state the SURFACE owns.
+   *
+   * Deliberately `unknown`, parsed by `domain/battle/view.resolveBattleView`
+   * and NOT by this schema: a corrupt preference must fail LOUD and SAFE (the
+   * named player-safe fallback) instead of throwing here and taking the whole
+   * battle row — and the GM's board — down with it. `null`/absent is the NAMED
+   * default; see `view.ts` for both constants.
+   */
+  view: z.unknown().default(null),
+  /**
    * Monster fighters seeded from rulebook/inline roster entries have NO
    * backing artifact; their resolved stats are frozen here at seed time
    * (M5-C). The synthetic `id` is what the repo's stats lookup keys on

@@ -26,6 +26,7 @@ import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken,
 import { CANONICAL_ROOM_MARKERS, isCastCreatureNpc } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
+import { BATTLE_ZOOM_MAX, BATTLE_ZOOM_MIN } from '@/domain/battle/view';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
 import { modulePath } from '@/app/routes';
 import {
@@ -112,6 +113,8 @@ import { DiceRoller } from '@/features/dice/DiceRoller';
 import type { DiceRollResult, RollIntent } from '@/features/dice/types';
 import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { useBattleState } from './use-battle';
+import { useBattleView } from './use-battle-view';
+import { useScreenWakeLock } from './use-screen-wake-lock';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { SpawnPicker } from './SpawnPicker';
 import { Button } from '@/components/ui/button';
@@ -174,8 +177,6 @@ import { cn } from '@/lib/utils';
  */
 const ENTRANCE_ROTATION = { north: 0, east: 90, south: 180, west: 270 } as const;
 
-const ZOOM_MIN = 0.35;
-const ZOOM_MAX = 4;
 // The tap/drag threshold lives in the gesture machine (single source) —
 const DRAG_THRESHOLD_PX = GESTURE_TAP_THRESHOLD_PX;
 
@@ -200,8 +201,12 @@ export function BattleSurface(): JSX.Element {
   const navigate = useNavigate();
 
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  // The iPad must not sleep at the table (docs/17 row 262b): the lock is held
+  // for as long as THIS surface is mounted, released on unmount and
+  // re-acquired on page resume. The status is rendered as `data-wake-lock` so
+  // the honest answer (unsupported / held / refused) is observable rather than
+  // assumed; an unsupported browser is a no-op, never a pretence.
+  const wakeLockStatus = useScreenWakeLock();
   const [liveDrag, setLiveDrag] = useState<LiveDrag | null>(null);
   // Live-drag frame throttle (iPad batch H): pointermove streams run hotter
   // than the display, and every setLiveDrag re-renders the whole surface
@@ -226,18 +231,15 @@ export function BattleSurface(): JSX.Element {
     widthCells: number;
     heightCells: number;
   } | null>(null);
-  const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
-  const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
-  const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
   // Fullscreen token portrait (image + name only): opened by a player-safe
   // token tap or by the sidebar selection-card portrait button (both modes),
   // closed by Esc/tap-outside/the close button. GM board taps stay
   // select-only so the rail stays usable.
   const [lightboxTokenId, setLightboxTokenId] = useState<BattleTokenId | null>(null);
-  // GM-only room-key marker selection (owner-ratified room-keys/treasure
-  // arc): the layout-room id whose key card shows in the rail.
-  const [selectedKeyRoomId, setSelectedKeyRoomId] = useState<string | null>(null);
-  const [playerSafe, setPlayerSafe] = useState(false);
+  // `zoom`, `pan`, the three rail selections, the GM room-key selection and
+  // `playerSafe` are NOT local state any more: they are the surface's persisted
+  // VIEW (`useBattleView`, docs/17 row 262b), restored from the battle row so a
+  // reload or an iOS tab discard cannot flip the table back to GM view.
   const [stageArmed, setStageArmed] = useState(false);
   const [reseedArmed, setReseedArmed] = useState(false);
   // Mid-fight spawn picker (spawn-picker arc): ONE Spawn button opens the
@@ -277,6 +279,26 @@ export function BattleSurface(): JSX.Element {
     contentSize.w,
     contentSize.h,
   );
+
+  // The persisted view of THIS battle (docs/17 row 262b): resolved from the
+  // row in the same render it arrives, so the first paint after a restore is
+  // already player-safe — no GM frame ever reaches the DOM.
+  const {
+    playerSafe,
+    zoom,
+    pan,
+    selectedTokenId,
+    selectedVeilId,
+    selectedEffectId,
+    selectedKeyRoomId,
+    setPlayerSafe,
+    setZoom,
+    setPan,
+    setSelectedTokenId,
+    setSelectedVeilId,
+    setSelectedEffectId,
+    setSelectedKeyRoomId,
+  } = useBattleView(battle);
 
   // THE portrait question, asked ONCE per board (docs/11 D6 / docs/17 row
   // 165): every token's art is this campaign's presentation row for the
@@ -1734,6 +1756,7 @@ export function BattleSurface(): JSX.Element {
       className={cn('flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100', playerSafe && 'select-none')}
       data-testid="battle-surface"
       data-player-safe={playerSafe ? 'true' : 'false'}
+      data-wake-lock={wakeLockStatus}
     >
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 p-2" data-testid="battle-toolbar">
@@ -2479,7 +2502,7 @@ export function BattleSurface(): JSX.Element {
 }
 
 function clampZoom(value: number): number {
-  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value));
+  return Math.max(BATTLE_ZOOM_MIN, Math.min(BATTLE_ZOOM_MAX, value));
 }
 
 /** Initiative reconcile effect: prune covered/hidden, auto-roll newcomers —
