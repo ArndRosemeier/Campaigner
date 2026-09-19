@@ -218,9 +218,10 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
      other change lands — never stacked behind a second unverified commit. The
      writer's own landing report still carries a FULL green gate on its slice;
      this tier covers the integrated tree. A background run's log MUST go to the
-     workspace (the gate's default `GATE_LOGDIR`), never `/tmp` — `/tmp` is
-     private per call here, so a `/tmp` log dies with the process and a red
-     result becomes undiagnosable.
+     workspace (the gate's default `GATE_LOGDIR`), never `/tmp` — under the
+     restricted sandbox `/tmp` is per-call, so a `/tmp` log dies with the
+     process, and a path that is trustworthy only while the sandbox is
+     permissive is not a place to keep evidence.
   **The honest cost, recorded rather than glossed:** `origin/main` can carry an
   UNVERIFIED commit for the ~10 minutes the full tier runs. That is acceptable
   ONLY because the app has ONE user (the owner) and a red result is fixed
@@ -280,19 +281,23 @@ used:
    report instead of resolving.
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
-5. **Worktree setup (verified recipe — REWRITTEN 2026-09-17 for this harness).**
-   Put the worktree INSIDE the repo, under `<repo>/worktrees/<slice>`. The old
-   `/tmp/<slice>` recipe is IMPOSSIBLE here and was measured to be: `/tmp` is a
-   per-call tmpfs — it ACCEPTS a write, and the file is GONE in the next bash
-   call (measured 2026-09-19; the earlier note read "read-only", which is the
-   safer half of the truth) — so a worktree created in one call does not exist
-   for the next — a writer following the old recipe would edit the MAIN tree and
-   destroy the parallel-writer guarantee. Outside-the-repo is impossible too: the
-   workspace's PARENT is read-only. In-repo is the only writable location, so
-   `eslint.config.js` ignores `worktrees` (an unignored in-repo worktree would be
-   swept into the main tree's `eslint .` run — the hazard the old warning named,
-   now handled at the source instead of by moving the worktree). `worktrees/` is
-   gitignored, so the main tree stays clean. Symlinking the main tree's
+5. **Worktree setup (verified recipe — IN-REPO, and it binds in EVERY sandbox
+   mode).** Put the worktree INSIDE the repo, under `<repo>/worktrees/<slice>`.
+   The `/tmp/<slice>` recipe is rejected because it depends on the FILE SANDBOX
+   MODE, which is not ours to rely on: under `workspace-write` the shell is a
+   bwrap sandbox with `--tmpfs /tmp`, so `/tmp` is PER-CALL — a write succeeds
+   and the file is GONE in the next bash call (measured 2026-09-19) — and a
+   worktree created there does not survive to the next call, so a writer
+   following the old recipe would edit the MAIN tree and destroy the
+   parallel-writer guarantee. Under `danger-full-access` `/tmp` is an ordinary
+   persistent tmpfs and the workspace's parent is writable too, but IN-REPO
+   STAYS THE ONE RECIPE: a location that exists only while the mode is
+   permissive breaks silently the moment the mode is not, and the mode has
+   changed under this workspace at least once (docs/17 row 244). `worktrees/` is
+   gitignored and ignored by `eslint.config.js` (an unignored in-repo worktree
+   would be swept into the main tree's `eslint .` run — the hazard the old
+   warning named, now handled at the source instead of by moving the worktree),
+   so the main tree stays clean. Symlinking the main tree's
    `node_modules` still does NOT work — 28 test files fail with `Denied ID
    …/pdfjs-dist/legacy/build/pdf.worker.mjs?url` from Vite's `server.fs.allow`
    while lint and typecheck still pass, so it reads as a real regression.
@@ -406,8 +411,9 @@ the config default, and it holds for whoever forgets. Binding rules:
    by PID.
 5. **Nothing outlives the writer.** Scratch harnesses live under that
    writer's own worktree (or the gate's workspace `.gate-logs`), never `/tmp`
-   — `/tmp` is per-call here (a write succeeds and then vanishes, §Parallel
-   writers 5); every process
+   — it is per-call under the RESTRICTED sandbox (a write succeeds and then
+   vanishes, §Parallel writers 5), and the workspace is the location that works
+   in every mode; every process
    it starts is foreground or killed before it reports, and load-generating
    scripts are DELETED rather than left executable.
 6. **The dispatcher verifies the host, not just the diff**: `uptime` and a
@@ -429,8 +435,10 @@ the config default, and it holds for whoever forgets. Binding rules:
      can look in the same instant, both see "free", and both start. Acquire an
      atomic lock instead (`mkdir` succeeds or it does not), and keep `pgrep`
      for the foreign suites we cannot lock out (the owner's other DSH project).
-     **The lock is NOT `/tmp`**: `/tmp` is per-call, so a `/tmp` lock is
-     invisible to the next bash call and excludes nothing (row 232). The lock is
+     **The lock is NOT `/tmp`**: `/tmp` is per-call under the RESTRICTED sandbox,
+     so a `/tmp` lock is invisible to the next bash call and excludes nothing
+     (row 232) — and a lock that holds only while the sandbox is permissive is
+     not a lock. The lock is
      `<repo>/.campaigner-lock`, derived from the git common dir so it is the SAME
      path from the main tree and every worktree, and `scripts/gate.sh` /
      `scripts/board.sh` take it themselves — use the gate, never hand-roll a lock.

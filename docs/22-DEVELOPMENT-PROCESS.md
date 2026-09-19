@@ -245,10 +245,12 @@ The human's instruction is INTENT, not design.
 `git commit` commits the whole index — file disjointness does NOT protect the
 commit phase (a real purge commit swept a concurrent writer's staged feature
 work under the wrong subject). So: one worktree per writer. WHERE it lives is
-harness-specific, and getting it wrong is measured, not theoretical: on this
-harness `/tmp` is a per-call tmpfs (a write succeeds, then vanishes — measured
-2026-09-19), so a worktree created there in
-one call does not exist for the next — the recipe is IN-REPO, under
+harness-specific, and getting it wrong is measured, not theoretical: under a
+RESTRICTED file sandbox `/tmp` is a per-call tmpfs (a write succeeds, then
+vanishes — measured 2026-09-19), so a worktree created there in
+one call does not exist for the next — and a location that is reliable only
+while the sandbox is permissive is not a location. The recipe is therefore
+IN-REPO, under
 `<repo>/worktrees/<slice>` (gitignored, and ignored by `eslint.config.js`, so it
 is NOT swept into the main tree's lint run), installed with a plain
 `pnpm install --frozen-lockfile`. Symlinked `node_modules` does NOT work (28 test
@@ -403,8 +405,9 @@ forward IMMEDIATELY, never stacked behind another unverified commit.
 
 **Two mechanical requirements** this model adds, both learned the hard way here:
 a background run's log must live in the WORKSPACE (`GATE_LOGDIR` now defaults
-there) — a `/tmp` log is invisible to every later shell in this harness and a red
-result becomes undiagnosable; and the lock must be on a shared path before two
+there) — under a restricted sandbox a `/tmp` log is invisible to every later
+shell and a red result becomes undiagnosable, and the workspace works in every
+mode; and the lock must be on a shared path before two
 gates can be trusted to exclude each other.
 
 ---
