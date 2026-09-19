@@ -2356,6 +2356,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **A LANDED row whose `sha=` is not on `origin/main` is DROPPED SILENTLY by the deploy's badge resolver**
+  (docs/17 rows 250, 253). `scripts/buildStatus.mjs` takes the newest GATE GREEN LANDED record off
+  `docs/20` and resolves that commit on HEAD's ancestry; when the sha was rebased away between the
+  writer's landing and the push — the real case: row 253 recorded `sha=653e37f`, its PRE-rebase
+  landing, while `origin/main` carried `1bc8d11` — the row does not resolve and is skipped WITHOUT a
+  word, so the badge credits the next-older verified landing instead. The DIRECTION is safe: any code
+  the skipped landing changed still sits inside `git diff <older verified> HEAD`, so the badge reads
+  `wip` and never `verified`. But the record is wrong and a landing that WAS verified loses its credit,
+  which is the same failure class row 250 found live against this same field. The board's convention is
+  therefore explicit, and it is what row 247 did: **the first bare hex token after `sha=` is the commit
+  that is ON `origin/main`; a rebased-away original goes in the prose after it**
+  (`sha=68a401b (rebased from 98a935b; …)`). A board-wide audit on 2026-09-19 checked all 77 LANDED rows
+  against `origin/main` and found exactly this one offender, now corrected. NOT yet hardened in code:
+  the resolver could NAME a verified claim it had to drop rather than passing over it in silence.
 - **FOLDED (docs/17 row 220): the single-artifact GM export's OWN stat block
   now goes through the text→blocks rule** (§2.3, docs/17 row 146). The history
   is kept because the deferral's reason was right and is why the fix had to be a
