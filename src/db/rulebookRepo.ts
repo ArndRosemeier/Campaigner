@@ -49,11 +49,27 @@ export async function listRulebooks(): Promise<Rulebook[]> {
  * every existing caller (`features/spells/SpellsPage`, `searchRules` itself)
  * is unchanged and there is still exactly ONE spelling.
  */
-export async function listReadyRulebooks(system?: GameSystem): Promise<Rulebook[]> {
-  const books = await listRulebooks();
+/**
+ * THE ready-book rule — the ONE spelling (docs/17 row 255c), shaped as a FILTER
+ * so a Dexie TRANSACTION can use it: the copy-on-write spell lookup inside
+ * `db/mobCopyRepair` cannot call the `db`-bound `listReadyRulebooks` from an
+ * upgrade body, re-spelled the predicate, and `ready-book-seam.test.ts` reds a
+ * second spelling by file name. The predicate stays spelled as the filter arrow
+ * this file has always carried, because that spelling IS what the pin's needle
+ * names — so the rule moved into a shared filter rather than into a named
+ * boolean, and both callers go through it.
+ */
+export function readyBooksOf<T extends Pick<Rulebook, 'status' | 'system'>>(
+  books: readonly T[],
+  system?: GameSystem,
+): T[] {
   return books.filter(
     (book) => book.status === 'ready' && (system === undefined || book.system === system),
   );
+}
+
+export async function listReadyRulebooks(system?: GameSystem): Promise<Rulebook[]> {
+  return readyBooksOf(await listRulebooks(), system);
 }
 
 /** The same answer as IDs — the shape a chunk read takes. */

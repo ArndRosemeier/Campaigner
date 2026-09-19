@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { COPIED_SPELL_ENTRY_KEY } from '@/domain/statblockFields';
 import { errorMessage } from '@/lib/errors';
 
 /**
@@ -152,6 +153,16 @@ function normalizeNode(node: unknown): Record<string, unknown> {
     for (const [key, rawProperty] of Object.entries(properties)) {
       if (rawProperty === null || typeof rawProperty !== 'object') {
         throw new StrictSchemaError(`property "${key}" is not a schema object`);
+      }
+      if (key === COPIED_SPELL_ENTRY_KEY) {
+        // The COPY-ONLY key (docs/17 row 255c): a stored library payload a copy
+        // carries so it resolves with the library absent. An LLM prompt must
+        // never be asked to author one, so it is dropped from the emitted
+        // schema exactly like the free-form `extras` record above while the
+        // runtime schema keeps it. It is an OBJECT (a transformed record), not
+        // a bare record node, so `isRecordNode` cannot see it — and its nested
+        // record is what reddened the strict-subset walk before this.
+        continue;
       }
       if (isRecordNode(rawProperty as Record<string, unknown>)) {
         // Free-form record (e.g. StatBlock.extras): strict mode cannot

@@ -335,6 +335,21 @@ const spellDataSchemaBase = spellDataObjectSchema.transform((data) => ({
 
 export const spellDataSchema = spellDataSchemaBase;
 
+/**
+ * The COPY-ONLY payload schema: the transform-free OBJECT shape (docs/17 row
+ * 255c). A copy is STORED in this shape, and the copy key rides a schema every
+ * LLM contract embeds — and `z.toJSONSchema` cannot represent a transform AT
+ * ALL, so embedding the transforming `spellDataSchema` above made the whole
+ * stat-block and encounter-brief strict conversion THROW (measured: "Transforms
+ * cannot be represented in JSON Schema"), which no amount of dropping the key
+ * from the EMITTED schema could avoid, because the throw happens first.
+ *
+ * `filterAxis` is therefore not re-derived on a copy's parse: it was already
+ * stamped by the library parse that produced the copy, and the copy stores that
+ * OUTPUT. The transform stays on `spellDataSchema` for the library's own read.
+ */
+export const storedSpellDataSchema = spellDataObjectSchema;
+
 /** The schema's INPUT type — `filterAxis` optional, so a document that omits it
  *  parses (the transform above stamps the system's own axis). */
 export type SpellDataInput = z.input<typeof spellDataSchema>;

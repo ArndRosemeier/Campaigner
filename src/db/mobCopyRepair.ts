@@ -5,6 +5,7 @@ import type { MobCopyRepairReport } from '@/domain/settings';
 import { copyCreatureStats } from '@/domain/libraryCopy';
 import { mobSpellIndex, type MobSpellIndex } from '@/domain/mobSpells';
 import { spellCorpusEntries } from '@/domain/spellData';
+import { readyBooksOf } from '@/db/rulebookRepo';
 import {
   storedNpcCitation,
   storedRulebookCitation,
@@ -152,9 +153,7 @@ function transactionSpellLookup(
     const cached = cache.get(system);
     if (cached !== undefined) return cached;
     const ready = new Set(
-      (await rulebooks.toArray())
-        .filter((book) => book.status === 'ready' && book.system === system)
-        .map((book) => book.id),
+      readyBooksOf(await rulebooks.toArray(), system).map((book) => book.id),
     );
     const chunksForSystem = (await allChunks()).filter((chunk) => ready.has(chunk.bookId));
     const index = mobSpellIndex(

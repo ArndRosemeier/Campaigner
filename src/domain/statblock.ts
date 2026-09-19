@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { GameSystem } from '@/domain/gameSystem';
-import { spellDataSchema, type SpellData } from '@/domain/spellData';
+import { storedSpellDataSchema, type SpellData } from '@/domain/spellData';
 import {
   COPIED_SPELL_ENTRY_KEY,
   statBlockBaseFields,
@@ -71,7 +71,7 @@ export const statBlockSchema = z.object({
 export function copiedMobSpellAssignmentSchema() {
   return z.object({
     ...storedMobSpellAssignmentShape(),
-    [COPIED_SPELL_ENTRY_KEY]: spellDataSchema.nullish(),
+    [COPIED_SPELL_ENTRY_KEY]: storedSpellDataSchema.nullish(),
   });
 }
 
