@@ -536,6 +536,21 @@ audits the registry (and the branch list) at every landing verification
 and whenever the owner asks — an unrun audit is why 57 stale branches were
 once found by the owner instead of the agent.
 
+**The tool, because the core has none (docs/17 row 245).** The core's
+`@deepseek-ai/dsh-tool-subagent-control` provides exactly `send_message`,
+`interrupt_agent` and `list_agents` — no delete or release — and
+`interrupt_agent` only stops the target's CURRENT turn, keeping it available
+for follow-ups. Finished one-shot and stale continuable subagents therefore
+accumulate. The community plugin `dsh-plugin-subagent-delete` is installed on
+this box and adds `delete_subagent` (permanent: stop, detach, remove the
+on-disk session log and the projection row) and `release_subagent` (stop, keep
+the transcript), plus `list_subagents`, which — unlike the core `list_agents` —
+also lists FINISHED one-shot subagents, i.e. exactly the population that piles
+up. Both take `{ subagent_id }`; a target that still has descendants is refused
+unless `recursive: true`; deletion is child-first and only an ancestor in the
+target's own session tree may call it. The tools exist only in a session started
+AFTER a profile restart — their absence in an older session is not a defect.
+
 - Delete a probe session as soon as its report is consumed.
 - Delete a writer session only after its landing is verified on
   `origin/main` (by commit SHA). Never delete a running writer.
