@@ -1919,8 +1919,9 @@ export function BattleSurface(): JSX.Element {
       <div className="flex min-h-0 flex-1">
         <div
           ref={boardRef}
-          className="relative min-h-0 flex-1 touch-none overflow-hidden overscroll-none bg-zinc-900"
+          className="relative min-h-0 flex-1 touch-none select-none overflow-hidden overscroll-none bg-zinc-900"
           data-testid="battle-board"
+          data-slot="battle-board"
           onPointerDown={onBoardPointerDown}
           onPointerMove={onBoardPointerMove}
           onPointerUp={onBoardPointerUp}
@@ -2266,8 +2267,8 @@ export function BattleSurface(): JSX.Element {
                     data-testid={`path-room-${String(index + 1)}`}
                     className={
                       veiledRoomIds.has(room.id)
-                        ? 'rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400'
-                        : 'rounded border border-sky-400/60 px-1.5 py-0.5 text-xs text-sky-100'
+                        ? 'rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400 pointer-coarse:min-h-11'
+                        : 'rounded border border-sky-400/60 px-1.5 py-0.5 text-xs text-sky-100 pointer-coarse:min-h-11'
                     }
                     onClick={() => {
                       setSelectedKeyRoomId(room.id);

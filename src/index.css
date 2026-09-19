@@ -151,6 +151,18 @@
     touch-action: manipulation;
   }
 
+  /* Tablet (05-UI.md §Tablet, docs/17 row 262a): on iOS a long-press on the
+     board's map/token <img>s raises the image callout ("Save Image", the
+     selection loupe). `touch-action: none` does not suppress it, and the
+     callout's `pointercancel` lands in `onBoardPointerCancel`, which abandons
+     the drag with no commit and no toast — the token simply snaps back. The
+     suppression belongs on the DRAGGABLE SURFACE (the board element, which
+     already owns `touch-none` and the pointer stream), not on the whole
+     surface: the toolbar and rail keep their text selectable for the GM. */
+  [data-slot='battle-board'] {
+    -webkit-touch-callout: none;
+  }
+
   /* Tablet (05-UI.md §Tablet): the dense controls a desktop pointer handles
      fine are under finger size. Grow the hit box without moving the layout —
      an absolutely-positioned pseudo-element is part of the button's hit-test

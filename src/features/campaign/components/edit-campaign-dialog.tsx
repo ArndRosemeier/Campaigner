@@ -192,7 +192,6 @@ export function EditCampaignDialog({
               <Input
                 value={name}
                 aria-label="Campaign name"
-                className="pointer-coarse:text-base"
                 autoCapitalize="words"
                 autoCorrect="off"
                 enterKeyHint="next"
@@ -207,7 +206,7 @@ export function EditCampaignDialog({
                 value={description}
                 placeholder="One or two sentences about the setting…"
                 aria-label="Campaign description"
-                className="min-h-[64px] text-sm pointer-coarse:text-base"
+                className="min-h-[64px] text-sm"
                 onChange={(event) => {
                   setDescription(event.target.value);
                 }}

@@ -4,6 +4,9 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Command, CommandInput } from '@/components/ui/command';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { createCampaign } from '@/db/campaignRepo';
 import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
@@ -25,12 +28,17 @@ import { clearDatabase } from '../db/helpers';
 /**
  * iPad batch D — inputs & iOS keyboard.
  *
- * Sub-16px inputs make mobile Safari auto-zoom on focus; every shrunken
- * input/textarea/select in the batch-D files carries a
- * `pointer-coarse:text-base` override so the EFFECTIVE font is ≥16px on
- * coarse pointers while desktop (fine pointer) visuals are unchanged. Name /
- * title inputs additionally hint the iOS keyboard (`autocapitalize="words"`
- * + `autocorrect="off"` + a sensible `enterkeyhint`); free-prose fields keep
+ * Sub-16px inputs make mobile Safari auto-zoom on focus. Batch D applied a
+ * `pointer-coarse:text-base` override per call site; docs/17 row 262a MOVED
+ * that floor into the primitives (`input.tsx`, `textarea.tsx`, `command.tsx`)
+ * and folded the 40 redundant call-site copies, because the enumeration had
+ * already missed 47 fields — including the battle path's only text input. These
+ * tests now prove the floor ARRIVES at each surface through the primitive, and
+ * `tests/architecture/one-coarse-input-floor.test.ts` pins that no call site
+ * re-declares it. The six `<SelectTrigger>` floors that remain by hand are a
+ * different element (no text entry, no zoom) — docs/18 §5. Name / title inputs
+ * additionally hint the iOS keyboard (`autocapitalize="words"` +
+ * `autocorrect="off"` + a sensible `enterkeyhint`); free-prose fields keep
  * autocorrect ON by deliberate omission.
  */
 
@@ -187,5 +195,25 @@ describe('iPad batch D: coarse-pointer 16px floor', () => {
     const description = screen.getByLabelText('Campaign description');
     expectCoarseText(description);
     expectAutocorrectKept(description);
+  });
+
+  // docs/17 row 262a: the floor is OWED BY THE PRIMITIVE now, not by these call
+  // sites — the tests above no longer pass because their components declare it
+  // (that override was folded away), they pass because `<Input>`/`<Textarea>`
+  // do. A bare field with no className at all is therefore covered by
+  // construction, which is the whole point of the fold.
+  it('the primitives themselves carry the floor, so a bare field is covered', () => {
+    render(
+      <>
+        <Input aria-label="Bare input" />
+        <Textarea aria-label="Bare textarea" />
+        <Command>
+          <CommandInput aria-label="Bare command input" />
+        </Command>
+      </>,
+    );
+    expectCoarseText(screen.getByLabelText('Bare input'));
+    expectCoarseText(screen.getByLabelText('Bare textarea'));
+    expectCoarseText(screen.getByLabelText('Bare command input'));
   });
 });

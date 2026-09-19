@@ -225,7 +225,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
             <Input
               value={step.brief}
               placeholder="Brief for this step…"
-              className="h-7 text-xs pointer-coarse:text-base"
+              className="h-7 text-xs"
               aria-label={`Step ${index + 1} brief`}
               data-testid={`writers-room-step-${String(index + 1)}-brief`}
               disabled={busy}

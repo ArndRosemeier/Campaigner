@@ -3793,6 +3793,11 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     const rail = screen.getByTestId('path-rail');
     expect(within(rail).getByTestId('path-room-1')).toHaveTextContent('A');
     expect(within(rail).getByTestId('path-room-2')).toHaveTextContent('B');
+    // docs/17 row 262a (M3): these chips are raw <button>s, so neither the
+    // button primitive's coarse min-h nor its ::after pad reaches them — they
+    // carry their own 44px coarse target (~22px raw before this).
+    expect(within(rail).getByTestId('path-room-1').className).toContain('pointer-coarse:min-h-11');
+    expect(within(rail).getByTestId('path-room-2').className).toContain('pointer-coarse:min-h-11');
     // Seed opens the spawn room (path room 1) — its veil is never seeded;
     // only room B stays veiled until the GM reveals it.
     const before = await currentBattle(moduleId);

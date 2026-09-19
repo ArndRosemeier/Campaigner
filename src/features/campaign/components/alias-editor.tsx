@@ -84,7 +84,7 @@ export function AliasEditor({
         placeholder={readOnly ? 'Aliases are fixed for this row' : placeholder}
         aria-label="Add alias"
         data-testid="alias-input"
-        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
+        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none dark:bg-transparent"
         onChange={(event) => {
           setDraft(event.target.value);
         }}

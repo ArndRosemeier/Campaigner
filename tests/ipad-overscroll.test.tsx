@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
@@ -36,6 +39,10 @@ import { flushAsyncUpdates } from './helpers/flush';
  * module-reader reader-width precedent): each container must carry the
  * overscroll class alongside its overflow utility. Desktop rendering is
  * untouched (overscroll-behavior is a no-op where no chaining occurs).
+ *
+ * docs/17 row 262a (M2) extends the battle-board arm: the board's own
+ * `select-none` and the `-webkit-touch-callout: none` rule it is keyed to are
+ * pinned here, because jsdom cannot raise an iOS callout either.
  */
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -310,6 +317,16 @@ describe('battle board layer', () => {
     const board = await screen.findByTestId('battle-board', {}, { timeout: 10_000 });
     expect(board.className).toContain('touch-none');
     expect(board.className).toContain('overscroll-none');
+    // docs/17 row 262a (M2): iOS raises the image callout — and its
+    // `pointercancel`, which abandons a drag with no commit and no toast — on a
+    // long press over the board's <img>s, and `touch-action: none` does not
+    // suppress it. The suppression sits on the DRAGGABLE SURFACE (the board
+    // element, which already owns the pointer stream) rather than the whole
+    // surface, so the toolbar and rail keep their text selectable for the GM.
+    expect(board.className).toContain('select-none');
+    expect(board.getAttribute('data-slot')).toBe('battle-board');
+    const css = readFileSync(join(process.cwd(), 'src/index.css'), 'utf8');
+    expect(css).toMatch(/\[data-slot='battle-board'\]\s*\{\s*-webkit-touch-callout:\s*none;/);
     await flushAsyncUpdates(20);
   }, 30_000);
 });

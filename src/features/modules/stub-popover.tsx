@@ -318,7 +318,7 @@ export function StubPopover({
             <Input
               id="stub-name"
               value={name}
-              className="h-7 text-xs pointer-coarse:text-base"
+              className="h-7 text-xs"
               autoCapitalize="words"
               autoCorrect="off"
               enterKeyHint="done"

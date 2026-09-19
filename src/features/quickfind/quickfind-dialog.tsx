@@ -193,7 +193,6 @@ export function QuickFindDialog({
             autoFocus
             placeholder="Search…"
             value={query}
-            className="pointer-coarse:text-base"
             onValueChange={setQuery}
             data-testid="quickfind-input"
           />

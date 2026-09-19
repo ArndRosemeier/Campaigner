@@ -106,7 +106,7 @@ export function ReaderSearch({
           }}
           placeholder="Search the module…"
           aria-label="Search the module"
-          className="h-7 pl-7 text-xs pointer-coarse:text-base"
+          className="h-7 pl-7 text-xs"
           data-testid="reader-search-input"
         />
         {query !== '' && (

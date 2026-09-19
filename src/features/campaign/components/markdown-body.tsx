@@ -83,7 +83,7 @@ export function MarkdownBody({
             readOnly ? 'The body is fixed for this shared creature row — see the note above.' : 'Free-text content, written in Markdown…'
           }
           data-testid={textareaTestId}
-          className="min-h-[240px] font-mono text-sm pointer-coarse:text-base"
+          className="min-h-[240px] font-mono text-sm"
         />
       )}
     </section>

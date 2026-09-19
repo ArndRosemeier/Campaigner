@@ -148,7 +148,7 @@ export function PartTextEditor({
           placeholder="Find in part…"
           aria-label="Find in part"
           data-testid="part-find-input"
-          className="h-7 min-w-36 flex-1 text-xs pointer-coarse:text-base"
+          className="h-7 min-w-36 flex-1 text-xs"
         />
         <span
           className="text-[11px] text-muted-foreground tabular-nums"
@@ -211,7 +211,7 @@ export function PartTextEditor({
           placeholder="Replace with…"
           aria-label="Replace with"
           data-testid="part-replace-input"
-          className="h-7 min-w-36 flex-1 text-xs pointer-coarse:text-base"
+          className="h-7 min-w-36 flex-1 text-xs"
         />
         <Button
           variant="outline"
