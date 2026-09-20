@@ -8407,3 +8407,47 @@ only by calling `runEntityBatch` directly — a unit pin, not a production path.
 Every injection type-clean, `entity-batch.ts` `1858d83b…` restored byte-identically;
 no two arms identical. Removing the inert argument is a LATER `src/` decision
 (docs/18 §5), deliberately not taken by this tests-only slice.
+
+## The instruction-level read is a MODEL call, and its pins mock the transport (docs/17 row 289)
+
+`tests/llm/instruction-level.test.ts` (6 pins) is the seam's own family:
+`llm/instructionLevel.readInstructionLevel` is a structured call, so the chat
+transport is MOCKED and the pins assert the CONTRACT and the PROMPT, not the
+network. What they hold: the owner's own sentence resolves the number he meant
+(the unit half of the exact regression — the end-to-end half is
+`tests/llm/runEngine.test.ts`'s *reads the owner's own sentence through the
+MODEL and BINDS the level he asked for*); the entity's NAME and its CURRENT
+level ride the payload, so a relative request has a base; `null` is taken as
+the honest answer for an instruction that asks for nothing (the call still
+happens — the model is the authority, never a pattern's silence); an empty
+instruction is refused BEFORE any call; a reply outside the app's 1..20 domain
+or off the contract fails LOUDLY with the named sentence and no fallback; and a
+transport failure is named while an `AbortError` passes through untouched so the
+run still records a cancel.
+
+The pins that CARRY the owner's case are behavioural and live beside the engine:
+`runEngine.test.ts` gained four arms — his sentence binds level 3 on a row whose
+minted block was level 1 (the regression), the standalone named read when no
+stored hint disagrees, NO instruction ⇒ NO call (the exact call count), and both
+failure arms (transport and schema-invalid) failing the run and writing
+nothing. The pre-289 regex pins were CONVERTED, never deleted, because their
+SUBJECT is live: `level-language.test.ts`'s language arm now drives the model
+reader (the union is the model's job), `runEngine.test.ts`'s CLASS D and
+`needsStatBlock:false` arms insert one read reply and their stat-block prompt
+moves from call 1 to call 2, and
+`tests/architecture/one-level-resolution.test.ts` pins the deleted wrapper
+ABSENT (`export function instructionLevel` appears nowhere in `src/`) plus the
+new reader defined once and called only by the engine.
+
+RED-PROVEN, arms in `.gate-logs/row289-arm{A..E}-*` with every sha256 printed
+before and after and every file restored byte-identically, `tsc -b` exit 0 on
+every injected tree (a lone `tsc --noEmit -p tsconfig.app.json` does NOT cover
+`tests/`, docs/17 row 288): (A) the model's answer ignored → 6 named pins red
+across the unit and end-to-end arms; (B) the no-instruction guard removed →
+exactly the NO-call pin red; (C) the failure swallowed → exactly the loud-failure
+pin red; (D) the 1..20 domain widened → the domain pins red; (E) the regex
+wrapper reborn in `roomBudget.ts` → the source pin red. No two injected hashes
+equal. The row-212/215 tripwire stayed GREEN with **NO `*Baseline.json` edit** —
+its own catch in this slice (a `userContentAt` helper byte-identical to
+`mob-spells-lanes.test.ts`'s `lastPrompt`) was REPLACED by `promptOf`, which is
+loud on a missing call: a different contract, not a renamed copy.
