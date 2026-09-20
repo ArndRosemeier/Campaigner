@@ -8095,3 +8095,24 @@ baseline hashes; the focused file ran under the suite lock, one worker,
 debounced persistence (this adds a control, not a second chat), the repo's
 compare-and-swap and its backup/export behaviour, and the canvas chat's own
 clear (bytes untouched).
+### The campaign export's zip is built through the ONE streaming seam (docs/17 row 276, docs/18 §2.1)
+
+`lib/exportImport.buildZip` was the LAST caller of the synchronous `zipSync` in `src/` — the
+debt docs/18 §5 recorded when row 265 cured the whole-DB backup. It is now ASYNC and rides the
+same seam, which row 276 EXTRACTED out of `buildBackup` into `src/lib/zipStream.ts` so both
+producers use it (one fflate `Zip`, one 1 MiB push slice loop, one MACROTASK yield).
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `yields to the event loop while the zip is packed (row 276 differential)` (`tests/lib/exportImport.test.ts`) | a MACROTASK scheduled BEFORE the build runs while the build is still in flight, and the finished archive is still the single-file export | a `zipSync` revert — `src/lib/exportImport.ts` `e125740d…` → `a0b4c0e6…` → `e125740d…`, `expected false to be true` — OR a microtask-only yield (`setTimeout(resolve, 0)` → `resolve()`): `src/lib/zipStream.ts` `1319693a…` → `4850f8de…` → `1319693a…`. Both arms restored byte-identically |
+| `keeps zip construction in the seam and zipSync out of src/` (SOURCE SCAN) (`tests/architecture/one-zip-writer.test.ts`, NEW) | `zipSync(` has ZERO call sites in `src/`, and every `Zip`/`ZipDeflate`/`AsyncZipDeflate`/`ZipPassThrough` construction lives in `src/lib/zipStream.ts`. It parses the TypeScript AST (comments naming `zipSync` cannot red it) and declares NO named helper, because `tests/**` is itself under the duplicate-body tripwire | a reintroduced `zipSync(` call reds it naming `src/lib/exportImport.ts:367` (`e125740d…` → `f7acb6e0…` → `e125740d…`); a foreign `new ZipDeflate(` reds it naming `src/lib/backup.ts (new ZipDeflate)` (`153caa89…` → `aa6c6aed…` → `153caa89…`) |
+
+**The FILE is unchanged** — the same entry names, the same JSON, the same `level: 6` — and every
+round-trip pin in `tests/lib/exportImport.test.ts` passes unchanged. The streamed CONTAINER is
+slightly larger over the same entries (data descriptors + per-slice deflate): the trade docs/18
+§5 (b) already records for the backup. **MEASURED** (scratch harness, deleted after use, raw log
+`.gate-logs/row276-measure2.log`): 400 notes × 32 KiB — PRE one 531.5 ms synchronous block and 0
+event-loop turns, POST 413 turns with a longest uninterrupted stretch of 90.4 ms.
+**WHAT IS NOT CHUNKED, stated rather than implied:** the export's JSON assembly (the top-level
+`JSON.stringify` + one per artifact + `bytesFromBase64` per image) and the export's progress
+reporting (the dialog's `busy` state only) — both named in docs/18 §5 as the residual trade.
