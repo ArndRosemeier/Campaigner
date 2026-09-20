@@ -2670,7 +2670,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      docs/17 row 278).
   3. **A campaign encounter's roster `npc-ref`** — a campaign artifact id, and a LIVE arm rather
      than a legacy shape: `domain/encounterResolve.resolveMonsterEntry` resolves it, and an unmet one
-     is NAMED and BLOCKING (`collectDependencies`' NPC arm / `citedChunkIdsFor`, §2.1) instead of
+     is NAMED and BLOCKING (`collectDependencies`' roster scan / `citedChunkIdsFor`, §2.1) instead of
      importing with no warning and rendering `missing ref` only afterwards. There is no stored
      library pointer beside it any more: the library-scoped `rulebook` citation arm and the
      `domain/mobCopyLegacy` seam that read it were DELETED by docs/17 row 278 (a roster mob is an
@@ -2717,14 +2717,15 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   9. NOT a library row identifier, checked and dismissed: `rulebook.packMeta.sourceId` names a fetch
      SOURCE (a pack recipe), not a library row.
   10. **The BATTLE'S FROZEN seed stat block** (`db/battleSeed.ts:242`, `:274`, `:297` — `seedFighters[]
-      .statBlock`) is copied VERBATIM from `resolved.statBlock`, so a LEGACY citation's block freezes
-      with BARE spell names and those chips still resolve against the library at render. **CLOSED by
+      .statBlock`) is copied VERBATIM from `resolved.statBlock`, so a block whose spell assignments
+      are BARE names would freeze that way and its chips would still resolve against the library at
+      render. **CLOSED by
       docs/17 row 270**: `expandRosterEntries` stamps the resolved block through the exported
       `domain/libraryCopy.copyStatBlockWithSpells` (live door `db/libraryCopy
       .copyStatBlockSpellsFromDb`) before any freeze site, so the seed row carries the library's full
       entries and answers with the pack deleted (pinned in `tests/features/mob-spell-copy.test.ts`).
-      A MIGRATED/COPIED roster entry's block already carried `spellData` (docs/17 row 255c) and passes
-      through byte-identically.
+      A roster entry that ALREADY carries its `spellData` (docs/17 row 255c) passes through
+      byte-identically.
 - **CLOSED (docs/17 row 263) — the two comments that promised behaviour the code lacks.** (d)
   `lib/imageIntake`'s JSDoc promised "a fallback to the original blob … when the canvas pipeline is
   unavailable or produces nothing"; there is NO such fallback and there must not be (substituting an
