@@ -2427,6 +2427,15 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   write for a reason it does not name (an opaque `AbortError`, a private-mode cap); such a
   failure takes the ordinary loud `toastError` path, and the storage estimate is the browser's
   own padded, rounded figure — the copy says so rather than implying a precise quota.
+  (e) **`lib/exportImport.ts:349` still zips a CAMPAIGN export with a synchronous `zipSync`** —
+  the same defect class row 265 fixed for the whole-DB backup, on a different, deliberate
+  action. It is NAMED as owed, not overlooked: the fold is a slice of its own because the
+  campaign export has its own entry layout, its own pins and its own "one tx on import"
+  contract, and it needs the streaming push helpers extracted from `buildBackup` (today they are
+  closures inside it) into one shared zip-writer seam first. Until then, treat "zip a user's
+  data on the main thread" as a family with one cured member and one open one — and if the
+  campaign export is folded, the fold goes through that ONE extracted seam rather than a second
+  copy of the chunked push loop.
 - **DELIBERATE TRADES (docs/17 row 264) — the fog's drift is a transform on a 2.25x raster, the
   dice engine is rebuilt per open, and NO frame rate was measured.** (a) **The fog's inter-layer
   parallax is gone on purpose.** `battle-fog-drift` moves ONE composited layer
