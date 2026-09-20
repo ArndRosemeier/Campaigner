@@ -38,6 +38,41 @@ conventions` are binding.
    Simplicity cuts the other way too: prefer the smallest design that does the
    job — no speculative generality, no abstraction serving a single caller, no
    new mechanism where an existing one already answers the question.
+5. **NEVER PARSE FREE TEXT WITH A REGEX — free text is read by the MODEL, and
+   structured input needs a STRUCTURED FORM** (owner-directed, 2026-09-20,
+   verbatim: *"Just as a GENERAL rule: NEVER expect a free text to confirm to
+   any regexable pattern. Thats a design disaster. If structured input is
+   needed, the form can never be free and needs to be structured as well.
+   Unstructured text needs an LLM. Period. If there are more such occurrance,
+   this needs to be fixed as well. Scan for regexes in this region."*).
+   The measured case that produced the rule: the owner asked to "bump the level
+   to 3" in the free-text instruction box, the level reader was a regex needing
+   the number ADJACENT to a level word (`level 3`), his sentence read as NO
+   level at all, and the stat block was then bound to the entity's existing
+   minted level while the prose model — which reads the sentence itself — wrote
+   the level he asked for. **The distinction that decides what is a violation:**
+   - a pattern over a **STRUCTURED FIELD** the app itself defines or a data
+     format it is contractually given (a `levelBand` string like `'3'`, a
+     `[[Name|alias]]` wikilink, a JSON pack payload, an ISO date) is FINE — the
+     input is a syntax, not prose;
+   - a pattern over the app's OWN machine-generated line (a formatter's output
+     being read back, e.g. the party-level lines) is FINE but must stay paired
+     with the formatter that writes it, so the two cannot drift;
+   - a pattern over **HUMAN OR MODEL FREE TEXT** — an instruction, a brief, a
+     module's prose, a stat block's narrative, a typed hint — is a DEFECT of
+     this rule, however well it works on the examples its author imagined.
+   **The obligation when one is found:** the free text is read by a structured,
+   zod-validated MODEL call (bound to the domain, e.g. 1..20, and answering
+   `null` honestly when the text asks for nothing), and what it read is NAMED on
+   the user-visible surface so a wrong read is correctable in one step — never a
+   silent guess and never a silent fallback (rule 1). If the value really must
+   be exact, the FORM becomes structured (a number field, a select) and the free
+   text stops being the input. Widening the pattern is NOT a fix: the variation
+   space of human phrasing is unbounded and multi-language. A regex may remain
+   as a FAST PRE-READ for a machine-clean form (`level 5`) only where the model
+   read is the authority, never as the authority itself. **The whole tree is in
+   scope**: a discovery that a pattern reads free text is priced and queued like
+   any other defect, and the scan is part of this rule's enforcement.
 
 ## Standing rule: critique the instruction (owner-directed)
 
