@@ -42,4 +42,14 @@ DirectoryIndex index.html
   <FilesMatch "\.(html|json)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
+
+  # THE SERVICE WORKER MUST NOT BE IMMUTABLE. The rule above matches `sw.js` like
+  # any other `.js` file, so a year-long cache means the browser never revalidates
+  # the worker and the app never receives an update (found live by docs/17 row
+  # 262's platform sweep). This block comes AFTER it deliberately: for the same
+  # header the LAST directive wins, and `sw.js` is a fixed filename with no content
+  # hash to bust a cache for us. Revalidate it; the hashed assets stay immutable.
+  <FilesMatch "^sw\.js$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
 </IfModule>
