@@ -17,7 +17,8 @@ import type { RulebookSummary } from '@/features/rules/hooks';
  * re-imported in another tab (AGENTS rule 1), and this is exactly the class of
  * invisible, silently-wrong state the report is about.
  *
- * TWO identity keys, in order, and neither is a guess:
+ * THREE identity keys, in order — the first two are proofs, the third is a
+ * named basis:
  *
  * 1. PROVENANCE — a FETCHED book stamps `packMeta.sourceUrl` as
  *    `https://github.com/<owner>/<repo>/tree/<ref>/<recipeId>` (`packFetch.ts`),
@@ -27,8 +28,18 @@ import type { RulebookSummary } from '@/features/rules/hooks';
  *    honest fallback is the book's `title` against the recipe's `label`, both
  *    read through the app's ONE comparable form (`domain/artifactAlias
  *    .comparableName` — NFC, trim, case fold).
+ * 3. FOLDER — a manual import's title is the FILE/zip base name
+ *    (`packImport.derivePackTitle`), and for a pack saved from this repo that
+ *    name is the upstream FOLDER (`packs/pf2e/spells` → `spells`), which a long
+ *    human label ("Spells — ranks, cantrips, focus, rituals") never equals. So
+ *    the recipe id's TAIL is a second loose key, and a match is reported as
+ *    imported WITH ITS BASIS NAMED (`via: 'folder'`, docs/17 row 281) — never
+ *    silently, and never as the false "not imported" the owner reported. It is
+ *    consulted AFTER the lookalike arm on purpose: when the folder name is
+ *    merely the label's own loose form, every folder match is already a
+ *    lookalike, and a lookalike is not a proof (below).
  *
- * WHEN NEITHER PROVES IT the card says the state is UNKNOWN rather than
+ * WHEN NONE OF THEM PROVES IT the card says the state is UNKNOWN rather than
  * guessing (AGENTS rule 1) — two proven matches are AMBIGUOUS (never a pick),
  * and a book whose title merely LOOKS like the recipe's label (letters and
  * digits only, so a manual import's derived slug `pathfinder-monster-core`
@@ -65,6 +76,18 @@ export type PackSourceImportState =
       systemMismatch: boolean;
     }
   | {
+      kind: 'imported';
+      candidate: PackSourceCandidate;
+      /** The title matched the recipe's upstream FOLDER name instead (docs/17 row 281). */
+      via: 'folder';
+      /**
+       * The upstream folder name the book's title matched — the BASIS the card
+       * NAMES, so a folder-key match is never asserted silently.
+       */
+      folderName: string;
+      systemMismatch: boolean;
+    }
+  | {
       kind: 'unknown';
       reason: 'ambiguous' | 'unidentified';
       candidates: readonly PackSourceCandidate[];
@@ -79,6 +102,16 @@ export type PackSourceImportState =
  */
 function looseTitleKey(name: string): string {
   return name.normalize('NFC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/**
+ * The recipe id's TAIL — the upstream folder name a manual import's derived
+ * title carries (docs/17 row 281, `packs/pf2e/spells` → `spells`). `split`
+ * always yields at least one element, so the guard can only be reached for an
+ * empty id and is never a different value.
+ */
+function recipeFolderName(recipe: PackRecipe): string {
+  return recipe.id.split('/').pop() ?? recipe.id;
 }
 
 /** Does this book's stamped provenance point at exactly this recipe? */
@@ -156,6 +189,29 @@ export function packSourceImportState(
   );
   if (lookalikes.length > 0) {
     return { kind: 'unknown', reason: 'unidentified', candidates: lookalikes };
+  }
+
+  // The upstream FOLDER key (docs/17 row 281). Reached only when the lookalike
+  // arm found nothing, i.e. only when the folder name is an INDEPENDENT key
+  // from the label — otherwise every folder match would already be a lookalike
+  // above, whose UNKNOWN answer is the one that stands.
+  const folderName = recipeFolderName(recipe);
+  const folderKey = looseTitleKey(folderName);
+  const folderMatches = candidates.filter(
+    (candidate) => looseTitleKey(candidate.summary.book.title) === folderKey,
+  );
+  if (folderMatches.length > 1) {
+    return { kind: 'unknown', reason: 'ambiguous', candidates: folderMatches };
+  }
+  const folderMatch = folderMatches[0];
+  if (folderMatch !== undefined) {
+    return {
+      kind: 'imported',
+      candidate: folderMatch,
+      via: 'folder',
+      folderName,
+      systemMismatch: folderMatch.summary.book.system !== expectedSystem,
+    };
   }
   return { kind: 'not-imported' };
 }

@@ -40,8 +40,9 @@ import { bookPackLaneCounts, formatPackLanes, formatPackSystem, packLaneCounts }
  *
  * Since docs/17 row 210 every recipe row also STATES whether the library
  * already holds that pack, derived live from the book rows
- * (`features/rules/pack-import-state` — provenance first, title fallback,
- * UNKNOWN rather than a guess) with row 204's ONE per-lane breakdown; a matched
+ * (`features/rules/pack-import-state` — provenance first, title fallback, then
+ * the upstream FOLDER name with its basis NAMED, docs/17 row 281; UNKNOWN
+ * rather than a guess) with row 204's ONE per-lane breakdown; a matched
  * book stored under another system is stated too, because that is invisible the
  * same way.
  *
@@ -74,6 +75,31 @@ function quoteTitles(candidates: readonly PackSourceCandidate[]): string {
   return candidates.map((candidate) => `“${candidate.summary.book.title}”`).join(', ');
 }
 
+/** An `imported` state, whichever basis arm proved it. */
+type ImportedState = Extract<PackSourceImportState, { kind: 'imported' }>;
+
+/**
+ * The BASIS half of the imported line (docs/17 row 281): WHICH key proved the
+ * pack, stated rather than assumed. The switch is exhaustive over the `via`
+ * union ON PURPOSE — a new basis arm cannot fall through silently. A provenance
+ * match was fetched, a title match carries no fetch provenance, and a folder
+ * match names the upstream folder the book's title matched so the owner can
+ * judge that key himself.
+ */
+function importedBasis(state: ImportedState, when: string): string {
+  switch (state.via) {
+    case 'provenance':
+      return `Imported — fetched ${when}`;
+    case 'title':
+      return `Imported — updated ${when}`;
+    case 'folder':
+      return (
+        `Imported from a file — matched by the upstream folder name \`${state.folderName}\` ` +
+        `(no fetch provenance) · updated ${when}`
+      );
+  }
+}
+
 /**
  * THE line every recipe row states (docs/17 row 210). The IDENTITY decision is
  * the pure seam (`features/rules/pack-import-state`); the lane breakdown is
@@ -94,8 +120,7 @@ function importStateLine(state: PackSourceImportState): string {
       const fetchedAt = state.candidate.packMeta.fetchedAt;
       const stamp = fetchedAt ?? state.candidate.summary.book.updatedAt;
       return (
-        `Imported — ${fetchedAt === undefined ? 'updated' : 'fetched'} ` +
-        `${new Date(stamp).toISOString()} · ` +
+        `${importedBasis(state, new Date(stamp).toISOString())} · ` +
         formatPackLanes(
           bookPackLaneCounts(state.candidate.packMeta, state.candidate.summary.spellChunkCount),
         )

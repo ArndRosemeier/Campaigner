@@ -62,6 +62,16 @@ function mockFetch(routes: Record<string, Response | Error>): ReturnType<typeof 
 const MONSTER_CORE = 'packs/pf2e/pathfinder-monster-core';
 const MONSTER_CORE_LABEL = 'Pathfinder Monster Core';
 
+/**
+ * The RULES-TEXT recipe of the row-281 report: every import-state pin before
+ * that row was bestiary-only, which is exactly why the owner's spells book
+ * could read "Not imported yet." for a pack the library held.
+ */
+const SPELLS_RECIPE = 'packs/pf2e/spells';
+const SPELLS_RULES_ADAPTER = 'foundry-pf2e-rules';
+/** The upstream folder name — the file base name a manual import derives. */
+const SPELLS_FOLDER = 'spells';
+
 /** A valid `section` chunk — the non-spell rules lane. */
 function sectionChunk(bookId: string): RuleChunk {
   return ruleChunkSchema.parse({
@@ -671,5 +681,45 @@ describe('BestiaryFetchSection imported state (docs/17 row 210)', () => {
     const fresh = screen.getByTestId('fetch-packs/pf2e/pathfinder-bestiary');
     expect(fresh).toHaveTextContent('Fetch & import');
     expect(fresh).toBeEnabled();
+  }, 30_000);
+
+  it('pin 7 — a FILE import of a RULES-TEXT pack is identified by the upstream FOLDER name, and the row NAMES that basis', async () => {
+    // The row-281 report: the owner's pf2e spells book was imported from a file,
+    // so it carries NO provenance, and its title is the file base name — the
+    // upstream folder `spells`, never the recipe's long human label. Both
+    // existing keys miss it, which is why the card told him the pack was not
+    // imported while the spell browser listed it.
+    const bookId = await seedPackBook({ title: SPELLS_FOLDER, sourceId: SPELLS_RULES_ADAPTER });
+    const book = await db.rulebooks.get(bookId);
+    if (book === undefined) throw new Error('seeded pack book missing');
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${SPELLS_RECIPE}`);
+    // The sentence NAMES the basis (the folder) and why a fetch cannot be
+    // claimed, instead of asserting an unexplained "Imported".
+    await waitFor(() => {
+      expect(state).toHaveTextContent(
+        `Imported from a file — matched by the upstream folder name \`${SPELLS_FOLDER}\` ` +
+          `(no fetch provenance) · updated ${new Date(book.updatedAt).toISOString()} · ` +
+          `0 spells · 2 stat blocks · 0 items · 1 section`,
+      );
+    });
+    expect(state).not.toHaveTextContent('Not imported yet.');
+    expect(screen.getByTestId(`fetch-${SPELLS_RECIPE}`)).toHaveTextContent('Re-import');
+  }, 30_000);
+
+  it('pin 8 — the folder key is NOT a wildcard: a same-adapter book titled after a DIFFERENT folder stays "Not imported yet."', async () => {
+    // The sibling curated folder of the SAME adapter. A folder key that matched
+    // anything (or any same-adapter candidate) would swallow this row too.
+    await seedPackBook({ title: 'feats', sourceId: SPELLS_RULES_ADAPTER });
+
+    render(<BestiaryFetchSection />);
+
+    const state = await screen.findByTestId(`import-state-${SPELLS_RECIPE}`);
+    await waitFor(() => {
+      expect(state).toHaveTextContent('Not imported yet.');
+    });
+    expect(screen.getByTestId(`fetch-${SPELLS_RECIPE}`)).toHaveTextContent('Fetch & import');
   }, 30_000);
 });

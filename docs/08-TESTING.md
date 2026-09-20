@@ -7492,7 +7492,8 @@ Settings → "Bestiary packs" card, so his imported spells were invisible until 
 inferred them from an empty Spells page. Every recipe row now states its import
 state, DERIVED FROM THE LIBRARY on each read (never a stored flag, which goes
 stale on a rename/delete/re-import) — and the state is bounded by what the
-library can PROVE: provenance, then an exact title, and UNKNOWN when neither
+library can PROVE: provenance, then an exact title, then the recipe's upstream
+FOLDER name stated as its own BASIS (docs/17 row 281), and UNKNOWN when none
 answers.
 
 - `tests/features/bestiary-fetch-section.test.tsx` (the section's EXISTING
@@ -7528,6 +7529,19 @@ answers.
   - **unidentified** — a manual import's derived slug title
     (`pathfinder-monster-core` as a book title) reads UNKNOWN (unidentified)
     with the lookalike named, NOT `Not imported yet.`
+  - **pin 7 (the FOLDER basis, docs/17 row 281)** — the RULES-TEXT recipe
+    (`foundry-pf2e-rules`, `packs/pf2e/spells`, label "Spells — ranks, cantrips,
+    focus, rituals") with the manual-import-shaped candidate every earlier pin
+    lacked (ready pack book, same adapter, NO `sourceUrl`, title `spells`) reads
+    `Imported from a file — matched by the upstream folder name \`spells\` (no
+    fetch provenance) · updated <its own updatedAt ISO> · 0 spells · 2 stat
+    blocks · 0 items · 1 section` and offers `Re-import`. Every import-state pin
+    before this one was BESTIARY-only, which is why the owner's spells book could
+    read "Not imported yet." for a pack his library held.
+  - **pin 8 (the folder key is NOT a wildcard)** — a same-adapter book titled
+    after a DIFFERENT curated folder (`feats`) leaves the spells row at
+    `Not imported yet.` with `Fetch & import`, so the new key cannot swallow its
+    own adapter's rows.
 - `tests/architecture/one-pack-lane-report.test.ts` — AMENDED: the
   `formatPackLanes(` call-site population now counts
   `bestiary-fetch-section.tsx` TWICE (its fetch toast + its new state line), so
@@ -7539,10 +7553,12 @@ matches a given on-disk library beyond the seeded rows; none proves the copy
 reads well to a person (it proves which data branch renders which message); and
 the UNIDENTIFIED arm is a heuristic by construction — it decides "looks like",
 never "is". The class it genuinely cannot cover is a manual import whose title
-is SILENT about the pack (a zip named `bundle.zip`): it matches neither key and
-matches no lookalike, so the row reads `Not imported yet.` — the one case where
-the row can still be wrong, recorded in docs/17 row 210 rather than hidden (the
-remedy is a re-import either way, and the action stays available).
+is SILENT about the pack (a zip named `bundle.zip`): it matches none of the
+three keys and no lookalike, so the row reads `Not imported yet.` — the case
+row 281's FOLDER key narrows (a file named after the upstream folder is now
+caught, with its basis named) but does not close, recorded in docs/17 rows 210
+and 281 rather than hidden (the remedy is a re-import either way, and the action
+stays available).
 
 **INJECTED RED, watched — the suite lock held BEFORE the first injection, the
 mutated file's hash PRINTED with `git hash-object` for every arm, the tree
@@ -7561,6 +7577,14 @@ No arm was VOID: all four hashes differ and every arm's RED named a different
 pin. The five remaining pins (title fallback, no match, action honesty,
 loading, lookalike) stayed GREEN under all four injections, so each pin owns
 its own behaviour rather than riding another's.
+
+**The row-281 arm (the FOLDER basis) was injected the same way, and the
+revert-proven pair is printed as sha256:** deleting the folder arm from
+`pack-import-state.ts` (`1f799dbf0ab0710c98428be64da9c3472c6cf68b99318c341534152987822c58`
+→ `9d7de5e7b610ea48cda923192c0ba59085f4e5c58f1a8f208c5577fe8b6ade19` → restored
+byte-identically to `1f799dbf…`) RED exactly **pin 7** and left **pin 8** GREEN
+on the SAME injected tree, so the new key's positive and negative arms each own
+their behaviour. The three hashes differ, so the arms are not VOID.
 
 ### A pack payload must agree with its adapter's declared system (docs/17 row 209, docs/12 §6, docs/18 §2.2)
 
