@@ -372,12 +372,15 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     expect(rosterReferenceFor(entry, undefined).text).toBe('Bestiary p.132');
 
     // 3. The portrait identity is unchanged, so no mobPortraits/creatureImages
-    //    row needs remapping and the copy is NOT re-labelled hand-written.
+    //    row needs remapping and the copy is NOT re-labelled hand-written. The
+    //    portrait NO LONGER reads the pack either (docs/17 row 269): this route
+    //    hands the job the copy's OWN block and no `chunkId` at all, so a fully
+    //    copied mob regenerates its portrait with the library uninstalled.
     expect(rosterEntryCreatureIdentity(entry, undefined)?.key).toBe(`chunk:${CHUNK}`);
     expect(rosterParticipantRoute(entry, undefined)).toEqual({
       lane: 'creature',
       creatureKey: `chunk:${CHUNK}`,
-      chunkId: CHUNK,
+      statBlock: OWLBEAR_COPIED,
       name: 'Owlbear',
       artifactId: null,
     });
@@ -388,6 +391,20 @@ describe('v23 → v24 migration (the mob copy, docs/17 row 248)', () => {
     expect(npc.data.creatureRef).toBeUndefined();
     expect(npc.data.statBlock).toEqual(PACK_ZOMBIE);
     expect(npc.data.sourceLine).toBe('Tome of Beasts: Zombie');
+    // Its roster route grounds on the artifact's copied block too — the same
+    // no-pack rule, now for the cast arm (docs/17 row 269).
+    expect(
+      rosterParticipantRoute(
+        { name: 'Aunt Agatha', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: NPC } },
+        npc,
+      ),
+    ).toEqual({
+      lane: 'creature',
+      creatureKey: `chunk:${PACK_CHUNK}`,
+      statBlock: PACK_ZOMBIE,
+      name: npc.name,
+      artifactId: NPC,
+    });
     // The row itself is the ONE thing a converted cast NPC may read; every
     // LIBRARY lookup still throws, so its disclosure cannot be a live read.
     const derived = await resolveStoredMonsterEntry(

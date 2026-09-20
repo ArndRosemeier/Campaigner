@@ -10,6 +10,7 @@ import {
   IMAGE_TEXT_SPARING_CLAUSE,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
+  portraitGroundingForStatBlock,
 } from '@/llm/imagePromptDraft';
 
 /**
@@ -249,6 +250,20 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
     // Unparsed chunks have no stat-free material: the raw text — today's
     // behavior, stat digits included — is returned BY EXPLICIT DESIGN.
     expect(portraitGroundingForChunk({ text: RAW_TEXT, statBlock: null })).toBe(RAW_TEXT);
+  });
+
+  it('DIFFERENTIAL: a copy’s own block grounds identically to the same block read off a chunk (docs/17 row 269)', () => {
+    // The copy arm (`portraitGroundingForStatBlock`) is the SAME body as the
+    // chunk arm's parsed branch — one rule, two entry points. This is the
+    // "exactly one" pin: if a second composition appears, the two drift here.
+    expect(portraitGroundingForStatBlock(STAT_FIXTURE)).toBe(
+      portraitGroundingForChunk({ text: RAW_TEXT, statBlock: STAT_FIXTURE }),
+    );
+    // And the copy arm has NO raw-text fallback to hide behind: its input is a
+    // parsed block by construction, so the raw chunk bytes cannot leak in.
+    expect(portraitGroundingForStatBlock(STAT_FIXTURE)).not.toContain(RAW_TEXT);
+    expect(portraitGroundingForStatBlock(STAT_FIXTURE)).toContain('shrugs off mortal frailty');
+    expect(portraitGroundingForStatBlock(STAT_FIXTURE)).not.toContain('256');
   });
 
   it('caps the composed grounding deterministically at the ONE owner-raised cap', () => {

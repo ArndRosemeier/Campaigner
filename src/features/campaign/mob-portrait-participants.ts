@@ -1,4 +1,4 @@
-import type { AnyArtifact, Artifact, Id, MonsterEntry } from '@/domain';
+import type { AnyArtifact, Artifact, Id, MonsterEntry, StatBlock } from '@/domain';
 import {
   chunkIdOfOriginToken,
   rosterEntryCreatureIdentity,
@@ -68,11 +68,14 @@ export async function portraitArtOf(campaignId: Id, creatureKey: string): Promis
  * Which lane one roster participant rides, and the identity it resolves to.
  *
  * - `creature`: the row cites a LIBRARY CREATURE. `creatureKey` is the
- *   portrait identity, `chunkId` the citation's chunk (prompt grounding), and
- *   `name` the citing name the canonical-vs-flavor check is performed against.
- *   An authored NPC standing in the roster rides this lane too — its stats are
- *   derived from a library creature (docs/11 D3), so it is the same creature
- *   kind and shares the same canonical portrait.
+ *   portrait identity, `name` the citing name the canonical-vs-flavor check is
+ *   performed against, and the prompt is grounded on ONE of two mutually
+ *   exclusive sources (docs/17 row 269): the row's OWN copied `statBlock` for a
+ *   CONVERTED copy (the pack is never read), or the citation's `chunkId` for an
+ *   UNCONVERTED pointer (the loud legacy arm). An authored NPC standing in the
+ *   roster rides this lane too — its stats are derived from a library creature
+ *   (docs/11 D3), so it is the same creature kind and shares the same canonical
+ *   portrait.
  * - `authored`: the row points at an AUTHORED NPC with no library creature
  *   behind it. The portrait belongs on that artifact's own cover — the batch
  *   reports its state and never touches the canonical cache.
@@ -94,10 +97,24 @@ export type CreaturePortraitRoute =
       lane: 'creature';
       creatureKey: string;
       /** The citation's chunk — the prompt's grounding read. Absent when the
-       * citation has no chunk (a content-hash-only reference): the job is then
-       * LOCAL, grounded on the authored row's own text, and can never touch
-       * the canonical cache. */
+       * citation has no chunk (a content-hash-only reference), and absent for a
+       * CONVERTED copy, which returns its own `statBlock` instead: the job is
+       * then LOCAL, grounded on the row's own block, and can never touch the
+       * canonical cache. */
       chunkId?: Id | undefined;
+      /**
+       * The row's OWN copied stat block — a CONVERTED copy (docs/17 row 269).
+       * The v24 migration turned a library citation into an authored copy that
+       * carries the library's bytes on its own row, so those bytes ARE the
+       * portrait's grounding and the job reads NO library chunk at all: a fully
+       * copied campaign mob regenerates its portrait with the pack UNINSTALLED.
+       *
+       * Mutually exclusive with `chunkId` by construction (this route never
+       * returns both): the library chunk is the grounding read of an
+       * UNCONVERTED pointer only. See the returned-object comments below for
+       * why a copy cannot keep its canonical-vs-flavor citation either.
+       */
+      statBlock?: StatBlock | undefined;
       name: string;
       /** The authored NPC standing in the roster, when there is one. */
       artifactId: Id | null;
@@ -129,10 +146,25 @@ export function rosterParticipantRoute(
   const token = entry.originToken?.trim();
   if (token !== undefined && token !== '') {
     const chunkId = chunkIdOfOriginToken(token);
+    // A CONVERTED copy grounds on its OWN block (docs/17 row 269). The token
+    // stays the IDENTITY (`creatureKey`) — the row is still the same creature,
+    // so no portrait row needs remapping — but it stops being a RESOLVER of
+    // prompt text: `chunkIdOfOriginToken` no longer buys a library read, so a
+    // copied mob regenerates its portrait with the pack uninstalled.
+    const own = entry.source.type === 'inline' ? entry.source.statBlock : undefined;
     return {
       lane: 'creature',
       creatureKey: token,
-      ...(chunkId === null ? {} : { chunkId }),
+      // A token-bearing row with NO copied block of its own (a hand-made
+      // `none`/pointer row the migration never writes) has no bytes to ground
+      // on, so it keeps the citation read — the loud arm, which names the
+      // missing chunk rather than illustrating a name (AGENTS rule 1). No
+      // placeholder is ever substituted for the absent block.
+      ...(own !== undefined
+        ? { statBlock: own }
+        : chunkId === null
+          ? {}
+          : { chunkId }),
       name: entry.name,
       artifactId: null,
     };
@@ -149,14 +181,23 @@ export function rosterParticipantRoute(
     // An authored NPC whose stat block is DERIVED from a library creature is
     // that creature kind (docs/11 D3): one creature, one look, so it shares the
     // canonical portrait instead of holding a private one.
+    //
+    // A CONVERTED cast row owns its numbers (docs/17 row 255b): the NPC
+    // artifact's copied block grounds the portrait, so no library read. A LEGACY
+    // row still carrying a `creatureRef` has `statBlock: null` (the schema
+    // refuses the pair) and keeps its citation chunk — the loud named arm. A
+    // `creatureRef` that names no chunk at all (a content-hash-only reference)
+    // has nothing to read, so the field is ABSENT rather than defaulted: the
+    // caller decides that from the route, never from a placeholder id.
+    const own = linked.kind === 'npc' ? linked.data.statBlock : null;
     return {
       lane: 'creature',
       creatureKey: identity.key,
-      // The citation's own chunk grounds the prompt. A `creatureRef` with no
-      // chunk at all (a content-hash-only reference) has no chunk to read, so
-      // the field is ABSENT rather than defaulted — the job is local and the
-      // caller decides that from the route, never from a placeholder id.
-      ...(identity.ref.chunkId === undefined ? {} : { chunkId: identity.ref.chunkId }),
+      ...(own !== null
+        ? { statBlock: own }
+        : identity.ref.chunkId === undefined
+          ? {}
+          : { chunkId: identity.ref.chunkId }),
       name: linked.name,
       artifactId: linked.id,
     };
@@ -170,6 +211,12 @@ export function rosterParticipantRoute(
     );
   }
   if (source.type === 'rulebook') {
+    // THE LOUD LEGACY ARM (docs/17 row 269): an UNCONVERTED pointer — the
+    // owner-forced failure arm, a row whose pack was absent at upgrade time. Its
+    // chunk is the only grounding there is and the pointer is the start-up
+    // retry's handle, so this arm KEEPS the library read, with its named failure
+    // when the chunk is gone. It is the one path where a portrait still needs
+    // the pack, and it is loud rather than silent by construction.
     return {
       lane: 'creature',
       creatureKey: identity.key,

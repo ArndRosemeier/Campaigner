@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
-import { CANONICAL_ROOM_MARKERS, isCastCreatureNpc } from '@/domain';
+import { CANONICAL_ROOM_MARKERS, isCastCreatureNpc, rosterEntryCreatureIdentity } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { BATTLE_ZOOM_MAX, BATTLE_ZOOM_MIN } from '@/domain/battle/view';
@@ -93,6 +93,7 @@ import {
   regenerateSingleMobPortrait,
   type SingleMobPortraitTarget,
 } from '@/features/campaign/mob-portrait-queue';
+import { rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
 import { runBattle } from '@/features/play/run-battle-seed';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
@@ -623,20 +624,40 @@ export function BattleSurface(): JSX.Element {
       encounterArtifact !== 'loading' && encounterArtifact?.kind === 'encounter'
         ? encounterArtifact.data.monsters
         : null;
-    const rosterName = roster?.find(
-      (entry) =>
-        (entry.source.type === 'rulebook' &&
-          `chunk:${entry.source.chunkId}` === selectedCreature.creatureKey) ||
-        (entry.source.type === 'npc-ref' && entry.source.artifactId === selectedToken.artifactId),
-    )?.name;
-    const citedName = (rosterName ?? name).trim();
+    // THE roster row standing for this token's creature — matched by the ONE
+    // creature-identity rule, never by the SHAPE of a stored source (docs/17 row
+    // 269): the old `rulebook`-only predicate missed a CONVERTED copy (an
+    // `inline` row carrying the opaque origin token), so such a row's citing
+    // name and its own grounding were invisible to this card.
+    const rosterEntry =
+      roster?.find((entry) =>
+        entry.source.type === 'npc-ref'
+          ? entry.source.artifactId === selectedToken.artifactId
+          : rosterEntryCreatureIdentity(entry, undefined)?.key === selectedCreature.creatureKey,
+      ) ?? null;
+    const citedName = (rosterEntry?.name ?? name).trim();
     if (citedName === '') return null;
+    // The portrait's grounding, decided by the SAME routing rule the editor
+    // batch and the module sweep walk: a CONVERTED copy grounds on its OWN
+    // copied block and reads no library at all; an UNCONVERTED pointer keeps
+    // its citation chunk (the loud arm), and a token with no roster row falls
+    // back to the card's own resolution.
+    const route =
+      rosterEntry === null ? null : rosterParticipantRoute(rosterEntry, selectedArtifact);
+    const routed = route !== null && route.lane === 'creature' ? route : null;
+    const chunkId = routed?.chunkId ?? selectedCreature.chunkId;
+    const grounding: { statBlock?: StatBlock; chunkId?: Id } =
+      routed?.statBlock !== undefined
+        ? { statBlock: routed.statBlock }
+        : chunkId === undefined
+          ? {}
+          : { chunkId };
     return {
       target: {
         campaignId,
         creatureKey: selectedCreature.creatureKey,
         name: citedName,
-        ...(selectedCreature.chunkId === undefined ? {} : { chunkId: selectedCreature.chunkId }),
+        ...grounding,
         // A CAST creature npc keeps its portrait on its own cover, so the
         // token names the artifact when the row is one (a copied row carries
         // the stamp, an unconverted one its pointer — one predicate); a library

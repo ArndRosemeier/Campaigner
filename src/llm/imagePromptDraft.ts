@@ -186,6 +186,26 @@ export function portraitGroundingForChunk(chunk: PortraitGroundingChunk): string
     // never as a silent default.
     return chunk.text;
   }
+  // The PARSED arm lives below, shared with a mob COPY's own block — one body,
+  // two entry points (the unparsed fallback stays on THIS entry: a copy has no
+  // unparsed text to fall back to).
+  return portraitGroundingForStatBlock(statBlock);
+}
+
+/**
+ * The stat-exempt portrait grounding of a creature whose OWN stat block is the
+ * source — the arm a CONVERTED mob copy grounds through (docs/17 row 269): a
+ * copy carries the library's bytes on its own row, so its portrait never reads
+ * the pack, and `rosterParticipantRoute` hands this block to the job.
+ *
+ * WHY IT IS NOT A SECOND RULE. It is `portraitGroundingForChunk`'s parsed arm,
+ * moved here so both entries call ONE body (the sizes/types/prose IN, every
+ * numeric field OUT and the 10,000-char cap are stated once, on the chunk
+ * entry above). A copy's block is parsed by construction — `domain/libraryCopy`
+ * refuses a chunk with no stat block — which is exactly why this entry needs no
+ * `text` fallback and why no caller may fabricate one.
+ */
+export function portraitGroundingForStatBlock(statBlock: StatBlock): string {
   const parts: string[] = [];
   const identity = `${statBlock.size} ${statBlock.creatureType}`.trim();
   if (identity !== '') parts.push(identity);

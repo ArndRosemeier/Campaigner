@@ -14,10 +14,14 @@
  *   - tests/features/invented-creature-portraits.test.ts (10)
  *   - tests/features/entity-image-queue.test.ts (6)
  *   - tests/features/mob-portrait-npc-ref.test.ts (8)
- *   - tests/features/mob-portrait-queue.test.ts (10)
+ *   - tests/features/mob-portrait-queue.test.ts (15)
  *   - tests/features/single-mob-portrait-queue.test.ts (12)
  *   - tests/features/mob-portrait-regen.test.ts (17)
- *   = 86 tests (under the ~120 cap).
+ *   = 96 tests (under the ~120 cap).
+ *
+ * The counts above are RE-MEASURED (docs/17 row 269): the merged total had
+ * drifted to 91 before this landing added the five `a CONVERTED copy needs no
+ * pack` arms, because per-file counts are prose that nothing checks.
  *
  * `tests/features/entity-panel.test.tsx` shares the same mock set but is
  * deliberately NOT merged: it is the one file in the cluster that relies on the
@@ -95,7 +99,8 @@ import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { putChunks } from '@/db/chunkRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
-import { getMobPortraitCacheEntry } from '@/db/mobPortraitCache';
+import { getMobPortraitCacheEntry, storeCanonicalPortraitIfAbsent } from '@/db/mobPortraitCache';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { __clearPendingMobPortraitGenerationsForTests } from '@/features/campaign/mob-portrait-cache-queue';
 
 const { chat } = await import('@/llm/openrouter');
@@ -2991,6 +2996,11 @@ describe('mob-portrait-queue.test.ts', () => {
       count: number;
       source: Record<string, unknown>;
       notes?: string;
+      /** A CONVERTED copy's stamped fields (docs/17 row 269): the origin label
+       * and the opaque identity token the migration/write paths write beside an
+       * `inline` copied block. */
+      sourceLine?: string;
+      originToken?: string;
     }[],
   ) {
     return createArtifact({
@@ -3005,6 +3015,8 @@ describe('mob-portrait-queue.test.ts', () => {
           count: monster.count,
           notes: monster.notes ?? '',
           source: monster.source,
+          ...(monster.sourceLine === undefined ? {} : { sourceLine: monster.sourceLine }),
+          ...(monster.originToken === undefined ? {} : { originToken: monster.originToken }),
         })) as never,
         terrain: '',
         tactics: '',
@@ -3352,6 +3364,238 @@ describe('mob-portrait-queue.test.ts', () => {
       await expect(enqueueMobPortraits(encounter, campaignId)).rejects.toThrow('no longer exists');
       expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
       void goblinChunkId;
+    });
+  });
+
+  /**
+   * A CONVERTED copy needs no pack (docs/17 row 269).
+   *
+   * The owner's rule is complete library isolation, and this was the last
+   * portrait path that broke it: an `inline` roster row carrying the opaque
+   * `originToken` was mapped back to a chunk id, so the worker read the pack's
+   * chunk and THREW once it was gone — even though the row already owned the
+   * library's bytes. The grounding now comes off the copy.
+   *
+   * WHAT THESE PINS PROVE, AND WHAT THEY CANNOT. jsdom generates no real
+   * portrait (the image call is mocked), so they prove the GROUNDING SOURCE
+   * (the copy's own block, with the chunk row DELETED so every library read
+   * fails), the LOCAL-ONLY rule (a copy never reads or writes the global
+   * `mobPortraits` slot, even when the slot is populated), the IDENTITY (the
+   * copy keeps its `chunk:`-keyed portrait and its row) and the FAILURE ARM (an
+   * UNCONVERTED pointer still reads the library, loudly, naming its missing
+   * chunk). Image quality is not, and cannot be, asserted here.
+   */
+  describe('a CONVERTED copy needs no pack (docs/17 row 269)', () => {
+    it('illustrates a copied roster mob with the library chunk DELETED, grounded on its own block', async () => {
+      const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+      const copy = await copyCreatureStatsFromDb({ chunkId }, 'Goblin Boss');
+      if (copy.status !== 'copied') throw new Error('the fixture chunk must copy');
+      // THE PACK IS UNINSTALLED: the chunk row is gone, so ANY library read
+      // fails. A portrait that still depends on it cannot pass this test.
+      await db.chunks.delete(chunkId);
+      const encounter = await addEncounter([
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          source: { type: 'inline', statBlock: copy.copy.statBlock },
+          sourceLine: copy.copy.sourceLine,
+          originToken: copy.copy.originToken,
+        },
+      ]);
+      if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+      const result = await enqueueMobPortraits(encounter, campaignId);
+      expect(result).toEqual({ enqueued: 1, alreadyImaged: [] });
+      const creatureKey = libraryCreatureKey(chunkId);
+      // The job carries the copy's OWN block and NO chunkId: the pack is not a
+      // fallback, it is absent from the job.
+      const job = useMobPortraitQueue.getState().queued.find((row) => row.name === 'Goblin Boss');
+      expect(job?.chunkId).toBeUndefined();
+      expect(job?.statBlock).toEqual(copy.copy.statBlock);
+      // IDENTITY UNCHANGED: the token stays the portrait key, exactly the key a
+      // citation of this chunk wrote before the conversion.
+      expect(job?.creatureKey).toBe(creatureKey);
+
+      await waitFor(async () => {
+        expect(await creaturePortraitArt(campaignId, creatureKey)).toBe('cover');
+      });
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      // The grounding came off the COPY's parsed block (size/type identity plus
+      // the text-render negative) — never the deleted chunk's raw text.
+      const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+      expect(finalPrompt).toContain('Large');
+      expect(finalPrompt).toContain('giant');
+      expect(finalPrompt).not.toContain(GOBLIN_TEXT);
+      expect(finalPrompt).not.toContain('59');
+      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+      // LOCAL-ONLY: a copy cannot know whether its citation was canonical
+      // without the pack, so it never touches the global slot (docs/18 §5).
+      expect(await getMobPortraitCacheEntry(creatureKey)).toBeUndefined();
+      expect(await creatureCoverIdOf(campaignId, creatureKey)).not.toBeNull();
+    });
+
+    it('regenerates a copied mob’s EXISTING portrait with the chunk DELETED — identity stable, nothing republished', async () => {
+      const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+      const copy = await copyCreatureStatsFromDb({ chunkId }, 'Goblin Boss');
+      if (copy.status !== 'copied') throw new Error('the fixture chunk must copy');
+      const creatureKey = libraryCreatureKey(chunkId);
+      // The campaign ALREADY shows this creature's portrait — the identity the
+      // copy kept. A regen must replace THOSE bytes, never abandon the row.
+      const existing = await createImage({
+        campaignId,
+        blob: blobOf('old-copy-cover'),
+        mimeType: 'image/png',
+        width: 10,
+        height: 10,
+        source: 'uploaded',
+      });
+      await setCreatureCover({ campaignId, creatureKey, imageId: existing.id });
+      await db.chunks.delete(chunkId);
+      const encounter = await addEncounter([
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          source: { type: 'inline', statBlock: copy.copy.statBlock },
+          sourceLine: copy.copy.sourceLine,
+          originToken: copy.copy.originToken,
+        },
+      ]);
+      if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+      const result = await regenerateMobPortraits(encounter, campaignId);
+      // LOCAL: the copy cannot claim the shared slot, so nothing is republished
+      // (and the pre-phase reads no chunk at all — it does not throw).
+      expect(result).toEqual({ regenerated: 1, republishedCanonical: [] });
+      await waitFor(async () => {
+        const coverId = await creatureCoverIdOf(campaignId, creatureKey);
+        expect(coverId).not.toBeNull();
+        expect(coverId).not.toBe(existing.id);
+      });
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      const fresh = await creatureCoverIdOf(campaignId, creatureKey);
+      const stored = await getImage(fresh ?? '');
+      // A FRESH local generation landed (this describe's intake mock names its
+      // output 'intake'), replacing the uploaded 'old-copy-cover' bytes.
+      expect(new TextDecoder().decode(stored?.bytes ?? new Uint8Array())).toBe('intake');
+      expect(await getMobPortraitCacheEntry(creatureKey)).toBeUndefined();
+
+      // The CONFIRM count tells the same truth: not shared, not unreadable.
+      const plan = await planMobPortraitBatch(encounter, campaignId);
+      expect(plan.imaged).toEqual(['Goblin Boss']);
+      expect(plan.missing).toEqual([]);
+      expect(plan.sharedPortraitNames).toEqual([]);
+      expect(plan.unreadableCitations).toEqual([]);
+    });
+
+    it('NEVER clones a POPULATED global slot for a copied row (the rejected alternative, docs/18 §5)', async () => {
+      const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+      const copy = await copyCreatureStatsFromDb({ chunkId }, 'Goblin Boss');
+      if (copy.status !== 'copied') throw new Error('the fixture chunk must copy');
+      const creatureKey = libraryCreatureKey(chunkId);
+      // A canonical portrait for this creature EXISTS in the global cache.
+      const canonical = await createImage({
+        campaignId: null,
+        blob: blobOf('canonical-bytes'),
+        mimeType: 'image/png',
+        width: 8,
+        height: 8,
+        source: 'generated',
+      });
+      const seated = await storeCanonicalPortraitIfAbsent(creatureKey, canonical);
+      expect(seated.stored).toBe(true);
+      await db.chunks.delete(chunkId);
+      const encounter = await addEncounter([
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          source: { type: 'inline', statBlock: copy.copy.statBlock },
+          sourceLine: copy.copy.sourceLine,
+          originToken: copy.copy.originToken,
+        },
+      ]);
+      if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+      await enqueueMobPortraits(encounter, campaignId);
+      await waitFor(async () => {
+        expect(await creaturePortraitArt(campaignId, creatureKey)).toBe('cover');
+      });
+      // A CLONE would have spent no generation and landed the slot's bytes; the
+      // copy generates LOCALLY instead (a flavored copy must never be handed the
+      // canonical creature's art — the silent wrong-art outcome this rejects).
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      const coverId = await creatureCoverIdOf(campaignId, creatureKey);
+      const stored = await getImage(coverId ?? '');
+      const landed = new TextDecoder().decode(stored?.bytes ?? new Uint8Array());
+      // This describe's intake mock names its output 'intake' — the discriminating
+      // assertion is that the cover is NOT the slot's 'canonical-bytes'.
+      expect(landed).toBe('intake');
+      expect(landed).not.toBe('canonical-bytes');
+      // The slot is untouched — neither read into a cover nor overwritten.
+      expect((await getMobPortraitCacheEntry(creatureKey))?.imageId).toBe(canonical.id);
+    });
+
+    it('illustrates a COPIED cast NPC with the chunk DELETED — on the artifact’s own cover, no pack', async () => {
+      const chunkId = await seedCreatureChunk('Zombie', GOBLIN_TEXT);
+      const copy = await copyCreatureStatsFromDb({ chunkId }, 'Zombie');
+      if (copy.status !== 'copied') throw new Error('the fixture chunk must copy');
+      const npc = await createArtifact({
+        campaignId,
+        kind: 'npc',
+        name: 'Gustav the Zombie',
+        data: {
+          appearance: '',
+          personality: '',
+          statBlock: copy.copy.statBlock,
+          sourceLine: copy.copy.sourceLine,
+          originToken: copy.copy.originToken,
+        },
+      });
+      await db.chunks.delete(chunkId);
+      const encounter = await addEncounter([
+        { name: 'Gustav the Zombie', count: 1, source: { type: 'npc-ref', artifactId: npc.id } },
+      ]);
+      if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+      const result = await enqueueMobPortraits(encounter, campaignId);
+      expect(result).toEqual({ enqueued: 1, alreadyImaged: [] });
+      const job = useMobPortraitQueue
+        .getState()
+        .queued.find((row) => row.name === 'Gustav the Zombie');
+      expect(job?.chunkId).toBeUndefined();
+      expect(job?.statBlock).toEqual(copy.copy.statBlock);
+      // A cast creature's portrait lands on its OWN cover (the artifactId arm).
+      expect(job?.artifactId).toBe(npc.id);
+
+      await waitFor(async () => {
+        const stored = await getAnyArtifact(npc.id);
+        expect(stored?.coverImageId ?? null).not.toBeNull();
+      });
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      expect(await getMobPortraitCacheEntry(libraryCreatureKey(chunkId))).toBeUndefined();
+    });
+
+    it('a LEGACY unconverted pointer still reads the library and fails LOUD when its chunk is gone', async () => {
+      const missingChunkId = newId();
+      const encounter = await addEncounter([
+        { name: 'Ghost Boss', count: 1, source: { type: 'rulebook', chunkId: missingChunkId } },
+      ]);
+      if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+      const result = await enqueueMobPortraits(encounter, campaignId);
+      expect(result).toEqual({ enqueued: 1, alreadyImaged: [] });
+      // The pointer's chunk is the ONLY grounding it has, and it is on the job —
+      // the loud arm the failure/retry exists for.
+      const job = useMobPortraitQueue.getState().queued.find((row) => row.name === 'Ghost Boss');
+      expect(job?.chunkId).toBe(missingChunkId);
+      expect(job?.statBlock).toBeUndefined();
+
+      await waitFor(() => {
+        expect(toastErrorMock).toHaveBeenCalled();
+      });
+      const call = toastErrorMock.mock.calls[0];
+      expect(call?.[0]).toBe('Could not generate a portrait for "Ghost Boss"');
+      expect((call?.[1] as Error).message).toMatch(/stat-block chunk no longer exists/);
+      expect(generateImagesMock).not.toHaveBeenCalled();
     });
   });
 });

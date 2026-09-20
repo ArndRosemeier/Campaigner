@@ -9,6 +9,7 @@ import { db } from '@/db/db';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { createImage } from '@/db/imageRepo';
 import { creatureCoverImageId, setCreatureCover } from '@/db/creatureRepo';
 import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
@@ -389,6 +390,78 @@ describe('battle-card mob portrait action', () => {
     expect(await getAnyArtifact(token?.artifactId ?? '')).toBeUndefined();
     // The same queue the editor batch uses lands the portrait on the campaign's
     // presentation row — the row the board itself resolves through.
+    await waitFor(async () => {
+      expect(await creaturePortrait(chunkId)).not.toBeNull();
+    });
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  });
+
+  it('a COPIED mob generates with the pack UNINSTALLED — the card grounds the job on the row’s own block', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const copy = await copyCreatureStatsFromDb({ chunkId }, 'Goblin Boss');
+    if (copy.status !== 'copied') throw new Error('the fixture chunk must copy');
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Copied warren',
+      data: {
+        difficulty: 'medium',
+        levelHint: '1',
+        monsters: [
+          {
+            name: 'Goblin Boss',
+            count: 1,
+            notes: '',
+            treasure: '',
+            source: { type: 'inline', statBlock: copy.copy.statBlock },
+            sourceLine: copy.copy.sourceLine,
+            originToken: copy.copy.originToken,
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Copied Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    // UNINSTALL the pack the mob was copied from (docs/17 row 269).
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    await renderSurface(campaignId, module.id);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapToken('Goblin Boss', module.id);
+    expect(screen.getByTestId('generate-token-portrait')).toHaveTextContent('Generate portrait');
+    enqueueSingleMock.mockClear();
+    generateImagesMock.mockClear();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('generate-token-portrait'));
+    await waitFor(() => {
+      expect(enqueueSingleMock).toHaveBeenCalledTimes(1);
+    });
+    // THE COPY'S OWN BLOCK grounds the job and NO `chunkId` rides along, so this
+    // target cannot reach the library at all — the deleted pack is irrelevant
+    // (the same rule the editor batch and the module sweep walk).
+    expect(enqueueSingleMock).toHaveBeenCalledWith({
+      campaignId,
+      creatureKey: libraryCreatureKey(chunkId),
+      statBlock: copy.copy.statBlock,
+      name: 'Goblin Boss',
+    });
     await waitFor(async () => {
       expect(await creaturePortrait(chunkId)).not.toBeNull();
     });

@@ -1,4 +1,4 @@
-import { imageBlob, type AnyArtifact, type Id, type StoredImage } from '@/domain';
+import { imageBlob, type AnyArtifact, type Id, type StatBlock, type StoredImage } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { attachImagesToArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -17,6 +17,7 @@ import {
   buildImagePrompt,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
+  portraitGroundingForStatBlock,
 } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
@@ -45,9 +46,12 @@ import {
  * `buildImagePrompt` contract, skip-if-imaged, loud per-creature toasts
  * (EntityBatchFailure {name, message} style) — but keyed by **creature
  * identity**: the queue's wiki-link name resolution does not fit a creature,
- * and prompt grounding is the cited chunk's stat-exempt portrait grounding
- * (`portraitGroundingForChunk`) (an invented mob has no appearance text — its
- * name plus its roster notes are the only description there is).
+ * and prompt grounding is the stat-exempt portrait grounding of the creature's
+ * OWN copied block (`portraitGroundingForStatBlock` — a CONVERTED mob, which
+ * never reads the pack, docs/17 row 269) or of its cited chunk
+ * (`portraitGroundingForChunk` — an UNCONVERTED pointer) (an invented mob has
+ * no appearance text — its name plus its roster notes are the only description
+ * there is).
  *
  * The pump/dedupe/cancellation/failed-retry/dock-counter machinery is the
  * shared `createJobQueue` factory (F6) — this module is the config plus the
@@ -59,12 +63,19 @@ import {
  * the cache worker (`mob-portrait-cache-queue`, cross-campaign single-flight)
  * and publish into the global slot; every later campaign clones the bytes
  * instead of generating. Flavored citations generate locally and never touch
- * the cache — neither read nor write.
+ * the cache — neither read nor write. A CONVERTED copy's portrait is LOCAL for
+ * the same reason a flavored one is (docs/17 row 269): the canonical name lives
+ * only in the chunk's heading path, so a copy — which no longer holds the chunk
+ * — cannot know whether it was canonical, and the app's rule for an unknowable
+ * canonical name is local generation (never a cache write). The accepted cost
+ * and the rejected clone-from-slot alternative are recorded in `docs/18` §5.
  *
  * ENUMERATION COVERS EVERY ROSTER PARTICIPANT THAT CAN OWN A PORTRAIT
  * (`rosterParticipantRoute`, the ONE spelling of the routing rule): a row that
  * CITES a library creature (a `rulebook` entry, or an authored NPC whose stat
- * block is derived from one) rides the canonical lane; a row pointing at a
+ * block is derived from one) rides the creature lane — grounded on its OWN
+ * copied block when it is a CONVERTED copy, on the cited chunk when it is an
+ * UNCONVERTED pointer; a row pointing at a
  * hand-authored NPC rides the authored lane and is illustrated against that
  * artifact; an uncited entry (`inline` / `none`) is an invented mob keyed on
  * its own content. Nothing is created to hold any of them.
@@ -106,9 +117,28 @@ export interface MobPortraitJob {
   /** Display name (the roster creature name) for progress + failures. */
   name: string;
   /** The creature's cited stat-block chunk — grounds the prompt. Absent for an
-   * invented mob (no library row) and for the creation-dialog portrait extra,
-   * where the artifact's own data grounds the prompt. */
+   * invented mob (no library row), for the creation-dialog portrait extra,
+   * where the artifact's own data grounds the prompt, and for a CONVERTED copy,
+   * whose own `statBlock` grounds it instead (docs/17 row 269). */
   chunkId?: Id;
+  /**
+   * The creature's OWN copied stat block — a CONVERTED row (docs/17 row 269).
+   * A mob whose library citation became an authored copy carries the library's
+   * bytes on its own row, so THIS grounds the prompt and the job reads no
+   * library chunk at all: a fully copied campaign mob regenerates its portrait
+   * with the pack UNINSTALLED. `rosterParticipantRoute` returns it and never
+   * returns both it and a `chunkId` (the chunk is the UNCONVERTED pointer's
+   * grounding read); the worker still checks this field FIRST, so a job that
+   * somehow carried both could not read the library either.
+   *
+   * A copy's canonical-vs-flavor citation is NOT recoverable from the copy (the
+   * canonical name is the chunk's last `headingPath` element, and the copy
+   * stores only the stamped `sourceLine`), so a copy's portrait is LOCAL: it
+   * never reads the global `mobPortraits` slot and never publishes to it. The
+   * fork, its accepted cost and the rejected alternative are recorded in
+   * `docs/18` §5 (row 269).
+   */
+  statBlock?: StatBlock;
   /**
    * The UNCITED roster row's own description — the roster `notes` the writer
    * wrote about the invented creature (docs/11 D5 amendment; owner decision
@@ -275,13 +305,26 @@ async function processJob(
   // An invented mob (no artifact, no chunk) is described by nothing but the
   // roster row's own notes — passed on the job, never read back off a row that
   // does not exist (docs/11 D5: an uncited creature is never materialized).
-  // Chunk-grounded jobs (library citations) carry the text-render negative
-  // explicitly; an invented mob and the creation-dialog extra ground on their
-  // own text and ride the shared default-on guard (docs/11 D5, generalized).
+  // Chunk-grounded jobs (a library citation, or a COPY's own block) carry the
+  // text-render negative explicitly; an invented mob and the creation-dialog
+  // extra ground on their own text and ride the shared default-on guard
+  // (docs/11 D5, generalized).
   let chunkGrounded = false;
   let summary = '';
   let body: string;
-  if (job.chunkId !== undefined) {
+  if (job.statBlock !== undefined) {
+    // A CONVERTED copy grounds on its OWN block (docs/17 row 269): the row owns
+    // the library's bytes, so no library chunk is read and the pack may be
+    // uninstalled entirely. The token on the job remains an IDENTITY, never a
+    // resolver. Stat-exempt prose only, exactly as a cited chunk would be, so
+    // the text-render negative rides along (chunkGrounded). The chunkId arm
+    // below is the UNCONVERTED pointer's, and it stays loud when its chunk is
+    // gone; a copy's portrait is LOCAL — it never reads or publishes the global
+    // canonical slot (a copy cannot know whether its citation was canonical
+    // without the pack; see `MobPortraitJob.statBlock`).
+    body = portraitGroundingForStatBlock(job.statBlock);
+    chunkGrounded = true;
+  } else if (job.chunkId !== undefined) {
     const chunk = (await getChunksByIds([job.chunkId]))[0];
     if (chunk === undefined) {
       throw new Error('the creature\u2019s stat-block chunk no longer exists');
@@ -436,8 +479,14 @@ interface BatchKind {
   /** The creature's portrait identity. */
   creatureKey: string;
   /** The cited stat-block chunk (prompt grounding) — absent for an invented
-   * mob and for a content-hash-only citation. */
+   * mob, for a content-hash-only citation, and for a CONVERTED copy (which
+   * grounds on `statBlock` instead and reads no library at all, docs/17 row
+   * 269). */
   chunkId?: Id;
+  /** The creature's OWN copied block (a converted copy, docs/17 row 269) — the
+   * grounding of a job that must not read the pack. Never set beside a
+   * `chunkId` (see `rosterParticipantRoute`). */
+  statBlock?: StatBlock;
   /** The authored NPC this creature is illustrated ON, when one stands in the
    * roster. */
   artifactId?: Id;
@@ -524,6 +573,7 @@ async function enumerateBatchKinds(
       name: route.name,
       creatureKey: route.creatureKey,
       ...(route.chunkId === undefined ? {} : { chunkId: route.chunkId }),
+      ...(route.statBlock === undefined ? {} : { statBlock: route.statBlock }),
       ...(route.artifactId === null ? {} : { artifactId: route.artifactId }),
       // THE portrait question, asked once through the one seam every renderer
       // asks (docs/11 D6): the campaign's presentation row for the identity,
@@ -592,6 +642,7 @@ export async function enqueueMobPortraits(
       creatureKey: kind.creatureKey,
       name: kind.name,
       ...(kind.chunkId === undefined ? {} : { chunkId: kind.chunkId }),
+      ...(kind.statBlock === undefined ? {} : { statBlock: kind.statBlock }),
       ...(kind.artifactId === undefined ? {} : { artifactId: kind.artifactId }),
     });
   }
@@ -646,10 +697,13 @@ export interface MobPortraitBatchPlan {
   /** Imaged library kinds cited canonically (Monster Core): REPLACING them
    * republishes the shared slot, so every future portrait in every campaign
    * uses the new art (existing covers elsewhere keep theirs) — the confirm
-   * must say so before the choice. */
+   * must say so before the choice. A CONVERTED copy never appears here: its
+   * portrait is local and its replace republishes nothing (docs/17 row 269). */
   sharedPortraitNames: string[];
   /** Imaged library kinds whose citation can no longer be read: replacing
-   * them fails loudly and keeps their portrait (the count never hides it). */
+   * them fails loudly and keeps their portrait (the count never hides it).
+   * Never a CONVERTED copy — that replace reads no library at all (docs/17 row
+   * 269). */
   unreadableCitations: string[];
 }
 
@@ -665,7 +719,11 @@ export async function planMobPortraitBatch(
   const sharedPortraitNames: string[] = [];
   const unreadableCitations: string[] = [];
   for (const kind of imaged) {
-    if (kind.chunkId === undefined) continue;
+    // A CONVERTED copy republishes nothing (docs/17 row 269): its portrait is
+    // LOCAL, so it is neither a shared canonical kind nor an unreadable
+    // citation — the count states neither, because the replace path performs
+    // neither.
+    if (kind.statBlock !== undefined || kind.chunkId === undefined) continue;
     const chunk = (await getChunksByIds([kind.chunkId]))[0];
     if (chunk === undefined) {
       // The replace path throws loud on this (kept portrait); the count reports
@@ -698,7 +756,9 @@ export async function planMobPortraitBatch(
  *    a plain re-enqueue would clone identical bytes, a no-op regen). A failed
  *    republish throws loud here with every old portrait still intact — nothing
  *    is enqueued. Flavored citations skip the cache entirely (local-only
- *    invariant).
+ *    invariant) — and so does a CONVERTED copy, which reaches neither the chunk
+ *    read nor the republish (docs/17 row 269): its regen is local, grounded on
+ *    its own copied block.
  * 3. Enqueue delete-after-replace regen jobs for the imaged kinds (plus the
  *    normal cover-less batch for the remainder). The old portraits stay until
  *    each worker commits its replacement; a failed, skipped, or queue-dropped
@@ -720,7 +780,11 @@ export async function regenerateMobPortraits(
   const republishedCanonical: string[] = [];
   const republishedKeys = new Set<string>();
   for (const target of imaged) {
-    if (target.chunkId === undefined) continue;
+    // A CONVERTED copy reads no library chunk and republishes nothing (docs/17
+    // row 269): its regen is LOCAL, grounded on its own block. Only an
+    // UNCONVERTED pointer reaches the chunk read below — and it still fails
+    // loudly, with every old portrait intact, when its chunk is gone.
+    if (target.statBlock !== undefined || target.chunkId === undefined) continue;
     const chunk = (await getChunksByIds([target.chunkId]))[0];
     if (chunk === undefined) {
       throw new Error(
@@ -749,6 +813,7 @@ export async function regenerateMobPortraits(
       creatureKey: target.creatureKey,
       name: target.name,
       ...(target.chunkId === undefined ? {} : { chunkId: target.chunkId }),
+      ...(target.statBlock === undefined ? {} : { statBlock: target.statBlock }),
       ...(target.artifactId === undefined ? {} : { artifactId: target.artifactId }),
     })),
   );
@@ -786,8 +851,13 @@ export interface SingleMobPortraitTarget {
   /** `CreatureIdentity.key` — the portrait identity. */
   creatureKey: string;
   /** The cited stat-block chunk — grounds the prompt, stat-exempt. Absent for
-   * an invented mob (its content identity is the key). */
+   * an invented mob (its content identity is the key) and for a CONVERTED copy
+   * (which grounds on `statBlock` and reads no library at all, docs/17 row
+   * 269). */
   chunkId?: Id | undefined;
+  /** The creature's OWN copied block (a converted copy, docs/17 row 269) — the
+   * grounding that needs no pack. Never set beside a `chunkId`. */
+  statBlock?: StatBlock | undefined;
   /** The authored NPC this creature is illustrated on, when one exists. */
   artifactId?: Id | undefined;
   /** The citing name (roster entry or token label) for the
@@ -815,6 +885,7 @@ export function enqueueSingleMobPortrait(target: SingleMobPortraitTarget): void 
       creatureKey: target.creatureKey,
       name,
       ...(target.chunkId === undefined ? {} : { chunkId: target.chunkId }),
+      ...(target.statBlock === undefined ? {} : { statBlock: target.statBlock }),
       ...(target.artifactId === undefined ? {} : { artifactId: target.artifactId }),
     },
   ]);
@@ -856,7 +927,12 @@ export async function regenerateSingleMobPortrait(
   });
   if (current === null) return { regenerated: false, republishedCanonical: false };
   let isCanonical = false;
-  if (target.chunkId !== undefined) {
+  // A CONVERTED copy never reaches the chunk read or the shared republish
+  // (docs/17 row 269): its portrait is LOCAL, grounded on its own block, so its
+  // regen needs no pack. An UNCONVERTED pointer keeps the canonical phase, and
+  // still fails loudly here (old portrait intact, nothing enqueued) when its
+  // chunk is gone.
+  if (target.statBlock === undefined && target.chunkId !== undefined) {
     const chunk = (await getChunksByIds([target.chunkId]))[0];
     if (chunk === undefined) {
       throw new Error(
@@ -879,6 +955,7 @@ export async function regenerateSingleMobPortrait(
       creatureKey: target.creatureKey,
       name,
       ...(target.chunkId === undefined ? {} : { chunkId: target.chunkId }),
+      ...(target.statBlock === undefined ? {} : { statBlock: target.statBlock }),
       ...(target.artifactId === undefined ? {} : { artifactId: target.artifactId }),
     },
   ]);
