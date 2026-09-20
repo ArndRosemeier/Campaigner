@@ -821,19 +821,19 @@ describe('veil presentation', () => {
     expect(fog.className).toContain('battle-fog-cloud');
     expect(fog.className).not.toContain('bg-zinc-300');
     expect(fog.className).not.toMatch(/opacity-\d/);
+    // The drift is its own clipped layer INSIDE the veil (docs/17 row 264):
+    // that is what lets a compositor transform move the cloud without the
+    // veil's 44 px protruding edge handles being clipped with it.
+    expect(fog.querySelector('.battle-fog-cloud-clip')).not.toBeNull();
 
     const css = readFileSync(resolve(import.meta.dirname, '..', '..', 'src', 'index.css'), 'utf8');
     const rule = /\.battle-fog-cloud\s*\{([^}]*)\}/.exec(css)?.[1];
     if (rule === undefined) throw new Error('the .battle-fog-cloud rule is gone');
-    // Layered (the "not just mushy" ask): three blended gradient layers …
-    expect([...rule.matchAll(/gradient\(/g)].length).toBeGreaterThanOrEqual(3);
-    expect(rule).toContain('background-image');
-    expect(rule).toContain('background-blend-mode');
-    // … drifting on a pure-CSS animation (no per-frame JS, no timers) …
-    expect(rule).toContain('animation: battle-fog-drift');
-    // … and OPAQUE, alpha-free greys: the fog still hides the map area
-    // (ledger 65 — the cloud is a look, never a tint).
-    expect(rule).toMatch(/background-color:\s*#[0-9a-f]{6}/i);
+    // OPAQUE, alpha-free greys: the fog still hides the map area (ledger 65 —
+    // the cloud is a look, never a tint). ONE definition of the base grey,
+    // shared by the element backdrop and the bottom of the blend stack.
+    expect(rule).toMatch(/--battle-fog-base:\s*#[0-9a-f]{6}/i);
+    expect(rule).toContain('background-color: var(--battle-fog-base)');
     expect(rule).not.toMatch(/rgba\(|hsla\(|\/\s*0?\.\d/);
     expect(rule).not.toContain('opacity');
     // It must never touch positioning/stacking: the veil is positioned by the
@@ -843,11 +843,43 @@ describe('veil presentation', () => {
     expect(rule).not.toContain('position');
     expect(rule).not.toContain('z-index');
 
+    // The cloud itself: three blended gradient layers on a clipped inner box,
+    // rasterized once and moved by a compositor transform (docs/17 row 264).
+    const clip = /\.battle-fog-cloud-clip\s*\{([^}]*)\}/.exec(css)?.[1];
+    if (clip === undefined) throw new Error('the .battle-fog-cloud-clip rule is gone');
+    // The clip box is what keeps the drifting texture inside the fog rect —
+    // and it is a CHILD of the veil, so the veil's protruding edge handles
+    // are not clipped with it.
+    expect(clip).toContain('position: absolute');
+    expect(clip).toContain('inset: 0');
+    expect(clip).toContain('overflow: hidden');
+
+    const drift = /\.battle-fog-cloud-clip::before\s*\{([^}]*)\}/.exec(css)?.[1];
+    if (drift === undefined) throw new Error('the .battle-fog-cloud-clip::before rule is gone');
+    // Layered (the "not just mushy" ask): three blended gradient layers …
+    expect([...drift.matchAll(/gradient\(/g)].length).toBeGreaterThanOrEqual(3);
+    expect(drift).toContain('background-image');
+    expect(drift).toContain('background-blend-mode');
+    // … on the SAME opaque base the element carries (the blend's darken step
+    // reads it), so the look is the one the owner approved.
+    expect(drift).toContain('background-color: var(--battle-fog-base)');
+    // … drifting on a pure-CSS animation (no per-frame JS, no timers) …
+    expect(drift).toContain('animation: battle-fog-drift');
+    // … never a paint-property animation (the per-frame repaint row 264 removes).
+    expect(drift).not.toContain('background-position');
+    // … and opaque, alpha-free greys.
+    expect(drift).not.toMatch(/rgba\(|hsla\(|\/\s*0?\.\d/);
+    expect(drift).not.toContain('opacity');
+
     const keyframes = /@keyframes battle-fog-drift\s*\{([\s\S]*?)\n\}/.exec(css)?.[1];
     if (keyframes === undefined) throw new Error('the battle-fog-drift keyframes are gone');
-    // Motion is background-position only — never opacity or geometry, so the
-    // animation cannot fight the selection ring or the drag lift.
-    expect(keyframes).toContain('background-position');
+    // Motion is a compositor TRANSFORM only — never opacity or geometry, so
+    // the animation cannot fight the selection ring or the drag lift, and
+    // never `background-position`, which repaints the blended layer EVERY
+    // frame on every fog rect (the burn docs/17 row 264 removes — a revert to
+    // paint-per-frame reds right here).
+    expect(keyframes).toContain('transform');
+    expect(keyframes).not.toContain('background-position');
     expect(keyframes).not.toContain('opacity');
 
     const reduced = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1];

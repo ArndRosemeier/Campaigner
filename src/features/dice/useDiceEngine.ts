@@ -22,6 +22,15 @@ export interface DiceEngine {
   rollDice: (notation: string[]) => Promise<DiceBoxRollDie[]>;
   /** Remove settled dice from the board (result-overlay dismissal). */
   clearDice: () => void;
+  /**
+   * Release the engine when the roller is out of use (dialog closed and no
+   * throw/settled result on screen). It cancels any in-flight boot, tears the
+   * instance down and returns the lifecycle to `idle` so `ensureStarted`
+   * rebuilds it on the next open — the engine, its WebGL context and the Ammo
+   * physics worker must not stay resident behind the board (docs/17 row 264).
+   * A failed start stays `error` so its loud status and Retry survive.
+   */
+  stop: () => void;
 }
 
 interface DiceEngineOptions {
@@ -44,6 +53,14 @@ let nextStageId = 0;
  * Ported from GM_Helper's DiceRoller.tsx boot sequence, including the
  * `offscreen: false` workaround ("Offscreen workers often never finish init
  * under Vite") and the init watchdog race.
+ *
+ * LIFECYCLE (docs/17 row 264): the engine is not only started lazily, it is
+ * RELEASED when the roller goes out of use. dice-box's onscreen world stops
+ * its own Babylon render loop and the physics worker once every die is asleep
+ * (`world.onscreen.js` `renderLoop`, "all dice settled → stopRenderLoop +
+ * stopSimulation"), but the scene, its WebGL context and the Ammo worker stay
+ * resident until `clear()`/disposal. `stop()` is that disposal; `ensureStarted`
+ * rebuilds on the next open.
  */
 export function useDiceEngine(options: DiceEngineOptions = {}): DiceEngine {
   const initTimeoutMs = options.initTimeoutMs ?? INIT_TIMEOUT_MS;
@@ -176,6 +193,17 @@ export function useDiceEngine(options: DiceEngineOptions = {}): DiceEngine {
     }
   }, []);
 
+  // Release when out of use (docs/17 row 264). Bumping the attempt FIRST is
+  // what makes this safe mid-boot: the in-flight `boot` sees the mismatch and
+  // discards its instance instead of storing it. `error` is left in place, so
+  // a failure keeps its inline status and the Retry path rather than quietly
+  // rebooting on the next open.
+  const stop = useCallback((): void => {
+    attemptRef.current += 1;
+    tearDown();
+    setStatus((current) => (current === 'error' ? current : 'idle'));
+  }, [tearDown]);
+
   useEffect(
     () => () => {
       attemptRef.current += 1;
@@ -184,5 +212,5 @@ export function useDiceEngine(options: DiceEngineOptions = {}): DiceEngine {
     [tearDown],
   );
 
-  return { status, error, stageRef, ensureStarted, retry, rollDice, clearDice };
+  return { status, error, stageRef, ensureStarted, retry, rollDice, clearDice, stop };
 }

@@ -2713,11 +2713,12 @@ interface VeilViewProps {
  * Fog's fill is the `battle-fog-cloud` class (index.css): an animated, layered
  * grey cloud, opaque and alpha-free, animated purely in CSS. It used to be the
  * flat `bg-zinc-300` slab the owner reported as "a white opaque rectangle …
- * mushy". Its motion is background-position only — no opacity, no geometry —
- * so selection and dragging still read via outline + lift (ring / z-20,
- * mirroring the token drag lift) and can never swing the fill. No `opacity-*`
- * class on either kind; the fills are alpha-free, pinned by the veil
- * presentation tests.
+ * mushy". Its motion is a compositor `transform` on a clipped inner cloud
+ * layer — never an opacity or geometry change, and never a per-frame
+ * `background-position` repaint (docs/17 row 264) — so selection and dragging
+ * still read via outline + lift (ring / z-20, mirroring the token drag lift)
+ * and can never swing the fill. No `opacity-*` class on either kind; the fills
+ * are alpha-free, pinned by the veil presentation tests.
  */
 function VeilView({
   veil,
@@ -2762,6 +2763,11 @@ function VeilView({
       // Hit area only — the board owns the stream (one-gesture-machine).
       data-gesture-grab={`veil:${veil.id}`}
     >
+      {/* The fog's drifting cloud lives in a clipped inner box so the drift
+          can be a compositor `transform` with no per-frame repaint (docs/17
+          row 264) — and so the 44 px edge handles below, which protrude past
+          the rect, are not clipped with it. Not rendered for a veil. */}
+      {veil.kind === 'fog' ? <span aria-hidden className="battle-fog-cloud-clip" /> : null}
       {resizable &&
         handles.map((handle) => (
           <button

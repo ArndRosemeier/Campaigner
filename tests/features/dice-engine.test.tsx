@@ -56,7 +56,7 @@ vi.mock('@3d-dice/dice-box', () => ({
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/toast', () => ({ toastError }));
 
-function lastInstance(): { config: Record<string, unknown>; cleared: number } {
+function lastInstance(): { config: Record<string, unknown>; cleared: number; rollNotations: unknown[] } {
   const instance = h.instances.at(-1);
   if (instance === undefined) throw new Error('engine was never constructed');
   return instance;
@@ -219,5 +219,68 @@ describe('useDiceEngine', () => {
       await flushTicks();
     });
     expect(lastInstance().cleared).toBe(1);
+  });
+
+  it('releases the engine on stop and rebuilds a fresh one on the next start', async () => {
+    // docs/17 row 264: out of use must mean the Babylon scene, its WebGL
+    // context and the Ammo worker are RELEASED, not left resident behind the
+    // board for the rest of the session.
+    renderEngine();
+    await act(async () => {
+      currentEngine().ensureStarted();
+      await flushTicks();
+    });
+    expect(currentEngine().status).toBe('ready');
+    await act(async () => {
+      currentEngine().stop();
+      await flushTicks();
+    });
+    expect(lastInstance().cleared).toBe(1);
+    expect(currentEngine().status).toBe('idle');
+    // The next open rebuilds: a SECOND instance, and it rolls.
+    await act(async () => {
+      currentEngine().ensureStarted();
+      await flushTicks();
+    });
+    expect(h.instances).toHaveLength(2);
+    expect(currentEngine().status).toBe('ready');
+    const rolls = await currentEngine().rollDice(['1d6']);
+    expect(rolls).toEqual([{ value: 4, sides: 6 }]);
+    expect(lastInstance().rollNotations).toEqual([['1d6']]);
+  });
+
+  it('cancels an in-flight boot on stop, so a closed roller stores no engine', async () => {
+    h.initImpl = () => new Promise(() => undefined);
+    renderEngine();
+    await act(async () => {
+      currentEngine().ensureStarted();
+      await flushTicks();
+    });
+    expect(currentEngine().status).toBe('loading');
+    await act(async () => {
+      currentEngine().stop();
+      await flushTicks();
+    });
+    expect(currentEngine().status).toBe('idle');
+    // The abandoned boot never publishes: the hook holds no instance to roll.
+    await expect(currentEngine().rollDice(['1d6'])).rejects.toThrow('3D dice are not ready yet');
+  });
+
+  it('keeps a failed start loud across stop — the error and its Retry survive', async () => {
+    h.initImpl = () => Promise.reject(new Error('no WebGL context'));
+    renderEngine();
+    await act(async () => {
+      currentEngine().ensureStarted();
+      await flushTicks();
+    });
+    expect(currentEngine().status).toBe('error');
+    await act(async () => {
+      currentEngine().stop();
+      await flushTicks();
+    });
+    // Never a silent reboot of a failed engine: the loud status stays until
+    // the user presses Retry.
+    expect(currentEngine().status).toBe('error');
+    expect(currentEngine().error).toBe('no WebGL context');
   });
 });

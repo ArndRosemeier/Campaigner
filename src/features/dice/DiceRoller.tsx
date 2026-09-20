@@ -34,9 +34,12 @@ import {
  * full-screen settled result. Controlled via `open`; the caller decides what
  * a result means through `onResult` — damage, heal, or any future roll — so
  * this component never touches HP or battle state itself. The 3D engine is
- * dynamic-imported on first open (zero bundle cost until then) and every
- * engine failure is loud: inline status + toast, dice rolls blocked, flat
- * modifier rolls unaffected (AGENTS.md: no silent fallbacks).
+ * dynamic-imported on first open (zero bundle cost until then) and RELEASED
+ * when the roller goes out of use, so its scene, WebGL context and physics
+ * worker do not sit resident behind the board for the rest of the session
+ * (docs/17 row 264); every engine failure is loud: inline status + toast, dice
+ * rolls blocked, flat modifier rolls unaffected (AGENTS.md: no silent
+ * fallbacks).
  */
 
 const LOG_LIMIT = 3;
@@ -96,6 +99,9 @@ export interface DiceRollerProps {
 
 export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerProps): JSX.Element {
   const engine = useDiceEngine();
+  // Destructured so the in-use effect's dependency array is statically
+  // checkable (react-hooks/exhaustive-deps): both are useCallbacks.
+  const { ensureStarted, stop: releaseEngine } = engine;
   const [tray, setTray] = useState<DiceTray>(EMPTY_TRAY);
   const [roll, setRoll] = useState<ActiveRoll | null>(null);
   // True while the 3D engine owns the board: the stage fades in for the
@@ -109,9 +115,32 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
   const pendingTrayRef = useRef<{ tray: DiceTray } | null>(null);
   const onResultRef = useRef(onResult);
 
+  // The 3D throw must be on screen WHILE it happens: `rollDice` resolves
+  // after the dice settle, so gating on the result alone hid the animation.
+  // Settled dice stay up behind the result number; flat values never raise
+  // the stage (engine-free by contract).
+  const stageVisible = rolling || roll?.dice === true;
+
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
+
+  // The engine is alive only while the roller is IN USE: the dialog is open,
+  // or a throw/settled result is on screen. Closing the roller releases the
+  // Babylon scene, its WebGL context and the Ammo physics worker instead of
+  // leaving them resident behind the board for the rest of the session
+  // (docs/17 row 264); reopening rebuilds them. Settled dice stay visible
+  // because `roll.dice` keeps `stageVisible` true until the result is
+  // dismissed. `ensureStarted` is idempotent, so the effect re-running as
+  // `status` changes costs nothing.
+  const engineInUse = open || stageVisible;
+  useEffect(() => {
+    if (engineInUse) {
+      ensureStarted();
+      return;
+    }
+    releaseEngine();
+  }, [engineInUse, ensureStarted, releaseEngine]);
 
   // Open side: warm the 3D engine (idempotent) and restore the last-used
   // tray — a genuine user preference; a corrupt storage entry is discarded
@@ -123,7 +152,6 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
     if (!open) {
       return;
     }
-    engine.ensureStarted();
     const readStored = (): string | null => {
       try {
         return window.localStorage.getItem(LAST_TRAY_STORAGE_KEY);
@@ -142,8 +170,6 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
         // Not JSON — stale foreign entry; the fresh-tray default applies.
       }
     }
-    // engine.ensureStarted is stable (useCallback on stable deps).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const clearRollError = useCallback((): void => {
@@ -266,11 +292,6 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
 
   const canRoll = tray.dice.length > 0 || tray.modifier !== 0;
   const diceBlocked = tray.dice.length > 0 && (engine.status !== 'ready' || engine.error !== null);
-  // The 3D throw must be on screen WHILE it happens: `rollDice` resolves
-  // after the dice settle, so gating on the result alone hid the animation.
-  // Settled dice stay up behind the result number; flat values never raise
-  // the stage (engine-free by contract).
-  const stageVisible = rolling || (roll?.dice === true);
 
   return (
     <>

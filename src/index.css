@@ -232,39 +232,83 @@
    it), and from the neutral edges of each layer: `lighten` leaves the
    backdrop untouched where a layer is black, `darken` leaves it untouched
    where a layer is white, so the base grey survives and the tiles have no
-   visible seam (the drift can therefore loop forever).
+   visible seam.
 
-   NO per-frame JavaScript and no timers: the whole animation is one CSS
-   `background-position` drift on three layered radial gradients (the cheap
-   class of solution — a battle map can hold many fog rects). Motion only, no
-   opacity or geometry change, so it can never fight the selection ring, the
-   drag lift or the tap threshold. `prefers-reduced-motion: reduce` stops the
-   drift and keeps the cloud: a static cloud, never "no fog". */
+   NO PER-FRAME REPAINT (docs/17 row 264). The drift used to animate
+   `background-position`, which is not a compositor property: with
+   `background-blend-mode` in play every frame was a full repaint of a blended
+   (on WebKit, often software-rasterized) layer, once per fog rect, forever.
+   The cloud is now ONE blended texture on an oversized inner layer that is
+   moved by `transform` — a compositor-only change, rasterized once. The
+   `-clip` box is what keeps the drift inside the fog rect; it sits INSIDE the
+   veil so the veil's 44 px edge handles (which protrude past the rect) are
+   never clipped with it. The inter-layer parallax the old keyframes gave is
+   gone: with one composite you get one velocity, and three separately
+   transformed layers would need `mix-blend-mode` — a per-frame blend of its
+   own, i.e. the cost this removes.
+
+   Motion only, no opacity or geometry change, so it can never fight the
+   selection ring, the drag lift or the tap threshold. `prefers-reduced-
+   motion: reduce` stops the drift and keeps the cloud: a static cloud, never
+   "no fog". */
 .battle-fog-cloud {
-  background-color: #a1a1aa;
+  /* ONE definition of the base grey: the element's own backdrop AND the
+     bottom of the blend stack below. */
+  --battle-fog-base: #a1a1aa;
+  background-color: var(--battle-fog-base);
+}
+
+/* The clip box: exactly the fog rect, hiding the drift's overspill. */
+.battle-fog-cloud-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* The drifting cloud: one 150%-sized blended texture, moved by transform.
+   `background-size` is scaled by the same 1.5 so the cloud reads at the size
+   it did when these gradients lived on the rect itself. The translate stays
+   well inside the 25% overspill on every side, so no edge is ever exposed.
+   THE PRICE OF COMPOSITING: the layer is rasterized at 2.25x the fog rect's
+   area (it is one raster, not a per-frame repaint), and the drift is now a
+   fraction of the rect instead of the old fixed 190 px, so it scales with the
+   fog rather than moving faster on small covers. */
+.battle-fog-cloud-clip::before {
+  content: '';
+  position: absolute;
+  inset: -25%;
+  background-color: var(--battle-fog-base);
   background-image:
     radial-gradient(closest-side circle at 32% 28%, #fafafa 0%, #e4e4e7 44%, #000000 100%),
     radial-gradient(closest-side circle at 74% 70%, #f4f4f5 0%, #d4d4d8 48%, #000000 100%),
     radial-gradient(closest-side circle at 52% 88%, #3f3f46 0%, #71717a 46%, #ffffff 100%);
-  background-size: 74% 78%, 88% 70%, 132% 96%;
+  background-size: 49.3% 52%, 58.7% 46.7%, 88% 64%;
   background-repeat: repeat;
   background-blend-mode: lighten, lighten, darken;
+  will-change: transform;
   animation: battle-fog-drift 52s linear infinite;
 }
 
-/* Three layers, three speeds and directions — the parallax is what makes the
-   mass read as cloud in motion instead of one sliding texture. */
 @keyframes battle-fog-drift {
   from {
-    background-position: 0 0, 0 0, 0 0;
+    transform: translate3d(0, 0, 0);
   }
   to {
-    background-position: 190px -130px, -150px 170px, 95px 75px;
+    transform: translate3d(-13%, 9%, 0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .battle-fog-cloud {
+  /* Static cloud, never "no fog": the drift stops and nothing else. */
+  .battle-fog-cloud-clip::before {
+    animation: none;
+  }
+  /* The 3D dice stage's fade and the progress dock's sweep are motion too. */
+  .dice-stage {
+    transition: none;
+  }
+  .progress-indeterminate {
     animation: none;
   }
 }

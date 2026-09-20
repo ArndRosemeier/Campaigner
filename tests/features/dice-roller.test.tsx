@@ -214,6 +214,73 @@ describe('DiceRoller', () => {
     // Flat value: settled overlay, but the 3D stage never came up.
     expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
   });
+  it('releases the 3D engine when the roller closes, and rebuilds it on the next open', async () => {
+    // docs/17 row 264: closing the roller must not leave a Babylon scene, its
+    // WebGL context and the Ammo worker resident behind the board for the rest
+    // of the session. The next open rebuilds — and a roll still works, so
+    // nothing leaks between rolls.
+    const user = userEvent.setup();
+    await renderRoller();
+    await waitFor(() => {
+      expect(h.instances).toHaveLength(1);
+    });
+    // Close the roller through its own control (the harness toggle sits
+    // outside the dialog and is inert while the dialog is open).
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
+    });
+    await waitFor(() => {
+      expect(lastInstance().cleared).toBeGreaterThanOrEqual(1);
+    });
+    await user.click(screen.getByRole('button', { name: 'open-roller' }));
+    await waitFor(() => {
+      expect(h.instances).toHaveLength(2);
+    });
+    await addDice(['d6']);
+    const rollButton = screen.getByRole('button', { name: 'Roll' });
+    await waitFor(() => {
+      expect(rollButton).toBeEnabled();
+    });
+    await user.click(rollButton);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Roll result 8/ })).toBeInTheDocument();
+    });
+  });
+
+  it('keeps the engine while settled dice are on screen, and releases it once the result is dismissed', async () => {
+    // The observed behaviour the release must not break: the settled dice stay
+    // up behind the result number, so the engine is alive while the stage is
+    // visible and released only when the stage drops.
+    const user = userEvent.setup();
+    await renderRoller();
+    await addDice(['d6']);
+    const rollButton = screen.getByRole('button', { name: 'Roll' });
+    await waitFor(() => {
+      expect(rollButton).toBeEnabled();
+    });
+    await user.click(rollButton);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Roll result 8/ })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'true');
+    expect(lastInstance().cleared).toBe(0);
+    // Dismiss → the stage drops → the engine is released. (Dismissal also
+    // clears the settled dice, so `cleared` moves by more than the release's
+    // own disposal; the RELEASE is proved by the rebuild below.)
+    await user.click(screen.getByRole('button', { name: /Roll result 8/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
+    });
+    await waitFor(() => {
+      expect(h.instances).toHaveLength(1);
+    });
+    await user.click(screen.getByRole('button', { name: 'open-roller' }));
+    await waitFor(() => {
+      expect(h.instances).toHaveLength(2);
+    });
+  });
+
   it('fixes percentile zeros up to 100 in the reported total', async () => {
     h.rollImpl = () => Promise.resolve([{ value: 0, sides: 100 }]);
     const onResult = vi.fn();
