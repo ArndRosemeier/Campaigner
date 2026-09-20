@@ -10,7 +10,7 @@ import {
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
 import { buildFighterStatsLookup, isBattleEmpty, pcFightersOf } from '@/db/fighterStats';
-import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
+import { listArtifactsByCampaign, listGlobalArtifacts, adoptedCopyIdOf } from '@/db/artifactRepo';
 import { stampNewEntity } from '@/domain/entity';
 
 /**
@@ -90,10 +90,40 @@ function emptyBoard(): BattleBoard {
  * `moduleId` index was unique, or imported from such an export) are resolved
  * to the row the index yields first; the others stay in the table and are named
  * in docs/18 §5 rather than silently dropped.
+ *
+ * The key names a row the CAMPAIGN owns (docs/17 row 268): a battle seeded from
+ * a LIBRARY-scoped encounter is re-keyed to the adopted copy, so the id is
+ * never a stored library reference. An affordance still holding the LIBRARY
+ * card resolves through `getBattleForEncounter` — the ONE hop — rather than
+ * through this identity lookup.
  */
 export async function getBattleByEncounter(encounterArtifactId: Id): Promise<Battle | undefined> {
   const row = await db.battles.where('encounterArtifactId').equals(encounterArtifactId).first();
   return row === undefined ? undefined : parseBattleRow(row);
+}
+
+/**
+ * The battle the ENCOUNTER an AFFORDANCE or URL holds owns — the keyed lookup
+ * plus the LIBRARY-ADOPTION hop (docs/17 row 268).
+ *
+ * Since a battle seeded from a LIBRARY-scoped encounter is KEYED to the
+ * CAMPAIGN's adopted copy, a caller that still holds the library card (the
+ * encounter's own Run-battle button, or a URL typed before the v29 backfill
+ * re-keyed the row) resolves through the campaign's copy. ONE hop, campaign-
+ * scoped, and a READ only: nothing is adopted, re-keyed or written here — the
+ * write-time half is `db/battleSeed.campaignOwnedEncounter`.
+ *
+ * A miss on the fallback is a genuine "no battle" (the surface's empty state),
+ * never a guess: `adoptedCopyIdOf` answers only the campaign's OWN copy.
+ */
+export async function getBattleForEncounter(
+  campaignId: Id,
+  encounterArtifactId: Id,
+): Promise<Battle | undefined> {
+  const direct = await getBattleByEncounter(encounterArtifactId);
+  if (direct !== undefined) return direct;
+  const copyId = await adoptedCopyIdOf(campaignId, encounterArtifactId);
+  return copyId === undefined ? undefined : getBattleByEncounter(copyId);
 }
 
 /** Every battle row the module holds, one per encounter it seeded from.

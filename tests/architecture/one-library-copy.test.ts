@@ -224,14 +224,15 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
   });
 
   /**
-   * THE BATTLE HOLDER (docs/17 row 259) — the LAST declared shape, and the one
-   * whose write address is `db.battles` rather than an artifact revision. A
-   * battle token's `artifactId` and its stage snapshot are the same reference
-   * one revision apart; the pin holds the two facts that would drift invisibly:
-   * the shape is ON the declared list, and both the discovery and the rewrite
-   * live in the ONE seam rather than at a call site.
+   * THE BATTLE HOLDER (docs/17 rows 259/268) — the LAST declared shape, and the
+   * one whose write address is `db.battles` rather than an artifact revision. A
+   * battle token's `artifactId`, its stage snapshot, the row's SEEDING ENCOUNTER
+   * key and the re-seed stamp's copy of it are all references of the same kind;
+   * the pin holds the facts that would drift invisibly: the shape is ON the
+   * declared list, and the discovery and the rewrite live in the ONE seam rather
+   * than at a call site.
    */
-  it('declares the battle holder and rewrites its tokens through the ONE seam', () => {
+  it('declares the battle holder and rewrites its references through the ONE seam', () => {
     expect(CODE['src/domain/libraryAdopt.ts']).toContain(
       "LIBRARY_ADOPT_HOLDER_SHAPES = ['roster', 'links', 'battle']",
     );
@@ -255,14 +256,21 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
       'src/db/libraryAdopt.ts',
       'src/domain/libraryAdopt.ts',
     ]);
-    // THE DELIBERATE EXCEPTION'S LOUD HALF (docs/17 row 263): the battle's
-    // seeding-encounter id is NEVER collected by the holder set and NEVER
-    // repointed — it is only NAMED when the row is gone, through ONE arm whose
-    // only caller is the tx-taking seam.
+    // THE SEEDING-ENCOUNTER KEY (docs/17 row 268, the REVERSAL of row 263's
+    // deliberate exception): the battle's IDENTITY id is a stored library
+    // reference like any other, so the ONE collector gathers it AND the re-seed
+    // stamp's copy of it, the ONE rewriter re-keys both, and a key whose row is
+    // in no table is NAMED through the ONE arm — all in the seam, never at a
+    // call site.
     expect(filesWith('danglingBattleEncounter')).toEqual([
       'src/db/libraryAdopt.ts',
       'src/domain/libraryAdopt.ts',
     ]);
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain('ids.push(encounterArtifactId)');
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain(
+      'encounterArtifactId !== null && encounterArtifactId !== undefined',
+    );
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain('{ reseed: { ...reseed, encounterArtifactId: reseedReplacement } }');
     // THE SAME TRANSACTION: the seam reaches `battles` through the caller's tx,
     // so the copy and the battle repoint cannot land apart.
     expect(CODE['src/db/libraryAdopt.ts']).toContain("tx.table('battles')");

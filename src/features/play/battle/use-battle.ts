@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import type { AnyArtifact, Battle, BattleTokenId, FighterStatsLookup, Id } from '@/domain';
 import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
-import { getBattleByEncounter } from '@/db/battleRepo';
+import { getBattleForEncounter } from '@/db/battleRepo';
 import { buildFighterStatsLookup, pcFightersOf } from '@/db/fighterStats';
 import { portraitCoveredByVeils } from '@/domain/battle/veil';
 import { veilCellPx } from '@/domain/battle/veil';
@@ -34,9 +34,17 @@ export function useBattleState(
   contentWidthPx: number,
   contentHeightPx: number,
 ): BattleState {
+  // The route names ONE encounter; this resolves the battle it owns (docs/17
+  // row 254) through the ONE encounter→battle resolver, which also answers a
+  // URL still naming the LIBRARY encounter the battle was adopted from before
+  // the row-268 re-key (docs/17 row 268) — a reload after the v29 upgrade must
+  // not land on an empty table.
   const battle = useLiveQuery(
-    async () => (encounterArtifactId === '' ? undefined : getBattleByEncounter(encounterArtifactId)),
-    [encounterArtifactId],
+    async () =>
+      encounterArtifactId === ''
+        ? undefined
+        : getBattleForEncounter(campaignId, encounterArtifactId),
+    [campaignId, encounterArtifactId],
     undefined,
   );
   const artifacts = useLiveQuery(

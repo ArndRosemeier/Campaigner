@@ -46,9 +46,21 @@ describe('one battle per ENCOUNTER (SOURCE SCAN)', () => {
     // creator is gone with it.
     expect(filesContaining('getBattleByModule')).toEqual([]);
     expect(filesContaining('ensureBattle(')).toEqual([]);
+    // The IDENTITY lookup (docs/17 row 254): one keyed read, used by the
+    // creator and by the seed. The UI never calls it directly any more — a
+    // LIBRARY encounter card has no battle keyed to it (docs/17 row 268), so
+    // the affordances go through the ONE adoption-aware resolver below.
     expect(filesContaining('getBattleByEncounter(')).toEqual([
       'src/db/battleRepo.ts',
       'src/db/battleSeed.ts',
+    ]);
+    // The ENCOUNTER→BATTLE resolver the route and the Run-battle button use
+    // (docs/17 row 268): the keyed lookup PLUS the one campaign-copy hop, so a
+    // battle seeded from a LIBRARY encounter opens from that card and from a
+    // URL typed before the v29 re-key. A second hop written anywhere else reds
+    // here.
+    expect(filesContaining('getBattleForEncounter(')).toEqual([
+      'src/db/battleRepo.ts',
       'src/features/play/battle/use-battle.ts',
       'src/features/play/run-battle.tsx',
     ]);

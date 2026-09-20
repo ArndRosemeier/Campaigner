@@ -200,7 +200,7 @@ describe('v21 → v22 migration (the persisted creature key is folded)', () => {
     // the Idea Board, v24 the mob copy, v25 the encounter-owned battle, v26 the
     // library-artifact adoption, v27 the battle-token adoption, v28 the seeding-encounter naming) are additive and
     // touch no creature state.
-    expect(db.verno).toBe(28);
+    expect(db.verno).toBe(29);
 
     // 1. The portrait slot is found under the FOLDED key, and the legacy bytes
     //    are gone from the unique index.

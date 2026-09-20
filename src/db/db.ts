@@ -1217,6 +1217,47 @@ export class CampaignerDB extends Dexie {
       .upgrade(async (tx) => {
         await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
       });
+    // Version 29 (docs/17 row 268): THE BATTLE'S IDENTITY KEY STOPS NAMING A
+    // LIBRARY ROW. v26 copied every referenced library ARTIFACT into its
+    // campaign, v27 the battle tokens and v28 merely NAMED a gone seeding
+    // encounter (the "deliberate exception" the owner then REVERSED, verbatim:
+    // *"why is there still an identity reference? I do not want any that is
+    // stored. I want campaign data completely isolated from libraries,
+    // completely, not mostly. because if there is still a reference, saving and
+    // loading get dependencies."*). `battle.encounterArtifactId` and the
+    // re-seed stamp's copy of it are now collected and repointed like any other
+    // library reference: a battle seeded from a LIBRARY-scoped encounter is
+    // re-keyed to the campaign's adopted copy, with a gone row left EXACTLY as
+    // it is and NAMED in `settings.libraryAdopt.unresolved` rather than
+    // re-keyed to a guess. v28 already ran on the owner's install and a landed
+    // upgrade body never re-runs, so this needs its own version rather than an
+    // edited v28 body (the row-259/263 reasoning, one arm over). The store shape
+    // is UNCHANGED — this is a data conversion, and the seam is idempotent, so a
+    // workspace with nothing to say writes nothing.
+    this.version(29)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId, encounterArtifactId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
+      });
   }
 }
 

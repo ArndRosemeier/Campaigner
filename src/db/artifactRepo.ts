@@ -30,6 +30,7 @@ import type { Table } from 'dexie';
 
 import { db } from '@/db/db';
 import { parseBattleRow, scrubArtifactFromBattles } from '@/db/battleRepo';
+import { isAdoptedCopyOf } from '@/domain/libraryAdopt';
 import { isBattleEmpty } from '@/db/fighterStats';
 import {
   buildStoredImage,
@@ -108,6 +109,29 @@ export async function listArtifactsByCampaign(campaignId: Id): Promise<Artifact[
     (row): row is Artifact => row.campaignId !== null,
   );
   return rows.map(parseArtifactRow).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * The campaign's OWN row for a LIBRARY artifact it has adopted, or `undefined`
+ * when it has not (docs/17 row 268).
+ *
+ * A battle is KEYED by its seeding encounter, and a LIBRARY-scoped encounter IS
+ * runnable — so the key must be the campaign's copy (`adoptedArtifactRow`
+ * stamps `copiedFromArtifactId`), and every reader that still holds the LIBRARY
+ * card (a stale URL, the encounter's own Run-battle affordance) resolves through
+ * this hop instead of storing a library reference. It asks the ONE idempotence
+ * predicate (`domain/libraryAdopt.isAdoptedCopyOf`), so "has this campaign
+ * adopted that library row" has exactly one answer for the copy seam and for
+ * every reader, and it answers `undefined` for a row the campaign never adopted
+ * — the caller then keeps the id it already had rather than inventing a target.
+ *
+ * A CAMPAIGN-scoped result can never be returned: `listArtifactsByCampaign`
+ * yields only owned rows, and an owned row is a copy only when its STORED
+ * origin names `globalId`.
+ */
+export async function adoptedCopyIdOf(campaignId: Id, globalId: Id): Promise<Id | undefined> {
+  const rows = await listArtifactsByCampaign(campaignId);
+  return rows.find((row) => isAdoptedCopyOf(row, globalId))?.id;
 }
 
 /** Global library rows (10-MILESTONE-6): a full scan — global artifacts are

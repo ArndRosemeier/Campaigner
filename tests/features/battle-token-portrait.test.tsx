@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
@@ -651,6 +651,74 @@ describe('battle-card stat block with the library uninstalled', () => {
     const block = within(card).getByTestId('selection-card-statblock');
     expect(within(block).getByText('AC').parentElement?.textContent).toContain('16');
     expect(within(block).getByText('HP').parentElement?.textContent).toContain('84');
+    await flushAsyncUpdates();
+  });
+});
+
+/**
+ * docs/17 row 268 — THE OWNER'S ACCEPTANCE THROUGH THE REAL RENDER PATH. A
+ * battle seeded from a LIBRARY-scoped encounter is KEYED to the campaign's own
+ * adopted copy (never the library row), so deleting the library row leaves the
+ * board and its provenance intact — and a route still naming the LIBRARY
+ * encounter (a URL typed before the v29 re-key) resolves through that copy
+ * rather than rendering the empty state.
+ *
+ * The owner's correction, verbatim: *"why is there still an identity reference?
+ * I do not want any that is stored. I want campaign data completely isolated
+ * from libraries, completely, not mostly."*
+ */
+describe('a battle seeded from a LIBRARY encounter (docs/17 row 268)', () => {
+  it('opens with the library row DELETED, from a route that still names the library encounter', async () => {
+    const libraryEncounter = globalArtifactSchema.parse({
+      ...stampNewEntity(),
+      campaignId: null,
+      moduleId: null,
+      kind: 'encounter',
+      name: 'Ford ambush',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      writerModel: '',
+      data: {
+        difficulty: 'medium',
+        levelHint: '5',
+        monsters: [{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    await db.artifacts.put(libraryEncounter);
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Library Encounter Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    const { battle } = await seedBattleFromEncounter(campaignId, module.id, libraryEncounter.id);
+    // The KEY is campaign-owned and its stored origin names the library row…
+    expect(battle.encounterArtifactId).not.toBe(libraryEncounter.id);
+    expect((await getArtifact(battle.encounterArtifactId ?? ''))?.copiedFromArtifactId).toBe(
+      libraryEncounter.id,
+    );
+    // …and the LIBRARY row is DELETED before the table opens.
+    await db.artifacts.delete(libraryEncounter.id);
+    expect(await getAnyArtifact(libraryEncounter.id)).toBeUndefined();
+
+    // The ROUTE still names the LIBRARY encounter — the stale-URL arm — and the
+    // board plus its provenance still render, read through the campaign copy.
+    await renderSurface(campaignId, module.id, { encounterId: libraryEncounter.id });
+    const provenance = screen.getByTestId('battle-provenance');
+    expect(provenance.textContent).toContain('Ford ambush');
+    expect(provenance.textContent).not.toContain('no longer exists');
     await flushAsyncUpdates();
   });
 });

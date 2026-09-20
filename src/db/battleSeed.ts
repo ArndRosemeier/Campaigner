@@ -1,4 +1,4 @@
-import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
+import type { AnyArtifact, Artifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
 import {
   GRID_SIZE_DEFAULT,
   newId,
@@ -19,7 +19,8 @@ import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
 import { toastError } from '@/lib/toast';
-import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { getAnyArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { adoptLibraryIds } from '@/db/libraryAdoptLive';
 import {
   ensureBattleForEncounter,
   getBattle,
@@ -312,16 +313,58 @@ export async function expandRosterEntries(
   return { tokens, seedFighters, statless };
 }
 
-export async function seedBattleFromEncounter(
+/**
+ * THE seeding encounter of a battle, CAMPAIGN-OWNED (docs/17 row 268).
+ *
+ * A battle is KEYED by its seeding encounter (`db/battleRepo.getBattleByEncounter`),
+ * and a LIBRARY-scoped encounter IS runnable (`features/campaign/components/
+ * artifact-editor.tsx`'s `EncounterRunAction` opens the module picker for
+ * `moduleId === null`). A stored key naming a LIBRARY row is a save/load
+ * dependency — the owner's correction, verbatim: *"I do not want any that is
+ * stored. I want campaign data completely isolated from libraries, completely,
+ * not mostly."* — so the encounter is ADOPTED into the campaign FIRST through
+ * the SAME seam every other library reference uses (`db/libraryAdoptLive
+ * .adoptLibraryIds`, over `db/libraryAdopt.adoptLibraryArtifacts`), and the
+ * battle is keyed to that copy. `encounterArtifactId` still means "the encounter
+ * this battle was seeded from"; the thing it names is campaign-owned.
+ *
+ * A campaign-scoped encounter is returned unchanged (the row IS the
+ * campaign's). An adoption that produces no copy is a LOUD refusal — the seed
+ * never falls back to keying the battle to the library row (AGENTS rule 1).
+ */
+async function campaignOwnedEncounter(
   campaignId: Id,
-  moduleId: Id,
   encounterArtifactId: Id,
-): Promise<SeedReport> {
+): Promise<Artifact & { kind: 'encounter' }> {
   const encounter = await getAnyArtifact(encounterArtifactId);
   if (encounter === undefined) throw new NotFoundError('Encounter artifact', encounterArtifactId);
   if (encounter.kind !== 'encounter') {
     throw new Error(`Artifact “${encounter.name}” is not an encounter`);
   }
+  if (encounter.campaignId !== null) return encounter;
+  const ownedId = (await adoptLibraryIds(campaignId, [encounter.id])).get(encounter.id);
+  if (ownedId === undefined) {
+    throw new Error(
+      `The library encounter “${encounter.name}” could not be copied into this campaign, so the battle cannot be keyed to a campaign-owned encounter. Restore the library row and try again.`,
+    );
+  }
+  const owned = await getArtifact(ownedId);
+  if (owned === undefined) throw new NotFoundError('Adopted encounter artifact', ownedId);
+  if (owned.kind !== 'encounter') throw new Error(`Artifact “${owned.name}” is not an encounter`);
+  return owned;
+}
+
+export async function seedBattleFromEncounter(
+  campaignId: Id,
+  moduleId: Id,
+  encounterArtifactId: Id,
+): Promise<SeedReport> {
+  // ADOPT a LIBRARY-scoped encounter FIRST (docs/17 row 268) and seed from the
+  // campaign's own copy: the battle's identity key must never name a library
+  // row, or saving/loading the campaign carries the dependency the owner
+  // corrected row 263 over.
+  const encounter = await campaignOwnedEncounter(campaignId, encounterArtifactId);
+  const encounterId = encounter.id;
 
   // Auto-promote on second-module use (BATTLE hook): a token whose artifact
   // is owned by another module promotes to campaign level BEFORE the seed
@@ -492,14 +535,14 @@ export async function seedBattleFromEncounter(
   // arc). Provenance and board land in ONE patchBattle (it merges + normalizes
   // once) — the previous two-phase patch-then-board-save normalized the row
   // twice and briefly persisted a half-seeded board.
-  const existing = await getBattleByEncounter(encounterArtifactId);
-  const battle = await ensureBattleForEncounter(campaignId, moduleId, encounterArtifactId);
+  const existing = await getBattleByEncounter(encounterId);
+  const battle = await ensureBattleForEncounter(campaignId, moduleId, encounterId);
   const reseed =
     existing === undefined
       ? null
-      : { at: Date.now(), encounterArtifactId, encounterName: encounter.name };
+      : { at: Date.now(), encounterArtifactId: encounterId, encounterName: encounter.name };
   const saved = await patchBattle(battle.id, {
-    encounterArtifactId,
+    encounterArtifactId: encounterId,
     seedFighters,
     reseed,
     board,

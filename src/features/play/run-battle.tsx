@@ -4,7 +4,7 @@ import type { JSX } from 'react';
 import { SwordsIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
-import { getBattleByEncounter } from '@/db/battleRepo';
+import { getBattleForEncounter } from '@/db/battleRepo';
 import { runBattle } from '@/features/play/run-battle-seed';
 import { battlePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
@@ -45,9 +45,13 @@ export function RunBattleButton({
   onRun?: (() => void) | undefined;
 }): JSX.Element {
   const navigate = useNavigate();
+  // THE encounter→battle resolver (docs/17 row 268): a LIBRARY encounter the
+  // owner is looking at has no battle keyed to it — the battle is keyed to the
+  // campaign's ADOPTED COPY — so this hop is what keeps "Open battle" honest
+  // and what stops a second press from re-seeding a board that already exists.
   const existingBattle = useLiveQuery(
-    async () => getBattleByEncounter(encounter.id),
-    [encounter.id],
+    async () => getBattleForEncounter(campaignId, encounter.id),
+    [campaignId, encounter.id],
     undefined,
   );
   // The row IS this encounter's board: any existing row (however it was left)
@@ -61,16 +65,22 @@ export function RunBattleButton({
       onClick={() => {
         // A battle exists for this encounter: OPEN it. Never seed over it — its
         // state is the table's, and only the in-battle Reseed may replace it.
+        // The path names the battle's OWN key (the campaign-owned encounter),
+        // so the surface resolves it without a hop.
         if (running) {
           onRun?.();
-          navigate(battlePath(campaignId, moduleId, encounter.id));
+          navigate(battlePath(campaignId, moduleId, existingBattle.encounterArtifactId ?? encounter.id));
           return;
         }
-        // No battle yet for this encounter: seed it, then open it.
+        // No battle yet for this encounter: seed it, then open it. The seed
+        // answers the row it keyed the battle to — the adopted copy when the
+        // encounter was a LIBRARY row — and the route must name that key.
         void runBattle(campaignId, moduleId, encounter).then((report) => {
           if (report === null) return;
           onRun?.();
-          navigate(battlePath(campaignId, moduleId, encounter.id));
+          navigate(
+            battlePath(campaignId, moduleId, report.battle.encounterArtifactId ?? encounter.id),
+          );
         });
       }}
     >

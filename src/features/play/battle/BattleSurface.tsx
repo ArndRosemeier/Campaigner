@@ -84,7 +84,7 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
-import { getAnyArtifact } from '@/db/artifactRepo';
+import { getArtifact } from '@/db/artifactRepo';
 import { creaturePortraitImageIn, tokenCreature } from '@/db/creatureRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { ZoomableImage } from '@/features/images/zoomable-image';
@@ -332,9 +332,17 @@ export function BattleSurface(): JSX.Element {
   // null when the battle has no provenance, undefined when the artifact id
   // is set but the artifact is gone (deleted encounters scrub their tokens;
   // the row's provenance stays loud).
+  //
+  // The read is CAMPAIGN-SCOPED, not any-scope (docs/17 row 268): the key names
+  // a row the campaign OWNS — a LIBRARY-scoped seed was re-keyed to the adopted
+  // copy by v29 and is kept campaign-owned at every write (`battleSeed
+  // .campaignOwnedEncounter`) — so no library id can reach this call any more.
+  // `getArtifact` answers `undefined` for a global row by contract, which is
+  // the honest arm for a legacy key a pre-fix export could still carry (named
+  // in docs/18 §5).
   const encounterArtifactId = battle?.encounterArtifactId ?? null;
   const encounterArtifact = useLiveQuery(
-    async () => (encounterArtifactId === null ? null : getAnyArtifact(encounterArtifactId)),
+    async () => (encounterArtifactId === null ? null : getArtifact(encounterArtifactId)),
     [encounterArtifactId],
     'loading' as const,
   );

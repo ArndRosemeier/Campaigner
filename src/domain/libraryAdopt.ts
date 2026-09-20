@@ -247,15 +247,17 @@ export function repointArtifactRow(
 }
 
 /**
- * THE BATTLE HALF of the adoption seam (docs/17 row 259) — the LAST declared
- * holder shape, and the one whose write address is not an artifact row.
+ * THE BATTLE HALF of the adoption seam (docs/17 rows 259/268) — the LAST
+ * declared holder shape, and the one whose write address is not an artifact row.
  *
  * A battle token's `artifactId` is a real artifact reference for an `npc-ref`
  * seed (docs/11 D5 amendment) and a synthetic seed handle for a `rulebook`
  * citation or an inline mob; a PC token cites its pc artifact. The board list
  * AND its stage snapshot (`⚑ Set stage` copies the tokens) are both live token
  * carriers, so a stage snapshot that keeps the old reference would be the same
- * defect one revision later.
+ * defect one revision later. The row's SEEDING ENCOUNTER (`encounterArtifactId`)
+ * and its re-seed stamp are references of the same kind and are collected and
+ * repointed too (docs/17 row 268, the reversal of row 263's exception).
  *
  * These functions read the STORED row's shape (every field optional: a legacy
  * battle row may predate any of them), never a parsed `Battle`, because the
@@ -282,22 +284,37 @@ export interface LibraryBattleRefs {
     | undefined;
   seedFighters?: readonly { id: Id }[] | undefined;
   /**
-   * The battle's SEEDING encounter (docs/17 row 263). Read here ONLY to name it
-   * when the row is gone — never to collect or repoint it: the battle is KEYED
-   * by this id (`db/battleRepo.getBattleByEncounter`), so re-pointing it would
-   * change the battle's identity and split the board. That is the DELIBERATE
-   * exception to the owner's "no runtime library reference" rule.
+   * The battle's SEEDING encounter. It is the battle's IDENTITY key
+   * (`db/battleRepo.getBattleByEncounter`) AND, when it names a LIBRARY row, a
+   * stored save/load dependency — so it IS collected and repointed at the
+   * campaign's adopted copy (docs/17 row 268). Row 263's DELIBERATE EXCEPTION
+   * is REVERSED by the owner's own correction, verbatim: *"why is there still
+   * an identity reference? I do not want any that is stored. I want campaign
+   * data completely isolated from libraries, completely, not mostly. because
+   * if there is still a reference, saving and loading get dependencies."* A
+   * reference to a LIBRARY row is a library dependency whichever field it sits
+   * in, and re-keying it to the CAMPAIGN's own copy keeps the field's meaning
+   * ("the encounter this battle was seeded from") while the thing it names is
+   * campaign-owned. A gone row is NAMED, never re-keyed to a guess.
    */
   encounterArtifactId?: Id | null | undefined;
+  /**
+   * The last destructive RE-SEED's stamped provenance (encounter-resume arc) —
+   * the SAME encounter id one revision later, so it moves with the key
+   * (docs/17 row 268).
+   */
+  reseed?: { encounterArtifactId?: Id | null | undefined } | null | undefined;
 }
 
-/** THE battle half of the ONE collector: every artifact id the battle's TOKENS
- * cite — the board list AND the saved stage snapshot. The frozen `seedFighters`
- * rows are deliberately NOT collected: their `id` is a synthetic per-expansion
- * handle that only coincides with an artifact id for a DERIVED `npc-ref`, and
- * that token already names the reference — collecting it twice would decide one
- * library row twice. `repointBattleRow` still REMAPS a seed row whose id is a
- * repointed id, so the frozen row a token keys its stats on survives. */
+/** THE battle half of the ONE collector: every artifact id the battle's ROW
+ * cites — the board tokens (the list AND the saved stage snapshot), the SEEDING
+ * ENCOUNTER key and the re-seed stamp (docs/17 row 268). The frozen
+ * `seedFighters` rows are deliberately NOT collected: their `id` is a synthetic
+ * per-expansion handle that only coincides with an artifact id for a DERIVED
+ * `npc-ref`, and that token already names the reference — collecting it twice
+ * would decide one library row twice. `repointBattleRow` still REMAPS a seed row
+ * whose id is a repointed id, so the frozen row a token keys its stats on
+ * survives. */
 export function battleLibraryReferenceIds(battle: LibraryBattleRefs): Id[] {
   const ids: Id[] = [];
   const collect = (tokens: readonly LibraryBattleTokenRef[]): void => {
@@ -308,16 +325,27 @@ export function battleLibraryReferenceIds(battle: LibraryBattleRefs): Id[] {
   };
   collect(battle.board?.tokens ?? []);
   collect(battle.board?.stage?.tokens ?? []);
+  // The battle's IDENTITY key (docs/17 row 268): a LIBRARY-scoped encounter IS
+  // runnable, and a stored key naming a library row is exactly the dependency
+  // the owner corrected row 263 over. Duplicates with the re-seed stamp are
+  // harmless — the pass decides each library id once.
+  const encounterArtifactId = battle.encounterArtifactId;
+  if (encounterArtifactId !== null && encounterArtifactId !== undefined) {
+    ids.push(encounterArtifactId);
+  }
+  const reseedEncounterId = battle.reseed?.encounterArtifactId;
+  if (reseedEncounterId !== null && reseedEncounterId !== undefined) ids.push(reseedEncounterId);
   return ids;
 }
 
 /**
  * Rewrite a battle row's library references to their campaign copies: the
- * board tokens, the stage snapshot's tokens AND the frozen seed rows whose id
- * is a repointed handle (a derived `npc-ref` freezes its seed row under the
- * artifact id, so the token must keep finding it). Answers `null` when nothing
+ * board tokens, the stage snapshot's tokens, the frozen seed rows whose id is a
+ * repointed handle (a derived `npc-ref` freezes its seed row under the artifact
+ * id, so the token must keep finding it), the SEEDING ENCOUNTER key and the
+ * re-seed stamp's copy of it (docs/17 row 268). Answers `null` when nothing
  * changed — the arm that makes a second pass write nothing. Immutable: an
- * unchanged token/seed keeps its identity.
+ * unchanged token/seed/key keeps its identity.
  */
 export function repointBattleRow<T extends LibraryBattleRefs>(
   battle: T,
@@ -361,8 +389,29 @@ export function repointBattleRow<T extends LibraryBattleRefs>(
   const stage = live?.stage ?? null;
   const stageTokens = stage === null ? null : repointTokens(stage.tokens ?? []);
   const seeds = repointSeeds(battle.seedFighters ?? []);
+  // THE SEEDING ENCOUNTER (docs/17 row 268): a LIBRARY-scoped key is re-keyed
+  // onto the campaign's own copy, and the re-seed stamp's copy of the same id
+  // moves with it. `resolve` answers `undefined` for an id with no copy (a gone
+  // library row), so the key is LEFT as it is and named by the caller.
+  const encounterId = battle.encounterArtifactId;
+  const encounterReplacement =
+    encounterId === null || encounterId === undefined ? undefined : resolve(encounterId);
+  const encounterChanged =
+    encounterReplacement !== undefined && encounterReplacement !== encounterId;
+  const reseed = battle.reseed ?? null;
+  const reseedEncounterId = reseed?.encounterArtifactId;
+  const reseedReplacement =
+    reseedEncounterId === null || reseedEncounterId === undefined
+      ? undefined
+      : resolve(reseedEncounterId);
+  const reseedChanged =
+    reseed !== null && reseedReplacement !== undefined && reseedReplacement !== reseedEncounterId;
   const changed =
-    (boardTokens?.changed ?? false) || (stageTokens?.changed ?? false) || seeds.changed;
+    (boardTokens?.changed ?? false) ||
+    (stageTokens?.changed ?? false) ||
+    seeds.changed ||
+    encounterChanged ||
+    reseedChanged;
   if (!changed) return null;
   const nextBoard =
     live === null
@@ -376,6 +425,8 @@ export function repointBattleRow<T extends LibraryBattleRefs>(
     ...battle,
     ...(live === null ? {} : { board: nextBoard }),
     seedFighters: seeds.seeds,
+    ...(encounterChanged ? { encounterArtifactId: encounterReplacement } : {}),
+    ...(reseedChanged ? { reseed: { ...reseed, encounterArtifactId: reseedReplacement } } : {}),
   } as T;
   return next;
 }
@@ -423,20 +474,19 @@ export function danglingBattleTokens(
 }
 
 /**
- * The battle's SEEDING-ENCOUNTER id when it resolves to NOTHING — the loud half
- * of the DELIBERATE exception (docs/17 row 263).
+ * The battle's SEEDING-ENCOUNTER id when it resolves to NOTHING — the loud arm
+ * that survives the row-268 reversal.
  *
- * A battle is KEYED by its seeding encounter (`db/battleRepo.getBattleByEncounter`)
- * while `BattleSurface` RE-READS that row with the any-scope getter, so a battle
- * seeded from a LIBRARY-scoped encounter keeps a runtime read of the shared
- * library. The decision is to KEEP the key — re-pointing it at a campaign copy
- * would change the battle's identity and split the board — but NOT to keep
- * quiet about a gone row: deletion of a SHARED library row scrubs no campaign's
- * rows (`db/artifactRepo.deleteArtifact` scrubs tokens only for an OWNED row),
- * so the surface would otherwise show nothing with no reason. Returned to the
- * caller so the id is NAMED in `settings.libraryAdopt.unresolved` beside the
- * dangling tokens. It is deliberately NOT collected by
- * `battleLibraryReferenceIds` and never repointed.
+ * A battle is KEYED by its seeding encounter (`db/battleRepo.getBattleByEncounter`),
+ * and since docs/17 row 268 that key is ADOPTED onto the campaign's own copy
+ * like every other library reference. Adoption cannot invent bytes, though: a
+ * key whose row is in NO table (not a campaign's, not the shared library's) has
+ * nothing to copy, so it is LEFT AS IT IS — never re-keyed to a guess — and
+ * NAMED here, because deletion of a SHARED library row scrubs no campaign's
+ * rows (`db/artifactRepo.deleteArtifact` scrubs only for an OWNED row) and the
+ * surface would otherwise show nothing with no reason. Returned to the caller
+ * so the id reaches `settings.libraryAdopt.unresolved` beside the dangling
+ * tokens.
  */
 export function danglingBattleEncounter(
   battle: LibraryBattleRefs,

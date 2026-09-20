@@ -23,7 +23,10 @@ import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { adoptDraftLibraryReferences } from '@/db/libraryAdoptLive';
 import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
+import { seedBattleFromEncounter } from '@/db/battleSeed';
+import { getBattleByEncounter, getBattleForEncounter } from '@/db/battleRepo';
 import {
+  adoptedCopyIdOf,
   createArtifact,
   duplicateArtifact,
   getArtifact,
@@ -95,6 +98,30 @@ function globalNpc(name = 'Sage of the Vale'): GlobalArtifact {
     coverImageId: null,
     writerModel: '',
     data: { appearance: '', personality: '', statBlock: STAT_BLOCK },
+  });
+}
+
+/** A GLOBAL library ENCOUNTER — the row a battle seeded from a library card is
+ * KEYED by before the row-268 re-key. */
+function globalEncounter(name = 'Ford ambush'): GlobalArtifact {
+  return globalArtifactSchema.parse({
+    ...stampNewEntity(),
+    campaignId: null,
+    moduleId: null,
+    kind: 'encounter',
+    name,
+    tags: [],
+    aliases: [],
+    summary: '',
+    body: '',
+    links: [],
+    currentRevision: 1,
+    imageIds: [],
+    coverImageId: null,
+    writerModel: '',
+    data: encounterData([
+      { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+    ]),
   });
 }
 
@@ -761,24 +788,25 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     expect(stats(copyId)).toMatchObject({ maxHp: 21, initiativeBonus: 2 });
   });
 
-  it('NAMES a GONE seeding encounter — the deliberate exception stays loud (docs/17 row 263)', async () => {
-    // A battle is KEYED by `encounterArtifactId` (`getBattleByEncounter`), so
-    // that id is IDENTITY and is never repointed — the accepted exception to
-    // "no runtime library read". v27 already ran on the owner's install, so the
-    // loud half rides the SAME seam through v28 (a landed upgrade body never
-    // re-runs). Deleting a SHARED library encounter scrubs nothing, so without
-    // this arm the surface shows nothing and names no reason.
+  it('NAMES a GONE seeding encounter — the key is left exactly as it is, never re-keyed to a guess', async () => {
+    // docs/17 row 268: the seeding-encounter key IS collected and repointed
+    // (row 263's deliberate exception is REVERSED), so the only key left alone
+    // is one whose row is in NO table — there is nothing to copy. It keeps its
+    // id and is NAMED, because deleting a SHARED library encounter scrubs
+    // nothing and the surface would otherwise show nothing with no reason.
     const missingEncounterId = '00000000-0000-4000-8000-00000000e9c0';
     const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
     await db.battles.update(battle.id, { encounterArtifactId: missingEncounterId });
 
     const report = await adopt();
+    expect(report.adopted).toEqual([]);
     expect(report.unresolved).toHaveLength(1);
     expect(report.unresolved[0]?.name).toBe(missingEncounterId);
     expect(report.unresolved[0]?.unexpected).toBe(false);
     expect(report.unresolved[0]?.where).toContain(missingEncounterId);
-    expect(report.unresolved[0]?.reason).toContain('deliberately NOT re-pointed');
-    // The KEY is KEPT: the battle's identity is untouched (no split board).
+    expect(report.unresolved[0]?.reason).toContain('nothing to adopt');
+    expect(report.unresolved[0]?.reason).toContain('re-keyed to a guess');
+    // The KEY is KEPT: nothing can be pointed at, so the row is untouched.
     expect((await db.battles.get(battle.id))?.encounterArtifactId).toBe(missingEncounterId);
 
     // LOUD: the report reaches settings and the ONE sentence prints it by name.
@@ -788,7 +816,64 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     expect(formatLibraryAdopt(persisted)).toContain(missingEncounterId);
   });
 
-  it('does NOT report a seeding encounter that still resolves — owned or library', async () => {
+  it('ADOPTS a LIBRARY seeding encounter and RE-KEYS the battle to the campaign copy (docs/17 row 268)', async () => {
+    // THE OWNER'S CORRECTION, verbatim: *"why is there still an identity
+    // reference? I do not want any that is stored. I want campaign data
+    // completely isolated from libraries, completely, not mostly."* A battle
+    // seeded from a LIBRARY-scoped encounter must not keep the library id as
+    // its key: it is re-keyed to the campaign's own copy, and the library row
+    // survives untouched.
+    const libraryEncounter = globalEncounter();
+    await db.artifacts.put(libraryEncounter);
+    const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
+    await db.battles.update(battle.id, { encounterArtifactId: libraryEncounter.id });
+
+    const report = await adopt();
+    expect(report.adopted).toHaveLength(1);
+    const copyId = report.adopted[0]?.copyId ?? '';
+    expect(report.repointed).toBe(1);
+    expect(report.unresolved).toEqual([]);
+
+    // The LIBRARY row SURVIVES, byte-identical…
+    expect(await db.artifacts.get(libraryEncounter.id)).toEqual(libraryEncounter);
+    // …and the battle's IDENTITY KEY names the campaign's own copy now.
+    const after = await db.battles.get(battle.id);
+    expect(after?.encounterArtifactId).toBe(copyId);
+    const copy = await getArtifact(copyId);
+    expect(copy?.campaignId).toBe(CAMPAIGN);
+    expect(copy?.kind).toBe('encounter');
+
+    // IDEMPOTENT: a second pass makes no copy and rewrites nothing.
+    const second = await adopt();
+    expect(second.adopted).toEqual([]);
+    expect(second.repointed).toBe(0);
+    expect(second.unresolved).toEqual([]);
+    expect(await db.battles.get(battle.id)).toEqual(after);
+  });
+
+  it('moves the RE-SEED stamp with the key — the second stored copy of the encounter id', async () => {
+    // The destructive re-seed stamps the same encounter id one revision later
+    // (`battle.reseed.encounterArtifactId`). Leaving it behind would keep a
+    // stored library reference on the row and disagree with the import path,
+    // which already remaps it (`lib/exportImport`).
+    const libraryEncounter = globalEncounter();
+    await db.artifacts.put(libraryEncounter);
+    const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
+    await db.battles.update(battle.id, {
+      encounterArtifactId: libraryEncounter.id,
+      reseed: { at: 1, encounterArtifactId: libraryEncounter.id, encounterName: 'Ford ambush' },
+    });
+
+    const report = await adopt();
+    const copyId = report.adopted[0]?.copyId ?? '';
+    const after = await db.battles.get(battle.id);
+    expect(after?.encounterArtifactId).toBe(copyId);
+    expect(after?.reseed?.encounterArtifactId).toBe(copyId);
+    // No library id survives anywhere on the row.
+    expect(JSON.stringify(after)).not.toContain(libraryEncounter.id);
+  });
+
+  it('does NOT adopt or report a seeding encounter the campaign already owns', async () => {
     const encounter = await createArtifact({
       campaignId: CAMPAIGN,
       kind: 'encounter',
@@ -799,6 +884,83 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     await db.battles.update(battle.id, { encounterArtifactId: encounter.id });
 
     const report = await adopt();
+    expect(report.adopted).toEqual([]);
+    expect(report.repointed).toBe(0);
     expect(report.unresolved).toEqual([]);
+    expect((await db.battles.get(battle.id))?.encounterArtifactId).toBe(encounter.id);
+  });
+});
+
+/**
+ * docs/17 row 268 — THE OWNER'S ACCEPTANCE: THE LIBRARY ROW IS DELETED AND THE
+ * BATTLE AND ITS ENCOUNTER STILL OPEN.
+ *
+ * The seed is the real production entry point (`db/battleSeed
+ * .seedBattleFromEncounter`, the module picker's action for a `moduleId ===
+ * null` encounter) and the reads are the ones the surface and its affordances
+ * use, so "the battle opens" is a statement about the real path. The library
+ * ENCOUNTER is a real row in the shared library and the campaign owns nothing
+ * but the copy the seed adopted.
+ */
+describe('a battle seeded from a LIBRARY encounter survives the library row (docs/17 row 268)', () => {
+  it('keys the battle to the adopted copy, and the battle AND encounter still open with the library row DELETED', async () => {
+    const libraryEncounter = globalEncounter('Ford ambush');
+    await db.artifacts.put(libraryEncounter);
+    const moduleId = newId();
+
+    const { battle } = await seedBattleFromEncounter(CAMPAIGN, moduleId, libraryEncounter.id);
+
+    // THE KEY IS CAMPAIGN-OWNED: not the library row, and its stored origin
+    // names it (the ONE idempotence rule).
+    expect(battle.encounterArtifactId).not.toBe(libraryEncounter.id);
+    const ownedEncounterId = battle.encounterArtifactId ?? '';
+    const ownedEncounter = await getArtifact(ownedEncounterId);
+    expect(ownedEncounter?.campaignId).toBe(CAMPAIGN);
+    expect(ownedEncounter?.copiedFromArtifactId).toBe(libraryEncounter.id);
+    // The library row SURVIVES the seed (a copy, never a move).
+    expect(await db.artifacts.get(libraryEncounter.id)).toEqual(libraryEncounter);
+
+    // DELETE the library row — the owner's "refetch the pack" story, taken to
+    // its extreme: the origin is gone, not merely re-ingested under a new id.
+    await db.artifacts.delete(libraryEncounter.id);
+    expect(await getAnyArtifact(libraryEncounter.id)).toBeUndefined();
+
+    // THE IDENTITY LOOKUP still resolves the campaign-owned key…
+    expect((await getBattleByEncounter(ownedEncounterId))?.id).toBe(battle.id);
+    // …the affordance that still holds the LIBRARY card resolves through the
+    // campaign's copy (the ONE hop), so "Open battle" stays honest and a second
+    // press can never re-seed the live board…
+    expect((await getBattleForEncounter(CAMPAIGN, libraryEncounter.id))?.id).toBe(battle.id);
+    const copyId = await adoptedCopyIdOf(CAMPAIGN, libraryEncounter.id);
+    expect(copyId).toBe(ownedEncounterId);
+    // …and the surface's CAMPAIGN-SCOPED provenance read still resolves the
+    // encounter itself (docs/17 row 268 replaced the any-scope getter there).
+    expect((await getArtifact(battle.encounterArtifactId ?? ''))?.name).toBe('Ford ambush');
+
+    // A battle from ANOTHER campaign never resolves through this campaign's
+    // copy — the hop is campaign-scoped, not a global by-origin lookup.
+    await seedCampaign('00000000-0000-4000-8000-0000000000ff', 'Other');
+    expect(await getBattleForEncounter('00000000-0000-4000-8000-0000000000ff', libraryEncounter.id)).toBeUndefined();
+  });
+
+  it('reuses the campaign copy on a second seed (one library row, one copy, one battle)', async () => {
+    const libraryEncounter = globalEncounter('Ford ambush');
+    await db.artifacts.put(libraryEncounter);
+    const moduleId = newId();
+
+    const first = await seedBattleFromEncounter(CAMPAIGN, moduleId, libraryEncounter.id);
+    const second = await seedBattleFromEncounter(CAMPAIGN, moduleId, libraryEncounter.id);
+
+    expect(second.battle.id).toBe(first.battle.id);
+    expect(second.battle.encounterArtifactId).toBe(first.battle.encounterArtifactId);
+    expect(
+      (await db.artifacts.toArray()).filter(
+        (row) => row.copiedFromArtifactId === libraryEncounter.id,
+      ),
+    ).toHaveLength(1);
+    // The destructive RE-SEED stamp records the CAMPAIGN-owned encounter too —
+    // no library id survives on the row.
+    expect(second.battle.reseed?.encounterArtifactId).toBe(second.battle.encounterArtifactId);
+    expect(JSON.stringify(second.battle)).not.toContain(libraryEncounter.id);
   });
 });

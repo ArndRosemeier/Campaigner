@@ -18,7 +18,9 @@ import type { ArtifactLink, Id } from '@/domain';
  * and a start-up retry only runs on a report that already lists work. So a
  * reference to a library artifact must not be BORN: before the editor saves a
  * draft, this adopts every library row the draft cites and hands back the
- * rewritten references, so what is written points at the campaign's own copy.
+ * rewritten references, so what is written points at the campaign's own copy —
+ * and before a battle is KEYED to a LIBRARY-scoped encounter, it adopts that
+ * encounter, so the key names a row the campaign owns (docs/17 row 268).
  *
  * It calls the SAME seam the migration and the retry call (`db/libraryAdopt
  * .adoptLibraryArtifacts`, with `pendingRefs`), so there is no second copy
@@ -40,6 +42,28 @@ async function globalReferenceIds(holder: LibraryReferenceHolder): Promise<Id[]>
 }
 
 /**
+ * Adopt a DECLARED SET of library ids into `campaignId` in ONE transaction and
+ * answer the global→copy map (a reused copy included).
+ *
+ * THE ONE live adoption call: the editor's autosave hands it the ids its draft
+ * cites, and the battle seed hands it the LIBRARY encounter it is about to key a
+ * battle to (docs/17 row 268) — the SAME seam, `reason:'write'`, with the ids
+ * adopted BEFORE the reference is born. An empty set opens no transaction.
+ */
+export async function adoptLibraryIds(
+  campaignId: Id,
+  ids: readonly Id[],
+): Promise<Map<Id, Id>> {
+  if (ids.length === 0) return new Map();
+  const report = await db.transaction(
+    'rw',
+    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
+    (tx) => adoptLibraryArtifacts({ tx, reason: 'write', pendingRefs: { campaignId, ids } }),
+  );
+  return new Map(report.adopted.map((entry) => [entry.globalId, entry.copyId]));
+}
+
+/**
  * Adopt every library artifact `holder` cites into `campaignId` and answer the
  * rewritten references — or `null` when the holder cites no library row (the
  * editor then saves its draft unchanged).
@@ -48,14 +72,7 @@ export async function adoptDraftLibraryReferences(
   campaignId: Id,
   holder: LibraryReferenceHolder,
 ): Promise<{ links: ArtifactLink[]; data: unknown } | null> {
-  const ids = await globalReferenceIds(holder);
-  if (ids.length === 0) return null;
-  const report = await db.transaction(
-    'rw',
-    [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
-    (tx) => adoptLibraryArtifacts({ tx, reason: 'write', pendingRefs: { campaignId, ids } }),
-  );
-  const copies = new Map(report.adopted.map((entry) => [entry.globalId, entry.copyId]));
+  const copies = await adoptLibraryIds(campaignId, await globalReferenceIds(holder));
   if (copies.size === 0) return null;
   return repointLibraryReferences(holder, (id) => copies.get(id));
 }

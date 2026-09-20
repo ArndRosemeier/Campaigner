@@ -31,12 +31,13 @@ import { errorMessage } from '@/lib/errors';
  *
  * WHAT IT DOES, for every campaign in the database: find the artifact rows
  * whose references still point at a GLOBAL library artifact (a roster `npc-ref`
- * target, a `links[].targetId`) AND the BATTLE rows whose tokens still do (the
- * board list, the stage snapshot and a derived seed row's id — docs/17 row
- * 259), COPY each referenced library row into that campaign with a fresh id,
- * CLONED images and a stored origin (`copiedFromArtifactId`), and REWRITE the
- * references to point at the copy — all in the caller's transaction, so a
- * reference is never left without its target.
+ * target, a `links[].targetId`) AND the BATTLE rows whose references still do
+ * (the board list, the stage snapshot, a derived seed row's id, and the row's
+ * SEEDING ENCOUNTER key plus its re-seed stamp — docs/17 rows 259/268), COPY
+ * each referenced library row into that campaign with a fresh id, CLONED images
+ * and a stored origin (`copiedFromArtifactId`), and REWRITE the references to
+ * point at the copy — all in the caller's transaction, so a reference is never
+ * left without its target.
  *
  * WHY IT TAKES A TRANSACTION AND IMPORTS NO `db`. The v26 upgrade body runs
  * before the upgraded `db` instance is usable, and a nested `db.transaction`
@@ -63,8 +64,9 @@ import { errorMessage } from '@/lib/errors';
  * card with no named reason, and deleting a SHARED library row scrubs no
  * campaign's tokens, so this seam NAMES each such token in `unresolved` rather
  * than leaving the silence the previous writer flagged. THE BATTLE'S SEEDING
- * ENCOUNTER gets the same treatment (docs/17 row 263): it is the battle's
- * IDENTITY key and is deliberately NEVER repointed, but a gone row is NAMED
+ * ENCOUNTER is collected and repointed like every other reference (docs/17 row
+ * 268 — the reversal of row 263's exception: a stored key naming a LIBRARY row
+ * is a save/load dependency), and a key whose row is in NO table is NAMED
  * rather than left as a surface with nothing on it and no reason.
  */
 
@@ -73,7 +75,8 @@ export interface LibraryAdoptOptions {
   tx: Transaction;
   /**
    * `upgrade` — a Dexie version bump (v26 for the artifact holders, v27 for the
-   * battle rows): persist the report whenever there was anything to say (copies
+   * battle rows, v28 for the seeding-encounter arm, v29 for the row-268
+   * re-key): persist the report whenever there was anything to say (copies
    * OR unresolved references).
    * `retry` — the startup heal: persist ONLY when it actually copied or
    * repointed something, so a workspace whose library row is still missing does
@@ -102,8 +105,9 @@ function globalRefsOf(row: AnyArtifact, globals: ReadonlyMap<Id, unknown>): Id[]
 /** The stored battle row's reference-bearing fields, as this seam reads them.
  * Nothing is parsed: a legacy row may predate any field, and the upgrade path
  * must not throw on it. `campaignId` is what groups the pass; the rest is the
- * battle holder `domain/libraryAdopt` owns — `encounterArtifactId` included,
- * which the holder reads only to NAME a gone encounter (never to repoint it). */
+ * battle holder `domain/libraryAdopt` owns — `encounterArtifactId` and the
+ * re-seed stamp included, which are collected and repointed like any other
+ * library reference (docs/17 row 268). */
 interface StoredBattleRefs extends LibraryBattleRefs {
   campaignId?: unknown;
 }
@@ -141,9 +145,10 @@ export async function adoptLibraryArtifacts(
     list.push(row);
     byCampaign.set(campaignId, list);
   }
-  // THE BATTLE HOLDERS (docs/17 row 259): a battle row's tokens cite artifacts
-  // exactly as an artifact row's `links`/roster do, and they are grouped by the
-  // same `campaignId` anchor.
+  // THE BATTLE HOLDERS (docs/17 rows 259/268): a battle row's tokens cite
+  // artifacts exactly as an artifact row's `links`/roster do, and its SEEDING
+  // ENCOUNTER key is a reference of the same kind — all grouped by the same
+  // `campaignId` anchor.
   const battleRows = (await battles.toArray()) as StoredBattleRefs[];
   const battlesByCampaign = new Map<Id, StoredBattleRefs[]>();
   for (const row of battleRows) {
@@ -409,17 +414,17 @@ export async function adoptLibraryArtifacts(
           unexpected: false,
         });
       }
-      // THE DELIBERATE EXCEPTION, MADE LOUD (docs/17 row 263): the battle is
-      // KEYED by its seeding encounter, so that id is IDENTITY and is never
-      // repointed — but a gone row is NAMED here rather than left as a surface
-      // with nothing on it and no reason.
+      // THE SEEDING ENCOUNTER'S GONE ARM (docs/17 rows 263/268): the key IS
+      // now collected and repointed (row 268), so only a row in NO table has
+      // nothing to copy — it keeps its id and is NAMED here rather than left as
+      // a surface with nothing on it and no reason.
       const danglingEncounter = danglingBattleEncounter(battle, knownArtifactIds);
       if (danglingEncounter !== undefined) {
         report.unresolved.push({
           where: battleWhere(battle),
           name: danglingEncounter,
           reason:
-            'this battle is KEYED by its seeding encounter — the key is deliberately NOT re-pointed (re-pointing it would change the battle\'s identity and split the board) — and that row is in no campaign and not in the shared library, so nothing can copy it and the provenance/spawn source cannot be read until it is restored',
+            'this battle is KEYED by its seeding encounter, and that row is in no campaign and not in the shared library, so there is nothing to adopt and the key is left exactly as it is rather than re-keyed to a guess — the provenance/spawn source cannot be read until the encounter is restored (re-import the pack, or recreate it)',
           unexpected: false,
         });
       }
