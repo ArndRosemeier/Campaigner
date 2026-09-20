@@ -255,11 +255,45 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
       'src/db/libraryAdopt.ts',
       'src/domain/libraryAdopt.ts',
     ]);
+    // THE DELIBERATE EXCEPTION'S LOUD HALF (docs/17 row 263): the battle's
+    // seeding-encounter id is NEVER collected by the holder set and NEVER
+    // repointed — it is only NAMED when the row is gone, through ONE arm whose
+    // only caller is the tx-taking seam.
+    expect(filesWith('danglingBattleEncounter')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
     // THE SAME TRANSACTION: the seam reaches `battles` through the caller's tx,
     // so the copy and the battle repoint cannot land apart.
     expect(CODE['src/db/libraryAdopt.ts']).toContain("tx.table('battles')");
     for (const path of ['src/db/libraryAdoptRetry.ts', 'src/db/libraryAdoptLive.ts']) {
       expect(CODE[path]).toContain('db.battles');
     }
+  });
+});
+
+/**
+ * THE ONE BOARD SCRUB (docs/17 row 263, row 259's finding 2).
+ *
+ * Removing an artifact's tokens from a board was implemented TWICE — the domain
+ * `scrubArtifactFromBoard` and an inline copy in `db/battleRepo` — and the two
+ * had already DRIFTED: the copy scrubbed ONLY the live token list (so deleting
+ * an OWNED artifact could leave the stage snapshot's token dangling, and
+ * `resetBattleToStage` would put it back on the board) and it dropped the
+ * domain seam's `activeIndex` fighter clamp. The fold is the fix: the delete
+ * path delegates to the domain seam, and this pin holds the ONE implementation.
+ */
+describe('one board scrub (SOURCE SCAN, docs/17 row 263)', () => {
+  it('DEFINES the artifact scrub once, and the delete path delegates to it', () => {
+    expect(filesWith('export function scrubArtifactFromBoard(')).toEqual([
+      'src/domain/battle/board.ts',
+    ]);
+    // The scrub's own filter expression exists in the domain seam alone — a
+    // re-implemented inline scrub reds here naming the second site.
+    expect(filesWith('token.artifactId !== artifactId')).toEqual(['src/domain/battle/board.ts']);
+    // The db delete path reaches it and owns no token surgery of its own.
+    expect(CODE['src/db/battleRepo.ts']).toContain('scrubArtifactFromBoard(battle.board, artifactId)');
+    expect(CODE['src/db/battleRepo.ts']).not.toContain('removedIds');
+    expect(CODE['src/db/battleRepo.ts']).not.toContain('initiativeOrder.filter(');
   });
 });

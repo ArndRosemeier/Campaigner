@@ -281,6 +281,14 @@ export interface LibraryBattleRefs {
     | null
     | undefined;
   seedFighters?: readonly { id: Id }[] | undefined;
+  /**
+   * The battle's SEEDING encounter (docs/17 row 263). Read here ONLY to name it
+   * when the row is gone — never to collect or repoint it: the battle is KEYED
+   * by this id (`db/battleRepo.getBattleByEncounter`), so re-pointing it would
+   * change the battle's identity and split the board. That is the DELIBERATE
+   * exception to the owner's "no runtime library reference" rule.
+   */
+  encounterArtifactId?: Id | null | undefined;
 }
 
 /** THE battle half of the ONE collector: every artifact id the battle's TOKENS
@@ -412,4 +420,29 @@ export function danglingBattleTokens(
   examine(battle.board?.tokens ?? []);
   examine(battle.board?.stage?.tokens ?? []);
   return out;
+}
+
+/**
+ * The battle's SEEDING-ENCOUNTER id when it resolves to NOTHING — the loud half
+ * of the DELIBERATE exception (docs/17 row 263).
+ *
+ * A battle is KEYED by its seeding encounter (`db/battleRepo.getBattleByEncounter`)
+ * while `BattleSurface` RE-READS that row with the any-scope getter, so a battle
+ * seeded from a LIBRARY-scoped encounter keeps a runtime read of the shared
+ * library. The decision is to KEEP the key — re-pointing it at a campaign copy
+ * would change the battle's identity and split the board — but NOT to keep
+ * quiet about a gone row: deletion of a SHARED library row scrubs no campaign's
+ * rows (`db/artifactRepo.deleteArtifact` scrubs tokens only for an OWNED row),
+ * so the surface would otherwise show nothing with no reason. Returned to the
+ * caller so the id is NAMED in `settings.libraryAdopt.unresolved` beside the
+ * dangling tokens. It is deliberately NOT collected by
+ * `battleLibraryReferenceIds` and never repointed.
+ */
+export function danglingBattleEncounter(
+  battle: LibraryBattleRefs,
+  knownArtifactIds: ReadonlySet<Id>,
+): Id | undefined {
+  const encounterArtifactId = battle.encounterArtifactId;
+  if (encounterArtifactId === null || encounterArtifactId === undefined) return undefined;
+  return knownArtifactIds.has(encounterArtifactId) ? undefined : encounterArtifactId;
 }

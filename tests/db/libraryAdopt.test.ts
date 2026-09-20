@@ -330,11 +330,14 @@ describe('library adoption (docs/17 row 257)', () => {
       return firstRosterEntry(row);
     };
 
-    // The live defect (board row 258): a global npc-ref resolves as missing in
-    // its own workspace even though the row exists.
+    // The row-258 defect is FIXED (docs/17 row 263): the repo-wired resolver
+    // reads through the any-scope getter, so the GLOBAL target resolves in its
+    // own workspace BEFORE any adoption — this arm used to assert the missing
+    // arm here, which was the defect stated as an expectation.
     const before = await resolveMonsterEntryWithRepos(await entry());
-    expect(before.statBlock).toBeNull();
-    expect(before.missingRef).toBeDefined();
+    expect(before.missingRef).toBeUndefined();
+    expect(before.statBlock).toEqual(STAT_BLOCK);
+    expect(before.origin).toBe('NPC: Sage of the Vale');
 
     await adopt();
 
@@ -342,6 +345,12 @@ describe('library adoption (docs/17 row 257)', () => {
     expect(resolved.missingRef).toBeUndefined();
     expect(resolved.statBlock).toEqual(STAT_BLOCK);
     expect(resolved.origin).toBe('NPC: Sage of the Vale');
+    // AFTER adoption the reference points at the campaign's OWN copy, so the
+    // numbers survive the library row itself being deleted.
+    const repointed = await entry();
+    expect(repointed.source.type === 'npc-ref' ? repointed.source.artifactId : '').not.toBe(
+      source.id,
+    );
   });
 
   it('leaves a reference to a GONE library row untouched — never a placeholder', async () => {
@@ -750,5 +759,46 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
       await listArtifactsByCampaign(CAMPAIGN),
     );
     expect(stats(copyId)).toMatchObject({ maxHp: 21, initiativeBonus: 2 });
+  });
+
+  it('NAMES a GONE seeding encounter — the deliberate exception stays loud (docs/17 row 263)', async () => {
+    // A battle is KEYED by `encounterArtifactId` (`getBattleByEncounter`), so
+    // that id is IDENTITY and is never repointed — the accepted exception to
+    // "no runtime library read". v27 already ran on the owner's install, so the
+    // loud half rides the SAME seam through v28 (a landed upgrade body never
+    // re-runs). Deleting a SHARED library encounter scrubs nothing, so without
+    // this arm the surface shows nothing and names no reason.
+    const missingEncounterId = '00000000-0000-4000-8000-00000000e9c0';
+    const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
+    await db.battles.update(battle.id, { encounterArtifactId: missingEncounterId });
+
+    const report = await adopt();
+    expect(report.unresolved).toHaveLength(1);
+    expect(report.unresolved[0]?.name).toBe(missingEncounterId);
+    expect(report.unresolved[0]?.unexpected).toBe(false);
+    expect(report.unresolved[0]?.where).toContain(missingEncounterId);
+    expect(report.unresolved[0]?.reason).toContain('deliberately NOT re-pointed');
+    // The KEY is KEPT: the battle's identity is untouched (no split board).
+    expect((await db.battles.get(battle.id))?.encounterArtifactId).toBe(missingEncounterId);
+
+    // LOUD: the report reaches settings and the ONE sentence prints it by name.
+    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
+    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
+    expect(persisted.unresolved[0]?.name).toBe(missingEncounterId);
+    expect(formatLibraryAdopt(persisted)).toContain(missingEncounterId);
+  });
+
+  it('does NOT report a seeding encounter that still resolves — owned or library', async () => {
+    const encounter = await createArtifact({
+      campaignId: CAMPAIGN,
+      kind: 'encounter',
+      name: 'Ambush at the Ford',
+      data: encounterData([{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } }]),
+    });
+    const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
+    await db.battles.update(battle.id, { encounterArtifactId: encounter.id });
+
+    const report = await adopt();
+    expect(report.unresolved).toEqual([]);
   });
 });

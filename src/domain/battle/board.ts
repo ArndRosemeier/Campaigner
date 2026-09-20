@@ -345,16 +345,27 @@ export function applyStageReset(
  * Removing an artifact scrubs its tokens from the board AND its entries from
  * initiative (the token ids go with it); `activeIndex` follows the active
  * token to its new position.
+ *
+ * BOTH token carriers are scrubbed (docs/17 row 263, row 259's finding 2): the
+ * board list AND the saved stage snapshot. `⚑ Set stage` copies the tokens, so
+ * a stage token left behind is the SAME dangling reference one revision later —
+ * and `resetBattleToStage` would put it straight back on the board. This is the
+ * ONE scrub the delete path calls (`db/battleRepo.scrubArtifactFromBattles`
+ * delegates here rather than re-implementing it).
  */
 export function scrubArtifactFromBoard(board: BattleBoard, artifactId: Id): BattleBoard {
   const removedTokenIds = new Set(
     board.tokens.filter((token) => token.artifactId === artifactId).map((token) => token.id),
   );
   const tokens = board.tokens.filter((token) => token.artifactId !== artifactId);
-  const initiativeOrder = board.initiativeOrder.filter((id) => !removedTokenIds.has(id));
-  if (tokens.length === board.tokens.length && initiativeOrder.length === board.initiativeOrder.length) {
+  const stage = board.stage;
+  const stageTokens =
+    stage === null ? null : stage.tokens.filter((token) => token.artifactId !== artifactId);
+  const stageChanged = stage !== null && stageTokens !== null && stageTokens.length !== stage.tokens.length;
+  if (tokens.length === board.tokens.length && !stageChanged) {
     return board;
   }
+  const initiativeOrder = board.initiativeOrder.filter((id) => !removedTokenIds.has(id));
   const activeId = board.initiativeOrder[board.activeIndex];
   const activeIndex = activeId === undefined ? 0 : Math.max(0, initiativeOrder.indexOf(activeId));
   const fighterCount = fighterTokens({ ...board, tokens }).length;
@@ -363,5 +374,6 @@ export function scrubArtifactFromBoard(board: BattleBoard, artifactId: Id): Batt
     activeIndex: fighterCount === 0 ? 0 : Math.min(activeIndex, Math.max(initiativeOrder.length - 1, 0)),
     initiativeOrder,
     tokens,
+    ...(stageChanged ? { stage: { ...stage, tokens: stageTokens } } : {}),
   };
 }

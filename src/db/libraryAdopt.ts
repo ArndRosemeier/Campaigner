@@ -15,6 +15,7 @@ import {
   NOT_GLOBAL_ARTIFACT_REASON,
   adoptedArtifactRow,
   battleLibraryReferenceIds,
+  danglingBattleEncounter,
   danglingBattleTokens,
   libraryReferenceIds,
   repointArtifactRow,
@@ -61,7 +62,10 @@ import { errorMessage } from '@/lib/errors';
  * OWN (docs/17 row 259): a token whose artifact is gone shows nothing on the
  * card with no named reason, and deleting a SHARED library row scrubs no
  * campaign's tokens, so this seam NAMES each such token in `unresolved` rather
- * than leaving the silence the previous writer flagged.
+ * than leaving the silence the previous writer flagged. THE BATTLE'S SEEDING
+ * ENCOUNTER gets the same treatment (docs/17 row 263): it is the battle's
+ * IDENTITY key and is deliberately NEVER repointed, but a gone row is NAMED
+ * rather than left as a surface with nothing on it and no reason.
  */
 
 export interface LibraryAdoptOptions {
@@ -98,10 +102,10 @@ function globalRefsOf(row: AnyArtifact, globals: ReadonlyMap<Id, unknown>): Id[]
 /** The stored battle row's reference-bearing fields, as this seam reads them.
  * Nothing is parsed: a legacy row may predate any field, and the upgrade path
  * must not throw on it. `campaignId` is what groups the pass; the rest is the
- * battle holder `domain/libraryAdopt` owns. */
+ * battle holder `domain/libraryAdopt` owns — `encounterArtifactId` included,
+ * which the holder reads only to NAME a gone encounter (never to repoint it). */
 interface StoredBattleRefs extends LibraryBattleRefs {
   campaignId?: unknown;
-  encounterArtifactId?: unknown;
 }
 
 export async function adoptLibraryArtifacts(
@@ -402,6 +406,20 @@ export async function adoptLibraryArtifacts(
           where: battleWhere(battle),
           name: dangling.label,
           reason: `its token points at artifact ${dangling.artifactId}, which is in no campaign and not in the shared library, and is not one of the battle's frozen seed rows — nothing can be copied and the token card has no stats to read`,
+          unexpected: false,
+        });
+      }
+      // THE DELIBERATE EXCEPTION, MADE LOUD (docs/17 row 263): the battle is
+      // KEYED by its seeding encounter, so that id is IDENTITY and is never
+      // repointed — but a gone row is NAMED here rather than left as a surface
+      // with nothing on it and no reason.
+      const danglingEncounter = danglingBattleEncounter(battle, knownArtifactIds);
+      if (danglingEncounter !== undefined) {
+        report.unresolved.push({
+          where: battleWhere(battle),
+          name: danglingEncounter,
+          reason:
+            'this battle is KEYED by its seeding encounter — the key is deliberately NOT re-pointed (re-pointing it would change the battle\'s identity and split the board) — and that row is in no campaign and not in the shared library, so nothing can copy it and the provenance/spawn source cannot be read until it is restored',
           unexpected: false,
         });
       }

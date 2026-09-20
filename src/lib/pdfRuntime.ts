@@ -23,8 +23,9 @@ if (import.meta.env.VITEST) {
 export type { PDFDocumentProxy };
 
 /**
- * Realm-safe copy of a byte payload (same trick class as backup.ts's
- * `ArrayBuffer.isView` check): Dexie/structured-clone backends may hand back
+ * Realm-safe NORMALISATION of a byte payload — NOT a defensive copy (same
+ * trick class as backup.ts's `ArrayBuffer.isView` check): Dexie/structured-clone
+ * backends may hand back
  * Uint8Arrays from another realm, where `instanceof` lies AND the typed-array
  * constructors/`Uint8Array.from` throw ("this is not a typed array") because
  * the internal slots are missing. Indexed access still works, so the copy is
@@ -53,11 +54,19 @@ export interface OpenedPdfDocument {
 }
 
 /**
- * Opens a PDF document from raw bytes. Callers pass a fresh COPY
- * (`copyBytes(bytes)`): pdfjs takes ownership of the buffer it is handed and
- * transfers it to the worker — the original arrives detached ("Cannot
- * perform Construct on a detached ArrayBuffer"), the same behavior the
- * ingest retention copies around.
+ * Opens a PDF document from raw bytes. pdfjs TAKES OWNERSHIP of the buffer it
+ * is handed and transfers it to the worker, so the caller's array arrives
+ * DETACHED ("Cannot perform Construct on a detached ArrayBuffer") — do not
+ * reuse it after this call. The ingest path snapshots its retained copy before
+ * handing the buffer over; the viewer reads its bytes once per book id.
+ *
+ * A "fresh COPY" is NOT what the production path passes. `copyBytes` is
+ * realm-SAFE normalisation, not a defensive copy: it returns same-realm bytes
+ * UNCHANGED, and same-realm is what a real IndexedDB read yields, so what gets
+ * detached is the caller's own row bytes. That is benign for both callers (each
+ * reads the array once), and a defensive copy was deliberately REJECTED: it
+ * would double the transient memory of a large PDF on exactly the iOS path this
+ * viewer's tablet work protects.
  */
 export async function openPdfDocument(data: Uint8Array): Promise<OpenedPdfDocument> {
   const loadingTask = getDocument({

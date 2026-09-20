@@ -382,6 +382,43 @@ describe('scrub on artifact delete', () => {
     expect(after?.board.initiativeOrder).toEqual([]);
   });
 
+  it('scrubs the STAGE snapshot too — no dangling token in EITHER carrier (docs/17 row 263)', async () => {
+    const pcId = await addPc('Serren');
+    const npcId = await addNpc('Goblin');
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    const npcToken: BattleToken = {
+      id: newId(),
+      artifactId: npcId,
+      label: 'Goblin',
+      x: 0.5,
+      y: 0.6,
+      visible: true,
+      scale: 1,
+      shape: 'portrait',
+      color: null,
+      currentHp: 4,
+      initiativeRoll: 12,
+      initiativeBonus: 2,
+      treasure: '',
+      conditions: [],
+    };
+    // `⚑ Set stage` snapshots the LIVE tokens, so the stage carries the same
+    // reference one revision later.
+    const opened: Battle['board'] = {
+      ...battle.board,
+      tokens: [...battle.board.tokens, npcToken],
+    };
+    await saveBattleBoard(battle.id, { ...opened, stage: captureStageSnapshot(opened) });
+
+    await deleteArtifact(npcId);
+
+    const after = await getBattle(battle.id);
+    expect(after?.board.tokens.map((token) => token.artifactId)).toEqual([pcId]);
+    // The defect: the live list was scrubbed but the stage snapshot was not, so
+    // a Reset would put the deleted artifact's token back on the board.
+    expect(after?.board.stage?.tokens.map((token) => token.artifactId)).toEqual([pcId]);
+  });
+
   it('deletes a board that empties to nothing and has no provenance', async () => {
     const npcId = await addNpc('Goblin');
     const battle = await ensureBattleForEncounter(campaignId, newId(), newId());

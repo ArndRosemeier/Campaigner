@@ -5,6 +5,7 @@ import {
   applyStageReset,
   ensurePcTokens,
   fillNpcTokenHp,
+  scrubArtifactFromBoard,
 } from '@/domain/battle/board';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
@@ -232,22 +233,20 @@ export async function deleteBattleIfEmpty(id: Id): Promise<void> {
  * Removing a pc/npc artifact scrubs its tokens (and initiative entries) from
  * every battle of the campaign; empty battles delete themselves. Called from
  * `deleteArtifact` — the UI never invokes this directly.
+ *
+ * The scrub itself is the ONE domain seam `scrubArtifactFromBoard` (docs/17
+ * row 263): it removes the artifact's tokens from the board list AND from the
+ * saved stage snapshot, so a delete can never leave a stage token dangling for
+ * `resetBattleToStage` to put back. This function only owns the row walk and
+ * the empty-battle rule — the same `=== board` identity test the seam returns
+ * for "nothing changed", so a battle with no matching token is left untouched.
  */
 export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): Promise<void> {
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
   for (const row of battles) {
     const battle = parseBattleRow(row);
-    const hasToken = battle.board.tokens.some((token) => token.artifactId === artifactId);
-    if (!hasToken) continue;
-    const tokens = battle.board.tokens.filter((token) => token.artifactId !== artifactId);
-    const removedIds = new Set(
-      battle.board.tokens.filter((token) => token.artifactId === artifactId).map((token) => token.id),
-    );
-    const initiativeOrder = battle.board.initiativeOrder.filter((id) => !removedIds.has(id));
-    const activeId = battle.board.initiativeOrder[battle.board.activeIndex];
-    const activeIndex =
-      activeId === undefined ? 0 : Math.max(0, initiativeOrder.indexOf(activeId));
-    const board: BattleBoard = { ...battle.board, tokens, initiativeOrder, activeIndex };
+    const board = scrubArtifactFromBoard(battle.board, artifactId);
+    if (board === battle.board) continue;
     await db.battles.put({ ...battle, board });
     await deleteBattleIfEmpty(battle.id);
   }

@@ -59,6 +59,52 @@ describe('intakeImage', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  /**
+   * THE COMMENT'S TRUE CONTRACT (docs/17 row 263). The JSDoc used to promise a
+   * fallback to the original blob "when the canvas pipeline is unavailable or
+   * produces nothing" — there is NO such fallback, deliberately: substituting
+   * an un-oriented, un-downscaled original is the silent substitution AGENTS
+   * rule 1 forbids (and for a map upload it bypasses the budget). The comment
+   * now states the loud arm, and these pins hold it.
+   */
+  it('REJECTS an unavailable decode instead of falling back to the original blob', async () => {
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(() => Promise.reject(new Error('decode refused'))),
+    );
+    try {
+      // The original blob is never returned — the caller gets the failure.
+      await expect(
+        intakeImage(new Blob(['original'], { type: 'image/jpeg' })),
+      ).rejects.toThrow('decode refused');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('REJECTS when the canvas encoder produces nothing', async () => {
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(() => Promise.resolve({ width: 10, height: 10, close: vi.fn() })),
+    );
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(
+      (callback: BlobCallback | null) => {
+        callback?.(null);
+      },
+    );
+    try {
+      await expect(
+        intakeImage(new Blob(['original'], { type: 'image/jpeg' })),
+      ).rejects.toThrow('canvas encoding produced no data');
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('blobToScaledDataUrl', () => {

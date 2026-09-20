@@ -54,14 +54,6 @@
       ]
     },
     {
-      "hash": "766ecd9d42a41188",
-      "reason": "creatureRepo and monsterResolve spell the same content-hash to chunk lookup, including the non-null-statBlock preference; fold onto one db helper. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/db/creatureRepo.ts:getChunkByContentHash",
-        "src/db/monsterResolve.ts:getChunkByContentHash"
-      ]
-    },
-    {
       "hash": "a7a5d7c440a27f8a",
       "reason": "The same getArtifactStatBlock arrow is defined twice inside runEngine.ts (two call scopes) and the two definitions are one implementation; delete one and share it. Owed; out of this detector slice's scope.",
       "sites": [

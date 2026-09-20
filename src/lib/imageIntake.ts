@@ -41,8 +41,12 @@ function canvasToBlob(
 
 /**
  * Normalizes an image blob: EXIF-oriented decode, downscale, WebP re-encode.
- * Falls back to the original blob (with its own type) when the canvas
- * pipeline is unavailable or produces nothing.
+ * EVERY failure is LOUD — an unsupported/refused decode (`createImageBitmap`),
+ * a missing 2d context, or an encoder that returned nothing THROWS out of
+ * `intakeImage` (the callers toast it). There is deliberately NO fallback to
+ * the original blob: storing an un-oriented, un-downscaled original would be
+ * the silent substitution AGENTS rule 1 forbids, and for a map-role upload it
+ * would bypass the larger-but-still-capped budget this module exists to apply.
  */
 export async function intakeImage(
   source: Blob,

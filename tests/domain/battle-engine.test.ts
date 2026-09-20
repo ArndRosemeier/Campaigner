@@ -639,6 +639,28 @@ describe('scrub & stage reset', () => {
     expect(scrubArtifactFromBoard(board, newId())).toBe(board);
   });
 
+  it('scrubs the SAVED STAGE snapshot too — both token carriers (docs/17 row 263)', () => {
+    // `⚑ Set stage` copies the tokens, so a stage that keeps a deleted
+    // artifact's token is the same dangling reference one revision later — and
+    // `resetBattleToStage` would put it straight back on the board.
+    const fighter = npcToken();
+    const other = npcToken({ artifactId: SEED_MONSTER });
+    const opened: BattleBoard = {
+      ...emptyBoard(),
+      tokens: [fighter, other],
+      initiativeOrder: [fighter.id, other.id],
+    };
+    const board: BattleBoard = { ...opened, stage: captureStageSnapshot(opened) };
+    const next = scrubArtifactFromBoard(board, CAMPAIGN_NPC);
+    expect(next.tokens.map((token) => token.id)).toEqual([other.id]);
+    expect(next.stage?.tokens.map((token) => token.id)).toEqual([other.id]);
+    // The stage is only replaced when it actually changed: a board whose STAGE
+    // alone matches is rewritten, and one with neither carrier is untouched.
+    const stageOnly: BattleBoard = { ...emptyBoard(), stage: captureStageSnapshot({ ...emptyBoard(), tokens: [fighter] }) };
+    expect(scrubArtifactFromBoard(stageOnly, CAMPAIGN_NPC).stage?.tokens).toEqual([]);
+    expect(scrubArtifactFromBoard(board, newId())).toBe(board);
+  });
+
   it('restores the exact opening layout and resets NPC instance HP', () => {
     const ground = stagingGroundAt(0.5, 0.5, 720, 480, 72);
     const goblin = npcToken({ currentHp: 2, initiativeRoll: 11, initiativeBonus: 2 });

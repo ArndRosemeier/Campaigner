@@ -15,10 +15,12 @@ import { Input } from '@/components/ui/input';
  * In-app PDF viewer (source-viewers arc): renders the RETAINED bytes of a
  * PDF-origin book with pdf.js on a canvas — open-at-page for the
  * chunk→page jump, fit-width default with a zoom multiplier, page nav.
- * `openPdfDocument` gets a COPY of the bytes: pdfjs transfers the buffer it
- * is handed. A book without retained bytes never reaches the viewer —
- * `PdfBookView` shows the loud absent state instead (no attach affordance:
- * retention happens at ingest or not at all, owner-ratified).
+ * `openPdfDocument` is handed bytes pdfjs will DETACH (it transfers the buffer
+ * to its worker), so the viewer reads the retained row ONCE per book id and
+ * never reuses the array — `copyBytes` normalises a cross-realm clone, it is
+ * NOT a second copy on this path. A book without retained bytes never reaches
+ * the viewer — `PdfBookView` shows the loud absent state instead (no attach
+ * affordance: retention happens at ingest or not at all, owner-ratified).
  */
 
 function isRenderCancelled(error: unknown): boolean {
@@ -36,8 +38,9 @@ export function PdfViewer({ pdf, initialPage = 1 }: { pdf: StoredPdf; initialPag
   const [zoom, setZoom] = useState(1);
   const [failure, setFailure] = useState<string | null>(null);
 
-  // Open the document once per retained payload (a copy — pdfjs detaches
-  // what it is handed).
+  // Open the document once per retained payload. pdfjs DETACHES what it is
+  // handed, so this effect is the array's only reader: it never re-reads
+  // `pdf.bytes` after the call.
   useEffect(() => {
     let cancelled = false;
     setDoc(null);

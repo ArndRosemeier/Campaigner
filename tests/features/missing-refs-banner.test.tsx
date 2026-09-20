@@ -4,13 +4,15 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { newId, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import { newId, globalArtifactSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import type { MonsterEntry } from '@/domain';
 import { workspacePath } from '@/app/routes';
 import { citationBookTitle, creatureOriginLabel } from '@/domain/encounterResolve';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
+import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
 import { MissingRefsBanner } from '@/features/campaign/components/missing-refs-banner';
@@ -119,6 +121,106 @@ describe('MissingRefsBanner', () => {
     renderBannerAt(campaign.id);
 
     await screen.findByTestId('missing-refs-banner');
+  });
+
+  it('RESOLVES a roster npc-ref to a GLOBAL library NPC — no `missing ref` (docs/17 row 263)', async () => {
+    // The defect: `db/monsterResolve` injected the CAMPAIGN-ONLY `getArtifact`
+    // while the battle seeder, the portrait queue and the cast path all pass the
+    // any-scope one, so a roster link to a GLOBAL NPC rendered the loud
+    // `missing ref` badge in its own workspace. The banner is the SAME resolve
+    // contract the encounter rows render, so "the banner stays hidden" is the
+    // honest render pin; the direct resolve below is its non-vacuity arm (the
+    // GLOBAL row's own origin, not a missing-ref reason).
+    const campaign = await createCampaign({ name: 'Global', system: 'dnd5e' });
+    const global = globalArtifactSchema.parse({
+      ...stampNewEntity(),
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Sage of the Vale',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      writerModel: '',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: statBlockSchema.parse({
+          system: 'dnd5e',
+          level: '5',
+          size: 'Medium',
+          creatureType: 'humanoid',
+          ac: 15,
+          acNote: '',
+          hp: 44,
+          hpFormula: '8d8+8',
+          speed: '30 ft.',
+          abilities: { str: 12, dex: 14, con: 12, int: 16, wis: 13, cha: 11 },
+          saves: '',
+          skills: '',
+          senses: '',
+          languages: '',
+          traits: [],
+          actions: [],
+          reactions: [],
+          legendary: [],
+          extras: {},
+        }),
+      },
+    });
+    await db.artifacts.put(global);
+    const entry: MonsterEntry = {
+      name: 'Sage of the Vale',
+      count: 1,
+      notes: '',
+      treasure: '',
+      source: { type: 'npc-ref', artifactId: global.id },
+    };
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'The sage arrives',
+      data: encounterData([entry]) as never,
+    });
+    renderBannerAt(campaign.id);
+
+    // The GLOBAL row answered, so no strand is missing.
+    await waitFor(() => {
+      expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
+    });
+    const resolved = await resolveMonsterEntryWithRepos(entry);
+    expect(resolved.missingRef).toBeUndefined();
+    expect(resolved.origin).toBe('NPC: Sage of the Vale');
+    expect(resolved.statBlock?.ac).toBe(15);
+  });
+
+  it('still reports a genuinely ABSENT npc-ref loudly', async () => {
+    const campaign = await createCampaign({ name: 'Gone', system: 'dnd5e' });
+    const entry: MonsterEntry = {
+      name: 'Nobody',
+      count: 1,
+      notes: '',
+      treasure: '',
+      source: { type: 'npc-ref', artifactId: '00000000-0000-4000-8000-0000000000aa' },
+    };
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Nobody comes',
+      data: encounterData([entry]) as never,
+    });
+    renderBannerAt(campaign.id);
+
+    const banner = await screen.findByTestId('missing-refs-banner');
+    expect(banner.textContent).toContain("'missing ref'");
+    const resolved = await resolveMonsterEntryWithRepos(entry);
+    expect(resolved.statBlock).toBeNull();
+    expect(resolved.missingRef?.creature).toBe('Nobody');
   });
 
   it('stays hidden off campaign routes', async () => {

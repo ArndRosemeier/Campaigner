@@ -893,7 +893,11 @@ export interface ArtifactKindRemovalCounts {
   revisions: number;
   /** Surviving artifacts whose link list loses a target (the cascade scrubs them). */
   backLinkedArtifacts: number;
-  /** Battle tokens scrubbed from this campaign's boards. */
+  /** LIVE battle tokens scrubbed from this campaign's boards. The delete's
+   * scrub ALSO clears the stage snapshot's copy of the same token
+   * (`domain/battle/board.scrubArtifactFromBoard`, docs/17 row 263); this
+   * census counts the LIVE carrier only, so it never double-counts one logical
+   * token, and the stage half is a snapshot rather than a second token. */
   battleTokensScrubbed: number;
   /** Boards that empty out and delete themselves after the scrub. */
   battlesDeleted: number;

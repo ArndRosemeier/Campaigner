@@ -154,6 +154,21 @@ describe('one legacy-read seam (SOURCE SCAN, docs/17 row 248c)', () => {
     expect((codeOf(REPO_WIRED).match(LIVE_RESOLVER_CALL) ?? []).length).toBe(0);
   });
 
+  it('assembles the repo-wired lookups through the ONE any-scope seam (docs/17 row 263)', () => {
+    // `db/creatureRepo.creatureLookups()` says "shared with db/monsterResolve"
+    // in its own doc — and the repo-wired reader now really does share it. It
+    // used to re-assemble its own copy with the CAMPAIGN-ONLY `getArtifact`, so
+    // a roster `npc-ref` at a GLOBAL library NPC read the loud `missing ref` in
+    // its own workspace; the ONE assembly is the any-scope getter.
+    const repoWired = codeOf(REPO_WIRED);
+    expect(repoWired).toContain('creatureLookups()');
+    expect(repoWired).not.toContain('getArtifact');
+    const assemblers = SOURCES.map(repoPath).filter((path) =>
+      codeOf(path).includes('getArtifact: (id: Id) => getAnyArtifact(id)'),
+    );
+    expect(assemblers).toEqual(['src/db/creatureRepo.ts']);
+  });
+
   it('leaves the v24 migration and the missing-refs banner no pointer read of their own', () => {
     const migration = codeOf(MIGRATION);
     expect((migration.match(/storedRulebookCitation\(/g) ?? []).length).toBe(1);

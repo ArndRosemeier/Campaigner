@@ -1183,6 +1183,40 @@ export class CampaignerDB extends Dexie {
       .upgrade(async (tx) => {
         await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
       });
+    // Version 28 (docs/17 row 263): the DELIBERATE exception's loud half. A
+    // battle is KEYED by its seeding encounter (`battle.encounterArtifactId`)
+    // and that id is deliberately NOT repointed — re-pointing it would change
+    // the battle's identity and split the board — but a gone row must not stay
+    // silent, so the SAME seam now NAMES it in `settings.libraryAdopt.unresolved`
+    // beside the dangling tokens. v27 already ran on the owner's install and a
+    // landed upgrade body never re-runs, so naming it required this version
+    // rather than an edited v27 body (exactly the row-259 reasoning one arm
+    // over). The store shape is UNCHANGED — this is a data conversion, and the
+    // seam is idempotent, so a workspace with nothing to say writes nothing.
+    this.version(28)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId, encounterArtifactId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
+      });
   }
 }
 

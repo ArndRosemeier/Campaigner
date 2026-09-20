@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PdfBookView } from '@/features/rules/pdf-viewer';
-import { openPdfDocument } from '@/lib/pdfRuntime';
+import { copyBytes, openPdfDocument } from '@/lib/pdfRuntime';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { clearDatabase } from '../db/helpers';
@@ -68,4 +68,26 @@ describe('PdfBookView', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('pdf-viewer')).not.toBeInTheDocument();
   }, 30000);
+});
+
+/**
+ * THE CORRECTED pdf CONTRACT (docs/17 row 263). The runtime comments used to
+ * promise callers "a fresh COPY": `copyBytes` is realm-SAFE NORMALISATION, not
+ * a defensive copy, so on the production path (a same-realm IndexedDB read) the
+ * bytes are handed to pdfjs UNCHANGED and pdfjs detaches them. The comment now
+ * states that, and these pins hold its two halves — the identity on same-realm
+ * input and the element-wise copy when `instanceof` lies.
+ */
+describe('copyBytes is realm normalisation, not a defensive copy', () => {
+  it('returns SAME-REALM bytes untouched', () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    expect(copyBytes(bytes)).toBe(bytes);
+  });
+
+  it('copies element-wise when `instanceof` lies (a cross-realm clone)', () => {
+    const foreign = { 0: 7, 1: 8, 2: 9 } as unknown as Uint8Array;
+    const copy = copyBytes(foreign);
+    expect(copy).not.toBe(foreign);
+    expect(Array.from(copy)).toEqual([7, 8, 9]);
+  });
 });
