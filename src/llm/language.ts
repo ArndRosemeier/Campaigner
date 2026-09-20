@@ -107,15 +107,22 @@ export const LEVEL_WORDS: Readonly<Record<GenerationLanguage, readonly string[]>
 };
 
 /**
+ * A word whose LAST character is CJK — the only words that may abut their
+ * digits (docs/17 row 282). CJK is written without word spaces, so `レベル5` is
+ * ordinary orthography; every other script separates the word from the number.
+ */
+const CJK_TAIL = /[\u3005-\u3007\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+
+/**
  * The ONE regex source that finds a level word in ANY supported language,
  * anchored so a level word is a standalone token in BOTH scripts
- * (docs/17 row 253).
+ * (docs/17 row 253, hardened by docs/17 row 282).
  *
  * THE BOUNDARY IS THE WHOLE PROBLEM FOR CJK. A leading `\b` (the English
  * reader's anchor) can NEVER match before a kana/ideograph: JavaScript's `\w`
  * is ASCII-only, so `レ` is a NON-word character, no boundary exists between
  * it and the start of the string, and `\bレベル` therefore matches nothing —
- * measured, not reasoned. The trailing `\b` stays (ASCI digits ARE `\w`, so a
+ * measured, not reasoned. The trailing `\b` stays (ASCII digits ARE `\w`, so a
  * boundary after them always exists), and it is what keeps the app's level
  * domain honest: `level 2024` captures `20`, which the 1..20 bound then
  * rejects, so a four-digit year is never read as a level.
@@ -129,8 +136,27 @@ export const LEVEL_WORDS: Readonly<Record<GenerationLanguage, readonly string[]>
  * prefix. `i` case-folds the Latin words; `u` lets non-ASCII sources compile.
  * The caller applies the level DOMAIN (1..20) — this pattern only finds the
  * number.
+ *
+ * TWO MEASURED FALSE POSITIVES ARE NOW CLOSED (docs/17 row 282), which is why
+ * the separator is per word rather than one `\s*` for the whole union:
+ *
+ * - **`\s*` CROSSED A LINE BREAK.** The old pattern matched `"auf Stufe\n7"`,
+ *   so a level word at the end of one line and ANY number starting the next
+ *   (a stat, a page, a year) became that prose's level. The separator is now a
+ *   HORIZONTAL space only — `[\\p{Zs}\\t]` (Unicode space separators plus TAB),
+ *   which deliberately EXCLUDES `\n`, `\r`, `\v` and `\f`.
+ * - **A WORD ABUTTING ITS DIGITS MATCHED ANYWHERE.** `"Stufe7"` (no separator)
+ *   resolved 7, so a malformed or merely concatenated token invented a level.
+ *   A non-CJK word now REQUIRES at least one separator; a CJK word keeps
+ *   `*` because its script has no word spacing (`レベル5` must still resolve).
  */
 export function levelWordsPattern(): RegExp {
-  const words = GENERATION_LANGUAGES.flatMap(({ code }) => [...LEVEL_WORDS[code]]);
-  return new RegExp(`(?<![A-Za-z0-9_])(${words.join('|')})\\s*(\\d{1,2})\\b`, 'iu');
+  const alternatives = GENERATION_LANGUAGES.flatMap(({ code }) =>
+    LEVEL_WORDS[code].map((word) => {
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const separator = CJK_TAIL.test(word.slice(-1)) ? '[\\p{Zs}\\t]*' : '[\\p{Zs}\\t]+';
+      return `(?:${escaped})${separator}`;
+    }),
+  );
+  return new RegExp(`(?<![A-Za-z0-9_])((?:${alternatives.join('|')}))(\\d{1,2})\\b`, 'iu');
 }

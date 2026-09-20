@@ -3038,6 +3038,46 @@ the ONE `level N` reader (`roomBudget.firstLevelInText`). The row-247 matrix:
 Raw log: `.gate-logs/row247-full.out` (the full gate) and
 `revert-proof-row247.log` (this differential), both in the worktree.
 
+### A mob has ONE level — the block is the truth, the hint is an intent, and the premise is not a level source (docs/17 row 282, docs/18 §2.2 rows 200/203 + §5)
+
+Row 247's premise half is REVERSED here, on the owner's ruling: the premise is a
+campaign story introduction, so `roomBudget.moduleStatedLevel` now reads
+STRUCTURE only (the mentioning part's level by name, else an EXACT band) and
+`moduleGen.normalizeAndSave` stamps no module-wide level on a RANGE-band module.
+The chip reads the MINTED block through the ONE reader
+(`llm/encounterRoster.mobLevelText` / `mobLevelFor`), shows the hint only as
+labelled intent (`target level N`) and names a disagreement; `runStatblock`'s
+chain head is the minted block (`const recordedLevel = mintedBlockLevel ??
+storedHint`), the disagreement rides the step's EXISTING `notice`, and the
+generated entity-hint paragraph is stripped from that step's prompt
+(`withoutEntityLevelHintLines`). The reader's two measured false positives are
+closed: no crossing a LINE BREAK, and no abutting digits for a non-CJK word.
+
+| fact pinned | where |
+|---|---|
+| **The chip reads the BLOCK**: a minted level-1 block beside a stored hint of 7 renders `entity-level-block` `level 1` AND the intent badge `target level 7` whose title names both numbers ("the block wins"); a block with no hint renders ONLY the block; an agreeing hint adds no second badge | `tests/features/entity-panel.test.tsx` (3 arms) |
+| **No block ⇒ labelled intent, never a bare level**: the exact text is `target level 7` and no `entity-level-block` exists | `tests/features/entity-panel.test.tsx` |
+| **The MINTED block outranks a contradicting stored hint at generation**: the prompt says `at level 1` and carries the `'block'` clause, the stored 7's paragraph is GONE from that prompt, the persisted block stays level 1, and the step `notice` reads "The module records level 7 … but its stat block is level 1 … the recorded level was not used"; the CONTROL arm (same hint, NO block) keeps the paragraph and resolves 7 | `tests/llm/runEngine.test.ts` |
+| **The PREMISE is not a level source**: a 1–3 RANGE module whose premise says `level 5` and whose mentioning part states 1 resolves 1, the prompt never says `at level 5`, and a reply at 3 is repaired once then REJECTED | `tests/llm/runEngine.test.ts` |
+| **A RANGE module stamps NO module-wide level**, while an EXACT band IS recorded and never overwrites the planner's own per-entity `levelHint` | `tests/llm/moduleGen.test.ts` (2 arms) |
+| **Structure only in the derivation**: the premise's `Stufe 5` still READS as 5 through `firstLevelInText` and is NOT a level source; an exact band resolves; an exact band is not overridden by louder premise prose | `tests/llm/level-language.test.ts` |
+| **The two hardened boundaries**: `Stufe\n7` / `Stufe\r\n7` / `Stufe\u000b7` → `undefined`, while TAB and NBSP still separate; `Stufe7` / `level5` / `уровень7` → `undefined`, while `Stufe 7`, `レベル7` and `等级7` resolve | `tests/llm/level-language.test.ts` |
+| **ONE reader for a mob's level** (AGENTS rule 4): source scan — `mobLevelText`/`mobLevelFor` defined once in `llm/encounterRoster`, called by the chip, the stat-block card and the engine; `const recordedLevel = mintedBlockLevel ?? storedHint` and the `resolvedLevel` expression each at exactly one site; `withoutEntityLevelHintLines` defined once and called once | `tests/architecture/one-level-resolution.test.ts` |
+
+**REVERT-PROVEN, five arms, every arm's sha256 printed, every file restored
+byte-identically from `.gate-logs/row282-writer/`, no two arms identical (raw
+logs `.gate-logs/row282-inject-i…v.log`; all five were run from the WORKTREE at
+default workers, one file cohort per arm):**
+
+| arm | injected file (sha256 before → injected → after) | observed |
+|---|---|---|
+| **i — the chip ignores the block** (`mobLevelFor(entry.artifact)` → `undefined`) | `entity-panel.tsx` `e0ebeb33…` → `fb3428f3…` → `e0ebeb33…` | **RED 2**: `reads the MINTED BLOCK as the fact …` and `shows ONLY the block when the hint agrees with it` |
+| **ii — the bare-level wording restored** (`target level {hint}` → `level {hint}`) | `entity-panel.tsx` `e0ebeb33…` → `194866df…` → `e0ebeb33…` | **RED 1**: `expected 'level 7' to be 'target level 7'` |
+| **iii — the disagreement dropped from the notice list** | `runEngine.ts` `75bcf166…` → `88e4052a…` → `75bcf166…` | **RED 1**: the block-wins pin, on `expected '' to contain 'The module records level 7…'` (the prompt arms stayed GREEN — the notice is the pin, not the clause) |
+| **iv — the premise source restored in `moduleStatedLevel`** | `roomBudget.ts` `e5110421…` → `c6e1d3c3…` → `e5110421…` | **RED 2**: `reads the module's stated level from STRUCTURE only …` and `records NO levelHint from the PREMISE on a RANGE-band module` |
+| **v — the pattern reverted to `\s*` + `*`** | `language.ts` `6858be83…` → `dacbd81f…` → `6858be83…` | **RED 1**: `hardens the two measured reader false positives` |
+
+
 ### The refill names its target, and a foreign returned name is refused (docs/17 row 226, docs/18 §2.1/§2.2)
 
 The owner regenerated «Hilde Marben» from the artifact editor and got *"this NPC

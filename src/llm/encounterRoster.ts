@@ -1,6 +1,6 @@
 import { comparableName } from '@/domain/artifactAlias';
 import type { GameSystem } from '@/domain/gameSystem';
-import type { Id, Rulebook, RuleChunk } from '@/domain';
+import type { AnyArtifact, Id, Rulebook, RuleChunk } from '@/domain';
 import { listChunksByBooks } from '@/db/chunkRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { errorMessage } from '@/lib/errors';
@@ -101,6 +101,43 @@ export function parseLevelSort(level: string): number {
   const value = Number(trimmed);
   if (trimmed !== '' && Number.isFinite(value)) return value;
   throw new Error(`cannot order creatures by level "${level}"`);
+}
+
+/**
+ * The PRINTED level a stat block states, read through the ONE level grammar
+ * (`parseLevelSort`), or `undefined` when it states none (docs/17 row 282).
+ *
+ * WHY THIS EXISTS. Two surfaces answered "what level is this mob" two ways: the
+ * entity panel's chip printed the module's RECORDED `levelHint` (a generation
+ * input) as if it were a fact, while the stat-block card printed its own raw
+ * string — so a levels-1–2 module whose premise mentioned one level-7 gnome
+ * showed `level 7` on every npc beside minted level-1 blocks. The stat block is
+ * the one truth about a mob's level, and BOTH surfaces read it through HERE.
+ *
+ * A level the grammar cannot read is NOT a level and is never presented as one:
+ * this returns `undefined` for it, exactly as for a blank level, and `'—'` (the
+ * dnd5e summons' printed "no CR") reads as none too — it is an ORDERING
+ * sentinel (+Infinity), never a number a chip or a generator may carry. That is
+ * a DISPLAY decision (the raw value stays in the stored block and in the editor
+ * form), never a substituted value: nothing is invented to stand in for it.
+ */
+export function mobLevelText(level: string): string | undefined {
+  const trimmed = level.trim();
+  if (trimmed === '') return undefined;
+  return Number.isFinite(parseLevelSort(trimmed)) ? trimmed : undefined;
+}
+
+/**
+ * The level a mob's OWN minted stat block states, off the artifact that holds
+ * it (docs/17 row 282) — `undefined` when the artifact has no stat block at all
+ * (an encounter, a location, a blockless npc stub) or its block states no
+ * readable level. ONE read for the chip, the stat-block card and the run
+ * engine's level resolution, so no surface can answer this question its own way
+ * (AGENTS rule 4).
+ */
+export function mobLevelFor(artifact: AnyArtifact): string | undefined {
+  if (artifact.kind !== 'npc' && artifact.kind !== 'pc') return undefined;
+  return mobLevelText(artifact.data.statBlock?.level ?? '');
 }
 
 /**

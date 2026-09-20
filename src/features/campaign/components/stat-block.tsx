@@ -18,6 +18,7 @@ import {
   type PairRow,
 } from '@/features/campaign/components/list-editors';
 import { MobSpellChips } from '@/features/spells/mob-spell-chips';
+import { mobLevelText } from '@/llm/encounterRoster';
 
 const ABILITIES = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
 const ABILITY_LABELS: Readonly<Record<(typeof ABILITIES)[number], string>> = {
@@ -107,6 +108,13 @@ function NumberField({
  */
 export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name: string }) {
   const headlineParts = [statBlock.size, statBlock.creatureType].filter((part) => part !== '');
+  // THE block's own level, read through the ONE reader (docs/17 row 282) — the
+  // SAME `mobLevelFor`/`mobLevelText` the entity panel's chip and the run
+  // engine's level resolution use, so the card and the chip can never print two
+  // answers for one mob. `undefined` when the block states no readable level, so
+  // an empty or unreadable `level` prints NO level line instead of presenting a
+  // non-level as one (the raw value stays in the stored block and the form).
+  const level = mobLevelText(statBlock.level);
   // THE caster line (docs/17 row 201): the stated spell DC / attack / tradition,
   // or the LOUD marker when a caster states no DC. `null` for a mundane or
   // legacy block, so those render exactly as they did. The bytes come from the
@@ -119,7 +127,7 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
       <div className="border-b pb-1.5">
         <h3 className="font-serif text-lg font-bold">{name}</h3>
         {headlineParts.length > 0 && <p className="text-xs italic">{headlineParts.join(' ')}</p>}
-        {statBlock.level !== '' && <p className="text-xs">Level {statBlock.level}</p>}
+        {level !== undefined && <p className="text-xs">Level {level}</p>}
       </div>
 
       <div className="grid grid-cols-3 gap-2 border-b py-1.5 text-xs">

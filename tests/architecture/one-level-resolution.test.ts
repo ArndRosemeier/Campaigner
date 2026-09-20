@@ -15,13 +15,21 @@ import { describe, expect, it } from 'vitest';
  * THE SECOND (row 247, the owner's level-5 smith) was the same idea again: a
  * level stated in the module's PREMISE reached nothing, a party-level line
  * biased the model, and the reply's own level was persisted verbatim — with a
- * notice beside it. The cure is still ONE site: `runStatblock` resolves FOUR
- * sources in ONE precedence chain (the user's instruction, the entity record's
- * hint, the module's own stated level, the brief's party-line-free fallback),
- * and the resolved value BINDS the parsed block. `moduleStatedLevel` is ONE
- * derivation (its two consumers — the spine recording the hint and the engine
- * resolving it — are named here), and `firstLevelInText` is the ONE reader of
- * `level N` out of any prose.
+ * notice beside it. The cure is still ONE site: `runStatblock` resolves the
+ * sources in ONE precedence chain (the user's instruction, the entity's OWN
+ * MINTED BLOCK since row 282, the entity record's hint, the module's own
+ * STRUCTURED level, the brief's party-line-free fallback), and the resolved
+ * value BINDS the parsed block. `moduleStatedLevel` is ONE derivation (its two
+ * consumers — the spine recording the hint and the engine resolving it — are
+ * named here), and `firstLevelInText` is the ONE reader of `level N` out of any
+ * prose.
+ *
+ * THE FOURTH (row 282, the owner's levels-1–2 module showing `level 7` on every
+ * npc) was a SOURCE that should never have existed: the PREMISE. Its half is
+ * pinned here too — `moduleStatedLevel` reads STRUCTURE only (an exact band and
+ * the mentioning part by name), the block outranks a stored hint that
+ * contradicts it, and the block is read through ONE reader by the chip, the
+ * stat-block card and the engine.
  *
  * The pins are SOURCE SCANS because the drift they catch is invisible: a second
  * call site that rebuilds `StartRunInput` reads correctly today and silently
@@ -44,6 +52,9 @@ const ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const MODULE_GEN = 'src/llm/moduleGen.ts';
 const LANGUAGE = 'src/llm/language.ts';
+const ROSTER = 'src/llm/encounterRoster.ts';
+const ENTITY_PANEL = 'src/features/modules/entity-panel.tsx';
+const STAT_BLOCK_CARD = 'src/features/campaign/components/stat-block.tsx';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -157,5 +168,42 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => 
     // The pre-row-206 raw regex over the brief is GONE: a second reader that
     // bypasses the party-line exclusion reds here.
     expect(filesContaining('.exec(input.brief)')).toEqual([]);
+  });
+
+  it('reads a mob’s MINTED level through ONE reader, and keeps the chain at one site (docs/17 row 282)', () => {
+    // THE READER, defined once beside the ONE level grammar and reached by every
+    // surface that answers "what level is this mob": the entity panel's chip, the
+    // stat-block card, and the engine's precedence chain.
+    expect(filesContaining('export function mobLevelText')).toEqual([ROSTER]);
+    expect(filesContaining('export function mobLevelFor')).toEqual([ROSTER]);
+    expect(
+      filesContaining('mobLevelFor(')
+        .filter((file) => file !== ROSTER)
+        .sort(),
+    ).toEqual([ENGINE, ENTITY_PANEL].sort());
+    // The card renders a `StatBlock`, not an artifact (the bestiary, battle and
+    // editor surfaces all mount it), so it reaches the SAME grammar read through
+    // `mobLevelText` rather than re-printing the raw string.
+    expect(
+      filesContaining('mobLevelText(')
+        .filter((file) => file !== ROSTER)
+        .sort(),
+    ).toEqual([STAT_BLOCK_CARD]);
+    // THE BLOCK IS THE HEAD OF THE RECORDED TERM: a stored hint that contradicts
+    // an existing minted block cannot steer a regeneration back to it, while the
+    // precedence EXPRESSION itself is unchanged and still one site (so the
+    // user's instruction and the module's structured level keep their order).
+    expect(filesContaining('const recordedLevel = mintedBlockLevel ?? storedHint')).toEqual([ENGINE]);
+    expect(filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel')).toEqual([
+      ENGINE,
+    ]);
+    // The generated entity-hint paragraph gets the SAME one-site exclusion the
+    // party line has, applied only where the block outranks the hint.
+    expect(filesContaining('export function withoutEntityLevelHintLines')).toEqual([ROOM_BUDGET]);
+    expect(
+      filesContaining('withoutEntityLevelHintLines(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([ENGINE]);
   });
 });

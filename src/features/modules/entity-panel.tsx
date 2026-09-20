@@ -64,6 +64,7 @@ import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureOnlyNotice } from '@/features/modules/detailed-entity';
 import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
+import { mobLevelFor, parseLevelSort } from '@/llm/encounterRoster';
 import {
   encountersNeedingMaps,
   FULL_AUTOMATION_TARGET,
@@ -1378,12 +1379,20 @@ function EntityRow({
   onToggleFocus: () => void;
   onImageToggle: () => void;
 }): JSX.Element {
-  // The module author's recorded level for this name (docs/17 row 197), read
-  // read-only through the ONE reader. Shown so the generated decision is
-  // INSPECTABLE: the hint is what the detail worker and the stat-block step are
-  // handed, and a decision nobody can see is a decision nobody can correct.
-  // `null` renders no marker, so a module with no hints is unchanged.
+  // A MOB HAS ONE LEVEL: the level of the stats the Smith actually MINTED, read
+  // off the entity's own artifact through the ONE reader (docs/17 row 282). The
+  // module's recorded `levelHint` is a GENERATION INPUT (docs/17 row 197) and is
+  // shown only as LABELLED INTENT — never as the mob's level, which is how a
+  // levels-1–2 module whose premise mentioned one level-7 gnome displayed
+  // `level 7` on every npc beside minted level-1 blocks.
   const levelHint = entityLevelHintFor(module.entityKinds, entry.name);
+  const blockLevel = entry.artifact === undefined ? undefined : mobLevelFor(entry.artifact);
+  // The disagreement is NAMED, never two silent numbers (docs/17 row 282): the
+  // block wins and the intent badge says so in words. The comparison goes
+  // through the ONE grammar, so `1/2` and `—` are read the way the rest of the
+  // app reads them.
+  const hintContradictsBlock =
+    blockLevel !== undefined && levelHint !== null && parseLevelSort(blockLevel) !== levelHint;
   return (
     <li className="flex flex-wrap items-center">
       <button
@@ -1442,19 +1451,46 @@ function EntityRow({
             {entityKindFor(module.entityKinds, entry.name) ?? 'stub'}
           </Badge>
         )}
-        {/* The module author's recorded level (docs/17 row 197), read-only: the
-            hint every generator for this name is handed, shown where the
-            module's other entity decisions already are. */}
-        {levelHint !== null && (
+        {/* THE MINTED BLOCK IS THE FACT (docs/17 row 282): the level of the
+            stats the Smith actually wrote, read through the ONE reader. */}
+        {blockLevel !== undefined && (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-emerald-500/60 px-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400"
+            title={`The stat block minted for this entity is level ${blockLevel} — a mob's stat block is the one source of truth about its level`}
+            data-testid="entity-level-block"
+            data-name={entry.name}
+            data-level={blockLevel}
+          >
+            level {blockLevel}
+          </Badge>
+        )}
+        {/* The module author's recorded level (docs/17 row 197) is an INTENT,
+            shown only when it is the only statement (no block yet) or when it
+            DISAGREES with the minted block — in which case the block wins and
+            the disagreement is said in words, never two silent numbers. */}
+        {levelHint !== null && blockLevel === undefined && (
           <Badge
             variant="outline"
             className="shrink-0 border-sky-500/60 px-1 text-[10px] font-medium text-sky-700 dark:text-sky-400"
-            title={`The module fixes this entity's level at ${String(levelHint)} — its generators build it at that level`}
+            title={`The module asks its generators to build this entity at level ${String(levelHint)} — no stat block is minted yet, so this is an INTENT, not the mob's level`}
             data-testid="entity-level-hint"
             data-name={entry.name}
             data-level={String(levelHint)}
           >
-            level {levelHint}
+            target level {levelHint}
+          </Badge>
+        )}
+        {levelHint !== null && hintContradictsBlock && (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-amber-500/60 px-1 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+            title={`The module records level ${String(levelHint)} for this entity, but its minted stat block is level ${blockLevel} — the block wins. Regenerate with an explicit level to change it`}
+            data-testid="entity-level-hint"
+            data-name={entry.name}
+            data-level={String(levelHint)}
+          >
+            target level {levelHint}
           </Badge>
         )}
         <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>

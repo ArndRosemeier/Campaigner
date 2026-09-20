@@ -806,15 +806,24 @@ export function entityLevelHintFor(
 /**
  * Records the MODULE's own stated level on the entity records that get a stat
  * block authored from scratch (docs/17 row 247) — the spine-time half of "the
- * premise's level must actually reach resolution".
+ * module's own STRUCTURED level must actually reach resolution".
  *
- * THE DEFECT IT CLOSES. `levelHint` was written ONLY by the spine MODEL: when
- * the planner answered `"levelHint": null` (or when a name was introduced by a
- * later part and only CLASSIFIED by the normalization pass, which can carry a
- * field but never author one — docs/17 row 197), the record kept no level at
- * all, and the entity generator was left to pick one. The owner's module
- * DESCRIBED a level-5 smith in its premise and the Smith produced a level-3
- * block.
+ * WHAT THE STATED LEVEL IS, SINCE docs/17 row 282: STRUCTURE ONLY — an EXACT
+ * band (`levelMin === levelMax`), never the premise's prose. `moduleStatedLevel`
+ * removed the premise source after the owner's ruling (*"Its very sloppy to
+ * infer all mobs levels from a CAMPAIGN premise … And this was about 1 NPC."*):
+ * one sentence about one level-7 gnome was stamped on every npc of a levels-1–2
+ * module, whose Smith had minted level-1 blocks. The name-scoped channels carry
+ * a per-entity level instead — the model's own `levelHint` on the record (this
+ * function never overwrites it) and the part's level by name.
+ *
+ * THE DEFECT IT STILL CLOSES. `levelHint` was written ONLY by the spine MODEL:
+ * when the planner answered `"levelHint": null` (or when a name was introduced
+ * by a later part and only CLASSIFIED by the normalization pass, which can carry
+ * a field but never author one — docs/17 row 197), the record kept no level at
+ * all, and the entity generator was left to pick one. An exact band is the
+ * module's own structured statement, so it still survives the entity boundary
+ * as DATA.
  *
  * WHICH KINDS. `npc` only, and deliberately: a mob IS an npc row in this app,
  * and `npc` is the one entity kind whose stat block the Smith authors from

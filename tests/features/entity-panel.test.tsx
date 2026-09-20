@@ -20,6 +20,7 @@ import { sweepOrphanedArtifacts } from '@/db/orphanSweep';
 import {
   assembleModulePartsDocument,
   battleSchema,
+  blankStatBlock,
   createArtifact as buildArtifact,
   createModule,
   moduleSchema,
@@ -1001,11 +1002,12 @@ describe('EntityPanel', () => {
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
 
-  it('shows a recorded level hint on the entity row, read-only (docs/17 row 197)', async () => {
+  it('shows a recorded level hint as LABELLED INTENT when no block exists yet (docs/17 rows 197, 282)', async () => {
     // The visibility half of the hint channel: the level the module author
-    // fixed is a generated DECISION, so it is inspectable where the module's
-    // other entity decisions already are (the panel row). Read-only here — a
-    // human editing surface is out of scope for this slice.
+    // recorded is a generated DECISION, so it is inspectable where the module's
+    // other entity decisions already are (the panel row). SINCE docs/17 row 282
+    // IT IS NOT THE MOB'S LEVEL: with no minted block the chip says `target
+    // level 7` — a LABELLED INTENT — and never a bare level presented as a fact.
     const campaign = await createCampaign({ name: 'Hints', system: 'dnd5e' });
     const base = moduleFixture(campaign.id);
     const module = moduleSchema.parse({
@@ -1028,7 +1030,10 @@ describe('EntityPanel', () => {
     const marker = await screen.findByTestId('entity-level-hint');
     expect(marker).toHaveAttribute('data-name', 'Kael');
     expect(marker).toHaveAttribute('data-level', '7');
-    expect(marker).toHaveTextContent('level 7');
+    // THE EXACT WORDING is the pin: "target level 7" can never be read as a
+    // statement of fact, and no block badge exists because no block was minted.
+    expect(marker.textContent).toBe('target level 7');
+    expect(screen.queryByTestId('entity-level-block')).toBeNull();
     // The neighbour with no hint renders NO marker, so a module with no hints
     // is byte-unchanged on this surface too.
     expect(screen.getAllByTestId('entity-level-hint')).toHaveLength(1);
@@ -1036,6 +1041,108 @@ describe('EntityPanel', () => {
       .getAllByTestId('entity-row')
       .find((row) => row.textContent.includes('Bram'));
     expect(bramRow?.textContent).not.toContain('level ');
+  });
+
+  it('reads the MINTED BLOCK as the fact and names a contradicting hint as intent (docs/17 row 282)', async () => {
+    // THE OWNER'S MODULE: every npc carries a stale module-wide `levelHint: 7`
+    // while the Smith minted level-1 blocks. The chip must agree with the BLOCK
+    // and keep the hint visible only as an intent that DISAGREES, in words.
+    const campaign = await createCampaign({ name: 'One level', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: [
+        { name: 'Kael', kind: 'npc', absorbed: [], levelHint: 7 },
+        { name: 'Bram', kind: 'npc', absorbed: [] },
+      ],
+    });
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: { ...blankStatBlock('dnd5e'), level: '1' },
+      },
+    });
+    // Bram has NO recorded hint at all — his block alone is the answer.
+    const bram = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Bram',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: { ...blankStatBlock('dnd5e'), level: '3' },
+      },
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[kael, bram]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const rowFor = (name: string): HTMLElement => {
+      const row = screen.getAllByTestId('entity-row').find((entry) => entry.textContent.includes(name));
+      if (row === undefined) throw new Error(`no entity row for ${name}`);
+      return row;
+    };
+    await waitFor(() => {
+      expect(screen.getAllByTestId('entity-level-block')).toHaveLength(2);
+    });
+    const kaelFact = within(rowFor('Kael')).getByTestId('entity-level-block');
+    expect(kaelFact).toHaveAttribute('data-level', '1');
+    expect(kaelFact.textContent).toBe('level 1');
+    // THE DISAGREEMENT: the block wins, and the intent badge says WHICH number
+    // it disagrees with — never a second silent level.
+    const kaelIntent = within(rowFor('Kael')).getByTestId('entity-level-hint');
+    expect(kaelIntent).toHaveAttribute('data-level', '7');
+    expect(kaelIntent.textContent).toBe('target level 7');
+    expect(kaelIntent.getAttribute('title')).toContain('its minted stat block is level 1');
+    expect(kaelIntent.getAttribute('title')).toContain('the block wins');
+    // Bram's own block, and NO intent badge: a module with no hint for a name
+    // shows nothing but the fact.
+    const bramFact = within(rowFor('Bram')).getByTestId('entity-level-block');
+    expect(bramFact.textContent).toBe('level 3');
+    expect(within(rowFor('Bram')).queryByTestId('entity-level-hint')).toBeNull();
+  });
+
+  it('shows ONLY the block when the hint agrees with it (docs/17 row 282)', async () => {
+    const campaign = await createCampaign({ name: 'Agreeing', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 7 }],
+    });
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: { ...blankStatBlock('dnd5e'), level: '7' },
+      },
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[kael]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const fact = await screen.findByTestId('entity-level-block');
+    expect(fact.textContent).toBe('level 7');
+    // One number, one badge: an agreeing intent adds nothing.
+    expect(screen.queryByTestId('entity-level-hint')).toBeNull();
   });
 });
 

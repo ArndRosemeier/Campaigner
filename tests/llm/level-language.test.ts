@@ -38,8 +38,14 @@ import type { Module } from '@/domain';
  * 4. the party-level trap (docs/17 row 206) stays closed: the app's generated
  *    English party line is removed BEFORE the reader sees the brief, so a
  *    German entity level in the same brief still wins;
- * 5. a NAMED entity's part outranks the module-wide premise (row 253's second
- *    half — the old order let the module's own level 3 shadow the mob's 5).
+ * 5. a NAMED entity's part states its level (row 253's second half), and since
+ *    docs/17 row 282 the module's stated level comes from STRUCTURE ONLY — an
+ *    exact band — never from the premise's prose (the owner's ruling: a
+ *    CAMPAIGN premise is not a level instruction, and one sentence about ONE
+ *    gnome must not become every mob's number);
+ * 6. the reader's two MEASURED false positives are closed (docs/17 row 282):
+ *    a level word may not reach across a LINE BREAK to a number, and a non-CJK
+ *    word may not abut its digits (`Stufe7`) — CJK keeps its no-separator form.
  */
 
 /** The module slice `moduleStatedLevel`/`partLevelForMention` read. */
@@ -143,10 +149,13 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
     expect(firstLevelInText(withoutPartyLevelLines(brief))).toBe(5);
   });
 
-  it('lets a NAMED entity’s part outrank the module-wide premise (row 253’s order fix)', () => {
-    // The owner's exact shape: the module's band/premise says 3, a part names
-    // the entity at 5. The old order returned the premise first, so `name` was
-    // nearly dead code and the mob shipped at the module's 3.
+  it('resolves a NAMED entity’s part level and NEVER the module’s premise prose (docs/17 row 282)', () => {
+    // The owner's exact shape, now read the honest way: a part names the entity
+    // at 5 — a STRUCTURED, name-scoped statement — while the premise's prose
+    // says 3. Row 253 made the part outrank the premise; row 282 removed the
+    // premise source entirely, because a CAMPAIGN story introduction is not a
+    // level instruction ("Its very sloppy to infer all mobs levels from a
+    // CAMPAIGN premise … And this was about 1 NPC.").
     const module = moduleFixture({
       premise: 'Eine Mine für Stufe 3 Charaktere. Die Stille Armee hat sich eingenistet.',
       bands: ['3', '5'],
@@ -162,22 +171,30 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
     });
     expect(firstLevelInText(module.spine?.premise ?? '')).toBe(3);
     expect(partLevelForMention(module, 'Marten Graubruch')).toBe(5);
-    // THE MEASURED OUTCOME: the named part wins over the module's own 3.
+    // THE MEASURED OUTCOME: the named part states the level — structure, by name.
     expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(5);
-    // An entity NO part names still takes the module-wide statement.
+    // An entity NO part names takes the module's own statement, and the PREMISE
+    // is not one: the exact band (3) is, so this is the band and NOT the prose.
+    // With a band that states no single level the answer is `undefined` — see
+    // the spine-time pin below and the moduleGen pin for the stamping half.
     expect(moduleStatedLevel(module, 'Unbekannter Namenloser')).toBe(3);
   });
 
-  it('keeps the spine-time call (no name, no parts) working on the premise', () => {
-    // `moduleGen.normalizeAndSave` records the level BEFORE any part exists.
+  it('reads the module’s stated level from STRUCTURE only — an EXACT band, never the premise (docs/17 row 282)', () => {
+    // `moduleGen.normalizeAndSave` records the level BEFORE any part exists, so
+    // this is the spine-time shape: no parts, and the premise is the module's
+    // only PROSE statement of a level. It must be IGNORED — that premise read is
+    // the defect that stamped one module-wide 7 on every npc of a levels-1–2
+    // module while the Smith minted level-1 blocks.
     const spineTime = moduleFixture({
       premise: 'Ein Abenteuer für Stufe 5 Gruppen.',
       parts: [],
       levelMin: 1,
       levelMax: 4,
     });
-    expect(moduleStatedLevel(spineTime)).toBe(5);
-    expect(moduleStatedLevel(spineTime, '')).toBe(5);
+    expect(firstLevelInText(spineTime.spine?.premise ?? ''), 'the prose still SAYS 5').toBe(5);
+    expect(moduleStatedLevel(spineTime), 'and it is not a level source').toBeUndefined();
+    expect(moduleStatedLevel(spineTime, '')).toBeUndefined();
     // A premise stating no level and a RANGE band states no level either.
     const rangeless = moduleFixture({
       premise: 'Ein Abenteuer ohne Angabe.',
@@ -186,7 +203,7 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
       levelMax: 4,
     });
     expect(moduleStatedLevel(rangeless)).toBeUndefined();
-    // An EXACT band is a stated level and still resolves.
+    // An EXACT band is STRUCTURE, and it still resolves.
     const exact = moduleFixture({
       premise: 'Ein Abenteuer ohne Angabe.',
       parts: [],
@@ -194,6 +211,41 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
       levelMax: 4,
     });
     expect(moduleStatedLevel(exact)).toBe(4);
+    // …and an exact band is not overridden by premise prose that says otherwise:
+    // structure beats prose.
+    const exactWithLoudProse = moduleFixture({
+      premise: 'Ein Abenteuer für Stufe 9 Gruppen.',
+      parts: [],
+      levelMin: 4,
+      levelMax: 4,
+    });
+    expect(moduleStatedLevel(exactWithLoudProse)).toBe(4);
+  });
+
+  it('hardens the two measured reader false positives (docs/17 row 282)', () => {
+    // (1) `\\s*` USED TO CROSS A LINE BREAK: a level word at the end of one line
+    // and any number starting the next became that prose's level. Horizontal
+    // space only now — TAB and Unicode space separators still separate, a LINE
+    // BREAK does not.
+    expect(firstLevelInText('auf Stufe\n7'), 'a newline is not a separator').toBeUndefined();
+    expect(firstLevelInText('Stufe\r\n7')).toBeUndefined();
+    expect(firstLevelInText('Stufe\u000b7')).toBeUndefined();
+    expect(firstLevelInText('Stufe\t7'), 'a TAB still separates').toBe(7);
+    expect(firstLevelInText('Stufe\u00a07'), 'a NBSP still separates').toBe(7);
+    // (2) A WORD ABUTTING ITS DIGITS USED TO MATCH: `Stufe7` (no separator)
+    // invented a level. A non-CJK word now REQUIRES a separator…
+    expect(firstLevelInText('Stufe7')).toBeUndefined();
+    expect(firstLevelInText('level5')).toBeUndefined();
+    expect(firstLevelInText('уровень7')).toBeUndefined();
+    expect(firstLevelInText('Stufe 7'), '…while a real separator still resolves').toBe(7);
+    // …but CJK keeps its no-separator form: that script has no word spacing, and
+    // the pre-existing pin above (`レベル5`) is the reason `*` survives there.
+    expect(firstLevelInText('レベル7')).toBe(7);
+    expect(firstLevelInText('等级7')).toBe(7);
+    // The level word must still be a standalone token: the negative lookbehind
+    // is unchanged, so `Stufe7x` and `counterlevel 5` stay silent.
+    expect(firstLevelInText('counterlevel 5')).toBeUndefined();
+    expect(firstLevelInText('Stufe7x')).toBeUndefined();
   });
 
   it('finds a German level the old English-only reader could not see', () => {

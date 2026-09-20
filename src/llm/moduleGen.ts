@@ -499,16 +499,18 @@ async function runSpinePass(
         // dropped with the variant-keyed records it was written on.
         //
         // THE MODULE'S OWN STATED LEVEL IS RECORDED HERE, before the carry
-        // (docs/17 row 247). The planner is ASKED for a per-entity levelHint
-        // but is free to answer `null` — and a name introduced by a LATER part
-        // is only classified by the normalization pass, which can carry a field
-        // and never author one — so a level the premise states could still
-        // reach the generators as nothing. `moduleStatedLevel` reads the module
-        // ITSELF (its just-written premise, else its own exact band; this pass
-        // has no parts yet), and `withCombatEntityLevelHints` writes it onto
-        // the npc records that state none. The planner's own answer is never
-        // overwritten, and a module stating no level leaves every record
-        // byte-identical.
+        // (docs/17 row 247) — and it is STRUCTURE ONLY (docs/17 row 282). The
+        // planner is ASKED for a per-entity levelHint but is free to answer
+        // `null`, so a module-wide level from STRUCTURED data still rides onto
+        // the npc records that state none. `moduleStatedLevel` reads the module
+        // ITSELF — an EXACT band (`levelMin === levelMax`) — and NOTHING from its
+        // prose: the premise is a campaign story introduction, not a level
+        // instruction, and deriving one module-wide number from it ("a level 7
+        // gnome") is exactly the defect that stamped `level 7` on every npc of a
+        // levels-1–2 module while their minted blocks were level 1. A RANGE
+        // states no level, so it stamps nothing and the entity carries the
+        // module's band instead. The planner's own answer is never overwritten,
+        // and a module stating no exact level leaves every record byte-identical.
         const statedLevel = moduleStatedLevel({
           spine: nextSpine,
           parts: [],

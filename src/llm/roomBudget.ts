@@ -12,7 +12,12 @@ import { comparableName } from '@/domain/artifactAlias';
 import { sameAliasName } from '@/domain';
 import { parseLevelSort, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { levelWordsPattern } from '@/llm/language';
-import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
+import {
+  ENTITY_LEVEL_HINT_HIERARCHY,
+  ENTITY_LEVEL_HINT_LABEL,
+  FIXED_CAST_SECTION_FOOTER,
+  FIXED_CAST_SECTION_HEADER,
+} from '@/llm/promptScaffolding';
 import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
@@ -125,23 +130,51 @@ export function withoutPartyLevelLines(brief: string): string {
 }
 
 /**
+ * The brief text with the app's generated ENTITY LEVEL-HINT paragraph removed
+ * (docs/17 row 282) — the sibling of `withoutPartyLevelLines` above, applied by
+ * the stat-block step ONLY when the entity's MINTED block outranks the stored
+ * hint.
+ *
+ * WHY THIS EXISTS. `buildEntityBrief` renders `ENTITY_LEVEL_HINT_LABEL` +
+ * `ENTITY_LEVEL_HINT_HIERARCHY` ("The module fixes this entity's level: 7. Build
+ * this entity at exactly that level; …") into a module entity's brief, and the
+ * stat-block step hands that whole brief to the model. Once the entity already
+ * has a minted block at another level, that paragraph is a LIE and a
+ * contradiction: the step's own clause says "at level 1 — the module's author
+ * fixed this entity's level", so the model would read two different exact
+ * levels in one prompt (row 247 removed the PARTY line from this prompt for
+ * exactly this class of reason). The matcher is built from the SAME two
+ * exported constants the brief writer uses, so a write of the paragraph and a
+ * read of this exclusion cannot drift; the trailing `.` after the digit is the
+ * paragraph's own shape.
+ */
+export function withoutEntityLevelHintLines(brief: string): string {
+  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(
+    `${escaped(ENTITY_LEVEL_HINT_LABEL)}\\d{1,2}\\.${escaped(ENTITY_LEVEL_HINT_HIERARCHY)}`,
+    'g',
+  );
+  return brief.replace(pattern, '');
+}
+
+/**
  * The FIRST level a piece of text states, in ANY generation language, or
  * `undefined` when it states none — the app's ONE free-text level reader
- * (docs/17 rows 247, 253). Every reader of a level out of prose goes through
- * THIS function:
+ * (docs/17 rows 247, 253). Every reader of a level out of PROSE goes through
+ * THIS function — two callers since docs/17 row 282 removed the premise source
+ * (`moduleStatedLevel` now reads STRUCTURE only):
  *
  * - the legacy brief fallback in `runEngine.runStatblock` (fed the brief with
  *   the generated party lines removed, `withoutPartyLevelLines`);
- * - `moduleStatedLevel` below (fed the module's OWN premise);
  * - the explicit-instruction reader (`instructionLevel`).
  *
- * WHY ONE READER, NOT THREE REGEXES. The three callers ask the same question
- * of different text, and a second level regex is exactly how the party-level
- * trap came back once already (docs/17 row 206): a copy that forgot the
- * exclusion, or that read `(\d+)` instead of the two-digit form, would
- * disagree with the others about what "level 5" means in the same sentence.
- * The `1..20` bound is the app's level domain (`ENTITY_LEVEL_HINT_*`), so a
- * stray four-digit number is NOT read as a level.
+ * WHY ONE READER, NOT THREE REGEXES. The callers ask the same question of
+ * different text, and a second level regex is exactly how the party-level trap
+ * came back once already (docs/17 row 206): a copy that forgot the exclusion,
+ * or that read `(\d+)` instead of the two-digit form, would disagree with the
+ * others about what "level 5" means in the same sentence. The `1..20` bound is
+ * the app's level domain (`ENTITY_LEVEL_HINT_*`), so a stray four-digit number
+ * is NOT read as a level.
  *
  * WHY IT IS NO LONGER ENGLISH-ONLY (docs/17 row 253). The app GENERATES in
  * eleven languages (`languageDirective`), but this reader asked only for the
@@ -178,36 +211,44 @@ export function instructionLevel(text: string): number | undefined {
 
 /**
  * The level the MODULE ITSELF states for one entity, or `undefined` when it
- * states none (docs/17 row 247) — the ONE derivation, used by the run engine's
- * level resolution AND by the module spine's entity-level recording
+ * states none (docs/17 rows 247 and 282) — the ONE derivation, used by the run
+ * engine's level resolution AND by the module spine's entity-level recording
  * (`moduleGen`), so the value a new module RECORDS and the value the engine
  * READS for an older module cannot disagree.
  *
- * THREE SOURCES, in the module's own order of specificity — and deliberately
- * NOT the `levelMin`/`levelMax` RANGE:
+ * STRUCTURE ONLY — THE PREMISE IS NOT A LEVEL SOURCE (docs/17 row 282, the
+ * owner's ruling: *"Its very sloppy to infer all mobs levels from a CAMPAIGN
+ * premise, thats not even module instructive. Its a premise for the whole
+ * CAMPAIGN. And this was about 1 NPC."*). TWO sources, and no prose scan:
  *
  * 1. **The level of the part that mentions the entity** (`partLevelForMention`
  *    — the spine's own structured `partPlan[].levelBand`), WHEN the caller
- *    names the entity. A statement about THIS entity outranks the module-wide
- *    one: this order is the function's whole point (its callers describe it as
- *    "the module's order of specificity"), and docs/17 row 253 is the owner's
- *    measured failure of the old order — a module whose premise stated the
- *    MODULE's own level 3 shadowed the part that described the mob at level 5,
- *    so `name` was nearly dead code and the mob shipped at 3. This is a
- *    MODULE statement read by NAME from the plan, never the rendered
- *    party-level line the brief carries; docs/17 row 206 keeps the generated
- *    LINE out of the fallback regex, and this function never touches it.
- * 2. **The premise's own `level N`.** The module author's prose is where the
- *    owner's first report lived ("i have a level 5 mob in a module (its
- *    described that way)"), and the premise is the module-wide statement of
- *    it — the right answer for an entity no part names.
- * 3. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
- *    stated level; a range is not, and inventing a number from it (a midpoint,
+ *    names the entity. It is a statement about THIS entity, from STRUCTURED
+ *    data and scoped BY NAME — which is the shape the owner's level-7 gnome
+ *    needed (that gnome, not every mob). This is a MODULE statement read by
+ *    NAME from the plan, never the rendered party-level line the brief carries;
+ *    docs/17 row 206 keeps the generated LINE out of the fallback regex, and
+ *    this function never touches it.
+ * 2. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
+ *    stated level; a RANGE is not, and inventing a number from it (a midpoint,
  *    a maximum) is the guessing AGENTS rule 1 forbids. So a range `undefined`s
- *    here and the engine refuses loudly instead of letting the model pick.
+ *    here and the engine bounds the reply with the band (or refuses loudly)
+ *    instead of letting the model pick.
+ *
+ * THE PREMISE SOURCE WAS REMOVED, DELIBERATELY, REVERSING PART OF ROW 247. A
+ * narrative premise is a story introduction, not a level instruction: one
+ * sentence about ONE npc ("a level 7 gnome") became ONE module-wide number
+ * stamped on every npc record, and a levels-1–2 module then displayed `level 7`
+ * on mobs whose minted blocks were level 1. The per-entity channels keep the
+ * honest half of row 247: the model's own structured `levelHint` on a record
+ * (which the spine prompt already asks for, and which is NAME-SCOPED) and the
+ * part's exact level by name above — plus the owner's explicit
+ * `instructionLevel`. The honest TRADE is recorded in docs/18 §5: an entity
+ * whose level exists ONLY in prose and which the model did not hint now falls
+ * to the module's band.
  *
  * `name` may be omitted for the SPINE-TIME call, where the module has no parts
- * yet: sources 2 and 3 still apply, and source 1 genuinely does not exist.
+ * yet: only source 2 applies, and source 1 genuinely does not exist.
  */
 export function moduleStatedLevel(
   module: Pick<Module, 'spine' | 'parts' | 'levelMin' | 'levelMax'>,
@@ -217,8 +258,6 @@ export function moduleStatedLevel(
     const fromPart = partLevelForMention(module, name);
     if (fromPart !== undefined) return fromPart;
   }
-  const fromPremise = firstLevelInText(module.spine?.premise ?? '');
-  if (fromPremise !== undefined) return fromPremise;
   return module.levelMin === module.levelMax ? module.levelMin : undefined;
 }
 

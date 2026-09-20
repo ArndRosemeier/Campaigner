@@ -445,15 +445,17 @@ describe('runSpine', () => {
   }, 20000);
 
   /**
-   * THE PREMISE'S LEVEL IS RECORDED (docs/17 row 247). The planner is ASKED for
-   * a per-entity `levelHint` but answers `null` here — the shape the owner's
-   * module had — while its PREMISE states the level. That statement used to
-   * reach nothing: the record kept no level, the generators picked one, and the
-   * owner's smith came out at the band's maximum. The spine now records the
-   * module's own stated level on the npc records that state none, so it survives
-   * the entity boundary as DATA.
+   * THE PREMISE IS NOT A LEVEL SOURCE (docs/17 row 282, REVERSING row 247's
+   * stamping half). The planner is ASKED for a per-entity `levelHint` but answers
+   * `null` here — the shape the owner's module had — while its PREMISE states a
+   * level, and this module's band is a RANGE (1–3). That premise sentence was
+   * ONE npc's description ("a level 7 gnome … this was about 1 NPC"), and a
+   * narrative premise is a campaign story introduction, not a module level
+   * instruction: stamping it on every npc made a levels-1–2 module display
+   * `level 7` beside minted level-1 blocks. So a RANGE module now records NO
+   * module-wide level, and the per-entity channels carry the honest ones.
    */
-  it('records the level the PREMISE states as a levelHint on its npc records', async () => {
+  it('records NO levelHint from the PREMISE on a RANGE-band module (docs/17 row 282)', async () => {
     const { campaign, moduleId } = await seedModule();
     const premiseStated = {
       ...VALID_SPINE,
@@ -482,11 +484,56 @@ describe('runSpine', () => {
 
     const saved = await getModule(moduleId);
     const byName = new Map((saved?.entityKinds ?? []).map((entry) => [entry.name, entry]));
-    expect(byName.get('Marten Graubruch')?.levelHint).toBe(5);
-    // ONLY the npc lane: a location authors no stat block and an encounter
-    // carries its own level chain, so neither is given a level here.
+    // The premise SAYS 5; the band is 1–3 (a RANGE, which states no single
+    // level); no record gets a module-wide level from prose.
+    expect(saved?.spine?.premise).toContain('level 5');
+    expect(byName.get('Marten Graubruch')?.levelHint).toBeUndefined();
+    // ONLY the npc lane was ever a candidate: a location authors no stat block
+    // and an encounter carries its own level chain.
     expect(byName.get('The Drowned Cathedral')?.levelHint).toBeUndefined();
     expect(byName.get('The Bells Below')?.levelHint).toBeUndefined();
+  }, 20000);
+
+  /**
+   * …AND AN EXACT BAND IS STILL RECORDED (docs/17 row 282): structure IS a
+   * level source. A `levelMin === levelMax` module states that level, and the
+   * npc records that state none inherit it — the half of row 247 that survived.
+   * The planner's own structured per-entity `levelHint` still wins over it (a
+   * NAME-SCOPED statement is more specific than the module's).
+   */
+  it('records an EXACT band as a levelHint, and never overwrites the planner’s own', async () => {
+    const { campaign, moduleId } = await seedModule();
+    // The seeded module's band is 1–3 (a RANGE); make it EXACT at 1.
+    await patchModule(moduleId, { levelMax: 1 });
+    const exactBand = {
+      ...VALID_SPINE,
+      entities: [
+        { name: 'Marten Graubruch', kind: 'npc' },
+        { name: 'Alte Schmiedin', kind: 'npc', levelHint: 9 },
+        { name: 'The Bells Below', kind: 'encounter' },
+      ],
+    };
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify(exactBand),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(
+        normalizationReply([
+          { name: 'Marten Graubruch', kind: 'npc' },
+          { name: 'Alte Schmiedin', kind: 'npc' },
+          { name: 'The Bells Below', kind: 'encounter' },
+        ]),
+      );
+
+    await runSpine(moduleId, campaign);
+
+    const saved = await getModule(moduleId);
+    const byName = new Map((saved?.entityKinds ?? []).map((entry) => [entry.name, entry]));
+    expect(byName.get('Marten Graubruch')?.levelHint).toBe(1);
+    // The model's own answer is never overwritten by the module's own band.
+    expect(byName.get('Alte Schmiedin')?.levelHint).toBe(9);
   }, 20000);
 
   it('retries invalid JSON once, then fails the module loudly (row + toast)', async () => {

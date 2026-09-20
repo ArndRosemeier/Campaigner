@@ -946,20 +946,29 @@ describe('runEngine', () => {
   }, 30000);
 
   /**
-   * THE OWNER'S REPORT, ARM ONE (docs/17 row 247): a module-created mob must
-   * carry the level the module actually states. His module's band was 1–3 and
-   * its only statement of level 5 was the PREMISE — so the block came out at the
-   * band's maximum. The premise's level must reach resolution and BIND.
+   * THE OWNER'S RULING (docs/17 row 282), REVERSING ROW 247's PREMISE HALF: a
+   * module-created mob takes the level of the PART that names it — STRUCTURED
+   * data, scoped by NAME — and the PREMISE's prose is not a level source at all.
+   * The owner, verbatim: *"Its very sloppy to infer all mobs levels from a
+   * CAMPAIGN premise … And this was about 1 NPC."* Here the band is a 1–3 RANGE
+   * and the premise's only statement is `level 5`; the mentioning part states 1,
+   * so 1 binds and the premise's 5 must not appear in the prompt.
    */
-  it('a module-created mob takes the level the module STATES IN THE PREMISE, not the band', async () => {
+  it('a module-created mob takes the PART’s level by name — the PREMISE is not a level source (docs/17 row 282)', async () => {
     const { campaignId, persona } = await seed();
     const moduleId = await seedPremiseLevelModule(campaignId, 'Marten Graubruch', 5, 3);
     chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
-      // THE OWNER'S OBSERVED REPLY: the band's level, chosen because nothing
-      // bound the model. The fix must repair it, not store it.
+      // The draft names the entity it was asked about, so the PART-level lookup
+      // by name can resolve (the part is the structured, name-scoped source).
+      .mockResolvedValueOnce({
+        text: draftReply('Marten Graubruch'),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      // A reply at the band's own 3: a level the part does not state, so the fix
+      // must repair it, not store it.
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
       ...INPUT(campaignId, persona),
@@ -970,26 +979,105 @@ describe('runEngine', () => {
     });
     await waitFor(
       async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
+        expect((await getRun(runId))?.status).toBe('failed');
       },
       { timeout: 20000 },
     );
 
     const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).toContain('at level 5');
+    expect(statblockPrompt).toContain('at level 1');
     expect(statblockPrompt).toContain("the module's author fixed this entity's level");
-    // …and the PARTY's level (the part band, 1) is nowhere near the clause.
-    expect(statblockPrompt).not.toContain('at level 1, grounded');
-
-    // The level-3 reply was repaired once (the prompt named the resolved 5),
-    // and the block that LANDED is the module's level — not a notice beside 3.
-    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
-    expect(repair).toContain('not the 5 this run resolved');
+    // THE PREMISE'S 5 IS NOWHERE: it is one npc's story detail, not a level.
+    expect(statblockPrompt).not.toContain('at level 5');
+    // The deviation is named with the level that actually resolved, and a reply
+    // that never honours it is REJECTED rather than persisted (docs/17 row 247's
+    // binding half, unchanged).
     const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('written at level "3"');
+    expect(run?.errorMessage).toContain('not the 1 this run resolved');
     const artifact = await getArtifact(run?.resultArtifactId ?? '');
-    if (artifact?.kind !== 'npc') throw new Error('the run produced no npc artifact');
-    expect(artifact.data.statBlock?.level).toBe('5');
+    expect(artifact).toBeUndefined();
   }, 20000);
+
+  /**
+   * THE GAP THE FIRST STEER CLOSED (docs/17 row 282): a stored hint that
+   * CONTRADICTS the entity's already-minted block must stop being trusted, or
+   * the owner's existing module (hint 7 stored on every npc, minted level-1
+   * blocks) would keep aiming the Smith at 7 one regeneration later. The BLOCK
+   * WINS, the disagreement is named on the step's EXISTING notice surface, and
+   * the generated entity-hint paragraph is removed from THIS step's prompt so
+   * the model never reads two exact levels — while the no-block path keeps that
+   * paragraph byte-identical (the differential arm below).
+   */
+  it('the MINTED BLOCK outranks a contradicting stored hint, says so, and strips the hint line from the prompt', async () => {
+    const { campaignId, persona } = await seed();
+    const HINT_PARAGRAPH =
+      "The module fixes this entity's level: 7. Build this entity at exactly that level; it overrides the party level above, and a description or stat block that prints another level must say so rather than drift.";
+    const hintedBrief = `Regenerate the full content of this npc.\n\n${HINT_PARAGRAPH}\n\n[[Kael the Grey]]`;
+    // ARM A — a MINTED block at level 1 against the record's stored 7.
+    const blockTarget = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7, {
+      statBlock: statBlockSchema.parse({ ...VALID_STATBLOCK, level: '1' }),
+    });
+    // ARM B — the SAME record hint, NO block yet: the control arm, which must
+    // keep the paragraph and resolve the hint (the normal, unchanged path).
+    const noBlockTarget = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply({ level: '1' }), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply({ level: '7' }), modelUsed: 'test-model', fallback: null });
+
+    const blockRunId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: hintedBrief,
+      targetArtifactId: blockTarget,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(blockRunId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+    const blockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    // THE BLOCK'S LEVEL BINDS, and the paragraph stating the contradicted 7 is
+    // GONE from this prompt (the step's own clause states the level).
+    expect(blockPrompt).toContain('at level 1');
+    expect(blockPrompt).toContain("this entity's own stat block is the one source of truth");
+    expect(blockPrompt).not.toContain("The module fixes this entity's level: 7");
+    expect(blockPrompt).not.toContain('at level 7');
+    // The block that was already on the row is what the run rebuilt, unchanged.
+    const blockArtifact = await getArtifact(blockTarget);
+    if (blockArtifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(blockArtifact.data.statBlock?.level).toBe('1');
+    // THE DISAGREEMENT IS NAMED, on the step's existing `notice` field.
+    const notice = stepNotice((await getRun(blockRunId))?.steps[2]?.output);
+    expect(notice).toContain('The module records level 7 for this entity');
+    expect(notice).toContain('its stat block is level 1');
+    expect(notice).toContain('the recorded level was not used');
+    // No repair turn was spent: the block already agreed with the resolution.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+
+    // ARM B — no minted block: the stored hint IS the answer and the paragraph
+    // is untouched, so the control is a real differential (not vacuous).
+    const noBlockRunId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: hintedBrief,
+      targetArtifactId: noBlockTarget,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(noBlockRunId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+    const noBlockPrompt = chatMock.mock.calls[3]?.[0].at(-1)?.content ?? '';
+    expect(noBlockPrompt).toContain('at level 7');
+    expect(noBlockPrompt).toContain("The module fixes this entity's level: 7");
+    const noBlockNotice = stepNotice((await getRun(noBlockRunId))?.steps[2]?.output);
+    expect(noBlockNotice).not.toContain('The module records level 7 for this entity');
+  }, 30000);
 
   /**
    * THE OWNER'S REPORT, ARM TWO (docs/17 row 247): "redo this completely, this
