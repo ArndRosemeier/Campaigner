@@ -336,7 +336,23 @@ used:
    hardlink-clone the main tree `node_modules` (`cp -al`) and rewrite
    `node_modules/.pnpm-workspace-state-v1.json` to name the WORKTREE path. The
    store is needed only to INSTALL, so with `node_modules` in place `pnpm` runs
-   scripts again, and the gate (which forces `CI=true`) is unaffected.** The gate and the suite lock both resolve correctly from inside a
+   scripts again, and the gate (which forces `CI=true`) is unaffected.**
+   **AND THE CLONE IS HARDLINKED, SO NOTHING MAY BE WRITTEN THROUGH IT (MEASURED
+   2026-09-20, the same day this recipe was written, by the hazard biting the CoS).** The
+   documented step "rewrite `node_modules/.pnpm-workspace-state-v1.json` to name the worktree
+   path" wrote THROUGH the hardlink, so the MAIN tree `node_modules` state file began naming a
+   WRITER worktree. When that worktree was retired, the main tree pnpm saw a workspace root that
+   no longer existed, ran `pnpm install`, and died `[ERR_SQLITE_ERROR] unable to open database
+   file` on the read-only store — which the gate reports as `TYPECHECK FAILED`: a FALSE failure
+   with NO type error behind it. THE RULE: inside a hardlink clone, `rm` the file FIRST and then
+   write a fresh one, never edit in place, and VERIFY the unshare with `ls -li` (the worktree copy
+   and the main tree copy must have DIFFERENT inodes). The same applies to
+   `node_modules/.tmp/*.tsbuildinfo` and anything else a tool writes inside the clone.
+   **A FALSE TYPE FAILURE IS DIAGNOSED FROM THE LOG, NOT FROM THE CHANGE:** when the gate says
+   `TYPECHECK FAILED` and no type error names the changed files, READ
+   `<gate-logdir>/typecheck.log` BEFORE touching anything — in this incident it said
+   `pnpm install`, and the dispatcher had already ordered two repairs and re-run the gate twice
+   on a wrong theory. The gate and the suite lock both resolve correctly from inside a
    worktree (verified: `git rev-parse --git-common-dir` is the SAME absolute path
    from the main tree and from a worktree, which is what makes the lock one lock
    across writers — see the lock derivation in `scripts/gate.sh`).
