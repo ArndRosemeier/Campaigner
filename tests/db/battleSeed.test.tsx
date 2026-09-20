@@ -111,14 +111,24 @@ async function addNpc(name: string, withStats: boolean): Promise<Artifact> {
   });
 }
 
-/** A CAST creature (docs/11 D3): no stored stat block, stats derived from the
- * cited library chunk. The schema forbids carrying both. */
+/** A CAST creature (docs/17 row 255b): it OWNS the library's block, stamped
+ * with its origin line and the opaque identity token. The pre-copy
+ * `creatureRef` pointer was deleted by the clean cut (docs/17 row 278). */
 async function addCastNpc(name: string, chunkId: Id): Promise<Artifact> {
+  const { db } = await import('@/db/db');
+  const chunk = await db.chunks.get(chunkId);
+  if (chunk?.statBlock == null) throw new Error('the fixture chunk carries no block');
   return createArtifact({
     campaignId,
     kind: 'npc',
     name,
-    data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
+    data: {
+      appearance: '',
+      personality: '',
+      statBlock: chunk.statBlock,
+      sourceLine: 'Bestiary p.12',
+      originToken: `chunk:${chunkId}`,
+    },
   });
 }
 
@@ -212,6 +222,32 @@ async function seedGoblinChunk(): Promise<Id> {
   return chunk.id;
 }
 
+/**
+ * A COPIED library mob's roster entry (docs/17 rows 255a/255b): the block the
+ * copy OWNS, its stamped origin line and its opaque identity token. This is the
+ * live shape of every library-cited mob now that the `rulebook` arm is gone
+ * (docs/17 row 278) — and it deliberately does NOT need the library after the
+ * copy is made.
+ */
+async function copiedGoblin(
+  over: { name?: string; count?: number; treasure?: string } = {},
+): Promise<{ chunkId: Id; monster: NonNullable<SeedOptions['monsters']>[number] }> {
+  const chunkId = await seedGoblinChunk();
+  const { db } = await import('@/db/db');
+  const chunk = await db.chunks.get(chunkId);
+  if (chunk?.statBlock == null) throw new Error('the fixture chunk carries no block');
+  return {
+    chunkId,
+    monster: {
+      name: over.name ?? 'Goblin Boss',
+      count: over.count ?? 1,
+      ...(over.treasure === undefined ? {} : { treasure: over.treasure }),
+      source: { type: 'inline', statBlock: chunk.statBlock },
+      entry: { sourceLine: 'Bestiary p.12', originToken: libraryCreatureKey(chunkId) },
+    },
+  };
+}
+
 describe('roster expansion', () => {
   it('seeds count tokens per entry with fresh max HP and npc-ref artifacts', async () => {
     const npc = await addNpc('Troll', true);
@@ -251,20 +287,18 @@ describe('roster expansion', () => {
    * Revert-proof: drop the freeze in `expandRosterEntries` and `stats(cast.id)`
    * is undefined again (the token keeps its derived maxHp but is excluded).
    */
-  it('resolves a CAST creature (creatureRef) instead of badging it statless (docs/17 row 239)', async () => {
+  it('resolves a CAST creature that OWNS its copied block, instead of badging it statless (docs/17 row 255b)', async () => {
     const chunkId = await seedGoblinChunk();
     const cast = await addCastNpc('Bog Zombie', chunkId);
     const encounter = await addEncounter({
       monsters: [{ name: 'Bog Zombie', count: 1, source: { type: 'npc-ref', artifactId: cast.id } }],
     });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    // The roster derived the stats, so the seed reports nothing statless.
+    // The row owns the numbers, so the seed reports nothing statless…
     expect(statless).toEqual([]);
-    // The battle lookup resolves them too: the derived block is frozen under
-    // the artifact id (the artifact stores no block of its own).
-    expect(battle.seedFighters).toEqual([
-      expect.objectContaining({ id: cast.id, maxHp: 21, initiativeBonus: 2 }),
-    ]);
+    // …and nothing is frozen under its id: the battle lookup reads the
+    // artifact's OWN copied block (docs/17 row 255b).
+    expect(battle.seedFighters).toEqual([]);
     const stats = buildFighterStatsLookup(battle, await listArtifactsByCampaign(campaignId));
     expect(stats(cast.id)).toMatchObject({ maxHp: 21, initiativeBonus: 2, currentHp: null });
   });
@@ -362,11 +396,10 @@ describe('roster expansion', () => {
   });
 
   it('freezes the roster entry treasure onto every instance token, statless included (GM-only)', async () => {
-    const chunkId = await seedGoblinChunk();
-    void chunkId;
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 2, treasure: 'Pouch: 5 gp, a bone key' });
     const encounter = await addEncounter({
       monsters: [
-        { name: 'Goblin Boss', count: 2, treasure: 'Pouch: 5 gp, a bone key', source: { type: 'none' as const } },
+        copied.monster,
         { name: 'Mystery beast', count: 1, treasure: 'Slime-coated ring', source: { type: 'none' as const } },
         { name: 'Plain', count: 1, source: { type: 'none' as const } },
       ],
@@ -579,11 +612,10 @@ describe('roster expansion', () => {
 });
 
 describe('mob artifact identity (owner-ratified arc)', () => {
-  it('shares ONE mob artifact across N same-creature instances with ONE seed row (chunk-resolved stats)', async () => {
-    const chunkId = await seedGoblinChunk();
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 3, source: { type: 'none' as const } }],
-    });
+  it('shares ONE creature identity and ONE seed row across N same-creature instances', async () => {
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 3 });
+    const chunkId = copied.chunkId;
+    const encounter = await addEncounter({ monsters: [copied.monster] });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(statless).toEqual([]);
     const fighters = fighterTokens(battle.board);
@@ -616,14 +648,14 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     expect(await getAnyArtifact(seedId)).toBeUndefined();
   });
 
-  it('retro-fills lazily: an old encounter (no mobArtifactId) converges on the same artifact across seeds', async () => {
-    const chunkId = await seedGoblinChunk();
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 1, source: { type: 'none' as const } }],
-    });
+  it('converges on the same creature identity across seeds (the copy carries it)', async () => {
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 1 });
+    const chunkId = copied.chunkId;
+    const encounter = await addEncounter({ monsters: [copied.monster] });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
-    // Pre-marker row: the stored source carries no mobArtifactId.
-    expect(encounter.data.monsters[0]?.source).toMatchObject({ type: 'none' });
+    // The stored row is a COPY: it owns its block and its identity token.
+    expect(encounter.data.monsters[0]?.source).toMatchObject({ type: 'inline' });
+    expect(encounter.data.monsters[0]?.originToken).toBe(libraryCreatureKey(chunkId));
     const first = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const second = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const firstId = fighterTokens(first.battle.board)[0]?.creatureKey;
@@ -637,19 +669,16 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     ).toHaveLength(0);
   });
 
-  it('a roster row that also carries a stale artifact id still seeds by the CITATION (that id is ignored)', async () => {
-    // REWRITTEN (ledger row 106): the retired `mobArtifactId` was a second,
-    // artifact-shaped identity for the same creature. It is gone from the
-    // schema, and a row that still carried one would be stripped by zod — the
-    // token's identity comes from the chunk, always.
-    const chunkId = await seedGoblinChunk();
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'none' as const } }],
-    });
+  it('seeds by the COPY: the token is the sole identity, never an artifact id', async () => {
+    // The retired `mobArtifactId` was a second, artifact-shaped identity for
+    // the same creature; the copy's opaque token is the ONE identity now.
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 2 });
+    const chunkId = copied.chunkId;
+    const encounter = await addEncounter({ monsters: [copied.monster] });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
     expect(Object.keys(encounter.data.monsters[0]?.source ?? {})).toEqual([
       'type',
-      'chunkId',
+      'statBlock',
     ]);
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     for (const token of fighterTokens(battle.board)) {
@@ -666,10 +695,9 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     // (docs/11 D6), so a portrait lives on a per-campaign creature row and
     // NOT on any artifact. The TokenView path is token → creatureKey →
     // creature portrait → blob url.
-    const chunkId = await seedGoblinChunk();
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'none' as const } }],
-    });
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 2 });
+    const chunkId = copied.chunkId;
+    const encounter = await addEncounter({ monsters: [copied.monster] });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const creatureKey = fighterTokens(battle.board)[0]?.creatureKey ?? '';
     expect(creatureKey).toBe(libraryCreatureKey(chunkId));
@@ -690,31 +718,34 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     ).toHaveLength(0);
   });
 
-  it('old seeding shapes are unchanged: inline keeps per-instance rows, a missing chunk stays statless', async () => {
-    const chunkId = await seedGoblinChunk();
-    void chunkId;
+  it('keeps per-instance rows for an INVENTED mob, and ONE shared row for a COPY', async () => {
+    const copied = await copiedGoblin({ name: 'Copied Boss', count: 2 });
     const encounter = await addEncounter({
       monsters: [
         { name: 'Goblin', count: 2, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } },
-        { name: 'Vanished', count: 1, source: { type: 'none' as const } },
-        { name: 'Real', count: 1, source: { type: 'none' as const } },
+        { name: 'Nameless', count: 1, source: { type: 'none' as const } },
+        copied.monster,
       ],
     });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    // Inline: two synthetic ids, two seed rows (per-instance identity kept).
+    // INVENTED inline: two synthetic ids, two seed rows (per-instance identity).
     const goblins = fighterTokens(battle.board).filter((token) => token.label.startsWith('Goblin'));
     expect(new Set(goblins.map((token) => token.artifactId)).size).toBe(2);
     expect(battle.seedFighters.filter((seed) => seed.name.startsWith('Goblin'))).toHaveLength(2);
-    // Missing chunk: statless token pointing nowhere — reported loudly.
-    // The ONE surviving `missing ref` reason, named (docs/11 D9): the library
-    // row is genuinely gone and the content-hash fallback found nothing.
-    expect(statless).toEqual(['Vanished (missing ref (Vanished))']);
-    const vanished = battle.board.tokens.find((token) => token.label === 'Vanished');
-    expect(vanished?.artifactId).toBeNull();
-    expect(vanished?.currentHp).toBeNull();
-    // The statful rulebook entry still retro-fills its mob artifact.
-    const real = fighterTokens(battle.board).find((token) => token.label === 'Real');
-    expect(real?.artifactId).toBeDefined();
+    // A COPY: ONE seed row for the identity, shared by both instances, and the
+    // pack does not matter (the row owns its block).
+    const copiedSeeds = battle.seedFighters.filter((seed) => seed.creatureKey === libraryCreatureKey(copied.chunkId));
+    expect(copiedSeeds).toHaveLength(1);
+    const copiedTokens = fighterTokens(battle.board).filter((token) =>
+      token.label.startsWith('Copied Boss'),
+    );
+    expect(copiedTokens).toHaveLength(2);
+    expect(new Set(copiedTokens.map((token) => token.artifactId)).size).toBe(1);
+    // A name-only entry is statless, reported loudly.
+    expect(statless).toEqual(['Nameless (no stats)']);
+    const nameless = battle.board.tokens.find((token) => token.label === 'Nameless');
+    expect(nameless?.artifactId).toBeNull();
+    expect(nameless?.currentHp).toBeNull();
   });
 });
 
@@ -940,12 +971,9 @@ describe('entrance-anchored staging (adjudicated)', () => {
 });
 
 describe('in-battle spawn (encounter-resume arc)', () => {
-  it('appends one rulebook instance through the shared path — same mob artifact, label numbering continues, ONE seed row', async () => {
-    const chunkId = await seedGoblinChunk();
-    void chunkId;
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 3, treasure: 'Pouch: 5 gp', source: { type: 'none' as const } }],
-    });
+  it('appends one copy instance through the shared path — same identity, label numbering continues, ONE seed row', async () => {
+    const copied = await copiedGoblin({ name: 'Goblin Boss', count: 3, treasure: 'Pouch: 5 gp' });
+    const encounter = await addEncounter({ monsters: [copied.monster] });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(fighterTokens(battle.board).map((token) => token.label)).toEqual([
       'Goblin Boss 1',

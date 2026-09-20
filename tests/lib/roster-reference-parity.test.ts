@@ -250,7 +250,13 @@ async function seedEncounter(): Promise<{
           // The mob CARRIES something: the treasure line is the third thing the
           // two books must agree about (docs/17 row 159).
           treasure: 'Pouch: 5 gp, a bone key',
-          source: { type: 'none' as const },
+          // A COPIED library mob (docs/17 row 255a): it OWNS the block, its
+          // stamped origin line and the opaque identity token. The pre-cut
+          // `rulebook` citation was deleted (docs/17 row 278); the reference the
+          // two books must agree about is now the STAMP.
+          source: { type: 'inline' as const, statBlock: citedStatBlock() },
+          sourceLine: 'Bestiary p.132',
+          originToken: `chunk:${chunk.id}`,
         },
         {
           name: 'Harbour Thug',
@@ -416,51 +422,6 @@ describe('both exporters print the SAME reference (one formatter)', () => {
     }
   });
 
-  it('a citation whose chunk carries no parseable block prints NO box in either book', async () => {
-    const { artifact, module, artifacts, monsters } = await seedEncounter();
-    // Re-ingest the same creature with NO parsed block (best-effort ingest).
-    const rulebook = await createRulebook({
-      title: 'Bestiary',
-      system: 'pathfinder2e',
-      filename: 'bestiary.pdf',
-    });
-    const statless = await citedChunk(rulebook.id, null);
-    await putChunks([statless]);
-    const rewritten = artifactSchema.parse({
-      ...artifact,
-      data: {
-        ...artifact.data,
-        monsters: monsters.map((monster): MonsterEntry =>
-          monster.name === 'Cave Fisher'
-            ? {
-                ...monster,
-                source: { type: 'none' as const },
-              }
-            : monster,
-        ),
-      },
-    });
-    const scoped: Artifact[] = artifacts.map((row) => (row.id === artifact.id ? rewritten : row));
-    const roster = await resolveExportRoster(rewritten);
-
-    const moduleText = textOf(
-      buildModuleDefinition({
-        module,
-        artifacts: scoped,
-        rosterResolution: { [rewritten.id]: roster },
-      }),
-    );
-    const exportText = textOf(buildGmNotesDefinition(rewritten, null, roster));
-
-    for (const text of [moduleText, exportText]) {
-      // The NAMED missing-ref reason, and nothing standing in for the numbers.
-      expect(text).toContain(' — missing ref (Cave Fisher)');
-      expect(text).not.toContain('Numbers from');
-      expect(text).not.toContain('Reactive Snap');
-      expect(text).not.toContain('44 (8d8)');
-    }
-  });
-
   it('a mob’s TREASURE is the same line in both books — and nothing at all for a mob that carries none', async () => {
     const { artifact, module, artifacts, monsters } = await seedEncounter();
     const roster = await resolveExportRoster(artifact);
@@ -545,7 +506,6 @@ describe('EXACTLY ONE implementation of the roster reference', () => {
     expect(domain).toContain(
       "const NO_CITATION_REFERENCE = 'no stats: this roster entry names the creature without a citation';",
     );
-    expect(domain).toContain("const UNRESOLVED_CITATION_REFERENCE = 'unresolved citation");
     expect(domain).toContain('export function rosterReferenceFor');
     // …and no other source spells any of them out again: an exporter that grew
     // its own copy is exactly the defect this slice removes (AGENTS rule 4).
@@ -636,6 +596,6 @@ describe('EXACTLY ONE implementation of the roster reference', () => {
     // The roster row is byte-identical: exporting renders the citation, it
     // never rewrites it (docs/12 §Storage, docs/11 D2/D3).
     expect(JSON.stringify(monsters)).toBe(before);
-    expect(JSON.stringify(artifact)).toContain('rulebook');
+    expect(JSON.stringify(artifact)).toContain('inline');
   });
 });

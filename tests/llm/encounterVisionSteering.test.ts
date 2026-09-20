@@ -17,6 +17,7 @@ import {
 } from '@/domain';
 import { settingsSchema } from '@/domain/settings';
 import { clearDatabase } from '../db/helpers';
+import { seedComplexEncounterTarget } from '../helpers/visionComplexTarget';
 import { useProgressStore } from '@/lib/progress';
 import { chat } from '@/llm/openrouter';
 import { encounterRunAdapters } from '@/llm/runEngine';
@@ -192,27 +193,6 @@ function complexLayoutFixture() {
   };
 }
 
-async function seedComplexTarget(campaignId: Id): Promise<Artifact & { kind: 'encounter' }> {
-  const target = await createArtifact({
-    campaignId,
-    kind: 'encounter',
-    name: 'Old Undercroft',
-    summary: 'Old summary.',
-    body: 'Existing prose.',
-    links: [],
-    data: {
-      difficulty: 'old', levelHint: '4',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
-      terrain: '', tactics: '', treasure: '',
-      mapImageId: newId(), preset: 'dungeon', locationKind: 'dungeon',
-      siteShape: 'complex', budgetAdvisory: 'STALE ADVISORY',
-      layout: complexLayoutFixture(),
-      fillGrade: 100,
-    },
-  });
-  if (target.kind !== 'encounter') throw new Error('encounter target missing');
-  return target;
-}
 
 async function seedSingleTarget(campaignId: Id): Promise<Artifact & { kind: 'encounter' }> {
   const target = await createArtifact({
@@ -277,7 +257,7 @@ describe('dungeon map path setting (docs/11 vision path)', () => {
 describe('Regenerate everything steering (docs/11 vision path, complex only)', () => {
   it("a vision override beats a classic setting — and is never persisted as the new default", async () => {
     const { campaign } = await setup('classic');
-    const target = await seedComplexTarget(campaign.id);
+    const target = await seedComplexEncounterTarget(campaign.id, complexLayoutFixture());
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(FULL_MARKS), modelUsed: 'test-model', fallback: null });
@@ -296,7 +276,7 @@ describe('Regenerate everything steering (docs/11 vision path, complex only)', (
 
   it('a classic override beats a vision setting', async () => {
     const { campaign } = await setup('vision');
-    const target = await seedComplexTarget(campaign.id);
+    const target = await seedComplexEncounterTarget(campaign.id, complexLayoutFixture());
     chatMock.mockResolvedValue({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
     await regenerateEncounterEverything(target.id, { redesignProse: false, dungeonMapPath: 'classic' });
     const after = await getArtifact(target.id);
@@ -313,7 +293,7 @@ describe('Regenerate everything steering (docs/11 vision path, complex only)', (
 
   it('no override follows the vision setting default', async () => {
     const { campaign } = await setup('vision');
-    const target = await seedComplexTarget(campaign.id);
+    const target = await seedComplexEncounterTarget(campaign.id, complexLayoutFixture());
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(FULL_MARKS), modelUsed: 'test-model', fallback: null });

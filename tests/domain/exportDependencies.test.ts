@@ -11,7 +11,6 @@ import {
   rulebookSchema,
   statBlockSchema,
   stampNewEntity,
-  type Artifact,
   type DependencyLibrary,
   type ExportBookDep,
   type ExportCitation,
@@ -296,204 +295,11 @@ describe('analyzeDependencies', () => {
 });
 
 /**
- * Manifest-stamp carry (chunk-hash-fallback follow-up): `collectDependencies`
- * stamps a dangling entry's own content identity onto its `missing-chunk`
- * citation, so re-exporting a healed-but-dangling campaign writes a manifest
- * a second-generation import clears at L0 instead of aborting on.
+ * A copy contributes NO library reference at all (docs/17 row 278): the numbers
+ * travel with the campaign, so nothing about it is a save/load dependency.
  */
-describe('collectDependencies missing-chunk stamp carry', () => {
-  function rulebookEntry(chunkId: string, stamp: Record<string, unknown> = {}): unknown {
-    void chunkId;
-    void stamp;
-    return {
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      source: { type: 'none' as const },
-    };
-  }
-
-  function encounterWith(monsters: unknown[]): Artifact {
-    return artifactSchema.parse({
-      ...stampNewEntity(),
-      campaignId: stampNewEntity().id,
-      kind: 'encounter',
-      name: 'Goblin ambush',
-      tags: [],
-      summary: '',
-      body: '',
-      links: [],
-      currentRevision: 1,
-      data: {
-        difficulty: 'medium',
-        levelHint: '1',
-        monsters,
-        terrain: '',
-        tactics: '',
-        treasure: '',
-      },
-    });
-  }
-
-  it('re-export after heal: a stamped dangling entry exports its hash and analyzes L0-present (no abort)', () => {
-    const danglingId = stampNewEntity().id;
-    const healed = encounterWith([
-      rulebookEntry(danglingId, { contentHash: HASH_A, creatureName: 'Goblin Warrior' }),
-    ]);
-    const exported = collectDependencies([healed], [], emptyLibrary());
-    expect(exported.citations).toHaveLength(1);
-    // Honest status (the chunk WAS missing here) WITH the entry's stamp.
-    expect(exported.citations[0]).toMatchObject({
-      citedChunkId: danglingId,
-      status: 'missing-chunk',
-      contentHash: HASH_A,
-      creatureName: 'Goblin Warrior',
-    });
-    // Second-generation import: a byte-identical install clears L0.
-    const local = book();
-    const localChunk = chunk(local.id);
-    const analysis = analyzeDependencies(exported, {
-      chunksByHash: new Map([[HASH_A, [localChunk]]]),
-      books: [local],
-    });
-    expect(analysis.citations[0]?.verdict).toBe('present');
-    expect(analysis.clean).toBe(true);
-    expect(analysis.blockingCitations).toBe(0);
-    expect(analysis.driftedCitations).toBe(0);
-  });
-
-  it('chunk data wins over a stale entry stamp (no silent override)', () => {
-    const local = book();
-    const localChunk = chunk(local.id, { contentHash: HASH_A });
-    const staleStamp = encounterWith([
-      rulebookEntry(localChunk.id, { contentHash: HASH_B, creatureName: 'Stale Name' }),
-    ]);
-    const exported = collectDependencies(
-      [staleStamp],
-      [],
-      {
-        ...emptyLibrary(),
-        chunksById: new Map([[localChunk.id, localChunk]]),
-        booksById: new Map([[local.id, local]]),
-        chunkCountsByBookId: new Map([[local.id, 1]]),
-      },
-    );
-    expect(exported.citations[0]).toMatchObject({
-      status: 'resolved',
-      contentHash: HASH_A,
-      creatureName: 'Goblin Warrior',
-    });
-  });
-
-  it('a stamp-less dangling entry stays a plain missing citation (no behavior change)', () => {
-    const danglingId = stampNewEntity().id;
-    const unstamped = encounterWith([rulebookEntry(danglingId)]);
-    const exported = collectDependencies([unstamped], [], emptyLibrary());
-    expect(exported.citations).toHaveLength(1);
-    expect(exported.citations[0]?.status).toBe('missing-chunk');
-    expect(exported.citations[0]?.contentHash).toBeUndefined();
-    expect(exported.citations[0]?.creatureName).toBeUndefined();
-    const analysis = analyzeDependencies(exported, { chunksByHash: new Map(), books: [] });
-    expect(analysis.citations[0]?.verdict).toBe('missing');
-    expect(analysis.clean).toBe(false);
-    expect(analysis.blockingCitations).toBe(1);
-    expect(analysis.driftedCitations).toBe(0);
-  });
-});
-
-/**
- * THE NPC CREATURE-CITATION ARM (docs/17 row 271, item A3). A cast NPC that
- * still carries the legacy `creatureRef` pointer cites a library creature
- * exactly as a roster `rulebook` entry does — the two are the same four-field
- * citation (`domain/creature.creatureRefForRulebookSource`) — but
- * `collectDependencies` used to skip every non-encounter row, so an unmet one
- * traveled with NO warning at all and only rendered `missing ref` after the
- * import. It now takes the SAME writer and the SAME policy as the roster arm.
- */
-describe('collectDependencies NPC creatureRef arm', () => {
-  function npcWith(creatureRef: Record<string, unknown>): Artifact {
-    return artifactSchema.parse({
-      ...stampNewEntity(),
-      campaignId: stampNewEntity().id,
-      kind: 'npc',
-      name: 'Aunt Agatha',
-      tags: [],
-      summary: '',
-      body: '',
-      links: [],
-      currentRevision: 1,
-      data: { appearance: '', personality: '', statBlock: null, creatureRef },
-    });
-  }
-
-  it('NAMES an unmet NPC citation and blocks it, exactly as the roster arm does', () => {
-    const npc = npcWith({
-      chunkId: stampNewEntity().id,
-      creatureName: 'Ghoul',
-      bookTitle: 'Monster Core',
-    });
-    const exported = collectDependencies([npc], [], emptyLibrary());
-    expect(exported.citations).toHaveLength(1);
-    expect(exported.citations[0]).toMatchObject({
-      artifactId: npc.id,
-      artifactName: 'Aunt Agatha',
-      kind: 'npc',
-      monsterName: 'Aunt Agatha',
-      status: 'missing-chunk',
-      creatureName: 'Ghoul',
-    });
-    const analysis = analyzeDependencies(exported, { chunksByHash: new Map(), books: [] });
-    expect(analysis.clean).toBe(false);
-    expect(analysis.blockingCitations).toBe(1);
-    expect(analysis.driftedCitations).toBe(0);
-    expect(analysis.citations[0]?.citation.kind).toBe('npc');
-  });
-
-  it('resolves an NPC citation through the SAME chunk→book join, and rolls the book up', () => {
-    const local = book();
-    const localChunk = chunk(local.id);
-    const npc = npcWith({ chunkId: localChunk.id });
-    const exported = collectDependencies([npc], [], {
-      ...emptyLibrary(),
-      chunksById: new Map([[localChunk.id, localChunk]]),
-      booksById: new Map([[local.id, local]]),
-      chunkCountsByBookId: new Map([[local.id, 1]]),
-    });
-    expect(exported.citations[0]).toMatchObject({
-      citedChunkId: localChunk.id,
-      status: 'resolved',
-      bookTitle: 'Monster Core',
-      system: 'pathfinder2e',
-      creatureName: 'Goblin Warrior',
-      contentHash: HASH_A,
-    });
-    expect(exported.books[0]?.citedChunkIds).toEqual([localChunk.id]);
-    expect(
-      analyzeDependencies(exported, {
-        chunksByHash: new Map([[HASH_A, [localChunk]]]),
-        books: [local],
-      }).clean,
-    ).toBe(true);
-  });
-
-  it('NAMES an id-less creatureRef too, carrying the hash it has (never silent)', () => {
-    const npc = npcWith({ contentHash: HASH_A, creatureName: 'Ghoul' });
-    const exported = collectDependencies([npc], [], emptyLibrary());
-    expect(exported.citations).toHaveLength(1);
-    expect(exported.citations[0]?.citedChunkId).toBeUndefined();
-    expect(exported.citations[0]).toMatchObject({ status: 'missing-chunk', contentHash: HASH_A });
-    // The verdict reads the hash, so a byte-identical install still clears it.
-    const local = book();
-    const localChunk = chunk(local.id);
-    expect(
-      analyzeDependencies(exported, {
-        chunksByHash: new Map([[HASH_A, [localChunk]]]),
-        books: [local],
-      }).citations[0]?.verdict,
-    ).toBe('present');
-  });
-
-  it('a COPIED npc (no creatureRef) contributes no citation at all', () => {
+describe('collectDependencies on a copied row', () => {
+  it('a COPIED npc — the campaign own row, inside the export — contributes no reference at all', () => {
     const copied = artifactSchema.parse({
       ...stampNewEntity(),
       campaignId: stampNewEntity().id,
@@ -513,6 +319,7 @@ describe('collectDependencies NPC creatureRef arm', () => {
       },
     });
     expect(collectDependencies([copied], [], emptyLibrary()).citations).toHaveLength(0);
+    expect(collectDependencies([copied], [], emptyLibrary()).unmetLibraryRefs).toHaveLength(0);
   });
 });
 
@@ -523,7 +330,7 @@ describe('collectDependencies NPC creatureRef arm', () => {
  * the helper does not enumerate, the builder resolves it against an empty map
  * and the manifest calls a present chunk missing.
  */
-describe('citedChunkIdsFor covers every citation arm collectDependencies reads', () => {
+describe('citedChunkIdsFor enumerates exactly what collectDependencies reads', () => {
   function runWithPins(id: string, pinnedChunkIds: string[]): PersonaRun {
     return personaRunSchema.parse({
       ...stampNewEntity(),
@@ -541,12 +348,10 @@ describe('citedChunkIdsFor covers every citation arm collectDependencies reads',
     });
   }
 
-  it('names exactly the roster, NPC and run-pin chunks, and the manifest resolves them', () => {
+  it('names the run-pin chunks and nothing else — a copied mob cites no library row', () => {
     const local = book();
-    const rosterChunk = chunk(local.id, { headingPath: ['Goblin Warrior'] });
-    const npcChunk = chunk(local.id, { headingPath: ['Ghoul'] });
     const pinnedChunk = chunk(local.id, { headingPath: ['Wraith'] });
-    const encounter = artifactSchema.parse({
+    const copiedEncounter = artifactSchema.parse({
       ...stampNewEntity(),
       campaignId: stampNewEntity().id,
       kind: 'encounter',
@@ -565,7 +370,9 @@ describe('citedChunkIdsFor covers every citation arm collectDependencies reads',
             count: 1,
             notes: '',
             treasure: '',
-            source: { type: 'none' as const },
+            source: { type: 'inline', statBlock: fixtureStatBlock() },
+            sourceLine: 'Monster Core: Goblin Warrior',
+            originToken: 'chunk:00000000-0000-4000-8000-0000000000fe',
           },
         ],
         terrain: '',
@@ -573,42 +380,25 @@ describe('citedChunkIdsFor covers every citation arm collectDependencies reads',
         treasure: '',
       },
     });
-    const npc = artifactSchema.parse({
-      ...stampNewEntity(),
-      campaignId: stampNewEntity().id,
-      kind: 'npc',
-      name: 'Aunt Agatha',
-      tags: [],
-      summary: '',
-      body: '',
-      links: [],
-      currentRevision: 1,
-      data: {
-        appearance: '',
-        personality: '',
-        statBlock: null,
-        originToken: `chunk:${npcChunk.id}`,
-      },
-    });
     const run = runWithPins(stampNewEntity().id, [pinnedChunk.id]);
-    const artifacts = [encounter, npc];
+    const artifacts = [copiedEncounter];
 
-    expect(new Set(citedChunkIdsFor(artifacts, [run]))).toEqual(
-      new Set([rosterChunk.id, npcChunk.id, pinnedChunk.id]),
-    );
+    // The artifact half contributes NOTHING: a copy's numbers travel with the
+    // campaign, so there is no library row to bulk-read (docs/17 row 278).
+    expect(citedChunkIdsFor(artifacts, [run])).toEqual([pinnedChunk.id]);
 
-    // Every enumerated chunk is in the library: NOTHING may be missing-chunk.
-    const chunksById = new Map(
-      [rosterChunk, npcChunk, pinnedChunk].map((entry) => [entry.id, entry] as const),
-    );
+    // …and the differential holds: the builder resolves the pin and emits no
+    // citation entry, so the map this helper fills is sufficient.
     const exported = collectDependencies(artifacts, [run], {
       ...emptyLibrary(),
-      chunksById,
+      chunksById: new Map([[pinnedChunk.id, pinnedChunk]]),
       booksById: new Map([[local.id, local]]),
-      chunkCountsByBookId: new Map([[local.id, 3]]),
+      chunkCountsByBookId: new Map([[local.id, 1]]),
     });
-    expect(exported.citations).toHaveLength(2);
-    expect(exported.citations.filter((entry) => entry.status === 'missing-chunk')).toEqual([]);
-    expect(exported.pinnedChunks.filter((pin) => pin.status !== 'resolved')).toEqual([]);
+    expect(exported.citations).toEqual([]);
+    expect(exported.pinnedChunks).toEqual([
+      expect.objectContaining({ chunkId: pinnedChunk.id, status: 'resolved' }),
+    ]);
+    expect(exported.books[0]?.citedChunkIds).toEqual([pinnedChunk.id]);
   });
 });

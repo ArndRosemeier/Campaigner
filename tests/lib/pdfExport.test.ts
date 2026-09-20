@@ -228,6 +228,7 @@ describe('pdf export definitions', () => {
       contentHash: await sha256Hex(text),
     });
     await putChunks([chunk]);
+    if (chunk.statBlock === null) throw new Error('the fixture chunk carries no block');
     const encounterRow = await persistArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
@@ -241,7 +242,11 @@ describe('pdf export definitions', () => {
             count: 1,
             notes: 'clings to the pilings',
             treasure: '',
-            source: { type: 'none' as const },
+            // A COPIED library mob (docs/17 row 255a): it OWNS the block, its
+            // stamped origin line and the opaque identity token.
+            source: { type: 'inline' as const, statBlock: chunk.statBlock },
+            sourceLine: 'Bestiary p.132',
+            originToken: `chunk:${chunk.id}`,
           },
         ],
         terrain: 'wet planks',

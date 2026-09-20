@@ -182,17 +182,6 @@ describe('MobPortraitsSection invented-creature actions', () => {
     await flushAsyncUpdates();
   });
 
-  it('rulebook-only roster shows no uncited list', () => {
-    render(
-      <MobPortraitsSection
-        artifact={enc([{ name: 'Goblin Boss', source: RULEBOOK }])}
-        campaignId="campaign-1"
-      />,
-    );
-    expect(screen.queryByTestId('mob-portraits-uncited')).toBeNull();
-    expect(screen.getByTestId('generate-mob-portraits').textContent).toMatch(/Generate mob portraits/);
-  });
-
   it('empty roster disables the batch with a no-creatures message (never the old dead-end)', () => {
     render(<MobPortraitsSection artifact={enc([])} campaignId="campaign-1" />);
     expect(screen.getByText(/No creatures to illustrate/i)).toBeDefined();

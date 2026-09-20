@@ -426,8 +426,8 @@ function encounterDataWith(monsters: unknown[]): Record<string, unknown> {
 describe('export v2', () => {
   beforeEach(clearDatabase);
 
-  it('writes format version 2 with tables and a golden Monster-Core manifest', async () => {
-    expect(EXPORT_FORMAT_VERSION).toBe(2);
+  it('writes format version 3 with tables and a golden Monster-Core manifest', async () => {
+    expect(EXPORT_FORMAT_VERSION).toBe(3);
     const campaign = await createCampaign({ name: 'Export v2', system: 'pathfinder2e' });
 
     // Pack-origin book with one cited statblock chunk (the "Monster Core").
@@ -469,8 +469,18 @@ describe('export v2', () => {
       campaignId: campaign.id,
       kind: 'encounter',
       name: 'Goblin ambush',
+      // A COPIED mob (docs/17 row 255a): it OWNS the block, so it cites no
+      // library row — the run pin is the only library dependency left.
       data: encounterDataWith([
-        { name: 'Goblin Warrior', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: chunk.id } },
+        {
+          name: 'Goblin Warrior',
+          count: 2,
+          notes: '',
+          treasure: '',
+          source: { type: 'inline', statBlock: fixtureStatBlock() },
+          sourceLine: 'Monster Core: Goblin Warrior',
+          originToken: `chunk:${chunk.id}`,
+        },
       ]) as never,
     });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -484,24 +494,13 @@ describe('export v2', () => {
     });
 
     const exported = await buildCampaignExport(campaign.id);
-    expect(exported.version).toBe(2);
+    expect(exported.version).toBe(3);
 
     const manifest = exported.dependencies;
     if (manifest === undefined) throw new Error('dependencies manifest missing');
-    expect(manifest.citations).toHaveLength(1);
-    expect(manifest.citations[0]).toMatchObject({
-      artifactId: encounter.id,
-      artifactName: 'Goblin ambush',
-      kind: 'encounter',
-      monsterName: 'Goblin Warrior',
-      bookTitle: 'Monster Core',
-      system: 'pathfinder2e',
-      creatureName: 'Goblin Warrior',
-      chunkType: 'statblock',
-      contentHash,
-      citedChunkId: chunk.id,
-      status: 'resolved',
-    });
+    // A COPY cites nothing (docs/17 row 278): the encounter contributes no
+    // citation entry at all, and the run pin is the only library dependency.
+    expect(manifest.citations).toEqual([]);
     expect(manifest.books).toHaveLength(1);
     expect(manifest.books[0]).toMatchObject({
       title: 'Monster Core',
@@ -785,8 +784,20 @@ describe('export v2', () => {
 describe('import dependency enforcement', () => {
   beforeEach(clearDatabase);
 
-  async function exportGoblinCampaign(): Promise<{ json: unknown; campaignId: string }> {
+  /**
+   * The export carries a roster `npc-ref` to a row ANOTHER campaign holds — the
+   * DRIFT POLICY's always-blocking arm (docs/17 row 261), which is current
+   * behaviour. The stat-block citation arms that used to drive these tests were
+   * deleted by the clean cut (docs/17 row 278), so a COPIED mob no longer
+   * contributes a library dependency; the run pin still does.
+   */
+  async function exportGoblinCampaign(): Promise<{
+    json: unknown;
+    campaignId: string;
+    otherNpcId: string;
+  }> {
     const campaign = await createCampaign({ name: 'Dep source', system: 'pathfinder2e' });
+    const otherCampaign = await createCampaign({ name: 'Other', system: 'pathfinder2e' });
     const book = await createPackBook({
       title: 'Monster Core',
       system: 'pathfinder2e',
@@ -815,107 +826,98 @@ describe('import dependency enforcement', () => {
     ]);
     const [chunk] = await db.chunks.toArray();
     if (chunk === undefined) throw new Error('chunk missing');
+    const otherNpc = await createArtifact({
+      campaignId: otherCampaign.id,
+      kind: 'npc',
+      name: 'Vexra',
+      data: { appearance: '', personality: '', statBlock: fixtureStatBlock() },
+    });
     await createArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
       name: 'Goblin ambush',
       data: encounterDataWith([
-        { name: 'Goblin Warrior', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: chunk.id } },
+        {
+          name: 'Vexra',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'npc-ref', artifactId: otherNpc.id },
+        },
       ]) as never,
+    });
+    await createRun({
+      campaignId: campaign.id,
+      personaId: newId(),
+      autonomy: 'manual',
+      userBrief: 'draft goblins',
+      pinnedChunkIds: [chunk.id],
     });
     return {
       json: JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown,
       campaignId: campaign.id,
+      otherNpcId: otherNpc.id,
     };
   }
 
-  it('aborts by default when the cited book is gone — zero rows written', async () => {
+  it('aborts by default when an npc-ref target is outside the export — zero rows written', async () => {
     const { json } = await exportGoblinCampaign();
-    await db.chunks.clear();
-    await db.rulebooks.clear();
 
     const campaignsBefore = await listCampaigns();
     const artifactsBefore = await db.artifacts.count();
-    let caught: unknown = null;
-    try {
-      await importExport(json);
-    } catch (error) {
-      caught = error;
-    }
+    const caught: unknown = await importExport(json).then(
+      () => null,
+      (error: unknown) => error,
+    );
     expect(caught).toBeInstanceOf(MissingDependenciesError);
     const analysis = (caught as MissingDependenciesError).analysis;
-    expect(analysis.citations[0]?.verdict).toBe('missing');
-    expect(analysis.books[0]?.matchLevel).toBe('missing');
-    expect(analysis.clean).toBe(false);
-    // The abort is specifically the MISSING arm, not a drift leaking in.
-    expect(analysis.blockingCitations).toBe(1);
+    expect(analysis.citations).toEqual([]);
+    expect(analysis.unmetLibraryRefs).toHaveLength(1);
+    expect(analysis.unmetLibraryRefs[0]).toMatchObject({ status: 'not-exported' });
+    expect(analysis.blockingCitations).toBe(0);
     expect(analysis.driftedCitations).toBe(0);
+    expect(analysis.clean).toBe(false);
     // Abort-before-tx: nothing to roll back, nothing written.
     expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
     expect(await db.artifacts.count()).toBe(artifactsBefore);
   });
 
-  it('still aborts on an unmet NPC ref even when every citation is present (docs/17 row 261)', async () => {
+  it('still aborts on an unmet NPC ref even when every run pin resolves (docs/17 row 261)', async () => {
     const { json } = await exportGoblinCampaign();
-    // The library is intact, so the citation is present; only the ref is unmet.
-    const exported = JSON.parse(JSON.stringify(json)) as {
-      dependencies?: Record<string, unknown>;
-    };
-    const dependencies = exported.dependencies;
-    if (dependencies === undefined) throw new Error('export fixture carries no manifest');
-    dependencies.unmetLibraryRefs = [
-      {
-        artifactId: newId(),
-        artifactName: 'Goblin ambush',
-        kind: 'encounter',
-        monsterName: 'Vexra',
-        npcArtifactId: newId(),
-        status: 'not-exported',
-      },
-    ];
-
-    const campaignsBefore = await listCampaigns();
-    let caught: unknown = null;
-    try {
-      await importExport(exported);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(MissingDependenciesError);
-    const analysis = (caught as MissingDependenciesError).analysis;
-    // This arm blocks on its OWN: no blocking/drifted citations at all.
+    // The library is intact, so the run pin resolves; only the ref is unmet.
+    const manifest = parseExport(json).dependencies;
+    if (manifest === undefined) throw new Error('export fixture carries no manifest');
+    expect(manifest.pinnedChunks.filter((pin) => pin.status !== 'resolved')).toEqual([]);
+    const analysis = await checkImportDependencies(manifest);
+    expect(analysis.unmetLibraryRefs).toHaveLength(1);
     expect(analysis.blockingCitations).toBe(0);
     expect(analysis.driftedCitations).toBe(0);
-    expect(analysis.unmetLibraryRefs).toHaveLength(1);
     expect(analysis.clean).toBe(false);
-    expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
   });
 
   it('import-anyway lands the encounter with a truthful `missing ref`', async () => {
-    const { json } = await exportGoblinCampaign();
-    await db.chunks.clear();
-    await db.rulebooks.clear();
+    const { json, otherNpcId } = await exportGoblinCampaign();
+    // The cited row is GONE at import time (the owner's cross-machine case).
+    await db.artifacts.delete(otherNpcId);
 
     const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
     const imported = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
-    expect(imported).toHaveLength(1);
-    const encounter = imported[0];
+    const encounter = imported.find((row) => row.kind === 'encounter');
     if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
-    // The rulebook chunkId is KEPT as-is — so the row resolves exactly like
-    // any other dangling citation (the manifest hash heals content identity
-    // around it, but with no local bytes there is still nothing to hit).
-    expect(encounter.data.monsters[0]?.source.type).toBe('rulebook');
     const first = encounter.data.monsters[0];
     if (first === undefined) throw new Error('imported roster entry missing');
-    const resolved = await resolveMonsterEntryWithRepos(first);
-    // Named (docs/11 D9) — and the name is the CREATURE's, so the marker is
-    // directly actionable against the library that lacks it.
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
+    expect(first.source.type).toBe('npc-ref');
+    // Named (docs/11 D9) — and the name is the ROW's, so the marker is
+    // directly actionable.
+    expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
+      statBlock: null,
+      origin: 'missing ref (Vexra)',
+    });
   });
 
   it('imports a drift-only manifest under the DEFAULT policy and REPORTS the drift (docs/17 row 261)', async () => {
     const { json } = await exportGoblinCampaign();
-    // Same book re-ingested: same title/system/creature, different bytes.
+    // Same book re-ingested: same title/system, different bytes.
     await db.chunks.clear();
     await db.rulebooks.clear();
     const book = await createPackBook({
@@ -945,9 +947,33 @@ describe('import dependency enforcement', () => {
       }),
     ]);
 
+    // The manifest SHAPE still carries citations (format 3 is unchanged): a
+    // file written by another install can name a stat-block citation, and the
+    // drift policy is what an import does with one. Inject a drifted citation
+    // so the policy is exercised end to end.
+    const exported = JSON.parse(JSON.stringify(json)) as {
+      dependencies: Record<string, unknown>;
+    };
+    exported.dependencies.citations = [
+      {
+        artifactId: newId(),
+        artifactName: 'Goblin ambush',
+        kind: 'encounter',
+        monsterName: 'Goblin Warrior',
+        citedChunkId: newId(),
+        chunkType: 'statblock',
+        status: 'missing-chunk',
+        contentHash: await sha256Hex('Goblin Warrior stat block, older printing'),
+        bookTitle: 'Monster Core',
+        system: 'pathfinder2e',
+        creatureName: 'Goblin Warrior',
+      },
+    ];
+    exported.dependencies.unmetLibraryRefs = [];
+
     // The fixture really IS a drift (not present, not missing), proved BEFORE
     // the policy assertion so the import below cannot pass vacuously.
-    const manifest = parseExport(json).dependencies;
+    const manifest = parseExport(exported).dependencies;
     const analysis = await checkImportDependencies(manifest);
     expect(analysis.citations[0]?.verdict).toBe('version-drift');
     expect(analysis.books[0]?.matchLevel).toBe('L1');
@@ -957,7 +983,7 @@ describe('import dependency enforcement', () => {
 
     // DEFAULT policy: the cross-machine import PROCEEDS — the exact case the
     // owner hit. No MissingDependenciesError, no 'import-anyway' escape hatch.
-    const result = await importExport(json);
+    const result = await importExport(exported);
     expect(result.createdArtifacts).toBe(1);
     // ...and it is NOT silent: the count rides the result and the picker's
     // sentence names the reason and the residual state.
@@ -967,23 +993,7 @@ describe('import dependency enforcement', () => {
     expect(note).toContain('DIFFERENT version');
     expect(note).toContain('missing ref');
     // Both campaigns exist: the source and the imported copy.
-    expect(await listCampaigns()).toHaveLength(2);
-
-    // The residual is the repo's existing truthful one: the drifted citation
-    // has no local id and no local hash, so the encounter lands as a NAMED
-    // `missing ref` — never the other version's stats silently substituted.
-    const imported = await db.artifacts
-      .where('campaignId')
-      .equals(result.campaignId)
-      .toArray();
-    const encounter = imported.find((row) => row.kind === 'encounter');
-    if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
-    const first = encounter.data.monsters[0];
-    if (first === undefined) throw new Error('imported roster entry missing');
-    expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
-      statBlock: null,
-      origin: 'missing ref (Goblin Warrior)',
-    });
+    expect(await listCampaigns()).toHaveLength(3);
   });
 
   it('zip imports enforce the same policy', async () => {
@@ -991,19 +1001,14 @@ describe('import dependency enforcement', () => {
     const zip = await buildZip(
       await buildCampaignExport(campaignId, undefined, { images: true }),
     );
-    await db.chunks.clear();
-    await db.rulebooks.clear();
 
     await expect(importZip(zip)).rejects.toBeInstanceOf(MissingDependenciesError);
-    expect(await listCampaigns()).toHaveLength(1);
     const result = await importZip(zip, { dependencyPolicy: 'import-anyway' });
     expect(result.createdArtifacts).toBe(1);
   });
 
   it('MissingDependenciesError uses ASCII quotes around missing ref', async () => {
     const { json } = await exportGoblinCampaign();
-    await db.chunks.clear();
-    await db.rulebooks.clear();
 
     const caught: unknown = await importExport(json).then(
       () => null,
@@ -1012,19 +1017,11 @@ describe('import dependency enforcement', () => {
     expect(caught).toBeInstanceOf(MissingDependenciesError);
     const message = (caught as MissingDependenciesError).message;
     expect(message).toContain("'missing ref'");
-    expect(message).not.toContain('‘');
-    expect(message).not.toContain('’');
+    expect(message).not.toContain('\u2018');
+    expect(message).not.toContain('\u2019');
   });
 });
 
-/**
- * Import content-identity healing (chunk-hash-fallback arc): pre-stamp
- * exports cite bare uuids, but the v2 manifest carries per-citation
- * contentHash — import stamps manifest hashes onto entries whose source
- * lacks them, so byte-identical installs resolve through the hash fallback.
- * The owner's case end to end: L0-exact Monster Core installed, banner
- * persists — now the markers clear with no re-export.
- */
 describe('drift reporting', () => {
   it('says nothing for zero drifts (an empty count is never announced)', () => {
     expect(formatDriftedCitations(0)).toBeNull();

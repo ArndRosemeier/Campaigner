@@ -137,7 +137,10 @@ function rulebookEntry(chunkId: string = CHUNK_ID) {
     count: 2,
     notes: '',
     treasure: '',
+    // The creature is named by the COPY's opaque identity token (docs/17 row
+    // 255a): that is what the portrait lane routes on.
     source: { type: 'none' as const },
+    originToken: libraryCreatureKey(chunkId),
   };
 }
 

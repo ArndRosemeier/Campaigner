@@ -589,7 +589,12 @@ describe('modules-list.test.tsx', () => {
               count: 2,
               notes: '',
               treasure: '',
-              source: { type: 'none' as const },
+              // A DANGLING npc-ref: the census speaks of library references
+              // (docs/17 row 278 — a copy is the campaign's own row).
+              source: {
+                type: 'npc-ref',
+                artifactId: '00000000-0000-4000-8000-0000000000aa',
+              },
             },
           ],
           terrain: '',

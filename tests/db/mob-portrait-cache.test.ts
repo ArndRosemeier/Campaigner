@@ -133,7 +133,17 @@ async function seedCreatureChunk(
 
 async function addEncounter(
   campaignId: string,
-  monsters: { name: string; count: number; source: Record<string, unknown>; notes?: string }[],
+  monsters: {
+    name: string;
+    count: number;
+    source: Record<string, unknown>;
+    notes?: string;
+    treasure?: string;
+    /** A copy's provenance: the stamped origin line and the opaque identity
+     * token (docs/17 rows 255a/255b). */
+    sourceLine?: string;
+    originToken?: string;
+  }[],
 ) {
   const encounter = await createArtifact({
     campaignId,
@@ -146,7 +156,10 @@ async function addEncounter(
         name: monster.name,
         count: monster.count,
         notes: monster.notes ?? '',
+        treasure: monster.treasure ?? '',
         source: monster.source,
+        ...(monster.sourceLine === undefined ? {} : { sourceLine: monster.sourceLine }),
+        ...(monster.originToken === undefined ? {} : { originToken: monster.originToken }),
       })) as never,
       terrain: '',
       tactics: '',
@@ -234,6 +247,22 @@ beforeEach(async () => {
   });
 });
 
+/**
+ * A roster row that names a library chunk by its opaque COPY token and carries
+ * NO block of its own. That is the SURVIVING route into the global canonical
+ * cache: a copy that OWNS its block grounds its portrait locally (docs/17 row
+ * 269), and the pre-copy `rulebook` citation that used to feed this lane was
+ * deleted (docs/17 row 278).
+ */
+function citationEntry(name: string, count: number, chunkId: string) {
+  return {
+    name,
+    count,
+    source: { type: 'none' as const },
+    originToken: libraryCreatureKey(chunkId),
+  };
+}
+
 describe('cache row schema (v18)', () => {
   it('registers the mobPortraits store and round-trips a parsed row', async () => {
     expect(db.table('mobPortraits')).toBeDefined();
@@ -266,7 +295,7 @@ describe('canonical-only invariant', () => {
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
     const encounterA = await addEncounter(campaignA, [
-      { name: 'Giant Rat', count: 3, source: { type: 'none' as const } },
+      citationEntry('Giant Rat', 3, chunkId),
     ]);
     const resultA = await enqueueMobPortraits(encounterA, campaignA);
     expect(resultA).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -303,7 +332,7 @@ describe('canonical-only invariant', () => {
     // as existing art, and the trigger for the one-sided replace-all confirm
     // (owner report; ledger 81).
     const encounterB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 2, source: { type: 'none' as const } },
+      citationEntry('Giant Rat', 2, chunkId),
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
     expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -361,14 +390,14 @@ describe('canonical-only invariant', () => {
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
     const encounterA = await addEncounter(campaignA, [
-      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
+      citationEntry('Giant Rat', 1, chunkId),
     ]);
     await enqueueMobPortraits(encounterA, campaignA);
     await drainMobQueue();
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
 
     const encounterB = await addEncounter(campaignB, [
-      { name: '  GIANT RAT ', count: 1, source: { type: 'none' as const } },
+      citationEntry('  GIANT RAT ', 1, chunkId),
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
     expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -395,7 +424,7 @@ describe('canonical-only invariant', () => {
 
     // Flavored first: local flavored cover, cache slot stays EMPTY.
     const flavoredA = await addEncounter(campaignA, [
-      { name: 'slimey giant rat', count: 2, source: { type: 'none' as const } },
+      citationEntry('slimey giant rat', 2, chunkId),
     ]);
     const resultA = await enqueueMobPortraits(flavoredA, campaignA);
     expect(resultA.enqueued).toBe(1);
@@ -408,7 +437,7 @@ describe('canonical-only invariant', () => {
 
     // Canonical citation populates the slot once.
     const canonicalB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
+      citationEntry('Giant Rat', 1, chunkId),
     ]);
     await enqueueMobPortraits(canonicalB, campaignB);
     await drainMobQueue();
@@ -419,7 +448,7 @@ describe('canonical-only invariant', () => {
 
     // A later flavored citation generates locally and does NOT overwrite.
     const flavoredC = await addEncounter(campaignC, [
-      { name: 'slimey giant rat', count: 1, source: { type: 'none' as const } },
+      citationEntry('slimey giant rat', 1, chunkId),
     ]);
     await enqueueMobPortraits(flavoredC, campaignC);
     await drainMobQueue();
@@ -442,7 +471,7 @@ describe('canonical-only invariant', () => {
     void chunkId;
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const encounter = await addEncounter(campaignId, [
-      { name: 'Nameless Horror', count: 1, source: { type: 'none' as const } },
+      citationEntry('Nameless Horror', 1, chunkId),
     ]);
     const result = await enqueueMobPortraits(encounter, campaignId);
     expect(result.enqueued).toBe(1);
@@ -638,7 +667,7 @@ describe('cache-blob prune immunity (NEVER-DELETE)', () => {
     // Cloning the cover, then deleting the clone's owner, prunes the clone
     // but never the cached blob.
     const encounterB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
+      citationEntry('Giant Rat', 1, chunkId),
     ]);
     await enqueueMobPortraits(encounterB, campaignB);
     // The clone lands when the worker commits, not during enumeration.
@@ -661,8 +690,10 @@ describe('cache-blob prune immunity (NEVER-DELETE)', () => {
 describe('loud failures (no placeholder art)', () => {
   it('a vanished chunk fails loud per mob with no cache write', async () => {
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
+    // A row that names a chunk its block does NOT cover: the identity token
+    // survives, the library read is the loud arm (docs/17 row 269).
     const encounter = await addEncounter(campaignId, [
-      { name: 'Ghost Boss', count: 1, source: { type: 'none' as const } },
+      citationEntry('Ghost Boss', 1, newId()),
     ]);
     const result = await enqueueMobPortraits(encounter, campaignId);
     expect(result.enqueued).toBe(1);

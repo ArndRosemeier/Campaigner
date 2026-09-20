@@ -165,8 +165,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** A cast creature npc: an AUTHORED row (the owner's Aunt Agatha) whose numbers
- * are the library creature's — born `statBlock: null` + `creatureRef`. */
+/** A cast creature npc (docs/17 row 255b): it OWNS the library's block, its
+ * stamped origin line and the opaque identity token. The pre-copy `creatureRef`
+ * pointer was deleted by the clean cut (docs/17 row 278). */
 async function seedCitedNpc(campaign: Campaign, name = 'Goblin Warrior'): Promise<{ id: Id; chunkId: Id }> {
   const chunkId = newId();
   const creature = await createArtifact({
@@ -175,29 +176,19 @@ async function seedCitedNpc(campaign: Campaign, name = 'Goblin Warrior'): Promis
     name,
     summary: '',
     body: '',
-    data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
+    data: {
+      appearance: '',
+      personality: '',
+      statBlock: NPC_STATBLOCK,
+      sourceLine: 'Bestiary p.132',
+      originToken: `chunk:${chunkId}`,
+    },
   });
   return { id: creature.id, chunkId };
 }
 
-describe('the refused pair, by the schema\u2019s own name', () => {
-  it('npcDataSchema refuses a citation beside an authored stat block', () => {
-    const parsed = npcDataSchema.safeParse({
-      appearance: '',
-      personality: '',
-      statBlock: NPC_STATBLOCK,
-      originToken: 'chunk:legacy-ref',
-    });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) throw new Error('the pair parsed');
-    expect(JSON.stringify(parsed.error.issues)).toContain(
-      'an npc carries either an authored stat block or a library creatureRef to derive one from, never both',
-    );
-  });
-});
-
 describe('a cited row is never asked for a stat block', () => {
-  it('never spends the statblock call on a cited row, and the citation survives the refill', async () => {
+  it('never spends the statblock call on a cast row, and its owned copy survives the refill', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = await seedPersona();
     const creature = await seedCitedNpc(campaign);
@@ -228,10 +219,10 @@ describe('a cited row is never asked for a stat block', () => {
     expect(after.summary).toBe(NPC_DRAFT.summary);
     expect(after.body).toBe(NPC_DRAFT.body);
     expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
-    // … the citation is byte-identical …
-    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId: creature.chunkId });
-    // … and no block was authored beside it (the numbers are the library's).
-    expect(after.data.statBlock).toBeNull();
+    // … the loaded COPY is byte-identical …
+    expect(after.data.statBlock).toEqual(NPC_STATBLOCK);
+    expect(after.data.sourceLine).toBe('Bestiary p.132');
+    expect(after.data.originToken).toBe(`chunk:${creature.chunkId}`);
     expect((await listRevisions(creature.id)).length).toBeGreaterThan(revisionsBefore.length);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
@@ -332,7 +323,7 @@ describe('a block that arrives anyway is refused by name, and nothing is written
     // THE REFUSAL IS NAMED: what happened, and that nothing was written.
     expect(failed?.errorMessage).toContain('Refusing to write');
     expect(failed?.errorMessage).toContain('Nothing was written');
-    expect(failed?.errorMessage).toContain('creatureRef');
+    expect(failed?.errorMessage).toContain('originToken');
     // THE TOAST'S HEADLINE IS THAT SENTENCE — never the zod issue dump.
     const toastTitle = toastErrorMock.mock.calls[0]?.[0] ?? '';
     expect(toastTitle).toBe(failed?.errorMessage);
@@ -340,7 +331,7 @@ describe('a block that arrives anyway is refused by name, and nothing is written
     expect(toastTitle).not.toContain('invalid_type');
     expect(toastTitle.startsWith('[')).toBe(false);
 
-    // NOTHING WAS WRITTEN: the row is byte-identical, citation and all.
+    // NOTHING WAS WRITTEN: the row is byte-identical, copy and all.
     const after = await getArtifact(creature.id);
     expect(after).toEqual(before);
   }, 30000);
@@ -416,10 +407,10 @@ describe('a data-check failure reaches the owner as a sentence', () => {
     const refused = npcDataSchema.safeParse({
       appearance: '',
       personality: '',
-      statBlock: NPC_STATBLOCK,
-      originToken: 'chunk:legacy-ref',
+      // A malformed stat block (a live schema arm).
+      statBlock: { system: 'not-a-system' },
     });
-    if (refused.success) throw new Error('the pair parsed');
+    if (refused.success) throw new Error('the malformed block parsed');
     const error: ZodError = refused.error;
 
     // The raw message IS the dump (zod 4) — measured, not assumed.
@@ -429,7 +420,7 @@ describe('a data-check failure reaches the owner as a sentence', () => {
     expect(composed).toContain('Nothing was written');
     // The composed sentence NAMES the field the check refused (the path zod
     // already knows) instead of dumping the issue array.
-    expect(composed).toContain('creatureRef: an npc carries either an authored stat block');
+    expect(composed).toContain('statBlock');
     expect(composed).not.toContain('"code"');
     expect(composed).not.toContain('\\n');
     // A named refusal (not a zod error) keeps its own sentence verbatim.

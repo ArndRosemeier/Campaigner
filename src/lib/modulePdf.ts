@@ -34,6 +34,7 @@ import {
   rosterReferenceFor,
   rosterStatBlockFor,
   rosterTreasureFor,
+  stampedSourceLine,
   type ResolvedMonster,
 } from '@/domain/encounterResolve';
 import { listBattlesByModule } from '@/db/battleRepo';
@@ -1253,7 +1254,7 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
                   statBoxContent(
                     statBlock,
                     `${monster.name} ×${monster.count}`,
-                    undefined,
+                    stampedSourceLine(monster),
                     state.spellIndexes,
                   ),
                 ]),

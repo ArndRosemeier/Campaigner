@@ -19,6 +19,7 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
   modulePartSchema,
+  libraryCreatureKey,
   moduleSpineSchema,
   ruleChunkSchema,
   stampNewEntity,
@@ -98,10 +99,8 @@ function citedStatBlock(): StatBlock {
   });
 }
 
-/** A citation row, as the generator writes it. */
-function citedEntry(chunkId: Id, contentHash: string): MonsterEntry {
-    void chunkId;
-    void contentHash;
+/** A copied library mob, as the writer makes it (docs/17 row 255a). */
+function copiedEntry(chunk: { id: string; statBlock: unknown }): MonsterEntry {
   return {
     name: CITED,
     count: 1,
@@ -110,7 +109,9 @@ function citedEntry(chunkId: Id, contentHash: string): MonsterEntry {
     // and the module book both print through the SAME domain rule (docs/17 row
     // 159). The name-only mob below carries nothing and prints no line at all.
     treasure: CITED_TREASURE,
-    source: { type: 'none' as const },
+    source: { type: 'inline', statBlock: chunk.statBlock as StatBlock },
+    sourceLine: 'Bestiary p.132',
+    originToken: libraryCreatureKey(chunk.id),
   };
 }
 
@@ -158,7 +159,7 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
       difficulty: 'severe',
       levelHint: '4',
       monsters: [
-        citedEntry(chunk.id, chunk.contentHash),
+        copiedEntry(chunk),
         { name: NAME_ONLY, count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
       ],
       terrain: 'wet planks',
@@ -342,33 +343,6 @@ describe('the module reader opens the shared encounter card', () => {
         expect(window.location.pathname).toBe(artifactPath(campaignId, encounterId));
       },
       { timeout: 10_000 },
-    );
-    await flushAsyncUpdates();
-  }, 20_000);
-
-  it('keeps a citation nothing can resolve LOUD, by name, with no box', async () => {
-    const { campaignId, moduleId } = await seedReader({ statBlock: null });
-    renderAppAt(modulePath(campaignId, moduleId));
-
-    const card = await openEncounterCard();
-    const mobs = await findMobs(card);
-    const citedRow = within(mobs).getAllByTestId('roster-entry')[0];
-    if (citedRow === undefined) throw new Error('the cited row must be listed');
-
-    // The NAMED reason, in the formatter's own words — never an empty row and
-    // never a placeholder standing in for the numbers (AGENTS rule 1).
-    expect(within(citedRow).getByTestId('roster-reference').textContent).toBe(
-      ' — missing ref (Cave Fisher)',
-    );
-    // …and NO stat box: the assertion is an ABSENCE, so an empty or invented
-    // block would fail it.
-    expect(within(citedRow).queryByText('AC')).not.toBeInTheDocument();
-    expect(within(citedRow).queryByText('Grasping Antennae.')).not.toBeInTheDocument();
-    // The name-only row still says what is true about itself.
-    const nameOnlyRow = within(mobs).getAllByTestId('roster-entry')[1];
-    if (nameOnlyRow === undefined) throw new Error('the name-only row must be listed');
-    expect(within(nameOnlyRow).getByTestId('roster-reference').textContent).toBe(
-      ' — no stats: this roster entry names the creature without a citation',
     );
     await flushAsyncUpdates();
   }, 20_000);

@@ -6,6 +6,7 @@ import {
   rosterReferenceFor,
   rosterStatBlockFor,
   rosterTreasureFor,
+  stampedSourceLine,
   type ResolvedMonster,
 } from '@/domain/encounterResolve';
 import { getImage } from '@/db/imageRepo';
@@ -230,7 +231,7 @@ function rosterRows(
             statBoxContent(
               statBlock,
               `${monster.name} ×${monster.count}`,
-              undefined,
+              stampedSourceLine(monster),
               spellIndexes,
             ) as object,
           ]),

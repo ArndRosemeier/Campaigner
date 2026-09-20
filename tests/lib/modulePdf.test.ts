@@ -1,6 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,24 +8,18 @@ import {
   modulePartSchema,
   moduleSpineSchema,
   newId,
-  ruleChunkSchema,
-  stampNewEntity,
   statBlockSchema,
   type Artifact,
   type AnyArtifact,
   type Id,
   type Module,
-  type RuleChunk,
   type StatBlock,
 } from '@/domain';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { patchBattle, ensureBattleForEncounter } from '@/db/battleRepo';
-import { putChunks } from '@/db/chunkRepo';
-import { createRulebook } from '@/db/rulebookRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createImage } from '@/db/imageRepo';
-import { sha256Hex } from '@/lib/hash';
 import {
   assertPdfmakeImageDataUrl,
   loadPdfImages,
@@ -128,24 +121,6 @@ function citedStatBlockFixture(): StatBlock {
   });
 }
 
-/** A statblock chunk as ingestion persists it (its own hash of its text). */
-async function citedChunkRow(
-  bookId: Id,
-  over: { pageStart?: number; statBlock?: StatBlock | null } = {},
-): Promise<RuleChunk> {
-  const text = 'Cave Fisher';
-  return ruleChunkSchema.parse({
-    ...stampNewEntity(),
-    bookId,
-    pageStart: over.pageStart ?? 132,
-    pageEnd: over.pageStart ?? 132,
-    chunkType: 'statblock',
-    headingPath: ['Cave Fisher'],
-    text,
-    statBlock: over.statBlock === undefined ? citedStatBlockFixture() : over.statBlock,
-    contentHash: await sha256Hex(text),
-  });
-}
 
 function owned(artifact: AnyArtifact): Artifact {
   if (artifact.campaignId === null) throw new Error('expected a campaign-owned row');
@@ -153,6 +128,36 @@ function owned(artifact: AnyArtifact): Artifact {
 }
 
 /** The seed: a two-part module whose prose mentions every row below. */
+/**
+ * THE LIVE SHAPE of a library-sourced mob: a COPY that OWNS the library's block,
+ * its stamped origin line and the opaque identity token (docs/17 row 255a).
+ * The pre-cut `rulebook` citation these tests used to build was deleted
+ * (docs/17 row 278); the assertions (the origin prints through the ONE rule, the
+ * numbers print with the source on the box) are current-model rules.
+ */
+function withCopiedCaveFisher(seeded: Seed): AnyArtifact[] {
+  return seeded.artifacts.map((artifact) =>
+    artifact.id === seeded.encounterId && artifact.kind === 'encounter'
+      ? {
+          ...artifact,
+          data: {
+            ...artifact.data,
+            monsters: artifact.data.monsters.map((monster) =>
+              monster.name === 'Cave Fisher'
+                ? {
+                    ...monster,
+                    source: { type: 'inline' as const, statBlock: citedStatBlockFixture() },
+                    sourceLine: 'Monster Core: Cave Fisher',
+                    originToken: 'chunk:00000000-0000-4000-8000-0000000000cf',
+                  }
+                : monster,
+            ),
+          },
+        }
+      : artifact,
+  );
+}
+
 interface Seed {
   module: Module;
   artifacts: AnyArtifact[];
@@ -556,7 +561,7 @@ describe('buildModuleDefinition — the module IS the document', () => {
     const text = textOf(
       buildModuleDefinition({
         module: seeded.module,
-        artifacts: seeded.artifacts,
+        artifacts: withCopiedCaveFisher(seeded),
         rosterResolution: {
           [seeded.encounterId]: [
             { statBlock: null, origin: 'inline' },
@@ -601,12 +606,12 @@ describe('buildModuleDefinition — the module IS the document', () => {
    * and this reads no `Cave Fisher ×1` box, no `Grasping Antennae`, no
    * `Reactive Snap`, no `Numbers from …`.
    */
-  it('prints a cited mob’s OWN numbers, with the source on the box (owner decision 3)', async () => {
+  it('prints a copied mob’s OWN numbers, with the source on the box (owner decision 3)', async () => {
     const seeded = await seed();
     const text = textOf(
       buildModuleDefinition({
         module: seeded.module,
-        artifacts: seeded.artifacts,
+        artifacts: withCopiedCaveFisher(seeded),
         rosterResolution: {
           [seeded.encounterId]: [
             { statBlock: null, origin: 'inline' },
@@ -663,59 +668,6 @@ describe('buildModuleDefinition — the module IS the document', () => {
     expect(text).not.toContain('Cave Fisher ×1');
     expect(text).not.toContain('Numbers from');
     expect(text).not.toContain('unresolved citation');
-  });
-
-  /**
-   * The pre-pass really is what reaches the renderer: `buildModulePdf` resolves
-   * every encounter roster itself, and a cited creature resolves to the chunk's
-   * own block through the ONE resolution order — so the module book prints
-   * numbers for a citation with nobody handing it a resolution.
-   */
-  it('resolves a cited roster row itself, end to end through buildModulePdf', async () => {
-    const seeded = await seed();
-    const rulebook = await createRulebook({
-      title: 'Bestiary',
-      system: 'pathfinder2e',
-      filename: 'bestiary.pdf',
-    });
-    const chunk = await citedChunkRow(rulebook.id);
-    await putChunks([chunk]);
-    const withCitation = seeded.artifacts.map((artifact) =>
-      artifact.id === seeded.encounterId && artifact.kind === 'encounter'
-        ? {
-            ...artifact,
-            data: {
-              ...artifact.data,
-              monsters: artifact.data.monsters.map((monster) =>
-                monster.name === 'Cave Fisher'
-                  ? {
-                      ...monster,
-                      source: { type: 'none' as const },
-                    }
-                  : monster,
-              ),
-            },
-          }
-        : artifact,
-    );
-
-    let definition: TDocumentDefinitions | undefined;
-    await buildModulePdf(seeded.module, withCitation, (built) => {
-      // The generator is the only place the finished definition is visible, so
-      // the pin reads the REAL document `buildModulePdf` produced.
-      definition = built;
-      return Promise.resolve(new Blob(['pdf']));
-    });
-    if (definition === undefined) throw new Error('the generator was never called');
-    const text = textOf(definition);
-
-    expect(text).toContain(`Bestiary p.${chunk.pageStart}`);
-    expect(text).not.toContain('see Bestiary');
-    expect(text).toContain('Reactive Snap');
-    expect(text).toContain('Skitter Away');
-    expect(text).toContain('"Perception: "');
-    expect(text).toContain('"+11"');
-    expect(text).toContain(`Numbers from Bestiary p.${chunk.pageStart}`);
   });
 
   it('a roster entry with no citation and no resolution says what is true about it', async () => {

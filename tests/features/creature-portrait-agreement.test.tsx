@@ -265,7 +265,16 @@ describe('the token and the module side resolve ONE portrait', () => {
       imageId: portraitId,
     });
     const { moduleId: seededModule } = await seedEncounterWith(moduleId, [
-      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
+      {
+        name: 'Zombie',
+        count: 1,
+        notes: '',
+        treasure: '',
+        // A copied library mob's opaque identity token (docs/17 row 255a): the
+        // surviving route that names the creature's portrait.
+        source: { type: 'none' as const },
+        originToken: libraryCreatureKey(chunkId),
+      },
     ]);
 
     await renderSurface(campaignId, seededModule);
@@ -345,7 +354,16 @@ describe('the affordance and the board state the same fact', () => {
     const chunkId = await seedChunk('Zombie', ZOMBIE_TEXT);
     const moduleId = await seedModule('Gap module');
     await seedEncounterWith(moduleId, [
-      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
+      {
+        name: 'Zombie',
+        count: 1,
+        notes: '',
+        treasure: '',
+        // A copied library mob's opaque identity token (docs/17 row 255a): the
+        // surviving route that names the creature's portrait.
+        source: { type: 'none' as const },
+        originToken: libraryCreatureKey(chunkId),
+      },
     ]);
 
     await renderSurface(campaignId, moduleId);

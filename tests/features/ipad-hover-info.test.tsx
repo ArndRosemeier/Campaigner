@@ -297,7 +297,13 @@ describe('iPad batch E halves 3+4: panes co-mount, leftover inputs hit 16px', ()
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Change rulebook stat block' }));
+    // The dialog is opened through the LIVE affordance: the source selector's
+    // "From rulebook…" choice (the per-row "Change" button only existed on a
+    // stored `rulebook` row, which the clean cut retired — docs/17 row 278).
+    await user.click(screen.getByLabelText('Stats source for Goblin'));
+    await user.click(
+      await screen.findByRole('option', { name: 'From rulebook…' }, { timeout: 5_000 }),
+    );
     expect(screen.getByPlaceholderText('Search stat blocks…')).toHaveClass(COARSE_TEXT);
   });
 });

@@ -8178,9 +8178,21 @@ notice sentence, the old-settings-row parse, the ATOMIC abort via the fault hook
 `npc-ref` re-homing, the two file refusals, and the exactly-one `.version(` /
 `.upgrade(` source scan.
 
-**OWED (not done in the code landing):** ~40 surviving test files carried
-`rulebook`/`creatureRef` fixtures; they were mechanically converted to the live
-arms so the tree COMPILES, but the assertions that proved the deleted semantics
-are RED and must be rewritten (or deleted case by case). The inventory's §a.6
-test list undercounted this — its own loud unknown #5 said as much. A `*Baseline.json`
-edit by this landing is DELETE-ONLY; none was needed.
+**COMPLETED (the owed half), triaged by SUBJECT rather than by colour.** Tests
+whose SUBJECT was retired compatibility were DELETED: the `resolveMonsterEntry`
+`rulebook` arms, the content-hash citation healing, the `creatureRef` borrowed
+stats, the deleted refine, the legacy-pointer failure/loud arms, the
+`OPTIONAL_TABLES` backup tolerance, the citation-naming banner rows, the
+canonical-republish toast, the `rulebook`-only uncited list, and the migration/
+retry semantics. Tests whose SUBJECT is a LIVE rule but whose FIXTURE was the
+old shape were CONVERTED to the copy shape (a `chunk:` origin token names the
+creature; the row owns its block): the identity/portrait lanes, seed freezing,
+the adoption seams, the `npc-ref` resolution, the drift policy and the two file
+refusals. ALL CHUNKS ARE GREEN: db 402, domain 455, lib 381, features 1497,
+llm 1267, architecture 100, remainder 369.
+
+The pass also FOLDED one duplicate it exposed: `tests/helpers/visionComplexTarget.ts`
+now carries the complex-encounter fixture the two vision tests had copied
+byte-for-byte. `*Baseline.json` edits were DELETE-ONLY (the deleted
+`cast-row-borrowed-stats-scan` and `monster-source-citation` sites and one stale
+entry).

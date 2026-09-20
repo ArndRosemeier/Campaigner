@@ -322,6 +322,17 @@ export interface MonsterReference {
   link?: MonsterReferenceLink;
 }
 
+/**
+ * The STAMPED origin line a COPIED mob carries (docs/17 row 248), trimmed and
+ * `undefined` when it carries none. THE one read of the field: the reference
+ * formatter and both exporters' stat boxes print this same string, so a copy
+ * names where its numbers came from in the same words everywhere.
+ */
+export function stampedSourceLine(entry: MonsterEntry): string | undefined {
+  const stamped = entry.sourceLine?.trim();
+  return stamped === undefined || stamped === '' ? undefined : stamped;
+}
+
 /** An `inline` entry carries its own stat block: no reference line at all. */
 const NO_REFERENCE: MonsterReference = { text: '', printed: '' };
 /** The separator between a roster line and its reference. */
@@ -365,8 +376,8 @@ export function rosterReferenceFor(
   // citation, so an `inline` copy must PRINT it — that arm used to print
   // nothing, which would silently drop "Bestiary p.132" from every converted
   // mob. An authored inline block has no stamp and keeps printing nothing.
-  const stamped = entry.sourceLine?.trim();
-  if (stamped !== undefined && stamped !== '') return plainReference(stamped);
+  const stamped = stampedSourceLine(entry);
+  if (stamped !== undefined) return plainReference(stamped);
   switch (entry.source.type) {
     case 'inline':
       // The stat box prints immediately below: an origin run here would

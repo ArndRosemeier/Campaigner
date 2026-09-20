@@ -289,7 +289,13 @@ describe('the citation survives every writer', () => {
       name: 'Goblin Boss',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: null,
+        sourceLine: 'Bestiary p.132',
+        originToken: `chunk:${chunkId}`,
+      },
     });
     const { db } = await import('@/db');
     const runsBefore = await db.runs.count();
@@ -306,13 +312,15 @@ describe('the citation survives every writer', () => {
     // The label names the KIND of row it is (docs/11 D4), so the refusal is
     // never mistaken for a generic "cannot change this".
     expect(result.reason).toContain('cast creature');
-    // Nothing ran, nothing was written: no run row, and the citation — which is
-    // what every encounter and battle resolves through — is byte-identical.
+    // Nothing ran, nothing was written: no run row, and the OWNED copy's
+    // provenance — what every encounter and battle resolves through — is
+    // byte-identical.
     expect(runEntityBatchMock).not.toHaveBeenCalled();
     expect(await db.runs.count()).toBe(runsBefore);
     const after = await getAnyArtifact(creature.id);
     if (after?.kind !== 'npc') throw new Error('the row is not an npc');
-    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
+    expect(after.data.originToken).toBe(`chunk:${chunkId}`);
+    expect(after.data.sourceLine).toBe('Bestiary p.132');
     expect(after.name).toBe('Goblin Boss');
   });
 

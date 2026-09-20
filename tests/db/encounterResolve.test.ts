@@ -10,6 +10,12 @@ import {
   rulebookDisplayTitle,
 } from '@/domain/encounterResolve';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
+import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import {
+  EMPTY_CREATURE_CITATION_REASON,
+  MISSING_CREATURE_CHUNK_REASON,
+  STATLESS_CREATURE_CHUNK_REASON,
+} from '@/domain/libraryCopy';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createPackBook, createRulebook, finalizePackBook } from '@/db/rulebookRepo';
@@ -113,124 +119,6 @@ describe('resolveMonsterEntryWithRepos', () => {
     expect(resolved.statBlock).toBeNull();
   });
 
-  it('resolves a rulebook chunk to "<book title> p. N"', async () => {
-    const book = await createRulebook({ title: 'Bestiary', system: 'dnd5e', filename: 'bestiary.pdf' });
-    const text = 'Troll stat block';
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId: book.id,
-        pageStart: 132,
-        pageEnd: 132,
-        chunkType: 'statblock',
-        headingPath: ['Troll'],
-        text,
-        statBlock: statBlock(),
-        contentHash: await sha256Hex(text),
-      }),
-    ]);
-    const chunks = await db.chunks.toArray();
-    void chunks;
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Troll',
-      count: 2,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('Bestiary p.132');
-    expect(resolved.statBlock?.level).toBe('3');
-  });
-
-  it('resolves a pack chunk to "<book title>: <creature name>" without a page', async () => {
-    // Pack chunks have no page numbers (12-BESTIARY-PACKS §4): the origin
-    // label names the creature from headingPath[0] instead.
-    const book = await createPackBook({ title: 'PF2e Bestiary', system: 'pathfinder2e', filename: 'bestiary.zip' });
-    await finalizePackBook(book.id, {
-      sourceId: 'foundry-pf2e',
-      license: 'Community Use Policy',
-      entriesImported: 1,
-      entriesSkipped: 0,
-      entriesFailed: 0,
-    });
-    const text = 'Goblin Warrior stat block';
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId: book.id,
-        pageStart: 1,
-        pageEnd: 1,
-        chunkType: 'statblock',
-        headingPath: ['Goblin Warrior'],
-        text,
-        statBlock: statBlock({ creatureType: 'humanoid' }),
-        contentHash: await sha256Hex(text),
-      }),
-    ]);
-    const chunks = await db.chunks.toArray();
-    void chunks;
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 4,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('PF2e Bestiary: Goblin Warrior');
-    expect(resolved.statBlock?.creatureType).toBe('humanoid');
-  });
-
-  it('resolves a dnd5e pack chunk to "<book title>: <creature name>" (M-C)', async () => {
-    const book = await createPackBook({ title: 'D&D 5e SRD Bestiary', system: 'dnd5e', filename: 'srd-bestiary.zip' });
-    await finalizePackBook(book.id, {
-      sourceId: 'foundry-dnd5e-srd',
-      license: 'CC-BY-4.0 attribution',
-      entriesImported: 1,
-      entriesSkipped: 0,
-      entriesFailed: 0,
-    });
-    const text = 'Ape stat block';
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId: book.id,
-        pageStart: 1,
-        pageEnd: 1,
-        chunkType: 'statblock',
-        headingPath: ['Ape'],
-        text,
-        statBlock: statBlock({ level: '1/2', creatureType: 'beast' }),
-        contentHash: await sha256Hex(text),
-      }),
-    ]);
-    const chunks = await db.chunks.toArray();
-    void chunks;
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Ape',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('D&D 5e SRD Bestiary: Ape');
-    expect(resolved.statBlock?.level).toBe('1/2');
-  });
-
-  it('degrades a dangling rulebook chunk to "missing ref"', async () => {
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Owlbear',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('missing ref (Owlbear)');
-    expect(resolved.statBlock).toBeNull();
-  });
-
   it('passes inline stat blocks through with origin "inline" and name-only entries to ""', async () => {
     const inline = await resolveMonsterEntryWithRepos({
       name: 'Bandit',
@@ -255,12 +143,13 @@ describe('resolveMonsterEntryWithRepos', () => {
 });
 
 /**
- * Content-identity fallback (chunk-hash-fallback arc): a rulebook citation
- * whose uuid misses but whose stamped hash hits byte-identical local
- * content resolves exactly like a uuid hit — stats and the LOCAL row's
- * label. Exact hash only: same creature under a new hash stays missing.
+ * Content-identity fallback (chunk-hash-fallback arc), now the COPY seam's own
+ * rule: `copyCreatureStats` tries the citation's uuid first and its stamped
+ * content hash second, so a re-ingest under a new row id still copies. Exact
+ * hash only — the same creature under a NEW hash is unresolved (the import dep
+ * dialog reports that drift).
  */
-describe('resolveMonsterEntry content-hash fallback', () => {
+describe('copyCreatureStats content-hash fallback', () => {
   beforeEach(clearDatabase);
 
   async function installPackChunk(
@@ -295,25 +184,19 @@ describe('resolveMonsterEntry content-hash fallback', () => {
     return { chunkId: chunk.id, contentHash };
   }
 
-  it('uuid-miss + hash-hit resolves the LOCAL chunk stats and pack label', async () => {
+  it('uuid-miss + hash-hit copies the LOCAL chunk stats and stamps the pack label', async () => {
     const text = 'Goblin Warrior stat block';
     const { contentHash } = await installPackChunk(text, 'Goblin Warrior', statBlock({ creatureType: 'humanoid' }));
-    void contentHash;
 
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 2,
-      notes: '',
-      treasure: '',
-      // A foreign install's uuid (re-ingest under a new row id) + the
-      // stamped content hash from citation birth.
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('Monster Core: Goblin Warrior');
-    expect(resolved.statBlock?.creatureType).toBe('humanoid');
+    // A foreign install's uuid (re-ingest under a new row id) + the stamped
+    // content hash from citation birth.
+    const copy = await copyCreatureStatsFromDb({ chunkId: newId(), contentHash }, 'Goblin Warrior');
+    if (copy.status !== 'copied') throw new Error('the hash fallback did not copy');
+    expect(copy.copy.sourceLine).toBe('Monster Core: Goblin Warrior');
+    expect(copy.copy.statBlock.creatureType).toBe('humanoid');
   });
 
-  it('uuid-miss + hash-hit resolves a PDF chunk with the LOCAL page label', async () => {
+  it('uuid-miss + hash-hit copies a PDF chunk with the LOCAL page label', async () => {
     const book = await createRulebook({ title: 'Bestiary', system: 'dnd5e', filename: 'bestiary.pdf' });
     const text = 'Troll stat block, local printing';
     const contentHash = await sha256Hex(text);
@@ -331,15 +214,10 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       }),
     ]);
 
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Troll',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('Bestiary p.77');
-    expect(resolved.statBlock?.level).toBe('3');
+    const copy = await copyCreatureStatsFromDb({ chunkId: newId(), contentHash }, 'Troll');
+    if (copy.status !== 'copied') throw new Error('the hash fallback did not copy');
+    expect(copy.copy.sourceLine).toBe('Bestiary p.77');
+    expect(copy.copy.statBlock.level).toBe('3');
   });
 
   it('prefers the statful chunk when several local chunks share one hash', async () => {
@@ -378,101 +256,37 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       }),
     ]);
 
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.statBlock?.creatureType).toBe('humanoid');
+    const copy = await copyCreatureStatsFromDb({ chunkId: newId(), contentHash }, 'Goblin Warrior');
+    if (copy.status !== 'copied') throw new Error('the statful chunk was not preferred');
+    expect(copy.copy.statBlock.creatureType).toBe('humanoid');
   });
 
-  it('hash-hit on a statless chunk stays missing', async () => {
+  it('a hash hit on a statless chunk is unresolved with the NAMED reason', async () => {
     const { contentHash } = await installPackChunk('Unparsed goblin text', 'Goblin Warrior', null);
-    void contentHash;
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
+    const copy = await copyCreatureStatsFromDb({ chunkId: newId(), contentHash }, 'Goblin Warrior');
+    expect(copy).toEqual({ status: 'unresolved', reason: STATLESS_CREATURE_CHUNK_REASON });
   });
 
-  it('uuid-miss + unknown hash stays missing', async () => {
+  it('a uuid-miss + unknown hash is unresolved (no silent empty copy)', async () => {
     await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
+    const copy = await copyCreatureStatsFromDb(
+      { chunkId: newId(), contentHash: await sha256Hex('other bytes') },
+      'Goblin Warrior',
+    );
+    expect(copy).toEqual({ status: 'unresolved', reason: MISSING_CREATURE_CHUNK_REASON });
   });
 
-  it('same creature under a new hash stays missing (L1 deferred, exact-only)', async () => {
+  it('the same creature under a NEW hash is unresolved (exact-only, L1 deferred)', async () => {
     const { contentHash } = await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
-    // Same creature re-ingested with revised bytes: the import dep dialog
-    // reports version drift, but the resolver stays exact-only.
     const revisedHash = await sha256Hex('Goblin Warrior stat block, revised printing');
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
+    const copy = await copyCreatureStatsFromDb({ chunkId: newId(), contentHash: revisedHash }, 'Goblin Warrior');
+    expect(copy).toEqual({ status: 'unresolved', reason: MISSING_CREATURE_CHUNK_REASON });
     expect(contentHash).not.toBe(revisedHash);
   });
 
-  it('uuid-miss with no stamped hash stays missing', async () => {
-    await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
-  });
-  it('reports WHAT is missing structurally, not only in the label (docs/17 row 155)', async () => {
-    await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    // The label and the structured reason are ONE fact: the banner reads the
-    // field, and a strand that recorded its book names the pack to install.
-    expect(resolved.origin).toBe('missing ref (Bog Zombie)');
-    expect(resolved.missingRef).toEqual({ creature: 'Bog Zombie', bookTitle: 'Monster Manual' });
-  });
-
-  it('reports NO pack for a citation written before the stamp — and never a guessed one', async () => {
-    await installPackChunk('Goblin Warrior stat block', 'Goblin Warrior', statBlock());
-
-    const resolved = await resolveMonsterEntryWithRepos({
-      name: 'Goblin Warrior',
-      count: 1,
-      notes: '',
-      treasure: '',
-      source: { type: 'none' as const },
-    });
-    expect(resolved.origin).toBe('missing ref (Goblin Warrior)');
-    expect(resolved.missingRef).toEqual({ creature: 'Goblin Warrior' });
-    expect(resolved.missingRef !== undefined && 'bookTitle' in resolved.missingRef).toBe(false);
+  it('a citation with neither key is unresolved by NAME (a dead pointer is loud)', async () => {
+    const copy = await copyCreatureStatsFromDb({}, 'Goblin Warrior');
+    expect(copy).toEqual({ status: 'unresolved', reason: EMPTY_CREATURE_CITATION_REASON });
   });
 });
 

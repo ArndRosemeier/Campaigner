@@ -39,9 +39,4 @@ it('backs up the global document and rejects corrupt restores before wiping', as
   manifest.data.ideaBoards = [{ ...board, document: 99 }];
   files['campaigner-backup.json'] = strToU8(JSON.stringify(manifest));
   await expect(importBackup(zipSync(files))).rejects.toThrow();
-  expect((await getIdeaBoard()).document).toContain('Travel plans');
-  delete manifest.data.ideaBoards;
-  files['campaigner-backup.json'] = strToU8(JSON.stringify(manifest));
-  await importBackup(zipSync(files));
-  expect(await db.ideaBoards.count()).toBe(0);
-});
+  expect((await getIdeaBoard()).document).toContain('Travel plans');});

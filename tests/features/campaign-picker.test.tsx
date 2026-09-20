@@ -16,16 +16,8 @@ import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { getCampaign } from '@/db/campaignRepo';
-import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
-import { putChunks } from '@/db/chunkRepo';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { db } from '@/db/db';
-import {
-  ruleChunkSchema,
-  statBlockSchema,
-  stampNewEntity,
-} from '@/domain';
-import { sha256Hex } from '@/lib/hash';
 import { buildCampaignExport } from '@/lib/exportImport';
 import { clearDatabase } from '../db/helpers';
 
@@ -123,57 +115,20 @@ describe('CampaignPickerPage import dependencies', () => {
   beforeEach(clearDatabase);
   afterEach(cleanup);
 
-  /** A campaign whose encounter cites a pack statblock — returned as JSON text. */
-  async function seedPackBackedExport(): Promise<{ json: string; campaignId: string }> {
+  /** An export whose encounter cites ANOTHER campaign's npc — the surviving
+   * always-blocking dependency (docs/17 row 261). */
+  async function seedExportWithUnmetRef(): Promise<{
+    json: string;
+    campaignId: string;
+    otherNpcId: string;
+  }> {
     const campaign = await createCampaign({ name: 'Dep source', system: 'pathfinder2e' });
-    const book = await createPackBook({
-      title: 'Monster Core',
-      system: 'pathfinder2e',
-      filename: 'monster-core.zip',
+    const otherCampaign = await createCampaign({ name: 'Other', system: 'pathfinder2e' });
+    const otherNpc = await createArtifact({
+      campaignId: otherCampaign.id,
+      kind: 'npc',
+      name: 'Vexra',
     });
-    await finalizePackBook(book.id, {
-      sourceId: 'foundry-pf2e',
-      license: 'Community Use Policy',
-      entriesImported: 120,
-      entriesSkipped: 3,
-      entriesFailed: 0,
-    });
-    const text = 'Goblin Warrior stat block';
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId: book.id,
-        pageStart: 1,
-        pageEnd: 1,
-        chunkType: 'statblock',
-        headingPath: ['Goblin Warrior'],
-        text,
-        statBlock: statBlockSchema.parse({
-          system: 'pathfinder2e',
-          level: '1',
-          size: 'Small',
-          creatureType: 'humanoid',
-          ac: 15,
-          acNote: '',
-          hp: 7,
-          hpFormula: '2d6',
-          speed: '25 ft.',
-          abilities: { str: 10, dex: 12, con: 10, int: 8, wis: 10, cha: 8 },
-          saves: '',
-          skills: '',
-          senses: '',
-          languages: '',
-          traits: [],
-          actions: [],
-          reactions: [],
-          legendary: [],
-          extras: {},
-        }),
-        contentHash: await sha256Hex(text),
-      }),
-    ]);
-    const [chunk] = await db.chunks.toArray();
-    if (chunk === undefined) throw new Error('chunk missing');
     await createArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
@@ -183,11 +138,11 @@ describe('CampaignPickerPage import dependencies', () => {
         levelHint: '1',
         monsters: [
           {
-            name: 'Goblin Warrior',
-            count: 2,
+            name: 'Vexra',
+            count: 1,
             notes: '',
             treasure: '',
-            source: { type: 'none' as const },
+            source: { type: 'npc-ref', artifactId: otherNpc.id },
           },
         ],
         terrain: '',
@@ -202,7 +157,7 @@ describe('CampaignPickerPage import dependencies', () => {
       } as never,
     });
     const exported = await buildCampaignExport(campaign.id);
-    return { json: JSON.stringify(exported), campaignId: campaign.id };
+    return { json: JSON.stringify(exported), campaignId: campaign.id, otherNpcId: otherNpc.id };
   }
 
   function uploadJson(json: string): void {
@@ -213,36 +168,35 @@ describe('CampaignPickerPage import dependencies', () => {
     fireEvent.change(input);
   }
 
-  it('opens the dep-summary dialog on unmet citations; Abort imports nothing', async () => {
+  it('opens the dep-summary dialog on an unmet NPC ref; Abort imports nothing', async () => {
     const user = userEvent.setup();
-    const { json } = await seedPackBackedExport();
-    // The book is gone here — every citation is an L0-miss.
-    await db.chunks.clear();
-    await db.rulebooks.clear();
+    const { json } = await seedExportWithUnmetRef();
     renderPicker();
     await screen.findByText('Dep source');
 
     uploadJson(json);
     const dialog = await screen.findByTestId('import-deps-dialog');
     expect(within(dialog).getByText('Import needs missing rulebook content')).toBeInTheDocument();
-    expect(within(dialog).getByTestId('import-deps-match-level')).toHaveTextContent('missing');
-    expect(within(dialog).getByText('Goblin ambush')).toBeInTheDocument();
-    expect(within(dialog).getByText('Goblin Warrior')).toBeInTheDocument();
+    // The SURVIVING blocking dependency: an npc-ref outside the export.
+    const unmet = within(dialog).getByTestId('import-deps-unmet');
+    expect(unmet).toHaveTextContent('Goblin ambush');
+    expect(unmet).toHaveTextContent('Vexra');
+    expect(unmet).toHaveTextContent('not-exported');
     // The resolve path names the Rules install surface explicitly + deep-links it.
     const rulesLink = within(dialog).getByTestId('import-deps-rules-link');
     expect(rulesLink.getAttribute('href')).toBe(ROUTES.rules);
     // ASCII quotes around 'missing ref' (no curly-quote mojibake).
     const description = within(dialog).getByText(/encounters below will show/).textContent;
     expect(description).toContain("'missing ref'");
-    expect(description).not.toContain('‘');
-    expect(description).not.toContain('’');
+    expect(description).not.toContain('\u2018');
+    expect(description).not.toContain('\u2019');
 
     await user.click(within(dialog).getByTestId('import-deps-abort'));
     await waitFor(() => {
       expect(screen.queryByTestId('import-deps-dialog')).toBeNull();
     });
-    // Abort-before-tx: the source campaign stands alone.
-    expect(await listCampaigns()).toHaveLength(1);
+    // Abort-before-tx: only the two SOURCE campaigns stand.
+    expect(await listCampaigns()).toHaveLength(2);
   });
 
 /**
@@ -313,9 +267,9 @@ describe('CampaignPickerPage import failure toasts', () => {
 
   it('Import anyway lands the campaign with `missing ref` encounters', async () => {
     const user = userEvent.setup();
-    const { json, campaignId } = await seedPackBackedExport();
-    await db.chunks.clear();
-    await db.rulebooks.clear();
+    const { json, campaignId, otherNpcId } = await seedExportWithUnmetRef();
+    // The cited row is GONE at import time (the owner's cross-machine case).
+    await db.artifacts.delete(otherNpcId);
     renderPicker();
     await screen.findByText('Dep source');
 
@@ -324,7 +278,7 @@ describe('CampaignPickerPage import failure toasts', () => {
     await user.click(within(dialog).getByTestId('import-deps-import-anyway'));
 
     await waitFor(async () => {
-      expect(await listCampaigns()).toHaveLength(2);
+      expect(await listCampaigns()).toHaveLength(3);
     });
     // Import-anyway follows the clean path: toast + navigation to the workspace.
     await screen.findByTestId('navigated-away');
@@ -343,7 +297,7 @@ describe('CampaignPickerPage import failure toasts', () => {
     if (first === undefined) throw new Error('imported roster entry missing');
     // Named, like every other missing-ref surface (docs/11 D9).
     expect((await resolveMonsterEntryWithRepos(first)).origin).toBe(
-      'missing ref (Goblin Warrior)',
+      'missing ref (Vexra)',
     );
   });
 });

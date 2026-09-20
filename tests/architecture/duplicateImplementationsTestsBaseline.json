@@ -1,14 +1,13 @@
 {
   "note": "DEBT, NOT A LICENCE. One entry per group the tripwire found in the test tree at base b712e8e, with a written reason; the notes on src/ apply unchanged. Folding a copy FORCES its entry out: tests/architecture/no-duplicate-implementations.test.ts reds BY NAME on any entry whose sites no longer match the tree (folded, renamed or moved), so a stale blessing cannot survive. Never add an entry to make a new copy green; baseline one only with a written reason and a named fold slice. FOLDING IS NOT DONE IN THIS SLICE: every entry is the measured debt this inventory declares.",
-  "scope": "Every tests/**/*.ts and tests/**/*.tsx file EXCEPT tests/fixtures/** — captured upstream documents and prompt goldens legitimately repeat, and that directory is excluded (the only exclusion; it is pinned as data by the test, never left silent). Floor: 75 normalized characters, the SAME floor as the src/ inventory, measured and kept (docs/17 row 212): the ladder DOWN only adds noise (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158) and the ladder UP would hide cheap folds a seam could carry (160 = 98 groups, 200 = 85, 300 = 53, 400 = 33 — while the 8-site `walk` scanner normalizes to 349 characters, `completedWith` to 105, `removeEventListener` to 102 and the 8-site `stripComments` to 84). See the test doc comment for the normalization and what the tripwire cannot see (paraphrases and bodies under the floor).",
+  "scope": "Every tests/**/*.ts and tests/**/*.tsx file EXCEPT tests/fixtures/** \u2014 captured upstream documents and prompt goldens legitimately repeat, and that directory is excluded (the only exclusion; it is pinned as data by the test, never left silent). Floor: 75 normalized characters, the SAME floor as the src/ inventory, measured and kept (docs/17 row 212): the ladder DOWN only adds noise (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158) and the ladder UP would hide cheap folds a seam could carry (160 = 98 groups, 200 = 85, 300 = 53, 400 = 33 \u2014 while the 8-site `walk` scanner normalizes to 349 characters, `completedWith` to 105, `removeEventListener` to 102 and the 8-site `stripComments` to 84). See the test doc comment for the normalization and what the tripwire cannot see (paraphrases and bodies under the floor).",
   "groups": [
     {
       "hash": "063f7540af0f9179",
-      "reason": "The same synchronous `walk` readdir scanner pasted into EIGHT source-scan tests (name-key-spaces, alias-merge-seam, cast-row-borrowed-stats-scan, encounter-map-offer-scan, entity-batch-creature-book, fileSlug, oneImage-seam, runNotCompletedReason); ONE `tests/helpers/sourceWalk.ts` can carry it — the clearest fold candidate in this inventory.",
+      "reason": "The same synchronous `walk` readdir scanner pasted into EIGHT source-scan tests (name-key-spaces, alias-merge-seam, cast-row-borrowed-stats-scan, encounter-map-offer-scan, entity-batch-creature-book, fileSlug, oneImage-seam, runNotCompletedReason); ONE `tests/helpers/sourceWalk.ts` can carry it \u2014 the clearest fold candidate in this inventory.",
       "sites": [
         "tests/domain/name-key-spaces.test.ts:walk",
         "tests/features/alias-merge-seam.test.ts:walk",
-        "tests/features/cast-row-borrowed-stats-scan.test.ts:walk",
         "tests/features/encounter-map-offer-scan.test.ts:walk",
         "tests/features/entity-batch-creature-book.test.ts:walk",
         "tests/lib/fileSlug.test.ts:walk",
@@ -278,7 +277,6 @@
       "sites": [
         "tests/domain/name-key-spaces.test.ts:srcFiles",
         "tests/features/alias-merge-seam.test.ts:srcFiles",
-        "tests/features/cast-row-borrowed-stats-scan.test.ts:srcFiles",
         "tests/features/encounter-map-offer-scan.test.ts:srcFiles",
         "tests/features/entity-batch-creature-book.test.ts:srcFiles",
         "tests/lib/fileSlug.test.ts:srcFiles",
@@ -312,7 +310,7 @@
     },
     {
       "hash": "480ed9c12381d100",
-      "reason": "Three canvas-chat option objects (`options` in canvas-chat-changes and canvas-chat-details, `previewOptions` in canvas-chat-turn-parity); the same shape as the `editorOptions` group — a shared canvas-chat fixture is a real fold candidate.",
+      "reason": "Three canvas-chat option objects (`options` in canvas-chat-changes and canvas-chat-details, `previewOptions` in canvas-chat-turn-parity); the same shape as the `editorOptions` group \u2014 a shared canvas-chat fixture is a real fold candidate.",
       "sites": [
         "tests/features/canvas-chat-changes.test.ts:options",
         "tests/features/canvas-chat-details.test.ts:options",
@@ -474,7 +472,7 @@
     },
     {
       "hash": "68d081baafc4d624",
-      "reason": "Two 947-character `complexLayoutFixture` layouts (encounterRepopulate, encounterVisionMap); same shape as the 912-character group above — a shared battle-map fixture is a real fold candidate.",
+      "reason": "Two 947-character `complexLayoutFixture` layouts (encounterRepopulate, encounterVisionMap); same shape as the 912-character group above \u2014 a shared battle-map fixture is a real fold candidate.",
       "sites": [
         "tests/llm/encounterRepopulate.test.ts:complexLayoutFixture",
         "tests/llm/encounterVisionMap.test.ts:complexLayoutFixture"
@@ -533,14 +531,6 @@
       ]
     },
     {
-      "hash": "724b8545c7aaceb1",
-      "reason": "Two pf2e level-1 stat-block fixtures (`fixtureStatBlock` in exportDependencies, `statBlock` in monster-source-citation); identical numbers make a shared stat-block fixture a fold candidate.",
-      "sites": [
-        "tests/domain/exportDependencies.test.ts:fixtureStatBlock",
-        "tests/features/monster-source-citation.test.tsx:statBlock"
-      ]
-    },
-    {
       "hash": "7385a46b6fdeee19",
       "reason": "Two `statBlock` dnd5e level-3 giant fixtures (bestiary-roster, roster); legitimate per-test scenario data, identical numbers make a shared fixture a fold candidate.",
       "sites": [
@@ -550,7 +540,7 @@
     },
     {
       "hash": "762fde5c4640dd77",
-      "reason": "Six `statBlock` dnd5e level-1 humanoid fixtures (battleRepo, deleteCampaignWorkspace, removeAllGeneratedContent, battle-surface, battle-token-portrait, ipad-overscroll); the most-repeated stat-block fixture — a shared `tests/helpers/statBlocks.ts` is a real fold candidate.",
+      "reason": "Six `statBlock` dnd5e level-1 humanoid fixtures (battleRepo, deleteCampaignWorkspace, removeAllGeneratedContent, battle-surface, battle-token-portrait, ipad-overscroll); the most-repeated stat-block fixture \u2014 a shared `tests/helpers/statBlocks.ts` is a real fold candidate.",
       "sites": [
         "tests/db/battleRepo.test.ts:statBlock",
         "tests/db/deleteCampaignWorkspace.test.ts:statBlock",

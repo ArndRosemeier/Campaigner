@@ -86,13 +86,13 @@ describe('one battle per ENCOUNTER (SOURCE SCAN)', () => {
       'src/features/play/run-battle.tsx',
     ]);
     // The dropped Dexie uniqueness: a module may hold one board per encounter.
-    // The historical version blocks keep their own (immutable) schemas — the
-    // file's own rule — so this pins the LIVE v25 shape; the runtime half (two
-    // rows in one module, both resolving by encounter) is
-    // tests/db/migration.test.ts.
+    // The clean cut collapsed every historical version block into ONE
+    // `version(31)` (docs/17 row 278), so the LIVE shape is pinned by the SINGLE
+    // declaration and its store line; the runtime half (two rows in one module,
+    // both resolving by encounter) is `tests/db/battleSeed.test.tsx`.
     const db = readFileSync(join(ROOT, 'src/db/db.ts'), 'utf8');
     expect(db).toContain("battles: 'id, campaignId, moduleId, encounterArtifactId'");
-    expect(db).toContain('this.version(25)');
+    expect(db).toContain('.version(DECLARED_DB_VERSION)');
   });
 
   it('leaves no module-wide Battle table entry anywhere', () => {

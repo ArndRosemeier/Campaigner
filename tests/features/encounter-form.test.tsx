@@ -58,7 +58,7 @@ function statBlock(system: GameSystem = 'dnd5e'): StatBlock {
 describe('encounter form monster sources', () => {
   beforeEach(clearDatabase);
 
-  it('resolves NPC links and rulebook refs, flagging dangling ones', async () => {
+  it('resolves NPC links, flagging dangling ones', async () => {
     const campaign = await createCampaign({ name: 'C', system: 'dnd5e' });
     const npc = await createArtifact({
       campaignId: campaign.id,
@@ -75,7 +75,13 @@ describe('encounter form monster sources', () => {
       levelHint: '5',
       monsters: [
         { name: 'Vexra', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } },
-        { name: 'Ghost', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
+        {
+          name: 'Ghost',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'npc-ref', artifactId: '00000000-0000-4000-8000-0000000000aa' },
+        },
       ],
       terrain: '',
       tactics: '',
@@ -103,9 +109,9 @@ describe('encounter form monster sources', () => {
     // Vexra` for a row this surface can cross-reference — instead of composing
     // its own origin badge.
     await screen.findByText(/— see Vexra/);
-    // Dangling rulebook chunk → the NAMED reason, in the panel's line AND in
-    // the compact warning badge (`missing ref (Ghost)`, docs/11 D9), never a
-    // crash and never an empty row.
+    // A row the surface cannot resolve is NAMED (`missing ref (Ghost)`, docs/11
+    // D9), never a crash and never an empty row. The retired `rulebook` citation
+    // arm (docs/17 row 278) is gone; a dangling `npc-ref` is the live shape.
     await screen.findByText(/— missing ref \(Ghost\)/);
     await screen.findByText('missing ref');
     expect(await screen.findByText('Ghost')).toBeInTheDocument();

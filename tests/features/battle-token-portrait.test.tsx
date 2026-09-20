@@ -249,6 +249,8 @@ async function seedCreatureChunk(creatureName: string, text: string): Promise<st
 
 async function seedRulebookBattle(): Promise<{ moduleId: string; chunkId: string }> {
   const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+  const chunk = await db.chunks.get(chunkId);
+  if (chunk?.statBlock == null) throw new Error('the fixture chunk carries no block');
   const encounter = await createArtifact({
     campaignId,
     kind: 'encounter',
@@ -256,7 +258,19 @@ async function seedRulebookBattle(): Promise<{ moduleId: string; chunkId: string
     data: {
       difficulty: 'medium',
       levelHint: '1',
-      monsters: [{ name: 'Goblin Boss', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
+      // A COPIED library mob (docs/17 row 255a): it owns the block, so the
+      // battle card answers with the pack UNINSTALLED.
+      monsters: [
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'inline' as const, statBlock: chunk.statBlock },
+          sourceLine: 'Bestiary p.1',
+          originToken: `chunk:${chunkId}`,
+        },
+      ],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -370,15 +384,22 @@ describe('battle-card mob portrait action', () => {
     await waitFor(() => {
       expect(enqueueSingleMock).toHaveBeenCalledTimes(1);
     });
-    // NO artifactId: a library creature has no artifact to illustrate, so the
-    // target names the identity and the campaign — the token's `artifactId` is
-    // null by design and reading it here would be reading a retired field.
-    expect(enqueueSingleMock).toHaveBeenCalledWith({
-      campaignId,
-      creatureKey: libraryCreatureKey(chunkId),
-      chunkId,
-      name: 'Goblin Boss',
-    });
+    // NO artifactId: the token's `artifactId` is a synthetic seed-row id that
+    // names no artifact. A COPIED mob grounds on its OWN block (docs/17 row
+    // 269), so the job carries `statBlock` — the copy — and no library chunkId.
+    expect(enqueueSingleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId,
+        creatureKey: libraryCreatureKey(chunkId),
+        name: 'Goblin Boss',
+      }),
+    );
+    const enqueued = (enqueueSingleMock.mock.calls[0] as unknown[])[0] as {
+      statBlock?: { hp?: number };
+      chunkId?: unknown;
+    };
+    expect(enqueued.statBlock?.hp).toBe(59);
+    expect(enqueued.chunkId).toBeUndefined();
     // The token identifies its creature by `creatureKey`, and its `artifactId`
     // is a SYNTHETIC seed-row id (db/battleSeed) that names no artifact at all —
     // so the old "hang the portrait on the token's artifact" assertion was
@@ -470,7 +491,7 @@ describe('battle-card mob portrait action', () => {
     await flushAsyncUpdates();
   });
 
-  it('imaged rulebook mob offers Regenerate (never Generate); Confirm regenerates with the canonical-republish toasts', async () => {
+  it('imaged copied mob offers Regenerate (never Generate); Confirm regenerates locally', async () => {
     const { moduleId, chunkId } = await seedRulebookBattle();
     // Seed the portrait through the production seam first, so regen republishes
     // fresh bytes (gen-1 → gen-2).
@@ -497,22 +518,22 @@ describe('battle-card mob portrait action', () => {
     await waitFor(() => {
       expect(regenerateSingleMock).toHaveBeenCalledTimes(1);
     });
-    expect(regenerateSingleMock).toHaveBeenCalledWith({
-      campaignId,
-      creatureKey: libraryCreatureKey(chunkId),
-      chunkId,
-      name: 'Goblin Boss',
-    });
+    expect(regenerateSingleMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        campaignId,
+        creatureKey: libraryCreatureKey(chunkId),
+        name: 'Goblin Boss',
+      }),
+    );
+    const regenerated = (regenerateSingleMock.mock.calls[0] as unknown[])[0] as {
+      statBlock?: { hp?: number };
+      chunkId?: unknown;
+    };
+    expect(regenerated.statBlock?.hp).toBe(59);
+    expect(regenerated.chunkId).toBeUndefined();
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         'Regenerating portrait for "Goblin Boss" — the existing cover is replaced',
-      );
-    });
-    // Canonical citation → the loud shared-consequence toast, SAME copy as
-    // the editor section.
-    await waitFor(() => {
-      expect(toastSuccessMock).toHaveBeenCalledWith(
-        'Shared portrait republished for "Goblin Boss" — future portraits in every campaign use the new art; existing covers elsewhere keep theirs',
       );
     });
     // Fresh bytes replaced the old portrait on the campaign's presentation row.

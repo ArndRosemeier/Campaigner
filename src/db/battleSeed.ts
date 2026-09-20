@@ -163,6 +163,11 @@ export async function expandRosterEntries(
   options: RosterExpansionOptions,
 ): Promise<RosterExpansion> {
   const seedFighters: SeedFighter[] = [];
+  // COPIED library mobs (docs/17 row 255a): ONE frozen seed row per creature
+  // IDENTITY within one expansion, shared by every instance and every roster
+  // entry that copies the same creature — the surviving half of the rule the
+  // deleted `rulebook` arm carried, now keyed on the copy's opaque token.
+  const copyFighters = new Map<string, Id>();
   const statless: string[] = [];
   const tokens: BattleToken[] = [];
   for (const [monsterIndex, entry] of entries.entries()) {
@@ -230,25 +235,41 @@ export async function expandRosterEntries(
         // freezing here; an authored npc keeps resolving through its row, so a
         // later edit still reaches the table. The artifact must still NEVER
         // store current HP.
+      } else if (entry.originToken !== undefined && entry.originToken.trim() !== '' && identity !== null) {
+        // A COPIED library mob (docs/17 row 255a/255b): the row owns the
+        // library's bytes and an opaque `chunk:<id>` token, so ONE frozen seed
+        // row per IDENTITY carries them and every instance/entry that copied the
+        // same creature resolves through it — exactly what the deleted
+        // `rulebook` arm did, now keyed on the copy.
+        const known = copyFighters.get(identity.key);
+        if (known === undefined) {
+          artifactId = newId();
+          copyFighters.set(identity.key, artifactId);
+          seedFighters.push({
+            id: artifactId,
+            name: entry.name,
+            maxHp,
+            initiativeBonus: bonus,
+            creatureKey: identity.key,
+            statBlock,
+            originLabel: resolved.origin,
+          });
+        } else {
+          artifactId = known;
+        }
       } else {
-        // A mob with no artifact of its own: freeze the resolved stats onto the
-        // battle row under a synthetic per-instance id and key their portrait on
-        // the content identity (docs/11 D5) so the invented mob still gets a
-        // look. A COPIED library mob is the exception (docs/17 row 255a): it
-        // carries an opaque `chunk:<id>` origin token, which is its stable
-        // creature identity, so the frozen row keeps it.
+        // An INVENTED mob (an authored inline block or a name-only entry) has no
+        // stable creature identity: freeze the resolved stats onto a per-instance
+        // synthetic row and key its portrait on the content identity (docs/11
+        // D5) so the invented mob still gets a look.
         artifactId = newId();
         seedFighters.push({
           id: artifactId,
           name: label,
           maxHp,
           initiativeBonus: bonus,
-          // The copy's own bytes are frozen on the row (docs/17 row 255b).
           statBlock,
           originLabel: resolved.origin,
-          ...(entry.originToken === undefined || identity === null
-            ? {}
-            : { creatureKey: identity.key }),
         });
       }
       // tokenFromFighter gives a fresh NPC instance max HP and empty

@@ -452,7 +452,7 @@ describe('empty-content rejection (loud, at every layer)', () => {
  * the distinction the old guard was blamed for).
  */
 describe('creature-row refill guard (the write chokepoint)', () => {
-  it('refills a CAST creature row\u2019s prose and cannot touch its citation', async () => {
+  it('refills a CAST creature row\u2019s prose and cannot touch its owned copy', async () => {
     const { campaign } = await seedCampaignOnly();
     const persona = await seedPersona();
     const chunkId = newId();
@@ -465,7 +465,13 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       links: [],
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: NPC_STATBLOCK,
+        sourceLine: 'Bestiary p.132',
+        originToken: `chunk:${chunkId}`,
+      },
     });
     const revisionsBefore = await listRevisions(creature.id);
     chatMock.mockResolvedValue({
@@ -487,11 +493,10 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
     expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
     expect(after.data.personality).toBe(NPC_DRAFT.personality);
-    // THE CITATION IS BYTE-IDENTICAL — the field the writer is not given.
-    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
-    // …and no stat block was authored onto it: the numbers come from the
-    // library, and writing one here would be the schema conflict below.
-    expect(after.data.statBlock).toBeNull();
+    // THE OWNED COPY IS BYTE-IDENTICAL — the fields the writer is not given.
+    expect(after.data.statBlock).toEqual(NPC_STATBLOCK);
+    expect(after.data.sourceLine).toBe('Bestiary p.132');
+    expect(after.data.originToken).toBe(`chunk:${chunkId}`);
     // The properties the owner put on the row survive the merge untouched.
     expect(after.aliases).toEqual(['Goblin']);
     expect(after.tags).toEqual(['bestiary', 'goblinoid']);
@@ -504,7 +509,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     expect(chatMock).toHaveBeenCalled();
   }, 30000);
 
-  it('a module-owned cast row behaves identically — the citation is field-protected, not module-gated', async () => {
+  it('a module-owned cast row behaves identically — the copy is field-protected, not module-gated', async () => {
     const { campaign, moduleId } = await seed();
     const persona = await seedPersona();
     const chunkId = newId();
@@ -515,7 +520,13 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       name: 'Cinder Bat',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: NPC_STATBLOCK,
+        sourceLine: 'Bestiary p.132',
+        originToken: `chunk:${chunkId}`,
+      },
     });
     chatMock.mockResolvedValue({
       text: JSON.stringify({ ...NPC_DRAFT, name: 'Cinder Bat' }),
@@ -533,8 +544,9 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     expect(after.name).toBe('Cinder Bat');
     expect(after.summary).toBe(NPC_DRAFT.summary);
     expect(after.moduleId).toBe(moduleId);
-    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
-    expect(after.data.statBlock).toBeNull();
+    expect(after.data.statBlock).toEqual(NPC_STATBLOCK);
+    expect(after.data.sourceLine).toBe('Bestiary p.132');
+    expect(after.data.originToken).toBe(`chunk:${chunkId}`);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 

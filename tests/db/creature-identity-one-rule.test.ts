@@ -12,7 +12,6 @@ import { createModule as saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { db } from '@/db/db';
 import {
-  contentCreatureKey,
   createModule,
   libraryCreatureKey,
   rosterEntryCreatureIdentity,
@@ -184,16 +183,17 @@ describe('every roster shape seeds the key the portrait lane names', () => {
     }
   });
 
-  it('a statless row carries the SAME key as the statful row of the same citation', async () => {
-    // The citation names a chunk the library does not hold: the entry seeds a
-    // token without stats — and that token still carries the creature identity
-    // its citation names, which is the key the batch would write a portrait
-    // under for the same citation.
+  it('a BLOCKLESS copied row keeps the identity its origin token names', async () => {
+    // A copy whose block is absent (a malformed row) still carries the opaque
+    // identity token — so it seeds a statless token under the SAME key the
+    // portrait lane answers for the creature (docs/17 row 248/255b). The
+    // identity is DATA, not a library read.
     const moduleId = await newModule('Statless');
     const { tokens, encounters } = await seedAndRead(moduleId, [
       {
         name: 'Ghost Lumberjack', count: 1, notes: '', treasure: '',
         source: { type: 'none' as const },
+        originToken: libraryCreatureKey(DEAD_CHUNK_ID),
       },
     ]);
     const entry = encounters[0];
@@ -202,57 +202,51 @@ describe('every roster shape seeds the key the portrait lane names', () => {
     expect(tokens[0]?.creatureKey).toBe(rosterEntryCreatureIdentity(entry, undefined)?.key);
   });
 
-  it('a HEALED citation keys on the citation the roster row names — the same key the batch writes under', async () => {
-    // A re-ingest landed the same bytes under a new row id: the stats resolve
-    // through the content hash, and the portrait key stays the key the roster
-    // row itself spells (`chunk:<the cited uuid>`) — the identity the batch's
-    // own route answers, so the token and the portrait row cannot disagree.
+  it('a copied row keys on its own origin token — the same key the batch writes under', async () => {
+    // THE surviving rule: the token IS the identity, so the token, the roster
+    // predicate and the portrait route cannot disagree — with the pack present
+    // or absent, because nothing re-derives it from a library read.
     const liveChunkId = await seedChunk('Zombie', ZOMBIE_TEXT);
-    expect(liveChunkId).not.toBe(DEAD_CHUNK_ID);
     const moduleId = await newModule('Healed');
     const { tokens, encounters } = await seedAndRead(moduleId, [
       {
         name: 'Zombie', count: 1, notes: '', treasure: '',
-        source: { type: 'none' as const },
+        source: { type: 'inline', statBlock: statBlock() },
+        sourceLine: 'Monster Core p.1',
+        originToken: libraryCreatureKey(liveChunkId),
       },
     ]);
     const entry = encounters[0];
     if (entry === undefined) throw new Error('roster row missing');
-    // The stats DID heal (the token has HP through the resolved row).
     expect(tokens[0]?.label).toBe('Zombie');
-    expect(tokens[0]?.creatureKey).toBe(libraryCreatureKey(DEAD_CHUNK_ID));
+    expect(tokens[0]?.creatureKey).toBe(libraryCreatureKey(liveChunkId));
     expect(tokens[0]?.creatureKey).toBe(rosterEntryCreatureIdentity(entry, undefined)?.key);
     expect(rosterParticipantRoute(entry, undefined)).toMatchObject({
       lane: 'creature',
-      creatureKey: libraryCreatureKey(DEAD_CHUNK_ID),
+      creatureKey: libraryCreatureKey(liveChunkId),
     });
   });
 
-  it('a cast creature whose citation carries only a content hash keys on its own row, both sides', async () => {
+  it('a cast creature whose citation names only a content hash HEALS on its resolved row, both sides', async () => {
     const chunkId = await seedChunk('Zombie', ZOMBIE_TEXT);
     const moduleId = await newModule('Hash only');
+    // The citation carries no uuid at all: the ONE copy seam resolves it
+    // through the exact content hash and stamps the RESOLVED row's token.
     const cast = await castCreatureAsNpc({
       campaignId, moduleId,
-      citation: { chunkId, contentHash: await sha256Hex(ZOMBIE_TEXT), creatureName: 'Zombie' },
+      citation: { contentHash: await sha256Hex(ZOMBIE_TEXT), creatureName: 'Zombie' },
       name: 'Gustav the Zombie', prose: { body: 'The gardener, risen.' },
-    });
-    // The stranded shape: a ref with no chunk uuid at all.
-    await db.artifacts.update(cast.artifactId, {
-      data: {
-        appearance: '', personality: '', statBlock: null,
-        originToken: 'chunk:legacy-ref',
-      },
     });
     const { tokens, encounters } = await seedAndRead(moduleId, [
       { name: 'Gustav the Zombie', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: cast.artifactId } },
     ]);
     const entry = encounters[0];
     if (entry === undefined) throw new Error('roster row missing');
-    expect(tokens[0]?.creatureKey).toBe(contentCreatureKey('Gustav the Zombie', undefined));
+    expect(tokens[0]?.creatureKey).toBe(libraryCreatureKey(chunkId));
     expect(tokens[0]?.creatureKey).toBe(rosterEntryCreatureIdentity(entry, await artifactOf(entry))?.key);
     expect(rosterParticipantRoute(entry, await artifactOf(entry))).toMatchObject({
       lane: 'creature',
-      creatureKey: contentCreatureKey('Gustav the Zombie', undefined),
+      creatureKey: libraryCreatureKey(chunkId),
     });
   });
 });

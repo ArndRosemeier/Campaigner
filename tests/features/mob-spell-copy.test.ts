@@ -356,7 +356,11 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
             count: 1,
             notes: '',
             treasure: '',
-            source: { type: 'none' as const },
+            // A COPIED library caster (docs/17 row 255a): the row owns the
+            // block; the frozen seed row carries it to the battle card.
+            source: { type: 'inline' as const, statBlock: libraryStatBlock() },
+            sourceLine: 'Pathfinder Player Core p.12',
+            originToken: `chunk:${chunkId}`,
           },
         ],
         terrain: '',

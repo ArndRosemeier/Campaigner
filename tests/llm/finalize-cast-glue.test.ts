@@ -9,7 +9,6 @@ import {
   createArtifact,
   getArtifact,
   listArtifactsByCampaign,
-  updateArtifact,
 } from '@/db/artifactRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { saveModule } from '@/db/moduleRepo';
@@ -168,8 +167,9 @@ interface OwnerWorld {
 /**
  * Seeds the owner's shape: a campaign, a module whose text links the encounter
  * AND an ALIASED cast member, the library chunk the cast borrows from, and the
- * cast creature npc row — `statBlock: null` + `creatureRef`, the exact pair
- * `db/creatureRepo.castCreatureAsNpc` writes in ONE literal.
+ * cast creature npc row — the library's block COPIED onto it with the stamped
+ * origin line and the opaque identity token, the shape
+ * `db/creatureRepo.castCreatureAsNpc` writes (docs/17 row 255b).
  */
 async function seedOwnerWorld(): Promise<OwnerWorld> {
   const campaign = await createCampaign({ name: 'Ein delikates Problem', system: 'dnd5e' });
@@ -237,8 +237,9 @@ async function seedOwnerWorld(): Promise<OwnerWorld> {
     data: {
       appearance: '',
       personality: '',
-      statBlock: null,
-      originToken: 'chunk:legacy-ref',
+      statBlock: BORROWED_STATS,
+      sourceLine: 'Bestiary p.132',
+      originToken: `chunk:${chunkId}`,
     },
   });
   const persona = createPersona({
@@ -391,17 +392,17 @@ describe('a roster monster the cast row answers (docs/17 row 137)', () => {
     expect(monster.name).toBe(CAST_NAME);
     expect(monster.source).toEqual({ type: 'npc-ref', artifactId: world.castRowId });
 
-    // The cast row is UNCHANGED, byte for byte: the citation still stands and
-    // no block was authored beside it.
+    // The cast row is UNCHANGED, byte for byte: its OWNED copy still stands and
+    // no second block was authored onto it.
     const after = await getArtifact(world.castRowId);
     expect(after).toEqual(before);
-    expect(after?.kind === 'npc' ? after.data.statBlock : 'not-npc').toBeNull();
-    expect(after?.kind === 'npc' ? (after.data as { creatureRef?: unknown }).creatureRef : undefined).toEqual(
-      before.kind === 'npc' ? (before.data as { creatureRef?: unknown }).creatureRef : undefined,
+    expect(after?.kind === 'npc' ? after.data.statBlock : 'not-npc').toEqual(BORROWED_STATS);
+    expect(after?.kind === 'npc' ? after.data.originToken : undefined).toEqual(
+      before.kind === 'npc' ? before.data.originToken : undefined,
     );
 
-    // Nothing is lost: the roster entry renders the LIBRARY's own numbers,
-    // through the ONE derived-stats path, with the derivation disclosed.
+    // Nothing is lost: the roster entry renders the row's COPY, through the
+    // ONE resolution path, with the derivation disclosed.
     const entry = encounter.kind === 'encounter' ? encounter.data.monsters[0] : undefined;
     if (entry === undefined) throw new Error('no roster entry to resolve');
     const resolved = await resolveMonsterEntryWithRepos(entry);
@@ -479,22 +480,5 @@ describe('the neighbours the guard must not break', () => {
       (artifact) => artifact.kind === 'npc' && artifact.name === 'Mira',
     );
     expect(named).toHaveLength(1);
-  });
-});
-
-describe('the schema refusal is still the backstop it always was', () => {
-  it('still refuses the pair if anything else ever constructs it, writing nothing', async () => {
-    const world = await seedOwnerWorld();
-    const before = await getArtifact(world.castRowId);
-    if (before?.kind !== 'npc') throw new Error('the cast row is missing');
-    await expect(
-      updateArtifact(
-        world.castRowId,
-        { data: { ...before.data, statBlock: AUTHORED_STATS } },
-        { source: 'persona' },
-      ),
-    ).rejects.toThrow(/an npc carries either an authored stat block or a library creatureRef/);
-    // The refusal precedes the write: the row is byte-identical.
-    expect(await getArtifact(world.castRowId)).toEqual(before);
   });
 });

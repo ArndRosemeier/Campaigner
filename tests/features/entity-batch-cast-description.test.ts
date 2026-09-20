@@ -277,7 +277,8 @@ async function seedModule(partMarkdown: string): Promise<{
  * `creatureRef`; the one-representation model says a core item is only ever
  * copied, so the pointer is gone.) */
 function expectCopiedCreature(row: NpcArtifact): void {
-  expect((row.data as { originToken?: unknown }).originToken).toBeUndefined();
+  // The row OWNS the copy (docs/17 row 255b) and mints no pointer.
+  expect((row.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
   expect(row.data.statBlock).toEqual(STAT_BLOCK);
   expect(row.data.sourceLine).toBe('Bestiary p.316');
   expect(row.data.originToken).toBe(`chunk:${CHUNK_ID}`);

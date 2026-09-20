@@ -75,7 +75,6 @@ const SEAM_PATH = join(ROOT, 'src/domain/libraryCreature.ts');
 const SEAM = 'src/domain/libraryCreature.ts';
 const POOL_SEAM = 'src/db/creatureRepo.ts';
 const LIVE_CALLER = 'src/features/modules/entity-batch.ts';
-const TX_CALLER = 'src/db/mobCopyRepair.ts';
 
 describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
   it('filters the pool by the one comparison in exactly one file, the seam', () => {
@@ -95,7 +94,6 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
   it('builds the citation identity in the seam and nowhere else in the cast lanes', () => {
     expect(needleCount(join(ROOT, SEAM), /contentIdentityFor\(/g)).toBe(1);
     expect(needleCount(join(ROOT, LIVE_CALLER), /contentIdentityFor\(/g)).toBe(0);
-    expect(needleCount(join(ROOT, TX_CALLER), /contentIdentityFor\(/g)).toBe(0);
   });
 
   it('routes the live cast through the seam and keeps the pool derivation single-site', () => {
@@ -108,10 +106,8 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
     // derivation instead of filtering and sorting a second time.
     expect(needleCount(join(ROOT, POOL_SEAM), /libraryCreaturePool\(/g)).toBe(1);
     expect(readFileSync(join(ROOT, POOL_SEAM), 'utf8')).not.toContain('creatures.sort(');
-    // The migration that runs inside the upgrade transaction spells NO name
-    // match of its own — a second algorithm there is the defect this pin
-    // exists to catch.
-    expect(needleCount(join(ROOT, TX_CALLER), /sameCreatureName/g)).toBe(0);
-    expect(needleCount(join(ROOT, TX_CALLER), /creatureLibraryName\(/g)).toBe(0);
+    // The migration that ran inside the upgrade transaction — and spelled no
+    // name match of its own — was deleted by the clean cut (docs/17 row 278),
+    // so the tx-caller arm of this pin has no subject left.
   });
 });

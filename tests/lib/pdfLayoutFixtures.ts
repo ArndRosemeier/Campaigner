@@ -244,7 +244,11 @@ export async function pdfLayoutLargeFixture(): Promise<LayoutFixture> {
           count: 1,
           notes: '',
           treasure: '',
-          source: { type: 'none' as const },
+          // A COPIED library mob (docs/17 row 255a): it owns the block and the
+          // stamped origin line the page model must preserve like any other run.
+          source: { type: 'inline' as const, statBlock: layoutCitedStatBlock() },
+          sourceLine: 'Monster Core: Cave Fisher',
+          originToken: 'chunk:00000000-0000-4000-8000-0000000000cf',
         },
       ],
       terrain: 'wet planks',

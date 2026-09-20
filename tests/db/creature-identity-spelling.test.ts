@@ -108,8 +108,12 @@ describe('the deleted roster spelling is absent', () => {
     // shapes it must cover.
     const creature = read('src/domain/creature.ts');
     expect(creature).toContain('export function rosterEntryCreatureIdentity(');
-    expect(creature).toContain("if (source.type === 'rulebook')");
+    // AMENDED (docs/17 row 278): the `rulebook` arm this needle named was
+    // DELETED with the clean cut; the surviving arms are the copy's opaque
+    // origin token (checked FIRST) and the `npc-ref` link.
+    expect(creature).toContain('const token = entry.originToken?.trim()');
     expect(creature).toContain("if (source.type === 'npc-ref')");
+    expect(creature).not.toContain("source.type === 'rulebook'");
   });
 
   it('the presentation-row table lost its dead reader with the same commit', () => {

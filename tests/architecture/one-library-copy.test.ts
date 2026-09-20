@@ -65,15 +65,15 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
     // The live wrapper is the one DB-bound door, and it delegates rather than
     // resolving for itself.
     expect(filesWith('creatureOriginLabel(')).toContain('src/domain/libraryCopy.ts');
-    // The declared callers: the migration's backfill (twice — roster + NPC), the
-    // CAST path (`db/creatureRepo.castCreatureAsNpc`, which owns
-    // `creatureLookups` and therefore calls the PURE seam directly — importing
-    // the live wrapper from the module the wrapper imports would be a cycle),
-    // and the three ROSTER write paths, each through the live wrapper.
+    // The declared callers, post clean cut (docs/17 row 278): the CAST path
+    // (`db/creatureRepo.castCreatureAsNpc`, which owns `creatureLookups` and
+    // therefore calls the PURE seam directly — importing the live wrapper from
+    // the module the wrapper imports would be a cycle) and the three ROSTER
+    // write paths, each through the live wrapper. The migration's backfill was
+    // deleted with the older-shape layer.
     expect(filesWith('copyCreatureStats(')).toEqual([
       'src/db/creatureRepo.ts',
       'src/db/libraryCopy.ts',
-      'src/db/mobCopyRepair.ts',
       'src/domain/libraryCopy.ts',
     ]);
     expect(filesWith('copyCreatureStatsFromDb(')).toEqual([
@@ -136,10 +136,9 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
       'src/db/libraryCopy.ts',
       'src/db/spellRepo.ts',
     ]);
-    // The migration's transaction-backed spell arm reuses the ONE corpus
-    // projection instead of reading stored spell rows its own way.
+    // Every corpus reader goes through the ONE projection (the migration's
+    // transaction-backed arm was deleted with the older-shape layer).
     expect(filesWith('spellCorpusEntries(')).toEqual([
-      'src/db/mobCopyRepair.ts',
       'src/db/spellRepo.ts',
       'src/domain/spellData.ts',
       'src/features/rules/hooks.ts',
@@ -199,16 +198,15 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
     expect(filesWith('export async function adoptLibraryArtifacts(')).toEqual([
       'src/db/libraryAdopt.ts',
     ]);
-    // The FOUR declared callers: the v26 upgrade body, the start-up retry, the
-    // live write path (which adopts BEFORE a reference is born), and the IMPORT
-    // path (docs/17 row 256 — a restored file's library references are adopted
-    // after its transaction, so no restored campaign keeps a library pointer) —
-    // no fifth copy of the operation anywhere.
+    // The declared callers after the clean cut (docs/17 row 278): the live
+    // write path (which adopts BEFORE a reference is born) and the IMPORT path
+    // (docs/17 row 256 — a restored file's library references are adopted after
+    // its transaction, so no restored campaign keeps a library pointer). The
+    // v26 upgrade body and the start-up retry were deleted with the migration
+    // layer — no fourth copy of the operation anywhere.
     expect(filesWith('adoptLibraryArtifacts(')).toEqual([
-      'src/db/db.ts',
       'src/db/libraryAdopt.ts',
       'src/db/libraryAdoptLive.ts',
-      'src/db/libraryAdoptRetry.ts',
       'src/lib/exportImport.ts',
     ]);
     // The upgrade body and the retry are the ONLY callers of the copy half — no
@@ -278,9 +276,7 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
     // THE SAME TRANSACTION: the seam reaches `battles` through the caller's tx,
     // so the copy and the battle repoint cannot land apart.
     expect(CODE['src/db/libraryAdopt.ts']).toContain("tx.table('battles')");
-    for (const path of ['src/db/libraryAdoptRetry.ts', 'src/db/libraryAdoptLive.ts']) {
-      expect(CODE[path]).toContain('db.battles');
-    }
+    expect(CODE['src/db/libraryAdoptLive.ts']).toContain('db.battles');
   });
 
   /**

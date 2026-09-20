@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact } from '@/db/artifactRepo';
+import { getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { getImage, listImagesByCampaign } from '@/db/imageRepo';
@@ -20,8 +20,6 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
-  type Artifact,
-  type Id,
   type Persona,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
@@ -43,6 +41,7 @@ import {
 } from '@/features/lab/experiments/labeledDungeon';
 import { repopulateEncounter } from '@/features/campaign/encounterRegen';
 import { clearDatabase } from '../db/helpers';
+import { seedComplexEncounterTarget } from '../helpers/visionComplexTarget';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -600,8 +599,8 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
 
   it('keeps repopulation path-independent under a vision setting (map + rooms preserved)', async () => {
     const { campaign } = await setup('vision');
-    const goblinChunkId = await seedRepopulatePackBook();
-    const before = await seedComplexTarget(campaign.id, goblinChunkId);
+    await seedRepopulatePackBook();
+    const before = await seedComplexEncounterTarget(campaign.id, complexLayoutFixture());
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(REPOPULATE_BRIEF), modelUsed: 'test-model', fallback: null });
     await repopulateEncounter(before.id, { redesignProse: false });
     const after = await getArtifact(before.id);
@@ -760,27 +759,3 @@ function complexLayoutFixture() {
   };
 }
 
-async function seedComplexTarget(
-  campaignId: Id,
-  _goblinChunkId: Id,
-): Promise<Artifact & { kind: 'encounter' }> {
-  const target = await createArtifact({
-    campaignId,
-    kind: 'encounter',
-    name: 'Old Undercroft',
-    summary: 'Old summary.',
-    body: 'Existing prose.',
-    links: [],
-    data: {
-      difficulty: 'old', levelHint: '4',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
-      terrain: '', tactics: '', treasure: '',
-      mapImageId: newId(), preset: 'dungeon', locationKind: 'dungeon',
-      siteShape: 'complex', budgetAdvisory: 'STALE ADVISORY',
-      layout: complexLayoutFixture(),
-      fillGrade: 100,
-    },
-  });
-  if (target.kind !== 'encounter') throw new Error('encounter target missing');
-  return target;
-}

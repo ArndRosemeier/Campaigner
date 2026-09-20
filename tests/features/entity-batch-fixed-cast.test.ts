@@ -444,7 +444,13 @@ describe('a batch failure records WHICH path it came down, with the raw evidence
       summary: '',
       body: '',
       links: [],
-      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${CHUNK_ID}`},
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: null,
+        sourceLine: 'Bestiary p.1',
+        originToken: `chunk:${CHUNK_ID}`,
+      },
     });
     const run = completedWith(cast.id);
     startRunMock.mockResolvedValue('run-1');
@@ -476,9 +482,9 @@ describe('a batch failure records WHICH path it came down, with the raw evidence
     // would fail against correct code. Identity IS pinned where the site hands
     // a value over untouched: the run row below and the thrown value.
     expect(failure?.raw).toEqual(cast);
-    expect((failure?.raw as { data: { creatureRef?: unknown } }).data.creatureRef).toEqual({
-      chunkId: CHUNK_ID,
-    });
+    expect(
+      (failure?.raw as { data: { originToken?: unknown } }).data.originToken,
+    ).toBe(`chunk:${CHUNK_ID}`);
     expect(result.generated).toEqual([]);
     // The refusal is a TRUE no-op: the cast row is untouched.
     expect((await getArtifact(cast.id))?.name).toBe('Zombie');
