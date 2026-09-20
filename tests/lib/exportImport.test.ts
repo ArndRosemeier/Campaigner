@@ -39,7 +39,6 @@ import {
   buildExport,
   buildZip,
   checkImportDependencies,
-  DanglingImportReferenceError,
   EXPORT_FORMAT_VERSION,
   exportFileName,
   formatDriftedCitations,
@@ -923,7 +922,7 @@ describe('export v2', () => {
       expect(importedKeeper.links[0]?.targetId).not.toBe(tower.id);
     });
 
-    it('REFUSES an import whose link names an artifact that is gone everywhere, naming it', async () => {
+    it('KEEPS a link whose target is gone everywhere, exactly as the file wrote it', async () => {
       const campaign = await createCampaign({ name: 'Dangling', system: 'dnd5e' });
       await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Fragment' });
       const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
@@ -932,9 +931,18 @@ describe('export v2', () => {
       const goneId = newId();
       exported.artifacts[0]?.links.push({ targetId: goneId, relation: 'quotes' });
 
-      await expect(importExport(exported)).rejects.toBeInstanceOf(DanglingImportReferenceError);
-      // The one rw transaction rolled the whole import back: no second campaign.
-      expect(await listCampaigns()).toHaveLength(1);
+      // THE CORRECTED ARM (docs/17 row 256, after the dispatcher's integrated
+      // gate refuted the strict one): a miss is NOT a whole-import refusal —
+      // a selection export legitimately carries a subset of its campaign
+      // (`buildCampaignExport`), and the field's own loud surface (the
+      // editor's dangling-link row) is what names it. The import LANDS and the
+      // id is kept BYTE-FOR-BYTE, never substituted for a live one.
+      const result = await importExport(exported);
+      const rows = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
+      const fragment = rows.find((row) => row.name === 'Fragment');
+      expect(fragment?.links).toEqual([{ targetId: goneId, relation: 'quotes' }]);
+      // The campaign the file described now exists beside the original.
+      expect(await listCampaigns()).toHaveLength(2);
     });
 
     it('ADOPTS a library link through the ONE seam and repoints it at the campaign copy', async () => {

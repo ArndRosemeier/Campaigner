@@ -234,7 +234,14 @@ describe('the plan control in the module group header', () => {
     expect(named((text) => text.includes('planModuleDocument('))).toEqual([
       'src/llm/modulePlan.ts',
     ]);
+    // TWO files write a stored plan, and BOTH are declared. `src/llm/modulePlan.ts`
+    // is the ONE AUTHORING seam (the planner persists what it planned); the
+    // import pass re-inserts a RESTORED row's plan as DATA through the one
+    // id-remap pass (docs/17 row 256) — a passthrough writer, never a second
+    // authoring surface, and the exactly-one claim this scan protects is that
+    // no OTHER surface writes a plan at all.
     expect(named((text) => text.includes('{ documentPlan: plan }'))).toEqual([
+      'src/lib/exportImport.ts',
       'src/llm/modulePlan.ts',
     ]);
     // The dialog's OWN write is the audience-only correction and nothing else.

@@ -2401,23 +2401,23 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
-- **FORK, OWNER'S TO DECIDE (docs/17 row 256) — what a file with a relation to a row that is GONE
-  EVERYWHERE should do.** The import's ONE id-remap pass has a strict arm (`links[].targetId` and a
-  module plan's `source`/`companion`) and a tolerant arm (a battle key/token, a frozen seed handle, a
-  run target — fields with their own foreign meaning, left exactly as they are for
-  `danglingBattleEncounter` / the token dangling arm / `missing ref` to name). The strict arm REFUSES
-  THE WHOLE IMPORT by name (`DanglingImportReferenceError`, inside the one transaction, so nothing
-  lands) when the target is in no artifact row at all. **The honest options:** (a) **CHOSEN — abort
-  the import and name the relation**, consistent with an import's existing abort-by-default for a
-  missing citation or an unmet NPC ref (`MissingDependenciesError`), and correct for a CAMPAIGN
-  export because the export's own builder proves that EVERY in-campaign `links[]` target travels with
-  it; (b) land the file and name the broken relations in a report — but `ImportResult` has no such
-  field, so (b) needs a NEW reported shape plus a picker surface (a feature, not a fold), and it would
-  be the only silently-degraded import arm; (c) quarantine the referencing artifacts — rejected as
-  over-engineering for the artifact-plate class. The RECOMMENDATION is (a), the landed behaviour; the
-  owner may prefer (b) for a whole-database restore specifically, in which case the work is a named
-  report field and its toast, not a change to the remap pass. The tolerant arm is deliberate and
-  already has its loud surfaces — do not "fix" it by making every reference strict.
+- **CORRECTED (docs/17 row 256) — a MISS IS TOLERANT, and its own integrated gate is why the strict arm is
+  gone.** The ONE id-remap pass remaps a reference when the file carries the row, registers a SHARED
+  LIBRARY target for the adoption seam, and otherwise KEEPS THE ID EXACTLY AS THE FILE WROTE IT — for the
+  arm that already owns that field's loud surface to name (the editor's dangling link row, the plan's own
+  issue reporting, `missing ref`, `danglingBattleEncounter`). **What it first shipped was the opposite:** a
+  strict arm (`links[].targetId`, a plan's `source`/`companion`) refusing the WHOLE import by name
+  (`DanglingImportReferenceError`, inside the transaction). The dispatcher's integrated full run refuted it
+  with two independent failures — `tests/features/module-plan-dialog.test.tsx`, where a plan names a
+  companion the file does not carry (a stale plan after an artifact was deleted; a selection export carries
+  a SUBSET of its campaign), so a round-trip that had always worked became a hard failure, and
+  `tests/features/campaign-tree-plan-control.test.tsx`, where the exactly-one-plan-writer scan caught this
+  file as a second writer and its declaration was amended to name the import as a PASSTHROUGH writer of a
+  restored row. **A whole-import refusal is the DEPENDENCY MANIFEST's policy alone**
+  (`MissingDependenciesError` + the picker's `import-anyway`) — the one place the owner has a choice — and it
+  must never be a side effect of the id-remap pass. Making dangling plan/link references strict again would
+  need the file's own completeness claim, which the export format does not carry today: recorded, not
+  assumed.
 - **BY DESIGN, NOT DEBT (docs/17 row 271, items B3+B7) — snapshots are HISTORY, and three
   library reads are NAME resolutions.** (a) **`revisions[].snapshot` and `moduleVersions[].snapshot`
   keep the ids the row was written with**, deliberately: a revision is what the content WAS, and

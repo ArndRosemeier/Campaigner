@@ -647,36 +647,34 @@ function healRulebookSources(
 // --- The ONE id-remap pass over a loaded campaign (docs/17 row 256) ----------
 
 /**
- * A reference inside an imported file that names NOTHING in this workspace:
- * not one of the file's own rows (so no fresh id exists to point at) and not a
- * SHARED LIBRARY row (so there is nothing to adopt). Kept as its own class so
- * the loud refusal is greppable and a caller can tell it from a zod failure
- * (`withImportMitigation` passes it through untouched, like
- * `MissingDependenciesError`).
+ * A MISS IS TOLERANT, AND THE INTEGRATED GATE IS WHY (docs/17 row 256, corrected
+ * after its first landing).
  *
- * Thrown INSIDE the import transaction, so the one rw transaction rolls the
- * whole import back and the campaign picker's toast names the relation rather
- * than offering a campaign whose links dangle (AGENTS rule 1: a relation that
- * cannot be restored is an error, never a silently kept dead id).
+ * This pass first shipped a STRICT arm for the two fields that exist only to
+ * name a row inside the loaded campaign (`links[].targetId`, a plan's
+ * `source`/`companion`): a target in no table at all REFUSED the whole import
+ * (`DanglingImportReferenceError`, thrown inside the transaction). The
+ * dispatcher's integrated run REFUTED that arm with two independent failures,
+ * and both are the reason it is gone:
+ *
+ * - `tests/features/module-plan-dialog.test.tsx` — a plan may name a companion
+ *   the file does not carry, because a SELECTION export is documented to carry
+ *   only a subset of its campaign (`buildCampaignExport`), so the strict arm
+ *   refused a legitimate round-trip that had always worked.
+ * - `tests/features/campaign-tree-plan-control.test.tsx` — the
+ *   exactly-one-plan-writer pin caught the second writer this file became,
+ *   which is the pin doing its job (its declaration is amended to name the
+ *   import as a PASSTHROUGH writer of a restored row, not an authoring seam).
+ *
+ * THE RULE THAT REPLACED IT: remap when the file carries the row, adopt when it
+ * is a shared library row, and otherwise KEEP THE ID EXACTLY AS IT IS, for the
+ * arm that already owns that field's loud surface to name (the editor's
+ * dangling link row, the plan's own issue reporting, the `missing ref` badge).
+ * A whole-import REFUSAL stays the DEPENDENCY MANIFEST's documented policy
+ * (`MissingDependenciesError` + `import-anyway`), which is the one place the
+ * owner has a choice — never a silent side effect of the id-remap pass, and
+ * never a dead id silently substituted for a live one.
  */
-export class DanglingImportReferenceError extends Error {
-  readonly from: string;
-  readonly targetId: Id;
-  readonly field: string;
-
-  constructor(from: string, targetId: Id, field: string) {
-    super(
-      `Import references ${targetId} from ${from} (${field}), but that artifact is neither in the ` +
-        'export nor in this workspace’s shared library — the relation cannot be restored. ' +
-        'Re-export the campaign with that artifact included, or import the library pack that holds it, ' +
-        'and try again.',
-    );
-    this.name = 'DanglingImportReferenceError';
-    this.from = from;
-    this.targetId = targetId;
-    this.field = field;
-  }
-}
 
 /**
  * THE ONE id-remap pass over a loaded campaign (docs/17 row 256). Every
@@ -701,18 +699,14 @@ export class DanglingImportReferenceError extends Error {
  *    campaign (`buildCampaignExport`), so a reference to a row outside the
  *    file is legitimate and must not become an error.
  *
- * AND THE TWO WAYS A MISS LANDS, which is the distinction the row is about:
- *
- * - `relation` — a field that EXISTS ONLY to name a row inside the loaded
- *   campaign: `links[].targetId` and the plan's `source`/`companion`. A miss
- *   here is a broken relation (and, for the plan, silent degradation to the
- *   procedural outline), so it is a NAMED refusal.
- * - `reference` — a field with its own documented foreign-reference meaning:
- *   a battle's seeding encounter, a battle token, a frozen seed handle, a
- *   run's target/result/context. A miss here keeps the id EXACTLY as it is and
- *   is NAMED by the arm that already owns that field (the adoption seam's
- *   `danglingBattleEncounter`, the token dangling arm, the `missing ref`
- *   badge), never re-pointed at a guess — the row-259/268 rule.
+ * AND HOW A MISS LANDS — ONE rule, after the strict arm was refuted by the
+ * integrated gate (see the correction note above): the id is KEPT EXACTLY as
+ * the file wrote it and the arm that already owns that field's loud surface
+ * names it (the editor's dangling link row, the plan's issue reporting, the
+ * `missing ref` badge, the adoption seam's `danglingBattleEncounter`). Never a
+ * silent substitution, never a guess, and never a whole-import refusal born
+ * inside the id-remap pass — that refusal is the dependency manifest's own
+ * documented policy, where the owner has a choice.
  *
  * IMAGE IDS ARE DELIBERATELY NOT REMAPPED, and this comment is the reason so
  * the next reader does not "fix" them: images are inserted with their own `id`
@@ -747,18 +741,10 @@ class ImportIdRemap {
   }
 
   /** The fresh artifact id, the KEPT library id (registered as pending for
-   * adoption), the id of a row this workspace already holds, or a NAMED
-   * refusal — the strict arm, for a field that exists only to name an
-   * in-campaign relation (`links`, a plan's source/companion). */
-  relation(id: Id, from: string, field: string): Id {
-    const resolved = this.resolve(id);
-    if (resolved !== undefined) return resolved;
-    throw new DanglingImportReferenceError(from, id, field);
-  }
-
-  /** The tolerant arm, for a field with its own foreign-reference meaning: a
-   * miss keeps the id exactly as it is, for the arm that owns that field's
-   * loud surface to name (never a silent substitution, never a guess). */
+   * adoption), the id of a row this workspace already holds — or the id
+   * EXACTLY as the file wrote it, for the arm that owns that field's loud
+   * surface to name (never a silent substitution, never a guess, and never a
+   * whole-import refusal: see the correction note above). */
   reference(id: Id): Id {
     return this.resolve(id) ?? id;
   }
@@ -774,11 +760,6 @@ class ImportIdRemap {
       `Import references the module ${id} of ${from}, which is outside the export` +
         (field === '' ? '' : ` (${field})`),
     );
-  }
-
-  /** A nullable strict-arm artifact reference. */
-  relationOrNull(id: Id | null, from: string, field: string): Id | null {
-    return id === null ? null : this.relation(id, from, field);
   }
 
   /** A nullable tolerant-arm artifact reference. */
@@ -840,7 +821,6 @@ async function classifyExternalIds(
  * IMAGE ids are untouched (a `planIndex` is identity, an image id is preserved
  * on import). */
 function remapPlanSection(section: DocumentPlanSection, plan: ImportIdRemap): DocumentPlanSection {
-  const where = `the document plan section “${section.title}”`;
   return {
     ...section,
     source:
@@ -850,13 +830,13 @@ function remapPlanSection(section: DocumentPlanSection, plan: ImportIdRemap): Do
             type: section.source.type,
             artifactId:
               section.source.type === 'artifact'
-                ? plan.relation(section.source.artifactId, where, 'its source')
-                : plan.relation(section.source.artifactId, where, 'its encounter source'),
+                ? plan.reference(section.source.artifactId)
+                : plan.reference(section.source.artifactId),
           },
     companion:
       section.companion === null || section.companion === undefined
         ? section.companion
-        : { artifactId: plan.relation(section.companion.artifactId, where, 'its companion') },
+        : { artifactId: plan.reference(section.companion.artifactId) },
   };
 }
 
@@ -1152,18 +1132,16 @@ export async function importExport(
             ...artifactFields,
             // THE ONE REMAP PASS, on the field the export wrote VERBATIM
             // (docs/17 row 256): every relation follows the artifact re-id map
-            // like a battle token or a run target already did, a target that
-            // is a SHARED LIBRARY row is kept and adopted after the
-            // transaction, and a target that is neither is NAMED and refuses
-            // the import. Before this, every relation in an imported campaign
+            // like a battle token or a run target already did, and a target
+            // that is a SHARED LIBRARY row is kept and adopted after the
+            // transaction. Before this, every relation in an imported campaign
             // dangled.
             links: artifactFields.links.map((link) => ({
               ...link,
-              targetId: remap.relation(
-                link.targetId,
-                `the ${artifactFields.kind} “${artifactFields.name}”`,
-                `its “${link.relation}” link`,
-              ),
+              // A miss keeps the file's own id and the editor's dangling-link
+              // row names it (docs/17 row 256, corrected after the integrated
+              // gate refuted the strict arm).
+              targetId: remap.reference(link.targetId),
             })),
             ...(artifactFields.kind === 'encounter'
               ? { data: healRulebookSources(exported.id, artifactFields.data, manifestByCite) }
