@@ -11,7 +11,7 @@ import {
   listArtifactsByCampaign,
 } from '@/db/artifactRepo';
 import { saveSettings } from '@/db/settingsRepo';
-import { saveModule } from '@/db/moduleRepo';
+import { saveModule, patchModule } from '@/db/moduleRepo';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import {
   createModule,
@@ -480,5 +480,32 @@ describe('the neighbours the guard must not break', () => {
       (artifact) => artifact.kind === 'npc' && artifact.name === 'Mira',
     );
     expect(named).toHaveLength(1);
+  });
+});
+
+/**
+ * THE OUT-OF-BAND TARGET ADVISORY, END TO END (docs/17 row 283). The pure
+ * function's arms live in `tests/llm/fixedCast.test.ts`; this is the WIRING —
+ * the real finalize path reads the module's own band and the target it records
+ * through `entityLevelHintFor`, and the sentence lands on the finished
+ * encounter's `data.budgetAdvisory` (the EXISTING advisory seam, never a second
+ * mechanism). The module's band is 3 and the recorded target is 9, so the
+ * target sits more than one band step outside it, while the fielded cast
+ * member's own block is level 3 — the party-level advisory stays quiet, so the
+ * sentence here is the TARGET check's, standing on its own.
+ */
+describe('the out-of-band target advisory reaches the finalized encounter (docs/17 row 283)', () => {
+  it('names a FIELDED figure whose module target is far outside the module band', async () => {
+    const world = await seedOwnerWorld();
+    await patchModule(world.module.id, {
+      entityKinds: [{ name: CAST_NAME, kind: 'npc', absorbed: [], levelHint: 9 }],
+    });
+    const { brief } = await entityBrief(world, ENCOUNTER_NAME);
+    const { encounter } = await finalizeThrough(world, brief, CAST_NAME, BORROWED_STATS);
+    if (encounter.kind !== 'encounter') throw new Error(`not an encounter: ${encounter.kind}`);
+    const advisory = encounter.data.budgetAdvisory;
+    expect(advisory).toContain(`The module targets level 9 for "${CAST_NAME}"`);
+    expect(advisory).toContain('takes part in');
+    expect(advisory).not.toContain('far from the party level');
   });
 });

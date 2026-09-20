@@ -1016,16 +1016,43 @@ const SPINE_ENTITY_INTENT =
  * The RANGE comes from `ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX` — the
  * SAME constants the record schema enforces — so the prompt can never offer a
  * level the boundary then rejects (AGENTS rule 4).
+ *
+ * TWO CASES, AND A REALISM ALLOWANCE (docs/17 row 283). The hint is a
+ * GENERATION TARGET, so the model has to be TOLD how to aim it, and the two
+ * kinds of figure aim at DIFFERENT things: a figure the party might FIGHT is a
+ * BALANCE question and aims inside the module's own band, while a figure the
+ * party NEVER fights is a REALISM question — what the figure IS in the world —
+ * and may legitimately sit FAR ABOVE the band. The owner's correction, verbatim
+ * (*"If the guard captain is not hostile, he can be level 12 in a level 1
+ * module. Not just high end for the module level. It should stay realistic."*),
+ * is why the clause names the module's own range for case (1) and explicitly
+ * denies it any capping power in case (2); the owner's two examples calibrate
+ * it (a non-hostile level-12 captain in a level-1 module is CORRECT, a
+ * fourteen-year-old is never level 10). This is a FUNCTION of the band rather
+ * than a constant because the band's own numbers are what case (1) aims at.
  */
-const SPINE_ENTITY_LEVEL_HINT =
-  ` Every entity entry ALSO carries "levelHint": the LEVEL this figure is at in your story, ` +
-  `a whole number from ${String(ENTITY_LEVEL_HINT_MIN)} to ${String(ENTITY_LEVEL_HINT_MAX)}, ` +
-  `when you fix one in the prose — an ally's, a rival's or a villain's class or character level. ` +
-  `State it so the figure SURVIVES into the entity the generators build: what you write about a figure ` +
-  `is how that figure is generated later, and a level stated only in your prose is otherwise LOST at the ` +
-  `entity boundary — the entity generator would pick a level of its own. Answer "levelHint": null for every ` +
-  `entity whose level your prose does not fix (places, factions, notes, generic opposition), and never ` +
-  `guess: the hint must agree with what your own text states. It is a generation hint, never shown to a reader.`;
+function spineEntityLevelHint(levelMin: number, levelMax: number): string {
+  return (
+    ` Every entity entry ALSO carries "levelHint": the LEVEL this figure is at in your story, ` +
+    `a whole number from ${String(ENTITY_LEVEL_HINT_MIN)} to ${String(ENTITY_LEVEL_HINT_MAX)}, ` +
+    `when you fix one in the prose — an ally's, a rival's or a villain's class or character level. ` +
+    `AIM IT BY WHAT THE FIGURE IS FOR, and the two cases are different. ` +
+    `(1) A figure the party might FIGHT — anyone who takes part in this module's encounters — is a ` +
+    `BALANCE question: aim it inside this module's own range of levels ` +
+    `${String(levelMin)}–${String(levelMax)}, the levels this module is built for, so the encounter ` +
+    `stays survivable. ` +
+    `(2) A figure the party does NOT fight — a bystander, an official, a shopkeeper, a child — is a ` +
+    `REALISM question: aim it at what the figure IS in the world, by standing, role and age, and this ` +
+    `module's range NEITHER CAPS IT NOR PULLS IT DOWN. A non-hostile captain of the guard may be level 12 ` +
+    `in a level-1 module and that is CORRECT, because the party never fights him; a fourteen-year-old is ` +
+    `NEVER level 10. ` +
+    `State it so the figure SURVIVES into the entity the generators build: what you write about a figure ` +
+    `is how that figure is generated later, and a level stated only in your prose is otherwise LOST at the ` +
+    `entity boundary — the entity generator would pick a level of its own. Answer "levelHint": null for every ` +
+    `entity whose level your prose does not fix (places, factions, notes, generic opposition), and never ` +
+    `guess: the hint must agree with what your own text states. It is a generation hint, never shown to a reader.`
+  );
+}
 
 async function spineMessages(
   module: Module,
@@ -1109,7 +1136,7 @@ async function spineMessages(
         'You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. ' +
         'Always answer in the exact JSON format requested. Never include commentary outside the JSON.' +
         SPINE_ENTITY_INTENT +
-        SPINE_ENTITY_LEVEL_HINT,
+        spineEntityLevelHint(module.levelMin, module.levelMax),
     },
     { role: 'user', content: composed.text },
   ];

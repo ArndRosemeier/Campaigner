@@ -437,11 +437,51 @@ describe('runSpine', () => {
     expect(messages[0]?.content).toContain('from 1 to 20');
     expect(messages[0]?.content).toContain('SURVIVES into the entity the generators build');
     expect(messages[0]?.content).toContain('"levelHint": null');
+    // THE TWO AIMING CASES AND THE REALISM ALLOWANCE (docs/17 row 283). The
+    // hint is a GENERATION TARGET, so the model must be told HOW to aim it, and
+    // the two cases aim at DIFFERENT things: a figure the party might FIGHT is
+    // balance and aims at THIS module's own band (whose numbers are stated); a
+    // figure the party NEVER fights is realism and the band "NEITHER CAPS IT NOR
+    // PULLS IT DOWN" — the owner's correction, calibrated by his own two
+    // examples (a non-hostile level-12 captain in a level-1 module is CORRECT; a
+    // fourteen-year-old is never level 10). This seeded module's band is 1–3,
+    // and the clause must name THAT band rather than a fixed string.
+    const systemContent = messages[0]?.content ?? '';
+    expect(systemContent).toContain('AIM IT BY WHAT THE FIGURE IS FOR');
+    expect(systemContent).toContain('(1) A figure the party might FIGHT');
+    expect(systemContent).toContain("inside this module's own range of levels 1–3");
+    expect(systemContent).toContain('(2) A figure the party does NOT fight');
+    expect(systemContent).toContain('NEITHER CAPS IT NOR PULLS IT DOWN');
+    expect(systemContent).toContain('A non-hostile captain of the guard may be level 12 in a level-1 module');
+    expect(systemContent).toContain('that is CORRECT');
+    expect(systemContent).toContain('a fourteen-year-old is NEVER level 10');
     const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
     expect(userContent).not.toContain('"intent"');
     expect(userContent).not.toContain('"levelHint"');
     expect(userContent).toContain('Module concept: A harbor bell that rings by itself beneath the water.');
     expect(userContent).toContain('Party levels 1–3');
+  }, 20000);
+
+  /**
+   * The aiming clause names the MODULE'S OWN band, not a fixed one (docs/17 row
+   * 283). Case (1) of the two-case rule tells the model to aim a figure the
+   * party might fight INSIDE this module's range, which is only truthful if the
+   * range in the sentence is the module row's own numbers — a constant here
+   * would aim every module at one band. This module is patched to 5–8 before the
+   * spine call, so the clause must state THAT range.
+   */
+  it('states the module’s OWN band in the aiming clause (docs/17 row 283)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await patchModule(moduleId, { levelMin: 5, levelMax: 8 });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
+
+    await guard(runSpine(moduleId, campaign));
+
+    const systemContent = chatMock.mock.calls[0]?.[0]?.[0]?.content ?? '';
+    expect(systemContent).toContain("inside this module's own range of levels 5–8");
+    expect(systemContent).not.toContain('levels 1–3, the levels this module is built for');
   }, 20000);
 
   /**

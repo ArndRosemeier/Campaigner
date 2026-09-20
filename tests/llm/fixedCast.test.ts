@@ -357,6 +357,122 @@ describe('fixedCastAdvisories', () => {
       fixedCastAdvisories('The Howling Pit', cast, [{ name: '  HALVAR ' }, { name: '' }, { name: 'mira' }], 1),
     ).toHaveLength(1);
   });
+
+  /**
+   * THE OUT-OF-BAND GENERATION TARGET, SCOPED TO ENCOUNTER PARTICIPANTS (docs/17
+   * row 283). The module's recorded `levelHint` is a GENERATION TARGET, and the
+   * spine prompt aims it by two different rules: a figure the party might FIGHT
+   * aims inside the module's band (balance), while a figure the party NEVER
+   * fights aims at what the figure IS (realism) and may legitimately sit far
+   * above it — a non-hostile level-12 captain of the guard in a level-1 module
+   * is CORRECT. So the advisory is a BALANCE signal and exists ONLY for a figure
+   * that TAKES PART in the encounter, which is the SAME `fielded` test the
+   * party-level check above uses ("their level matters once they actually
+   * fight"): no second "is this a combatant" rule is introduced. These arms are
+   * written with NO party level on purpose, so the target check stands alone
+   * rather than riding the party-level advisory.
+   */
+  describe('out-of-band generation targets (docs/17 row 283)', () => {
+    /** The module records level 12 for Halvar; its own band is 1–2. */
+    const band = { levelMin: 1, levelMax: 2 };
+    const targets = {
+      ...band,
+      targetLevelFor: (name: string): number | null => (name === 'Halvar' ? 12 : null),
+    };
+
+    it('flags the out-of-band target of a FIELDED figure, and names it', () => {
+      const advisories = fixedCastAdvisories(
+        'The Howling Pit',
+        cast,
+        [{ name: 'Halvar' }, { name: 'Mira' }],
+        undefined,
+        targets,
+      );
+      expect(advisories).toHaveLength(1);
+      expect(advisories[0]).toContain('The module targets level 12 for "Halvar"');
+      expect(advisories[0]).toContain('who takes part in "The Howling Pit"');
+      expect(advisories[0]).toContain("module's own range of 1–2");
+      expect(advisories[0]).toContain('balance question');
+    });
+
+    it('stays SILENT for an out-of-band NON-COMBAT figure — the correction this slice follows', () => {
+      // Halvar is in the encounter's scene but the roster never fields him: the
+      // party does not fight him, so his level-12 target is EXPECTED and the
+      // out-of-band advisory must not fire. (The SEPARATE cast-coverage
+      // advisory a name absent from the roster already raised is a different
+      // question, unchanged by this slice; it is named here only to keep the
+      // two apart.)
+      const advisories = fixedCastAdvisories(
+        'The Howling Pit',
+        cast,
+        [{ name: 'Pit Goblin' }],
+        undefined,
+        targets,
+      );
+      expect(advisories.join(' ')).toContain('missing from the roster');
+      expect(advisories.join(' ')).not.toContain('The module targets level');
+    });
+
+    it('stays quiet within one band step of the module range, and fires past it', () => {
+      const roster = [{ name: 'Halvar' }, { name: 'Mira' }];
+      // `in-band` is inside the module's own range (a quiet target for anyone
+      // but Halvar); only Halvar's number moves between the arms.
+      const aimedAt = (range: { levelMin: number; levelMax: number }, inBand: number, value: number) => ({
+        ...range,
+        targetLevelFor: (name: string): number => (name === 'Halvar' ? value : inBand),
+      });
+      const low = { levelMin: 1, levelMax: 2 };
+      // The boundary ABOVE: band max 2 + ROOM_BUDGET_OVER_MARGIN (2) = 4 is
+      // quiet; 5 is more than one band step past the range.
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, roster, undefined, aimedAt(low, 2, 4)),
+      ).toEqual([]);
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, roster, undefined, aimedAt(low, 2, 5)),
+      ).toHaveLength(1);
+      // The boundary BELOW, on a higher module: band min 5 − 2 = 3 is quiet; 2
+      // is more than one band step under the range.
+      const high = { levelMin: 5, levelMax: 8 };
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, roster, undefined, aimedAt(high, 6, 3)),
+      ).toEqual([]);
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, roster, undefined, aimedAt(high, 6, 2)),
+      ).toHaveLength(1);
+    });
+
+    it('says it ONCE per figure: the party-level advisory wins when both apply', () => {
+      const advisories = fixedCastAdvisories(
+        'The Howling Pit',
+        cast,
+        [{ name: 'Halvar' }, { name: 'Mira' }],
+        1,
+        targets,
+      );
+      expect(advisories).toHaveLength(1);
+      expect(advisories[0]).toContain('far from the party level');
+      expect(advisories.join(' ')).not.toContain('The module targets level');
+    });
+
+    it('renders the pre-283 advisories BYTE-IDENTICALLY when no module context is handed in', () => {
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Halvar' }, { name: 'Mira' }], undefined),
+      ).toEqual([]);
+      expect(
+        fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Pit Goblin' }], undefined),
+      ).toHaveLength(2);
+      // A figure the module records NOTHING for raises nothing new either.
+      expect(
+        fixedCastAdvisories(
+          'The Howling Pit',
+          cast,
+          [{ name: 'Halvar' }, { name: 'Mira' }],
+          undefined,
+          { ...band, targetLevelFor: (): number | null => null },
+        ),
+      ).toEqual([]);
+    });
+  });
 });
 
 describe('Smith finalize fixed-cast advisories (full runs)', () => {

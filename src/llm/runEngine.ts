@@ -6550,14 +6550,17 @@ export class RunEngine {
   }
 
   /**
-   * Fixed-cast finalize advisories (docs/11): after the roster finalizes,
-   * the encounter's scene members must have landed — a missing name
-   * (cast-coverage) or a wildly-off fielded level (level-mismatch) rides the
-   * existing advisory block (`data.budgetAdvisory` + the step notice, the
-   * 'under' precedent). Loud, never blocking: unjudgeable states (no owning
-   * module, module gone mid-flight, no scene mention, empty cast, no party
-   * level) yield no advisory, never a failure. Genuine IO errors propagate
-   * like every other finalize read (AGENTS rule 1 — no catch-and-continue).
+   * Fixed-cast finalize advisories (docs/11, extended by docs/17 row 283):
+   * after the roster finalizes, the encounter's scene members must have landed —
+   * a missing name (cast-coverage), a wildly-off fielded level (level-mismatch),
+   * or a FIELDED figure whose module-recorded generation TARGET sits far outside
+   * the module's own band (target-out-of-band, the realism-vs-balance rule) —
+   * and all of them ride the existing advisory block (`data.budgetAdvisory` +
+   * the step notice, the 'under' precedent). Loud, never blocking: unjudgeable
+   * states (no owning module, module gone mid-flight, no scene mention, empty
+   * cast, no party level) yield no advisory, never a failure. Genuine IO errors
+   * propagate like every other finalize read (AGENTS rule 1 — no
+   * catch-and-continue).
    */
   private async fixedCastAdvisoriesFor(args: {
     campaignId: Id;
@@ -6577,7 +6580,17 @@ export class RunEngine {
     if (cast.length === 0) return [];
     const partyLevel =
       partLevelForMention(owner, encounterName) ?? parseRosterTargetLevel(levelHint);
-    return fixedCastAdvisories(encounterName, cast, monsters, partyLevel);
+    // THE MODULE'S OWN BAND AND THE TARGETS IT RECORDS (docs/17 row 283): the
+    // out-of-band check needs the levels the module AIMS its generators at, read
+    // through the ONE entity-record reader (the same one the entity batch and
+    // the grounding use), and the module's own range to judge them against.
+    // Handed in as ONE optional context, so a caller that omits it (and every
+    // pre-283 pin) gets the pre-283 advisories byte-identically.
+    return fixedCastAdvisories(encounterName, cast, monsters, partyLevel, {
+      levelMin: owner.levelMin,
+      levelMax: owner.levelMax,
+      targetLevelFor: (name) => entityLevelHintFor(owner.entityKinds, name),
+    });
   }
 
   private async runFinalize(

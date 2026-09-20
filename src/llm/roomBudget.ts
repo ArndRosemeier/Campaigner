@@ -932,6 +932,26 @@ export interface FixedCastMember {
   statBlock: StatBlock | null;
 }
 
+/**
+ * The module-side context the OUT-OF-BAND target check needs (docs/17 row 283):
+ * the module's OWN band, and the module's recorded GENERATION TARGET for a
+ * figure by name. Kept as ONE optional argument so the pre-283 callers (and
+ * every existing pin) render the same advisories BYTE-IDENTICALLY — omitting it
+ * means no band check at all.
+ *
+ * `targetLevelFor` is a LOOKUP rather than a pre-joined map deliberately: the
+ * caller already holds the module row, so the ONE reader of the field
+ * (`domain/module.entityLevelHintFor`, over the module's entity records) is
+ * consulted here instead of a second name-keyed copy of it being built.
+ */
+export interface EncounterTargetContext {
+  /** The owning module's own band, inclusive (`Module.levelMin`/`levelMax`). */
+  levelMin: number;
+  levelMax: number;
+  /** The module's recorded target level for a figure, or null when it states none. */
+  targetLevelFor: (name: string) => number | null;
+}
+
 function fixedCastSummary(name: string, statBlock: StatBlock | null): string {
   if (statBlock === null) return `${name} (no stat block on file)`;
   return (
@@ -1033,9 +1053,9 @@ export function fixedCastSectionFor(cast: readonly FixedCastMember[]): string | 
 
 /**
  * Fixed-cast finalize advisories (docs/11, pure): after the roster
- * finalizes, two checks ride the existing advisory block/seam
- * (`data.budgetAdvisory`, the 'under' precedent) — both loud, never
- * blocking, neither fails anything:
+ * finalizes, the encounter's cast is checked and every finding rides the
+ * existing advisory block/seam (`data.budgetAdvisory`, the 'under' precedent)
+ * — all loud, never blocking, none of them fails anything:
  *
  * - cast-coverage: a fixed-cast name absent from the roster (the encounter
  *   was supposed to feature them — prose said so, the roster does not).
@@ -1045,16 +1065,30 @@ export function fixedCastSectionFor(cast: readonly FixedCastMember[]): string | 
  *   one — their level matters once they actually fight. Deliberate
  *   mismatches stay legal: the brief stated levels honestly, this flags
  *   them loudly.
+ * - target-out-of-band (docs/17 row 283): the level the module ASKS its
+ *   generators to build a FIELDED cast member at (`targets.targetLevelFor`,
+ *   the module record's `levelHint`) sits more than one band step outside the
+ *   module's OWN range. This is the BALANCE half of the two-case aiming rule
+ *   the spine prompt states: a figure that TAKES PART in an encounter is a
+ *   balance question, so an out-of-band TARGET is a signal — while a figure
+ *   the encounter never fields (a bystander, an official, a child) is a
+ *   REALISM question, its out-of-band level is EXPECTED, and it is silent
+ *   here BY CONSTRUCTION: the check lives under the same `fielded` guard the
+ *   party-level check uses, so no second "is this a combatant" test exists.
+ *   Suppressed when the party-level advisory already named this figure: one
+ *   sentence per figure about its level, never two.
  *
  * Unjudgeable states yield nothing: no party level (unmentioned encounter,
- * digit-free hint) or an unreadable cast level is a legitimate state, never
- * a failure.
+ * digit-free hint), no owning-module band, or an unreadable cast level is a
+ * legitimate state, never a failure. The party level is consulted FIRST and
+ * the target check stands on its own when there is none.
  */
 export function fixedCastAdvisories(
   encounterName: string,
   cast: readonly FixedCastMember[],
   roster: readonly { name: string }[],
   partyLevel: number | undefined,
+  targets?: EncounterTargetContext,
 ): string[] {
   const advisories: string[] = [];
   const rosterNames = new Set(
@@ -1072,17 +1106,36 @@ export function fixedCastAdvisories(
       );
       continue;
     }
-    if (partyLevel === undefined) continue;
-    const castLevel = parseBudgetLevel(member.level);
-    if (
-      castLevel.kind === 'level' &&
-      Math.abs(castLevel.value - partyLevel) > ROOM_BUDGET_OVER_MARGIN
-    ) {
-      advisories.push(
-        `Fixed cast member "${member.name}" (level ${String(castLevel.value)}) is far from the party ` +
-          `level (${String(partyLevel)}) for "${encounterName}" — deliberate mismatches are legal, ` +
-          "but review this fight's difficulty by hand.",
-      );
+    let levelFlagged = false;
+    if (partyLevel !== undefined) {
+      const castLevel = parseBudgetLevel(member.level);
+      if (
+        castLevel.kind === 'level' &&
+        Math.abs(castLevel.value - partyLevel) > ROOM_BUDGET_OVER_MARGIN
+      ) {
+        advisories.push(
+          `Fixed cast member "${member.name}" (level ${String(castLevel.value)}) is far from the party ` +
+            `level (${String(partyLevel)}) for "${encounterName}" — deliberate mismatches are legal, ` +
+            "but review this fight's difficulty by hand.",
+        );
+        levelFlagged = true;
+      }
+    }
+    if (!levelFlagged && targets !== undefined) {
+      const target = targets.targetLevelFor(member.name);
+      if (
+        target !== null &&
+        (target < targets.levelMin - ROOM_BUDGET_OVER_MARGIN ||
+          target > targets.levelMax + ROOM_BUDGET_OVER_MARGIN)
+      ) {
+        advisories.push(
+          `The module targets level ${String(target)} for "${member.name}", who takes part in ` +
+            `"${encounterName}" — more than ${String(ROOM_BUDGET_OVER_MARGIN)} levels outside this ` +
+            `module's own range of ${String(targets.levelMin)}–${String(targets.levelMax)}. A figure the ` +
+            `party fights is a balance question, so review this fight's difficulty — a figure the party ` +
+            `never fights is a realism question and its level is expected to be whatever it is.`,
+        );
+      }
     }
   }
   return advisories;

@@ -36,6 +36,15 @@ import { describe, expect, it } from 'vitest';
  * loses the level the day a caller is added, and a second `level N` regex
  * anywhere is a second answer to the same question.
  *
+ * THE FIFTH (row 283) is a MISSING RULE rather than a duplicated one: the hint
+ * is a GENERATION TARGET, and the model was never told how to AIM it — so a
+ * figure the party NEVER fights was aimed at the module's band like a combatant.
+ * The spine clause is now a function of the module's own band and states the two
+ * cases (fight ⇒ balance, inside the band; never fight ⇒ realism, the band
+ * neither caps nor pulls down), and the out-of-band signal exists ONLY for an
+ * encounter participant, judged inside the SAME `fielded` guard the fixed-cast
+ * party-level advisory already uses (docs/17 row 283).
+ *
  * THE THIRD (row 253) was an ASYMMETRY, not a copy count: the app GENERATES in
  * eleven languages (`llm/language.ts` carries the directive) while the ONE
  * reader asked only for the English word `level`, so a German module's own
@@ -205,5 +214,45 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => 
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
+  });
+
+  it('aims the hint by TWO cases and judges an out-of-band target for participants only (docs/17 row 283)', () => {
+    // THE AIMING CLAUSE IS A FUNCTION OF THE MODULE'S OWN BAND. Case (1) tells
+    // the model to aim a figure the party might fight INSIDE this module's range,
+    // which is only truthful when the numbers come from the module row; a
+    // constant here would aim every module at one band.
+    expect(filesContaining('function spineEntityLevelHint(')).toEqual([MODULE_GEN]);
+    expect(filesContaining('spineEntityLevelHint(module.levelMin, module.levelMax)')).toEqual([
+      MODULE_GEN,
+    ]);
+    // The pre-283 constant is GONE rather than renamed-and-left: a second aiming
+    // clause reachable from anywhere else would be a second answer to "how do I
+    // aim this figure's level", which is the defect class this whole file guards.
+    expect(filesContaining('SPINE_ENTITY_LEVEL_HINT')).toEqual([]);
+    // THE OUT-OF-BAND CHECK: ONE context type, ONE advisory sentence, both in the
+    // ONE advisory home (`roomBudget`), with the engine as its only production
+    // caller. The target reaches it through `entityLevelHintFor`, the ONE reader
+    // of the module record's hint, rather than a second name-keyed copy.
+    expect(filesContaining('export interface EncounterTargetContext')).toEqual([ROOM_BUDGET]);
+    expect(filesContaining('The module targets level')).toEqual([ROOM_BUDGET]);
+    expect(
+      filesContaining('targetLevelFor:')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([ENGINE]);
+    expect(
+      filesContaining('targetLevelFor: (name) => entityLevelHintFor(owner.entityKinds, name)'),
+    ).toEqual([ENGINE]);
+    // The check lives UNDER the SAME `fielded` guard the party-level check uses,
+    // so "takes part in an encounter" has ONE meaning here (the behavioral
+    // non-vacuity arm lives in `tests/llm/fixedCast.test.ts`, docs/17 row 283).
+    const roomBudget = readFileSync(join(process.cwd(), ROOM_BUDGET), 'utf8');
+    const fieldedGuard = roomBudget.indexOf('if (!fielded) {');
+    const outOfBandCheck = roomBudget.indexOf('target < targets.levelMin - ROOM_BUDGET_OVER_MARGIN');
+    expect(fieldedGuard, 'the fielded guard exists').toBeGreaterThan(-1);
+    expect(outOfBandCheck, 'the out-of-band target check exists').toBeGreaterThan(-1);
+    expect(outOfBandCheck, 'the target check sits inside the fielded path').toBeGreaterThan(
+      fieldedGuard,
+    );
   });
 });
