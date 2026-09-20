@@ -352,7 +352,18 @@ used:
    `TYPECHECK FAILED` and no type error names the changed files, READ
    `<gate-logdir>/typecheck.log` BEFORE touching anything — in this incident it said
    `pnpm install`, and the dispatcher had already ordered two repairs and re-run the gate twice
-   on a wrong theory. The gate and the suite lock both resolve correctly from inside a
+   on a wrong theory.
+   **AND IN A WORKTREE `pnpm` STILL PREFLIGHTS INTO THE READ-ONLY STORE (MEASURED
+   2026-09-20 by the row-281 writer, the third environment finding of that day).** Even
+   with the clone in place and the state file rewritten, `pnpm exec`/`pnpm <script>` runs
+   its deps verification, which opens the store index and dies `[ERR_SQLITE_ERROR] unable
+   to open database file`. Every pnpm call in a worktree therefore needs
+   `pnpm_config_verify_deps_before_run=false` (the name pnpm's own bundle reads at
+   `dist/pnpm.mjs:172408`), e.g.
+   `pnpm_config_verify_deps_before_run=false GATE_TESTS=0 GATE_CHECKS=all bash scripts/gate.sh`;
+   or call `node_modules/.bin/<tool>` directly, which bypasses pnpm entirely (what the
+   CoS does for ad-hoc runs). No tracked file changes for it. The MAIN tree needs none of
+   this — its state file is its own. The gate and the suite lock both resolve correctly from inside a
    worktree (verified: `git rev-parse --git-common-dir` is the SAME absolute path
    from the main tree and from a worktree, which is what makes the lock one lock
    across writers — see the lock derivation in `scripts/gate.sh`).
