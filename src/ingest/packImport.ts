@@ -12,6 +12,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, failPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
 import { errorMessage } from '@/lib/errors';
+import { ingestLockName, withGenerationLock } from '@/lib/generationLocks';
 
 import { getPackAdapter } from './packs/registry';
 import type {
@@ -33,6 +34,16 @@ import type {
  * per-entry problems are collected into the report, and a selection with zero
  * valid entries fails the book (`status: 'error'`) and throws — an empty
  * "ready" book is forbidden.
+ *
+ * NO CREATED BOOK IS EVER LEFT `'processing'` (docs/17 row 277). The row exists
+ * from `createBook` onward, and ANY throw after it lands the row in `'error'`
+ * carrying the failure's own message before the error is rethrown — a parse
+ * failure, a persist failure and a finalize failure alike. The guard is
+ * EXACTLY-ONCE: the zero-entry arm writes its own message and marks it, so the
+ * outer guard never re-fails a row that already landed. The post-create pass
+ * also holds the ONE cross-tab ingest lease (`lib/generationLocks`), which is
+ * what lets `ingest/ingestReconcile` tell this live import from a row a
+ * discarded tab left behind.
  *
  * THE SYSTEM-AGREEMENT CHECK (docs/17 row 209). A book's `system` is a
  * constant per adapter (`adapter.system`, written to the book at
@@ -348,83 +359,129 @@ export async function importPack(
     filename: firstInput === undefined ? title : firstInput.name,
   });
 
-  const base = Date.now();
-  const chunks: RuleChunk[] = [];
-  for (const [index, entry] of entries.entries()) {
-    const statBlock = statBlockSchema.parse(entry.statBlock);
-    chunks.push(
-      await ruleChunk(entry, statBlock, book.id, base + index),
-    );
-  }
-  // The item lane (12-BESTIARY-PACKS §13): stamps continue after the creature
-  // lane so `createdAt` ordering stays unique across the combined chunk list.
-  for (const [index, entry] of items.entries()) {
-    const item = itemDataSchema.parse(entry.item);
-    chunks.push(
-      await itemChunk(entry, item, book.id, base + entries.length + index),
-    );
-  }
-  // The rules-text lane (docs/12 §15): stamps continue after the item lane.
-  for (const [index, entry] of sections.entries()) {
-    chunks.push(
-      await sectionChunk(entry, book.id, base + entries.length + items.length + index),
-    );
-  }
+  // THE PACK-IMPORT LEASE (docs/17 row 266's lease, held by packs since row
+  // 277): the whole post-create pass runs under the ONE ingest lease, exactly
+  // as `ingest/ingestFiles.ingestPdf` runs a PDF's extraction + persistence.
+  // It is what makes `ingest/ingestReconcile`'s
+  // `isGenerationLockHeld(ingestLockName(bookId))` guard NON-VACUOUS on a pack
+  // book: without it a start-up in another tab would read this book's
+  // `'processing'` row, find no lease, and fail an import that is genuinely
+  // running. Advisory like every generation lock — with no Web Locks API the
+  // work runs directly (`lib/generationLocks`).
+  return withGenerationLock(ingestLockName(book.id), async () => {
+    // ANY throw after the row exists must leave it NAMED, never `'processing'`
+    // forever (the row-241 residual this slice closes; docs/18 §5). Exactly
+    // once: a failure this pass has ALREADY written through `deps.failBook`
+    // (the zero-entry arm below) sets `bookFailed`, so the row is never
+    // double-failed by this guard.
+    //
+    // The PDF twin of this guard is `ingest/ingestFiles.ingestPdf`'s own catch
+    // (`:142-146`). They are deliberately left as siblings rather than folded
+    // into one seam: this one carries the extra exactly-once state, and
+    // re-plumbing the ingest's book creation is explicitly out of row 277's
+    // scope (docs/18 §5(b)). A later slice that touches ingest book creation
+    // should fold them.
+    let bookFailed = false;
+    try {
+      const base = Date.now();
+      const chunks: RuleChunk[] = [];
+      for (const [index, entry] of entries.entries()) {
+        const statBlock = statBlockSchema.parse(entry.statBlock);
+        chunks.push(await ruleChunk(entry, statBlock, book.id, base + index));
+      }
+      // The item lane (12-BESTIARY-PACKS §13): stamps continue after the
+      // creature lane so `createdAt` ordering stays unique across the combined
+      // chunk list.
+      for (const [index, entry] of items.entries()) {
+        const item = itemDataSchema.parse(entry.item);
+        chunks.push(await itemChunk(entry, item, book.id, base + entries.length + index));
+      }
+      // The rules-text lane (docs/12 §15): stamps continue after the item lane.
+      for (const [index, entry] of sections.entries()) {
+        chunks.push(
+          await sectionChunk(entry, book.id, base + entries.length + items.length + index),
+        );
+      }
 
-  // The per-lane SPELL count (docs/17 row 204): counted from the chunks this
-  // run BUILT, through the ONE seam below — never a second pass over the
-  // documents and never a re-derivation.
-  const spellsImported = spellsImportedFromChunks(chunks);
+      // The per-lane SPELL count (docs/17 row 204): counted from the chunks
+      // this run BUILT, through the ONE seam below — never a second pass over
+      // the documents and never a re-derivation.
+      const spellsImported = spellsImportedFromChunks(chunks);
 
-  let done = 0;
-  for (const batch of batches(chunks, CHUNK_BATCH)) {
-    await deps.persistChunks([...batch]);
-    done += batch.length;
-    options.onProgress?.({ bookId: book.id, done, total: chunks.length });
-  }
+      let done = 0;
+      for (const batch of batches(chunks, CHUNK_BATCH)) {
+        await deps.persistChunks([...batch]);
+        done += batch.length;
+        options.onProgress?.({ bookId: book.id, done, total: chunks.length });
+      }
 
-  const packMeta: PackMeta = {
-    sourceId: adapter.id,
-    license: adapter.license,
-    entriesImported: entries.length + items.length + sections.length,
-    entriesSkipped: skipped,
-    entriesFailed: failures.length,
-    itemsImported: items.length,
-    sectionsImported: sections.length,
-    ...options.provenance,
-  };
+      const packMeta: PackMeta = {
+        sourceId: adapter.id,
+        license: adapter.license,
+        entriesImported: entries.length + items.length + sections.length,
+        entriesSkipped: skipped,
+        entriesFailed: failures.length,
+        itemsImported: items.length,
+        sectionsImported: sections.length,
+        ...options.provenance,
+      };
 
-  if (entries.length === 0 && items.length === 0 && sections.length === 0) {
-    const fetchedCount =
-      inputs.length + (options.extraFailures?.length ?? 0);
-    // 16-BESTIARY-FETCH §6: when the selection validates nothing, the error
-    // leads with a representative failure (the first entry's issue) so the
-    // toast and the error-state book show the reason, not just a count. The
-    // noun comes from the adapter so an item pack's error says "item".
-    const noun = adapter.entryNoun ?? 'creature';
-    const representative = leadFailure(failures);
-    const message =
-      (representative === null ? '' : `${representative} — `) +
-      `no valid ${noun} entries in the pack selection ` +
-      `(${String(skipped)} skipped, ${String(failures.length)} failed` +
-      (options.extraFailures === undefined ? '' : ` of ${String(fetchedCount)} fetched files`) +
-      `)`;
-    await deps.failBook(book.id, message);
-    throw new Error(`${message} — book "${title}" marked as error`);
-  }
+      if (entries.length === 0 && items.length === 0 && sections.length === 0) {
+        const fetchedCount = inputs.length + (options.extraFailures?.length ?? 0);
+        // 16-BESTIARY-FETCH §6: when the selection validates nothing, the error
+        // leads with a representative failure (the first entry's issue) so the
+        // toast and the error-state book show the reason, not just a count. The
+        // noun comes from the adapter so an item pack's error says "item".
+        const noun = adapter.entryNoun ?? 'creature';
+        const representative = leadFailure(failures);
+        const message =
+          (representative === null ? '' : `${representative} — `) +
+          `no valid ${noun} entries in the pack selection ` +
+          `(${String(skipped)} skipped, ${String(failures.length)} failed` +
+          (options.extraFailures === undefined
+            ? ''
+            : ` of ${String(fetchedCount)} fetched files`) +
+          `)`;
+        await deps.failBook(book.id, message);
+        bookFailed = true;
+        throw new Error(`${message} — book "${title}" marked as error`);
+      }
 
-  const ready = await deps.finalizeBook(book.id, packMeta);
-  return {
-    book: ready,
-    system: adapter.system,
-    chunkCount: chunks.length,
-    imported: entries.length + items.length + sections.length,
-    itemsImported: items.length,
-    sectionsImported: sections.length,
-    spellsImported,
-    skipped,
-    failed: failures,
-  };
+      const ready = await deps.finalizeBook(book.id, packMeta);
+      return {
+        book: ready,
+        system: adapter.system,
+        chunkCount: chunks.length,
+        imported: entries.length + items.length + sections.length,
+        itemsImported: items.length,
+        sectionsImported: sections.length,
+        spellsImported,
+        skipped,
+        failed: failures,
+      };
+    } catch (error) {
+      if (!bookFailed) {
+        // A failing `failBook` must NOT replace the import failure (AGENTS rule
+        // 1): the row is gone, so there is nothing left to name, and BOTH
+        // messages must survive in one loud throw. The cause stays the ORIGINAL
+        // import error — that is the failure the owner has to act on.
+        let markError: unknown;
+        try {
+          await deps.failBook(book.id, errorMessage(error));
+        } catch (caught) {
+          markError = caught;
+        }
+        if (markError !== undefined) {
+          throw new Error(
+            `${errorMessage(error)} — the book could not be marked as error: ` +
+              errorMessage(markError),
+            { cause: error },
+          );
+        }
+      }
+      throw error;
+    }
+  });
 }
 
 /**

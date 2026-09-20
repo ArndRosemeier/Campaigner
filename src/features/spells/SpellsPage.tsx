@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { JSX } from 'react';
+import type { JSX, ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { SparklesIcon, TriangleAlertIcon } from 'lucide-react';
+import { ClockIcon, SparklesIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { ROUTES } from '@/app/routes';
 import { SpellChip } from '@/components/spell-chip';
 import { Checkbox } from '@/components/ui/checkbox';
 import { loadSpellChunksFor } from '@/db/spellRepo';
-import { listRulebooks } from '@/db/rulebookRepo';
+import { listRulebooks, readyBooksOf } from '@/db/rulebookRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { DND5E_SPELL_SCHOOL_LABELS } from '@/domain/spellData';
-import type { Campaign, Dnd5eSpellSchool, Id, SpellFilterAxis, SpellTradition } from '@/domain';
+import type {
+  Campaign,
+  Dnd5eSpellSchool,
+  Id,
+  Rulebook,
+  SpellFilterAxis,
+  SpellTradition,
+} from '@/domain';
 import { useCampaign } from '@/features/campaign/hooks';
-import { readyBookIds } from '@/search';
 import { SpellCard } from '@/features/spells/spell-card';
 import { buildSpellRows, filterSpellRows, type SpellRow } from '@/features/spells/spell-rows';
 
@@ -40,12 +46,19 @@ import { buildSpellRows, filterSpellRows, type SpellRow } from '@/features/spell
  *
  * EMPTY IS ALWAYS EXPLAINED, AND WHICH EMPTY IT IS COMES FROM THE DATA
  * (docs/17 row 204, amending row 181's named follow-up): a campaign with NO
- * ready book of its system gets the import remedy; a campaign WITH ready
- * books whose library carries no spell payload gets the RE-IMPORT remedy
- * (docs/12 §15.4 — the spells arc had no migration, so a rules pack imported
- * before it needs importing again); and a filter that matches nothing keeps
- * its own distinct state. The first two are told apart by the ready books the
- * page already read — never guessed — and neither is ever a silent blank list.
+ * same-system book at all gets the import remedy; a campaign WITH ready books
+ * whose library carries no spell payload gets the RE-IMPORT remedy (docs/12
+ * §15.4 — the spells arc had no migration, so a rules pack imported before it
+ * needs importing again); and a filter that matches nothing keeps its own
+ * distinct state. The first two are told apart by the ready books the page
+ * already read — never guessed — and neither is ever a silent blank list.
+ *
+ * A SAME-SYSTEM BOOK THAT IS NOT READY IS NAMED, NEVER HIDDEN (docs/17 row
+ * 277): when the system has no ready book but does have one that is still
+ * importing or that failed, the page names those books and their situation
+ * instead of claiming nothing is imported. The ready-book answer still comes
+ * from the ONE rule, and the not-ready rows are what remains of the same-system
+ * books — see the read above.
  */
 export function SpellsPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
@@ -66,14 +79,26 @@ export function SpellsPage(): JSX.Element {
    * (`db/spellRepo.loadSpellChunksFor`, docs/17 row 184) — the same read a
    * mob's chips and the run engine's stat-block grounding use, and the
    * cross-system rows are dropped by the book-id intersection.
+   *
+   * A book of this system that is NOT ready is carried too (docs/17 row 277).
+   * The page used to read ready books only, so a same-system book that was still
+   * importing — or that had failed — made it claim "No spells imported for
+   * <system>", i.e. told the owner to import what is already importing. The
+   * ready half still comes from the ONE rule (`readyBooksOf`); the other half is
+   * what is LEFT of the same-system rows, so no second "is ready" predicate
+   * exists.
    */
   const loaded = useLiveQuery(async () => {
     if (campaign === undefined) return undefined;
     if (campaign === null) return null;
-    const readyIds = new Set(await readyBookIds(campaign.system));
-    const books = (await listRulebooks()).filter((book) => readyIds.has(book.id));
+    const books = await listRulebooks();
+    const ready = readyBooksOf(books, campaign.system);
+    const readyIds = new Set(ready.map((book) => book.id));
+    const notReady = books.filter(
+      (book) => book.system === campaign.system && !readyIds.has(book.id),
+    );
     const chunks = await loadSpellChunksFor(campaign.system);
-    return { books, chunks };
+    return { books: ready, notReady, chunks };
   }, [campaign]);
 
   const allRows: SpellRow[] = useMemo(
@@ -138,18 +163,7 @@ export function SpellsPage(): JSX.Element {
       </div>
 
       {totalEntries === 0 && errorRows.length === 0 ? (
-        loaded.books.length === 0 ? (
-          <EmptySpells
-            testId="spells-no-material"
-            title={`No spells imported for ${GAME_SYSTEM_LABELS[system]}`}
-            body={
-              system === 'pathfinder2e'
-                ? 'Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition.'
-                : 'Import the D&D 5e SRD spells pack on the Rules page — its spell documents appear here, ordered by level and filterable by school.'
-            }
-            remedy
-          />
-        ) : (
+        loaded.books.length > 0 ? (
           <EmptySpells
             testId="spells-no-spell-data"
             title={`No spell data in your ${GAME_SYSTEM_LABELS[system]} library`}
@@ -157,6 +171,22 @@ export function SpellsPage(): JSX.Element {
               system === 'pathfinder2e'
                 ? 'Your Pathfinder 2e books carry no structured spell data — a rules pack imported before the app stored spells that way looks exactly like this, and so does a library with only a bestiary pack. Re-import the Pathfinder 2e rules-text pack on the Rules page to add the spell list.'
                 : 'Your D&D 5e books carry no structured spell data — a rules pack imported before the app stored spells that way looks exactly like this, and so does a library with only a bestiary pack. Re-import the D&D 5e SRD spells pack on the Rules page to add the spell list.'
+            }
+            remedy
+          />
+        ) : loaded.notReady.length > 0 ? (
+          // A same-system book EXISTS but is not ready (docs/17 row 277):
+          // naming it is the honest answer — "No spells imported for <system>"
+          // would tell the owner to import what is already importing.
+          <NotReadySpells books={loaded.notReady} system={system} />
+        ) : (
+          <EmptySpells
+            testId="spells-no-material"
+            title={`No spells imported for ${GAME_SYSTEM_LABELS[system]}`}
+            body={
+              system === 'pathfinder2e'
+                ? 'Import the Pathfinder 2e rules-text pack on the Rules page — its spell documents appear here, ordered by rank and filterable by tradition.'
+                : 'Import the D&D 5e SRD spells pack on the Rules page — its spell documents appear here, ordered by level and filterable by school.'
             }
             remedy
           />
@@ -283,27 +313,34 @@ const SCHOOLS: readonly Dnd5eSpellSchool[] = ['abj', 'con', 'div', 'enc', 'evo',
 
 /**
  * A named empty state. Never a silent empty list (AGENTS rule 1, docs/17 row
- * 181): the title states the FACT and the body names the way out.
+ * 181): the title states the FACT and the body names the way out. `children`
+ * and `icon` let the not-ready state below reuse this ONE shell instead of
+ * growing a second empty-state frame.
  */
 function EmptySpells({
   testId,
   title,
   body,
   remedy = false,
+  icon,
+  children,
 }: {
   testId: string;
   title: string;
   body: string;
   remedy?: boolean;
+  icon?: JSX.Element;
+  children?: ReactNode;
 }): JSX.Element {
   return (
     <div
       className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-center"
       data-testid={testId}
     >
-      <SparklesIcon aria-hidden className="size-8 text-muted-foreground" />
+      {icon ?? <SparklesIcon aria-hidden className="size-8 text-muted-foreground" />}
       <h2 className="text-sm font-medium">{title}</h2>
       <p className="max-w-[52ch] text-xs text-muted-foreground">{body}</p>
+      {children}
       {remedy && (
         <Link
           to={ROUTES.rules}
@@ -315,4 +352,73 @@ function EmptySpells({
       )}
     </div>
   );
+}
+
+/**
+ * The empty state for a system whose books are NOT ready yet (docs/17 row
+ * 277): it NAMES them and says each one's own situation, so the page never
+ * claims nothing is imported while a same-system import is running or has
+ * failed. The ready half is the ONE ready-book rule's answer (see the read in
+ * `SpellsPage`), and these rows are simply what is left of the same-system
+ * books — there is deliberately no second "is ready" predicate here.
+ */
+function NotReadySpells({
+  books,
+  system,
+}: {
+  books: readonly Rulebook[];
+  system: Campaign['system'];
+}): JSX.Element {
+  const label = GAME_SYSTEM_LABELS[system];
+  const processing = books.filter((book) => book.status === 'processing');
+  const failed = books.filter((book) => book.status === 'error');
+  const title =
+    processing.length > 0 && failed.length === 0
+      ? `${label} books are still importing`
+      : `No spells imported yet for ${label}`;
+  const body = [
+    processing.length === 0
+      ? ''
+      : `${String(processing.length)} ${label} book${processing.length === 1 ? '' : 's'} ` +
+        `${processing.length === 1 ? 'is' : 'are'} still importing — the spell list appears ` +
+        `here when the import finishes.`,
+    failed.length === 0
+      ? ''
+      : `${String(failed.length)} ${label} import${failed.length === 1 ? '' : 's'} failed — ` +
+        `the way forward is named on the book's card on the Rules page.`,
+  ]
+    .filter((line) => line !== '')
+    .join(' ');
+  return (
+    <EmptySpells
+      testId="spells-not-ready"
+      title={title}
+      body={body}
+      remedy
+      icon={<ClockIcon aria-hidden className="size-8 text-muted-foreground" />}
+    >
+      <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+        {books.map((book) => (
+          <li key={book.id} data-testid="spells-not-ready-book" data-status={book.status}>
+            <span className="font-medium text-foreground">{book.title}</span>
+            {' — '}
+            {notReadyLine(book)}
+          </li>
+        ))}
+      </ul>
+    </EmptySpells>
+  );
+}
+
+/**
+ * What one not-ready book's own line says. The REMEDY is the book's own: a pack
+ * book is imported again ("Import bestiary pack"), a PDF book is re-selected
+ * through the `Retry…` control its card carries — naming the wrong one would be
+ * the same defect this state exists to prevent (docs/17 row 277).
+ */
+function notReadyLine(book: Rulebook): string {
+  if (book.status === 'processing') return 'still importing…';
+  return book.origin === 'pack'
+    ? 'the import failed — import this pack again on the Rules page'
+    : 'the import failed — open its card on the Rules page and choose "Retry…"';
 }

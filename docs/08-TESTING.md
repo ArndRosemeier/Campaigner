@@ -8116,3 +8116,45 @@ event-loop turns, POST 413 turns with a longest uninterrupted stretch of 90.4 ms
 **WHAT IS NOT CHUNKED, stated rather than implied:** the export's JSON assembly (the top-level
 `JSON.stringify` + one per artifact + `bytesFromBase64` per image) and the export's progress
 reporting (the dialog's `busy` state only) — both named in docs/18 §5 as the residual trade.
+
+### The pack-import residual — one failure guard, one reconcile seam, one named not-ready book (docs/17 row 277, docs/18 §2.1/§2.2/§5)
+
+The felt problem is a book that lies about itself in two directions: a PACK import
+that threw after `createBook` left the row reading `processing…` forever (nothing
+reconciled pack books, and the Rules page's failure copy is shown only for
+`'error'`), and the Spells page answered "No spells imported for <system>" while
+that very system's book was still importing. Three parts, ONE seam each — the
+post-create failure guard, the EXISTING start-up reconcile extended with a pack
+lane, and the ONE ready-book rule reused for the not-ready half.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| Any post-`createBook` throw (a `statBlockSchema`/`itemDataSchema` parse, a `persistChunks` failure, a `finalizeBook` failure) lands the row in `'error'` with the failure's OWN message and rethrows — the row is never left `'processing'` | `tests/ingest/packs/pack-import.test.ts` — `names the book and rethrows when a persist fails after the row exists`, `names the book and rethrows when finalizeBook fails`, and the REAL-Dexie pin `leaves NO processing book behind — the real Dexie row reaches \`error\`` (row state, not call shape) | pinned |
+| The guard is EXACTLY ONCE: the zero-entry arm writes its own message and the catch does not fail the row again | `tests/ingest/packs/pack-import.test.ts` — `marks the book error and throws when zero entries validate` now asserts `deps.failed` has LENGTH 1 as well as the message | pinned |
+| A `failBook` that itself fails (the row was deleted mid-import) is reported BESIDE the original failure, never swallowed in its place | `tests/ingest/packs/pack-import.test.ts` — `keeps BOTH failures visible when the row cannot be marked at all` (both messages in ONE throw) | pinned |
+| `importPack` holds the ONE cross-tab ingest lease across the whole post-create pass, so the reconcile's `isGenerationLockHeld` guard is NON-VACUOUS on a pack book | `tests/ingest/packs/pack-import.test.ts` — `holds the ONE ingest lease across the whole post-create pass` (a stubbed `LockManager`: the lock is named `ingestLockName(<the created book>)`, HELD while the chunks persist, and released after the pass) | pinned |
+| The PACK lane reconciles a `'processing'` pack row to `'error'` with the PACK sentence, which names the pack's real remedy and NOT the PDF one | `tests/ingest/ingestReconcile.test.ts` — `fails a processing pack row with the PACK lane's own sentence, never the PDF one` (the two constants are asserted to DIFFER, and `Retry…` is asserted absent) | pinned |
+| The lanes never touch each other's rows, each reads its OWN origin population, the lease guard covers packs too, the batch is loud once with its own remedy, and a row that finished between the read and the write is never overwritten | `tests/ingest/ingestReconcile.test.ts` — the five remaining pack-lane pins (`the two lanes never touch each other's rows`, `leaves a pack row another tab is importing alone`, `reads its own origin population`, `reports a pack batch loudly, once`, `never overwrites a pack row that finished`) | pinned |
+| The mount effect actually reaches the pack lane THROUGH the app: the owner's library card stops saying `processing…` and carries the pack sentence | `tests/features/feature-shell-and-editor.test.tsx` — `reconciles a PACK import a discarded tab left 'processing' — with the pack's own remedy`, rendered through the real router beside the row-266 PDF pin | pinned |
+| The Spells page NAMES a same-system book that is still importing (and one that failed, with that book's OWN remedy), never claiming nothing is imported; a ready book still takes today's path; a cross-system book never triggers it | `tests/features/spells-page.test.tsx` — five pins (`names a still-importing same-system book…`, `names a FAILED pack import and points at the pack remedy`, `names a FAILED PDF import and points at its own Retry control`, `a not-ready book of ANOTHER system never triggers…`, `a READY book keeps today's path…`) | pinned |
+| The not-ready half did NOT fork the ready-book rule: the set is "same-system books MINUS the ready answer" (`readyBooksOf`), and the ready filter is still declared once | `tests/db/ready-book-seam.test.ts` — the source scan is unchanged and stays green (the needle `(book) => book.status === 'ready'` still appears only in `db/rulebookRepo.ts`) | pinned |
+| The exception catalogue has not grown: the new tests copy no shared helper | `tests/architecture/no-duplicate-implementations.test.ts` — 18 green; the first draft extended the file-local `memoryDeps`/`createBook` helpers and the tripwire red-carded the baseline, so the id capture moved into a NEW local `trackedDeps` and the blessed copies stayed byte-identical. A `*Baseline.json` edit would have been DELETE-only; none was needed | pinned |
+
+**REVERT-PROVEN, one arm per part, every arm's sha256 printed with `sha256sum`, no
+two arms identical, each restored byte-identically from an out-of-tree copy under
+`.gate-logs/` (raw logs beside them):** (A) `src/ingest/packImport.ts`
+`41d6a951fdbb660e…` → `60d25aaa9d4f04e4…` (the exactly-once guard inverted, so the
+catch never names the row) → **RED 5 / GREEN 21**, the five being the zero-entry
+exactly-once pin plus all four guard pins (`.gate-logs/row277-armA2-run.log`); (B)
+`src/ingest/ingestReconcile.ts` `cc5b251b0c4372bf…` → `662450802d4e8874…` (the pack
+batch short-circuited to `[]`) → **RED 4 / GREEN 7**, exactly the pack-lane batch
+pins (`.gate-logs/row277-armB-run.log`); (C) `src/features/spells/SpellsPage.tsx`
+`ffc9303c18a5fe96…` → `ce6b0d29b40cd8b9…` (the not-ready branch removed) → **RED 3 /
+GREEN 14**, exactly the three naming pins (`.gate-logs/row277-armC-run.log`). Each
+file was verified back at its original hash after the run.
+
+**UNPROVEN here, stated rather than implied:** the lease is EXERCISED against a
+stubbed `LockManager` — jsdom has no Web Locks and no second tab, so "a start-up in
+another tab leaves a live pack import alone" is pinned as the GUARD's behaviour
+(a held lock name → no write) plus the import's HOLD of that name, not as a real
+cross-tab race. The device test remains the owner's.

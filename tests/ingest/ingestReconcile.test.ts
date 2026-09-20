@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createPackBook, createRulebook, getRulebook, updateRulebook } from '@/db/rulebookRepo';
+import {
+  createPackBook,
+  createRulebook,
+  finalizePackBook,
+  getRulebook,
+  updateRulebook,
+} from '@/db/rulebookRepo';
 import { ingestLockName } from '@/lib/generationLocks';
 import {
+  INTERRUPTED_PACK_IMPORT_MESSAGE,
   INTERRUPTED_PDF_IMPORT_MESSAGE,
+  formatInterruptedPackImportReport,
   formatInterruptedPdfImportReport,
+  reconcileInterruptedPackImport,
+  reconcileInterruptedPackImports,
   reconcileInterruptedPdfImport,
   reconcileInterruptedPdfImports,
 } from '@/ingest/ingestReconcile';
@@ -150,6 +160,126 @@ describe('interrupted PDF import reconciliation', () => {
     await updateRulebook(bookId, { status: 'ready' });
 
     expect(await reconcileInterruptedPdfImport(bookId)).toBe(false);
+    const row = await getRulebook(bookId);
+    expect(row?.status).toBe('ready');
+    expect(row?.errorMessage).toBe('');
+  });
+});
+
+/**
+ * The PACK arm of the same reconcile (docs/17 row 277, the row-241 residual).
+ *
+ * A pack book carries `'processing'` exactly like a PDF import, and a discarded
+ * tab leaves it behind the same way — but it has NO file to re-select, so the
+ * PDF lane's remedy ("pick the PDF again") would be a lie on it. The pack lane
+ * rides the SAME seam (ONE read parameterized by origin, ONE transaction, ONE
+ * lease guard, ONE batch loop) and differs only in its named sentence and its
+ * report line. These pins hold that: the pack sentence is its own and names the
+ * pack's real remedy, each lane leaves the other's rows alone, and the lease
+ * guard is the same one — non-vacuous because `importPack` holds it.
+ */
+describe('interrupted PACK import reconciliation (docs/17 row 277)', () => {
+  async function seedProcessingPackBook(): Promise<string> {
+    const book = await createPackBook({
+      title: 'bestiary-pack',
+      system: 'dnd5e',
+      filename: 'pack.json',
+    });
+    expect(book.status).toBe('processing');
+    return book.id;
+  }
+
+  it("fails a processing pack row with the PACK lane's own sentence, never the PDF one", async () => {
+    const bookId = await seedProcessingPackBook();
+
+    expect(await reconcileInterruptedPackImport(bookId)).toBe(true);
+
+    const row = await getRulebook(bookId);
+    expect(row?.status).toBe('error');
+    expect(row?.errorMessage).toBe(INTERRUPTED_PACK_IMPORT_MESSAGE);
+    // The remedy names the REAL way forward — import the pack again — and the
+    // two lanes' sentences must differ: the PDF one would tell the owner to
+    // re-select a PDF that does not exist.
+    expect(INTERRUPTED_PACK_IMPORT_MESSAGE).not.toBe(INTERRUPTED_PDF_IMPORT_MESSAGE);
+    expect(INTERRUPTED_PACK_IMPORT_MESSAGE).toContain('Import the pack again');
+    expect(INTERRUPTED_PACK_IMPORT_MESSAGE).toContain('"Import bestiary pack"');
+    expect(INTERRUPTED_PACK_IMPORT_MESSAGE).not.toContain('Retry');
+
+    // Idempotent: the row is no longer processing.
+    expect(await reconcileInterruptedPackImport(bookId)).toBe(false);
+    expect((await getRulebook(bookId))?.errorMessage).toBe(INTERRUPTED_PACK_IMPORT_MESSAGE);
+  });
+
+  it("the two lanes never touch each other's rows (the origin re-read)", async () => {
+    const packId = await seedProcessingPackBook();
+    const pdfId = await seedProcessingPdfBook();
+
+    expect(await reconcileInterruptedPdfImports([packId, pdfId])).toEqual([pdfId]);
+    expect((await getRulebook(packId))?.status).toBe('processing');
+    expect((await getRulebook(pdfId))?.errorMessage).toBe(INTERRUPTED_PDF_IMPORT_MESSAGE);
+
+    const packId2 = await seedProcessingPackBook();
+    const pdfId2 = await seedProcessingPdfBook();
+    expect(await reconcileInterruptedPackImports([pdfId2, packId2])).toEqual([packId2]);
+    expect((await getRulebook(pdfId2))?.status).toBe('processing');
+    expect((await getRulebook(packId2))?.errorMessage).toBe(INTERRUPTED_PACK_IMPORT_MESSAGE);
+  });
+
+  it('leaves a pack row another tab is importing alone (the SAME held lease)', async () => {
+    const bookId = await seedProcessingPackBook();
+    const held: string[] = [ingestLockName(bookId)];
+    stubHeldIngestLock(held);
+
+    expect(await reconcileInterruptedPackImports([bookId])).toEqual([]);
+    expect((await getRulebook(bookId))?.status).toBe('processing');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    // …and with the lease released the very same row IS reconciled.
+    held.length = 0;
+    expect(await reconcileInterruptedPackImports([bookId])).toEqual([bookId]);
+    expect((await getRulebook(bookId))?.status).toBe('error');
+  });
+
+  it('reads its own origin population, so a start-up reconciles both lanes', async () => {
+    const packId = await seedProcessingPackBook();
+    const pdfId = await seedProcessingPdfBook();
+
+    expect(await reconcileInterruptedPdfImports()).toEqual([pdfId]);
+    expect(await reconcileInterruptedPackImports()).toEqual([packId]);
+    expect((await getRulebook(pdfId))?.errorMessage).toBe(INTERRUPTED_PDF_IMPORT_MESSAGE);
+    expect((await getRulebook(packId))?.errorMessage).toBe(INTERRUPTED_PACK_IMPORT_MESSAGE);
+  });
+
+  it('reports a pack batch loudly, once, with the pack remedy', async () => {
+    const first = await seedProcessingPackBook();
+    const second = await seedProcessingPackBook();
+
+    expect((await reconcileInterruptedPackImports()).sort()).toEqual([first, second].sort());
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(String(toastErrorMock.mock.calls[0]?.[0])).toContain('Interrupted 2 pack imports');
+    expect(formatInterruptedPackImportReport(1)).toContain('Interrupted 1 pack import —');
+    expect(formatInterruptedPackImportReport(1)).toContain(
+      '"Import bestiary pack" on the Rules page',
+    );
+    expect(formatInterruptedPackImportReport(2)).toContain('Import the packs again');
+
+    toastErrorMock.mockClear();
+    await updateRulebook(first, { status: 'processing', errorMessage: '' });
+    expect(await reconcileInterruptedPackImports([first], { notify: false })).toEqual([first]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('never overwrites a pack row that finished between the read and the write', async () => {
+    const bookId = await seedProcessingPackBook();
+    await finalizePackBook(bookId, {
+      sourceId: 'test-pack',
+      license: 'CC-BY-4.0',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+
+    expect(await reconcileInterruptedPackImport(bookId)).toBe(false);
     const row = await getRulebook(bookId);
     expect(row?.status).toBe('ready');
     expect(row?.errorMessage).toBe('');

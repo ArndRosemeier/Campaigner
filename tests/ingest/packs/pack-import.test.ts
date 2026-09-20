@@ -2,14 +2,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { strToU8, zipSync } from 'fflate';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ItemData } from '@/domain/itemData';
 import type { PackMeta } from '@/domain/rulebook';
 import { statBlockSchema } from '@/domain/statblock';
 import type { RuleChunk } from '@/domain';
+import { listRulebooks } from '@/db/rulebookRepo';
 import {
   derivePackTitle,
+  dexiePackImportDeps,
   importPack,
   type PackImportDeps,
   type PackImportProgress,
@@ -17,7 +19,9 @@ import {
 import { PACK_ADAPTERS, getPackAdapter } from '@/ingest/packs/registry';
 import type { PackAdapter, PackFileParse } from '@/ingest/packs/types';
 import { sha256Hex } from '@/lib/hash';
+import { ingestLockName } from '@/lib/generationLocks';
 
+import { clearDatabase } from '../../db/helpers';
 import { baseNpc, encodeJson, folderDoc } from './fixtures';
 
 const DND5E_FIXTURES = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'dnd5e');
@@ -87,6 +91,24 @@ function memoryDeps(): MemoryDeps {
     failed,
   };
   return deps;
+}
+
+/**
+ * `memoryDeps` plus the id `createBook` handed out — the book the post-create
+ * guard must name. The wrapper exists so the shared `memoryDeps` helper (blessed
+ * as a deliberate copy in the duplication baseline) stays byte-identical.
+ */
+function trackedDeps(): { deps: MemoryDeps; bookId: () => string | undefined } {
+  const deps = memoryDeps();
+  let id: string | undefined;
+  // `.bind(deps)` keeps the method attached to its object (`unbound-method`).
+  const createBook = deps.createBook.bind(deps);
+  deps.createBook = async (input) => {
+    const book = await createBook(input);
+    id = book.id;
+    return book;
+  };
+  return { deps, bookId: () => id };
 }
 
 describe('importPack', () => {
@@ -177,6 +199,9 @@ describe('importPack', () => {
     expect(deps.failed[0]?.message).toContain(
       '— no valid creature entries in the pack selection (1 skipped, 1 failed)',
     );
+    // EXACTLY ONCE (docs/17 row 277): the zero-entry arm writes the row
+    // itself, and the post-create guard must NOT fail it a second time.
+    expect(deps.failed).toHaveLength(1);
     expect(deps.finalized).toHaveLength(0);
   });
 
@@ -664,5 +689,134 @@ describe('importPack system agreement (docs/17 row 209)', () => {
     expect(result.book.status).toBe('ready');
     expect(result.book.packMeta?.entriesImported).toBe(1);
     expect(result.book.packMeta?.entriesFailed).toBe(1);
+  });
+});
+
+/**
+ * The post-create failure guard (docs/17 row 277, the row-241 residual).
+ *
+ * `importPack` creates the Rulebook row FIRST, so ANY throw after that point
+ * used to leave the book reading `processing…` FOREVER — nothing reconciled
+ * pack books, and the row had no way forward. The guard is now: any throw after
+ * `createBook` lands the row in `'error'` carrying the failure's own message and
+ * rethrows LOUDLY (AGENTS rules 1–2), EXACTLY ONCE (the zero-entry arm writes
+ * its own message and must not be double-failed by the guard).
+ *
+ * The `deps`-based pins hold the call shape; the real-Dexie pin is the one that
+ * proves the ROW STATE — a book left `'processing'` is exactly the defect, and
+ * only the database can be asked whether it happened.
+ */
+describe('importPack post-create failure guard (docs/17 row 277)', () => {
+  const okNpc = (): { name: string; bytes: Uint8Array } => ({
+    name: 'good.json',
+    bytes: encodeJson(baseNpc('Ok Creature')),
+  });
+
+  it('names the book and rethrows when a persist fails after the row exists', async () => {
+    const { deps, bookId } = trackedDeps();
+    deps.persistChunks = () => Promise.reject(new Error('disk went away'));
+
+    await expect(
+      importPack('foundry-pf2e', [okNpc()], { title: 'Interrupted Pack', deps }),
+    ).rejects.toThrow('disk went away');
+
+    // The row the run created is the one that was named — with the failure's
+    // OWN message, not a placeholder.
+    expect(deps.failed).toEqual([{ id: bookId(), message: 'disk went away' }]);
+    expect(deps.finalized).toHaveLength(0);
+  });
+
+  it('names the book and rethrows when finalizeBook fails', async () => {
+    const { deps, bookId } = trackedDeps();
+    deps.finalizeBook = () => Promise.reject(new Error('finalize exploded'));
+
+    await expect(
+      importPack('foundry-pf2e', [okNpc()], { title: 'Interrupted Pack', deps }),
+    ).rejects.toThrow('finalize exploded');
+
+    expect(deps.failed).toEqual([{ id: bookId(), message: 'finalize exploded' }]);
+  });
+
+  it('keeps BOTH failures visible when the row cannot be marked at all', async () => {
+    const deps = memoryDeps();
+    deps.persistChunks = () => Promise.reject(new Error('disk went away'));
+    deps.failBook = () => Promise.reject(new Error('Rulebook not found: gone'));
+
+    // The owner deleted the row mid-import: the import failure is still the
+    // headline, and the un-nameable row is stated beside it — never swallowed.
+    await expect(
+      importPack('foundry-pf2e', [okNpc()], { title: 'Interrupted Pack', deps }),
+    ).rejects.toThrow(
+      'disk went away — the book could not be marked as error: Rulebook not found: gone',
+    );
+  });
+
+  it('leaves NO processing book behind — the real Dexie row reaches `error`', async () => {
+    await clearDatabase();
+    const deps: PackImportDeps = {
+      ...dexiePackImportDeps,
+      persistChunks: () => Promise.reject(new Error('disk went away')),
+    };
+
+    await expect(
+      importPack('foundry-pf2e', [okNpc()], { title: 'Interrupted Pack', deps }),
+    ).rejects.toThrow('disk went away');
+
+    const books = await listRulebooks();
+    expect(books).toHaveLength(1);
+    expect(books[0]?.status).toBe('error');
+    expect(books[0]?.errorMessage).toBe('disk went away');
+    expect(books[0]?.origin).toBe('pack');
+  });
+
+  it('still finalizes a healthy import (the guard is not a blanket failure)', async () => {
+    await clearDatabase();
+    const result = await importPack('foundry-pf2e', [okNpc()], {
+      title: 'Healthy Pack',
+      deps: dexiePackImportDeps,
+    });
+    expect(result.book.status).toBe('ready');
+    expect((await listRulebooks())[0]?.status).toBe('ready');
+  });
+
+  it('holds the ONE ingest lease across the whole post-create pass', async () => {
+    // The start-up reconcile's `isGenerationLockHeld(ingestLockName(bookId))`
+    // guard is only meaningful if a live pack import HOLDS that lease
+    // (docs/17 row 277). This pins the hold: the lock is named for the book the
+    // run created, and it is still held while the chunks are being persisted.
+    const requested: string[] = [];
+    let held = false;
+    let heldDuringPersist = false;
+    const { deps, bookId } = trackedDeps();
+    deps.persistChunks = () => {
+      heldDuringPersist = held;
+      return Promise.resolve();
+    };
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: (name: string, _options: unknown, callback: () => Promise<unknown>) => {
+          requested.push(name);
+          held = true;
+          return Promise.resolve(callback()).finally(() => {
+            held = false;
+          });
+        },
+        query: () => Promise.resolve({ held: held ? [{ name: requested[0] }] : [], pending: [] }),
+      },
+    });
+
+    try {
+      const result = await importPack('foundry-pf2e', [okNpc()], {
+        title: 'Leased Pack',
+        deps,
+      });
+      expect(result.book.status).toBe('ready');
+      expect(requested).toEqual([ingestLockName(bookId() ?? '')]);
+      expect(heldDuringPersist).toBe(true);
+      // …and released when the pass settles.
+      expect(held).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

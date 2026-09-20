@@ -14,7 +14,7 @@ import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
 import { reconcileInterruptedModuleGens } from '@/llm/moduleGenReconcile';
-import { reconcileInterruptedPdfImports } from '@/ingest/ingestReconcile';
+import { reconcileInterruptedPdfImports, reconcileInterruptedPackImports } from '@/ingest/ingestReconcile';
 import { onPageResumed } from '@/lib/pageLiveness';
 import {
   applyBackgroundTitle,
@@ -46,7 +46,9 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
  * body — docs/17 row 110) it reconciles rows a previous page left behind: runs
  * still 'running' are marked failed (04-LLM-PERSONAS "Interrupted by reload")
  * and module rows still 'generating' with no live pass are failed LOUDLY with a
- * named recovery instruction (`llm/moduleGenReconcile`); the same module
+ * named recovery instruction (`llm/moduleGenReconcile`); interrupted PDF and
+ * PACK imports are reconciled to a named failure too, through the ONE
+ * `ingest/ingestReconcile` seam (docs/17 rows 266 and 277); the same module
  * reconciliation runs on the way back into a tab that was hidden, frozen or
  * discarded, and the shell owns restoring the app's own `document.title` when
  * the tab is visible again (the background line belongs to the trip away).
@@ -299,6 +301,15 @@ export function AppShell(): JSX.Element {
     // leaves a row another tab holds the ingest lease on alone.
     void reconcileInterruptedPdfImports().catch((error: unknown) => {
       toastError('Could not reconcile interrupted PDF imports', error);
+    });
+    // The PACK arm of the same rulebook reconcile (docs/17 row 277): a pack book
+    // also carries 'processing' and is left behind by a discarded tab, but it
+    // has NO file to re-select — so it rides the SAME reconcile seam with its
+    // OWN named remedy sentence ("Import bestiary pack" again). `importPack`
+    // holds the same ingest lease, so a live pack import in another tab is left
+    // alone exactly like a live PDF extraction.
+    void reconcileInterruptedPackImports().catch((error: unknown) => {
+      toastError('Could not reconcile interrupted pack imports', error);
     });
     // Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
     // Seeding after mount (not in main.tsx) so failures surface as toasts.

@@ -8,6 +8,7 @@ import {
   type NewRulebook,
   type PackMeta,
   type Rulebook,
+  type RulebookOrigin,
 } from '@/domain';
 import { db } from '@/db/db';
 import { deleteChunksByBook } from '@/db/chunkRepo';
@@ -160,30 +161,34 @@ export async function updateRulebook(id: string, patch: RulebookPatch): Promise<
 }
 
 /**
- * Every PDF-origin book whose persisted status is `'processing'` (docs/17 row
- * 266) — the population the start-up reconcile owns.
+ * Every book of ONE origin whose persisted status is `'processing'` (docs/17
+ * row 266 for PDFs, extended to packs by row 277) — the population the
+ * start-up reconcile owns.
  *
- * The `status` INDEX is read (the table carries one), and the `origin` split
- * is applied after the parse because a pack book is NOT a PDF import: it has
- * no file to re-select, so the PDF recovery sentence would be a lie on it.
- * Pack rows are reconciled by their own slice (see docs/18 §5).
+ * The `status` INDEX is read (the table carries one), and the `origin` split is
+ * applied after the parse because the two lanes need DIFFERENT recovery
+ * sentences: a PDF book can be re-selected from the file picker, a pack book
+ * has no file to re-select and is re-imported/ re-fetched instead. It is ONE
+ * read parameterized by origin rather than one read per lane — the lanes differ
+ * only in their message, and two near-identical reads would be the drift
+ * AGENTS rule 4 forbids.
  */
-export async function listProcessingPdfBooks(): Promise<Rulebook[]> {
+export async function listProcessingBooks(origin: RulebookOrigin): Promise<Rulebook[]> {
   const rows = await db.rulebooks.where('status').equals('processing').toArray();
-  return rows.map(parseRulebookRow).filter((book) => book.origin === 'pdf');
+  return rows.map(parseRulebookRow).filter((book) => book.origin === origin);
 }
 
 /**
- * The interrupted-import reconcile write (docs/17 row 266): marks a PDF book
- * whose row still says `'processing'` as `'error'` with `errorMessage`, which
- * is the status the Rules page already offers its `Retry…` control on — so
- * the row stops being a forever-`processing…` card and becomes a named
- * failure with a way forward.
+ * The interrupted-import reconcile write (docs/17 row 266, one write for BOTH
+ * origins since row 277): marks a book of the given origin whose row still says
+ * `'processing'` as `'error'` with `errorMessage` — the status the Rules page
+ * already shows its failure copy on, so the row stops being a
+ * forever-`processing…` card and becomes a named failure with a way forward.
  *
- * The status and origin are re-read INSIDE the transaction, so a pipeline
- * that finished between the reconcile's read and this write (or a row that
- * was never an import) is left alone: the write is idempotent, and after it
- * lands the row is no longer `'processing'`.
+ * The status and origin are re-read INSIDE the transaction, so a pipeline that
+ * finished between the reconcile's read and this write (or a row of the other
+ * origin) is left alone: the write is idempotent, and after it lands the row is
+ * no longer `'processing'`.
  *
  * Returns the failed row, or `undefined` when there was nothing to fail. The
  * CROSS-TAB lease is deliberately NOT read here (it is async, and the module
@@ -191,15 +196,16 @@ export async function listProcessingPdfBooks(): Promise<Rulebook[]> {
  * type has none of) — the caller reads `isGenerationLockHeld` before opening
  * the transaction; see `ingest/ingestReconcile`.
  */
-export async function failInterruptedPdfImport(
+export async function failInterruptedBookImport(
   id: Id,
+  origin: RulebookOrigin,
   errorMessage: string,
 ): Promise<Rulebook | undefined> {
   return db.transaction('rw', db.rulebooks, async () => {
     const current = await db.rulebooks.get(id);
     if (current === undefined) return undefined;
     const book = parseRulebookRow(current);
-    if (book.status !== 'processing' || book.origin !== 'pdf') return undefined;
+    if (book.status !== 'processing' || book.origin !== origin) return undefined;
     const updated = rulebookSchema.parse({
       ...book,
       status: 'error',

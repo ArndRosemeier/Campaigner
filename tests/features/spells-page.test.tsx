@@ -9,7 +9,7 @@ import { createAppRouter } from '@/app/router';
 import { spellsPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { createPackBook, createRulebook, failPackBook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import {
   defaultSettings,
@@ -300,6 +300,102 @@ describe('spells page — empty states per system', () => {
     // Neither corpus-level empty state appears while a spell list exists.
     expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
     expect(screen.queryByTestId('spells-no-spell-data')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A same-system book that is NOT ready is NAMED (docs/17 row 277).
+ *
+ * The page read READY books only, so a same-system book that was still
+ * importing — or that had failed — made it claim "No spells imported for
+ * <system>", i.e. told the owner to import what was already importing. The
+ * stated empty state now names those books and each one's own situation; a
+ * READY book still takes today's path, and a book of another system never
+ * triggers it.
+ */
+describe('spells page — a same-system book that is not ready is named (row 277)', () => {
+  it('names a still-importing same-system book instead of claiming nothing is imported', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    await createPackBook({
+      title: 'PF2e Rules Pack',
+      system: 'pathfinder2e',
+      filename: 'pack.json',
+    });
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-not-ready');
+    expect(notice).toHaveTextContent('PF2e Rules Pack');
+    expect(notice).toHaveTextContent('still importing');
+    expect(notice).toHaveTextContent('the spell list appears here when the import finishes');
+    // The defect this closes: the old copy said exactly this while the pack WAS
+    // importing.
+    expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
+    expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
+  });
+
+  it('names a FAILED pack import and points at the pack remedy', async () => {
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const pack = await createPackBook({
+      title: 'SRD Spells',
+      system: 'dnd5e',
+      filename: 'pack.json',
+    });
+    await failPackBook(pack.id, 'no valid spell entries in the pack selection (0 skipped, 3 failed)');
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-not-ready');
+    expect(notice).toHaveTextContent('No spells imported yet for D&D 5e');
+    expect(notice).toHaveTextContent('SRD Spells');
+    expect(notice).toHaveTextContent('import this pack again');
+    // The remedy is the BOOK's own: a pack is never told to re-pick a PDF.
+    expect(notice).not.toHaveTextContent('Retry');
+    expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
+  });
+
+  it('names a FAILED PDF import and points at its own Retry control', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    const pdf = await createRulebook({
+      title: 'Core Rulebook',
+      system: 'pathfinder2e',
+      filename: 'core.pdf',
+    });
+    await updateRulebook(pdf.id, { status: 'error', errorMessage: 'extraction failed' });
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-not-ready');
+    expect(notice).toHaveTextContent('Core Rulebook');
+    expect(notice).toHaveTextContent('"Retry…"');
+    expect(notice).not.toHaveTextContent('import this pack again');
+  });
+
+  it('a not-ready book of ANOTHER system never triggers the named state', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    await createPackBook({ title: 'SRD Spells', system: 'dnd5e', filename: 'pack.json' });
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-no-material');
+    expect(notice).toHaveTextContent('No spells imported for Pathfinder 2e');
+    expect(screen.queryByTestId('spells-not-ready')).not.toBeInTheDocument();
+  });
+
+  it("a READY book keeps today's path even while another same-system book imports", async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
+    await readyBook('PF2e Rules', 'pathfinder2e');
+    await createPackBook({
+      title: 'PF2e Bestiary',
+      system: 'pathfinder2e',
+      filename: 'pack.json',
+    });
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-no-spell-data');
+    expect(notice).toHaveTextContent('Re-import the Pathfinder 2e rules-text pack');
+    expect(screen.queryByTestId('spells-not-ready')).not.toBeInTheDocument();
   });
 });
 

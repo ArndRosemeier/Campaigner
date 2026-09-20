@@ -65,8 +65,8 @@ import type {
 import { saveSettings, readSettings } from '@/db/settingsRepo';
 import { DEFAULT_CHAT_MODEL } from '@/domain/settings';
 import { INTERRUPTED_MODULE_GEN_MESSAGE } from '@/llm/moduleGenReconcile';
-import { INTERRUPTED_PDF_IMPORT_MESSAGE } from '@/ingest/ingestReconcile';
-import { createRulebook, getRulebook } from '@/db/rulebookRepo';
+import { INTERRUPTED_PACK_IMPORT_MESSAGE, INTERRUPTED_PDF_IMPORT_MESSAGE } from '@/ingest/ingestReconcile';
+import { createPackBook, createRulebook, getRulebook } from '@/db/rulebookRepo';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
@@ -267,6 +267,33 @@ describe('app-shell-boot-reconcile.test.tsx', () => {
         await screen.findByTestId(`retry-book-${bookId}`, {}, { timeout: 10_000 }),
       ).toBeInTheDocument();
       await user.keyboard('{Escape}');
+      await flushAsyncUpdates();
+    }, 20_000);
+
+    it("reconciles a PACK import a discarded tab left 'processing' — with the pack's own remedy", async () => {
+      const book = await createPackBook({
+        title: 'wedge-pack',
+        system: 'dnd5e',
+        filename: 'pack.json',
+      });
+
+      renderAppAt(ROUTES.rules);
+
+      // The same start-up seam, reached from the same mount effect: the pack
+      // row stops being a forever-`processing…` card and carries a sentence
+      // that names the remedy a PACK has (import it again) — never the PDF's
+      // "pick the PDF again", which would be a lie on it.
+      const card = await screen.findByText('wedge-pack', {}, { timeout: 10_000 });
+      await waitFor(() => {
+        expect(screen.getByText(INTERRUPTED_PACK_IMPORT_MESSAGE)).toBeInTheDocument();
+      });
+      expect(card.closest('li')).not.toBeNull();
+      expect(INTERRUPTED_PACK_IMPORT_MESSAGE).not.toBe(INTERRUPTED_PDF_IMPORT_MESSAGE);
+
+      const row = await actDrained(() => getRulebook(book.id));
+      expect(row?.status).toBe('error');
+      expect(row?.errorMessage).toBe(INTERRUPTED_PACK_IMPORT_MESSAGE);
+
       await flushAsyncUpdates();
     }, 20_000);
 
