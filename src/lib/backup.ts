@@ -1,4 +1,4 @@
-import { Zip, ZipDeflate, unzipSync, strToU8 } from 'fflate';
+import { unzipSync } from 'fflate';
 import { z } from 'zod';
 
 import { db } from '@/db/db';
@@ -15,6 +15,7 @@ import {
   type StoredPdf,
 } from '@/domain';
 import { imageFileExtension, retiredTableRows } from '@/lib/exportImport';
+import { StreamingZip } from '@/lib/zipStream';
 
 /**
  * Full-app backup (M4-C): zips the ENTIRE IndexedDB state — campaigns,
@@ -35,7 +36,9 @@ import { imageFileExtension, retiredTableRows } from '@/lib/exportImport';
  * safeguard costs the GM his session on a tablet, so `buildBackup` streams the
  * zip with bounded batches and yields to the event loop between them. The FILE
  * is unchanged — one zip, the same entries, the same manifest shape — and the
- * restore half (`unzipSync`) is untouched.
+ * restore half (`unzipSync`) is untouched. The streaming writer itself is the
+ * ONE seam (`lib/zipStream.StreamingZip`), shared with the campaign export
+ * (docs/17 row 276): this module supplies only the backup's entry layout.
  */
 
 export const BACKUP_FORMAT = 'campaigner-backup';
@@ -50,9 +53,6 @@ const MANIFEST_NAME = 'campaigner-backup.json';
  */
 const ROWS_PER_YIELD = 40;
 
-/** Bytes handed to the deflate stream between yields (1 MiB). */
-const BYTES_PER_PUSH = 1024 * 1024;
-
 /** Progress of a running backup build, for the app-wide progress dock. */
 export interface BackupProgress {
   /** What is happening right now ("Packing images (12 of 340)…"). */
@@ -66,27 +66,9 @@ export interface BuildBackupOptions {
   onProgress?: (progress: BackupProgress) => void;
 }
 
-/**
- * Hands the main thread back to the browser. A MACROTASK (`setTimeout`), not a
- * resolved promise: a microtask lets the async function continue without ever
- * giving rendering, input or the browser's own watchdogs a turn, which is
- * exactly the difference between a chunked build and a blocked tab — the
- * defect docs/17 row 265 exists for.
- */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 0);
-  });
-}
-
 /** `mobPortraits` → `mob portraits`, for progress detail lines only. */
 function readableTableName(name: string): string {
   return name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
-}
-
-/** The push half of fflate's streaming zip entries (structural, not imported). */
-interface StreamingEntry {
-  push: (chunk: Uint8Array, final?: boolean) => void;
 }
 
 /**
@@ -149,10 +131,12 @@ export interface BackupFile {
  *
  * - each table is read one at a time, and its rows are serialized in
  *   `ROWS_PER_YIELD`-row batches;
- * - the manifest JSON and every image binary are pushed into fflate's
- *   STREAMING zip in bounded slices, with a macrotask yield between slices, so
- *   the main thread keeps breathing and a mobile watchdog is never handed one
- *   long synchronous `zipSync` to kill the tab over;
+ * - the manifest JSON and every image binary are pushed through the ONE
+ *   streaming-zip seam (`lib/zipStream.StreamingZip`, docs/17 row 265 extracted
+ *   it and row 276 shares it with the campaign export) in bounded slices, with a
+ *   macrotask yield between slices, so the main thread keeps breathing and a
+ *   mobile watchdog is never handed one long synchronous `zipSync` to kill the
+ *   tab over;
  * - progress is reported per table and per image for the progress dock.
  *
  * The memory shape is bounded by design: rows are dropped as each table is
@@ -164,46 +148,9 @@ export interface BackupFile {
  */
 export async function buildBackup(options: BuildBackupOptions = {}): Promise<BackupFile> {
   const onProgress = options.onProgress;
-  const chunks: Uint8Array[] = [];
-  let streamError: Error | null = null;
-  const zip = new Zip((error, chunk) => {
-    if (error) {
-      streamError = error;
-      return;
-    }
-    if (chunk.length > 0) chunks.push(chunk);
-  });
+  const zip = new StreamingZip();
 
-  const failIfStreamBroken = (): void => {
-    if (streamError !== null) throw streamError;
-  };
-
-  /** Pushes bytes in bounded slices, yielding between them. */
-  const pushBytes = async (
-    entry: StreamingEntry,
-    bytes: Uint8Array,
-    finalize: boolean,
-  ): Promise<void> => {
-    if (bytes.length === 0) {
-      if (finalize) {
-        entry.push(new Uint8Array(0), true);
-        failIfStreamBroken();
-      }
-      return;
-    }
-    for (let offset = 0; offset < bytes.length; offset += BYTES_PER_PUSH) {
-      const end = Math.min(offset + BYTES_PER_PUSH, bytes.length);
-      entry.push(bytes.subarray(offset, end), finalize && end >= bytes.length);
-      failIfStreamBroken();
-      await yieldToEventLoop();
-    }
-  };
-
-  const pushText = (entry: StreamingEntry, text: string, finalize: boolean): Promise<void> =>
-    pushBytes(entry, strToU8(text), finalize);
-
-  const manifestEntry = new ZipDeflate(MANIFEST_NAME, { level: 6 });
-  zip.add(manifestEntry);
+  const manifestEntry = zip.add(MANIFEST_NAME);
 
   const tableCounts: Record<string, number> = {};
   const exportedAt = Date.now();
@@ -239,11 +186,11 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
       for (let start = 0; start < rows.length; start += ROWS_PER_YIELD) {
         const batch = rows.slice(start, start + ROWS_PER_YIELD);
         const text = batch.map((row) => JSON.stringify(mapRow(row))).join(',');
-        await pushText(manifestEntry, start === 0 ? text : `,${text}`, false);
+        await zip.pushText(manifestEntry, start === 0 ? text : `,${text}`, false);
       }
     };
 
-    await pushText(
+    await zip.pushText(
       manifestEntry,
       `{"format":${JSON.stringify(BACKUP_FORMAT)},"version":${String(BACKUP_FORMAT_VERSION)},` +
         `"exportedAt":${String(exportedAt)},"dbVersion":${String(db.verno)},"data":{`,
@@ -255,8 +202,8 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
       const label = readableTableName(table.name);
       report(`Reading ${label} (${String(index + 1)} of ${String(tables.length)})…`);
 
-      if (index > 0) await pushText(manifestEntry, ',', false);
-      await pushText(manifestEntry, `${JSON.stringify(table.name)}:[`, false);
+      if (index > 0) await zip.pushText(manifestEntry, ',', false);
+      await zip.pushText(manifestEntry, `${JSON.stringify(table.name)}:[`, false);
       report(`Packing ${label} (${String(index + 1)} of ${String(tables.length)})…`);
 
       if (table.name === 'settings') {
@@ -286,17 +233,13 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
             throw new Error(`Image row ${meta.id} has no binary payload`);
           }
           metaRows.push(meta);
-          // The SAME level the whole-zip `zipSync` applied to every entry: the
-          // streaming split changes how the file is made, never what it holds.
-          // (Images were measured as pass-through first — 30 patterned 128 KiB
-          // images took the zip from 375 098 B to 4 131 073 B — so storing them
-          // uncompressed is a silent size regression, not a saving.)
-          const entry = new ZipDeflate(
-            `images/${meta.id}.${imageFileExtension(meta.mimeType)}`,
-            { level: 6 },
-          );
-          zip.add(entry);
-          await pushBytes(entry, bytes, true);
+          // `StreamingZip.add` writes every entry at the SAME level the
+          // whole-zip `zipSync` applied: the streaming split changes how the
+          // file is made, never what it holds (images were measured as
+          // pass-through once and taken back out — 30 patterned 128 KiB images
+          // took the zip from 375 098 B to 4 131 073 B).
+          const entry = zip.add(`images/${meta.id}.${imageFileExtension(meta.mimeType)}`);
+          await zip.pushBytes(entry, bytes, true);
           report(`Packing images (${String(imageIndex + 1)} of ${String(imageCount)})…`);
         }
         await writeRows(metaRows, (row) => row);
@@ -306,15 +249,14 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
         tableCounts[table.name] = rows.length;
       }
 
-      await pushText(manifestEntry, ']', false);
+      await zip.pushText(manifestEntry, ']', false);
     }
 
     // `tableCounts` closes the object AFTER `data`: JSON object order is
     // irrelevant to the parser, and writing it last is what lets the counts be
     // a running tally rather than a second pass over the data.
-    await pushText(manifestEntry, `},"tableCounts":${JSON.stringify(tableCounts)}}`, true);
+    await zip.pushText(manifestEntry, `},"tableCounts":${JSON.stringify(tableCounts)}}`, true);
     zip.end();
-    failIfStreamBroken();
   } catch (error) {
     // The zip is abandoned mid-entry; terminate so the deflate state and any
     // worker/stream resources go with it. The error is rethrown, never
@@ -323,14 +265,7 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
     throw error;
   }
 
-  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return { bytes, manifest, pdfExcluded };
+  return { bytes: zip.bytes(), manifest, pdfExcluded };
 }
 
 const backupSchema = z.object({

@@ -120,7 +120,7 @@ describe('export/import', () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const nameless = await createArtifact({ campaignId: campaign.id, kind: 'note', name: '???' });
 
-    const files = Object.keys(unzipSync(buildZip(await buildCampaignExport(campaign.id))));
+    const files = Object.keys(unzipSync(await buildZip(await buildCampaignExport(campaign.id))));
 
     expect(files).toContain(`artifacts/note/artifact-${nameless.id.slice(0, 8)}.json`);
   });
@@ -144,7 +144,7 @@ describe('export/import', () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const grimm = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Grimm' });
     const exported = await buildCampaignExport(campaign.id);
-    const zip = buildZip(exported);
+    const zip = await buildZip(exported);
     const files = Object.keys(unzipSync(zip));
     expect(files).toContain('campaigner-export.json');
     // BYTE-EXACT entry name, not a prefix: the slug half is the seam's
@@ -156,6 +156,42 @@ describe('export/import', () => {
     ) as { format: string; artifacts: unknown[] };
     expect(manifest.format).toBe('campaigner-export');
     expect(manifest.artifacts).toHaveLength(1);
+  });
+
+  /**
+   * ASYNC, CHUNKED ZIP (docs/17 row 276). The campaign export used to call the
+   * synchronous `zipSync` over the whole payload on the main thread — the
+   * row-265 defect in the other action. Pinned here is the PROPERTY `zipSync`
+   * could not have: a MACROTASK that runs while the build is still in flight.
+   * The timer is scheduled BEFORE the build starts, so only a real macrotask
+   * boundary INSIDE the build lets it run first; an implementation that yields
+   * with a resolved promise (a microtask) drains before any timer and reds this
+   * too. jsdom cannot end a tab, so this differential is the suite's whole
+   * reach and the device is the owner's proof.
+   */
+  it('yields to the event loop while the zip is packed (row 276 differential)', async () => {
+    const campaign = await createCampaign({ name: 'Async Emberfall', system: 'dnd5e' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'note',
+      name: 'Long note',
+      body: 'x'.repeat(64 * 1024),
+    });
+    const exported = await buildCampaignExport(campaign.id);
+
+    let buildSettled = false;
+    let macrotaskRanWhilePacking = false;
+    setTimeout(() => {
+      if (!buildSettled) macrotaskRanWhilePacking = true;
+    }, 0);
+    const zip = await buildZip(exported).then((bytes) => {
+      buildSettled = true;
+      return bytes;
+    });
+
+    expect(macrotaskRanWhilePacking).toBe(true);
+    // …and the file is still the same single-file export the import accepts.
+    expect(Object.keys(unzipSync(zip))).toContain('campaigner-export.json');
   });
 
   it('rejects invalid import payloads (missing format marker)', async () => {
@@ -208,7 +244,7 @@ describe('export/import', () => {
     const zipExport = await buildCampaignExport(campaign.id, undefined, { images: true });
     expect(zipExport.images).toHaveLength(1);
     expect(zipExport.images?.[0]?.dataBase64).not.toBeNull();
-    const zip = buildZip(zipExport);
+    const zip = await buildZip(zipExport);
     const files = unzipSync(zip);
     const imageFile = Object.keys(files).find((name) =>
       name.startsWith(`images/${image.id}.`),
@@ -1301,7 +1337,7 @@ describe('import dependency enforcement', () => {
 
   it('zip imports enforce the same policy', async () => {
     const { campaignId } = await exportGoblinCampaign();
-    const zip = buildZip(
+    const zip = await buildZip(
       await buildCampaignExport(campaignId, undefined, { images: true }),
     );
     await db.chunks.clear();

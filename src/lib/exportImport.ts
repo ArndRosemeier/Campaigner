@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { strToU8, unzipSync, zipSync } from 'fflate';
+import { strToU8, unzipSync } from 'fflate';
 
 import type {
   Artifact,
@@ -42,6 +42,7 @@ import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { bytesFromBase64 } from '@/lib/base64';
 import { fileSlug } from '@/lib/fileSlug';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
+import { StreamingZip } from '@/lib/zipStream';
 import { db } from '@/db/db';
 
 /**
@@ -328,8 +329,20 @@ export function exportSuggestedName(campaignName: string, format: 'json' | 'zip'
   return `${fileSlug(campaignName, 'artifact')}-${new Date(Date.now()).toISOString().slice(0, 10)}.${format}`;
 }
 
-/** Multi-file zip bundle: one JSON per artifact + a manifest + image files. */
-export function buildZip(exported: CampaignExport): Uint8Array {
+/**
+ * Multi-file zip bundle: one JSON per artifact + a manifest + image files.
+ *
+ * ASYNCHRONOUS and chunked since docs/17 row 276 — the campaign export was the
+ * last caller of the synchronous `zipSync`, the same defect row 265 cured for
+ * the whole-database backup. Every entry goes into the ONE streaming-zip seam
+ * (`lib/zipStream.StreamingZip`) and its bytes are pushed in bounded slices with
+ * a macrotask yield between them, so a large campaign no longer deflates its
+ * whole payload on the main thread. The FILE is unchanged — the same entry
+ * names, the same JSON, the same compression level — so `importZip` accepts it
+ * exactly as before. A failure rejects and the half-written stream is
+ * terminated: never a partial archive (AGENTS rule 1).
+ */
+export async function buildZip(exported: CampaignExport): Promise<Uint8Array> {
   // Zip images are carried as binary files next to the JSON; the JSON keeps
   // only their metadata (dataBase64: null) — no double storage (M3-A).
   const withImageRefs: CampaignExport =
@@ -351,7 +364,17 @@ export function buildZip(exported: CampaignExport): Uint8Array {
     files[`images/${image.id}.${imageFileExtension(image.mimeType)}`] =
       bytesFromBase64(image.dataBase64);
   }
-  return zipSync(files, { level: 6 });
+  const zip = new StreamingZip();
+  try {
+    for (const [name, bytes] of Object.entries(files)) {
+      await zip.pushBytes(zip.add(name), bytes, true);
+    }
+    zip.end();
+  } catch (error) {
+    zip.terminate();
+    throw error;
+  }
+  return zip.bytes();
 }
 
 // --- Import -----------------------------------------------------------------

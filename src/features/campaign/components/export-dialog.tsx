@@ -115,9 +115,13 @@ export function ExportCampaignDialog({
           ? await buildCampaignExport(campaignId, undefined, { images: format === 'zip' })
           : await buildCampaignExport(campaignId, ids, { images: format === 'zip' });
       if (format === 'zip') {
-        await target.write(
-          new Blob([buildZip(exported) as BlobPart], { type: 'application/zip' }),
-        );
+        // `buildZip` is async and chunked (docs/17 row 276): the await is what
+        // keeps `busy` honest across the whole build, and a failure lands in
+        // the catch below (toastError), never in a partial download. The
+        // `BlobPart` cast is the backup surface's own precedent (TS strict
+        // rejects `Uint8Array<ArrayBufferLike>` as a BlobPart directly).
+        const zipBytes = await buildZip(exported);
+        await target.write(new Blob([zipBytes as BlobPart], { type: 'application/zip' }));
       } else {
         await target.write(
           new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
