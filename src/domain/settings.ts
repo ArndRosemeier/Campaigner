@@ -21,100 +21,60 @@ import {
 } from '@/domain/promptStyle';
 
 /**
- * The one-shot report of the core-mob citation repair (docs/11 D7): what the
- * v20 upgrade converted, and — BY NAME — everything it could not convert.
- * Written by the upgrade, consumed once by AppShell, then nulled.
+ * The ONE report of the clean-cut purge (docs/17 row 278). The upgrade body
+ * that removes every campaign-scoped row runs inside Dexie, before React
+ * exists, so it cannot toast: it writes what it removed and kept here, and
+ * AppShell reads it ONCE and nulls it.
  *
- * The by-name half is the point (AGENTS rule 1): a repair that cannot convert
- * a citation must never leave it to render as a bare `missing ref` with no
- * explanation of what was lost.
+ * Every count is recorded because a purge the owner cannot see is the
+ * silent-loss shape AGENTS rule 1 forbids — and `libraryLegacyCitationsDropped`
+ * is additionally the ONE INSTRUMENT that reveals whether a surviving library
+ * row carried an unconvertible citation (readable only from his browser,
+ * inventory §f.9/§f.11).
  */
-export const creatureCitationRepairReportSchema = z.object({
-  /** `npc-ref` citations rewritten to the `rulebook` citation of the identity
-   * the deleted mob artifact's marker named — the owner's incident, healed. */
-  citationsRewritten: z.number().int().nonnegative(),
-  /** Marked `npc` rows deleted as cache (they were never authored content). */
-  emptyRowsDeleted: z.number().int().nonnegative(),
-  /** Marked rows whose cover was carried onto the campaign's presentation row
-   * for the creature identity, so no portrait was lost with the row. */
-  coversCarriedForward: z.number().int().nonnegative(),
-  /** Rows that still carried authored text when they were deleted — reported
-   * because the owner may want to re-create them as real NPCs (docs/11 D7). */
-  authoredRowsRemoved: z.array(z.string()).default([]),
-  /** Citations that could NOT be converted, by name, with the reason. */
-  unconverted: z
-    .array(z.object({ where: z.string(), name: z.string(), reason: z.string() }))
-    .default([]),
+export const cleanCutReportSchema = z.object({
+  /** Campaign rows removed (`campaigns`). */
+  campaignsPurged: z.number().int().nonnegative(),
+  /** Module rows removed (`modules`). */
+  modulesPurged: z.number().int().nonnegative(),
+  /** Battle rows removed (`battles`). */
+  battlesPurged: z.number().int().nonnegative(),
+  /** Run rows removed (`runs`). */
+  runsPurged: z.number().int().nonnegative(),
+  /** Module-document snapshots removed (`moduleVersions`). */
+  moduleVersionsPurged: z.number().int().nonnegative(),
+  /** Campaign creature-presentation rows removed (`creatureImages`). */
+  creatureImagesPurged: z.number().int().nonnegative(),
+  /** Campaign-scoped artifact rows removed (`artifacts` with a campaign). */
+  artifactsPurged: z.number().int().nonnegative(),
+  /** Campaign-scoped image blobs removed (`images` with a campaign). */
+  imagesPurged: z.number().int().nonnegative(),
+  /** Revisions of removed artifacts (`revisions`). */
+  revisionsPurged: z.number().int().nonnegative(),
+  /** The `campaignId: null` LIBRARY artifacts that were kept. */
+  libraryArtifactsKept: z.number().int().nonnegative(),
+  /**
+   * Surviving library rows whose citation could not be read any more and was
+   * DROPPED: a global artifact whose roster still carried an unconvertible
+   * `rulebook` source (rewritten to `none`) or whose NPC data still carried a
+   * `creatureRef` (removed). The count is the instrument that reveals the
+   * population on the first post-cut launch.
+   */
+  libraryLegacyCitationsDropped: z.number().int().nonnegative(),
 });
 
-export type CreatureCitationRepairReport = z.infer<typeof creatureCitationRepairReportSchema>;
+export type CleanCutReport = z.infer<typeof cleanCutReportSchema>;
 
 /**
- * The report of the mob-copy migration (docs/17 row 248): what the v24 upgrade
- * (and every later startup retry) COPIED an authored stat block out of a
- * library citation, and — BY NAME — every mob it could NOT convert because the
- * library no longer holds the chunk (pack uninstalled, chunk gone, no parseable
- * stat block).
+ * The result of ONE library-adoption pass
+ * (`db/libraryAdopt.adoptLibraryArtifacts`) — the ONE record of what the LIVE
+ * write path copied out of the shared library into the campaign that referenced
+ * it, and of every reference it could NOT repoint.
  *
- * The two populations are counted separately because they are asked about
- * separately: a converted ROSTER MOB and a converted cast NPC are different
- * rows on different surfaces.
- *
- * `unconverted` is the RETRY WORKLIST, not just a notice: the pointer survives
- * on exactly those rows (the owner-decided failure arm), and a startup retry
- * re-runs the seam so installing the missing pack heals them later. AppShell
- * says the report ONCE and then keeps ONLY that worklist
- * (`domain/mobCopyRepair.retainedMobCopyJournal`, docs/17 row 271) — the
- * upgrade's counts are history once they have been read, and a report with no
- * worklist left is dropped to `null` entirely.
- */
-export const mobCopyRepairReportSchema = z.object({
-  /** Encounter roster mobs whose `rulebook` citation became an authored copy. */
-  rosterMobsCopied: z.number().int().nonnegative(),
-  /** Cast NPCs whose `creatureRef` became an authored copy. */
-  npcCreaturesCopied: z.number().int().nonnegative(),
-  /** Mobs that could NOT be converted, by name, with the reason — the retry
-   * worklist. Their pointers are deliberately left in place. */
-  unconverted: z
-    .array(
-      z.object({
-        where: z.string(),
-        name: z.string(),
-        reason: z.string(),
-        /**
-         * `true` when the row failed with an UNEXPECTED throw rather than one of
-         * the seam's own named data conditions (docs/17 row 248's per-row
-         * guard). The per-row isolation keeps the upgrade from aborting, but a
-         * thrown error may be a CODE DEFECT rather than a data condition, so
-         * the report says WHICH it was — the sentence AppShell shows names the
-         * error text, never hiding it (AGENTS rules 1/2).
-         */
-        unexpected: z.boolean().default(false),
-      }),
-    )
-    .default([]),
-  /** Whether AppShell has already told the user about this report. */
-  notified: z.boolean().default(false),
-});
-
-export type MobCopyRepairReport = z.infer<typeof mobCopyRepairReportSchema>;
-
-/**
- * The library-ADOPTION report (docs/17 row 257) — the ONE record of what the
- * v26 backfill (and its startup retry) copied out of the shared library into
- * the campaigns that referenced it, and of every reference it could NOT
- * repoint.
- *
- * It exists for the same reason the mob-copy report does: the migration runs
- * inside a Dexie `version(N).upgrade`, before React mounts, so it cannot reach
- * a toast — it writes what it did into settings and AppShell reads it once. The
- * adoption is an owner-visible change (his encounters now carry their own rows
- * instead of citing the library), so the report states the counts in the open
- * and NAMES every reference it left alone, with the reason. `unresolved` is the
- * retry worklist; AppShell says the report ONCE and then keeps ONLY that
- * worklist (`domain/libraryAdoptRepair.retainedLibraryAdoptJournal`, docs/17
- * row 271) — `adopted` holds the library row ids the copies came from, and it
- * has no reader once the sentence has been read.
+ * It is a RETURN VALUE only: the migration arms that used to persist it into
+ * `settings.libraryAdopt` were deleted with the clean cut (docs/17 row 278), so
+ * nothing stores this shape any more. `unresolved` is still how a caller that
+ * wants to speak about a reference the seam could not adopt learns about it.
  */
 export const libraryAdoptReportSchema = z.object({
   /** The library rows bound to a campaign COPY in this pass, each with its
@@ -135,107 +95,22 @@ export const libraryAdoptReportSchema = z.object({
    * an artifact row (roster `npc-ref` / `links[]`) or a BATTLE row (its board
    * tokens and stage snapshot; docs/17 row 259). */
   repointed: z.number().int().nonnegative().default(0),
-  /** References that could NOT be repointed, by name, with the reason — the
-   * retry worklist. The reference is deliberately left in place. */
+  /** References that could NOT be repointed, by name, with the reason. The
+   * reference is deliberately left in place. */
   unresolved: z
     .array(
       z.object({
         where: z.string(),
         name: z.string(),
         reason: z.string(),
-        /** `true` when the row failed with an UNEXPECTED throw rather than one
-         * of the seam's own named data conditions (the row-248 guard's
-         * vocabulary, applied here). */
         unexpected: z.boolean().default(false),
       }),
     )
     .default([]),
-  /** Whether AppShell has already told the user about this report. */
   notified: z.boolean().default(false),
 });
 
 export type LibraryAdoptReport = z.infer<typeof libraryAdoptReportSchema>;
-
-/**
- * WHAT A RETRY JOURNAL KEEPS AFTER THE USER HAS BEEN TOLD (docs/17 row 271,
- * item B4) — ONE rule for the mob-copy and adoption reports, so the two cannot
- * drift about what "already said" means.
- *
- * Both reports are written by a Dexie upgrade (which cannot toast), read ONCE
- * by AppShell, and used to be kept forever — `libraryAdopt.adopted[].globalId`
- * included, i.e. the library row ids the copies came from. `settings` is not
- * part of a campaign export, so that was never a save/load dependency; it is
- * still a stored library id the owner's rule does not want lying around, and
- * the journal should not accumulate.
- *
- * The report is HISTORY once it has been said: the counts and the `adopted`
- * list are dropped (the per-report callers own which fields those are). What
- * is NOT history is the RETRY WORKLIST (`unconverted`/`unresolved`): the
- * startup retry is gated on it, and the pointer that heals lives on the DATA
- * row, not in the report — so keeping the worklist is what lets a pack
- * installed later still heal the row. `null` therefore means "nothing left to
- * say and nothing left to heal", while a non-null answer means "keep
- * retrying"; the old `notified: true` could not carry that distinction, which
- * is why the journal had to be kept whole and never cleared.
- *
- * `retained` answers the report with its history cleared. `notified` is set
- * HERE so a caller cannot forget it and re-toast on every launch.
- */
-export function settingsJournalAfterNotify<T extends { notified: boolean }>(
-  worklist: readonly unknown[],
-  retained: () => T,
-): T | null {
-  if (worklist.length === 0) return null;
-  return { ...retained(), notified: true };
-}
-
-/**
- * A creature row the v22 key fold had to DROP because the same creature was
- * already stored under the other Unicode composition (docs/17 row 168). The
- * dropped `imageId` is recorded — not deleted, and named in the one-shot
- * report — so a merged slot is never silent loss (AGENTS rule 1).
- */
-export const creatureKeyFoldDroppedSchema = z.object({
-  /** Which creature table the dropped row lived in. */
-  table: z.enum(['mobPortraits', 'creatureImages']),
-  /** The key the row was stored under, as it was before the fold. */
-  creatureKey: z.string(),
-  /** The image blob the dropped row pointed at. */
-  imageId: z.string(),
-});
-
-export type CreatureKeyFoldDropped = z.infer<typeof creatureKeyFoldDroppedSchema>;
-
-/**
- * The one-shot report of the v22 persisted-creature-key fold (docs/17 row 168):
- * how many rows in each population were re-keyed onto the comparable form, how
- * many duplicate slots were merged, and WHICH row lost each merge. Written by
- * the Dexie upgrade body (which runs before React exists and cannot toast) and
- * consumed once by AppShell, which surfaces it and resets it to null.
- *
- * The counts are per POPULATION, never a single total, because the owner's
- * question after a re-key is "what did that touch?" — portrait slots, campaign
- * presentation rows, battle tokens and frozen fighter rows are four different
- * things.
- */
-export const creatureKeyFoldReportSchema = z.object({
-  /** `mobPortraits` rows whose stored key changed. */
-  mobPortraitKeysFolded: z.number().int().nonnegative(),
-  /** `creatureImages` rows whose stored key changed. */
-  creatureImageKeysFolded: z.number().int().nonnegative(),
-  /** Battle tokens whose stored key changed (board tokens AND the saved stage
-   * snapshot's tokens — both are live token carriers). */
-  battleTokenKeysFolded: z.number().int().nonnegative(),
-  /** `seedFighters` rows whose frozen identity key changed. */
-  seedFighterKeysFolded: z.number().int().nonnegative(),
-  /** Creature rows dropped because both compositions were present; the newer
-   * `updatedAt` won and the loser is named in `dropped`. */
-  mergedRows: z.number().int().nonnegative(),
-  /** Every merged-away row, by table, key and image blob. */
-  dropped: z.array(creatureKeyFoldDroppedSchema).default([]),
-});
-
-export type CreatureKeyFoldReport = z.infer<typeof creatureKeyFoldReportSchema>;
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -648,44 +523,13 @@ export const settingsSchema = z.object({
    * value.
    */
   maxParallelRequests: z.number().int().min(1).max(4).default(2),
-  /** v11 migration notice, consumed once by AppShell after it is shown. */
-  retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
   /**
-   * The v21 migration notice (docs/17 row 108): how many rows the dropped
-   * `deliverables` table held, written by the Dexie upgrade body and consumed
-   * once by AppShell (which resets it to 0). The deliverables CONCEPT is gone
-   * with the module being its own document model, so those rows have no
-   * reader — but a drop the owner cannot see is silent loss, and his work was
-   * in that table. 0 = nothing to report.
+   * The clean-cut purge report (docs/17 row 278): every pre-cut campaign row
+   * was removed by the ONE `version(31)` upgrade body, and the library and
+   * settings were kept. Consumed ONCE by AppShell, then nulled. `null` =
+   * nothing to report (a fresh install, or the sentence has been said).
    */
-  deliverablesRemoved: z.number().int().nonnegative().default(0),
-  /**
-   * The v22 migration notice (docs/17 row 168): the persisted creature key was
-   * folded onto the comparable form (NFC + trim + case-fold), so a
-   * Mac-authored spelling and a precomposed one are one creature. The upgrade
-   * body cannot toast, so it writes what it re-keyed and merged here; AppShell
-   * reads it ONCE, says it, and resets it to null. `null` = nothing to report.
-   */
-  creatureKeyFold: creatureKeyFoldReportSchema.nullable().default(null),
-  /**
-   * The one-shot core-mob citation repair report (docs/11 D7), consumed once by
-   * AppShell and then reset to null. `null` = nothing to report.
-   */
-  creatureCitationRepair: creatureCitationRepairReportSchema.nullable().default(null),
-  /**
-   * The mob-copy migration report (docs/17 row 248), consumed ONCE by AppShell,
-   * which then drops the upgrade's history and keeps `unconverted` only while
-   * it still gates the startup retry (docs/17 row 271). `null` = nothing to
-   * report and nothing left to heal.
-   */
-  mobCopyRepair: mobCopyRepairReportSchema.nullable().default(null),
-  /**
-   * The library-ADOPTION report (docs/17 row 257), consumed ONCE by AppShell,
-   * which then drops `adopted` (the library row ids) and keeps `unresolved`
-   * only while it still gates the startup retry (docs/17 row 271). `null` =
-   * nothing to report and nothing left to heal.
-   */
-  libraryAdopt: libraryAdoptReportSchema.nullable().default(null),
+  cleanCut: cleanCutReportSchema.nullable().default(null),
   /** First-run setup wizard (see onboardingSchema above). */
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
   /** Last-used module shortcut (see lastModuleSchema above). */
@@ -758,12 +602,7 @@ export function defaultSettings(): Settings {
     dungeonMapPath: 'classic',
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     maxParallelRequests: 2,
-    retiredSessionNotesRemoved: 0,
-    deliverablesRemoved: 0,
-    creatureKeyFold: null,
-    creatureCitationRepair: null,
-    mobCopyRepair: null,
-    libraryAdopt: null,
+    cleanCut: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,

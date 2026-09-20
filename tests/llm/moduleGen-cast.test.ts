@@ -24,7 +24,6 @@ import {
   entityBestiarySlotSchema,
   moduleEntityKindSchema,
   moduleSpineSchema,
-  npcCreatureRef,
   ruleChunkSchema,
   statBlockSchema,
   stampNewEntity,
@@ -549,7 +548,7 @@ describe('finalize: the cast path', () => {
     // Her stats are the LIBRARY creature's — COPIED onto the row (docs/17 row
     // 255b), with the origin line stamped and the portrait token kept — and she
     // mints no pointer.
-    expect(npcCreatureRef(npc)).toBeUndefined();
+    expect((npc.data as { originToken?: unknown }).originToken).toBeUndefined();
     expect(npc.data.originToken).toBe(`chunk:${zombieChunkId}`);
     expect(npc.data.statBlock?.hp).toBe(22);
     expect(npc.data.sourceLine).toBe('Bestiary p.316');

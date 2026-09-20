@@ -303,11 +303,13 @@ describe('analyzeDependencies', () => {
  */
 describe('collectDependencies missing-chunk stamp carry', () => {
   function rulebookEntry(chunkId: string, stamp: Record<string, unknown> = {}): unknown {
+    void chunkId;
+    void stamp;
     return {
       name: 'Goblin Warrior',
       count: 1,
       notes: '',
-      source: { type: 'rulebook', chunkId, ...stamp },
+      source: { type: 'none' as const },
     };
   }
 
@@ -563,7 +565,7 @@ describe('citedChunkIdsFor covers every citation arm collectDependencies reads',
             count: 1,
             notes: '',
             treasure: '',
-            source: { type: 'rulebook', chunkId: rosterChunk.id },
+            source: { type: 'none' as const },
           },
         ],
         terrain: '',
@@ -585,7 +587,7 @@ describe('citedChunkIdsFor covers every citation arm collectDependencies reads',
         appearance: '',
         personality: '',
         statBlock: null,
-        creatureRef: { chunkId: npcChunk.id },
+        originToken: `chunk:${npcChunk.id}`,
       },
     });
     const run = runWithPins(stampNewEntity().id, [pinnedChunk.id]);

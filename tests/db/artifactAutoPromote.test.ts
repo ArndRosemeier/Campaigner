@@ -144,7 +144,7 @@ describe('promoteRosterUses (roster)', () => {
       moduleId: moduleA,
       kind: 'npc',
       name: 'Cave Fisher',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
     });
 
     const promoted = await promoteRosterUses(moduleB, [
@@ -167,7 +167,7 @@ describe('promoteRosterUses (roster)', () => {
         count: 1,
         notes: '',
         treasure: '',
-        source: { type: 'rulebook', chunkId },
+        source: { type: 'none' as const },
       },
     ]);
 

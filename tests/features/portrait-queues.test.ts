@@ -1791,7 +1791,7 @@ describe('invented-creature-portraits.test.ts', () => {
           notes: OOZE_NOTES,
           treasure: 'a swallowed ring',
         },
-        { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+        { name: 'Whisper Wisp', count: 1, source: { type: 'none' as const }, notes: 'barely a rumor' },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -1866,7 +1866,7 @@ describe('invented-creature-portraits.test.ts', () => {
       // The negative half: a hand-typed encounter (no recorded model, a `none`
       // citation) must not produce a settings-derived id or a fabricated row.
       const encounter = await addEncounter([
-        { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+        { name: 'Whisper Wisp', count: 1, source: { type: 'none' as const }, notes: 'barely a rumor' },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -1949,9 +1949,9 @@ describe('invented-creature-portraits.test.ts', () => {
       });
       const chunkId = newId();
       const encounter = await addEncounter([
-        { name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Goblin Boss', count: 1, source: { type: 'none' as const } },
         { name: 'Captain Vane', count: 1, source: { type: 'npc-ref', artifactId: npc.id } },
-        { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+        { name: 'Whisper Wisp', count: 1, source: { type: 'none' as const }, notes: 'barely a rumor' },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -1977,7 +1977,7 @@ describe('invented-creature-portraits.test.ts', () => {
           source: { type: 'inline', statBlock: oozeBlock() },
           notes: OOZE_NOTES,
         },
-        { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+        { name: 'Whisper Wisp', count: 1, source: { type: 'none' as const }, notes: 'barely a rumor' },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -1990,7 +1990,7 @@ describe('invented-creature-portraits.test.ts', () => {
 
     it('reports already-imaged creatures instead of re-enqueueing', async () => {
       const encounter = await addEncounter([
-        { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+        { name: 'Whisper Wisp', count: 1, source: { type: 'none' as const }, notes: 'barely a rumor' },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -2046,7 +2046,7 @@ describe('invented-creature-portraits.test.ts', () => {
     });
 
     it('fails loudly on an empty roster name with nothing enqueued (no silent skip)', async () => {
-      const encounter = await addEncounter([{ name: '   ', count: 1, source: { type: 'none' } }]);
+      const encounter = await addEncounter([{ name: '   ', count: 1, source: { type: 'none' as const } }]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
       await expect(enqueueInventedCreaturePortraits(encounter, campaignId)).rejects.toThrow(
@@ -2700,12 +2700,12 @@ describe('mob-portrait-npc-ref.test.ts', () => {
             appearance: '',
             personality: '',
             statBlock: null,
-            creatureRef: { chunkId, creatureName: 'Goblin Boss' },
+            originToken: 'chunk:legacy-ref',
           },
         })
       ).id;
       const encounter = await addEncounter([
-        { name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Goblin Boss', count: 1, source: { type: 'none' as const } },
         // The same creature cited a second time through its row — the shape an
         // encounter ends up with when a roster row is linked to a cast NPC.
         { name: 'Goblin Boss', count: 2, source: { type: 'npc-ref', artifactId: mobArtifactId } },
@@ -2749,6 +2749,7 @@ describe('mob-portrait-npc-ref.test.ts', () => {
 
     it('does not re-illustrate locally a rulebook creature that already has shared art', async () => {
       const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    void chunkId;
       const mobArtifactId = (
         await createArtifact({
           campaignId,
@@ -2758,14 +2759,14 @@ describe('mob-portrait-npc-ref.test.ts', () => {
             appearance: '',
             personality: '',
             statBlock: null,
-            creatureRef: { chunkId, creatureName: 'Goblin Boss' },
+            originToken: 'chunk:legacy-ref',
           },
         })
       ).id;
       await enqueueMobPortraits(
         await (async () => {
           const encounter = await addEncounter([
-            { name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } },
+            { name: 'Goblin Boss', count: 1, source: { type: 'none' as const } },
           ]);
           if (encounter.kind !== 'encounter') throw new Error('not an encounter');
           return encounter;
@@ -2802,7 +2803,7 @@ describe('mob-portrait-npc-ref.test.ts', () => {
     it('an inline entry and a rulebook creature still enumerate exactly as before', async () => {
       const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
       const encounter = await addEncounter([
-        { name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Goblin Boss', count: 1, source: { type: 'none' as const } },
         {
           name: 'Gloom Ooze',
           count: 2,
@@ -3277,19 +3278,19 @@ describe('mob-portrait-queue.test.ts', () => {
       const encounter = await addEncounter([
         // An OLD row with no citation stamp beyond the chunk: nothing has to be
         // created for it — the citation IS the reference (docs/11 D5).
-        { name: 'Ogre', count: 2, source: { type: 'rulebook', chunkId: ogreChunkId } },
+        { name: 'Ogre', count: 2, source: { type: 'none' as const } },
         // Same chunk again: the SAME identity — no second job, and the share is
         // reported rather than silently dropped.
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogreChunkId } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
         // Pre-imaged goblin: enumerated away.
-        { name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId: goblinChunkId } },
+        { name: 'Goblin Boss', count: 2, source: { type: 'none' as const } },
         // An uncited entry is not a library citation — its ROSTER NOTES are its
         // only description (docs/11 D5; the owner's "special zombie" decision).
         {
           name: 'Troll',
           count: 1,
           notes: 'A hulking troll with mossy green hide and one cracked tusk.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -3334,7 +3335,7 @@ describe('mob-portrait-queue.test.ts', () => {
 
     it('refuses to illustrate an invented mob nobody described (no picture of a name)', async () => {
       const encounter = await addEncounter([
-        { name: 'Nameless Thing', count: 1, source: { type: 'none' } },
+        { name: 'Nameless Thing', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
       const result = await enqueueInventedCreaturePortraits(encounter, campaignId);
@@ -3577,7 +3578,7 @@ describe('mob-portrait-queue.test.ts', () => {
     it('a LEGACY unconverted pointer still reads the library and fails LOUD when its chunk is gone', async () => {
       const missingChunkId = newId();
       const encounter = await addEncounter([
-        { name: 'Ghost Boss', count: 1, source: { type: 'rulebook', chunkId: missingChunkId } },
+        { name: 'Ghost Boss', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -4327,7 +4328,7 @@ describe('mob-portrait-regen.test.ts', () => {
         {
           name: 'sickly goblin boss',
           count: 1,
-          source: { type: 'rulebook', chunkId },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4380,7 +4381,7 @@ describe('mob-portrait-regen.test.ts', () => {
         {
           name: 'sickly goblin boss',
           count: 1,
-          source: { type: 'rulebook', chunkId },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4412,7 +4413,7 @@ describe('mob-portrait-regen.test.ts', () => {
         {
           name: 'sickly goblin boss',
           count: 1,
-          source: { type: 'rulebook', chunkId },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4447,7 +4448,7 @@ describe('mob-portrait-regen.test.ts', () => {
           difficulty: 'medium',
           levelHint: '1',
           monsters: [
-            { name: 'Ogre', count: 1, notes: '', source: { type: 'rulebook', chunkId } },
+            { name: 'Ogre', count: 1, notes: '', source: { type: 'none' as const } },
           ] as never,
           terrain: '',
           tactics: '',
@@ -4473,7 +4474,7 @@ describe('mob-portrait-regen.test.ts', () => {
       // Campaign A holds a clone of the same slot bytes.
       const artifactA = libraryCreatureKey(chunkId);
       const encounterA = await addEncounter([
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounterA.kind !== 'encounter') throw new Error('not an encounter');
       await enqueueMobPortraits(encounterA, campaignId);
@@ -4551,7 +4552,7 @@ describe('mob-portrait-regen.test.ts', () => {
       // fresh campaign's first enumeration clones the canonical slot (D6).
       const artifactC = libraryCreatureKey(chunkId);
       const encounterC = await addEncounter(
-        [{ name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId } }],
+        [{ name: 'Ogre', count: 1, source: { type: 'none' as const } }],
         campaignC,
       );
       if (encounterC.kind !== 'encounter') throw new Error('not an encounter');
@@ -4570,7 +4571,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const artifactId = libraryCreatureKey(chunkId);
       const oldCoverId = await attachUploadedCover(artifactId, campaignId);
       const encounter = await addEncounter([
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
       generateImagesMock.mockRejectedValueOnce(new Error('slot generation exploded'));
@@ -4596,7 +4597,7 @@ describe('mob-portrait-regen.test.ts', () => {
         {
           name: 'Ghost Boss',
           count: 1,
-          source: { type: 'rulebook', chunkId: missingChunkId },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4619,7 +4620,7 @@ describe('mob-portrait-regen.test.ts', () => {
         {
           name: 'Goblin Boss',
           count: 1,
-          source: { type: 'rulebook', chunkId },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4692,7 +4693,7 @@ describe('mob-portrait-regen.test.ts', () => {
           name: 'Gloom Ooze',
           count: 1,
           notes: 'A dripping gloom ooze, its body a standing wave of black tar.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4728,7 +4729,7 @@ describe('mob-portrait-regen.test.ts', () => {
           name: 'Gloom Ooze',
           count: 1,
           notes: 'A dripping gloom ooze, its body a standing wave of black tar.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4769,7 +4770,7 @@ describe('mob-portrait-regen.test.ts', () => {
           name: 'Whisper Wisp',
           count: 1,
           notes: 'A whisper wisp: a smear of pale light that hums a name.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4812,7 +4813,7 @@ describe('mob-portrait-regen.test.ts', () => {
           name: 'Gloom Ooze',
           count: 1,
           notes: 'A dripping gloom ooze, its body a standing wave of black tar.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -4855,7 +4856,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const campaignB = (await createCampaign({ name: 'Second campaign', system: 'dnd5e' })).id;
       libraryCreatureKey(troll);
       const encounterB = await addEncounter(
-        [{ name: 'Troll', count: 1, source: { type: 'rulebook', chunkId: troll } }],
+        [{ name: 'Troll', count: 1, source: { type: 'none' as const } }],
         campaignB,
       );
       if (encounterB.kind !== 'encounter') throw new Error('not an encounter');
@@ -4876,9 +4877,9 @@ describe('mob-portrait-regen.test.ts', () => {
       await attachUploadedCover(goblinArt, campaignId);
       await attachUploadedCover(ogreArt, campaignId);
       const encounter = await addEncounter([
-        { name: 'Goblin', count: 1, source: { type: 'rulebook', chunkId: goblin } },
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre } },
-        { name: 'Troll', count: 1, source: { type: 'rulebook', chunkId: troll } },
+        { name: 'Goblin', count: 1, source: { type: 'none' as const } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
+        { name: 'Troll', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
       // The hole is real: the token for this kind renders initials (cover null).
@@ -4929,20 +4930,21 @@ describe('mob-portrait-regen.test.ts', () => {
     it('counts both lanes per creature kind and reports a repeated kind as a shared row, never silencing it', async () => {
       const goblin = await seedCreatureChunk('Goblin', 'Goblin, small and mean. HP 7, AC 15.');
       const ogre = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    void ogre;
       const goblinArt = libraryCreatureKey(goblin);
       await attachUploadedCover(goblinArt, campaignId);
       const encounter = await addEncounter([
         {
           name: 'Goblin',
           count: 2,
-          source: { type: 'rulebook', chunkId: goblin },
+          source: { type: 'none' as const },
         },
         {
           name: 'Goblin',
           count: 1,
-          source: { type: 'rulebook', chunkId: goblin },
+          source: { type: 'none' as const },
         },
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
         {
           name: 'Gloom Ooze',
           count: 2,
@@ -4986,7 +4988,7 @@ describe('mob-portrait-regen.test.ts', () => {
       // says, the run does.
       await attachUploadedCover(ogreArt, campaignId);
       const encounter = await addEncounter([
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
@@ -5012,7 +5014,7 @@ describe('mob-portrait-regen.test.ts', () => {
       const ogreArt = libraryCreatureKey(ogre);
       await attachUploadedCover(ogreArt, campaignId);
       const encounter = await addEncounter([
-        { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre } },
+        { name: 'Ogre', count: 1, source: { type: 'none' as const } },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');
       const { db } = await import('@/db/db');
@@ -5031,13 +5033,14 @@ describe('mob-portrait-regen.test.ts', () => {
 
     it('creates nothing while counting: the fill is what creates the artifacts', async () => {
       const kobold = await seedCreatureChunk('Kobold', 'Kobold, yappy. HP 5, AC 12.');
+    void kobold;
       const encounter = await addEncounter([
-        { name: 'Kobold', count: 1, source: { type: 'rulebook', chunkId: kobold } },
+        { name: 'Kobold', count: 1, source: { type: 'none' as const } },
         {
           name: 'Gloom Ooze',
           count: 1,
           notes: 'A dripping gloom ooze, its body a standing wave of black tar.',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ]);
       if (encounter.kind !== 'encounter') throw new Error('not an encounter');

@@ -20,7 +20,6 @@ import {
   libraryCreatureKey,
   moduleTagFor,
   npcCreatureIdentity,
-  npcCreatureRef,
   npcOriginToken,
   sameAliasName,
 } from '@/domain';
@@ -34,10 +33,8 @@ import {
   derivedStatOrigin,
   missingCreatureOrigin,
   resolveCreatureChunk,
-  resolveDerivedNpcStats as derivedNpcStats,
   type CreatureCitation,
   type MonsterLookups,
-  type ResolvedCreature,
 } from '@/domain/encounterResolve';
 import {
   createArtifact,
@@ -179,24 +176,6 @@ export async function resolveCreatureCitation(
     chunkId: chunk.id,
     canonical: canonicalName !== null && isCanonicalCitation(canonicalName, name),
   };
-}
-
-/**
- * The numbers of an AUTHORED NPC whose number source is DERIVED from a library
- * creature (docs/11 D3), repo-wired for top code: this wrapper only supplies
- * the library lookups — the RULE (the resolution order, the `derivedStatOrigin`
- * label and the `missing ref` failure) lives in
- * `domain/encounterResolve.resolveDerivedNpcStats`, which the encounter
- * roster's `npc-ref` arm reads too, so a row's own details surface and an
- * encounter listing it cannot disagree. Read-only by construction: it derives,
- * and nothing here writes a block onto the row (the `creatureRef` + authored
- * is refused by `npcDataSchema`).
- */
-export function resolveDerivedNpcStats(
-  npcName: string,
-  citation: CreatureRef,
-): Promise<ResolvedCreature> {
-  return derivedNpcStats(npcName, citation, creatureLookups());
 }
 
 /** The identity of a creature with no library row behind it — an invented mob
@@ -516,9 +495,11 @@ export async function tokenCreature(options: {
   // A CAST creature npc that OWNS its numbers (docs/17 row 255b) carries the
   // copy's stamp: its own block is the card's answer, under the identity its
   // origin token preserves (so the portrait does not move). This is the case
-  // the roster's own `npc-ref` row reaches after part 1 converted the cast —
-  // the artifact fallback in `BattleSurface` would also cover the block, but
-  // this is where the card's identity and name come from.
+  // the roster's own `npc-ref` row reaches — the artifact fallback in
+  // `BattleSurface` would also cover the block, but this is where the card's
+  // identity and name come from. An authored npc with no stamp is not a
+  // creature card at all, and the pre-copy `creatureRef` fallback was deleted
+  // by the clean cut (docs/17 row 278).
   if (artifact.data.sourceLine !== undefined || npcOriginToken(artifact) !== undefined) {
     const rawToken = npcOriginToken(artifact);
     const token = rawToken === undefined ? undefined : rawToken.trim();
@@ -539,16 +520,7 @@ export async function tokenCreature(options: {
           : derivedStatOrigin(artifact.name, sourceLine),
     };
   }
-  const citation = npcCreatureRef(artifact);
-  if (citation === undefined || creatureRefIsEmpty(citation)) return null;
-  const listing = await resolveCreatureCitation(citation, artifact.name);
-  return {
-    creatureKey: listing.identity.key,
-    name: artifact.name,
-    chunkId: listing.chunk?.id ?? listing.identity.ref.chunkId ?? undefined,
-    statBlock: frozen?.statBlock ?? listing.chunk?.statBlock ?? null,
-    identityLabel: listing.origin,
-  };
+  return null;
 }
 
 /** The chunk a library creature identity key names, or null for a content key.

@@ -126,6 +126,7 @@ const CHUNK_ID = '00000000-0000-4000-8000-00000000c001';
 
 /** A rulebook-cited roster entry (mobArtifactId when the row is stamped). */
 function rulebookEntry(chunkId: string = CHUNK_ID) {
+    void chunkId;
   // REWRITTEN (ledger row 106): this used to stamp a `mobArtifactId` naming a
   // covered `npc` artifact — the retired way of saying "this citation is
   // already imaged". A citation's portrait is the campaign's PRESENTATION row
@@ -136,10 +137,7 @@ function rulebookEntry(chunkId: string = CHUNK_ID) {
     count: 2,
     notes: '',
     treasure: '',
-    source: {
-      type: 'rulebook' as const,
-      chunkId,
-    },
+    source: { type: 'none' as const },
   };
 }
 

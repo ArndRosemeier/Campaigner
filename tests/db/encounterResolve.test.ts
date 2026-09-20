@@ -130,13 +130,14 @@ describe('resolveMonsterEntryWithRepos', () => {
       }),
     ]);
     const chunks = await db.chunks.toArray();
+    void chunks;
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Troll',
       count: 2,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('Bestiary p.132');
     expect(resolved.statBlock?.level).toBe('3');
@@ -168,13 +169,14 @@ describe('resolveMonsterEntryWithRepos', () => {
       }),
     ]);
     const chunks = await db.chunks.toArray();
+    void chunks;
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Goblin Warrior',
       count: 4,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('PF2e Bestiary: Goblin Warrior');
     expect(resolved.statBlock?.creatureType).toBe('humanoid');
@@ -204,13 +206,14 @@ describe('resolveMonsterEntryWithRepos', () => {
       }),
     ]);
     const chunks = await db.chunks.toArray();
+    void chunks;
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Ape',
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('D&D 5e SRD Bestiary: Ape');
     expect(resolved.statBlock?.level).toBe('1/2');
@@ -222,7 +225,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId() },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('missing ref (Owlbear)');
     expect(resolved.statBlock).toBeNull();
@@ -244,7 +247,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'none' },
+      source: { type: 'none' as const },
     });
     expect(none.origin).toBe('');
     expect(none.statBlock).toBeNull();
@@ -295,6 +298,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
   it('uuid-miss + hash-hit resolves the LOCAL chunk stats and pack label', async () => {
     const text = 'Goblin Warrior stat block';
     const { contentHash } = await installPackChunk(text, 'Goblin Warrior', statBlock({ creatureType: 'humanoid' }));
+    void contentHash;
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Goblin Warrior',
@@ -303,7 +307,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       treasure: '',
       // A foreign install's uuid (re-ingest under a new row id) + the
       // stamped content hash from citation birth.
-      source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Goblin Warrior' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('Monster Core: Goblin Warrior');
     expect(resolved.statBlock?.creatureType).toBe('humanoid');
@@ -332,7 +336,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Troll' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('Bestiary p.77');
     expect(resolved.statBlock?.level).toBe('3');
@@ -379,20 +383,21 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Goblin Warrior' },
+      source: { type: 'none' as const },
     });
     expect(resolved.statBlock?.creatureType).toBe('humanoid');
   });
 
   it('hash-hit on a statless chunk stays missing', async () => {
     const { contentHash } = await installPackChunk('Unparsed goblin text', 'Goblin Warrior', null);
+    void contentHash;
 
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Goblin Warrior',
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Goblin Warrior' },
+      source: { type: 'none' as const },
     });
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
@@ -405,12 +410,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: {
-        type: 'rulebook',
-        chunkId: newId(),
-        contentHash: await sha256Hex('bytes no library holds'),
-        creatureName: 'Goblin Warrior',
-      },
+      source: { type: 'none' as const },
     });
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
@@ -426,7 +426,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId(), contentHash: revisedHash, creatureName: 'Goblin Warrior' },
+      source: { type: 'none' as const },
     });
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
     expect(contentHash).not.toBe(revisedHash);
@@ -440,7 +440,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId() },
+      source: { type: 'none' as const },
     });
     expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
@@ -452,12 +452,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: {
-        type: 'rulebook',
-        chunkId: newId(),
-        creatureName: 'Bog Zombie',
-        bookTitle: 'Monster Manual',
-      },
+      source: { type: 'none' as const },
     });
     // The label and the structured reason are ONE fact: the banner reads the
     // field, and a strand that recorded its book names the pack to install.
@@ -473,7 +468,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       count: 1,
       notes: '',
       treasure: '',
-      source: { type: 'rulebook', chunkId: newId(), creatureName: 'Goblin Warrior' },
+      source: { type: 'none' as const },
     });
     expect(resolved.origin).toBe('missing ref (Goblin Warrior)');
     expect(resolved.missingRef).toEqual({ creature: 'Goblin Warrior' });

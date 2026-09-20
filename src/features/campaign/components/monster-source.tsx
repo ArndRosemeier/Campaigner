@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 'lucide-react';
+import { FileWarningIcon, PenLineIcon, UsersIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
@@ -56,7 +56,15 @@ import { toastError } from '@/lib/toast';
  * dangling reference names itself, never a crash.
  */
 
-const SOURCE_OPTIONS: { value: MonsterSource['type']; label: string }[] = [
+/**
+ * The selector's choices. `'rulebook'` is a UI-only affordance — "copy stats
+ * from the bestiary" — and NEVER becomes a stored source: `applyRulebookPick`
+ * copies the library's block onto the row (docs/17 row 255a), so the source arms
+ * a row can carry are `none`/`npc-ref`/`inline` (docs/17 row 278).
+ */
+type MonsterSourceChoice = MonsterSource['type'] | 'rulebook';
+
+const SOURCE_OPTIONS: { value: MonsterSourceChoice; label: string }[] = [
   { value: 'none', label: 'None (name only)' },
   { value: 'npc-ref', label: 'Link NPC…' },
   { value: 'rulebook', label: 'From rulebook…' },
@@ -69,12 +77,6 @@ export function MonsterSourceBadge({ source }: { source: MonsterSource }): JSX.E
       return (
         <Badge variant="secondary" aria-label="Linked NPC">
           <UsersIcon aria-hidden className="size-3" /> NPC
-        </Badge>
-      );
-    case 'rulebook':
-      return (
-        <Badge variant="secondary" aria-label="Rulebook stat block">
-          <BookOpenIcon aria-hidden className="size-3" /> Rulebook
         </Badge>
       );
     case 'inline':
@@ -166,7 +168,7 @@ export function MonsterSourceControls({
         <Select
           value={entry.source.type}
           items={Object.fromEntries(SOURCE_OPTIONS.map((option) => [option.value, option.label]))}
-          onValueChange={(value) => {
+          onValueChange={(value: MonsterSourceChoice | null) => {
             if (value === null) return;
             switch (value) {
               case 'none':
@@ -223,19 +225,6 @@ export function MonsterSourceControls({
               ))}
             </SelectContent>
           </Select>
-        )}
-        {entry.source.type === 'rulebook' && (
-          <Button
-            variant="ghost"
-            size="xs"
-            aria-label="Change rulebook stat block"
-            onClick={() => {
-              setRulebookOpen(true);
-            }}
-          >
-            <LinkIcon aria-hidden data-icon="inline-start" />
-            Change
-          </Button>
         )}
         {entry.source.type === 'inline' && (
           <Button
@@ -492,7 +481,7 @@ export function MonsterStatblocksPanel({
          * and a citation nothing can supply is `null` on both sides, which
          * prints the named `missing ref (…)` line and no box at all.
          */
-        const statBlock = rosterStatBlockFor(monster, entry) ?? entry.statBlock;
+        const statBlock = rosterStatBlockFor(monster) ?? entry.statBlock;
         /*
          * THE TREASURE, through the SAME rule the books use (docs/17 row 159):
          * `rosterTreasureFor` decides whether this mob carries anything and

@@ -38,7 +38,6 @@ import {
   // (docs/17 row 206).
   entityLevelHintFor,
   spellCorpusEntries,
-  npcCreatureRef,
   spawnFirstPath,
   // The ONE alias merge rule (docs/17 row 121): the three in-place writes below
   // read it directly because their alias rides a combined content patch.
@@ -1452,32 +1451,27 @@ function mergeRefillData(
   if (target.kind !== kind) return draftData;
   if (kind === 'npc' && target.kind === 'npc' && 'appearance' in draftData) {
     const previous = target.data;
-    const citation = previous.creatureRef;
     // THE REFUSED PAIR IS NEVER CONSTRUCTED (docs/11 §A cited row's REFILL,
     // docs/17 row 112).
     // A CAST CREATURE's numbers are never a run's to author — under the
     // one-representation model (docs/17 row 255b) the row OWNS the copy of the
-    // library's block, where it used to carry the `creatureRef` citation that
-    // the schema refused to sit beside an authored block. The rule is the same
-    // for both spellings (`isCastCreatureNpc`): the statblock step is forced off
-    // for such a target (`runStatblock`), so this refusal is unreachable from
-    // the pipeline it just ran; it is reachable from a run PERSISTED before that
-    // rule (resumed, or with an edited statblock step), which is exactly why the
-    // refusal is here rather than assumed away (docs/17 row 137 recorded the
-    // second constructor this guard closes).
+    // library's block. The statblock step is forced off for such a target
+    // (`runStatblock`), so this refusal is unreachable from the pipeline it just
+    // ran; it is reachable from a run PERSISTED before that rule (resumed, or
+    // with an edited statblock step), which is exactly why the refusal is here
+    // rather than assumed away (docs/17 row 137 recorded the second constructor
+    // this guard closes).
     //
     // LOUD, and by neither precedence nor omission: dropping the copy would
     // discard the numbers the module owns as "the library's" and sever the
     // disclosed origin, and keeping both would put an authored block beside a
     // row the whole arc says is a copy.
     if (isCastCreatureNpc(target) && draftData.statBlock !== null) {
-      const origin =
-        previous.sourceLine ??
-        (citation?.creatureName === undefined ? undefined : `the library creature «${citation.creatureName}»`);
+      const origin = previous.sourceLine;
       throw new Error(
         `Refusing to write «${target.name}»: it is a cast creature — its numbers are the copy this ` +
           `module owns of ${origin ?? 'a library creature'} ` +
-          `(creatureRef/originToken), so no run may author a stat block over it. ` +
+          `(originToken), so no run may author a stat block over it. ` +
           `Nothing was written — its prose is unchanged and the copy stands.`,
       );
     }
@@ -1490,10 +1484,6 @@ function mergeRefillData(
       // run — the refusal above is what makes that structural rather than
       // assumed.
       statBlock: isCastCreatureNpc(target) ? previous.statBlock : draftData.statBlock ?? previous.statBlock,
-      // The creature identity survives the refill (IDENTITY, not content): a
-      // smith writing an Aunt Agatha's prose must not also delete the fact that
-      // her numbers are the library zombie's copy — nor move her portrait slot.
-      ...(citation === undefined ? {} : { creatureRef: citation }),
       ...(previous.sourceLine === undefined ? {} : { sourceLine: previous.sourceLine }),
       ...(previous.originToken === undefined ? {} : { originToken: previous.originToken }),
       // The run stamp survives only while the row is still MACHINE-owned: it
@@ -3786,12 +3776,11 @@ export class RunEngine {
       const refillTarget = await getAnyArtifact(input.targetArtifactId);
       if (refillTarget !== undefined && isCastCreatureNpc(refillTarget)) {
         // The identity is read through its ONE accessor (`domain/creature`),
-        // never by reaching into `data` here. A row born under the copy model
-        // (docs/17 row 255b) names its origin by the STAMPED line; an old row
-        // still carrying the pointer names the creature it cites.
-        const citation = npcCreatureRef(refillTarget);
+        // never by reaching into `data` here. A cast row names its origin by the
+        // STAMPED line (docs/17 row 255b); the pre-copy pointer it replaced was
+        // deleted by the clean cut (docs/17 row 278).
         const copied = refillTarget.kind === 'npc' ? refillTarget.data.sourceLine : undefined;
-        const origin = copied ?? citation?.creatureName ?? 'creatureRef';
+        const origin = copied ?? 'originToken';
         debugLog('run', 'statblock skipped: the refill target is a cast creature');
         return {
           step: this.finishStep(
@@ -4647,7 +4636,7 @@ export class RunEngine {
       if (sceneContext === '') return null;
       const pool = await listArtifactsByCampaign(input.campaign.id);
       return fixedCastSectionFor(
-        await fixedCastForEncounter(target.name, sceneContext, pool, owningModule.id),
+        fixedCastForEncounter(target.name, sceneContext, pool, owningModule.id),
       );
     })();
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
@@ -4869,7 +4858,6 @@ export class RunEngine {
         rosterPin === undefined
           ? undefined
           : await resolveEntryLevels(rosterPin, {
-              chunkById,
               getArtifactStatBlock: async (artifactId) => {
                 const artifact = await getAnyArtifact(artifactId);
                 if (artifact?.kind !== 'npc') return null;
@@ -5978,17 +5966,9 @@ export class RunEngine {
         monsterIndexes: [...(parsed.rooms[roomIndex]?.monsterIndexes ?? [])],
       })),
     };
-    const chunkIds = [
-      ...new Set(
-        monsters.flatMap((monster) =>
-          monster.source.type === 'rulebook' ? [monster.source.chunkId] : [],
-        ),
-      ),
-    ];
-    const chunks = chunkIds.length === 0 ? [] : await getChunksByIds(chunkIds);
-    const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+    // A copied mob's level comes from its OWN block (docs/17 row 278); there is
+    // no library citation left to read a level out of.
     const levels = await resolveEntryLevels(monsters, {
-      chunkById,
       getArtifactStatBlock: async (artifactId) => {
         const artifact = await getArtifact(artifactId);
         if (artifact?.kind !== 'npc') return null;
@@ -6515,7 +6495,7 @@ export class RunEngine {
     const sceneContext = surroundingParagraphs(moduleDocumentText(owner), encounterName);
     if (sceneContext === '') return [];
     const pool = await listArtifactsByCampaign(campaignId);
-    const cast = await fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
+    const cast = fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
     if (cast.length === 0) return [];
     const partyLevel =
       partLevelForMention(owner, encounterName) ?? parseRosterTargetLevel(levelHint);
@@ -6949,17 +6929,9 @@ export class RunEngine {
             ? { targetLevel: hintLevel }
             : {}),
         }));
-        const chunkIds = [
-          ...new Set(
-            data.monsters.flatMap((monster) =>
-              monster.source.type === 'rulebook' ? [monster.source.chunkId] : [],
-            ),
-          ),
-        ];
-        const chunks = chunkIds.length === 0 ? [] : await getChunksByIds(chunkIds);
-        const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+        // A copied mob's level comes from its OWN block (docs/17 row 278); there
+        // is no library citation left to read a level out of.
         const levels = await resolveEntryLevels(data.monsters, {
-          chunkById,
           getArtifactStatBlock: async (artifactId) => {
             const artifact = await getArtifact(artifactId);
             if (artifact?.kind !== 'npc') return null;

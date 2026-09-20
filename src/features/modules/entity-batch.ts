@@ -629,7 +629,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           module.spine?.premise ?? '',
           stubKindCarriesPartyLevel(kind) ? partLevelForMention(module, target.name) : undefined,
           kind === 'encounter'
-            ? await fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
+            ? fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
             : [],
           kind === 'encounter',
           // The batch's kind IS the entity's kind, and it keys the brief's

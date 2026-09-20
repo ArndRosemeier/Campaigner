@@ -250,19 +250,14 @@ async function seedEncounter(): Promise<{
           // The mob CARRIES something: the treasure line is the third thing the
           // two books must agree about (docs/17 row 159).
           treasure: 'Pouch: 5 gp, a bone key',
-          source: {
-            type: 'rulebook',
-            chunkId: chunk.id,
-            contentHash: chunk.contentHash,
-            creatureName: 'Cave Fisher',
-          },
+          source: { type: 'none' as const },
         },
         {
           name: 'Harbour Thug',
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
       ],
       terrain: 'wet planks',
@@ -439,12 +434,7 @@ describe('both exporters print the SAME reference (one formatter)', () => {
           monster.name === 'Cave Fisher'
             ? {
                 ...monster,
-                source: {
-                  type: 'rulebook',
-                  chunkId: statless.id,
-                  contentHash: statless.contentHash,
-                  creatureName: 'Cave Fisher',
-                },
+                source: { type: 'none' as const },
               }
             : monster,
         ),

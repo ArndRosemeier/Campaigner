@@ -187,7 +187,7 @@ describe('CampaignPickerPage import dependencies', () => {
             count: 2,
             notes: '',
             treasure: '',
-            source: { type: 'rulebook', chunkId: chunk.id },
+            source: { type: 'none' as const },
           },
         ],
         terrain: '',

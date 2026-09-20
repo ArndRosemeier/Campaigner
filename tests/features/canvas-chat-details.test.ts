@@ -97,7 +97,7 @@ async function seed(): Promise<void> {
       tactics: 'They fight from the ledges.',
       treasure: 'The tide-hoard.',
       monsters: [
-        { name: 'Goblin Warrior', count: 4, notes: 'Two per ledge.', treasure: STORED_ONLY_TREASURE, source: { type: 'none' } },
+        { name: 'Goblin Warrior', count: 4, notes: 'Two per ledge.', treasure: STORED_ONLY_TREASURE, source: { type: 'none' as const } },
       ],
     }),
   });

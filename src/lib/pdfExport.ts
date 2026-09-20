@@ -212,7 +212,7 @@ function rosterRows(
   return artifact.data.monsters.flatMap((monster, index): Row[] => {
     const resolved = roster?.[index];
     const reference = rosterReferenceFor(monster, resolved).printed;
-    const statBlock = rosterStatBlockFor(monster, resolved);
+    const statBlock = rosterStatBlockFor(monster);
     const treasure = rosterTreasureFor(monster);
     return [
       {
@@ -230,7 +230,7 @@ function rosterRows(
             statBoxContent(
               statBlock,
               `${monster.name} ×${monster.count}`,
-              monster.source.type === 'rulebook' ? resolved?.origin : undefined,
+              undefined,
               spellIndexes,
             ) as object,
           ]),
@@ -582,8 +582,8 @@ export async function exportArtifactPdf(
   if (template === 'gm') {
     if (artifact.kind === 'npc' || artifact.kind === 'pc') blocks.push(artifact.data.statBlock);
     if (artifact.kind === 'encounter') {
-      for (const [index, monster] of artifact.data.monsters.entries()) {
-        blocks.push(rosterStatBlockFor(monster, roster[index]));
+      for (const monster of artifact.data.monsters) {
+        blocks.push(rosterStatBlockFor(monster));
       }
     }
   }

@@ -239,7 +239,7 @@ async function withdrawnRunFixture(
   await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
   const encounter = await createArtifact({
     campaignId: campaign.id, kind: 'encounter', name: encounterName,
-    data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
   });
   return { campaignId: campaign.id, encounterId: encounter.id };
 }
@@ -310,11 +310,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const first = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'First',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     const second = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'Second',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // The stylize step fails for the SECOND job only — the queue continues
     // with the next job and reports the failure loudly.
@@ -373,11 +373,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '' },
     });
     const hall = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Great Hall',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building', siteShape: 'single', budgetAdvisory: '' },
     });
     // The dungeon job briefs fresh (never-mapped + dungeon preset ⇒ no pin),
     // so its reply must stock a real complex; the hall job keeps the pinned
@@ -429,7 +429,7 @@ describe('module encounter map queue', () => {
     vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,bWFw');
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'complex', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'complex', budgetAdvisory: '' },
     });
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
@@ -548,7 +548,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Withdrawn',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // Hold the Cartographer's brief call until the abort — the job's abort
     // signal is the cancellation seam (runEngine.cancel aborts it).
@@ -600,11 +600,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const activeEncounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Mapping now',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     const queuedEncounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Still queued',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // Hold the Cartographer's brief call until the abort — the job's abort
     // signal is the cancellation seam (runEngine.cancel aborts it).
@@ -658,7 +658,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Stopped mid-brief',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // THE DELAY IS THE CAUSE, NOT THE CLOCK (docs/08 §the pending-continuation
     // flake, the `89e5d71` method): the brief's reply is a promise the TEST
@@ -720,7 +720,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Row gone',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     let releaseBrief: (() => void) | undefined;
     parkThisRunsBrief(campaign.name, (release) => {
@@ -764,7 +764,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Stopped then died',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // A reply the test can REJECT by hand: the abort of a stopped run reaches
     // the step as whatever the provider raised (a transport error, a
@@ -814,7 +814,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Provider died',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // Nobody stopped anything: the step itself dies (the provider's reply is a
     // hard error). This is the guard against curing the seam by swallowing —

@@ -353,7 +353,7 @@ describe('the console entry is the diagnostic payload the owner asked for', () =
       id: 'artifact-9',
       kind: 'npc',
       name: 'Zombie',
-      data: { creatureRef: { chunkId: '5a4f0c9e-1111-4111-8111-000000000001' } },
+      data: { originToken: 'chunk:legacy-ref' },
     };
     const setupError = new Error('No API key configured');
     reportEntityBatchFailures(

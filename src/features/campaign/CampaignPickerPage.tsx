@@ -64,12 +64,11 @@ import {
   importExport,
   importZip,
   MissingDependenciesError,
-  parseExportTolerant,
+  parseExport,
   parseZipExport,
   withImportMitigation,
   type DependencyPolicy,
   formatDriftedCitations,
-  formatRetiredTableRows,
 } from '@/lib/exportImport';
 import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -120,24 +119,12 @@ export function CampaignPickerPage(): JSX.Element {
         ? await importZip(payload.bytes, { dependencyPolicy: policy })
         : await importExport(payload.raw, {}, { dependencyPolicy: policy });
     toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
-    // Retired tables (docs/17 row 108): an older file may still carry rows for
-    // a table this build deleted. Skipped LOUDLY, with the count.
-    const retiredNote = formatRetiredTableRows(result.retiredRows);
-    if (retiredNote !== null) toastInfo(retiredNote);
     // Version drift (docs/17 row 261): the import PROCEEDED over citations that
     // resolved to the same book under a DIFFERENT version. It is not an abort
     // any more, so the count must ride the success — an unblocked fallback
     // that said nothing would be the silent failure AGENTS rule 1 forbids.
     const driftNote = formatDriftedCitations(result.driftedCitations);
     if (driftNote !== null) toastInfo(driftNote);
-    if (result.skippedRetired > 0) {
-      // Retired-row tolerance (M2 import rules): the skip is never silent —
-      // the count and the skipped record names ride alongside success.
-      const names = result.skippedNames.length > 0 ? `: ${result.skippedNames.join(', ')}` : '';
-      toastInfo(
-        `Import skipped ${result.skippedRetired} retired session record(s) from an older version${names}`,
-      );
-    }
     importedNavigate(workspacePath(result.campaignId));
   }
 
@@ -159,13 +146,12 @@ export function CampaignPickerPage(): JSX.Element {
     }
     let analysis: DependencyAnalysis;
     try {
-      // Tolerant parse: legacy exports may carry retired session rows that
-      // the strict boundary rejects — their citations leave with them, so
-      // the dep check only ever sees landing content.
+      // The strict boundary: a pre-cut file is REFUSED by name here, before the
+      // dependency dialog or any write (docs/17 row 278).
       const manifest =
         payload.kind === 'zip'
-          ? parseExportTolerant(parseZipExport(payload.bytes).manifest).export.dependencies
-          : parseExportTolerant(payload.raw).export.dependencies;
+          ? parseExport(parseZipExport(payload.bytes).manifest).dependencies
+          : parseExport(payload.raw).dependencies;
       analysis = await checkImportDependencies(manifest);
     } catch (error) {
       toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));

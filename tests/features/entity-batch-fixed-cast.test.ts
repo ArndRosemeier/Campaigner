@@ -444,7 +444,7 @@ describe('a batch failure records WHICH path it came down, with the raw evidence
       summary: '',
       body: '',
       links: [],
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: CHUNK_ID } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${CHUNK_ID}`},
     });
     const run = completedWith(cast.id);
     startRunMock.mockResolvedValue('run-1');

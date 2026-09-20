@@ -158,7 +158,7 @@ describe('iPad batch D: coarse-pointer 16px floor', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',

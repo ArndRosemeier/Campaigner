@@ -346,7 +346,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId() },
+          source: { type: 'none' as const },
         },
       ]),
     });

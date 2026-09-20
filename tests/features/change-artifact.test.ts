@@ -289,7 +289,7 @@ describe('the citation survives every writer', () => {
       name: 'Goblin Boss',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
     });
     const { db } = await import('@/db');
     const runsBefore = await db.runs.count();
@@ -312,7 +312,7 @@ describe('the citation survives every writer', () => {
     expect(await db.runs.count()).toBe(runsBefore);
     const after = await getAnyArtifact(creature.id);
     if (after?.kind !== 'npc') throw new Error('the row is not an npc');
-    expect(after.data.creatureRef).toEqual({ chunkId });
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
     expect(after.name).toBe('Goblin Boss');
   });
 
@@ -385,7 +385,7 @@ describe('the citation survives every writer', () => {
       name: 'Goblin Boss',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
     });
 
     const result = await changeArtifact({ artifactId: creature.id, instruction: 'x' });

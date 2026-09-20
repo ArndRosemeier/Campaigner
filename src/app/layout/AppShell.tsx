@@ -27,12 +27,7 @@ import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
 import { useLibraryCreaturePool } from '@/app/use-library-creatures';
-import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
-import { formatCreatureKeyFold } from '@/domain/creatureKeyFold';
-import { formatLibraryAdopt, retainedLibraryAdoptJournal } from '@/domain/libraryAdoptRepair';
-import { formatMobCopyRepair, retainedMobCopyJournal } from '@/domain/mobCopyRepair';
-import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
-import { retryMobCopies } from '@/db/mobCopyRetry';
+import { formatCleanCut } from '@/domain/cleanCut';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
@@ -87,165 +82,22 @@ export function AppShell(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    // THE clean-cut report (docs/17 row 278). The ONE `version(31)` upgrade
+    // body removed every campaign-scoped row BEFORE React mounted, so it could
+    // not toast: it wrote the counts into settings. This reads them ONCE, says
+    // exactly what was removed and what was kept, and nulls the field so a
+    // second launch says nothing. The named count (and the
+    // `libraryLegacyCitationsDropped` instrument) is the whole point — the
+    // owner asked for a clean delete he can SEE, never a silent one.
     void readSettings()
       .then(async (settings) => {
-        const removed = settings.retiredSessionNotesRemoved;
-        if (removed === 0) return;
-        toastInfo(
-          `${String(removed)} session ${removed === 1 ? 'note' : 'notes'} from the retired play view ${removed === 1 ? 'was' : 'were'} removed`,
-        );
-        await updateSettings({ retiredSessionNotesRemoved: 0 });
-      })
-      .catch((error: unknown) => {
-        toastError('Could not report the play-view migration', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    // The v21 migration notice (docs/17 row 108): the Dexie upgrade DROPPED
-    // the `deliverables` table, because the module is now the PDF's document
-    // model and the outline has no reader left. The upgrade body cannot toast
-    // (it runs before React exists, inside Dexie), so it wrote the removed row
-    // count into settings; this reads it ONCE and says what happened, in the
-    // open. Those rows were the owner's own work — a table that vanished
-    // without a word is the silent-loss shape AGENTS rule 1 forbids.
-    void readSettings()
-      .then(async (settings) => {
-        const removed = settings.deliverablesRemoved;
-        if (removed === 0) return;
-        toastInfo(
-          `The deliverables table was removed — its ${String(removed)} saved module ${removed === 1 ? 'outline' : 'outlines'} ${
-            removed === 1 ? 'is' : 'are'
-          } gone. A module PDF is now generated from the module itself, so no outline is needed; nothing else changed.`,
-        );
-        await updateSettings({ deliverablesRemoved: 0 });
-      })
-      .catch((error: unknown) => {
-        toastError('Could not report the deliverables migration', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    // ONE loud migration report (docs/11 D7): the core-mob arc's Dexie upgrade
-    // rewrote citations that pointed at a retired bestiary creature row and
-    // deleted those rows as cache. The upgrade body cannot toast (it runs
-    // before React, inside Dexie), so it writes what it did into settings and
-    // this reads it ONCE — the counts the owner needs to trust their
-    // encounters, and the names of anything it could NOT convert, stated in as
-    // many words rather than swallowed (AGENTS rule 2).
-    void readSettings()
-      .then(async (settings) => {
-        const report = settings.creatureCitationRepair;
+        const report = settings.cleanCut;
         if (report === null) return;
-        toastInfo(formatCreatureCitationRepair(report));
-        await updateSettings({ creatureCitationRepair: null });
+        toastInfo(formatCleanCut(report));
+        await updateSettings({ cleanCut: null });
       })
       .catch((error: unknown) => {
-        toastError('Could not report the bestiary citation repair', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    // ONE loud migration report (docs/17 row 168): the v22 Dexie upgrade FOLDED
-    // the persisted creature identity onto the comparable form (NFC + trim +
-    // case-fold), so a Mac-authored and a precomposed spelling of one name are
-    // one creature again — it re-keyed `mobPortraits`/`creatureImages` rows and
-    // every creature key inside `battles`, and merged a creature that existed
-    // under BOTH compositions (the newer row won, the dropped one is named).
-    // The upgrade body cannot toast (it runs before React, inside Dexie), so it
-    // wrote the per-population counts into settings; this reads them ONCE. A
-    // re-key the owner cannot see is silent loss, and the drop list is the
-    // imageIds a merge let go (AGENTS rules 1/2).
-    void readSettings()
-      .then(async (settings) => {
-        const report = settings.creatureKeyFold;
-        if (report === null) return;
-        const message = formatCreatureKeyFold(report);
-        if (message !== null) toastInfo(message);
-        await updateSettings({ creatureKeyFold: null });
-      })
-      .catch((error: unknown) => {
-        toastError('Could not report the creature key migration', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    // ONE loud migration report (docs/17 row 248): the v24 Dexie upgrade turned
-    // every mob that CITED a library creature into an authored COPY of its
-    // stats, stamping the origin line ("Bestiary p.132") and preserving the
-    // `chunk:` portrait identity as an opaque token. The upgrade body cannot
-    // toast (it runs before React, inside Dexie), so it wrote what it did into
-    // settings; this reads it ONCE, states the counts and NAMES every mob it
-    // could not convert (AGENTS rules 1/2).
-    //
-    // The unresolved list doubles as the RETRY WORKLIST (the owner-decided
-    // failure arm): those rows deliberately KEPT their pointer, so re-running
-    // the seam here copies them the moment the missing pack has been imported.
-    // Once the sentence has been said the upgrade's history is DROPPED and only
-    // the worklist survives (docs/17 row 271, `retainedMobCopyJournal`), so the
-    // journal cannot accumulate and no library id outlives its reader.
-    void readSettings()
-      .then(async (settings) => {
-        const pending = settings.mobCopyRepair;
-        if (pending === null) return;
-        if (pending.unconverted.length > 0) {
-          await retryMobCopies();
-          // The retry writes a FRESH report only when it healed something, so
-          // re-read: the toast must state what this launch did, not the stale
-          // upgrade counts.
-          const after = await readSettings();
-          const report = after.mobCopyRepair;
-          if (report === null || report.notified) return;
-          toastInfo(formatMobCopyRepair(report));
-          await updateSettings({ mobCopyRepair: retainedMobCopyJournal(report) });
-          return;
-        }
-        if (pending.notified) return;
-        toastInfo(formatMobCopyRepair(pending));
-        await updateSettings({ mobCopyRepair: retainedMobCopyJournal(pending) });
-      })
-      .catch((error: unknown) => {
-        toastError('Could not report the mob copy migration', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    // ONE loud migration report (docs/17 row 257): the v26 Dexie upgrade copied
-    // every referenced GLOBAL LIBRARY artifact into the campaign that cited it
-    // (fresh id, cloned images, stored origin), leaving the shared library row
-    // in place — the last family of the owner's *"core items are only ever
-    // copied"* rule. Like the mob-copy migration it cannot toast from inside
-    // Dexie, so it wrote the outcome into settings; this reads it ONCE and NAMES
-    // every reference it could not repoint (AGENTS rules 1/2).
-    //
-    // The unresolved list doubles as the RETRY WORKLIST: a library row that was
-    // gone at upgrade time left its reference untouched, so re-running the seam
-    // here adopts it the moment the row exists. Once the sentence has been said
-    // the `adopted` history (library row ids) is DROPPED and only the worklist
-    // survives (docs/17 row 271, `retainedLibraryAdoptJournal`), so the journal
-    // cannot accumulate.
-    void readSettings()
-      .then(async (settings) => {
-        const pending = settings.libraryAdopt;
-        if (pending === null) return;
-        if (pending.unresolved.length > 0) {
-          await retryLibraryAdoptions();
-          // The retry writes a FRESH report only when it healed something, so
-          // re-read: the toast must state what this launch did, not the stale
-          // upgrade counts.
-          const after = await readSettings();
-          const report = after.libraryAdopt;
-          if (report === null || report.notified) return;
-          toastInfo(formatLibraryAdopt(report));
-          await updateSettings({ libraryAdopt: retainedLibraryAdoptJournal(report) });
-          return;
-        }
-        if (pending.notified) return;
-        toastInfo(formatLibraryAdopt(pending));
-        await updateSettings({ libraryAdopt: retainedLibraryAdoptJournal(pending) });
-      })
-      .catch((error: unknown) => {
-        toastError('Could not report the library adoption migration', error);
+        toastError('Could not report the clean-base update', error);
       });
   }, []);
 

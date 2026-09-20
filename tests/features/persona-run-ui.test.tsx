@@ -1552,7 +1552,7 @@ describe('PersonaPanel refill targets (bestiary creature rows are ordinary rows 
       name: 'Goblin Warrior',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
     });
     await createArtifact({
       campaignId: campaign.id,

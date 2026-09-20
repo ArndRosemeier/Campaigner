@@ -156,7 +156,7 @@ async function seed(): Promise<Seed> {
     data: {
       difficulty: 'deadly',
       levelHint: '5',
-      monsters: [{ name: 'Cultist', count: 4, notes: 'netters', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Cultist', count: 4, notes: 'netters', treasure: '', source: { type: 'none' as const } }],
       terrain: 'wet planks',
       tactics: 'surround and drag under',
       treasure: 'silver bell charm',

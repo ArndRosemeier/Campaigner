@@ -31,32 +31,20 @@ function entry(over: Partial<MonsterEntry> & Pick<MonsterEntry, 'source'>): Mons
   });
 }
 
-const CITATION = {
-  type: 'rulebook' as const,
-  chunkId: '11111111-1111-4111-8111-111111111111',
-  contentHash: 'a'.repeat(64),
-  creatureName: 'Zombie',
-};
+const CITATION = { type: 'none' } as const;
 
 /** ONE instance: a pin asserts the SAME block comes back, not an equal copy. */
 const INLINE_BLOCK = STAT_BLOCK();
 
 describe('rosterReferenceFor — one rule for every source type', () => {
-  it('prints the REAL origin of a cited creature, not a constant', () => {
-    const resolved: ResolvedMonster = { statBlock: null, origin: 'Bestiary p.132' };
-    const reference = rosterReferenceFor(entry({ name: 'Zombie', source: CITATION }), resolved);
-
-    // The owner's line, before → after: the reference NAMES the book and page
-    // the numbers come from, so a GM can find them.
+  it('prints the STAMPED origin line of a copied mob (docs/17 row 278)', () => {
+    const reference = rosterReferenceFor(
+      entry({ name: 'Zombie', source: { type: 'inline', statBlock: INLINE_BLOCK }, sourceLine: 'Bestiary p.132' }),
+      { statBlock: INLINE_BLOCK, origin: 'Bestiary p.132' },
+    );
+    // The copy has no citation left to compose a line from, so the stored line
+    // IS the reference — naming the book and page the numbers came from.
     expect(reference.printed).toBe(' — Bestiary p.132');
-    expect(reference.printed).not.toContain('see Bestiary');
-  });
-
-  it('prints a pack citation’s creature name (the pack has no page numbers)', () => {
-    const resolved: ResolvedMonster = { statBlock: null, origin: 'Monster Core: Cave Fisher' };
-    expect(
-      rosterReferenceFor(entry({ name: 'Cave Fisher', source: CITATION }), resolved).printed,
-    ).toBe(' — Monster Core: Cave Fisher');
   });
 
   it('keeps a citation nothing can satisfy NAMED, in the same words as before', () => {
@@ -96,52 +84,24 @@ describe('rosterReferenceFor — one rule for every source type', () => {
   });
 
   it('states the no-citation truth for a name-only entry', () => {
-    expect(rosterReferenceFor(entry({ source: { type: 'none' } }), undefined).printed).toBe(
+    expect(rosterReferenceFor(entry({ source: { type: 'none' as const } }), undefined).printed).toBe(
       ' — no stats: this roster entry names the creature without a citation',
     );
   });
 
-  it('never claims a citation it could not resolve', () => {
-    // A `rulebook` entry with NO resolution (a builder called without the
-    // pre-pass): the document says so LOUDLY rather than printing a
-    // citation-shaped claim it cannot honour (AGENTS rule 1).
+  it('says what is true about a name-only entry with no resolution either', () => {
     const reference = rosterReferenceFor(entry({ source: CITATION }), undefined);
-    expect(reference.printed).toContain('unresolved citation');
-    expect(reference.printed).not.toContain('see Bestiary');
+    expect(reference.printed).toContain('no stats: this roster entry names the creature');
   });
 });
 
 describe('rosterStatBlockFor — whose numbers a row prints', () => {
-  it('prints the cited library chunk’s own numbers', () => {
-    const block = STAT_BLOCK();
-    expect(
-      rosterStatBlockFor(entry({ source: CITATION }), { statBlock: block, origin: 'Bestiary p.132' }),
-    ).toBe(block);
-  });
-
-  it('prints NO block for a citation whose chunk carries no parseable block', () => {
-    // `chunk.statBlock` is legitimately null (best-effort ingest parse): the
-    // row keeps its named missing-ref line and prints NO box — never an empty
-    // or placeholder one (AGENTS rule 1).
-    expect(
-      rosterStatBlockFor(entry({ source: CITATION }), {
-        statBlock: null,
-        origin: 'missing ref (Zombie)',
-      }),
-    ).toBeNull();
-  });
-
-  it('prints NO block for a citation the pre-pass never resolved', () => {
-    expect(rosterStatBlockFor(entry({ source: CITATION }), undefined)).toBeNull();
-  });
-
-  it('prints an inline entry’s own block', () => {
+  it('prints an inline entry’s own block (the copied mob’s numbers)', () => {
     // `toEqual`: the boundary PARSES the entry, so an inline block comes back
     // as an equal value rather than the same object — the pin is that the row's
     // OWN block prints, not a resolved one.
     const printed = rosterStatBlockFor(
       entry({ source: { type: 'inline', statBlock: INLINE_BLOCK } }),
-      { statBlock: null, origin: 'inline' },
     );
     expect(printed).toEqual(INLINE_BLOCK);
     // Non-vacuity: it is the inline block's own numbers.
@@ -149,16 +109,10 @@ describe('rosterStatBlockFor — whose numbers a row prints', () => {
   });
 
   it('prints no block for npc-ref and none', () => {
-    expect(
-      rosterStatBlockFor(entry({ source: { type: 'none' } }), {
-        statBlock: STAT_BLOCK(),
-        origin: 'Bestiary p.132',
-      }),
-    ).toBeNull();
+    expect(rosterStatBlockFor(entry({ source: { type: 'none' as const } }))).toBeNull();
     expect(
       rosterStatBlockFor(
         entry({ source: { type: 'npc-ref', artifactId: '22222222-2222-4222-8222-222222222222' } }),
-        { statBlock: STAT_BLOCK(), origin: 'NPC: Vexra' },
       ),
     ).toBeNull();
   });

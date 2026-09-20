@@ -107,7 +107,6 @@ export function NpcCard({
           <BorrowedStatBlock
             npcName={npc.name}
             copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
-            citation={data.creatureRef}
           />
         ) : data.statBlock !== null ? (
           <div className="text-base">

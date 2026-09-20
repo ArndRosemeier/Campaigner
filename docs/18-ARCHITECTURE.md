@@ -3201,3 +3201,26 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   above; named here again only because this slice touched level vocabulary and
   deliberately did NOT touch it (different idea: comparing two levels is not
   reading a level out of prose).
+
+### §5 (clean cut, docs/17 row 278) — the migration layer is CLOSED, with one test debt
+
+The whole older-shape/migration layer is DELETED: `domain/mobCopyLegacy`,
+`domain/{creatureCitationRepair,creatureKeyFold,mobCopyRepair,libraryAdoptRepair}`,
+`db/{mobCopyRepair,mobCopyRetry,creatureRepair,libraryAdoptRetry}`, the six
+settings report fields, the five AppShell notice effects, the tolerant export
+parser / v1 demotion / `healRulebookSources` / `RETIRED_EXPORT_TABLES`, and the
+`OPTIONAL_TABLES` + `retiredRows` backup tolerance. Dexie has exactly ONE
+version (`31`) and exactly one `.upgrade()` body (`db/cleanCut`).
+`domain/plural` is KEPT (the new `formatCleanCut` uses it), and the DRIFT POLICY
+(docs/17 row 261) is KEPT.
+
+SEAM ROWS TO READ AS AMENDED BY THIS ROW (the §2 rows above still describe the
+pre-cut shape and are owed a row-by-row rewrite): the legacy-read seam row,
+`db/mobCopyRepair`/retry, `db/creatureRepair`, `db/libraryAdoptRetry`,
+`domain/libraryAdoptRepair`/`creatureCitationRepair`/`creatureKeyFold`, and the
+`creatureRepo.resolveDerivedNpcStats` / `npcCreatureRef` helpers.
+
+**OWED, and it is the ONE thing a successor must finish:** the surviving test
+files that asserted the deleted citation semantics are RED (their fixtures were
+converted to live arms so the tree compiles). The pin set that PROVES the cut is
+green: `tests/db/clean-cut.test.ts` 11/11.

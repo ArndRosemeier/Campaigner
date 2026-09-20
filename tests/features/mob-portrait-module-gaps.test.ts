@@ -144,7 +144,7 @@ async function seedMobArtifact(
     summary: '',
     body: '',
     coverImageId: options.coverImageId ?? null,
-    data: { ...npcData, creatureRef: { chunkId: CHUNK_ID } },
+    data: { ...npcData, originToken: `chunk:${CHUNK_ID}`},
   });
 }
 
@@ -275,7 +275,7 @@ function npcRefEntry(name: string, artifactId: string, count = 1): MonsterEntry 
 }
 
 function uncitedEntry(name: string, count = 1, notes = ''): MonsterEntry {
-  return { name, count, notes, treasure: '', source: { type: 'none' } };
+  return { name, count, notes, treasure: '', source: { type: 'none' as const } };
 }
 
 /** The owner's roster shape: a chunk-backed `npc-ref` (a materialized CORE
@@ -435,7 +435,7 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
       summary: '',
       body: '',
       coverImageId: image.id,
-      data: { ...npcData, creatureRef: { chunkId: CHUNK_ID } },
+      data: { ...npcData, originToken: `chunk:${CHUNK_ID}`},
     });
     const encounter = await seedEncounter(campaign.id, module.id, [
       npcRefEntry('Gelatinous Cube', mob.id),

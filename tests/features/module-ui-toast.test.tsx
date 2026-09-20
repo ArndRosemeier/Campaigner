@@ -53,7 +53,6 @@ import {
   encounterDataSchema,
   modulePartSchema,
   moduleSpineSchema,
-  newId,
   createModule as buildModule,
 } from '@/domain';
 import type { Id, Module, Campaign } from '@/domain';
@@ -590,7 +589,7 @@ describe('modules-list.test.tsx', () => {
               count: 2,
               notes: '',
               treasure: '',
-              source: { type: 'rulebook', chunkId: newId() },
+              source: { type: 'none' as const },
             },
           ],
           terrain: '',

@@ -171,7 +171,6 @@ export function NpcForm({
           <BorrowedStatBlock
             npcName={artifactName}
             copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
-            citation={data.creatureRef}
           />
         )}
         {!npcDataIsCastCreature(data) && data.statBlock !== null && !editingStatBlock && (

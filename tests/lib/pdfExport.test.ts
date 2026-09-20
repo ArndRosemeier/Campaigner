@@ -241,12 +241,7 @@ describe('pdf export definitions', () => {
             count: 1,
             notes: 'clings to the pilings',
             treasure: '',
-            source: {
-              type: 'rulebook',
-              chunkId: chunk.id,
-              contentHash: chunk.contentHash,
-              creatureName: 'Cave Fisher',
-            },
+            source: { type: 'none' as const },
           },
         ],
         terrain: 'wet planks',

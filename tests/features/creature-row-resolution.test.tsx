@@ -179,7 +179,7 @@ async function seedCreature(campaignId: Id, name = 'Zombie'): Promise<Artifact> 
     summary: '',
     body: '',
     coverImageId: null,
-    data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: CHUNK_ID } },
+    data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${CHUNK_ID}`},
   });
 }
 
@@ -486,7 +486,7 @@ describe('the generation the verdict unlocks', () => {
     if (npc?.kind !== 'npc') throw new Error('no npc of that name landed');
     expect(npc.moduleId).toBe(module.id);
     expect(npc.campaignId).toBe(campaign.id);
-    expect(npc.data.creatureRef).toBeUndefined();
+    expect((npc.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
     expect(npc.tags).toContain('module:Ember Crypt');
     expect(npc.summary).toBe(NPC_DRAFT.summary);
     expect(npc.body).toBe(NPC_DRAFT.body);
@@ -502,7 +502,7 @@ describe('the generation the verdict unlocks', () => {
     // NOTHING exists for the library creature itself: the batch may cite it,
     // never materialize it.
     expect(
-      pool.filter((artifact) => artifact.kind === 'npc' && artifact.data.creatureRef !== undefined),
+      pool.filter((artifact) => artifact.kind === 'npc' && (artifact.data as { creatureRef?: unknown }).creatureRef !== undefined),
     ).toEqual([]);
     // The library row is still there to cite — untouched by the generation.
     expect((await resolveCreatureCitation({ chunkId }, 'Zombie')).chunk?.id).toBe(chunkId);
@@ -530,13 +530,13 @@ describe('the generation the verdict unlocks', () => {
     expect(landed).toHaveLength(1);
     expect(landed[0]?.moduleId).toBe(module.id);
     expect(landed[0]?.kind).toBe('npc');
-    expect(landed[0]?.kind === 'npc' ? landed[0].data.creatureRef : chunkId).toBeUndefined();
+    expect(landed[0]?.kind === 'npc' ? (landed[0].data as { originToken?: unknown }).originToken : chunkId).toBeUndefined();
     // The sweep materializes the MODULE's entity and nothing else: the library
     // creature is never turned into an artifact by an automation pass (docs/11
     // D5 — the encounter/sweep side may cite, never cast).
     expect(
       (await listArtifactsByCampaign(campaign.id)).filter(
-        (artifact) => artifact.kind === 'npc' && artifact.data.creatureRef !== undefined,
+        (artifact) => artifact.kind === 'npc' && (artifact.data as { creatureRef?: unknown }).creatureRef !== undefined,
       ),
     ).toEqual([]);
     expect((await resolveCreatureCitation({ chunkId }, 'Zombie')).chunk?.id).toBe(chunkId);
@@ -595,7 +595,7 @@ describe('the generation the verdict unlocks', () => {
     // CAST, not generated: the row OWNS the library creature's copy — the block,
     // the stamped origin line and the opaque identity token — and mints no
     // pointer (docs/17 row 255b).
-    expect(npc.data.creatureRef).toBeUndefined();
+    expect((npc.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
     expect(npc.data.statBlock?.hp).toBe(22);
     expect(npc.data.sourceLine).toBeDefined();
     expect(npc.data.originToken).toMatch(/^chunk:/);

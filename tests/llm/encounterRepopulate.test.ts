@@ -218,7 +218,7 @@ function complexLayoutFixture() {
  *  monster, owner-set fill grade, a stale advisory, preset 'dungeon'. */
 async function seedComplexTarget(
   campaignId: Id,
-  goblinChunkId: Id,
+  _goblinChunkId: Id,
   overrides: Record<string, unknown> = {},
   moduleId?: Id,
 ): Promise<Artifact & { kind: 'encounter' }> {
@@ -233,7 +233,7 @@ async function seedComplexTarget(
     links: [],
     data: {
       difficulty: 'old', levelHint: '4',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId, preset: 'dungeon', locationKind: 'dungeon',
       siteShape: 'complex', budgetAdvisory: 'STALE ADVISORY',
@@ -275,7 +275,7 @@ function singleRoomLayoutFixture() {
 
 async function seedSingleTarget(
   campaignId: Id,
-  goblinChunkId: Id,
+  _goblinChunkId: Id,
   overrides: Record<string, unknown> = {},
   moduleId?: Id,
 ): Promise<Artifact & { kind: 'encounter' }> {
@@ -289,7 +289,7 @@ async function seedSingleTarget(
     links: [],
     data: {
       difficulty: 'old', levelHint: '3',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'standard', locationKind: 'other',
       siteShape: 'single', budgetAdvisory: '', layout: null,

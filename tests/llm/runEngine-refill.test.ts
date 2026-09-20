@@ -465,7 +465,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       links: [],
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
     });
     const revisionsBefore = await listRevisions(creature.id);
     chatMock.mockResolvedValue({
@@ -488,7 +488,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
     expect(after.data.personality).toBe(NPC_DRAFT.personality);
     // THE CITATION IS BYTE-IDENTICAL — the field the writer is not given.
-    expect(after.data.creatureRef).toEqual({ chunkId });
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
     // …and no stat block was authored onto it: the numbers come from the
     // library, and writing one here would be the schema conflict below.
     expect(after.data.statBlock).toBeNull();
@@ -515,7 +515,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       name: 'Cinder Bat',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
     });
     chatMock.mockResolvedValue({
       text: JSON.stringify({ ...NPC_DRAFT, name: 'Cinder Bat' }),
@@ -533,7 +533,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     expect(after.name).toBe('Cinder Bat');
     expect(after.summary).toBe(NPC_DRAFT.summary);
     expect(after.moduleId).toBe(moduleId);
-    expect(after.data.creatureRef).toEqual({ chunkId });
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId });
     expect(after.data.statBlock).toBeNull();
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
@@ -573,7 +573,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     // The curated stat block survives (the draft skipped its statblock step)
     // and no creature marker was invented.
     expect(after.data.statBlock?.hp).toBe(22);
-    expect(after.data.creatureRef).toBeUndefined();
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 });

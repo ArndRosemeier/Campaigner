@@ -202,7 +202,7 @@ async function seedComplexTarget(campaignId: Id): Promise<Artifact & { kind: 'en
     links: [],
     data: {
       difficulty: 'old', levelHint: '4',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' } }],
+      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'dungeon', locationKind: 'dungeon',
       siteShape: 'complex', budgetAdvisory: 'STALE ADVISORY',
@@ -224,7 +224,7 @@ async function seedSingleTarget(campaignId: Id): Promise<Artifact & { kind: 'enc
     links: [],
     data: {
       difficulty: 'old', levelHint: '3',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'standard', locationKind: 'other',
       siteShape: 'single', budgetAdvisory: '', layout: null,

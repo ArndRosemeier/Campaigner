@@ -256,7 +256,7 @@ describe('deriveAutomationDeviation', () => {
             count: 2,
             notes: '',
             treasure: '',
-            source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-00000000c001' },
+            source: { type: 'none' as const },
           },
         ],
         terrain: '',

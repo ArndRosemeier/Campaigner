@@ -141,29 +141,29 @@ export function MobPortraitsSection({
   const [regenEntry, setRegenEntry] = useState<{ index: number; name: string } | null>(null);
   if (artifact.campaignId === null) return null;
   const data = artifact.data;
-  const rulebookCount = data.monsters.filter((monster) => monster.source.type === 'rulebook').length;
   const uncited = data.monsters
     .map((monster, index) => ({ monster, index }))
     .filter(({ monster }) => monster.source.type === 'inline' || monster.source.type === 'none');
   /**
-   * Every roster participant the batch counts (docs/17 row 90): the cited
-   * creature kinds the rulebook lane walks PLUS the uncited entries PLUS the
+   * Every roster participant the batch counts (docs/17 row 90): the copied
+   * creature kinds the creature lane walks PLUS the uncited entries PLUS the
    * `npc-ref` rows — a monster the encounter materialized for a creature the
    * prose staged (which the batch used to skip entirely, so it could never be
    * illustrated) and an ordinary named NPC standing in the roster. The queue
    * routes each one by what its artifact IS; the surface only needs the count,
    * and taking it from the roster rather than from a plan keeps the button
-   * enabled for the owner's exact report (a roster of nothing but materialized
-   * monsters has no rulebook entries and no uncited entries).
+   * enabled for the owner's exact report.
    */
-  const participantCount =
-    rulebookCount +
-    uncited.length +
-    data.monsters.filter((monster) => monster.source.type === 'npc-ref').length;
+  // EVERY roster entry is a participant (docs/17 row 278): the library-citation
+  // lane is gone — a copied mob is `inline` with an `originToken`, so it rides
+  // the creature lane through the uncited list — and an `npc-ref` is a
+  // participant of its own. Counting the roster is therefore exactly counting
+  // the work.
+  const participantCount = data.monsters.length;
   const hasUncited = uncited.length > 0;
   /**
-   * Whether the batch has anything to act on at all. NOT `rulebookCount` and
-   * NOT `uncited.length`: the invented lane also carries `npc-ref` rows (a
+   * Whether the batch has anything to act on at all. NOT `uncited.length`: the
+   * invented lane also carries `npc-ref` rows (a
    * materialized monster, a named NPC), so gating a lane on the roster's SHAPE
    * is what left the owner's lumberjacks unreachable. The queue's own
    * enumeration is the authority — `planMobPortraitBatch` still decides whether
@@ -179,11 +179,9 @@ export function MobPortraitsSection({
     try {
       // BOTH lanes whenever the roster has participants, in the order the
       // queue's own enumeration walks them, and NEITHER gated on the roster's
-      // SHAPE. `rulebookCount === 0` used to skip the rulebook lane — but an
-      // `npc-ref` to a CHUNK-BACKED artifact (a bestiary creature the
-      // encounter materialized into its mob artifact) rides THAT lane, so a
-      // roster of nothing but such rows left a visible hole unfilled: the
-      // count offered "Fill 1 missing portrait" and the press enqueued
+      // SHAPE. An `npc-ref` to a cast artifact rides the creature lane, so a
+      // roster of nothing but such rows used to leave a visible hole unfilled:
+      // the count offered "Fill 1 missing portrait" and the press enqueued
       // nothing (row 90's exact shape-gating defect, and row 92's rule — an
       // offer the work refuses is a bug — applied to the press). The two lanes
       // go through ONE seam (`enqueueEncounterPortraitFill`), the same call

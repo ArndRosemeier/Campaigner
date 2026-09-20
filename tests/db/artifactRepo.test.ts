@@ -642,7 +642,7 @@ describe('legacy rows (parse-on-read materializes defaults)', () => {
       data: {
         difficulty: 'medium',
         levelHint: '3',
-        monsters: [{ name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' } }],
+        monsters: [{ name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' as const } }],
         terrain: '',
         tactics: '',
         treasure: '',

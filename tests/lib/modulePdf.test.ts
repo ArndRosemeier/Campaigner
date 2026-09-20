@@ -251,19 +251,14 @@ async function seed(): Promise<Seed> {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'none' },
+          source: { type: 'none' as const },
         },
         {
           name: 'Cave Fisher',
           count: 1,
           notes: '',
           treasure: '',
-          source: {
-            type: 'rulebook',
-            chunkId: newId(),
-            contentHash: 'a'.repeat(64),
-            creatureName: 'Cave Fisher',
-          },
+          source: { type: 'none' as const },
         },
       ],
       terrain: 'wet planks',
@@ -695,12 +690,7 @@ describe('buildModuleDefinition — the module IS the document', () => {
                 monster.name === 'Cave Fisher'
                   ? {
                       ...monster,
-                      source: {
-                        type: 'rulebook' as const,
-                        chunkId: chunk.id,
-                        contentHash: chunk.contentHash,
-                        creatureName: 'Cave Fisher',
-                      },
+                      source: { type: 'none' as const },
                     }
                   : monster,
               ),

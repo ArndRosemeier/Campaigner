@@ -688,7 +688,7 @@ describe('Encounter Cartographer run', () => {
       links: [{ targetId: newId(), relation: 'at' }],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
@@ -744,7 +744,7 @@ describe('Encounter Cartographer run', () => {
       writerModel: '',
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
@@ -836,7 +836,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
@@ -872,7 +872,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
@@ -1247,7 +1247,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Keep this prose.',
         data: {
           difficulty: 'hard', levelHint: '4',
-          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: 'old terrain', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard',
           locationKind: 'wilderness', mapMode: 'architectural', siteShape: 'single', budgetAdvisory: '',
@@ -1276,7 +1276,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Keep this prose.',
         data: {
           difficulty: 'hard', levelHint: '4',
-          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: 'old terrain', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard',
           locationKind: 'dungeon', mapMode: 'natural', siteShape: 'single', budgetAdvisory: '',
@@ -1563,7 +1563,7 @@ describe('Encounter Cartographer run', () => {
         links: [],
         data: {
           difficulty: 'old', levelHint: '4',
-          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
         },
@@ -1637,12 +1637,13 @@ describe('Encounter Cartographer run', () => {
     it('keeps the draw-once stability across regens and the owner-set precedence', async () => {
       const { campaign, cartographer } = await setup();
       const goblinChunkId = await seedPackBook();
+    void goblinChunkId;
       const roster = [0, 1, 2, 3].map((index) => ({
         name: `Crypt Thing ${String(index)}`,
         count: 1,
         notes: '',
         treasure: '',
-        source: { type: 'rulebook' as const, chunkId: goblinChunkId },
+        source: { type: 'none' as const },
       }));
       const target = await createArtifact({
         campaignId: campaign.id,
@@ -1734,6 +1735,7 @@ describe('Encounter Cartographer run', () => {
     it('rejects an over-cap fresh roster loudly (the bounded stocking seam)', async () => {
       const { campaign, cartographer } = await setup();
       const goblinChunkId = await seedPackBook();
+    void goblinChunkId;
       const target = await createArtifact({
         campaignId: campaign.id,
         kind: 'encounter',
@@ -1742,7 +1744,7 @@ describe('Encounter Cartographer run', () => {
         links: [],
         data: {
           difficulty: 'old', levelHint: '4',
-          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
         },
@@ -1816,6 +1818,7 @@ describe('Encounter Cartographer run', () => {
      *  monster, remembered preset 'standard' (the D10 trap), owner-set fill
      *  grade. */
     async function seedComplexTarget(campaignId: Id, goblinChunkId: Id, moduleId?: Id): Promise<Artifact & { kind: 'encounter' }> {
+    void goblinChunkId;
       const target = await createArtifact({
         campaignId,
         ...(moduleId === undefined ? {} : { moduleId }),
@@ -1825,7 +1828,7 @@ describe('Encounter Cartographer run', () => {
         links: [],
         data: {
           difficulty: 'old', levelHint: '4',
-          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, preset: 'standard', locationKind: 'dungeon',
           siteShape: 'complex', budgetAdvisory: '',
@@ -1839,6 +1842,7 @@ describe('Encounter Cartographer run', () => {
 
     /** A single-arena row (one stale fight, no layout on file). */
     async function seedSingleTarget(campaignId: Id, goblinChunkId: Id): Promise<Artifact & { kind: 'encounter' }> {
+    void goblinChunkId;
       const target = await createArtifact({
         campaignId,
         kind: 'encounter',
@@ -1847,7 +1851,7 @@ describe('Encounter Cartographer run', () => {
         links: [],
         data: {
           difficulty: 'old', levelHint: '4',
-          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, preset: 'standard', locationKind: 'other',
           siteShape: 'single', budgetAdvisory: '', layout: null,
@@ -2158,8 +2162,8 @@ describe('Encounter Cartographer run', () => {
         data: {
           difficulty: 'old', levelHint: '2',
           monsters: [
-            { name: 'Halvar', count: 1, notes: '', treasure: '', source: { type: 'none' } },
-            { name: 'Crypt Rat', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+            { name: 'Halvar', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
+            { name: 'Crypt Rat', count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
           ],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon',

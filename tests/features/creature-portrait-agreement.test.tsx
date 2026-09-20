@@ -265,7 +265,7 @@ describe('the token and the module side resolve ONE portrait', () => {
       imageId: portraitId,
     });
     const { moduleId: seededModule } = await seedEncounterWith(moduleId, [
-      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } },
+      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
     ]);
 
     await renderSurface(campaignId, seededModule);
@@ -345,7 +345,7 @@ describe('the affordance and the board state the same fact', () => {
     const chunkId = await seedChunk('Zombie', ZOMBIE_TEXT);
     const moduleId = await seedModule('Gap module');
     await seedEncounterWith(moduleId, [
-      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } },
+      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
     ]);
 
     await renderSurface(campaignId, moduleId);

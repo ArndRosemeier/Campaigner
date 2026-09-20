@@ -14,7 +14,6 @@ import {
   createArtifact as buildArtifact,
   createModule,
   moduleSchema,
-  newId,
   type Id,
   type Module,
 } from '@/domain';
@@ -290,7 +289,7 @@ describe('iPad batch E halves 3+4: panes co-mount, leftover inputs hit 16px', ()
           count: 1,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId() },
+          source: { type: 'none' as const },
         }}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"

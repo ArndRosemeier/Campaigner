@@ -12,7 +12,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { createImage } from '@/db/imageRepo';
 import { creatureCoverImageId, setCreatureCover } from '@/db/creatureRepo';
-import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
+import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { createModule, globalArtifactSchema, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
@@ -256,7 +256,7 @@ async function seedRulebookBattle(): Promise<{ moduleId: string; chunkId: string
     data: {
       difficulty: 'medium',
       levelHint: '1',
-      monsters: [{ name: 'Goblin Boss', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -705,9 +705,14 @@ describe('battle-card stat block with the library uninstalled', () => {
     const before = await currentBattle(module.id);
     expect(before.board.tokens[0]?.artifactId).toBe(libraryNpc.id);
 
-    // ADOPT through the seam's retry caller (the v27 backfill's own entry),
-    // then DELETE the library row.
-    await retryLibraryAdoptions();
+    // ADOPT through the ONE seam's live caller (the v27 backfill that used to
+    // call its retry arm was deleted by the clean cut), then DELETE the library
+    // row.
+    await db.transaction(
+      'rw',
+      [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
+      (tx) => adoptLibraryArtifacts({ tx, reason: 'write' }),
+    );
     const copyId = (await currentBattle(module.id)).board.tokens[0]?.artifactId ?? '';
     expect(copyId).not.toBe(libraryNpc.id);
     expect((await getAnyArtifact(copyId))?.copiedFromArtifactId).toBe(libraryNpc.id);
@@ -760,7 +765,7 @@ describe('a battle seeded from a LIBRARY encounter (docs/17 row 268)', () => {
       data: {
         difficulty: 'medium',
         levelHint: '5',
-        monsters: [{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+        monsters: [{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
         terrain: '',
         tactics: '',
         treasure: '',

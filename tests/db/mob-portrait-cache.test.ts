@@ -266,7 +266,7 @@ describe('canonical-only invariant', () => {
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
     const encounterA = await addEncounter(campaignA, [
-      { name: 'Giant Rat', count: 3, source: { type: 'rulebook', chunkId } },
+      { name: 'Giant Rat', count: 3, source: { type: 'none' as const } },
     ]);
     const resultA = await enqueueMobPortraits(encounterA, campaignA);
     expect(resultA).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -303,7 +303,7 @@ describe('canonical-only invariant', () => {
     // as existing art, and the trigger for the one-sided replace-all confirm
     // (owner report; ledger 81).
     const encounterB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 2, source: { type: 'rulebook', chunkId } },
+      { name: 'Giant Rat', count: 2, source: { type: 'none' as const } },
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
     expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -361,14 +361,14 @@ describe('canonical-only invariant', () => {
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
     const encounterA = await addEncounter(campaignA, [
-      { name: 'Giant Rat', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
     ]);
     await enqueueMobPortraits(encounterA, campaignA);
     await drainMobQueue();
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
 
     const encounterB = await addEncounter(campaignB, [
-      { name: '  GIANT RAT ', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: '  GIANT RAT ', count: 1, source: { type: 'none' as const } },
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
     expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
@@ -395,7 +395,7 @@ describe('canonical-only invariant', () => {
 
     // Flavored first: local flavored cover, cache slot stays EMPTY.
     const flavoredA = await addEncounter(campaignA, [
-      { name: 'slimey giant rat', count: 2, source: { type: 'rulebook', chunkId } },
+      { name: 'slimey giant rat', count: 2, source: { type: 'none' as const } },
     ]);
     const resultA = await enqueueMobPortraits(flavoredA, campaignA);
     expect(resultA.enqueued).toBe(1);
@@ -408,7 +408,7 @@ describe('canonical-only invariant', () => {
 
     // Canonical citation populates the slot once.
     const canonicalB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
     ]);
     await enqueueMobPortraits(canonicalB, campaignB);
     await drainMobQueue();
@@ -419,7 +419,7 @@ describe('canonical-only invariant', () => {
 
     // A later flavored citation generates locally and does NOT overwrite.
     const flavoredC = await addEncounter(campaignC, [
-      { name: 'slimey giant rat', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: 'slimey giant rat', count: 1, source: { type: 'none' as const } },
     ]);
     await enqueueMobPortraits(flavoredC, campaignC);
     await drainMobQueue();
@@ -439,9 +439,10 @@ describe('canonical-only invariant', () => {
 
   it('a chunk with no usable heading generates locally and never writes the cache', async () => {
     const chunkId = await seedCreatureChunk('Nameless', GIANT_RAT_TEXT, ['  ', '']);
+    void chunkId;
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const encounter = await addEncounter(campaignId, [
-      { name: 'Nameless Horror', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: 'Nameless Horror', count: 1, source: { type: 'none' as const } },
     ]);
     const result = await enqueueMobPortraits(encounter, campaignId);
     expect(result.enqueued).toBe(1);
@@ -494,7 +495,7 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     const encounter = await addEncounter(campaignId, [
       { name: 'Captain Vane', count: 1, source: { type: 'npc-ref', artifactId: npc.id } },
       { name: 'One-off Ooze', count: 1, source: { type: 'inline', statBlock: testStatBlock() } },
-      { name: 'Unnamed Horror', count: 1, source: { type: 'none' } },
+      { name: 'Unnamed Horror', count: 1, source: { type: 'none' as const } },
     ]);
 
     const tables = await transactionTablesDuring(async () => {
@@ -554,7 +555,7 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
         notes: 'a standing wave of black tar',
         source: { type: 'inline', statBlock: testStatBlock() },
       },
-      { name: 'Whisper Wisp', count: 1, notes: 'barely a rumor', source: { type: 'none' } },
+      { name: 'Whisper Wisp', count: 1, notes: 'barely a rumor', source: { type: 'none' as const } },
     ]);
 
     const tables = await transactionTablesDuring(async () => {
@@ -637,7 +638,7 @@ describe('cache-blob prune immunity (NEVER-DELETE)', () => {
     // Cloning the cover, then deleting the clone's owner, prunes the clone
     // but never the cached blob.
     const encounterB = await addEncounter(campaignB, [
-      { name: 'Giant Rat', count: 1, source: { type: 'rulebook', chunkId } },
+      { name: 'Giant Rat', count: 1, source: { type: 'none' as const } },
     ]);
     await enqueueMobPortraits(encounterB, campaignB);
     // The clone lands when the worker commits, not during enumeration.
@@ -661,7 +662,7 @@ describe('loud failures (no placeholder art)', () => {
   it('a vanished chunk fails loud per mob with no cache write', async () => {
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const encounter = await addEncounter(campaignId, [
-      { name: 'Ghost Boss', count: 1, source: { type: 'rulebook', chunkId: newId() } },
+      { name: 'Ghost Boss', count: 1, source: { type: 'none' as const } },
     ]);
     const result = await enqueueMobPortraits(encounter, campaignId);
     expect(result.enqueued).toBe(1);

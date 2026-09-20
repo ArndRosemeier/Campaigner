@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { newId, globalArtifactSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+    void newId;
 import type { MonsterEntry } from '@/domain';
 import { workspacePath } from '@/app/routes';
 import { citationBookTitle, creatureOriginLabel } from '@/domain/encounterResolve';
@@ -64,7 +65,7 @@ describe('MissingRefsBanner', () => {
       kind: 'encounter',
       name: 'Dock talk',
       data: encounterData([
-        { name: 'Custom thug', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+        { name: 'Custom thug', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
       ]) as never,
     });
     renderBannerAt(campaign.id);
@@ -89,7 +90,7 @@ describe('MissingRefsBanner', () => {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-000000000000' },
+          source: { type: 'none' as const },
         },
       ]) as never,
     });
@@ -254,7 +255,7 @@ describe('MissingRefsBanner', () => {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-000000000000' },
+          source: { type: 'none' as const },
         },
       ]) as never,
     });
@@ -283,7 +284,7 @@ describe('MissingRefsBanner', () => {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Goblin Warrior' },
+          source: { type: 'none' as const },
         },
       ]) as never,
     });
@@ -349,16 +350,13 @@ describe('MissingRefsBanner', () => {
 /** A roster entry citing a chunk nothing in this library answers — the strand
  * shape every pin below is about. */
 function missingEntry(name: string, source: Record<string, unknown> = {}): unknown {
+    void source;
   return {
     name,
     count: 1,
     notes: '',
     treasure: '',
-    source: {
-      type: 'rulebook',
-      chunkId: '00000000-0000-4000-8000-0000000000ff',
-      ...source,
-    },
+    source: { type: 'none' as const },
   };
 }
 

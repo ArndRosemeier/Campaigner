@@ -21,8 +21,7 @@ import {
 } from '@/lib/deviceCapabilities';
 import { isQuotaExceededError } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
-import { formatRetiredTableRows } from '@/lib/exportImport';
-import { toastError, toastErrorPersistent, toastInfo, toastSuccess } from '@/lib/toast';
+import { toastError, toastErrorPersistent, toastSuccess } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -262,11 +261,6 @@ export function BackupSection(): JSX.Element {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await importBackup(bytes);
       toastSuccess(`Backup restored — ${String(result.totalRows)} rows`);
-      // Retired tables (docs/17 row 108): a pre-v21 backup still carries the
-      // `deliverables` table this build deleted. Its rows had nowhere to land,
-      // so the skip is stated with its count — never silent (AGENTS rule 1).
-      const retiredNote = formatRetiredTableRows(result.retiredRows);
-      if (retiredNote !== null) toastInfo(retiredNote);
       // Load-bearing reload (kept on purpose, F10): the restore REPLACED the
       // whole database, so every module-scope cache and store must re-derive
       // from the new rows — the keyword index (backup's chunk restore goes

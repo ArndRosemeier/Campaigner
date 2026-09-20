@@ -1578,7 +1578,7 @@ describe('moduleGen-party-exclusion.test.ts', () => {
       );
     });
 
-    it('keeps the fixed cast npc-only — a party member named in the scene is not cast', async () => {
+    it('keeps the fixed cast npc-only — a party member named in the scene is not cast', () => {
       const pool = [
         {
           id: 'pc-1',
@@ -1602,7 +1602,7 @@ describe('moduleGen-party-exclusion.test.ts', () => {
         },
       ] as never;
 
-      const cast = await fixedCastForEncounter(
+      const cast = fixedCastForEncounter(
         'The Ringing Below',
         `[[${PC_NAME}]] argues with [[${SHARED_NPC}]] beside the bell.`,
         pool,

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as createModuleSchema, moduleSchema, monsterEntrySchema, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, blankStatBlock, type Persona, type StatBlock } from '@/domain';
-import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
+import { resolveMonsterEntry } from '@/domain/encounterResolve';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -1865,7 +1865,7 @@ describe('rosterMobCopyFor', () => {
     const { db } = await import('@/db/db');
     await db.rulebooks.clear();
     await db.chunks.clear();
-    const resolved = await resolveStoredMonsterEntry(entry, {
+    const resolved = await resolveMonsterEntry(entry, {
       getArtifact: () => Promise.reject(new Error('library read attempted')),
       getChunk: () => Promise.reject(new Error('library read attempted')),
       getChunkByContentHash: () => Promise.reject(new Error('library read attempted')),

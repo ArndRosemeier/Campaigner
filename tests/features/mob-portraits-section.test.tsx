@@ -92,7 +92,7 @@ function plan(overrides: Partial<MobPortraitBatchPlan> = {}): MobPortraitBatchPl
 
 const INLINE = { type: 'inline', statBlock: null };
 const NONE = { type: 'none' };
-const RULEBOOK = { type: 'rulebook', chunkId: 'chunk-1' };
+const RULEBOOK = { type: 'none' };
 
 beforeEach(() => {
   enqueueFillMock.mockReset();

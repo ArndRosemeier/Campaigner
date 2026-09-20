@@ -6,7 +6,7 @@ import { createArtifact, getAnyArtifact, listArtifactsByCampaign } from '@/db/ar
 import { listBattlesByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { castCreatureAsNpc, resolveCreatureCitation, resolveDerivedNpcStats } from '@/db/creatureRepo';
+import { castCreatureAsNpc, resolveCreatureCitation } from '@/db/creatureRepo';
 import { db } from '@/db/db';
 import { createImage } from '@/db/imageRepo';
 import {
@@ -19,14 +19,11 @@ import {
   contentCreatureKey,
   createModule,
   creatureIdentityForCitation,
-  creatureRefSchema,
   libraryCreatureKey,
   npcCreatureIdentity,
-  npcDataSchema,
   ruleChunkSchema,
   statBlockSchema,
   stampNewEntity,
-  type StatBlock,
 } from '@/domain';
 import { isMissingRefOrigin, missingCreatureOrigin } from '@/domain/encounterResolve';
 import { sha256Hex } from '@/lib/hash';
@@ -128,80 +125,8 @@ describe('D3 — a citation resolves by chunk id, then by content hash, and refu
     );
   });
 
-  it('reports a citation the workspace cannot supply by NAME, without inventing stats', async () => {
-    const listing = await resolveCreatureCitation({ chunkId: crypto.randomUUID() }, 'Absent Ghoul');
-    expect(listing.chunk).toBeNull();
-    expect(listing.statBlock).toBeNull();
-    expect(listing.origin).toContain('Absent Ghoul');
-    const derived = await resolveDerivedNpcStats('Absent Ghoul', { chunkId: crypto.randomUUID() });
-    expect(derived.statBlock).toBeNull();
-  });
-
-  it('a derived NPC carries the LIBRARY stat block and says where it came from', async () => {
-    const chunkId = await seedCreep('Bog Zombie', 22);
-    const derived = await resolveDerivedNpcStats('Aunt Agatha', { chunkId, creatureName: 'Bog Zombie' });
-    expect(derived.statBlock?.hp).toBe(22);
-    // The origin names BOTH the npc and where its numbers came from, so a
-    // reader is never shown borrowed numbers without their source.
-    expect(derived.origin).toContain('NPC: Aunt Agatha (stats from ');
-    expect(derived.origin.length).toBeGreaterThan('NPC: Aunt Agatha (stats from )'.length);
-  });
 });
 
-describe('D3 — the schema refuses an authored stat block AND a citation on the same row', () => {
-  const block: StatBlock = statBlockSchema.parse({
-    system: 'dnd5e',
-    level: '1',
-    size: 'Medium',
-    creatureType: 'undead',
-    ac: 10,
-    acNote: '',
-    hp: 5,
-    hpFormula: '1d8',
-    speed: '30 ft.',
-    abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
-    saves: '',
-    skills: '',
-    senses: '',
-    languages: '',
-    traits: [],
-    actions: [],
-    reactions: [],
-    legendary: [],
-    extras: {},
-  });
-
-  it('accepts either one alone', () => {
-    expect(npcDataSchema.safeParse({ appearance: '', personality: '', statBlock: block }).success).toBe(true);
-    expect(
-      npcDataSchema.safeParse({
-        appearance: '',
-        personality: '',
-        statBlock: null,
-        creatureRef: { chunkId: crypto.randomUUID() },
-      }).success,
-    ).toBe(true);
-  });
-
-  it('refuses both, naming the conflict and the remedy', () => {
-    const parsed = npcDataSchema.safeParse({
-      appearance: '',
-      personality: '',
-      statBlock: block,
-      creatureRef: { chunkId: crypto.randomUUID() },
-    });
-    expect(parsed.success).toBe(false);
-    if (parsed.success) throw new Error('the conflict was accepted');
-    const message = parsed.error.issues.map((issue) => issue.message).join('\n');
-    expect(message).toContain('either an authored stat block or a library creatureRef');
-    expect(message).toContain('clear the stat block or drop the creature reference');
-  });
-
-  it('a ref is a POINTER, never a resolution key: its own schema refuses a non-uuid chunk', () => {
-    expect(creatureRefSchema.safeParse({ chunkId: 'chunk:1' }).success).toBe(false);
-    expect(creatureRefSchema.safeParse({ chunkId: crypto.randomUUID() }).success).toBe(true);
-  });
-});
 
 describe('D4 — casting is idempotent per identity, and a rival is refused loudly', () => {
   it('CREATES once and REUSES on the second cast, writing nothing new', async () => {
@@ -256,7 +181,7 @@ describe('D4 — casting is idempotent per identity, and a rival is refused loud
     // NO POINTER (docs/17 row 255b): the owner's rule is that a core item is
     // only ever COPIED, so the row owns the library bytes, the stamped origin
     // line and the opaque identity token instead of a `creatureRef`.
-    expect(row.data.creatureRef).toBeUndefined();
+    expect((row.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
     expect(row.data.statBlock?.hp).toBe(22);
     expect(row.data.statBlock?.ac).toBe(8);
     expect(row.data.sourceLine).toBe('Bestiary p.4');
@@ -324,7 +249,7 @@ describe('D4 — casting is idempotent per identity, and a rival is refused loud
     if (row?.kind !== 'npc') throw new Error('not an npc');
     // The authored prose is untouched: the refusal is what protected it.
     expect(row.summary).toBe('Hand-written, thank you.');
-    expect(row.data.creatureRef).toBeUndefined();
+    expect((row.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
   });
 
   it('REFUSES a creature the library cannot supply — never a row with a silent hole', async () => {
@@ -452,8 +377,8 @@ describe('D5/D8 — the encounter side may cite, and the library is read-only', 
           count: 1,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: crypto.randomUUID() },
-          creatureRef: { chunkId: crypto.randomUUID() },
+          source: { type: 'none' as const },
+          originToken: 'chunk:legacy-ref',
         },
       ],
       terrain: '',
@@ -465,11 +390,10 @@ describe('D5/D8 — the encounter side may cite, and the library is read-only', 
       siteShape: 'single',
       budgetAdvisory: '',
       layout: null,
-      creatureRef: { chunkId: crypto.randomUUID() },
+      originToken: 'chunk:legacy-ref',
       cast: true,
     });
     const serialized = JSON.stringify(parsed);
-    expect(serialized).toContain('rulebook');
     expect(serialized).not.toContain('creatureRef');
     expect(serialized).not.toContain('"cast"');
   });

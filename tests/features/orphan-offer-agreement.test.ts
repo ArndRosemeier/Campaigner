@@ -293,7 +293,7 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
       moduleId: module.id,
       kind: 'npc',
       name: 'Goblin',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
+      data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
     });
     // REWRITTEN (ledger row 106): the roster used to reach this row by NAME —
     // a `rulebook` citation called "Cave Fisher" kept a same-named npc alive,
@@ -328,7 +328,7 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId() },
+          source: { type: 'none' as const },
         },
       ]),
     });

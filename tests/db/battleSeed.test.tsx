@@ -118,7 +118,7 @@ async function addCastNpc(name: string, chunkId: Id): Promise<Artifact> {
     campaignId,
     kind: 'npc',
     name,
-    data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+    data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
   });
 }
 
@@ -363,11 +363,12 @@ describe('roster expansion', () => {
 
   it('freezes the roster entry treasure onto every instance token, statless included (GM-only)', async () => {
     const chunkId = await seedGoblinChunk();
+    void chunkId;
     const encounter = await addEncounter({
       monsters: [
-        { name: 'Goblin Boss', count: 2, treasure: 'Pouch: 5 gp, a bone key', source: { type: 'rulebook', chunkId } },
-        { name: 'Mystery beast', count: 1, treasure: 'Slime-coated ring', source: { type: 'none' } },
-        { name: 'Plain', count: 1, source: { type: 'none' } },
+        { name: 'Goblin Boss', count: 2, treasure: 'Pouch: 5 gp, a bone key', source: { type: 'none' as const } },
+        { name: 'Mystery beast', count: 1, treasure: 'Slime-coated ring', source: { type: 'none' as const } },
+        { name: 'Plain', count: 1, source: { type: 'none' as const } },
       ],
     });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
@@ -387,7 +388,7 @@ describe('roster expansion', () => {
     const encounter = await addEncounter({
       monsters: [
         { name: 'Wight', count: 1, source: { type: 'npc-ref', artifactId: statlessNpc.id } },
-        { name: 'Mystery beast', count: 2, source: { type: 'none' } },
+        { name: 'Mystery beast', count: 2, source: { type: 'none' as const } },
       ],
     });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
@@ -581,7 +582,7 @@ describe('mob artifact identity (owner-ratified arc)', () => {
   it('shares ONE mob artifact across N same-creature instances with ONE seed row (chunk-resolved stats)', async () => {
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 3, source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 3, source: { type: 'none' as const } }],
     });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(statless).toEqual([]);
@@ -618,11 +619,11 @@ describe('mob artifact identity (owner-ratified arc)', () => {
   it('retro-fills lazily: an old encounter (no mobArtifactId) converges on the same artifact across seeds', async () => {
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 1, source: { type: 'none' as const } }],
     });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
     // Pre-marker row: the stored source carries no mobArtifactId.
-    expect(encounter.data.monsters[0]?.source).toMatchObject({ type: 'rulebook', chunkId });
+    expect(encounter.data.monsters[0]?.source).toMatchObject({ type: 'none' });
     const first = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const second = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const firstId = fighterTokens(first.battle.board)[0]?.creatureKey;
@@ -643,7 +644,7 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     // token's identity comes from the chunk, always.
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'none' as const } }],
     });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
     expect(Object.keys(encounter.data.monsters[0]?.source ?? {})).toEqual([
@@ -667,7 +668,7 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     // creature portrait → blob url.
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'none' as const } }],
     });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const creatureKey = fighterTokens(battle.board)[0]?.creatureKey ?? '';
@@ -691,11 +692,12 @@ describe('mob artifact identity (owner-ratified arc)', () => {
 
   it('old seeding shapes are unchanged: inline keeps per-instance rows, a missing chunk stays statless', async () => {
     const chunkId = await seedGoblinChunk();
+    void chunkId;
     const encounter = await addEncounter({
       monsters: [
         { name: 'Goblin', count: 2, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } },
-        { name: 'Vanished', count: 1, source: { type: 'rulebook', chunkId: newId() } },
-        { name: 'Real', count: 1, source: { type: 'rulebook', chunkId } },
+        { name: 'Vanished', count: 1, source: { type: 'none' as const } },
+        { name: 'Real', count: 1, source: { type: 'none' as const } },
       ],
     });
     const { battle, statless } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
@@ -940,8 +942,9 @@ describe('entrance-anchored staging (adjudicated)', () => {
 describe('in-battle spawn (encounter-resume arc)', () => {
   it('appends one rulebook instance through the shared path — same mob artifact, label numbering continues, ONE seed row', async () => {
     const chunkId = await seedGoblinChunk();
+    void chunkId;
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 3, treasure: 'Pouch: 5 gp', source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 3, treasure: 'Pouch: 5 gp', source: { type: 'none' as const } }],
     });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(fighterTokens(battle.board).map((token) => token.label)).toEqual([

@@ -30,8 +30,6 @@ import {
   type DependencyAnalysis,
   type CreatureImage,
   type DocumentPlanSection,
-  type EncounterArtifactData,
-  type ExportCitation,
   type ExportDependencies,
   type ExportMissingImage,
   type ModuleDocumentPlan,
@@ -41,6 +39,7 @@ import { listRevisions } from '@/db/artifactRepo';
 import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { bytesFromBase64 } from '@/lib/base64';
 import { fileSlug } from '@/lib/fileSlug';
+import { LegacyCampaignFileRefusedError, legacyExportRefused } from '@/lib/legacyCampaignFile';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
 import { StreamingZip } from '@/lib/zipStream';
 import { db } from '@/db/db';
@@ -57,15 +56,17 @@ import { db } from '@/db/db';
  * battle and run ids are remapped with their artifact references rewritten to
  * the new ids).
  *
- * RETIRED TABLES (docs/17 row 108): a file written before the deliverables
- * concept was deleted may still carry rows for the `deliverables` table. The
- * table is gone and there is nowhere to put them, so an import SKIPS them —
- * and reports the count through `ImportResult.retiredRows`, because silently
- * discarding rows an owner's file still holds is exactly the loss AGENTS rule
- * 1 forbids. Nothing crashes on the extra key.
+ * OLDER FILES ARE REFUSED LOUDLY (docs/17 row 278). The clean cut abolished
+ * the older-shape layer instead of migrating it, so a file written before the
+ * cut describes CAMPAIGN rows this build no longer has (they were purged by
+ * design). `parseExport` refuses any version but the current one with a named
+ * sentence (`lib/legacyCampaignFile`); the pre-cut tolerance machinery
+ * (retired-table skipping, the v1 demotion rescue, citation healing) is deleted
+ * with it. The DRIFT policy (docs/17 row 261) is current cross-machine
+ * behaviour and stays.
  */
 
-export const EXPORT_FORMAT_VERSION = 2;
+export const EXPORT_FORMAT_VERSION = 3;
 
 /** An image in an export bundle: metadata + optional inline base64 payload. */
 export interface ExportedImage {
@@ -85,7 +86,7 @@ export interface ExportedImage {
 /** One exportable bundle shape covering single/selection/whole-campaign. */
 export interface CampaignExport {
   format: 'campaigner-export';
-  version: 1 | 2;
+  version: number;
   exportedAt: number;
   campaign: Campaign | null;
   artifacts: (Artifact & { revisions: ArtifactRevision[] })[];
@@ -380,44 +381,6 @@ export async function buildZip(exported: CampaignExport): Promise<Uint8Array> {
 // --- Import -----------------------------------------------------------------
 
 /**
- * Tables a file may still carry that THIS build no longer has (docs/17 row
- * 108). `deliverables` held the M3-D outline model, deleted with the concept:
- * the module IS the PDF's document now. A file written before the deletion
- * still contains its rows, and there is nowhere to put them — so the import
- * SKIPS them and reports the count (`ImportResult.retiredRows`), which the
- * picker toasts. Never a crash on the extra key, never a silent discard.
- */
-export const RETIRED_EXPORT_TABLES: readonly string[] = ['deliverables'];
-
-/** Row counts of retired tables a raw exported file still carries (0 rows or
- * an absent key ⇒ no entry). */
-export function retiredTableRows(raw: unknown): Record<string, number> {
-  if (typeof raw !== 'object' || raw === null) return {};
-  const source = raw as Record<string, unknown>;
-  const counts: Record<string, number> = {};
-  for (const table of RETIRED_EXPORT_TABLES) {
-    const rows = source[table];
-    if (Array.isArray(rows) && rows.length > 0) counts[table] = rows.length;
-  }
-  return counts;
-}
-
-/**
- * The ONE sentence a retired-table skip becomes, so the campaign picker and
- * the backup restore report it in the same words (AGENTS rule 2). `null` when
- * there is nothing to report.
- */
-export function formatRetiredTableRows(counts: Readonly<Record<string, number>>): string | null {
-  const entries = Object.entries(counts).filter(([, count]) => count > 0);
-  if (entries.length === 0) return null;
-  const parts = entries.map(
-    ([table, count]) =>
-      `${String(count)} row${count === 1 ? '' : 's'} from the retired "${table}" table`,
-  );
-  return `Skipped ${parts.join(' and ')} — that table is gone (a module PDF is generated from the module itself now), so those rows had nowhere to land. Everything else imported.`;
-}
-
-/**
  * The ONE sentence a version-drift import becomes (docs/17 row 261), so the
  * campaign picker reports it in the same words the retired-table skip uses
  * (AGENTS rule 2). `null` when there is no drift to report — an empty count is
@@ -435,22 +398,6 @@ export function formatDriftedCitations(count: number): string | null {
 export interface ImportResult {
   campaignId: Id;
   createdArtifacts: number;
-  /**
-   * Retired-row tolerance (M2 import rules): how many retired/version-drift
-   * rows `parseExportTolerant` skipped to land this import (session artifacts
-   * with their revision snapshots, session-anchored pre-v11 battles). Zero on
-   * current-shape exports. The picker surfaces a loud toast naming
-   * `skippedNames` whenever this is nonzero — skips are never silent.
-   */
-  skippedRetired: number;
-  /** Names of the skipped retired artifacts (battles carry no names). */
-  skippedNames: string[];
-  /**
-   * Rows of RETIRED TABLES the file still carried and this import skipped
-   * (`retiredTableRows`), by table name. Loud, never silent: the picker toasts
-   * `formatRetiredTableRows` whenever this is non-empty.
-   */
-  retiredRows: Record<string, number>;
   /**
    * Statblock citations that resolved to `version-drift` (docs/17 row 261):
    * the same creature under a DIFFERENT version of the same book. The import
@@ -543,15 +490,27 @@ export class MissingDependenciesError extends Error {
 export function withImportMitigation(error: unknown): Error {
   if (zodIssuesOf(error) !== null) return error as Error;
   if (error instanceof MissingDependenciesError) return error;
+  // A refused PRE-CUT file passes through untouched: its sentence already names
+  // the cause, the formats and the remedy, and the generic "update and
+  // re-export" mitigation would contradict it (there is nothing to re-update,
+  // and the old file can never import).
+  if (error instanceof LegacyCampaignFileRefusedError) return error;
   const cause = error instanceof Error ? error.message : String(error);
   return new Error(
     `${cause} Update this instance (or the exporting one) to the same version, re-export, and try again.`,
   );
 }
 
-/** Zod-validates a parsed export payload at the boundary (loud, never lenient). */
+/**
+ * Zod-validates a parsed export payload at the boundary (loud, never lenient),
+ * then REFUSES any format but the current one by name (docs/17 row 278). The
+ * version is `z.number().int()` rather than a literal so the refusal is the
+ * sentence the user reads, not a raw ZodError about a literal mismatch.
+ */
 export function parseExport(raw: unknown): z.infer<typeof exportSchema> {
-  return exportSchema.parse(raw);
+  const parsed = exportSchema.parse(raw);
+  if (parsed.version !== EXPORT_FORMAT_VERSION) throw legacyExportRefused(parsed.version);
+  return parsed;
 }
 
 /** Splits a zip bundle into its manifest payload + image binaries (M3-A). */
@@ -619,85 +578,6 @@ export async function checkImportDependencies(
   }
   return analyzeDependencies(manifest, { chunksByHash, books });
 }
-
-/**
- * Content-identity healing (chunk-hash-fallback arc; the book half added by
- * docs/17 row 155): citations born before stamping carry no hash and no book,
- * but the v2 manifest does. Stamp the manifest's hash, its creature name and
- * its book title onto matching entries — matched by exporting artifact id +
- * cited chunkId — so OLD exports resolve byte-identical installs through the
- * hash fallback too, AND name the pack they came from when one is missing
- * here. Each field heals INDEPENDENTLY and only when the entry lacks it: an
- * entry that already carries a hash still gains a missing book title, which is
- * what makes this the ONE healing seam rather than a second one.
- *
- * The manifest's own `bookTitle` is present only when the book RESOLVED at
- * export time (it is L1 logical identity, `exportCitationSchema`), so a
- * citation whose book was already gone at export heals nothing here and stays
- * the honest "no pack recorded" — never a guessed one.
- * Entries with no manifest match (v1 files carry no manifest at all) land
- * unchanged and keep resolving by uuid, exactly as before.
- */
-function healRulebookSources(
-  exportedArtifactId: Id,
-  data: EncounterArtifactData,
-  manifestByCite: ReadonlyMap<string, ExportCitation>,
-): EncounterArtifactData {
-  return {
-    ...data,
-    monsters: data.monsters.map((entry) => {
-      if (entry.source.type !== 'rulebook') return entry;
-      const citation = manifestByCite.get(`${exportedArtifactId}::${entry.source.chunkId}`);
-      if (citation === undefined) return entry;
-      const hash = entry.source.contentHash === undefined ? citation.contentHash : undefined;
-      const creature =
-        entry.source.creatureName === undefined ? citation.creatureName : undefined;
-      const book = entry.source.bookTitle === undefined ? citation.bookTitle : undefined;
-      if (hash === undefined && creature === undefined && book === undefined) return entry;
-      return {
-        ...entry,
-        source: {
-          ...entry.source,
-          ...(hash === undefined ? {} : { contentHash: hash }),
-          ...(creature === undefined ? {} : { creatureName: creature }),
-          ...(book === undefined ? {} : { bookTitle: book }),
-        },
-      };
-    }),
-  };
-}
-
-// --- The ONE id-remap pass over a loaded campaign (docs/17 row 256) ----------
-
-/**
- * A MISS IS TOLERANT, AND THE INTEGRATED GATE IS WHY (docs/17 row 256, corrected
- * after its first landing).
- *
- * This pass first shipped a STRICT arm for the two fields that exist only to
- * name a row inside the loaded campaign (`links[].targetId`, a plan's
- * `source`/`companion`): a target in no table at all REFUSED the whole import
- * (`DanglingImportReferenceError`, thrown inside the transaction). The
- * dispatcher's integrated run REFUTED that arm with two independent failures,
- * and both are the reason it is gone:
- *
- * - `tests/features/module-plan-dialog.test.tsx` — a plan may name a companion
- *   the file does not carry, because a SELECTION export is documented to carry
- *   only a subset of its campaign (`buildCampaignExport`), so the strict arm
- *   refused a legitimate round-trip that had always worked.
- * - `tests/features/campaign-tree-plan-control.test.tsx` — the
- *   exactly-one-plan-writer pin caught the second writer this file became,
- *   which is the pin doing its job (its declaration is amended to name the
- *   import as a PASSTHROUGH writer of a restored row, not an authoring seam).
- *
- * THE RULE THAT REPLACED IT: remap when the file carries the row, adopt when it
- * is a shared library row, and otherwise KEEP THE ID EXACTLY AS IT IS, for the
- * arm that already owns that field's loud surface to name (the editor's
- * dangling link row, the plan's own issue reporting, the `missing ref` badge).
- * A whole-import REFUSAL stays the DEPENDENCY MANIFEST's documented policy
- * (`MissingDependenciesError` + `import-anyway`), which is the one place the
- * owner has a choice — never a silent side effect of the id-remap pass, and
- * never a dead id silently substituted for a live one.
- */
 
 /**
  * THE ONE id-remap pass over a loaded campaign (docs/17 row 256). Every
@@ -776,9 +656,9 @@ class ImportIdRemap {
   module(id: Id, from: string, field: string): Id {
     const fresh = this.moduleIds.get(id);
     if (fresh !== undefined) return fresh;
-    // The module arm keeps its own long-standing sentence (an existing pin
-    // asserts its words): a module-owned row whose module is absent is the
-    // documented v2 break, told apart from the v1 rescue by the file version.
+    // A module-owned row whose module is absent is a real break, refused by
+    // name (the pre-cut v1 demotion rescue died with the file refusal,
+    // docs/17 row 278).
     throw new Error(
       `Import references the module ${id} of ${from}, which is outside the export` +
         (field === '' ? '' : ` (${field})`),
@@ -910,14 +790,13 @@ function remapStoredDocumentPlan(stored: unknown, plan: ImportIdRemap): unknown 
  * reported count. The dependency manifest and `missingImages` are metadata
  * only (no tables) — validated, not imported.
  *
- * An artifact whose module is NOT in the export is decided BY VERSION, never
- * by an any-case fallback: a v1 file (pre-M3-E, whose `modules` table never
- * traveled) demotes to campaign level — the documented legacy rescue
- * (07-MILESTONE-3 M3-E), and the ONE exception, pinned by test; any other
- * version THROWS loudly, exactly like the battle path below for the identical
- * breakage. Silently demoting there would MOVE a module's artifact out of its
- * module (a scope change only the explicit `moveScope` family may make) and
- * hide a corrupt or hand-edited export behind a plausible-looking row.
+ * An artifact whose module is NOT in the export THROWS loudly, exactly like
+ * the battle path below: a module-owned row whose module is absent is a real
+ * breakage, and silently demoting it to campaign level would MOVE a module's
+ * artifact out of its module (a scope change only the explicit `moveScope`
+ * family may make) and hide a corrupt or hand-edited export behind a
+ * plausible-looking row. The pre-cut v1 demotion rescue died with the file
+ * refusal (docs/17 row 278) — a v1 file never reaches this code.
  *
  * Dependency enforcement (M3-E slice B; the drift split is docs/17 row 261):
  * the manifest is checked against the local library FIRST
@@ -929,20 +808,11 @@ function remapStoredDocumentPlan(stored: unknown, plan: ImportIdRemap): unknown 
  * verdict exists to describe. The analysis is computed under every policy
  * (an `import-anyway` file may drift too) and its `driftedCitations` count
  * rides `ImportResult`, which the picker toasts — unblocking without saying
- * so would be the silent fallback AGENTS rule 1 forbids. Rulebook chunkIds
- * are KEPT as-is either way, so encounters that land without their content
- * (including a drifted citation, which has no local id or hash) resolve to
- * the existing `missing ref` markers — truthful, never invented. Pre-stamp
- * entries additionally heal their content identity from the manifest
- * (`healRulebookSources`): a later byte-identical install clears those markers
- * through the hash fallback. Skipped retired rows never trip this check: their
- * citations leave with them (`parseExportTolerant` filters the manifest).
+ * so would be the silent fallback AGENTS rule 1 forbids. A drifted citation
+ * resolves to the existing `missing ref` marker — truthful, never invented.
  *
- * Retired-row tolerance (M2 import rules): legacy exports carrying retired
- * `session` artifacts or session-anchored pre-v11 battles (or live rows that
- * fail ONLY on version-drift grounds) import the surviving rows and report
- * `{ skippedRetired, skippedNames }` — the picker toasts the count loudly.
- * Genuinely corrupt rows abort via the original aggregated ZodError.
+ * An OLDER FILE never gets here: `parseExport` refused it by name first
+ * (docs/17 row 278).
  *
  * The whole import is ONE rw transaction over the eight touched tables (the
  * same contract as backup.ts's restore, array form past Dexie's five-table
@@ -955,10 +825,9 @@ export async function importExport(
   files: Record<string, Uint8Array> = {},
   options: ImportOptions = {},
 ): Promise<ImportResult> {
-  // Read BEFORE parsing: the tolerant shell strips unknown keys, so the
-  // retired tables have to be counted off the RAW file (docs/17 row 108).
-  const retiredRows = retiredTableRows(raw);
-  const { export: parsed, skippedRetired, skippedNames } = parseExportTolerant(raw);
+  // The strict boundary: a pre-cut file is refused BY NAME here (docs/17 row
+  // 278), before any dependency read or transaction.
+  const parsed = parseExport(raw);
 
   // Dependency enforcement (M3-E slice B; amended by docs/17 row 261): the
   // manifest is read against the local library BEFORE the tx opens. Only a
@@ -975,18 +844,6 @@ export async function importExport(
 
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
-
-  // Content-identity healing (chunk-hash-fallback arc; books since docs/17
-  // row 155): the v2 manifest carries per-citation contentHash, creatureName
-  // and bookTitle — index EVERY citation by exporting artifact + cited chunk
-  // so pre-stamp entries heal on the way in. A citation with no hash is still
-  // indexed: it may be the only record of which book the entry came from, and
-  // each field heals independently.
-  const manifestByCite = new Map<string, ExportCitation>(
-    (parsed.dependencies?.citations ?? []).map(
-      (citation) => [`${citation.artifactId}::${citation.citedChunkId}`, citation] as const,
-    ),
-  );
 
   const campaign =
     parsed.campaign === null
@@ -1166,9 +1023,6 @@ export async function importExport(
               // gate refuted the strict arm).
               targetId: remap.reference(link.targetId),
             })),
-            ...(artifactFields.kind === 'encounter'
-              ? { data: healRulebookSources(exported.id, artifactFields.data, manifestByCite) }
-              : {}),
             id: artifactId,
             campaignId: newCampaignId,
             moduleId: remappedModuleId,
@@ -1305,9 +1159,6 @@ export async function importExport(
   return {
     campaignId: newCampaignId,
     createdArtifacts: created,
-    skippedRetired,
-    skippedNames,
-    retiredRows,
     driftedCitations,
   };
 }
@@ -1333,8 +1184,12 @@ const artifactWithRevisionsSchema = artifactSchema.and(
 
 const exportSchema = z.object({
   format: z.literal('campaigner-export'),
-  /** v1 files predate the M3-E tables/manifest; every new field is optional. */
-  version: z.union([z.literal(1), z.literal(2)]),
+  /**
+   * The file format. `z.number().int()` — NOT a literal — so `parseExport` can
+   * refuse an older version with a NAMED sentence instead of leaking a raw
+   * ZodError about a literal mismatch (docs/17 row 278).
+   */
+  version: z.number().int(),
   exportedAt: z.number(),
   campaign: campaignSchema.nullable(),
   artifacts: z.array(artifactWithRevisionsSchema),
@@ -1377,298 +1232,4 @@ export function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 1000);
-}
-
-// --- Retired-row tolerance (06-MILESTONES M2 import rules) --------------------
-//
-// Owner-observed: an export written by an older build (which still knew the
-// retired `session` artifact kind and session-anchored battles) fails a fresh
-// import with one aggregated ZodError — `buildCampaignExport` reads raw Dexie
-// rows with no kind filter, and `parseExport`'s schemas no longer accept the
-// removed discriminator. Same-code rows cannot exist at home (repo reads parse
-// on the source side), so every tolerance case below is version skew by
-// construction.
-//
-// Policy (mirrors the v11 upgrade precedent, db.ts — sessions + their
-// revisions deleted, battles cleared): unparseable RETIRED-kind rows are
-// SKIPPED-WITH-COUNT, never silent and never abort-the-world; genuinely
-// CORRUPT rows of live kinds still abort loudly via the original aggregated
-// error. The retired-vs-corrupt discriminator is exact and schema-driven:
-//
-// - RETIRED (skip): top-level `kind === 'session'` — the ONLY value the kind
-//   enum ever dropped (the complete historic enumeration lives in
-//   `normalizeLegacyProducesKind`, domain/persona.ts). The artifact's revision
-//   snapshots ride with it. Pre-v11 battle rows (a string `sessionId`, no
-//   valid `moduleId`) — v11 cleared battles because live state cannot be
-//   truthfully re-anchored from retired sessions.
-// - DRIFT (skip): a live-kind entry that fails ONLY on version-drift grounds —
-//   (a) `custom` issues at `data` (the three encounter siteShape invariants)
-//   or `data.layout` (stale generated geometry: spawn-room count,
-//   overlap/bounds, corridors, entrances) — the only custom validators in the
-//   artifact union — or (b) `invalid_type`/`invalid_value` issues whose raw
-//   value is explicit `null` on a defaulted field (pre-default writers stored
-//   null where current schemas carry `.default(...)`), VERIFIED by re-parsing
-//   a probe with those nulls removed and stale layouts neutralized. Anything
-//   else failing in the probe (empty name, bad roster, dangling types) means
-//   the row is corrupt, not drifted.
-// - CORRUPT (abort): everything else — the original aggregated ZodError
-//   throws unchanged, so no silent fallback laundering is possible.
-//
-// Skipped rows' dependency citations leave with them: the returned manifest
-// drops citations/unmet-refs pointing at skipped artifact ids, so the
-// slice-B abort-by-default check never fires on content that is not landing.
-
-export interface TolerantExport {
-  export: z.infer<typeof exportSchema>;
-  /** Count of skipped retired/drift rows (session artifacts + pre-v11 battles). */
-  skippedRetired: number;
-  /** Names of the skipped retired artifacts (battles carry no names). */
-  skippedNames: string[];
-  /** Original ids of the skipped artifacts (re-id map + dep filtering). */
-  skippedArtifactIds: Id[];
-}
-
-/**
- * Tolerant import boundary: strict `exportSchema` first (current-shape files
- * parse value-identical, zero skips); on failure, per-row classification that
- * skips retired/drift rows with a count and rethrows the ORIGINAL aggregated
- * error for genuinely corrupt rows. The reassembled export is strict-parsed
- * before return, so downstream code keeps the same zod guarantee.
- */
-export function parseExportTolerant(raw: unknown): TolerantExport {
-  const direct = exportSchema.safeParse(raw);
-  if (direct.success) {
-    return { export: direct.data, skippedRetired: 0, skippedNames: [], skippedArtifactIds: [] };
-  }
-  const originalError = direct.error;
-  const shell = tolerantShellSchema.safeParse(raw);
-  if (!shell.success) {
-    // Not even the shell parses (bad format marker, corrupt tables outside
-    // artifacts/battles) — the original error is the loud surface.
-    throw originalError;
-  }
-
-  const keptArtifacts: z.infer<typeof artifactWithRevisionsSchema>[] = [];
-  const skippedNames: string[] = [];
-  const skippedArtifactIds: Id[] = [];
-  let skippedRetired = 0;
-  for (const row of shell.data.artifacts) {
-    const parsed = artifactWithRevisionsSchema.safeParse(row);
-    if (parsed.success) {
-      keptArtifacts.push(parsed.data);
-      continue;
-    }
-    const verdict = classifySkippedArtifact(row, parsed.error);
-    if (verdict === null) throw originalError;
-    skippedRetired += 1;
-    skippedNames.push(verdict.name);
-    skippedArtifactIds.push(verdict.id);
-  }
-
-  const keptBattles: z.infer<typeof battleSchema>[] = [];
-  for (const row of shell.data.battles ?? []) {
-    const parsed = battleSchema.safeParse(row);
-    if (parsed.success) {
-      keptBattles.push(parsed.data);
-      continue;
-    }
-    if (!isRetiredBattleRow(row)) throw originalError;
-    skippedRetired += 1;
-  }
-
-  const reassembled = {
-    ...shell.data,
-    artifacts: keptArtifacts,
-    battles: shell.data.battles === undefined ? undefined : keptBattles,
-    dependencies:
-      shell.data.dependencies === undefined || skippedArtifactIds.length === 0
-        ? shell.data.dependencies
-        : {
-            ...shell.data.dependencies,
-            citations: shell.data.dependencies.citations.filter(
-              (citation) => !skippedArtifactIds.includes(citation.artifactId),
-            ),
-            unmetLibraryRefs: shell.data.dependencies.unmetLibraryRefs.filter(
-              (ref) => !skippedArtifactIds.includes(ref.artifactId),
-            ),
-          },
-  };
-  // Final strict parse: the tolerance stage can only REMOVE rows, never widen
-  // the schema — downstream keeps the exact `exportSchema` guarantee.
-  return {
-    export: exportSchema.parse(reassembled),
-    skippedRetired,
-    skippedNames,
-    skippedArtifactIds,
-  };
-}
-
-/** The export shell with artifacts/battles held as unknown for per-row triage. */
-const tolerantShellSchema = z.object({
-  format: z.literal('campaigner-export'),
-  version: z.union([z.literal(1), z.literal(2)]),
-  exportedAt: z.number(),
-  campaign: campaignSchema.nullable(),
-  artifacts: z.array(z.unknown()),
-  images: z
-    .array(
-      z.object({
-        id: z.uuid(),
-        mimeType: z.string().min(1),
-        width: z.number().int().positive(),
-        height: z.number().int().positive(),
-        prompt: z.string(),
-        model: z.string(),
-        source: z.enum(['generated', 'uploaded']),
-        createdAt: z.number(),
-        updatedAt: z.number(),
-        dataBase64: z.string().nullable(),
-      }),
-    )
-    .optional(),
-  modules: z.array(moduleSchema).optional(),
-  battles: z.array(z.unknown()).optional(),
-  runs: z.array(personaRunSchema).optional(),
-  /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):
-   * campaign state, so a v20+ file carries them and a v1/v2 file simply has
-   * none (a restore then shows initials until each portrait is generated). */
-  creatureImages: z.array(creatureImageSchema).optional(),
-  dependencies: exportDependenciesSchema.optional(),
-  missingImages: z.array(exportMissingImageSchema).optional(),
-});
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-/** Pre-v11 battle shape: session-anchored, no module — un-re-anchorable (v11). */
-function isRetiredBattleRow(row: unknown): boolean {
-  if (!isRecord(row)) return false;
-  return typeof row.sessionId === 'string' && typeof row.moduleId !== 'string';
-}
-
-interface SkippedArtifact {
-  id: Id;
-  name: string;
-}
-
-/**
- * Classifies a failed artifact entry: retired/drift skip descriptor, or null
- * for genuinely corrupt rows (the caller rethrows the original error).
- */
-function classifySkippedArtifact(row: unknown, error: z.ZodError): SkippedArtifact | null {
-  if (!isRecord(row)) return null;
-  const id = typeof row.id === 'string' ? row.id : '(unknown id)';
-  const name = typeof row.name === 'string' && row.name !== '' ? row.name : '(unnamed)';
-  // Retired: the only kind the enum ever dropped (v11 deleted these rows).
-  // Any other bad kind ('map', null, …) is corruption, caught by the issue
-  // loop below — 'session' is the complete historic enumeration.
-  if (row.kind === 'session') return { id, name };
-  // Drift probe below: every issue must be layout/shape-custom or an
-  // explicit null, and the neutralized probe must parse clean.
-  const issues = error.issues;
-  if (issues.length === 0) return null;
-  for (const issue of issues) {
-    if (issue.code === 'custom' && isLayoutShapePath(issue.path)) continue;
-    if (
-      (issue.code === 'invalid_type' || issue.code === 'invalid_value') &&
-      isExplicitNullAtPath(row, issue.path)
-    ) {
-      continue;
-    }
-    return null;
-  }
-  const probe = cloneJson(row);
-  for (const issue of issues) {
-    if (issue.code === 'custom') neutralizeLayoutAtPath(probe, issue.path);
-    else deleteAtPath(probe, issue.path);
-  }
-  const reparsed = artifactWithRevisionsSchema.safeParse(probe);
-  if (!reparsed.success) return null;
-  return { id, name };
-}
-
-/**
- * Entry-relative custom-issue paths that are version drift: `data` (the three
- * encounter siteShape invariants) and `data.layout` (stale generated
- * geometry) — the only custom validators in the artifact union — including
- * inside revision snapshots (historical copies drift identically). Any other
- * custom path is corruption.
- */
-function isLayoutShapePath(path: readonly PropertyKey[]): boolean {
-  const stripped = stripSnapshotPrefix(path);
-  if (stripped === null) return false;
-  return (
-    (stripped.length === 1 && stripped[0] === 'data') ||
-    (stripped.length === 2 && stripped[0] === 'data' && stripped[1] === 'layout')
-  );
-}
-
-/** Strips an optional `revisions[i].snapshot` prefix from an entry-relative path. */
-function stripSnapshotPrefix(path: readonly PropertyKey[]): readonly PropertyKey[] | null {
-  if (path[0] === 'data') return path;
-  if (
-    path.length >= 3 &&
-    path[0] === 'revisions' &&
-    typeof path[1] === 'number' &&
-    path[2] === 'snapshot'
-  ) {
-    return path.slice(3);
-  }
-  return null;
-}
-
-/** True when the raw row holds an explicit null object-field at the path. */
-function isExplicitNullAtPath(row: Record<string, unknown>, path: readonly PropertyKey[]): boolean {
-  const parent = parentAtPath(row, path);
-  const key = path[path.length - 1];
-  if (parent === null || key === undefined) return false;
-  // Array holes are corruption, not drift — only record fields qualify.
-  if (Array.isArray(parent)) return false;
-  return parent[key as string] === null;
-}
-
-function parentAtPath(
-  root: unknown,
-  path: readonly PropertyKey[],
-): Record<string, unknown> | unknown[] | null {
-  let node: unknown = root;
-  for (const segment of path.slice(0, -1)) {
-    if (!isRecord(node) && !Array.isArray(node)) return null;
-    node = (node as Record<string | number, unknown>)[segment as string];
-  }
-  return isRecord(node) || Array.isArray(node) ? node : null;
-}
-
-function deleteAtPath(root: Record<string, unknown>, path: readonly PropertyKey[]): void {
-  const parent = parentAtPath(root, path);
-  const key = path[path.length - 1];
-  if (parent === null || Array.isArray(parent) || key === undefined) return;
-  Reflect.deleteProperty(parent, key);
-}
-
-/** Neutralizes the stale layout enclosing a custom-issue path (probe only). */
-function neutralizeLayoutAtPath(root: Record<string, unknown>, path: readonly PropertyKey[]): void {
-  const dataPath = layoutDataPath(path);
-  if (dataPath === null) return;
-  let node: unknown = root;
-  for (const segment of dataPath) {
-    if (!isRecord(node)) return;
-    node = node[segment as string];
-  }
-  if (!isRecord(node)) return;
-  node.layout = null;
-  delete node.siteShape;
-}
-
-/** Resolves the enclosing `data` object path for a layout custom-issue path. */
-function layoutDataPath(path: readonly PropertyKey[]): readonly PropertyKey[] | null {
-  const stripped = stripSnapshotPrefix(path);
-  if (stripped?.[0] !== 'data') return null;
-  const prefixLength = path.length - stripped.length;
-  return [...path.slice(0, prefixLength), 'data'];
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

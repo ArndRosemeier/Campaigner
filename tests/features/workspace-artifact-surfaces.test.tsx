@@ -352,7 +352,7 @@ async function seedCastRow(campaignId: string): Promise<Artifact> {
 /** A LEGACY pointer row: the shape the v24 migration leaves when its pack was
  * missing at upgrade time (docs/17 row 248). It still resolves live, and its
  * failure arm is still the loud named one. */
-async function seedLegacyCitedRow(campaignId: string, chunkId: string): Promise<Artifact> {
+async function seedLegacyCitedRow(campaignId: string, _chunkId: string): Promise<Artifact> {
   return createArtifact({
     campaignId,
     kind: 'npc',
@@ -361,7 +361,7 @@ async function seedLegacyCitedRow(campaignId: string, chunkId: string): Promise<
       appearance: '',
       personality: '',
       statBlock: null,
-      creatureRef: { chunkId, creatureName: 'Bog Zombie' },
+      originToken: 'chunk:legacy-ref',
     },
   });
 }
@@ -387,7 +387,7 @@ describe('a cast row renders its COPIED numbers', () => {
     expect(artifact.data.statBlock?.hp).toBe(22);
     expect(artifact.data.sourceLine).toBe('Bestiary p.4');
     expect(artifact.data.originToken).toBeDefined();
-    expect(artifact.data.creatureRef).toBeUndefined();
+    expect((artifact.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
 
     renderEditor(artifact, campaign.id);
     // A COPIED row renders SYNCHRONOUSLY (no library read at all), so the
@@ -545,7 +545,7 @@ describe('an unresolvable library creature is LOUD, never blank', () => {
       campaignId: campaign.id,
       kind: 'npc',
       name: 'Nameless Ghoul',
-      data: { appearance: '', personality: '', statBlock: null, creatureRef: {} },
+      data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
     });
 
     renderEditor(artifact, campaign.id);
@@ -604,7 +604,7 @@ describe('the refused pair stays unconstructible', () => {
       appearance: '',
       personality: '',
       statBlock: blankStatBlock('dnd5e'),
-      creatureRef: { chunkId: '00000000-0000-4000-8000-00000000c001' },
+      originToken: 'chunk:legacy-ref',
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('the refused pair parsed');
@@ -617,7 +617,7 @@ describe('the refused pair stays unconstructible', () => {
         appearance: '',
         personality: '',
         statBlock: null,
-        creatureRef: { chunkId: '00000000-0000-4000-8000-00000000c001' },
+        originToken: 'chunk:legacy-ref',
       }).success,
     ).toBe(true);
   });
@@ -638,7 +638,7 @@ describe('the refused pair stays unconstructible', () => {
           appearance: '',
           personality: '',
           statBlock: blankStatBlock('dnd5e'),
-          creatureRef: { chunkId, creatureName: 'Bog Zombie' },
+          originToken: 'chunk:legacy-ref',
         },
       }),
     ).rejects.toThrow();
@@ -646,7 +646,7 @@ describe('the refused pair stays unconstructible', () => {
     const stored = await getArtifact(artifact.id);
     if (stored?.kind !== 'npc') throw new Error('not an npc');
     expect(stored.data.statBlock).toBeNull();
-    expect(stored.data.creatureRef).toBeDefined();
+    expect((stored.data as { creatureRef?: unknown }).creatureRef).toBeDefined();
   });
 });
 

@@ -9,8 +9,7 @@ import {
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
-import { creatureRefIsEmpty, npcCreatureRef, sameAliasName } from '@/domain';
-import { resolveCreatureCitation } from '@/db/creatureRepo';
+import { sameAliasName } from '@/domain';
 import { parseLevelSort, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { levelWordsPattern } from '@/llm/language';
 import { FIXED_CAST_SECTION_FOOTER, FIXED_CAST_SECTION_HEADER } from '@/llm/promptScaffolding';
@@ -919,12 +918,12 @@ function fixedCastSummary(name: string, statBlock: StatBlock | null): string {
  * This is NOT the pack pool's key space (`PACK_POOL_NAME_KEY`): a pack
  * creature's name is a LIBRARY lookup, a roster name is this campaign's own row.
  */
-export async function fixedCastForEncounter(
+export function fixedCastForEncounter(
   encounterName: string,
   sceneContext: string,
   artifacts: readonly AnyArtifact[],
   moduleId: Id | null,
-): Promise<FixedCastMember[]> {
+): FixedCastMember[] {
   const self = comparableName(encounterName);
   const seen = new Set<string>();
   const cast: FixedCastMember[] = [];
@@ -940,7 +939,7 @@ export async function fixedCastForEncounter(
     if (artifact?.kind !== 'npc') continue;
     cast.push({
       name: artifact.name,
-      ...(await fixedCastStatsFor(artifact)),
+      ...fixedCastStatsFor(artifact),
     });
   }
   return cast;
@@ -957,9 +956,9 @@ export async function fixedCastForEncounter(
  * is the silent hole AGENTS rule 1 forbids. A reference that resolves to nothing
  * keeps `null`: the brief then says so, honestly.
  */
-async function fixedCastStatsFor(
+function fixedCastStatsFor(
   artifact: Extract<AnyArtifact, { kind: 'npc' }>,
-): Promise<{ level: string | undefined; summary: string; statBlock: StatBlock | null }> {
+): { level: string | undefined; summary: string; statBlock: StatBlock | null } {
   if (artifact.data.statBlock !== null) {
     const statBlock = artifact.data.statBlock;
     return {
@@ -968,17 +967,11 @@ async function fixedCastStatsFor(
       statBlock,
     };
   }
-  const citation = npcCreatureRef(artifact);
-  if (citation === undefined || creatureRefIsEmpty(citation)) {
-    return { level: undefined, summary: fixedCastSummary(artifact.name, null), statBlock: null };
-  }
-  const listing = await resolveCreatureCitation(citation, artifact.name);
-  const statBlock = listing.chunk?.statBlock ?? null;
-  return {
-    level: statBlock?.level,
-    summary: fixedCastSummary(artifact.name, statBlock),
-    statBlock,
-  };
+  // A cast creature OWNS its copy (docs/17 row 255b), and since the clean cut
+  // (docs/17 row 278) there is no `creatureRef` pointer to fall back to: an npc
+  // with no block on its row has no numbers to offer the budget brief, and the
+  // brief says so honestly rather than deriving them from a library read.
+  return { level: undefined, summary: fixedCastSummary(artifact.name, null), statBlock: null };
 }
 
 /**
@@ -1138,14 +1131,15 @@ export function resolveBriefMonsterLevels(
 }
 
 export interface EntryLevelLookups {
-  chunkById: ReadonlyMap<Id, RuleChunk>;
   /** Resolves an npc-ref entry's stat block (null when missing/statless). */
   getArtifactStatBlock: (artifactId: Id) => Promise<StatBlock | null>;
 }
 
 /**
  * Level strings for persisted roster entries (MonsterEntry sources) — used
- * by the in-place Smith fill, whose reconciled roster is the real thing.
+ * by the in-place Smith fill, whose reconciled roster is the real thing. A
+ * copied mob's level is its own block's (docs/17 row 278); the library-citation
+ * arm is gone.
  */
 export async function resolveEntryLevels(
   entries: readonly MonsterEntry[],
@@ -1157,8 +1151,6 @@ export async function resolveEntryLevels(
       switch (entry.source.type) {
         case 'inline':
           return entry.source.statBlock.level;
-        case 'rulebook':
-          return lookups.chunkById.get(entry.source.chunkId)?.statBlock?.level;
         case 'npc-ref': {
           const cached = npcCache.get(entry.source.artifactId);
           if (cached !== undefined) return cached?.level;

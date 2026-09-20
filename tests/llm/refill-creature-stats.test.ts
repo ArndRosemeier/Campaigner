@@ -175,7 +175,7 @@ async function seedCitedNpc(campaign: Campaign, name = 'Goblin Warrior'): Promis
     name,
     summary: '',
     body: '',
-    data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
+    data: { appearance: '', personality: '', statBlock: null, originToken: `chunk:${chunkId}`},
   });
   return { id: creature.id, chunkId };
 }
@@ -186,7 +186,7 @@ describe('the refused pair, by the schema\u2019s own name', () => {
       appearance: '',
       personality: '',
       statBlock: NPC_STATBLOCK,
-      creatureRef: { chunkId: newId() },
+      originToken: 'chunk:legacy-ref',
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('the pair parsed');
@@ -229,7 +229,7 @@ describe('a cited row is never asked for a stat block', () => {
     expect(after.body).toBe(NPC_DRAFT.body);
     expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
     // … the citation is byte-identical …
-    expect(after.data.creatureRef).toEqual({ chunkId: creature.chunkId });
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toEqual({ chunkId: creature.chunkId });
     // … and no block was authored beside it (the numbers are the library's).
     expect(after.data.statBlock).toBeNull();
     expect((await listRevisions(creature.id)).length).toBeGreaterThan(revisionsBefore.length);
@@ -270,7 +270,7 @@ describe('a cited row is never asked for a stat block', () => {
     const after = await getArtifact(authored.id);
     if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
     expect(after.data.statBlock?.hp).toBe(22);
-    expect(after.data.creatureRef).toBeUndefined();
+    expect((after.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 });
@@ -417,7 +417,7 @@ describe('a data-check failure reaches the owner as a sentence', () => {
       appearance: '',
       personality: '',
       statBlock: NPC_STATBLOCK,
-      creatureRef: { chunkId: newId() },
+      originToken: 'chunk:legacy-ref',
     });
     if (refused.success) throw new Error('the pair parsed');
     const error: ZodError = refused.error;

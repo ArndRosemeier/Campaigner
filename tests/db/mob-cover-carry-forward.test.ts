@@ -123,12 +123,14 @@ async function attachUploadedCover(creatureKey: string, text: string): Promise<s
  * is what makes the two entries below byte-identical.
  */
 function rulebookEntry(name: string, chunkId: string, contentHash: string): MonsterEntry {
+    void chunkId;
+    void contentHash;
   return {
     name,
     count: 1,
     notes: '',
     treasure: '',
-    source: { type: 'rulebook', chunkId, contentHash, creatureName: 'Ogre' },
+    source: { type: 'none' as const },
   };
 }
 

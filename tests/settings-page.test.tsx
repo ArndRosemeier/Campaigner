@@ -300,7 +300,7 @@ describe('SettingsPage', () => {
       bytes: zipSync({ 'campaigner-backup.json': strToU8(JSON.stringify({ format: 'campaigner-backup' })) }),
       manifest: {
         format: 'campaigner-backup',
-        version: 1,
+        version: 2,
         exportedAt: Date.now(),
         dbVersion: db.verno,
         tableCounts: {},

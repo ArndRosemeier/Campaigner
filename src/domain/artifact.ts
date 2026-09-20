@@ -1,8 +1,6 @@
 import { z } from 'zod';
 
-import { creatureRefSchema } from '@/domain/creature';
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
-import { LEGACY_MONSTER_SOURCE_ARMS } from '@/domain/mobCopyLegacy';
 import { statBlockSchema } from '@/domain/statblock';
 import {
   encounterLayoutSchema,
@@ -238,65 +236,50 @@ export type PcArtifactData = z.infer<typeof pcDataSchema>;
  *
  * - authored inline (`statBlock`);
  * - absent (both null/undefined — a named NPC with no numbers);
- * - DERIVED from a library creature (`creatureRef` — the Aunt Agatha path,
- *   docs/11 D3): this NPC's prose, the rulebook creature's stats.
+ * - COPIED from a library creature: an NPC cast from the bestiary owns the
+ *   library's bytes on the row itself (`statBlock`), disclosed by the stamped
+ *   `sourceLine` and identified by the opaque `originToken` (docs/17 row 255b).
  *
- * The two are MUTUALLY EXCLUSIVE and the conflict is a loud named error, never
- * a silent precedence: a row that carried both would make the numbers the GM
- * reads depend on which reader won.
+ * The pre-copy model's `creatureRef` POINTER — this NPC's prose, the library
+ * creature's stats resolved at read time — was deleted by the clean cut
+ * (docs/17 row 278). A surviving library row still carrying one is normalised by
+ * the purge, and the type no longer accepts it.
  */
-export const npcDataSchema = z
-  .object({
-    appearance: z.string(),
-    personality: z.string(),
-    statBlock: statBlockSchema.nullable(),
-    /**
-     * The library creature this authored NPC's stat block is derived FROM
-     * (docs/11 D3). Resolves exactly like a `rulebook` citation — chunk uuid
-     * first, then the content-hash fallback — and the origin label DISCLOSES
-     * the derivation so a GM is never misled about where the numbers came
-     * from. Additive + optional: every pre-existing row leaves it unset.
-     */
-    creatureRef: creatureRefSchema.optional(),
-    /**
-     * The STAMPED origin line of a mob COPY (docs/17 row 248): a library
-     * creature's numbers used to be derived at read time from a live chunk read,
-     * and the disclosure line ("Bestiary p.132" / "Bestiary: Owlbear") was
-     * composed then, from the chunk and its book. Under the one-representation
-     * model the numbers are COPIED onto the row, so the label has to be copied
-     * with them or the GM silently loses where they came from. The migration
-     * stamps it from the LIVE read BEFORE the pointer drops; a row that still
-     * carries a `creatureRef` leaves it unset. The line is the creature origin
-     * alone — `derivedStatOrigin` adds the NPC's own name at read time.
-     */
-    sourceLine: z.string().optional(),
-    /**
-     * The opaque ORIGIN TOKEN of a copied library creature (`chunk:<id>`,
-     * `domain/creature.libraryCreatureKey`) — docs/17 row 255b. The encounter
-     * roster entry has carried one since row 248; the CAST path writes the same
-     * thing now that it copies instead of citing, because the token is BOTH the
-     * portrait identity (so no `mobPortraits`/`creatureImages` row needs
-     * remapping) and the REUSE identity a re-cast compares against — the
-     * `creatureRef` it replaced was that identity before. Additive + optional:
-     * a row cast before row 255b (or converted by the v24 migration's NPC arm
-     * before it stamped tokens) carries none, and then its identity falls to the
-     * content key.
-     */
-    originToken: z.string().optional(),
-    /**
-     * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
-     * one did: the GENERATION seam's own provenance, so a later pass can tell a
-     * freshly cast, prose-less row from one a module designer has since written
-     * in. It is never authored text and never rendered; an NPC a human wrote
-     * from scratch has no reason to carry it.
-     */
-    castByRunId: z.string().optional(),
-  })
-  .refine((data) => !(data.creatureRef !== undefined && data.statBlock !== null), {
-    error:
-      'an npc carries either an authored stat block or a library creatureRef to derive one from, never both — clear the stat block or drop the creature reference',
-    path: ['creatureRef'],
-  });
+export const npcDataSchema = z.object({
+  appearance: z.string(),
+  personality: z.string(),
+  statBlock: statBlockSchema.nullable(),
+  /**
+   * The STAMPED origin line of a mob COPY (docs/17 row 248): a library
+   * creature's numbers used to be derived at read time from a live chunk read,
+   * and the disclosure line ("Bestiary p.132" / "Bestiary: Owlbear") was
+   * composed then, from the chunk and its book. Under the one-representation
+   * model the numbers are COPIED onto the row, so the label has to be copied
+   * with them or the GM silently loses where they came from. The line is the
+   * creature origin alone — `derivedStatOrigin` adds the NPC's own name at read
+   * time.
+   */
+  sourceLine: z.string().optional(),
+  /**
+   * The opaque ORIGIN TOKEN of a copied library creature (`chunk:<id>`,
+   * `domain/creature.libraryCreatureKey`) — docs/17 row 255b. The encounter
+   * roster entry has carried one since row 248; the CAST path writes the same
+   * thing now that it copies instead of citing, because the token is BOTH the
+   * portrait identity (so no `mobPortraits`/`creatureImages` row needs
+   * remapping) and the REUSE identity a re-cast compares against. Additive +
+   * optional: a row cast before row 255b carries none, and then its identity
+   * falls to the content key.
+   */
+  originToken: z.string().optional(),
+  /**
+   * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
+   * one did: the GENERATION seam's own provenance, so a later pass can tell a
+   * freshly cast, prose-less row from one a module designer has since written
+   * in. It is never authored text and never rendered; an NPC a human wrote
+   * from scratch has no reason to carry it.
+   */
+  castByRunId: z.string().optional(),
+});
 
 export type NpcArtifactData = z.infer<typeof npcDataSchema>;
 
@@ -336,39 +319,32 @@ export const noteDataSchema = z.record(z.string(), z.never());
 export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 
 /**
- * Where a monster's stats come from. The LIVE model has exactly TWO arms
- * (docs/17 row 248, the one-representation arc):
+ * Where a monster's stats come from. The live model has exactly THREE arms
+ * (docs/17 row 278 — the clean cut deleted the legacy pointer forms):
  * - inline: the mob's OWN stat block — an authored block, or the authored COPY
- *   the v24 migration made of a library creature;
- * - none: name-only entry (pre-M3 rows migrate to this).
+ *   the copy-on-write seam made of a library creature;
+ * - none: name-only entry;
+ * - npc-ref: links an AUTHORED NPC artifact (live since the beginning: the
+ *   encounter editor's "Link NPC…" picker, the battle spawn picker and the
+ *   encounter finalize all mint it).
  *
- * The LEGACY pointer arms (`rulebook`, `npc-ref`) are accepted by this schema
- * SOLELY so a stored row the migration could not convert still PARSES — an
- * unconvertible row keeps its pointer as the start-up retry's handle (the
- * owner-forced exception, docs/17 row 248), and `anyArtifactSchema` parses
- * every artifact read. They are declared in `domain/mobCopyLegacy` (THE one
- * legacy-read seam) and composed here; nothing in this module resolves them.
- *
- * `MonsterSource` still contains the legacy arms because it describes what can
- * be READ off a row; `LiveMonsterSource` / `LiveMonsterEntry` are the narrowed
- * live shapes the live resolver takes.
+ * The `rulebook` citation arm and the NPC `creatureRef` arm are GONE. The
+ * clean-cut purge normalises any surviving library row that still carried one
+ * (`db/cleanCut.ts`), so `anyArtifactSchema` no longer has to tolerate them and
+ * no reader has to resolve them.
  */
+export const npcRefMonsterSourceSchema = z.object({
+  type: z.literal('npc-ref'),
+  artifactId: z.uuid(),
+});
+
 export const monsterSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('inline'), statBlock: statBlockSchema }),
   z.object({ type: z.literal('none') }),
-  ...LEGACY_MONSTER_SOURCE_ARMS,
+  npcRefMonsterSourceSchema,
 ]);
 
 export type MonsterSource = z.infer<typeof monsterSourceSchema>;
-
-/** The LIVE representation: a copy the row owns, or a name-only entry. */
-export type LiveMonsterSource = Extract<
-  MonsterSource,
-  { type: 'inline' } | { type: 'none' }
->;
-
-/** A roster entry that carries no legacy pointer — what the live resolver takes. */
-export type LiveMonsterEntry = Omit<MonsterEntry, 'source'> & { source: LiveMonsterSource };
 
 export const monsterEntrySchema = z.object({
   name: z.string(),

@@ -8158,3 +8158,29 @@ stubbed `LockManager` — jsdom has no Web Locks and no second tab, so "a start-
 another tab leaves a live pack import alone" is pinned as the GUARD's behaviour
 (a held lock name → no write) plus the import's HOLD of that name, not as a real
 cross-tab race. The device test remains the owner's.
+
+## The clean cut (docs/17 row 278): test families DELETED, and the owed migration
+
+The clean cut abolished the older-shape layer, so the families that existed only
+to prove it are DELETED rather than kept green artificially:
+
+- `tests/db/migration.test.ts` (1,651 l.) — the whole v1→v30 chain.
+- `tests/db/mobCopyRepair.test.ts` (754 l.) — the v24 conversion + retry.
+- `tests/app/migration-notice.test.tsx` — the five migration notices.
+- `tests/architecture/one-legacy-mob-read.test.ts` — the legacy-read seam pin.
+- `tests/features/mob-copy-on-write.test.ts`, `monster-source-citation.test.tsx`,
+  `cast-row-borrowed-stats-scan.test.ts` — the legacy pointer's UI arms.
+
+NEW: `tests/db/clean-cut.test.ts` (11 pins) — the purge and its counts, the
+library/settings survival, the `mobPortraits`→image chain, idempotence, the
+notice sentence, the old-settings-row parse, the ATOMIC abort via the fault hook,
+`db.verno === 31`, the newer-version residual with NO delete, the
+`npc-ref` re-homing, the two file refusals, and the exactly-one `.version(` /
+`.upgrade(` source scan.
+
+**OWED (not done in the code landing):** ~40 surviving test files carried
+`rulebook`/`creatureRef` fixtures; they were mechanically converted to the live
+arms so the tree COMPILES, but the assertions that proved the deleted semantics
+are RED and must be rewritten (or deleted case by case). The inventory's §a.6
+test list undercounted this — its own loud unknown #5 said as much. A `*Baseline.json`
+edit by this landing is DELETE-ONLY; none was needed.

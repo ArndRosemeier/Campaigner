@@ -131,7 +131,7 @@ describe('a model-prose field renders through the ONE wiki renderer', () => {
             count: 1,
             notes: `Sworn to [[${RESOLVED}]]; a rumor names [[${UNRESOLVED}]].`,
             treasure: '',
-            source: { type: 'none' },
+            source: { type: 'none' as const },
           },
         ],
         terrain: '',

@@ -1564,7 +1564,7 @@ describe('spawn-picker.test.tsx', () => {
         count: 1,
         notes: '',
         treasure: '',
-        source: { type: 'none' },
+        source: { type: 'none' as const },
       });
       await expect(spawnPickedEntry(newId(), entry)).rejects.toThrow();
     });

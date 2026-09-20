@@ -13,7 +13,6 @@ import { updateSettings } from '@/db/settingsRepo';
 import {
   createModule,
   moduleDocumentText,
-  npcCreatureRef,
   ruleChunkSchema,
   statBlockSchema,
   stampNewEntity,
@@ -278,7 +277,7 @@ async function seedModule(partMarkdown: string): Promise<{
  * `creatureRef`; the one-representation model says a core item is only ever
  * copied, so the pointer is gone.) */
 function expectCopiedCreature(row: NpcArtifact): void {
-  expect(npcCreatureRef(row)).toBeUndefined();
+  expect((row.data as { originToken?: unknown }).originToken).toBeUndefined();
   expect(row.data.statBlock).toEqual(STAT_BLOCK);
   expect(row.data.sourceLine).toBe('Bestiary p.316');
   expect(row.data.originToken).toBe(`chunk:${CHUNK_ID}`);

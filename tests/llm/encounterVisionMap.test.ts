@@ -762,7 +762,7 @@ function complexLayoutFixture() {
 
 async function seedComplexTarget(
   campaignId: Id,
-  goblinChunkId: Id,
+  _goblinChunkId: Id,
 ): Promise<Artifact & { kind: 'encounter' }> {
   const target = await createArtifact({
     campaignId,
@@ -773,7 +773,7 @@ async function seedComplexTarget(
     links: [],
     data: {
       difficulty: 'old', levelHint: '4',
-      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+      monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'dungeon', locationKind: 'dungeon',
       siteShape: 'complex', budgetAdvisory: 'STALE ADVISORY',

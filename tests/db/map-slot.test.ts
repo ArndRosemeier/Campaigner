@@ -461,7 +461,7 @@ describe('regenerate finalize slot-replace (runEngine)', () => {
       data: {
         difficulty: 'old',
         levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain',
         tactics: 'old tactics',
         treasure: 'old treasure',

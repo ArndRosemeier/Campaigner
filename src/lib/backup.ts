@@ -14,7 +14,8 @@ import {
   type StoredImage,
   type StoredPdf,
 } from '@/domain';
-import { imageFileExtension, retiredTableRows } from '@/lib/exportImport';
+import { imageFileExtension } from '@/lib/exportImport';
+import { legacyBackupRefused } from '@/lib/legacyCampaignFile';
 import { StreamingZip } from '@/lib/zipStream';
 
 /**
@@ -42,7 +43,7 @@ import { StreamingZip } from '@/lib/zipStream';
  */
 
 export const BACKUP_FORMAT = 'campaigner-backup';
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 const MANIFEST_NAME = 'campaigner-backup.json';
 
 /**
@@ -270,7 +271,10 @@ export async function buildBackup(options: BuildBackupOptions = {}): Promise<Bac
 
 const backupSchema = z.object({
   format: z.literal(BACKUP_FORMAT),
-  version: z.literal(BACKUP_FORMAT_VERSION),
+  // `z.number().int()`, NOT a literal (docs/17 row 278): a pre-cut backup must
+  // fail with the NAMED refusal sentence below, not a raw ZodError about a
+  // literal mismatch.
+  version: z.number().int(),
   exportedAt: z.number(),
   dbVersion: z.number(),
   data: z.record(z.string(), z.array(z.record(z.string(), z.unknown()))),
@@ -280,51 +284,18 @@ export interface BackupImportResult {
   /** Restored row count per table. */
   tableCounts: Record<string, number>;
   totalRows: number;
-  /**
-   * Rows of RETIRED TABLES the zip still carried and this restore skipped, by
-   * table name (`retiredTableRows`): a pre-v21 backup holds the `deliverables`
-   * table the app no longer has. Skipped LOUDLY — the backup UI toasts
-   * `formatRetiredTableRows` — never crashed on, never silently discarded
-   * (docs/17 row 108).
-   */
-  retiredRows: Record<string, number>;
 }
 
 /**
- * Tables a pre-feature backup may legitimately lack: an absent key restores
- * as EMPTY instead of failing the missing-table check. `pdfFiles` (retained
- * PDF bytes, source-viewers arc) landed after backup v1 — its absence in an
- * old zip is the truth (those books have no retained bytes), not corruption.
- * `mobPortraits` (global mob-portrait cache, docs/11 D5 amendment slice A)
- * is likewise derived, rebuildable state — a pre-v18 backup restores with an
- * empty cache and the next canonical generation repopulates it.
- * `moduleVersions` (durable module document versions, docs/18 §2.3 simple
- * undo) landed after backup v1 too: a pre-v19 zip carries no undo history,
- * which is the truth about that database — the first AI change after the
- * restore starts the stack, and no module DOCUMENT text is affected (the
- * parts live on the module rows, which the zip does carry).
- */
-const OPTIONAL_TABLES: ReadonlySet<string> = new Set([
-  'pdfFiles',
-  'mobPortraits',
-  'moduleVersions',
-  'ideaBoards',
-  // `creatureImages` (per-campaign portraits of CITED creatures, docs/11 D5
-  // amendment) landed after backup v1: a pre-v20 zip carries none, and an
-  // empty presentation tier is exactly what that database had — every cited
-  // creature renders initials until its portrait is generated, and no
-  // authored text, roster or map is affected.
-  'creatureImages',
-]);
-
-/**
  * Restores a backup zip, REPLACING every table's contents. The locally
- * stored OpenRouter API key is preserved (backups carry none). A backup
- * missing any current table (except OPTIONAL_TABLES, which restore empty),
- * or missing the binary of a referenced image, fails loudly before anything
- * is written. Retained PDF bytes are never in the zip, so a restore leaves
- * every book without retained bytes — the re-import note in the backup UI
- * says so up front.
+ * stored OpenRouter API key is preserved (backups carry none). A backup from
+ * any other FORMAT is REFUSED by name (docs/17 row 278) — the clean cut
+ * abolished the older-shape layer, so an old file's campaigns have to be
+ * recreated rather than migrated. A current backup missing any table key, or
+ * missing the binary of a referenced image, fails loudly before anything is
+ * written. Retained PDF bytes are never in the zip, so a restore leaves every
+ * book without retained bytes — the re-import note in the backup UI says so up
+ * front.
  */
 export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportResult> {
   const unzipped = unzipSync(zipBytes);
@@ -335,13 +306,15 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
   const { 'campaigner-backup.json': _manifest, ...files } = unzipped;
   void _manifest;
   const parsed = backupSchema.parse(JSON.parse(new TextDecoder().decode(manifestEntry[1])));
-  // Retired tables: a pre-v21 zip carries `deliverables`, which this build
-  // does not have. `db.tables` cannot see it, so without this count the rows
-  // would be dropped by silence — the one outcome AGENTS rule 1 forbids.
-  const retiredRows = retiredTableRows(parsed.data);
+  // THE REFUSAL, by name (docs/17 row 278): a pre-cut backup describes campaign
+  // rows this build no longer has, and there is no migration to land them.
+  if (parsed.version !== BACKUP_FORMAT_VERSION) throw legacyBackupRefused(parsed.version);
 
   for (const table of db.tables) {
-    if (parsed.data[table.name] === undefined && !OPTIONAL_TABLES.has(table.name)) {
+    // Every current backup carries every table's key (`buildBackup` loops
+    // `db.tables`), so an absent key is an incompatible file, not a table that
+    // had not been invented yet.
+    if (parsed.data[table.name] === undefined) {
       throw new Error(
         `Backup is missing table "${table.name}" — it was made by an incompatible version`,
       );
@@ -410,7 +383,6 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
   return {
     tableCounts,
     totalRows: Object.values(tableCounts).reduce((sum, count) => sum + count, 0),
-    retiredRows,
   };
 }
 

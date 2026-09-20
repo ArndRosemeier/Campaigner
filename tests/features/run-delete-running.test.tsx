@@ -149,7 +149,7 @@ async function seedParkedEncounterRun(campaignName: string): Promise<{
     data: {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',

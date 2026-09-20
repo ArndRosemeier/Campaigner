@@ -1219,8 +1219,7 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
         // from. A citation whose chunk carries no parseable block resolves to
         // `null` — then no box prints at all, and the named missing-ref line
         // above the notes stands alone (never an empty or invented block).
-        const statBlock = rosterStatBlockFor(monster, resolved);
-        const cited = monster.source.type === 'rulebook';
+        const statBlock = rosterStatBlockFor(monster);
         // THE treasure rule, shared with the single-artifact export and the
         // reader's roster row (docs/17 row 159): what ONE instance carries is
         // authored on the roster entry, and `rosterTreasureFor` decides whether
@@ -1254,7 +1253,7 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
                   statBoxContent(
                     statBlock,
                     `${monster.name} ×${monster.count}`,
-                    cited ? resolved?.origin : undefined,
+                    undefined,
                     state.spellIndexes,
                   ),
                 ]),
@@ -2689,8 +2688,8 @@ export async function buildModulePdf(
     if (artifact.kind === 'encounter') {
       const resolved = await resolveMonsterEntries(artifact.data.monsters);
       rosterResolution[artifact.id] = resolved;
-      for (const [index, monster] of artifact.data.monsters.entries()) {
-        blocks.push(rosterStatBlockFor(monster, resolved[index]));
+      for (const monster of artifact.data.monsters) {
+        blocks.push(rosterStatBlockFor(monster));
       }
     } else if (artifact.kind === 'npc') {
       blocks.push(artifact.data.statBlock);

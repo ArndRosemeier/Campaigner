@@ -177,9 +177,9 @@ async function seed(): Promise<Seed> {
       difficulty: 'severe',
       levelHint: '4',
       monsters: [
-        { name: 'Cultist', count: 4, notes: 'netters', treasure: CULTIST_TREASURE, source: { type: 'none' } },
+        { name: 'Cultist', count: 4, notes: 'netters', treasure: CULTIST_TREASURE, source: { type: 'none' as const } },
         // Carries NOTHING: the mob that must contribute no row and no line.
-        { name: 'Harbour Thug', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+        { name: 'Harbour Thug', count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
       ],
       terrain: 'wet planks',
       tactics: 'drag them under',
@@ -203,7 +203,7 @@ async function seed(): Promise<Seed> {
       difficulty: 'moderate',
       levelHint: '3',
       monsters: [
-        { name: 'Ghoul', count: 3, notes: '', treasure: GHOUL_TREASURE, source: { type: 'none' } },
+        { name: 'Ghoul', count: 3, notes: '', treasure: GHOUL_TREASURE, source: { type: 'none' as const } },
       ],
       terrain: '',
       tactics: '',
@@ -226,7 +226,7 @@ async function seed(): Promise<Seed> {
       difficulty: 'trivial',
       levelHint: '1',
       monsters: [
-        { name: 'Rat', count: 5, notes: '', treasure: '   ', source: { type: 'none' } },
+        { name: 'Rat', count: 5, notes: '', treasure: '   ', source: { type: 'none' as const } },
       ],
       terrain: '',
       tactics: '',

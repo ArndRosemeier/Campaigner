@@ -322,7 +322,7 @@ describe('deleteArtifactsOfKind — the cascade it reports', () => {
           count: 1,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: stampNewEntity().id },
+          source: { type: 'none' as const },
         },
       ]),
     });

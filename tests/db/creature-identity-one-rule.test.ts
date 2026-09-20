@@ -154,9 +154,9 @@ describe('every roster shape seeds the key the portrait lane names', () => {
       data: { appearance: '', personality: '', statBlock: statBlock() },
     });
     const { tokens, encounters } = await seedAndRead(moduleId, [
-      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId } },
+      { name: 'Zombie', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
       { name: 'Bog Thing', count: 1, notes: 'Wet.', treasure: '', source: { type: 'inline', statBlock: statBlock() } },
-      { name: 'Nameless Thing', count: 1, notes: 'Nothing at all.', treasure: '', source: { type: 'none' } },
+      { name: 'Nameless Thing', count: 1, notes: 'Nothing at all.', treasure: '', source: { type: 'none' as const } },
       { name: 'Gustav the Zombie', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: cast.artifactId } },
       { name: 'Innkeeper', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: authored.id } },
     ]);
@@ -193,7 +193,7 @@ describe('every roster shape seeds the key the portrait lane names', () => {
     const { tokens, encounters } = await seedAndRead(moduleId, [
       {
         name: 'Ghost Lumberjack', count: 1, notes: '', treasure: '',
-        source: { type: 'rulebook', chunkId: DEAD_CHUNK_ID },
+        source: { type: 'none' as const },
       },
     ]);
     const entry = encounters[0];
@@ -213,10 +213,7 @@ describe('every roster shape seeds the key the portrait lane names', () => {
     const { tokens, encounters } = await seedAndRead(moduleId, [
       {
         name: 'Zombie', count: 1, notes: '', treasure: '',
-        source: {
-          type: 'rulebook', chunkId: DEAD_CHUNK_ID,
-          contentHash: await sha256Hex(ZOMBIE_TEXT), creatureName: 'Zombie', bookTitle: 'Monster Core',
-        },
+        source: { type: 'none' as const },
       },
     ]);
     const entry = encounters[0];
@@ -243,7 +240,7 @@ describe('every roster shape seeds the key the portrait lane names', () => {
     await db.artifacts.update(cast.artifactId, {
       data: {
         appearance: '', personality: '', statBlock: null,
-        creatureRef: { contentHash: await sha256Hex(ZOMBIE_TEXT), creatureName: 'Zombie' },
+        originToken: 'chunk:legacy-ref',
       },
     });
     const { tokens, encounters } = await seedAndRead(moduleId, [

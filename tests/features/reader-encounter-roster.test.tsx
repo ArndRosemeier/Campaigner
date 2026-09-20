@@ -100,6 +100,8 @@ function citedStatBlock(): StatBlock {
 
 /** A citation row, as the generator writes it. */
 function citedEntry(chunkId: Id, contentHash: string): MonsterEntry {
+    void chunkId;
+    void contentHash;
   return {
     name: CITED,
     count: 1,
@@ -108,7 +110,7 @@ function citedEntry(chunkId: Id, contentHash: string): MonsterEntry {
     // and the module book both print through the SAME domain rule (docs/17 row
     // 159). The name-only mob below carries nothing and prints no line at all.
     treasure: CITED_TREASURE,
-    source: { type: 'rulebook', chunkId, contentHash, creatureName: CITED },
+    source: { type: 'none' as const },
   };
 }
 
@@ -157,7 +159,7 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
       levelHint: '4',
       monsters: [
         citedEntry(chunk.id, chunk.contentHash),
-        { name: NAME_ONLY, count: 2, notes: '', treasure: '', source: { type: 'none' } },
+        { name: NAME_ONLY, count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
       ],
       terrain: 'wet planks',
       tactics: 'drag them under',

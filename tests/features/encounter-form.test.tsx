@@ -75,7 +75,7 @@ describe('encounter form monster sources', () => {
       levelHint: '5',
       monsters: [
         { name: 'Vexra', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } },
-        { name: 'Ghost', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-0000000000999' } },
+        { name: 'Ghost', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
       ],
       terrain: '',
       tactics: '',
@@ -120,7 +120,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -177,7 +177,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -243,7 +243,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -303,7 +303,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -656,7 +656,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
     return {
       difficulty: 'hard',
       levelHint: '4',
-      monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -705,7 +705,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
         initial={{
           difficulty: '',
           levelHint: '',
-          monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' } }],
+          monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',
           treasure: '',
@@ -743,7 +743,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
         data={{
           difficulty: '',
           levelHint: '',
-          monsters: [{ name: 'Bandit', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+          monsters: [{ name: 'Bandit', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',
           treasure: '',

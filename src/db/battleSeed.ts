@@ -163,9 +163,6 @@ export async function expandRosterEntries(
   options: RosterExpansionOptions,
 ): Promise<RosterExpansion> {
   const seedFighters: SeedFighter[] = [];
-  // Library creatures: ONE frozen seed row per cited creature identity within
-  // one expansion, so several entries citing the same chunk share it.
-  const creatureFighters = new Map<string, Id>();
   const statless: string[] = [];
   const tokens: BattleToken[] = [];
   for (const [monsterIndex, entry] of entries.entries()) {
@@ -174,21 +171,19 @@ export async function expandRosterEntries(
     // `seedFighters[]` is what the battle card reads, so its spells must carry
     // the library's own entries and render with the pack UNINSTALLED — the same
     // rule every `copyCreatureStats` caller obeys, through the SAME spell seam
-    // (`db/libraryCopy.copyStatBlockSpellsFromDb`). A LEGACY `rulebook` citation
-    // is the one arm that reaches here BARE (the v24 migration copies what it
-    // can, and this seed resolves the rest at read time); a copied/inline block
-    // already carries its entries and passes through byte-identically. A name
-    // the library does not hold is left exactly as it was — loud, never
-    // dropped — and a spell-less block costs no corpus read.
+    // (`db/libraryCopy.copyStatBlockSpellsFromDb`). A copied/inline block already
+    // carries its entries and passes through byte-identically. A name the library
+    // does not hold is left exactly as it was — loud, never dropped — and a
+    // spell-less block costs no corpus read.
     const statBlock =
       resolved.statBlock === null
         ? null
         : await copyStatBlockSpellsFromDb(resolved.statBlock);
     // ONE identity per roster entry, resolved the same way for every shape and
-    // for BOTH token paths below (docs/17 row 165): a cited creature whose
-    // library row did not resolve keeps the portrait its citation names, and an
-    // invented mob keys on the block its own row carries.
-    const { linked, identity } = await creatureIdentityForEntry(entry);
+    // for BOTH token paths below (docs/17 row 165): an `npc-ref` keeps the
+    // identity of the row it links, and an invented mob keys on the block its own
+    // row carries.
+    const { identity } = await creatureIdentityForEntry(entry);
     const numberStart = options.numberFrom ?? 1;
     for (let index = 1; index <= entry.count; index += 1) {
       const number = numberStart + index - 1;
@@ -230,78 +225,18 @@ export async function expandRosterEntries(
       let artifactId: Id;
       if (entry.source.type === 'npc-ref') {
         artifactId = entry.source.artifactId;
-        // A DERIVED npc (a `creatureRef` with no stored stat block) has no
-        // numbers the battle lookup can read: `fighterStatsFromNpc` reads only
-        // `artifact.data.statBlock`, while the roster derives the block from
-        // the cited library creature. Freeze the DERIVED stats onto a seed row
-        // keyed by the artifact id (the rulebook-citation precedent), so every
-        // lookup — `use-battle`'s and the repo's three — resolves the cast
-        // creature instead of badging it "No combat stats — excluded from
-        // initiative". An AUTHORED npc (its own stat block) is NOT frozen: it
-        // keeps resolving through its row, so a later edit still reaches the
-        // table. The artifact must still NEVER store current HP.
-        if (
-          linked?.kind === 'npc' &&
-          linked.data.statBlock === null &&
-          linked.data.creatureRef !== undefined &&
-          !seedFighters.some((seed) => seed.id === artifactId)
-        ) {
-          // The DERIVED block is frozen with the numbers (docs/17 row 255b):
-          // the card reads the row, never the library — so an uninstalled pack
-          // cannot cost an already-seeded legacy cast its AC and attacks.
-          seedFighters.push({
-            id: artifactId,
-            name: entry.name,
-            maxHp,
-            initiativeBonus: bonus,
-            statBlock,
-            originLabel: resolved.origin,
-          });
-        }
-      } else if (entry.source.type === 'rulebook') {
-        // A LIBRARY CREATURE CITATION (docs/11 D5 amendment): no row is created
-        // for it, so the creature identity is the token's portrait handle. ONE
-        // seedFighters row per IDENTITY (not per instance) carries the
-        // chunk-resolved stats; every instance resolves through it, exactly as
-        // the retired mob artifact's row used to.
-        if (identity === null) {
-          // Unreachable by construction (a `rulebook` source always names a
-          // chunk, so it always has an identity) — and loud rather than a
-          // placeholder key that would silently collapse creatures onto one
-          // portrait (AGENTS rule 1).
-          throw new Error(
-            `seeding: the library citation for “${entry.name}” has no creature identity`,
-          );
-        }
-        const known = creatureFighters.get(identity.key);
-        if (known === undefined) {
-          artifactId = newId();
-          creatureFighters.set(identity.key, artifactId);
-          seedFighters.push({
-            id: artifactId,
-            name: entry.name,
-            maxHp,
-            initiativeBonus: bonus,
-            creatureKey: identity.key,
-            // The library block is frozen ON the row (docs/17 row 255b): the
-            // card reads this, so uninstalling the pack cannot strip an
-            // already-seeded battle of its AC and attacks.
-            statBlock,
-            originLabel: resolved.origin,
-          });
-        } else {
-          artifactId = known;
-        }
+        // A CAST npc carries its OWN copy of the creature's numbers (docs/17
+        // row 255b), so the battle lookup reads the row and nothing needs
+        // freezing here; an authored npc keeps resolving through its row, so a
+        // later edit still reaches the table. The artifact must still NEVER
+        // store current HP.
       } else {
-        // Inline monsters have no artifact and no creature identity of their
-        // own beyond their content: freeze the resolved stats onto the battle
-        // row under a synthetic per-instance id and key their portrait on the
-        // content identity (docs/11 D5) so the invented mob still gets a look.
-        // A COPIED library mob is the exception (docs/17 row 255a): it carries
-        // an opaque `chunk:<id>` origin token, which is its stable creature
-        // identity — the same one a `rulebook` citation froze here before the
-        // copy-on-write arc — so the frozen row keeps it (`foldCreatureKey`
-        // returns id keys unchanged, so no stored battle row needs remapping).
+        // A mob with no artifact of its own: freeze the resolved stats onto the
+        // battle row under a synthetic per-instance id and key their portrait on
+        // the content identity (docs/11 D5) so the invented mob still gets a
+        // look. A COPIED library mob is the exception (docs/17 row 255a): it
+        // carries an opaque `chunk:<id>` origin token, which is its stable
+        // creature identity, so the frozen row keeps it.
         artifactId = newId();
         seedFighters.push({
           id: artifactId,

@@ -1,5 +1,4 @@
-import type { AnyArtifact, Id, LiveMonsterEntry, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
-import { creatureRefIsEmpty } from '@/domain/creature';
+import type { AnyArtifact, Id, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
 
 /**
  * Monster source resolution (07-MILESTONE-3 M3-B; re-based on the library tier
@@ -282,49 +281,6 @@ export async function resolveCreatureCitation(
 }
 
 /**
- * The numbers of an AUTHORED NPC that BORROWS them from a library creature
- * (docs/11 D3, the owner's Aunt Agatha path: *"she will have zombie stats but
- * with prose"*). `npcName` is the row's OWN name — the identity a reader
- * opened — and the label LEADS with it, so borrowed numbers are never taken
- * for an authored block.
- *
- * THE one derived-stats rule. The encounter roster's `npc-ref` arm below and
- * `db/creatureRepo.resolveDerivedNpcStats` (the repo-wired read every UI
- * surface asks) both go through THIS, so a row's details panel, an encounter
- * listing that row and a battle token can never answer "which numbers are
- * this npc's?" differently.
- *
- * TWO ways it fails, both NAMED: a citation that carries neither key at all is
- * a dead pointer and an ERROR (`creatureRefIsEmpty` — calling it "missing"
- * would hide a write-side bug behind a read-side label, which is the same
- * refusal the repo-level citation resolver makes), and a citation the library
- * cannot supply answers the one shared `missing ref (<the creature>)` label —
- * the citation's own stamped creature name, never the row's title, because a
- * reader has to be told WHAT is missing.
- */
-export async function resolveDerivedNpcStats(
-  npcName: string,
-  citation: CreatureCitation,
-  lookups: MonsterLookups,
-): Promise<ResolvedCreature> {
-  if (creatureRefIsEmpty(citation)) {
-    throw new Error(
-      `creature citation for "${npcName}" carries neither a chunk id nor a content hash — nothing can resolve it`,
-    );
-  }
-  const creature = await resolveCreatureCitation(
-    citation,
-    creatureCitationName(citation, npcName),
-    lookups,
-  );
-  if (creature.statBlock === null) return creature;
-  return {
-    statBlock: creature.statBlock,
-    origin: derivedStatOrigin(npcName, creature.origin),
-  };
-}
-
-/**
  * The CROSS-REFERENCE a roster entry's reference may need: the row it names and
  * the pdfmake destination that row prints at. A `npc-ref` reference is a `see
  * <name>` link when the document prints that row (pdfmake throws on a
@@ -371,14 +327,6 @@ const NO_REFERENCE: MonsterReference = { text: '', printed: '' };
 /** The separator between a roster line and its reference. */
 const REFERENCE_SEPARATOR = ' — ';
 const NO_CITATION_REFERENCE = 'no stats: this roster entry names the creature without a citation';
-/**
- * A citation the pre-pass did not resolve — reachable only when a builder is
- * called WITHOUT resolution data (no production path does). It never falls back
- * to a citation-shaped claim the document cannot honour (AGENTS rule 1): the
- * document says the citation could not be resolved, in the same named register
- * as the missing-ref reason.
- */
-const UNRESOLVED_CITATION_REFERENCE = 'unresolved citation: this build resolved no origin for it';
 
 /** A plain reference: the text, plus the same text as one printed line. */
 function plainReference(text: string): MonsterReference {
@@ -430,15 +378,6 @@ export function rosterReferenceFor(
         return plainReference(missingCreatureOrigin(entry.name));
       }
       return { ...plainReference(`see ${target.name}`), link: target };
-    case 'rulebook':
-      // The REAL origin of the cited creature — the book and page the numbers
-      // actually come from. The pre-pass resolves it for every row it runs
-      // over, so the constant `(see Bestiary)` this used to print pointed at a
-      // chapter no module PDF has ever had (docs/17 row 108 superseded by 142,
-      // which amends row 108 by reference).
-      return resolved === undefined
-        ? plainReference(UNRESOLVED_CITATION_REFERENCE)
-        : plainReference(resolved.origin);
     case 'none':
       // A name-only roster entry records no citation at all. The resolution
       // pass reports the named missing-ref reason for it (the branch above);
@@ -449,26 +388,19 @@ export function rosterReferenceFor(
 }
 
 /**
- * The stat block a roster row PRINTS: the cited library creature's resolved
- * numbers for a `rulebook` citation, the entry's own block for `inline`.
+ * The stat block a roster row PRINTS: the entry's OWN block for `inline`, and
+ * nothing for every other arm.
  *
  * THE one rule for "does this row print a box, and whose numbers are they",
- * read by both exporters. A citation the library cannot satisfy resolves to
- * `null` (the chunk is absent, or its ingest left no parseable `statBlock`), and
- * that case prints NO box — the named missing-ref reference line stands alone
- * rather than an empty or invented one (AGENTS rule 1). A `rulebook` entry with
- * NO resolution at all likewise prints no box: an unresolved citation must not
- * silently become a heading with nothing under it.
+ * read by both exporters. An `npc-ref` row prints no box in the books because
+ * its numbers print at that NPC's own entry one page away (the reference says
+ * `see <name>`); a name-only entry has none; an unresolved reference never
+ * becomes an invented or empty box (AGENTS rule 1).
  */
-export function rosterStatBlockFor(
-  entry: MonsterEntry,
-  resolved: ResolvedMonster | undefined,
-): StatBlock | null {
+export function rosterStatBlockFor(entry: MonsterEntry): StatBlock | null {
   switch (entry.source.type) {
     case 'inline':
       return entry.source.statBlock;
-    case 'rulebook':
-      return resolved?.statBlock ?? null;
     case 'npc-ref':
     case 'none':
       return null;
@@ -514,31 +446,55 @@ export function rosterTreasureFor(entry: MonsterEntry): MonsterTreasure | null {
 }
 
 /**
- * Resolve a LIVE roster entry — the two representations the model has left
- * (docs/17 row 248): an authored COPY (or authored block), and a name-only
- * entry. This function deliberately carries NO legacy arm: a stored legacy
- * pointer is read and resolved by the ONE seam
- * `domain/mobCopyLegacy.resolveStoredMonsterEntry`, which `db/monsterResolve`
- * dispatches through. Handing this function a legacy entry is a programming
- * error the narrowed `LiveMonsterEntry` type makes unrepresentable rather than
- * a silent wrong answer (AGENTS rule 1).
+ * Resolve a roster entry — the THREE representations the model has (docs/17 row
+ * 278): an authored COPY (or authored block), a name-only entry, and an
+ * `npc-ref` to an AUTHORED NPC artifact.
+ *
+ * The `npc-ref` arm's resolution was RE-HOMED here from the deleted
+ * `domain/mobCopyLegacy` seam (it is live: three write paths mint it), so the
+ * ONE resolver carries every arm the schema accepts. `rulebook` and the NPC
+ * `creatureRef` are gone: the clean-cut purge normalises a surviving library row
+ * that still carried one, so nothing can arrive here in that shape.
  */
-export function resolveMonsterEntry(entry: LiveMonsterEntry): ResolvedMonster {
-  // The entry's own STAMPED origin line, when it is a migrated copy (docs/17
-  // row 248) — read once, so the inline arm below and every other reader of
-  // this entry agree about what it says.
+export async function resolveMonsterEntry(
+  entry: MonsterEntry,
+  lookups: MonsterLookups,
+): Promise<ResolvedMonster> {
+  // The entry's own STAMPED origin line, when it is a copied mob (docs/17 row
+  // 248) — read once, so the inline arm below and every other reader of this
+  // entry agree about what it says.
   const stamped = entry.sourceLine?.trim();
-  switch (entry.source.type) {
+  const source = entry.source;
+  switch (source.type) {
     case 'inline':
       // The stat box prints immediately below: an origin run here would
-      // contradict the block under it. A migrated COPY is the exception — it
+      // contradict the block under it. A copied mob is the exception — it
       // carries a stamped `sourceLine` and no citation left to compose one
       // from, so the origin IS that stored line (docs/17 row 248).
       return {
-        statBlock: entry.source.statBlock,
+        statBlock: source.statBlock,
         origin: stamped === undefined || stamped === '' ? 'inline' : stamped,
       };
     case 'none':
       return { statBlock: null, origin: '' };
+    case 'npc-ref': {
+      const artifact = await lookups.getArtifact(source.artifactId);
+      if (artifact === undefined) {
+        // An authored NPC whose row is gone is a real dangling reference — a
+        // campaign row the GM can see and restore.
+        return { statBlock: null, ...missingRefReason(entry.name) };
+      }
+      if (artifact.kind !== 'npc') return { statBlock: null, origin: `NPC: ${artifact.name}` };
+      // A COPIED cast row (docs/17 row 255b): the library's numbers live ON the
+      // row and its stamped disclosure line is printed with the row's own name.
+      const npcStamped = artifact.data.sourceLine?.trim();
+      return {
+        statBlock: artifact.data.statBlock,
+        origin:
+          npcStamped === undefined || npcStamped === ''
+            ? `NPC: ${artifact.name}`
+            : derivedStatOrigin(artifact.name, npcStamped),
+      };
+    }
   }
 }

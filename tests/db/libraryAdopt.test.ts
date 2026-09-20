@@ -17,11 +17,9 @@ import {
   type MonsterEntry,
 } from '@/domain';
 import { defaultSettings } from '@/domain/settings';
-import { formatLibraryAdopt } from '@/domain/libraryAdoptRepair';
 import { tokenFromFighter, captureStageSnapshot } from '@/domain/battle/board';
 import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { adoptDraftLibraryReferences } from '@/db/libraryAdoptLive';
-import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { getBattleByEncounter, getBattleForEncounter, saveBattleStage } from '@/db/battleRepo';
@@ -120,7 +118,7 @@ function globalEncounter(name = 'Ford ambush'): GlobalArtifact {
     coverImageId: null,
     writerModel: '',
     data: encounterData([
-      { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+      { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
     ]),
   });
 }
@@ -184,12 +182,12 @@ function firstRosterEntry(row: Artifact): MonsterEntry {
   return entry;
 }
 
-/** Run the seam exactly as a Dexie upgrade body does. */
-function adopt(reason: 'upgrade' | 'retry' = 'upgrade') {
+/** Run the seam exactly as the live write path does. */
+function adopt() {
   return db.transaction(
     'rw',
     [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
-    (tx) => adoptLibraryArtifacts({ tx, reason }),
+    (tx) => adoptLibraryArtifacts({ tx, reason: 'write' }),
   );
 }
 
@@ -276,11 +274,6 @@ describe('library adoption (docs/17 row 257)', () => {
     // …and the repoint is a real revision, not a raw put.
     expect(repointedEncounter.currentRevision).toBe(2);
     expect(repointedRelation?.currentRevision).toBe(2);
-
-    // The report is persisted for the shell's one-shot toast.
-    const settings = await db.settings.get('settings');
-    expect(settings?.libraryAdopt?.notified).toBe(false);
-    expect(settings?.libraryAdopt?.adopted).toHaveLength(1);
   });
 
   it('is IDEMPOTENT on the stored origin id: a second run makes no copy and rewrites nothing', async () => {
@@ -452,28 +445,12 @@ describe('library adoption (docs/17 row 257)', () => {
     expect((await listGlobalArtifacts()).map((row) => row.id)).toEqual([source.id]);
   });
 
-  it('refuses LOUDLY when there is no settings row to report in', async () => {
-    await db.settings.clear();
-    const source = globalNpc();
-    await db.artifacts.put(source);
-    await createArtifact({
-      campaignId: CAMPAIGN,
-      kind: 'encounter',
-      name: 'Ambush',
-      data: encounterData([npcRefEntry('Sage', source.id)]),
-    });
-
-    await expect(adopt()).rejects.toThrow(/refusing to migrate silently/);
-  });
-
   it('writes NOTHING and reports zero for a workspace with no library references', async () => {
     await createArtifact({ campaignId: CAMPAIGN, kind: 'npc', name: 'Home-grown' });
     const report = await adopt();
     expect(report.adopted).toEqual([]);
     expect(report.repointed).toBe(0);
     expect(report.unresolved).toEqual([]);
-    // Nothing to say ⇒ nothing persisted.
-    expect((await db.settings.get('settings'))?.libraryAdopt).toBeNull();
   });
 
   it('a DUPLICATE of an adopted copy drops the origin stamp (one library row, one adopted copy)', async () => {
@@ -539,7 +516,6 @@ describe('the WRITE-TIME half (the reference is never born)', () => {
     expect((await getAnyArtifact(copyId))?.copiedFromArtifactId).toBe(source.id);
     // The library row survives, and the WRITE path never persists a report.
     expect(await db.artifacts.get(source.id)).toEqual(source);
-    expect((await db.settings.get('settings'))?.libraryAdopt).toBeNull();
   });
 
   it('reuses the campaign copy on a second write (one library row, one copy)', async () => {
@@ -723,66 +699,9 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     // The reference is LEFT as it was — nothing is pointed at a placeholder.
     expect((await db.battles.get(battle.id))?.board.tokens[0]?.artifactId).toBe(missingId);
 
-    // LOUD: the persisted report carries it to the shell, and the ONE sentence
-    // prints it by name and reason.
-    const settings = await db.settings.get('settings');
-    const persisted = settings?.libraryAdopt;
-    expect(persisted?.unresolved[0]?.name).toBe('Ghost');
-    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
-    expect(formatLibraryAdopt(persisted)).toContain('Ghost');
-    expect(formatLibraryAdopt(persisted)).toContain(missingId);
-  });
-
-  it('the RETRY path heals a battle row, and its second run reports all-zero', async () => {
-    const source = globalNpc();
-    await db.artifacts.put(source);
-    const battle = await putBattle(CAMPAIGN, [tokenFor(source.id, 'Sage')]);
-
-    const first = await retryLibraryAdoptions();
-    expect(first.adopted).toHaveLength(1);
-    expect(first.repointed).toBe(1);
-    const copyId = first.adopted[0]?.copyId ?? '';
-    expect((await db.battles.get(battle.id))?.board.tokens[0]?.artifactId).toBe(copyId);
-    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
-
-    const second = await retryLibraryAdoptions();
-    expect(second.adopted).toEqual([]);
-    expect(second.repointed).toBe(0);
-    expect(second.unresolved).toEqual([]);
-    // A retry that changed nothing persists nothing: the first run's report is
-    // left exactly as it was rather than re-stamped (the shell is not re-toasted).
-    expect((await db.settings.get('settings'))?.libraryAdopt).toEqual(persisted);
-  });
-
-  it('the RETRY path RE-KEYS a re-landed battle encounter key (docs/17 row 256 at-rest restoration)', async () => {
-    // The at-rest restoration case: a battle row lands carrying a LIBRARY
-    // encounter key that the v28/v29 upgrade bodies will never see again (they
-    // already ran on this install) — e.g. a whole-database backup restored over
-    // the current schema. The start-up retry runs the SAME seam, which collects
-    // `encounterArtifactId` and its re-seed stamp like any other library
-    // reference, so the key is re-pointed onto the campaign's own copy rather
-    // than left as a save/load dependency.
-    const source = globalEncounter();
-    await db.artifacts.put(source);
-    const battle = await putBattle(CAMPAIGN, []);
-    await db.battles.update(battle.id, {
-      encounterArtifactId: source.id,
-      reseed: { at: Date.now(), encounterArtifactId: source.id, encounterName: source.name },
-    });
-
-    const report = await retryLibraryAdoptions();
-    expect(report.adopted).toHaveLength(1);
-    const copyId = report.adopted[0]?.copyId ?? '';
-    expect(copyId).not.toBe('');
-    const after = await db.battles.get(battle.id);
-    expect(after?.encounterArtifactId).toBe(copyId);
-    expect(after?.reseed?.encounterArtifactId).toBe(copyId);
-    // The library row SURVIVES beside the campaign's copy (the owner's rule).
-    expect((await db.artifacts.get(source.id))?.campaignId).toBeNull();
-    // Idempotent: a second launch adopts nothing and repoints nothing.
-    const again = await retryLibraryAdoptions();
-    expect(again.adopted).toEqual([]);
-    expect(again.repointed).toBe(0);
+    // LOUD: the report NAMES it (the shell persists it as the live arm's own
+    // report; the migration arms that used to store it were deleted).
+    expect(report.unresolved[0]?.name).toBe('Ghost');
   });
 
   it('remaps the frozen seed handle of a DERIVED npc-ref, so the token keeps its stats', async () => {
@@ -795,7 +714,7 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
         appearance: '',
         personality: '',
         statBlock: null,
-        creatureRef: { chunkId: '00000000-0000-4000-8000-00000000cafe' },
+        originToken: 'chunk:legacy-ref',
       },
     });
     await db.artifacts.put(source);
@@ -839,12 +758,6 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     expect(report.unresolved[0]?.reason).toContain('re-keyed to a guess');
     // The KEY is KEPT: nothing can be pointed at, so the row is untouched.
     expect((await db.battles.get(battle.id))?.encounterArtifactId).toBe(missingEncounterId);
-
-    // LOUD: the report reaches settings and the ONE sentence prints it by name.
-    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
-    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
-    expect(persisted.unresolved[0]?.name).toBe(missingEncounterId);
-    expect(formatLibraryAdopt(persisted)).toContain(missingEncounterId);
   });
 
   it('ADOPTS a LIBRARY seeding encounter and RE-KEYS the battle to the campaign copy (docs/17 row 268)', async () => {
@@ -909,7 +822,7 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
       campaignId: CAMPAIGN,
       kind: 'encounter',
       name: 'Ambush at the Ford',
-      data: encounterData([{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } }]),
+      data: encounterData([{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }]),
     });
     const battle = await putBattle(CAMPAIGN, [tokenFor(null, 'Stamp')]);
     await db.battles.update(battle.id, { encounterArtifactId: encounter.id });
@@ -1018,7 +931,7 @@ describe('the battle row’s map image is a CAMPAIGN copy (docs/17 row 270)', ()
       kind: 'encounter',
       name: 'Sunken ford',
       data: encounterData([
-        { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+        { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
       ]),
       links: [{ targetId: locationId, relation: 'at' }],
     });
@@ -1142,10 +1055,5 @@ describe('the battle row’s map image is a CAMPAIGN copy (docs/17 row 270)', ()
     expect(report.unresolved.map((entry) => entry.name)).toContain(IMAGE);
     // The id is LEFT EXACTLY as it was.
     expect((await db.battles.get(battle.id))?.board.mapImageId).toBe(IMAGE);
-
-    // LOUD: the report reaches settings and the ONE sentence prints it.
-    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
-    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
-    expect(formatLibraryAdopt(persisted)).toContain(IMAGE);
   });
 });

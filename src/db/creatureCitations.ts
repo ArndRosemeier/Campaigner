@@ -1,7 +1,6 @@
 import { comparableName } from '@/domain/artifactAlias';
-import type { AnyArtifact, CreatureRef, Id } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 import { listArtifactsByModule } from '@/db/artifactRepo';
-import { resolveCreatureCitation } from '@/db/creatureRepo';
 
 /**
  * The module-delete dialog's blast-radius census (docs/11 D5 amendment): the
@@ -15,9 +14,13 @@ import { resolveCreatureCitation } from '@/db/creatureRepo';
  * this module removes its encounters; the creatures they cite are the
  * bestiary's and stay".
  *
- * A citation that cannot be resolved is reported BY NAME, never dropped
- * (AGENTS rule 1): the dialog must not under-count a module's reach because a
- * pack was uninstalled.
+ * WHAT STILL COUNTS AS A LIBRARY CITATION (docs/17 row 278). A copied mob — a
+ * roster entry with an `inline` block and an `originToken`, or an `npc-ref` to a
+ * cast/copied NPC — is the campaign's OWN row (the owner's rule is that core
+ * items are only ever copied), so it is not a library reference and must not be
+ * reported as one. The one library reference that survives the clean cut is a
+ * DANGLING `npc-ref`: its target row is gone, so the census cannot resolve it
+ * and names it as unresolved — never drops it (AGENTS rule 1).
  */
 export interface ModuleCreatureCitations {
   /** The distinct creatures cited, by the name the citing roster used, A→Z. */
@@ -26,86 +29,32 @@ export interface ModuleCreatureCitations {
   citingEncounters: string[];
 }
 
-/** One library citation a roster carries, with the name the roster reads it
- * by. `citation` is absent when there is no LIBRARY pointer to resolve at all
- * (a dangling `npc-ref`): that case is unresolved by construction and is
- * reported as such, never fed to the resolver as an empty citation (which is a
- * loud write-side error, docs/11 D9). */
-interface CitedCreature {
-  name: string;
-  citation?: CreatureRef;
-  /** False when the citation points at a campaign row rather than a library
-   * creature this census can speak about. */
-  libraryRef: boolean;
-}
-
 /**
  * KEY SPACE `LIBRARY_CREATURE_NAME_KEY` (docs/17 row 167): ONE library
  * creature prints ONCE — the identity of a creature this library HOLDS, keyed
- * by its name, for the two places that dedupe such a list (this census and
- * `llm/creatorRoster.nearestLibraryCreatures`'s suggestion list). A library
- * creature's name is neither a written token nor a module row, so this space
- * is neither `WRITTEN_LINK_NAME_KEY` nor `MODULE_NAME_KEY`.
- *
- * The distinct library creatures one encounter roster cites, deduped
- * case-insensitively by the name the roster uses.
+ * by its name. The distinct dangling references one encounter roster carries,
+ * deduped case-insensitively by the name the roster uses.
  */
-function citedCreatures(
-  encounter: AnyArtifact,
-  byId: Map<Id, AnyArtifact>,
-): CitedCreature[] {
+function citedCreatures(encounter: AnyArtifact, byId: Map<Id, AnyArtifact>): string[] {
   if (encounter.kind !== 'encounter') return [];
-  const found: CitedCreature[] = [];
+  const found: string[] = [];
   const seen = new Set<string>();
   for (const entry of encounter.data.monsters) {
     const source = entry.source;
-    let cited: CitedCreature | null = null;
-    if (source.type === 'rulebook') {
-      // The roster entry's OWN citation — resolved by the reader's seam, chunk
-      // uuid first and content hash second.
-      cited = {
-        name: source.creatureName ?? entry.name,
-        citation: {
-          chunkId: source.chunkId,
-          ...(source.contentHash === undefined ? {} : { contentHash: source.contentHash }),
-          ...(source.creatureName === undefined ? {} : { creatureName: source.creatureName }),
-        },
-        libraryRef: true,
-      };
-    } else if (source.type === 'npc-ref') {
-      const target = byId.get(source.artifactId);
-      if (target === undefined) {
-        // A citation whose target is gone is still a citation to census, and it
-        // is unresolved for a reason this census cannot resolve away: the ROW
-        // is missing, not the library entry (docs/11 D9).
-        cited = { name: entry.name, libraryRef: true };
-      } else if (target.kind === 'npc' && target.data.creatureRef !== undefined) {
-        // An UNCONVERTED cast npc (docs/11 D3): its own prose, the library's
-        // stats — so the creature it cites IS a library creature, and this
-        // census speaks of it under the LIBRARY's name, which is what the
-        // dialog must name.
-        cited = { name: target.name, citation: target.data.creatureRef, libraryRef: true };
-      } else {
-        // A HAND-AUTHORED npc — and, since docs/17 row 255b, a COPIED cast npc
-        // too — cites no library creature at all: a copy is this campaign's own
-        // row (the owner's rule is that core items are only ever copied), so it
-        // must not appear as a library reference. It is already the ownership
-        // half of the census, and it is deleted with the module, not left in
-        // the bestiary.
-        cited = { name: target.name, libraryRef: false };
-      }
-    }
-    if (cited?.libraryRef !== true) continue;
-    const key = comparableName(cited.name);
+    if (source.type !== 'npc-ref') continue;
+    // A resolvable target is an authored or CAST npc — this campaign's own row,
+    // deleted with the module, not a library reference.
+    if (byId.has(source.artifactId)) continue;
+    const key = comparableName(entry.name);
     if (seen.has(key)) continue;
     seen.add(key);
-    found.push(cited);
+    found.push(entry.name);
   }
   return found;
 }
 
 /** Counts the library creatures a module's encounters cite. */
-export async function countCreaturesCitedByModule(
+export function countCreaturesCitedByModule(
   owned: readonly AnyArtifact[],
 ): Promise<ModuleCreatureCitations> {
   const byId = new Map<Id, AnyArtifact>();
@@ -118,25 +67,18 @@ export async function countCreaturesCitedByModule(
     const cited = citedCreatures(artifact, byId);
     if (cited.length === 0) continue;
     citingEncounters.push(artifact.name);
-    for (const creature of cited) {
-      const key = comparableName(creature.name);
+    for (const name of cited) {
+      const key = comparableName(name);
       if (seen.has(key)) continue;
       seen.add(key);
-      if (creature.citation === undefined) {
-        citations.push({ name: creature.name, resolved: false });
-        continue;
-      }
-      // Resolved through the SAME library seam the reader uses, so the census
-      // reports unresolved citations for exactly the reason the chip would.
-      const listing = await resolveCreatureCitation(creature.citation, creature.name);
-      citations.push({
-        name: listing.chunk === null ? creature.name : listing.name,
-        resolved: listing.chunk !== null,
-      });
+      // The target row is gone by construction (that is the only arm this census
+      // speaks about), so the citation is unresolved for a reason the census
+      // cannot resolve away: the ROW is missing, not the library entry.
+      citations.push({ name, resolved: false });
     }
   }
   citations.sort((left, right) => left.name.localeCompare(right.name));
-  return { creatures: citations, citingEncounters };
+  return Promise.resolve({ creatures: citations, citingEncounters });
 }
 
 /** Convenience for a caller that does not already hold the module's rows. */

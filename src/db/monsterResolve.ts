@@ -1,19 +1,11 @@
-import { type ResolvedMonster } from '@/domain/encounterResolve';
-import { resolveStoredMonsterEntry } from '@/domain/mobCopyLegacy';
+import { resolveMonsterEntry, type ResolvedMonster } from '@/domain/encounterResolve';
 import type { MonsterEntry } from '@/domain';
 import { creatureLookups } from '@/db/creatureRepo';
 
 /**
  * Repo-wired monster resolution (07-MILESTONE-3 M3-B): the UI-facing variant
  * of the pure resolver (pure logic lives in `/src/domain/encounterResolve.ts`
- * with injected lookups, and the ONE legacy read in
- * `/src/domain/mobCopyLegacy.ts`).
- *
- * Since docs/17 row 248c it dispatches through `resolveStoredMonsterEntry`: the
- * LIVE model has one representation (`inline` / `none`) and the pure resolver
- * carries no legacy arm, so a stored pointer the v24 migration could not
- * convert — the start-up retry's handle — is read and resolved by the seam
- * rather than by every consumer.
+ * with injected lookups).
  *
  * THE LOOKUPS COME FROM THE ONE SEAM (docs/17 row 263): `creatureLookups()`
  * (`db/creatureRepo`) is the repo-wired `MonsterLookups` — its `getArtifact` IS
@@ -24,13 +16,12 @@ import { creatureLookups } from '@/db/creatureRepo';
  * it fine — one idea, two getters, drifted. A genuinely absent artifact is
  * still the loud missing arm; nothing here softens it.
  *
- * Content-hash fallback (chunk-hash-fallback arc): several local chunks may
- * share one hash (re-ingests) — prefer the one that actually carries stats,
- * mirroring the import verdict's L0 rule (a hash hit on a statless chunk
- * never satisfies).
+ * The clean cut (docs/17 row 278) deleted the `domain/mobCopyLegacy` dispatch
+ * this used to go through: the `npc-ref` resolution is re-homed into the ONE
+ * pure resolver, so there is exactly one dispatch again.
  */
 export function resolveMonsterEntryWithRepos(entry: MonsterEntry): Promise<ResolvedMonster> {
-  return resolveStoredMonsterEntry(entry, creatureLookups());
+  return resolveMonsterEntry(entry, creatureLookups());
 }
 
 /** Resolves a whole monster list in order (used by the Stat blocks panel). */

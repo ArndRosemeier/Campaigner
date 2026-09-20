@@ -533,7 +533,7 @@ describe('the entity sidebar control', () => {
         // A CAST creature npc (docs/11 D3/D4): an authored row whose stats come
         // from the library. The retired `monsterChunkId` was the hidden marker
         // that made a bestiary row look like a campaign mob artifact.
-        creatureRef: { chunkId: '00000000-0000-4000-8000-00000000c001' },
+        originToken: 'chunk:legacy-ref',
       },
     });
     // The encounter data shape, typed ONCE (an inline literal against the
@@ -549,7 +549,7 @@ describe('the entity sidebar control', () => {
           treasure: '',
           source: { type: 'npc-ref', artifactId: cube.id },
         },
-        { name: 'Bog Lurker', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+        { name: 'Bog Lurker', count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
       ],
       terrain: '',
       tactics: '',

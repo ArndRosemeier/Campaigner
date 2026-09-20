@@ -210,23 +210,10 @@ export function rosterParticipantRoute(
       `creature portrait: the roster entry “${entry.name}” stands for no creature`,
     );
   }
-  if (source.type === 'rulebook') {
-    // THE LOUD LEGACY ARM (docs/17 row 269): an UNCONVERTED pointer — the
-    // owner-forced failure arm, a row whose pack was absent at upgrade time. Its
-    // chunk is the only grounding there is and the pointer is the start-up
-    // retry's handle, so this arm KEEPS the library read, with its named failure
-    // when the chunk is gone. It is the one path where a portrait still needs
-    // the pack, and it is loud rather than silent by construction.
-    return {
-      lane: 'creature',
-      creatureKey: identity.key,
-      chunkId: source.chunkId,
-      name: entry.name,
-      artifactId: null,
-    };
-  }
-  // `inline` / `none`: an uncited, model-invented mob — identified by content,
-  // with no artifact and no library row anywhere.
+  // `inline` / `none`: a mob with no stored pointer. A copied one carries an
+  // `originToken` and was handled above; the rest are uncited, model-invented
+  // mobs — identified by content, with no artifact and no library row anywhere.
+  // The `rulebook` citation arm died with the clean cut (docs/17 row 278).
   return { lane: 'invented', creatureKey: identity.key, name: entry.name };
 }
 

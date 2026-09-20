@@ -341,6 +341,7 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
    */
   it('freezes the library’s spell entry onto a battle seed, so the card answers with the library ABSENT', async () => {
     const { chunkId } = await installLibrary();
+    void chunkId;
     const campaign = await createCampaign({ name: 'Seed campaign', system: SYSTEM });
     const encounter = await createArtifact({
       campaignId: campaign.id,
@@ -355,7 +356,7 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
             count: 1,
             notes: '',
             treasure: '',
-            source: { type: 'rulebook', chunkId },
+            source: { type: 'none' as const },
           },
         ],
         terrain: '',

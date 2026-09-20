@@ -238,7 +238,7 @@ async function seedOwnerWorld(): Promise<OwnerWorld> {
       appearance: '',
       personality: '',
       statBlock: null,
-      creatureRef: { chunkId, contentHash, creatureName: CREATURE_NAME },
+      originToken: 'chunk:legacy-ref',
     },
   });
   const persona = createPersona({
@@ -268,7 +268,7 @@ async function entityBrief(
   const moduleText = moduleDocumentText(world.module);
   const contextParagraphs = surroundingParagraphs(moduleText, name);
   const castPool = await listArtifactsByCampaign(world.campaign.id);
-  const cast = await fixedCastForEncounter(name, contextParagraphs, castPool, world.module.id);
+  const cast = fixedCastForEncounter(name, contextParagraphs, castPool, world.module.id);
   return {
     brief: buildEntityBrief(
       name,
@@ -396,8 +396,8 @@ describe('a roster monster the cast row answers (docs/17 row 137)', () => {
     const after = await getArtifact(world.castRowId);
     expect(after).toEqual(before);
     expect(after?.kind === 'npc' ? after.data.statBlock : 'not-npc').toBeNull();
-    expect(after?.kind === 'npc' ? after.data.creatureRef : undefined).toEqual(
-      before.kind === 'npc' ? before.data.creatureRef : undefined,
+    expect(after?.kind === 'npc' ? (after.data as { creatureRef?: unknown }).creatureRef : undefined).toEqual(
+      before.kind === 'npc' ? (before.data as { creatureRef?: unknown }).creatureRef : undefined,
     );
 
     // Nothing is lost: the roster entry renders the LIBRARY's own numbers,
@@ -446,7 +446,7 @@ describe('the neighbours the guard must not break', () => {
     expect(created?.name).toBe('Bog Lurker');
     expect(created?.moduleId).toBe(world.module.id);
     expect(created?.kind === 'npc' ? created.data.statBlock : undefined).toEqual(AUTHORED_STATS);
-    expect(created?.kind === 'npc' ? created.data.creatureRef : undefined).toBeUndefined();
+    expect(created?.kind === 'npc' ? (created.data as { creatureRef?: unknown }).creatureRef : undefined).toBeUndefined();
     // Exactly one such row: the materialization created it, it did not reuse.
     const named = (await listArtifactsByCampaign(world.campaign.id)).filter(
       (artifact) => artifact.kind === 'npc' && artifact.name === 'Bog Lurker',

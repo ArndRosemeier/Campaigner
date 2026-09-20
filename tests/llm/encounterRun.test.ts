@@ -35,7 +35,7 @@ import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 /**
  * Encounter Smith stat sources (07-MILESTONE-3 M3-B + fix-02): the retrieve
  * step adds a statblock-restricted search; a draft monster citing
- * `sourceChunkIndex` persists as { type: 'rulebook', chunkId }, and since
+ * `sourceChunkIndex` persists as { type: 'none' }, and since
  * fix-02 an embedded statBlock is MATERIALIZED into a real NPC artifact and
  * persists as { type: 'npc-ref', artifactId } — a name-only monster is a
  * rejected draft (one repair, then loud per autonomy), never a silent
@@ -1123,7 +1123,7 @@ describe('encounter runs (M3-B)', () => {
     if (source?.type !== 'npc-ref') throw new Error('not an npc-ref');
     const linked = await getAnyArtifact(source.artifactId);
     if (linked?.kind !== 'npc') throw new Error('linked artifact is not an npc');
-    expect(linked.data.creatureRef).toBeUndefined();
+    expect((linked.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
 
     const plan = await planMobPortraitBatch(artifact, campaign.id);
     expect(plan.missing).toEqual(['Risen Lumberjack']);
@@ -1906,7 +1906,7 @@ describe('encounter runs (M3-B)', () => {
         data: {
           difficulty: 'deadly',
           levelHint: '5',
-          monsters: [{ name: 'Troll', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } }],
+          monsters: [{ name: 'Troll', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',
           treasure: '',
@@ -1985,8 +1985,8 @@ describe('encounter runs (M3-B)', () => {
           difficulty: 'deadly',
           levelHint: '5',
           monsters: [
-            { name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } },
-            { name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+            { name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
+            { name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
           ],
           terrain: '',
           tactics: '',
@@ -2094,7 +2094,7 @@ describe('encounter runs (M3-B)', () => {
         data: {
           difficulty: 'deadly',
           levelHint: '5',
-          monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } }],
+          monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',
           treasure: '',

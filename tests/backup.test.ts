@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
-import { createModule, saveModule } from '@/db/moduleRepo';
+import { createModule } from '@/db/moduleRepo';
 import {
   createModule as buildModule,
   ruleChunkSchema,
@@ -28,7 +28,6 @@ import {
   noteBackupSettled,
   type BackupProgress,
 } from '@/lib/backup';
-import { formatRetiredTableRows } from '@/lib/exportImport';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
@@ -236,118 +235,6 @@ describe('app backup', () => {
     await importBackup(bytes);
     expect((await db.rulebooks.toArray()).some((row) => row.id === book.id)).toBe(true);
     expect(await db.pdfFiles.toArray()).toEqual([]);
-  });
-
-  it('still restores a pre-retention backup whose zip lacks the pdfFiles table', async () => {
-    await seedBuiltInPersonas();
-    const { bytes } = await buildBackup();
-
-    // Simulate a zip made before pdfFiles existed (no table key at all).
-    const entries = unzipSync(bytes);
-    const manifest = JSON.parse(
-      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
-    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
-    if (manifest.data === undefined || manifest.tableCounts === undefined) {
-      throw new Error('backup manifest is missing data/tableCounts');
-    }
-    delete manifest.data.pdfFiles;
-    delete manifest.tableCounts.pdfFiles;
-    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
-
-    // The book rows restore; the optional table restores empty (no retained
-    // bytes — the truth for pre-retention backups), not a loud failure.
-    await clearDatabase();
-    const result = await importBackup(new Uint8Array(oldZip));
-    expect(await db.personas.count()).toBeGreaterThan(0);
-    expect(await db.pdfFiles.toArray()).toEqual([]);
-    expect(result.tableCounts.pdfFiles).toBe(0);
-  });
-
-  it('still restores a pre-undo backup whose zip lacks the moduleVersions table', async () => {
-    await seedBuiltInPersonas();
-    const campaign = await createCampaign({ name: 'Pre-undo Ember', system: 'dnd5e' });
-    const module = await createModule(
-      buildModule({
-        campaignId: campaign.id,
-        title: 'The Pre-Undo Vault',
-        concept: 'A vault from before undo existed.',
-        levelMin: 1,
-        levelMax: 3,
-        tone: '',
-        sizeDial: 'standard',
-      }),
-    );
-    await saveModule(module);
-    const { bytes } = await buildBackup();
-
-    // Simulate a zip made before durable module versions existed (no table
-    // key at all) — the owner's own pre-v19 backups.
-    const entries = unzipSync(bytes);
-    const manifest = JSON.parse(
-      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
-    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
-    if (manifest.data === undefined || manifest.tableCounts === undefined) {
-      throw new Error('backup manifest is missing data/tableCounts');
-    }
-    delete manifest.data.moduleVersions;
-    delete manifest.tableCounts.moduleVersions;
-    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
-
-    // The rows restore; the optional undo stack restores empty (no undo
-    // history existed then — the truth), never a loud "incompatible version".
-    await clearDatabase();
-    const result = await importBackup(new Uint8Array(oldZip));
-    expect(await db.personas.count()).toBeGreaterThan(0);
-    // The module itself restores (its DOCUMENT text is the module row's, never
-    // the version stack's) — only the undo history is absent.
-    expect((await db.modules.toArray()).some((row) => row.title === 'The Pre-Undo Vault')).toBe(true);
-    expect(await db.moduleVersions.toArray()).toEqual([]);
-    expect(result.tableCounts.moduleVersions).toBe(0);
-  });
-
-  it('still restores a pre-v21 zip carrying the retired `deliverables` table, loudly', async () => {
-    await seedBuiltInPersonas();
-    const campaign = await createCampaign({ name: 'Pre-v21 Ember', system: 'dnd5e' });
-    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Kept note' });
-    const { bytes } = await buildBackup();
-
-    // Simulate a zip made BEFORE the deliverables concept was deleted: the
-    // manifest carries a `deliverables` table this build no longer has
-    // (docs/17 row 108). Nothing in `db.tables` can even name it, so without
-    // an explicit count those rows would vanish in silence.
-    const entries = unzipSync(bytes);
-    const manifest = JSON.parse(
-      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
-    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
-    if (manifest.data === undefined || manifest.tableCounts === undefined) {
-      throw new Error('backup manifest is missing data/tableCounts');
-    }
-    manifest.data.deliverables = [
-      {
-        id: '00000000-0000-4000-8000-0000000000f1',
-        campaignId: campaign.id,
-        title: 'Pre-v21 outline',
-        subtitle: '',
-        audience: 'gm',
-        coverImageId: null,
-        outline: [],
-        createdAt: 1,
-        updatedAt: 1,
-      },
-    ];
-    manifest.tableCounts.deliverables = 1;
-    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
-
-    await clearDatabase();
-    const result = await importBackup(new Uint8Array(oldZip));
-
-    // Restored, not crashed: the extra key is tolerated.
-    expect((await db.artifacts.toArray()).some((row) => row.name === 'Kept note')).toBe(true);
-    // LOUD: the skipped rows are counted and reported by table name.
-    expect(result.retiredRows).toEqual({ deliverables: 1 });
-    expect(formatRetiredTableRows(result.retiredRows)).toContain('retired "deliverables" table');
-    // And the table really is gone from this build.
-    expect(db.tables.map((table) => table.name)).not.toContain('deliverables');
   });
 
   it('heals legacy persona rows on restore and fails loudly on a truly invalid kind', async () => {
