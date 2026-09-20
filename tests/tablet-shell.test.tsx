@@ -11,6 +11,7 @@ import {
   installHintDismissed,
   isStandalone,
   mediaMatches,
+  readStorageUsage,
   shouldShowInstallHint,
   storagePersistedStatus,
 } from '@/lib/deviceCapabilities';
@@ -143,5 +144,27 @@ describe('storage persistence', () => {
       persisted: vi.fn().mockResolvedValue(false),
     });
     await expect(ensurePersistentStorage()).rejects.toThrow('denied');
+  });
+
+  it('reads the browser storage estimate, and answers null (not an error) when it cannot', async () => {
+    stubStorage({ estimate: vi.fn().mockResolvedValue({ usage: 1024, quota: 4096 }) });
+    await expect(readStorageUsage()).resolves.toEqual({ usageBytes: 1024, quotaBytes: 4096 });
+
+    // No API at all (jsdom, older Safari) — a capability the platform lacks.
+    stubStorage(undefined);
+    await expect(readStorageUsage()).resolves.toBeNull();
+
+    // A present API that reports nothing numeric is "cannot say", never a
+    // confident "0 B of 0 B".
+    stubStorage({ estimate: vi.fn().mockResolvedValue({}) });
+    await expect(readStorageUsage()).resolves.toBeNull();
+
+    stubStorage({ estimate: vi.fn().mockResolvedValue({ usage: 10, quota: 0 }) });
+    await expect(readStorageUsage()).resolves.toBeNull();
+  });
+
+  it('propagates a thrown estimate probe — a broken API is loud, not "unavailable"', async () => {
+    stubStorage({ estimate: vi.fn().mockRejectedValue(new Error('probe exploded')) });
+    await expect(readStorageUsage()).rejects.toThrow('probe exploded');
   });
 });

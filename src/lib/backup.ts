@@ -1,4 +1,4 @@
-import { unzipSync, zipSync, strToU8 } from 'fflate';
+import { Zip, ZipDeflate, unzipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
 
 import { db } from '@/db/db';
@@ -29,11 +29,94 @@ import { imageFileExtension, retiredTableRows } from '@/lib/exportImport';
  * everything functional ride the zip; the export reports the exclusion so
  * the backup UI can show a loud re-import note. Import REPLACES the whole
  * database.
+ *
+ * The SAVE half is asynchronous and chunked (docs/17 row 265): a synchronous
+ * `zipSync` over a whole library is the likeliest way the one pre-session
+ * safeguard costs the GM his session on a tablet, so `buildBackup` streams the
+ * zip with bounded batches and yields to the event loop between them. The FILE
+ * is unchanged — one zip, the same entries, the same manifest shape — and the
+ * restore half (`unzipSync`) is untouched.
  */
 
 export const BACKUP_FORMAT = 'campaigner-backup';
 export const BACKUP_FORMAT_VERSION = 1;
 const MANIFEST_NAME = 'campaigner-backup.json';
+
+/**
+ * Rows serialized into the manifest between event-loop yields. The two big
+ * tables are `chunks` (imported rulebook text) and `embeddings` (vectors), so
+ * even one table's `JSON.stringify` is a main-thread block on a real library;
+ * this bounds a batch to tens of milliseconds.
+ */
+const ROWS_PER_YIELD = 40;
+
+/** Bytes handed to the deflate stream between yields (1 MiB). */
+const BYTES_PER_PUSH = 1024 * 1024;
+
+/** Progress of a running backup build, for the app-wide progress dock. */
+export interface BackupProgress {
+  /** What is happening right now ("Packing images (12 of 340)…"). */
+  detail: string;
+  /** 0..1 across the whole build. */
+  progress: number;
+}
+
+export interface BuildBackupOptions {
+  /** Called as the build advances; a surface maps it onto the progress dock. */
+  onProgress?: (progress: BackupProgress) => void;
+}
+
+/**
+ * Hands the main thread back to the browser. A MACROTASK (`setTimeout`), not a
+ * resolved promise: a microtask lets the async function continue without ever
+ * giving rendering, input or the browser's own watchdogs a turn, which is
+ * exactly the difference between a chunked build and a blocked tab — the
+ * defect docs/17 row 265 exists for.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/** `mobPortraits` → `mob portraits`, for progress detail lines only. */
+function readableTableName(name: string): string {
+  return name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+}
+
+/** The push half of fflate's streaming zip entries (structural, not imported). */
+interface StreamingEntry {
+  push: (chunk: Uint8Array, final?: boolean) => void;
+}
+
+/**
+ * The in-flight marker (docs/17 row 265). Set while a backup is being built and
+ * cleared when it settles, so a tab killed mid-build — iOS memory pressure, a
+ * reload, a crash — leaves the mark behind and the NEXT visit to the backup
+ * surface can say the last save did not finish. That is the aborted-tab arm of
+ * "a failure is never silent": the dead tab cannot toast, but its successor can.
+ * localStorage rather than the database because the marker must survive the
+ * interruption it records and must never travel inside a backup itself.
+ */
+const BACKUP_IN_FLIGHT_KEY = 'campaigner.backup-in-flight';
+
+/** The marker store, or null where there is none (node tests, a worker). */
+function backupMarkerStorage(): Storage | null {
+  return typeof localStorage === 'undefined' ? null : localStorage;
+}
+
+export function markBackupInFlight(): void {
+  backupMarkerStorage()?.setItem(BACKUP_IN_FLIGHT_KEY, String(Date.now()));
+}
+
+export function noteBackupSettled(): void {
+  backupMarkerStorage()?.removeItem(BACKUP_IN_FLIGHT_KEY);
+}
+
+export function backupRunWasInterrupted(): boolean {
+  const storage = backupMarkerStorage();
+  return storage !== null && storage.getItem(BACKUP_IN_FLIGHT_KEY) !== null;
+}
 
 export interface BackupManifest {
   format: typeof BACKUP_FORMAT;
@@ -59,61 +142,195 @@ export interface BackupFile {
   pdfExcluded: PdfExclusion;
 }
 
-/** Builds the whole-database backup zip. */
-export async function buildBackup(): Promise<BackupFile> {
-  const data: Record<string, unknown[]> = {};
-  const files: Record<string, Uint8Array> = {};
-  let pdfExcluded: PdfExclusion = { count: 0, totalBytes: 0 };
-
-  for (const table of db.tables) {
-    const rows = await table.toArray();
-    if (table.name === 'settings') {
-      // The API key never travels: stripped on export (and re-preserved from
-      // the local row on import).
-      data[table.name] = rows.map((row) => ({
-        ...(row as Record<string, unknown>),
-        openRouterApiKey: '',
-      }));
-    } else if (table.name === 'pdfFiles') {
-      // Retained rulebook PDF bytes NEVER travel (owner-ratified). The table
-      // key is still written — empty — so restore's missing-table check
-      // passes and the manifest honestly counts 0.
-      data[table.name] = [];
-      pdfExcluded = {
-        count: rows.length,
-        totalBytes: (rows as StoredPdf[]).reduce((sum, row) => sum + row.sizeBytes, 0),
-      };
-    } else if (table.name === 'images') {
-      const imageRows: unknown[] = [];
-      for (const row of rows as StoredImage[]) {
-        const { bytes, ...meta } = row;
-        // Realm-safe binary check: Dexie/structured-clone backends may hand
-        // back Uint8Arrays from another realm, where `instanceof` lies.
-        if (!ArrayBuffer.isView(bytes)) {
-          throw new Error(`Image row ${meta.id} has no binary payload`);
-        }
-        imageRows.push(meta);
-        files[`images/${meta.id}.${imageFileExtension(meta.mimeType)}`] = bytes;
-      }
-      data[table.name] = imageRows;
-    } else {
-      data[table.name] = rows;
+/**
+ * Builds the whole-database backup zip — ASYNCHRONOUSLY and in bounded chunks
+ * (docs/17 row 265). The output is still ONE file with the SAME entries and the
+ * SAME manifest shape; only the way it is produced changed:
+ *
+ * - each table is read one at a time, and its rows are serialized in
+ *   `ROWS_PER_YIELD`-row batches;
+ * - the manifest JSON and every image binary are pushed into fflate's
+ *   STREAMING zip in bounded slices, with a macrotask yield between slices, so
+ *   the main thread keeps breathing and a mobile watchdog is never handed one
+ *   long synchronous `zipSync` to kill the tab over;
+ * - progress is reported per table and per image for the progress dock.
+ *
+ * The memory shape is bounded by design: rows are dropped as each table is
+ * packed, so the peak is the LARGEST TABLE plus the growing output, never the
+ * whole database plus a second full copy of its zip (`zipSync` needed both).
+ * The one copy that cannot go away is the output itself: the single-file
+ * contract is what the owner stores in iCloud or mails to himself, and the
+ * plain-download fallback needs a Blob.
+ */
+export async function buildBackup(options: BuildBackupOptions = {}): Promise<BackupFile> {
+  const onProgress = options.onProgress;
+  const chunks: Uint8Array[] = [];
+  let streamError: Error | null = null;
+  const zip = new Zip((error, chunk) => {
+    if (error) {
+      streamError = error;
+      return;
     }
-  }
+    if (chunk.length > 0) chunks.push(chunk);
+  });
 
+  const failIfStreamBroken = (): void => {
+    if (streamError !== null) throw streamError;
+  };
+
+  /** Pushes bytes in bounded slices, yielding between them. */
+  const pushBytes = async (
+    entry: StreamingEntry,
+    bytes: Uint8Array,
+    finalize: boolean,
+  ): Promise<void> => {
+    if (bytes.length === 0) {
+      if (finalize) {
+        entry.push(new Uint8Array(0), true);
+        failIfStreamBroken();
+      }
+      return;
+    }
+    for (let offset = 0; offset < bytes.length; offset += BYTES_PER_PUSH) {
+      const end = Math.min(offset + BYTES_PER_PUSH, bytes.length);
+      entry.push(bytes.subarray(offset, end), finalize && end >= bytes.length);
+      failIfStreamBroken();
+      await yieldToEventLoop();
+    }
+  };
+
+  const pushText = (entry: StreamingEntry, text: string, finalize: boolean): Promise<void> =>
+    pushBytes(entry, strToU8(text), finalize);
+
+  const manifestEntry = new ZipDeflate(MANIFEST_NAME, { level: 6 });
+  zip.add(manifestEntry);
+
+  const tableCounts: Record<string, number> = {};
+  const exportedAt = Date.now();
   const manifest: BackupManifest = {
     format: BACKUP_FORMAT,
     version: BACKUP_FORMAT_VERSION,
-    exportedAt: Date.now(),
+    exportedAt,
     dbVersion: db.verno,
-    tableCounts: Object.fromEntries(
-      Object.entries(data).map(([name, rows]) => [name, rows.length]),
-    ),
+    tableCounts,
   };
-  files[MANIFEST_NAME] = strToU8(
-    JSON.stringify({ ...manifest, data }, null, 2),
-  );
-  return { bytes: zipSync(files, { level: 6 }), manifest, pdfExcluded };
+  let pdfExcluded: PdfExclusion = { count: 0, totalBytes: 0 };
+
+  try {
+    const tables = db.tables;
+    // One unit per table READ, one per table PACKED, one per image binary:
+    // enough resolution for the dock to move without a progress report per row.
+    const imageCount = await db.images.count();
+    const totalUnits = tables.length * 2 + imageCount;
+    let finishedUnits = 0;
+    const report = (detail: string): void => {
+      finishedUnits += 1;
+      onProgress?.({
+        detail,
+        progress: totalUnits === 0 ? 1 : Math.min(1, finishedUnits / totalUnits),
+      });
+    };
+
+    /** Serializes rows into the open manifest entry, yielding per batch. */
+    const writeRows = async (
+      rows: unknown[],
+      mapRow: (row: unknown) => unknown,
+    ): Promise<void> => {
+      for (let start = 0; start < rows.length; start += ROWS_PER_YIELD) {
+        const batch = rows.slice(start, start + ROWS_PER_YIELD);
+        const text = batch.map((row) => JSON.stringify(mapRow(row))).join(',');
+        await pushText(manifestEntry, start === 0 ? text : `,${text}`, false);
+      }
+    };
+
+    await pushText(
+      manifestEntry,
+      `{"format":${JSON.stringify(BACKUP_FORMAT)},"version":${String(BACKUP_FORMAT_VERSION)},` +
+        `"exportedAt":${String(exportedAt)},"dbVersion":${String(db.verno)},"data":{`,
+      false,
+    );
+
+    for (const [index, table] of tables.entries()) {
+      const rows = await table.toArray();
+      const label = readableTableName(table.name);
+      report(`Reading ${label} (${String(index + 1)} of ${String(tables.length)})…`);
+
+      if (index > 0) await pushText(manifestEntry, ',', false);
+      await pushText(manifestEntry, `${JSON.stringify(table.name)}:[`, false);
+      report(`Packing ${label} (${String(index + 1)} of ${String(tables.length)})…`);
+
+      if (table.name === 'settings') {
+        // The API key never travels: stripped on export (and re-preserved from
+        // the local row on import).
+        await writeRows(rows, (row) => ({
+          ...(row as Record<string, unknown>),
+          openRouterApiKey: '',
+        }));
+        tableCounts[table.name] = rows.length;
+      } else if (table.name === 'pdfFiles') {
+        // Retained rulebook PDF bytes NEVER travel (owner-ratified). The table
+        // key is still written — empty — so restore's missing-table check
+        // passes and the manifest honestly counts 0.
+        pdfExcluded = {
+          count: rows.length,
+          totalBytes: (rows as StoredPdf[]).reduce((sum, row) => sum + row.sizeBytes, 0),
+        };
+        tableCounts[table.name] = 0;
+      } else if (table.name === 'images') {
+        const metaRows: unknown[] = [];
+        for (const [imageIndex, row] of (rows as StoredImage[]).entries()) {
+          const { bytes, ...meta } = row;
+          // Realm-safe binary check: Dexie/structured-clone backends may hand
+          // back Uint8Arrays from another realm, where `instanceof` lies.
+          if (!ArrayBuffer.isView(bytes)) {
+            throw new Error(`Image row ${meta.id} has no binary payload`);
+          }
+          metaRows.push(meta);
+          // The SAME level the whole-zip `zipSync` applied to every entry: the
+          // streaming split changes how the file is made, never what it holds.
+          // (Images were measured as pass-through first — 30 patterned 128 KiB
+          // images took the zip from 375 098 B to 4 131 073 B — so storing them
+          // uncompressed is a silent size regression, not a saving.)
+          const entry = new ZipDeflate(
+            `images/${meta.id}.${imageFileExtension(meta.mimeType)}`,
+            { level: 6 },
+          );
+          zip.add(entry);
+          await pushBytes(entry, bytes, true);
+          report(`Packing images (${String(imageIndex + 1)} of ${String(imageCount)})…`);
+        }
+        await writeRows(metaRows, (row) => row);
+        tableCounts[table.name] = metaRows.length;
+      } else {
+        await writeRows(rows, (row) => row);
+        tableCounts[table.name] = rows.length;
+      }
+
+      await pushText(manifestEntry, ']', false);
+    }
+
+    // `tableCounts` closes the object AFTER `data`: JSON object order is
+    // irrelevant to the parser, and writing it last is what lets the counts be
+    // a running tally rather than a second pass over the data.
+    await pushText(manifestEntry, `},"tableCounts":${JSON.stringify(tableCounts)}}`, true);
+    zip.end();
+    failIfStreamBroken();
+  } catch (error) {
+    // The zip is abandoned mid-entry; terminate so the deflate state and any
+    // worker/stream resources go with it. The error is rethrown, never
+    // converted into a partial archive (AGENTS rule 1).
+    zip.terminate();
+    throw error;
+  }
+
+  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return { bytes, manifest, pdfExcluded };
 }
 
 const backupSchema = z.object({

@@ -68,3 +68,34 @@ export async function storagePersistedStatus(): Promise<boolean | null> {
   if (storage?.persisted === undefined) return null;
   return storage.persisted();
 }
+
+/** Bytes the browser reports as stored, and the allowance it reports them against. */
+export interface StorageUsage {
+  usageBytes: number;
+  quotaBytes: number;
+}
+
+/**
+ * How much of its storage allowance the browser says this origin is using
+ * (S8, docs/17 row 265). Returns `null` — the module's safe default for a
+ * capability the platform lacks, exactly like `storagePersistedStatus` — when
+ * the estimate API is absent (jsdom, older Safari) OR when it answers without
+ * numeric usage/quota: a platform that reports nothing must be shown as
+ * "not available", never as a confident "0 B used".
+ *
+ * A THROW from a PRESENT API is deliberately NOT swallowed: the caller
+ * surfaces it (`toastError`) and shows the unavailable line, so a broken probe
+ * is loud rather than silently indistinguishable from an unsupported browser.
+ *
+ * The numbers are the browser's own ESTIMATE — it pads them for privacy and
+ * rounds them — so every surface that renders them must say they are
+ * approximate (the caller owns that copy).
+ */
+export async function readStorageUsage(): Promise<StorageUsage | null> {
+  const storage = (navigator as { storage?: StorageManager }).storage;
+  if (storage?.estimate === undefined) return null;
+  const estimate = await storage.estimate();
+  const { usage, quota } = estimate;
+  if (typeof usage !== 'number' || typeof quota !== 'number' || quota <= 0) return null;
+  return { usageBytes: usage, quotaBytes: quota };
+}

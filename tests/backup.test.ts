@@ -6,14 +6,28 @@ import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule, saveModule } from '@/db/moduleRepo';
-import { createModule as buildModule, ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
+import {
+  createModule as buildModule,
+  ruleChunkSchema,
+  stampNewEntity,
+  type RuleChunk,
+  type StoredImage,
+} from '@/domain';
 import { db } from '@/db/db';
 import { putChunks } from '@/db/chunkRepo';
 import { searchKeyword } from '@/search/keywordIndex';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { getPersona } from '@/db/personaRepo';
-import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
+import {
+  backupFileName,
+  backupRunWasInterrupted,
+  buildBackup,
+  importBackup,
+  markBackupInFlight,
+  noteBackupSettled,
+  type BackupProgress,
+} from '@/lib/backup';
 import { formatRetiredTableRows } from '@/lib/exportImport';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
@@ -435,6 +449,126 @@ describe('app backup', () => {
     await expect(importBackup(new Uint8Array(corruptZip))).rejects.toThrow();
     // The transaction aborted: nothing was written, not even the wipe.
     expect((await db.campaigns.toArray()).some((row) => row.name === 'Test Campaign')).toBe(false);
+  });
+});
+
+/**
+ * Asynchronous, chunked build (docs/17 row 265). The pins are the PROPERTIES
+ * the synchronous `zipSync` build could not have: the event loop keeps running
+ * while the zip is packed, progress is reported, and a mid-build failure
+ * rejects instead of producing a partial archive.
+ *
+ * jsdom cannot prove real memory pressure or a tab death — this is the node
+ * project, and neither can it. What is pinned here is the yield and the
+ * failure contract; the device is the owner's proof (docs/18 §5).
+ */
+describe('app backup — asynchronous chunked build (row 265)', () => {
+  it('reports progress and yields to the event loop while packing', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Async Ember', system: 'dnd5e' });
+    await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['image-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 4,
+      height: 4,
+      source: 'uploaded',
+    });
+
+    const events: BackupProgress[] = [];
+    let buildSettled = false;
+    let macrotaskRanWhilePacking = false;
+    const build = buildBackup({
+      onProgress: (progress) => {
+        events.push(progress);
+        // Scheduled at the FINAL progress event and checked before the build
+        // settles: only a real macrotask boundary inside the packing tail lets
+        // it run. A synchronous pack (the pre-row-265 `zipSync`) would resolve
+        // first, so `buildSettled` would already be true — this arm is exactly
+        // the differential that pins the yield.
+        if (progress.progress === 1) {
+          setTimeout(() => {
+            if (!buildSettled) macrotaskRanWhilePacking = true;
+          }, 0);
+        }
+      },
+    }).then((file) => {
+      buildSettled = true;
+      return file;
+    });
+    const { bytes } = await build;
+
+    expect(macrotaskRanWhilePacking).toBe(true);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((event) => event.detail.length > 0)).toBe(true);
+    expect(events[events.length - 1]?.progress).toBe(1);
+    // Monotonic: the dock's bar must never jump backwards.
+    const progresses = events.map((event) => event.progress);
+    expect(progresses).toEqual([...progresses].sort((a, b) => a - b));
+    // …and the end product is still a valid single-file backup.
+    expect(Object.keys(unzipSync(bytes))).toContain('campaigner-backup.json');
+  });
+
+  it('streams a valid manifest whose counts equal what the build reports', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Streamed Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Kept note', body: 'x' });
+
+    const { bytes, manifest } = await buildBackup();
+    const entries = unzipSync(bytes);
+    const manifestEntry = entries['campaigner-backup.json'];
+    if (manifestEntry === undefined) throw new Error('streamed backup has no manifest entry');
+    const parsed = JSON.parse(new TextDecoder().decode(manifestEntry)) as {
+      format?: string;
+      tableCounts?: Record<string, number>;
+      data?: Record<string, unknown[]>;
+    };
+
+    expect(parsed.format).toBe('campaigner-backup');
+    expect(parsed.tableCounts).toEqual(manifest.tableCounts);
+    expect(manifest.tableCounts.campaigns).toBe(1);
+    expect(manifest.tableCounts.artifacts).toBe(1);
+    expect(parsed.data?.campaigns).toHaveLength(1);
+    // The empty pdfFiles key is still written: restore's missing-table check
+    // reads the KEY, so an interrupted refactor here would break old restores.
+    expect(parsed.data?.pdfFiles).toEqual([]);
+  });
+
+  it('rejects loudly on a broken image row instead of returning a partial zip', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Broken Ember', system: 'dnd5e' });
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['x'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      source: 'uploaded',
+    });
+    // Corrupt the stored row the way a foreign writer could: no binary payload.
+    await db.images.put({ ...image, bytes: 'not-bytes' } as unknown as StoredImage);
+
+    const events: BackupProgress[] = [];
+    await expect(
+      buildBackup({
+        onProgress: (progress) => {
+          events.push(progress);
+        },
+      }),
+    ).rejects.toThrow(/no binary payload/);
+    // It failed LOUDLY, and only after the build had already made progress —
+    // i.e. the failure came out of the chunked walk, not a pre-flight stub.
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the interrupted-run marker a no-op where localStorage does not exist', () => {
+    // tests/backup.test.ts runs in the DOM-free node project: the marker
+    // helpers must stay importable and silent there (docs/18 §5).
+    expect(() => {
+      markBackupInFlight();
+      noteBackupSettled();
+    }).not.toThrow();
+    expect(backupRunWasInterrupted()).toBe(false);
   });
 });
 
