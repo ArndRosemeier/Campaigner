@@ -17,6 +17,7 @@ import {
   battleSchema,
   campaignSchema,
   collectDependencies,
+  citedChunkIdsFor,
   creatureImageSchema,
   exportDependenciesSchema,
   exportMissingImageSchema,
@@ -192,21 +193,19 @@ export async function buildCampaignExport(
   // advisories for run pins, unmet entries for library npc-refs. The pure
   // `collectDependencies` builder takes injected maps (the
   // `resolveMonsterEntry`/`MonsterLookups` precedent); every Dexie read
-  // happens here, in bulk.
-  const citedChunkIds = new Set<Id>();
+  // happens here, in bulk. WHICH chunks to read is asked of the builder's own
+  // module (`domain/exportDependencies.citedChunkIdsFor`), so this read cannot
+  // fall behind a citation arm the builder knows about (docs/17 row 271).
+  const citedChunkIds = citedChunkIdsFor(withRevisions, runs);
   const npcRefIds = new Set<Id>();
   for (const artifact of withRevisions) {
     if (artifact.kind !== 'encounter') continue;
     for (const entry of artifact.data.monsters) {
-      if (entry.source.type === 'rulebook') citedChunkIds.add(entry.source.chunkId);
-      else if (entry.source.type === 'npc-ref') npcRefIds.add(entry.source.artifactId);
+      if (entry.source.type === 'npc-ref') npcRefIds.add(entry.source.artifactId);
     }
   }
-  for (const run of runs) {
-    for (const chunkId of run.pinnedChunkIds) citedChunkIds.add(chunkId);
-  }
   const [chunkRows, npcRows] = await Promise.all([
-    db.chunks.bulkGet([...citedChunkIds]),
+    db.chunks.bulkGet(citedChunkIds),
     db.artifacts.bulkGet([...npcRefIds]),
   ]);
   const chunksById = new Map(

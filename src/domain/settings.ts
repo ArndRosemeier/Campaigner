@@ -62,10 +62,11 @@ export type CreatureCitationRepairReport = z.infer<typeof creatureCitationRepair
  *
  * `unconverted` is the RETRY WORKLIST, not just a notice: the pointer survives
  * on exactly those rows (the owner-decided failure arm), and a startup retry
- * re-runs the seam so installing the missing pack heals them later. `notified`
- * is what keeps that worklist from re-toasting on every launch — AppShell says
- * the report once and records that it did, while `unconverted` stays readable
- * for the retry.
+ * re-runs the seam so installing the missing pack heals them later. AppShell
+ * says the report ONCE and then keeps ONLY that worklist
+ * (`domain/mobCopyRepair.retainedMobCopyJournal`, docs/17 row 271) — the
+ * upgrade's counts are history once they have been read, and a report with no
+ * worklist left is dropped to `null` entirely.
  */
 export const mobCopyRepairReportSchema = z.object({
   /** Encounter roster mobs whose `rulebook` citation became an authored copy. */
@@ -110,7 +111,10 @@ export type MobCopyRepairReport = z.infer<typeof mobCopyRepairReportSchema>;
  * adoption is an owner-visible change (his encounters now carry their own rows
  * instead of citing the library), so the report states the counts in the open
  * and NAMES every reference it left alone, with the reason. `unresolved` is the
- * retry worklist; `notified` is what keeps it from re-toasting on every launch.
+ * retry worklist; AppShell says the report ONCE and then keeps ONLY that
+ * worklist (`domain/libraryAdoptRepair.retainedLibraryAdoptJournal`, docs/17
+ * row 271) — `adopted` holds the library row ids the copies came from, and it
+ * has no reader once the sentence has been read.
  */
 export const libraryAdoptReportSchema = z.object({
   /** The library rows bound to a campaign COPY in this pass, each with its
@@ -151,6 +155,39 @@ export const libraryAdoptReportSchema = z.object({
 });
 
 export type LibraryAdoptReport = z.infer<typeof libraryAdoptReportSchema>;
+
+/**
+ * WHAT A RETRY JOURNAL KEEPS AFTER THE USER HAS BEEN TOLD (docs/17 row 271,
+ * item B4) — ONE rule for the mob-copy and adoption reports, so the two cannot
+ * drift about what "already said" means.
+ *
+ * Both reports are written by a Dexie upgrade (which cannot toast), read ONCE
+ * by AppShell, and used to be kept forever — `libraryAdopt.adopted[].globalId`
+ * included, i.e. the library row ids the copies came from. `settings` is not
+ * part of a campaign export, so that was never a save/load dependency; it is
+ * still a stored library id the owner's rule does not want lying around, and
+ * the journal should not accumulate.
+ *
+ * The report is HISTORY once it has been said: the counts and the `adopted`
+ * list are dropped (the per-report callers own which fields those are). What
+ * is NOT history is the RETRY WORKLIST (`unconverted`/`unresolved`): the
+ * startup retry is gated on it, and the pointer that heals lives on the DATA
+ * row, not in the report — so keeping the worklist is what lets a pack
+ * installed later still heal the row. `null` therefore means "nothing left to
+ * say and nothing left to heal", while a non-null answer means "keep
+ * retrying"; the old `notified: true` could not carry that distinction, which
+ * is why the journal had to be kept whole and never cleared.
+ *
+ * `retained` answers the report with its history cleared. `notified` is set
+ * HERE so a caller cannot forget it and re-toast on every launch.
+ */
+export function settingsJournalAfterNotify<T extends { notified: boolean }>(
+  worklist: readonly unknown[],
+  retained: () => T,
+): T | null {
+  if (worklist.length === 0) return null;
+  return { ...retained(), notified: true };
+}
 
 /**
  * A creature row the v22 key fold had to DROP because the same creature was
@@ -636,15 +673,17 @@ export const settingsSchema = z.object({
    */
   creatureCitationRepair: creatureCitationRepairReportSchema.nullable().default(null),
   /**
-   * The mob-copy migration report (docs/17 row 248), consumed ONCE by AppShell
-   * (`notified`) and then re-read only by the startup retry, which needs
-   * `unconverted` to know there is still work. `null` = nothing to report.
+   * The mob-copy migration report (docs/17 row 248), consumed ONCE by AppShell,
+   * which then drops the upgrade's history and keeps `unconverted` only while
+   * it still gates the startup retry (docs/17 row 271). `null` = nothing to
+   * report and nothing left to heal.
    */
   mobCopyRepair: mobCopyRepairReportSchema.nullable().default(null),
   /**
-   * The library-ADOPTION report (docs/17 row 257), consumed ONCE by AppShell
-   * (`notified`) and then re-read only by the startup retry, which needs
-   * `unresolved` to know there is still work. `null` = nothing to report.
+   * The library-ADOPTION report (docs/17 row 257), consumed ONCE by AppShell,
+   * which then drops `adopted` (the library row ids) and keeps `unresolved`
+   * only while it still gates the startup retry (docs/17 row 271). `null` =
+   * nothing to report and nothing left to heal.
    */
   libraryAdopt: libraryAdoptReportSchema.nullable().default(null),
   /** First-run setup wizard (see onboardingSchema above). */

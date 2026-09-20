@@ -136,7 +136,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Decide whether a module-owned orphan is deletable (the ONE guard predicate) | `orphanSweep.evaluateOrphanGuards(candidates, input)` (db/orphanSweep.ts — PURE, every input a value the caller already holds): the five guards in their load-bearing order (campaign-wide mention → ambiguity shadow → battle portrait token → frozen seed fighter) plus the SURVIVING-encounter roster pass, returning `refusal`/`null` per candidate with the loud reason text and the `moduleMentionedIds`/`shadowedIds` sets. The sweep assembles the FULL bundle from rows re-listed inside its tx; the panel passes the subset its props can see (`entity-orphans.panelOrphanGuardInput` — `campaignModules: [module]`, no battles), and `orphanOfferView` composes the derivation with the refusals a sweep RETURNED. Both surfaces therefore decide "deletable" with ONE function, pinned per candidate in `tests/features/orphan-offer-agreement.test.ts` | a second walk of the guards at read time (the owner's "Delete 2 orphans" offered two roster-cited creatures the sweep always refuses — ledger 92); a panel-side copy of the mention gate, the battle/outline guards or the roster pass; reading a guard's reason string to decide anything |
 | Delete a module's orphaned entities (the guarded sweep) | `orphanSweep.sweepOrphanedArtifacts` (db/orphanSweep.ts — owns `ORPHAN_KINDS` + the orphan definition; docs/08 §M4-C "Orphaned entities", 14 §7) — ONE rw tx (array form: artifacts, revisions, images, battles, modules, campaigns) that RE-DERIVES candidates from re-listed rows INSIDE the tx (recount) and decides them with the shared `evaluateOrphanGuards` predicate (the seam row above): campaign-wide mentions via UNCAPPED `buildWikiGraph`, ambiguity shadow, battle `tokens[].artifactId` + `seedFighters[].id` on ANY campaign battle, encounter roster `npc-ref`/`mobArtifactId` on any SURVIVING encounter (SAME-module counts — the module survives); per-artifact outcomes `deleted`/`kept`+reason for ONE caller toast; deletes ride the frozen `deleteArtifact` nested (subset scope) | deleting per artifact with an ad-hoc hand-rolled cascade; trusting a dialog count instead of the tx recount; a silent drop of a guarded row |
 | Tag a module's unmentioned entities and offer only what a sweep will delete (read time) | `entity-orphans.deriveModuleOrphans` / `useModuleOrphans` / `orphanOfferView` (features/modules — pure over the panel's EXISTING props `module` + `artifacts`; no live query, no new props): module-owned rows of `ORPHAN_KINDS` with zero resolving wiki-link mentions in THIS module's prose, mentions via `buildWikiGraph` tokens (reader semantics), each row carrying the shared predicate's verdict; ambiguity-shadowed rows stay out of the group; a guard-refused row renders as IN USE with the sweep's own reason and no trash; `orphanOfferView(rows, recordedSweepRefusals)` composes the derivation with the refusals a sweep returned (panel view state), so the count/button/dialog list only what a sweep will delete and a refusal never re-offers the row | `countOccurrences` substring scans; a panel-side campaign-wide copy (the sweep re-derives the gate in-tx); a second orphan predicate outside the sweep's `orphanCandidatesOf`; counting rows a guard refuses (ledger 92) |
-| Describe what an export cites but does not carry (rulebook chunks, library NPCs) | `collectDependencies` (`domain/exportDependencies.ts` — pure, `DependencyLibrary` maps injected; `buildCampaignExport` does the bulk Dexie reads) + the L0(contentHash)/L1(system+title+creature)/L2(chunkId) identity contract (docs/07 M3-E); missing image blobs land on `missingImages` with referrers named, never silently dropped | re-resolving rulebooks at read sites; a second citation-identity scheme |
+| Describe what an export cites but does not carry (rulebook chunks, NPC creature citations, library NPCs) | `collectDependencies` (`domain/exportDependencies.ts` — pure, `DependencyLibrary` maps injected; `buildCampaignExport` does the bulk Dexie reads, and WHICH chunks to read is asked of `citedChunkIdsFor(artifacts, runs)` BESIDE the builder, so a new citation arm there cannot be resolved against a map the caller never filled — docs/17 row 271) + the L0(contentHash)/L1(system+title+creature)/L2(row id, present whenever the citing row named a chunk) identity contract (docs/07 M3-E). ONE `citeCreature` writer serves BOTH chunk-citing arms, because they are the same question: an encounter roster `rulebook` source (converted through `domain/creature.creatureRefForRulebookSource` — the two shapes are the same four fields) and an NPC's legacy `data.creatureRef` (`domain/creature.npcCreatureRef`), with the same three verdicts and the same BLOCKING policy on `missing`. A `creatureRef` that names only a content hash is still NAMED (`citedChunkId` is optional and absent there; the verdict reads the hash), and a COPIED row (no `creatureRef`) contributes nothing. Missing image blobs land on `missingImages` with referrers named, never silently dropped | re-resolving rulebooks at read sites; a second citation-identity scheme; a second citation writer per citing kind; adding a chunk-citing arm without adding it to `citedChunkIdsFor` (the differential pin in `tests/domain/exportDependencies.test.ts` reds that) |
 | Check an export's rulebook deps BEFORE importing it | `analyzeDependencies` (same file — pure, `chunksByHash` pool + `books` injected; `checkImportDependencies` in `lib/exportImport.ts` does the Dexie reads: one `contentHash.anyOf` probe + same-system book chunks) → `importExport`/`importZip` default-abort via `MissingDependenciesError` BEFORE the tx opens (nothing to roll back) for a `missing` citation or an unmet NPC ref ONLY — a `version-drift` (the same book/system/creature under a DIFFERENT hash) does NOT block (docs/17 row 261), and its count rides `ImportResult.driftedCitations`, which the picker toasts via `formatDriftedCitations` because an unblocked fallback may never go silent; rulebook chunkIds are KEPT as-is so `missing ref` markers stay truthful (a drifted citation lands as the named `missing ref` too — the other version's stats are never substituted); pre-stamp entries heal content identity from the manifest (`healRulebookSources` — matched by exporting artifact + cited chunkId, every field gap-only and INDEPENDENTLY: an entry that already has its hash still heals a missing `bookTitle`; docs/17 row 155); the AppShell `MissingRefsBanner` derives from the same `resolveMonsterEntry` contract (banner and badges clear together when byte-identical content is installed — the hash fallback, not the uuid) and reports WHAT is missing per its own seam row below | an ad-hoc hash compare inside the import tx; healing chunkIds to local rows; a toast-only surface; a second healing pass for the book alone; treating a `version-drift` as blocking (it refused exactly the cross-machine import the verdict describes) or unblocking it SILENTLY (the count, the different-version reason and the residual `missing ref` are all reported) |
 | **Persist the standalone Idea Board — ONE app-level document plus its transcript** (docs/21, docs/17 row 173) | `db/ideaBoardRepo`: `getIdeaBoard()` creates the single row INSIDE one rw transaction (two concurrent opens cannot mint two boards), and `saveIdeaBoard(next, expected)` is an in-transaction COMPARE-AND-SWAP against the snapshot the session loaded, so a write another tab already superseded is REFUSED by name instead of silently overwriting it. ONE board is the feature's contract and `domain/ideaBoard.parseIdeaBoards` enforces it (two stored rows refuse loudly rather than being picked or discarded). Additive Dexie v23 (`ideaBoards: 'id, updatedAt'`, no upgrade body). The full-app backup carries it — `ideaBoards` is in `backup.OPTIONAL_TABLES` (a pre-v23 zip restores EMPTY, which is the truth about that database) and `importBackup` validates the rows BEFORE its destructive write — while the campaign EXPORT deliberately does not (the board is app-level, never campaign state) | a second board row or a plain `table.put` without the snapshot check (the lost-update shape); storing the board on `settings` (a preferences row), on a module row (module-owned, and exported with the module), or on an artifact (scope/revision semantics the board must not inherit); a campaign-keyed board table (it would have to be swept by three delete paths and would travel in campaign exports); an auto-retry loop around the refused save (the refusal would be reported forever) |
 | **Read a campaign system's imported SPELL CORPUS — and index it by the ONE comparable name** (docs/17 row 184) | `db/spellRepo.ts` is the ONE spell-corpus read: `loadSpellChunksFor(system)` composes the two rules the app already owns — `db/rulebookRepo.readyBookIds(system)` (the ONE ready-book rule, MOVED here from `search/search.ts` by row 184 and re-exported by `@/search`, so every existing caller is unchanged; a `db` module importing the retrieval barrel was both a layering inversion and a live coupling — three LLM tests mock `@/search` with only `searchRules`, so the imported `readyBookIds` arrived `undefined` and every stat-block run threw) and `chunkRepo.listChunksByType('spell')` (the ONE chunk-type read, docs/17 row 182) — and returns the RAW chunks, so each caller keeps its own loud corrupt-row reporting; the pure projection `domain/spellData.spellCorpusEntries` (a spell chunk → `{ chunkId, name, rank, cantrip, data }`, MOVED down from `features/spells/spell-rows` by row 184's verification because `db`/`llm` importing a FEATURE is the same layering inversion as importing the retrieval barrel; `features/spells/spell-rows` re-exports it so the feature keeps its public surface, and it owns the corrupt-row SKIP whose loud report is `buildSpellRows`'s `data-error` rows); `loadSpellIndexesFor(systems)` is the ONE index builder (`domain/mobSpells.mobSpellIndex`, keyed by `domain/artifactAlias.comparableName`, first-wins) and `statBlockSystems(blocks)` the small collector the two PDF exporters share. Consumers: `features/spells/SpellsPage` (the list), `features/spells/mob-spell-chips` (a stat block's chips), `llm/runEngine.spellLibraryFor` (prompt + validation) and both PDF exporters' async pre-passes | the NOT-Z column: a second `where('chunkType').equals('spell')` or a hand-rolled `status === 'ready' && system === …` filter (the chunk-type read and the ready-book rule are each already single-site); a case-folding `name.trim().toLowerCase()` comparison instead of `comparableName` (the ONE comparable form, docs/18 §2.1); a cached module-scope index that a rules-pack re-import cannot refresh (the run engine reads per LLM step by design); merging two systems' corpora into one index (each system gets its OWN map); **a second ready-book filter** — the two component copies (`bestiary-roster`, `SpawnPicker`) were folded onto `listReadyRulebooks` and `tests/db/ready-book-seam.test.ts` reds the predicate by file (a single book's status BADGE is a different question and is not the needle); **a corpus read that is not scoped to its system or its ready books** — `tests/db/spellRepo.test.ts` seeds a ready PF2E book AND a ready dnd5e book that both carry `spell` chunks and requires each read to return only its own, in BOTH directions (since ledger 194 the dnd5e half is a REAL corpus rather than a probe: the dnd5e adapter imports `type: 'spell'` documents into the same lane, so the scoping pin protects two live lanes), plus the not-ready book's chunk dropped, plus the per-system index (`loadSpellIndexesFor`) and the collector (`statBlockSystems`) — the dispatcher's arm D (`readyBookIds(system)` → `readyBookIds()`) changed this file's bytes and left every OTHER test green, which is why this pin exists. **AMENDED BY REFERENCE (docs/17 row 207): the rule is NOT fully held by the spell corpus alone.** Three GENERATION reads escaped it — the module PARTS rule excerpts (`llm/moduleGen.ruleExcerptSection` called `searchRules` with no `system`), the module creator's bestiary window (`llm/creatorRoster` → `db/creatureRepo.listLibraryCreatures()`) and the CAST that resolves it (`features/modules/entity-batch.libraryCitationForEntity`), so a Pathfinder 2e campaign with a dnd5e book installed could ground, offer and CAST cross-system content. Row 207 closes that seam with ONE optional `system` on the creature pool (`listLibraryCreatures(system)`, filtered by the OWNING BOOK's system) plus `system` in the search options; the spell-corpus rule above is UNCHANGED, and the global Rules page / bestiary browser / wiki-link publisher remain deliberately unscoped |
@@ -2401,6 +2401,51 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+- **BY DESIGN, NOT DEBT (docs/17 row 271, items B3+B7) — snapshots are HISTORY, and three
+  library reads are NAME resolutions.** (a) **`revisions[].snapshot` and `moduleVersions[].snapshot`
+  keep the ids the row was written with**, deliberately: a revision is what the content WAS, and
+  restoring one is an explicit content restore, so stripping pointers on write (or repointing them
+  on restore) would make the history lie and would silently re-scope a module version. The import
+  writes snapshots VERBATIM and the dependency manifest never collected them, so a pre-adoption
+  snapshot restored later can reintroduce a pointer — that is the documented nature of history, not
+  a missed cleanup, and a successor must not "fix" it by rewriting snapshot bytes. (b) **A prose
+  `[[Name]]` wikilink (`lib/wikilinks.ts` — `scopeTier` ranks a campaign row ABOVE a global one,
+  which is also why an adopted copy wins every prose reference without a character of prose being
+  rewritten), a module entity's `bestiary` slot (`domain/module.ts` — a cast REQUEST resolved once
+  by NAME, docs/17 row 248's remaining slice) and a bare stat-block spell name
+  (`domain/mobSpells.mobSpellChips` over the library spell index) resolve by NAME at read time.**
+  They carry no stored id, so no copy can remove them without deleting the feature: a wikilink is
+  the user's prose, the bestiary slot is the model's request, and a spell name is what the stat
+  block prints. This is the honest residual of "campaign data isolated from libraries" — a NAME is
+  not a stored reference, and a copy is not possible. Do not "fix" any of the three by
+  materializing a row, and do not count them as remaining stored references.
+- **OWED, NAMED BY docs/17 row 271 — a battle's board/stage `mapImageId` can still name a LIBRARY
+  image.** `db/battleSeed.resolveMapImageId` falls back to a LINKED location's `coverImageId`
+  (`:104-123`, role `map`) and freezes it onto `board.mapImageId`/`board.stage.mapImageId`
+  (`:464`). When that location is a GLOBAL library row the location IS adopted and its images
+  CLONED, but the battle's frozen map id is not remapped: `domain/libraryAdopt`'s battle collector
+  (`battleLibraryReferenceIds`) enumerates ARTIFACT ids only, and an image id is not an artifact, so
+  `db/libraryAdopt` neither clones it nor repoints the field. Reachability is a PATH proven at the
+  code (a global location with a `map`-role cover plus a battle seeded before adoption); whether it
+  occurred in the owner's data is not measurable from here. NOT FIXED by row 271 because every seam
+  it needs is on that slice's boundary — `domain/libraryAdopt.ts` (the collector),
+  `db/libraryAdopt.ts` (the copy/repoint), `domain/battle.ts` (the typed board) and
+  `db/battleSeed.ts` (the freeze). The fix is a second id space in the adoption seam (clone the
+  library image, repoint the field, name a gone one) and it is a slice of its own; do not treat the
+  board map as isolated until it lands. (See the completeness enumeration below, item 2.)
+- **OWED, NAMED BY docs/17 row 271 — a battle's frozen seed stat block is copied VERBATIM, so a
+  LEGACY citation's bare spell names freeze without their `spellData`.** `db/battleSeed.
+  expandRosterEntries` freezes `resolved.statBlock` onto `seedFighters[].statBlock` (`:242`, `:274`,
+  `:297`) and the card prefers that row (`db/creatureRepo`, the `frozen?.statBlock` arm). For a
+  MIGRATED/COPIED roster entry the block already carries each spell's library payload (docs/17 row
+  255c), so nothing is owed. For a row the v24 migration could NOT convert — its `rulebook` pointer
+  survives — the frozen block is the library chunk's own, with bare names, so those chips still need
+  the library. EVERY `domain/libraryCopy.copyCreatureStats` caller stamps `spellData`
+  (`db/libraryCopy.copyCreatureStatsFromDb`, `db/creatureRepo.castCreatureAsNpc`,
+  `db/mobCopyRepair`, and the `llm/runEngine`, `features/campaign/monster-source` and
+  `features/play/battle/spawn-picker-logic` write paths), so this freeze is the ONE copy path left;
+  it is NOT fixed here because `db/battleSeed.ts` is on row 271's boundary. Same follow-up slice as
+  the image id above. (See the completeness enumeration below, item 10.)
 - **OWED, NAMED BY docs/17 row 266 (the PDF-import reconcile slice) — PACK books are
   NOT reconciled at start-up, and `Retry…` still leaves the failed row behind.**
   (a) `ingest/ingestReconcile.reconcileInterruptedPdfImports` fails `origin === 'pdf'`
@@ -2588,12 +2633,19 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      encounter whose linked location was itself a library row. It is NAMED rather than half-healed: the
      seam builds its image mapping per COPY and drops it, so folding this needs a second (image)
      resolver on the ONE battle rewriter plus a mapping a REUSED copy cannot reconstruct.
+     **STILL OPEN at docs/17 row 271**, which could not take it: the collector, the copier/repointer and
+     the freeze are all on that slice's boundary (`domain/libraryAdopt.ts`, `db/libraryAdopt.ts`,
+     `domain/battle.ts`, `db/battleSeed.ts`). Re-measured there and unchanged.
   3. **The LEGACY roster citations** on a campaign encounter: the `rulebook` arm
      (`domain/mobCopyLegacy.ts:59-64` — `chunkId`, optional `contentHash`, optional `creatureName`, and
      `bookTitle`, which is a display name rather than a resolution key) and the `npc-ref` arm
      (`:54-57`, a campaign artifact id after row 257), plus a DERIVED npc's `creatureRef.chunkId`
      (`domain/artifact.ts:260`). Read-only legacy shapes, kept so stored rows still PARSE; the `rulebook`
-     chunk id is a real library pointer and the v24 migration converts what it can.
+     chunk id is a real library pointer and the v24 migration converts what it can. **docs/17 row 271
+     CLOSED the silent half for the NPC pointer**: `collectDependencies` now takes an NPC arm and an
+     unmet `data.creatureRef` is NAMED and BLOCKING exactly like the roster arm
+     (`citeCreature`/`citedChunkIdsFor`, §2.1), instead of importing with no warning and rendering
+     `missing ref` only afterwards.
   4. **`chunk:<id>` creature keys** — `domain/creature.libraryCreatureKey` (`domain/creature.ts:180-182`)
      embedded in `battle.board.tokens[].creatureKey` / `seedFighters[].creatureKey` and in
      `creatureImages` / `mobPortraits.creatureKey`. DELIBERATE: the token is OPAQUE (docs/17 row 255a)
@@ -2609,8 +2661,15 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      manifest's `pinnedMissing` is advisory too.
   7. **`settings.libraryAdopt`** (`domain/settings.ts:115-151`) — `adopted[].globalId` and
      `unresolved[].name` are library ids BY CONSTRUCTION: the report is the retry worklist and the
-     record of what was adopted from where. Not a dependency (nothing is read through them), but a
-     stored library id.
+     record of what was adopted from where. Not a dependency (nothing is read through them; `settings`
+     is not part of a campaign export), but a stored library id. **docs/17 row 271 (item B4) DROPS the
+     history once AppShell has said the sentence** — `retainedLibraryAdoptJournal` clears `adopted`
+     (and the `repointed` count) and keeps ONLY `unresolved`, because that list gates the startup
+     retry; a report with nothing left to heal is cleared to `null` entirely, so the journal no longer
+     accumulates. The same rule clears `settings.mobCopyRepair` (`retainedMobCopyJournal`), whose
+     `unconverted` list is its retry gate. Both go through ONE decision
+     (`domain/settings.settingsJournalAfterNotify`). A dangling-token/encounter `unresolved[].name` is a
+     gone-row id rather than a resolvable reference, and it survives only while it still gates a retry.
   8. **THE ENTRY POINTS THAT CAN RE-INTRODUCE ONE.** `lib/exportImport.ts:902-911` remaps a battle's
      `encounterArtifactId` / `reseed.encounterArtifactId` through the export's artifact map and FALLS
      BACK to the original id when the encounter was not exported — so a PRE-fix export, or a whole-DB
@@ -2620,6 +2679,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      rather than silently absorbed.
   9. NOT a library row identifier, checked and dismissed: `rulebook.packMeta.sourceId` names a fetch
      SOURCE (a pack recipe), not a library row.
+  10. **The BATTLE'S FROZEN seed stat block** (`db/battleSeed.ts:242`, `:274`, `:297` — `seedFighters[]
+      .statBlock`) is copied VERBATIM from `resolved.statBlock`, so a LEGACY citation's block freezes
+      with BARE spell names and those chips still resolve against the library at render. A
+      MIGRATED/COPIED roster entry's block already carries `spellData` (docs/17 row 255c) so that arm is
+      self-contained; the legacy arm is the ONE copy path that misses it. STILL OPEN at docs/17 row 271
+      (the file is on its boundary); the follow-up is a slice of its own and shares the adoption
+      boundary the image-id item above needs.
 - **CLOSED (docs/17 row 263) — the two comments that promised behaviour the code lacks.** (d)
   `lib/imageIntake`'s JSDoc promised "a fallback to the original blob … when the canvas pipeline is
   unavailable or produces nothing"; there is NO such fallback and there must not be (substituting an

@@ -1,4 +1,4 @@
-import type { LibraryAdoptReport } from '@/domain/settings';
+import { settingsJournalAfterNotify, type LibraryAdoptReport } from '@/domain/settings';
 import { plural } from '@/domain/plural';
 
 /**
@@ -66,4 +66,26 @@ export function formatLibraryAdopt(report: LibraryAdoptReport): string {
     );
   }
   return `${head} ${sentences.join(' ')}`;
+}
+
+/**
+ * WHAT THE ADOPTION JOURNAL KEEPS ONCE THE USER HAS BEEN TOLD (docs/17 row
+ * 271, item B4).
+ *
+ * `null` when every reference has been repointed — nothing left to say,
+ * nothing left to retry. Otherwise the report with its HISTORY dropped
+ * (`adopted`, the library row ids and their copy ids, plus the repoint count)
+ * and its RETRY WORKLIST kept, because the startup retry is gated on that
+ * list. This is the field the owner's rule is really about: `adopted[].
+ * globalId` is a stored library row id, and it has no reader once the
+ * sentence has been read.
+ */
+export function retainedLibraryAdoptJournal(
+  report: LibraryAdoptReport,
+): LibraryAdoptReport | null {
+  return settingsJournalAfterNotify(report.unresolved, () => ({
+    ...report,
+    adopted: [],
+    repointed: 0,
+  }));
 }

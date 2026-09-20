@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { AnyArtifact, Artifact, Id, PersonaRun, Rulebook, RuleChunk } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
+import { creatureRefForRulebookSource, npcCreatureRef, type CreatureRef } from '@/domain/creature';
 import { chunkTypeSchema } from '@/domain/rulebook';
 import { gameSystemSchema } from '@/domain/gameSystem';
 import { rulebookOriginSchema } from '@/domain/rulebook';
@@ -31,10 +32,19 @@ export const exportCitationSchema = z.object({
   artifactId: z.uuid(),
   artifactName: z.string(),
   kind: z.string(),
-  /** The roster entry's display name (what the GM called the monster). */
+  /** The citing row's display name (what the GM called the monster, or the
+   *  NPC's own name for an NPC citation). */
   monsterName: z.string(),
-  /** L2 row identity: the chunk id in the SOURCE database. */
-  citedChunkId: z.uuid(),
+  /**
+   * L2 row identity: the chunk id in the SOURCE database. OPTIONAL because a
+   * citation is only as specific as the row that carries it (docs/17 row 271):
+   * an NPC's legacy `creatureRef` may name a content hash and no chunk id
+   * (`domain/creature.creatureRefIsEmpty` acknowledges exactly that), and the
+   * manifest states what it has rather than inventing an id. The L0/L1
+   * verdicts read `contentHash`/`bookTitle`/`creatureName`, never this field,
+   * so such a citation still clears against a byte-identical install.
+   */
+  citedChunkId: z.uuid().optional(),
   /** The chunk's actual type at export time (expected 'statblock'). */
   chunkType: chunkTypeSchema,
   /** 'resolved' ⇔ chunk and book both found; otherwise the honest gap. */
@@ -457,10 +467,46 @@ export interface DependencyLibrary {
 }
 
 /**
+ * EVERY library chunk id an export cites, for the bulk read that fills
+ * `DependencyLibrary.chunksById` (docs/17 row 271): an encounter roster
+ * entry's legacy `rulebook` source, an NPC's legacy `creatureRef`, and a run's
+ * `pinnedChunkIds`.
+ *
+ * THE ONE enumeration of that question. `collectDependencies` reads the
+ * citations off the rows themselves and is pure, so it cannot perform the read
+ * — this is the caller's half, and it lives HERE, beside the builder, so a new
+ * citation arm added there cannot be resolved against a map this list never
+ * filled (the differential pin in `tests/domain/exportDependencies.test.ts`).
+ * A `creatureRef` that names only a content hash has no row id to enumerate;
+ * its citation carries the hash, which is what the import's L0 verdict reads.
+ */
+export function citedChunkIdsFor(
+  artifacts: readonly Artifact[],
+  runs: readonly PersonaRun[],
+): Id[] {
+  const ids = new Set<Id>();
+  for (const artifact of artifacts) {
+    if (artifact.kind === 'encounter') {
+      for (const entry of artifact.data.monsters) {
+        if (entry.source.type === 'rulebook') ids.add(entry.source.chunkId);
+      }
+    } else if (artifact.kind === 'npc') {
+      const chunkId = npcCreatureRef(artifact)?.chunkId;
+      if (chunkId !== undefined) ids.add(chunkId);
+    }
+  }
+  for (const run of runs) {
+    for (const chunkId of run.pinnedChunkIds) ids.add(chunkId);
+  }
+  return [...ids];
+}
+
+/**
  * Builds the dependency manifest for an export: encounter
- * `source.type === 'rulebook'` entries join chunk → book; run
- * `pinnedChunkIds` become advisory entries; encounter `npc-ref` entries
- * pointing outside the exported set become unmet-library entries.
+ * `source.type === 'rulebook'` entries join chunk → book; an NPC's legacy
+ * `creatureRef` joins the same way (docs/17 row 271); run `pinnedChunkIds`
+ * become advisory entries; encounter `npc-ref` entries pointing outside the
+ * exported set become unmet-library entries.
  *
  * Pure: no IO, no writes — every library fact arrives via `library`. Throws
  * loudly on an inconsistent library (a resolved book with no chunk count)
@@ -492,99 +538,138 @@ export function collectDependencies(
     return heading === undefined || heading === '' ? fallback : heading;
   };
 
-  for (const artifact of artifacts) {
-    if (artifact.kind !== 'encounter') continue;
-    for (const entry of artifact.data.monsters) {
-      if (entry.source.type === 'rulebook') {
-        const chunk = library.chunksById.get(entry.source.chunkId);
-        if (chunk === undefined) {
-          // Dangling citation: the chunk is gone locally, but the entry's
-          // own content-identity stamp (chunk-hash-fallback arc) still
-          // identifies the bytes — carry it so a later import can clear L0
-          // against a byte-identical install (`analyzeDependencies` reads
-          // `contentHash`, never `status`). The status stays honestly
-          // `missing-chunk`: the chunk WAS missing here; the stamp is the
-          // fallback source ONLY on a chunk-join miss (chunk data wins below).
-          citations.push({
-            artifactId: artifact.id,
-            artifactName: artifact.name,
-            kind: artifact.kind,
-            monsterName: entry.name,
-            citedChunkId: entry.source.chunkId,
-            chunkType: 'statblock',
-            status: 'missing-chunk',
-            ...(entry.source.contentHash === undefined
-              ? {}
-              : { contentHash: entry.source.contentHash }),
-            ...(entry.source.creatureName === undefined
-              ? {}
-              : { creatureName: entry.source.creatureName }),
-          });
-          continue;
-        }
-        const book = library.booksById.get(chunk.bookId);
-        if (book === undefined) {
-          citations.push({
-            artifactId: artifact.id,
-            artifactName: artifact.name,
-            kind: artifact.kind,
-            monsterName: entry.name,
-            citedChunkId: chunk.id,
-            chunkType: chunk.chunkType,
-            status: 'missing-book',
-            contentHash: chunk.contentHash,
-          });
-          continue;
-        }
-        citations.push({
-          artifactId: artifact.id,
-          artifactName: artifact.name,
-          kind: artifact.kind,
-          monsterName: entry.name,
-          citedChunkId: chunk.id,
-          chunkType: chunk.chunkType,
-          status: 'resolved',
-          bookTitle: book.title,
-          system: book.system,
-          creatureName: creatureNameOf(chunk, entry.name),
-          contentHash: chunk.contentHash,
-        });
-        recordBookCite(book.id, chunk.id);
-      } else if (entry.source.type === 'npc-ref') {
-        const target = library.artifactsById.get(entry.source.artifactId);
-        if (target === undefined) {
-          unmetLibraryRefs.push({
-            artifactId: artifact.id,
-            artifactName: artifact.name,
-            kind: artifact.kind,
-            monsterName: entry.name,
-            npcArtifactId: entry.source.artifactId,
-            status: 'missing',
-          });
-        } else if (target.campaignId === null) {
-          unmetLibraryRefs.push({
-            artifactId: artifact.id,
-            artifactName: artifact.name,
-            kind: artifact.kind,
-            monsterName: entry.name,
-            npcArtifactId: target.id,
-            npcName: target.name,
-            status: 'global',
-          });
-        } else if (!exportedIds.has(target.id)) {
-          unmetLibraryRefs.push({
-            artifactId: artifact.id,
-            artifactName: artifact.name,
-            kind: artifact.kind,
-            monsterName: entry.name,
-            npcArtifactId: target.id,
-            npcName: target.name,
-            status: 'not-exported',
-          });
-        }
-        // A campaign NPC inside the export resumes fine — no manifest entry.
-      }
+  /**
+   * THE ONE stat-block citation writer (docs/17 row 271). A roster entry's
+   * legacy `rulebook` source and an authored NPC's legacy `creatureRef` are the
+   * SAME four-field citation (`domain/creature.creatureRefForRulebookSource` is
+   * where that equivalence is written down), so both arms ask the library the
+   * same question and go through this one writer: the three verdicts, the
+   * content-identity stamps and the per-book rollup cannot drift between them.
+   *
+   * `owner` is the row that CITES — the encounter or the NPC — and its
+   * id/name/kind are what an import report NAMES, so an unmet NPC citation is
+   * as loud as an unmet roster one. `monsterName` is the citing row's own
+   * display name, the fallback `creatureNameOf` uses when the chunk states no
+   * heading.
+   */
+  const citeCreature = (
+    owner: { id: Id; name: string; kind: string },
+    monsterName: string,
+    citation: CreatureRef,
+  ): void => {
+    const chunkId = citation.chunkId;
+    const chunk = chunkId === undefined ? undefined : library.chunksById.get(chunkId);
+    if (chunk === undefined) {
+      // Dangling citation: the chunk is gone locally, but the citation's own
+      // content-identity stamp (chunk-hash-fallback arc) still identifies the
+      // bytes — carry it so a later import can clear L0 against a
+      // byte-identical install (`analyzeDependencies` reads `contentHash`,
+      // never `status`). The status stays honestly `missing-chunk`: the chunk
+      // WAS missing here; the stamp is the fallback source ONLY on a chunk-join
+      // miss (chunk data wins below). An id-less citation (an NPC
+      // `creatureRef` that names only a hash) has no row id to carry at all,
+      // which is what `citedChunkId` being optional states.
+      citations.push({
+        artifactId: owner.id,
+        artifactName: owner.name,
+        kind: owner.kind,
+        monsterName,
+        ...(chunkId === undefined ? {} : { citedChunkId: chunkId }),
+        chunkType: 'statblock',
+        status: 'missing-chunk',
+        ...(citation.contentHash === undefined ? {} : { contentHash: citation.contentHash }),
+        ...(citation.creatureName === undefined ? {} : { creatureName: citation.creatureName }),
+      });
+      return;
     }
+    const book = library.booksById.get(chunk.bookId);
+    if (book === undefined) {
+      citations.push({
+        artifactId: owner.id,
+        artifactName: owner.name,
+        kind: owner.kind,
+        monsterName,
+        citedChunkId: chunk.id,
+        chunkType: chunk.chunkType,
+        status: 'missing-book',
+        contentHash: chunk.contentHash,
+      });
+      return;
+    }
+    citations.push({
+      artifactId: owner.id,
+      artifactName: owner.name,
+      kind: owner.kind,
+      monsterName,
+      citedChunkId: chunk.id,
+      chunkType: chunk.chunkType,
+      status: 'resolved',
+      bookTitle: book.title,
+      system: book.system,
+      creatureName: creatureNameOf(chunk, monsterName),
+      contentHash: chunk.contentHash,
+    });
+    recordBookCite(book.id, chunk.id);
+  };
+
+  for (const artifact of artifacts) {
+    if (artifact.kind === 'encounter') {
+      for (const entry of artifact.data.monsters) {
+        if (entry.source.type === 'rulebook') {
+          citeCreature(
+            { id: artifact.id, name: artifact.name, kind: artifact.kind },
+            entry.name,
+            creatureRefForRulebookSource(entry.source),
+          );
+        } else if (entry.source.type === 'npc-ref') {
+          const target = library.artifactsById.get(entry.source.artifactId);
+          if (target === undefined) {
+            unmetLibraryRefs.push({
+              artifactId: artifact.id,
+              artifactName: artifact.name,
+              kind: artifact.kind,
+              monsterName: entry.name,
+              npcArtifactId: entry.source.artifactId,
+              status: 'missing',
+            });
+          } else if (target.campaignId === null) {
+            unmetLibraryRefs.push({
+              artifactId: artifact.id,
+              artifactName: artifact.name,
+              kind: artifact.kind,
+              monsterName: entry.name,
+              npcArtifactId: target.id,
+              npcName: target.name,
+              status: 'global',
+            });
+          } else if (!exportedIds.has(target.id)) {
+            unmetLibraryRefs.push({
+              artifactId: artifact.id,
+              artifactName: artifact.name,
+              kind: artifact.kind,
+              monsterName: entry.name,
+              npcArtifactId: target.id,
+              npcName: target.name,
+              status: 'not-exported',
+            });
+          }
+          // A campaign NPC inside the export resumes fine — no manifest entry.
+        }
+      }
+      continue;
+    }
+    // THE NPC ARM (docs/17 row 271). A cast NPC that still carries the legacy
+    // `creatureRef` pointer cites a library creature exactly as a roster
+    // `rulebook` entry does — and this loop used to skip every non-encounter
+    // row, so an unmet one traveled with NO warning and rendered `missing ref`
+    // only after the import. It takes the SAME writer and the SAME policy as
+    // the roster arm (blocking when `missing`), because it is the same
+    // question. A row born under the copy model carries no `creatureRef` and
+    // contributes nothing.
+    if (artifact.kind !== 'npc') continue;
+    const ref = npcCreatureRef(artifact);
+    if (ref === undefined) continue;
+    citeCreature({ id: artifact.id, name: artifact.name, kind: artifact.kind }, artifact.name, ref);
   }
 
   for (const run of runs) {

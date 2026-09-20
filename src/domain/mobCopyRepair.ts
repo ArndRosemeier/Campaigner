@@ -1,4 +1,4 @@
-import type { MobCopyRepairReport } from '@/domain/settings';
+import { settingsJournalAfterNotify, type MobCopyRepairReport } from '@/domain/settings';
 import { plural } from '@/domain/plural';
 
 /**
@@ -71,4 +71,25 @@ export function formatMobCopyRepair(report: MobCopyRepairReport): string {
     );
   }
   return `${head} ${sentences.join(' ')}`;
+}
+
+/**
+ * WHAT THE MOB-COPY JOURNAL KEEPS ONCE THE USER HAS BEEN TOLD (docs/17 row
+ * 271, item B4).
+ *
+ * `null` when no mob is left to heal — nothing left to say, nothing left to
+ * retry. Otherwise the report with its HISTORY dropped (the two upgrade
+ * counts) and its RETRY WORKLIST kept, because the startup retry is gated on
+ * that list and the pointer it heals lives on the row itself. This replaces the
+ * old `{ ...report, notified: true }`, which kept the upgrade's counts — and,
+ * for the adoption report beside it, the library row ids — forever.
+ */
+export function retainedMobCopyJournal(
+  report: MobCopyRepairReport,
+): MobCopyRepairReport | null {
+  return settingsJournalAfterNotify(report.unconverted, () => ({
+    ...report,
+    rosterMobsCopied: 0,
+    npcCreaturesCopied: 0,
+  }));
 }

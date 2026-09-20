@@ -29,8 +29,8 @@ import { useHelpStore } from '@/help/helpStore';
 import { useLibraryCreaturePool } from '@/app/use-library-creatures';
 import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
 import { formatCreatureKeyFold } from '@/domain/creatureKeyFold';
-import { formatLibraryAdopt } from '@/domain/libraryAdoptRepair';
-import { formatMobCopyRepair } from '@/domain/mobCopyRepair';
+import { formatLibraryAdopt, retainedLibraryAdoptJournal } from '@/domain/libraryAdoptRepair';
+import { formatMobCopyRepair, retainedMobCopyJournal } from '@/domain/mobCopyRepair';
 import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
 import { retryMobCopies } from '@/db/mobCopyRetry';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
@@ -179,7 +179,9 @@ export function AppShell(): JSX.Element {
     // The unresolved list doubles as the RETRY WORKLIST (the owner-decided
     // failure arm): those rows deliberately KEPT their pointer, so re-running
     // the seam here copies them the moment the missing pack has been imported.
-    // `notified` keeps that from re-toasting on every launch.
+    // Once the sentence has been said the upgrade's history is DROPPED and only
+    // the worklist survives (docs/17 row 271, `retainedMobCopyJournal`), so the
+    // journal cannot accumulate and no library id outlives its reader.
     void readSettings()
       .then(async (settings) => {
         const pending = settings.mobCopyRepair;
@@ -193,12 +195,12 @@ export function AppShell(): JSX.Element {
           const report = after.mobCopyRepair;
           if (report === null || report.notified) return;
           toastInfo(formatMobCopyRepair(report));
-          await updateSettings({ mobCopyRepair: { ...report, notified: true } });
+          await updateSettings({ mobCopyRepair: retainedMobCopyJournal(report) });
           return;
         }
         if (pending.notified) return;
         toastInfo(formatMobCopyRepair(pending));
-        await updateSettings({ mobCopyRepair: { ...pending, notified: true } });
+        await updateSettings({ mobCopyRepair: retainedMobCopyJournal(pending) });
       })
       .catch((error: unknown) => {
         toastError('Could not report the mob copy migration', error);
@@ -216,8 +218,10 @@ export function AppShell(): JSX.Element {
     //
     // The unresolved list doubles as the RETRY WORKLIST: a library row that was
     // gone at upgrade time left its reference untouched, so re-running the seam
-    // here adopts it the moment the row exists. `notified` keeps the sentence
-    // from repeating on every launch.
+    // here adopts it the moment the row exists. Once the sentence has been said
+    // the `adopted` history (library row ids) is DROPPED and only the worklist
+    // survives (docs/17 row 271, `retainedLibraryAdoptJournal`), so the journal
+    // cannot accumulate.
     void readSettings()
       .then(async (settings) => {
         const pending = settings.libraryAdopt;
@@ -231,12 +235,12 @@ export function AppShell(): JSX.Element {
           const report = after.libraryAdopt;
           if (report === null || report.notified) return;
           toastInfo(formatLibraryAdopt(report));
-          await updateSettings({ libraryAdopt: { ...report, notified: true } });
+          await updateSettings({ libraryAdopt: retainedLibraryAdoptJournal(report) });
           return;
         }
         if (pending.notified) return;
         toastInfo(formatLibraryAdopt(pending));
-        await updateSettings({ libraryAdopt: { ...pending, notified: true } });
+        await updateSettings({ libraryAdopt: retainedLibraryAdoptJournal(pending) });
       })
       .catch((error: unknown) => {
         toastError('Could not report the library adoption migration', error);
