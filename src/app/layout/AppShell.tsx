@@ -22,7 +22,7 @@ import {
 } from '@/lib/backgroundTitle';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { ensurePersistentStorage } from '@/lib/deviceCapabilities';
-import { toastError, toastInfo } from '@/lib/toast';
+import { toastError, toastInfoPersistent } from '@/lib/toast';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
@@ -82,23 +82,63 @@ export function AppShell(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    // THE clean-cut report (docs/17 row 278). The ONE `version(31)` upgrade
-    // body removed every campaign-scoped row BEFORE React mounted, so it could
-    // not toast: it wrote the counts into settings. This reads them ONCE, says
-    // exactly what was removed and what was kept, and nulls the field so a
-    // second launch says nothing. The named count (and the
-    // `libraryLegacyCitationsDropped` instrument) is the whole point — the
-    // owner asked for a clean delete he can SEE, never a silent one.
+    // THE clean-cut report, PINNED AT LAST (docs/17 rows 278 and 280). The ONE
+    // `version(31)` upgrade body removed every campaign-scoped row BEFORE React
+    // mounted, so it could not toast: it wrote the counts into settings. This
+    // reads them, says exactly what was removed and what was kept, and — since
+    // row 280 — KEEPS the report until the owner ACKNOWLEDGES it. The named
+    // count (and the `libraryLegacyCitationsDropped` instrument) is the whole
+    // point: the owner asked for a clean delete he can SEE, never a silent one.
+    //
+    // WHAT WENT WRONG THE FIRST TIME, MEASURED ON HIS ONLY REAL RUN: the notice
+    // was a 4-second `toastInfo` and `settings.cleanCut` was nulled in the same
+    // turn. The first-run wizard auto-opens from ITS OWN effect on the SAME
+    // condition (settings untouched by the purge, so `status` is still 'fresh',
+    // and every campaign row is now gone — `maybeAutoOpenWizard`), so the modal
+    // held the owner's attention while the one sentence a DESTRUCTIVE operation
+    // produces expired, and the record went with it. The cure is the EXISTING
+    // persistent seam (`toastInfoPersistent`): `duration: Infinity` plus
+    // sonner's own close button, so the modal cannot outlast it, and the report
+    // row survives a reload, a crash or a closed tab.
+    //
+    // THE WIZARD INTERACTION, DECIDED (row 280): the two surfaces are
+    // INDEPENDENT and the notice is deliberately NOT deferred behind the wizard.
+    // A purge is exactly when a first-run wizard appears, and deferring would
+    // make the destructive notice conditional on the owner finishing or
+    // dismissing setup — the notice names what was DESTROYED, so a modal must
+    // never be the reason it is unseen. Nothing had to be re-ordered to get
+    // that: the Toaster is an app-level fixed layer above the dialog (sonner's
+    // `z-index: 999999999` vs the dialog's `z-50`), and the wizard only writes
+    // `settings.onboarding` — through `updateSettings`, which MERGES — so
+    // neither opening nor dismissing the wizard can hide or consume this
+    // notice. `tests/app/clean-cut-notice.test.tsx` pins the wizard-open case.
+    //
+    // ACKNOWLEDGED means: the owner activated the notice's own close control
+    // (`toastInfoPersistent`'s `onDismiss`). Nothing else clears the row — not
+    // a reload, not the wizard, not a second launch. A never-seen report is
+    // therefore re-said on every launch until it is seen, and the row itself is
+    // the durable record for as long as that lasts.
+    let active = true;
     void readSettings()
-      .then(async (settings) => {
+      .then((settings) => {
         const report = settings.cleanCut;
-        if (report === null) return;
-        toastInfo(formatCleanCut(report));
-        await updateSettings({ cleanCut: null });
+        if (report === null || !active) return;
+        toastInfoPersistent(formatCleanCut(report), () => {
+          // The owner has seen it. The write rides the ONE settings write
+          // (AGENTS rule 4); a failure is LOUD and leaves the row in place, so
+          // the notice is raised again next launch rather than vanishing
+          // silently (AGENTS rules 1-2).
+          void updateSettings({ cleanCut: null }).catch((error: unknown) => {
+            toastError('Could not record the clean-base notice as seen', error);
+          });
+        });
       })
       .catch((error: unknown) => {
         toastError('Could not report the clean-base update', error);
       });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {

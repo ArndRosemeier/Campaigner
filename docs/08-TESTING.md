@@ -2586,6 +2586,63 @@ declines today. (3) The failed-run-row half of "the evidence survives" is
 asserted only through the `runId`/`errorMessage` the record carries — the Runs
 tab's own rendering is pinned elsewhere and is not re-driven here.
 
+### The clean-cut notice reaches the owner, and the report outlives the mount (docs/17 rows 278/280, docs/18 §2.3)
+
+The row-278 landing pinned the PURGE (`tests/db/clean-cut.test.ts`, through the
+real `version(31)` upgrade) and the SENTENCE (`formatCleanCut`), but nothing
+pinned the WIRING — no test anywhere asserted that a stored report ever becomes
+something the owner can read. The owner's only real run found the gap: the purge
+ran, the report was written inside the same `versionchange` transaction, and he
+still never saw it. The gap's failure mode is SILENCE, which is the class AGENTS
+rules 1–2 forbid, so the missing pin is the defect.
+
+The new family mounts the REAL app shell (`RouterProvider` over
+`createAppRouter()`, fake-indexeddb, `clearDatabase()` per test) rather than the
+effect in isolation, because the defect was an INTERACTION: the same condition
+that raises the notice (`AppShell`'s clean-cut mount effect) auto-opens the
+first-run wizard from its OWN effect, and the notice was a 4-second `toastInfo`
+whose report was nulled in the same turn.
+
+| fact pinned | where |
+|---|---|
+| **The notice is the PERSISTENT seam, and the report SURVIVES the mount**: the sentence is found, sonner's own closer is reachable by ROLE + accessible name, and `readSettings().cleanCut` still equals the stored report | `tests/app/clean-cut-notice.test.tsx` (`says what was removed and KEEPS the report until the owner acknowledges the notice`, NEW) |
+| **Acknowledgement is the ONLY thing that clears it**: activating the closer removes the notice AND nulls the row — the write rides the ONE settings write (`updateSettings`) | same file, same pin (the second half) |
+| **A report the owner never saw is RE-SAID**: unmount + remount on the same browser shows the sentence again with the row intact | `tests/app/clean-cut-notice.test.tsx` (`re-says an unacknowledged report on the NEXT launch…`, NEW) |
+| **The wizard cannot swallow it**: with onboarding `'fresh'` and zero campaigns, the wizard auto-opens AND the notice is delivered with a reachable closer; the wizard's own `settings` write (`Don't show again` → `dismissed`, through the merging `updateSettings`) neither clears nor consumes the report | `tests/app/clean-cut-notice.test.tsx` (`delivers the notice with the wizard OPEN…`, NEW) |
+| **The control**: no report ⇒ no notice, no closer, and nothing cleared — so the assertions above cannot pass vacuously | `tests/app/clean-cut-notice.test.tsx` (`says nothing and writes nothing when there was no clean cut`, NEW) |
+| **ONE persistent-notice mechanism** (AGENTS rule 4, obligation 2): `duration` / `Infinity` and `closeButton` / `true` are each spelled exactly once under `src/` (in `lib/toast.ts`'s `persistentNotice`), and exactly TWO entry points call that builder — a second hand-written persistent notice reds by file | `tests/architecture/one-persistent-toast.test.ts` (NEW, AST source scan) |
+
+**REVERT-PROVEN, three arms, every arm's sha256 printed, no two arms identical,
+each restored byte-identically from an out-of-tree copy** (`.gate-logs/row280-writer/`):
+
+| injection | sha256 before → after | result |
+|---|---|---|
+| **ARM 1 — the durability half reverted**: `AppShell` clears `settings.cleanCut` on the way past (`void updateSettings({ cleanCut: null })` right after raising the notice), exactly the pre-280 behaviour while keeping the persistent seam | `src/app/layout/AppShell.tsx` `89fd2b40…` → `3a1d8303…` → `89fd2b40…` | **RED 3** — every pin that reads the row, each `AssertionError: expected null to deeply equal { campaignsPurged: 3, …(10) }` — with the non-vacuity control **GREEN** |
+| **ARM 2 — the persistence half reverted**: the mount effect raises `toastInfo(...)` (transient) instead of `toastInfoPersistent(...)` — the exact cure reverted, and the fog the wizard hid behind | `src/app/layout/AppShell.tsx` `89fd2b40…` → `5deff085…` → `89fd2b40…` | **RED 2**, both `Unable to find an accessible element with the role "button" and name /^close toast$/i` — the notice-appears half and the **wizard** half — with the re-say pin and the control **GREEN** (the row survives, but nothing can acknowledge it) |
+| **ARM 3 — a SECOND persistent notice born beside the seam** | `src/lib/progress.ts` `d7d11410…` → `3b27a5ea…` → `d7d11410…` | **RED 1**, `expected [ 'src/lib/progress.ts', …(1) ] to deeply equal [ 'src/lib/toast.ts' ]` — the scan names the copy by file |
+
+**A DEFECTIVE ARM, RECORDED RATHER THAN QUIETLY RE-RUN** (the docs/18 §4
+"identical arms are a VOID probe" rule, applied to a different mistake): the
+first ARM 2 attempt swapped only the CALL (`toastInfoPersistent(...)` →
+`toastInfo(...)`) and left the import naming `toastInfoPersistent`, so the effect
+threw a `ReferenceError` into its own `.catch` and no notice was raised at all.
+It reddened the pins for the WRONG reason (`Unable to find an element with the
+text` — the sentence was never raised, instead of "raised but transient"). It was
+re-injected with the import restored and re-run; only the second result is
+evidence.
+
+**UNPROVEN.** (1) jsdom has no layout, so the STACKING claim in `AppShell`'s
+comment — sonner's `z-index: 999999999` over the dialog's `z-50` — is read off
+the shipped CSS, not measured; what the pins measure is that the notice is in the
+DOM, carries a reachable closer by role, is not `aria-hidden`/`inert`, and is not
+inside the dialog. (2) The wizard's own dismissal is driven with a real user
+click, but the owner's actual first-run path (a modal he reads for minutes) is
+not reproducible in jsdom — the persistence, not the layout, is what the cure
+guarantees. (3) A failed acknowledgement write (`updateSettings` rejecting) is
+NOT pinned: the `.catch(toastError)` keeps the row in place by construction, and
+forcing that path would require mocking the settings repo the whole family drives
+for real.
+
 ### The roster path never builds the refused pair (docs/17 row 137, docs/11 §A cited row's REFILL, docs/18 §4)
 
 The owner reported ONE of two encounters failing, with the identical error on a

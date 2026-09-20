@@ -1,4 +1,4 @@
-import { toast } from 'sonner';
+import { toast, type ExternalToast } from 'sonner';
 
 import { humanizeZodIssues, zodIssuesOf } from '@/lib/zodErrorSummary';
 
@@ -101,14 +101,67 @@ export function toastError(message: string, error?: unknown): void {
  * 131) and its failed run row is in the Runs tab — so a dismissed notice is a
  * cleared screen, never a lost reason. `tests/lib/toast-persistent-dismiss.test.tsx`
  * pins both halves.
+ *
+ * THE OPTIONS LIVE HERE ONCE (docs/17 row 280). A persistent notice acquired a
+ * SECOND caller — the clean-cut report, which is a statement of fact rather than
+ * a failure (`toastInfoPersistent`) — so the three options that MAKE a notice
+ * persistent (`duration: Infinity`, `closeButton: true`, and the acknowledgement
+ * hook) moved into `persistentNotice` below. Two hand-written option objects
+ * would drift exactly as the AGENTS centralization rule warns: the next person
+ * to add a persistent notice would copy one of them, and whichever option that
+ * copy missed would be a silent regression in a surface whose whole job is not
+ * to be missed. `tests/lib/toast-persistent-dismiss.test.tsx` holds the
+ * population to this file with a source scan as well as by behaviour.
  */
-export function toastErrorPersistent(message: string, error?: unknown): void {
-  const detail = errorDescription(error);
-  if (detail === undefined) {
-    toast.error(message, { duration: Infinity, closeButton: true });
-  } else {
-    toast.error(message, { duration: Infinity, description: detail, closeButton: true });
+function persistentNotice(
+  level: 'error' | 'info',
+  message: string,
+  description: string | undefined,
+  onAcknowledge?: () => void,
+): void {
+  const options: ExternalToast = { duration: Infinity, closeButton: true };
+  if (description !== undefined) options.description = description;
+  // `onDismiss` — and NOT `onAutoClose` — is the acknowledgement hook: sonner
+  // fires it from the close button's own click handler and from a swipe-out
+  // (`node_modules/sonner/dist/index.mjs:848` / `:772`), i.e. from a deliberate
+  // user dismissal. With `duration: Infinity` the auto-close path never runs.
+  if (onAcknowledge !== undefined) {
+    options.onDismiss = () => {
+      onAcknowledge();
+    };
   }
+  if (level === 'error') {
+    toast.error(message, options);
+  } else {
+    toast.info(message, options);
+  }
+}
+
+export function toastErrorPersistent(message: string, error?: unknown): void {
+  persistentNotice('error', message, errorDescription(error));
+}
+
+/**
+ * A persistent notice that is NOT a failure — it says what the app DID, and it
+ * must not be missed (docs/17 row 280).
+ *
+ * THE OWNER'S REPORT, verbatim from the one real clean cut: he never saw the
+ * sentence naming what was removed, because the notice was a 4-second
+ * `toastInfo` fired on the same mount as the first-run wizard's auto-open, and
+ * `AppShell` cleared `settings.cleanCut` in the same breath — so the ONE
+ * notification a DESTRUCTIVE operation produces expired under a modal and left
+ * no second chance and no record. The fix is not more copy: it is the SAME
+ * persistence the failure seam already has.
+ *
+ * `onAcknowledge` is the caller's record that the owner has SEEN this. It runs
+ * only from a deliberate dismissal, which is why the notice must be raised with
+ * `closeButton: true` — a persistent notice with no reachable closer is a
+ * permanent one (the row-136 defect, `tests/lib/toast-persistent-dismiss.test.tsx`).
+ * The caller owns what acknowledgement means, because only the caller knows
+ * where its durable record lives.
+ */
+export function toastInfoPersistent(message: string, onAcknowledge?: () => void): void {
+  persistentNotice('info', message, undefined, onAcknowledge);
 }
 
 /** Optional one-click follow-up attached to a success toast. */
