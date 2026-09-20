@@ -102,7 +102,7 @@ a query is a `grep` and the answer is a line, not a paragraph.
 | `SESSION` | an actor that may dispatch (id, model, state) |
 | `PROBE` | a read-only agent in flight and the question it answers |
 | `IN-FLIGHT` | a writer: row, session, model, worktree, branch, base, **state**, and the full scope |
-| `LANDED` | a verified landing: row, sha, **the dispatcher's own verification numbers**, what was retired, the note, the docs |
+| `LANDED` | a verified landing: row, sha, **the dispatcher's own verification numbers**, what was retired, the note, the docs. Under the row-252 split the WRITER writes this row with its COMPILE tier, so the DISPATCHER's post-gate board commit adds a `LANDED` record **whose `sha` is the GATED TREE TIP** and whose `verify=` states `GATE GREEN` — `scripts/buildStatus.mjs` reads ONLY those records, so a green gate that never reaches one leaves the deployed badge reading `wip` for a verified build (GUARD `green-reaches-the-badge`, docs/17 row 272) |
 | `QUEUE` | owner requests and known debt not yet dispatched, with the row number reserved |
 | `QUEUE-CLOSED` | a queue line whose scope has been consumed (kept for one screen of history, then dropped) |
 | `TRAP` | a mistake that actually happened, with the rule that prevents it |
