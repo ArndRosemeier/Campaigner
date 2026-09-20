@@ -10,7 +10,13 @@ export default tseslint.config(
     // `worktrees` holds writers' git worktrees (in-repo because /tmp is a
     // per-call read-only tmpfs here and the workspace parent is read-only); an
     // unignored one would be swept into the main tree's lint run.
-    ignores: ['dist', 'coverage', 'node_modules', '.pnpm-home', 'worktrees'],
+    //
+    // `.gate-logs` holds the gate's raw logs AND the evidence the dispatcher
+    // preserves from each retired writer, which includes `.ts`/`.tsx` injection
+    // backups. It was missing here until that evidence broke the lint run with
+    // two parsing errors — the SAME hazard as an unignored worktree, so it gets
+    // the same treatment rather than being worked around by renaming evidence.
+    ignores: ['dist', 'coverage', 'node_modules', '.pnpm-home', 'worktrees', '.gate-logs'],
   },
 
   // Plain JS files (project tooling) — no type information available.

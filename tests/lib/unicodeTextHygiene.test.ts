@@ -313,6 +313,7 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/ingest/packs/pf2e-journal.ts': 2,
     'src/ingest/packs/text.ts': 2,
     'src/ingest/statblock.ts': 11,
+    'src/lib/backup.ts': 1,
     'src/lib/base64.ts': 1,
     'src/lib/encodingHygiene.ts': 3,
     'src/lib/exportImport.ts': 1,
@@ -349,7 +350,9 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
       'the d20 STAT BLOCK vocabulary (Armor Class, Hit Points, Speed, STR/DEX/CON, Challenge, Level) and its numbers — English format keywords by the systems\u2019 own spec. A stat block written with non-ASCII digits MISSES detection (the chunk is simply not classified), it is never corrupted, and a citation that then finds no chunk fails loudly (docs/17 row 155)',
     'src/llm/language.ts':
       'the level-READER pattern (`levelWordsPattern`, docs/17 rows 247 and 253) over the module\u2019s own premise / part prose and over a user\u2019s change instruction: the ASCII digits plus the leading `[A-Za-z0-9_]` lookbehind are the RAW MATERIAL of a level rather than prose to classify. The language assumption this scan hunts is NOT here — the alternation is the UNION of all eleven `GENERATION_LANGUAGES` level words (`LEVEL_WORDS`, machine-enforced complete), CJK included — which is exactly why this file is an ASCII SHAPE and not a bug. Its failure mode is a MISSING level, never corrupted text \u2014 with no exact statement the module\u2019s band BOUNDS the block, and a module-owned run with no band refuses loudly (docs/17 row 247). Residual and accepted: an ASCII-letter lookbehind also declines a kanji immediately prefixing the CJK word (\u201e\u9ad8\u30ec\u30d9\u30eb5\u201c), because the alternative \u2014 a `\\p{L}` lookbehind \u2014 would decline the ordinary CJK spelling `\u30ec\u30d9\u30eb5` itself',
-    'src/lib/base64.ts': 'charCodeAt over a BINARY string (base64 bytes), not over text',
+          'src/lib/backup.ts':
+        'the camelCase SPLITTER for an internal Dexie TABLE NAME (a store name is our own ASCII vocabulary), used to render a display label — never user prose, and nothing is matched or stored from it',
+      'src/lib/base64.ts': 'charCodeAt over a BINARY string (base64 bytes), not over text',
     'src/lib/encodingHygiene.ts':
       'the DEBRIS DETECTOR itself: `?` + two lowercase hex, and the literal `\\uXXXX` escape. ASCII is the POINT — the defect it finds IS a mangled non-ASCII character (docs/18 §2, row 177)',
     'src/lib/exportImport.ts': 'String.fromCharCode byte→binary, the sibling of base64',
