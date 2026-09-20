@@ -16,6 +16,7 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
 import { MissingRefsBanner } from '@/features/campaign/components/missing-refs-banner';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import {
   MISSING_REF_NAME_CAP,
   missingRefsSummary,
@@ -68,9 +69,12 @@ describe('MissingRefsBanner', () => {
     });
     renderBannerAt(campaign.id);
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
-    });
+    // The banner is absent BEFORE the live query settles too, so a bare
+    // `waitFor(null)` returns on its first tick, proves nothing, and then lets
+    // the query's late setState land outside act — which the console guard
+    // fails. The drain is what waits for the READ (docs/17 row 272).
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
   });
 
   it('shows with the Rules link when a rulebook citation dangles', async () => {
@@ -189,11 +193,15 @@ describe('MissingRefsBanner', () => {
     });
     renderBannerAt(campaign.id);
 
-    // The GLOBAL row answered, so no strand is missing.
-    await waitFor(() => {
-      expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
-    });
-    const resolved = await resolveMonsterEntryWithRepos(entry);
+    // The GLOBAL row answered, so no strand is missing — and the raw resolve
+    // await is WRAPPED, not merely followed by a drain: a bare await of a Dexie
+    // read hands the component's liveQuery the window to dispatch its setState
+    // outside act (tests/helpers/flush.ts), which is the leak the full gate
+    // failed here (docs/17 row 272). Draining inside the same act also makes the
+    // negative assertion NON-VACUOUS: the `waitFor(null)` this replaced returned
+    // before the query had run at all, so it proved nothing either way.
+    const resolved = await actDrained(() => resolveMonsterEntryWithRepos(entry));
+    expect(screen.queryByTestId('missing-refs-banner')).toBeNull();
     expect(resolved.missingRef).toBeUndefined();
     expect(resolved.origin).toBe('NPC: Sage of the Vale');
     expect(resolved.statBlock?.ac).toBe(15);

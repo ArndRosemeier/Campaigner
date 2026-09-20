@@ -528,6 +528,21 @@ surface mounts nothing-checked until it does.
   them in `actDrained()` (§Console guard). Under an open Base UI dialog the
   window is wider: the dialog's own transition-reset rAF / unmount timers
   land on the queue too.
+- **A negative `waitFor` proves nothing unless something makes it wait for the
+  READ — reproduced by DELAYING THE CAUSE (the `89e5d71` method), docs/17 row
+  272.** `missing-refs-banner.test.tsx`'s two "stays hidden" pins asserted
+  `waitFor(() => expect(queryByTestId('missing-refs-banner')).toBeNull())`,
+  which passes on its FIRST tick — before the banner's `useLiveQuery` has run at
+  all — so the pin was vacuous AND the query's settled setState landed outside
+  `act`. The full gate red-carded the `GLOBAL library NPC` pin once inside a
+  63-file chunk; it did NOT reproduce in isolation at any MACROtask delay
+  (0/5/20/50ms injected in the banner's own live query), because those let the
+  update land after unmount. ONE injected MICROTASK (`await Promise.resolve()`)
+  makes it deterministic: the PRE-fix test fails on that NAMED pin, and the
+  cured test is green 4/4 under the SAME injection — the raw resolve await
+  wrapped in `actDrained()`, and the hidden-campaign pin draining through
+  `flushAsyncUpdates()` — with every arm's component hash printed and restored
+  byte-identically (`.gate-logs/row272/`). Loading the box was never used.
 
 ## UI coverage matrix (05-UI inventory → tests)
 
