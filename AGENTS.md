@@ -324,7 +324,19 @@ used:
    while lint and typecheck still pass, so it reads as a real regression.
    `pnpm install --offline` fails with `ERR_PNPM_NO_OFFLINE_META`; a plain
    `pnpm install --frozen-lockfile` succeeds in seconds from the local pnpm
-   store. The gate and the suite lock both resolve correctly from inside a
+   store under `danger-full-access` — **but NOT under `workspace-write`, which is
+   a session policy that has been live on this box (MEASURED 2026-09-20, hit by
+   the row-276 writer and re-verified by the CoS): the sandbox ro-binds `/`
+   (`findmnt -T /` → `/dev/vda1 ext4 ro,…`), so the shared store at
+   `~/.local/share/pnpm/store` is READ-ONLY (`touch` there answers `Read-only
+   file system`), `pnpm install` dies `[ERR_SQLITE_ERROR] unable to open
+   database file`, and `pnpm exec` dies in its deps preflight. The MAIN tree is
+   unaffected, because its `node_modules` already lives on the writable
+   workspace. The verified workaround, entirely inside the worktree:
+   hardlink-clone the main tree `node_modules` (`cp -al`) and rewrite
+   `node_modules/.pnpm-workspace-state-v1.json` to name the WORKTREE path. The
+   store is needed only to INSTALL, so with `node_modules` in place `pnpm` runs
+   scripts again, and the gate (which forces `CI=true`) is unaffected.** The gate and the suite lock both resolve correctly from inside a
    worktree (verified: `git rev-parse --git-common-dir` is the SAME absolute path
    from the main tree and from a worktree, which is what makes the lock one lock
    across writers — see the lock derivation in `scripts/gate.sh`).
