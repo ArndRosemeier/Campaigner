@@ -628,9 +628,13 @@ describe('the batch destination check scopes the instruction to the row the run 
     // default responder; only this change run is re-aimed.
     chatMock.mockImplementation((messages) => {
       const raw = JSON.stringify(messages);
-      const text = raw.includes('Fill the StatBlock for')
-        ? JSON.stringify({ ...STAT_BLOCK, level: '5', hp: 42, hpFormula: '9d6 + 9' })
-        : JSON.stringify(AUTHORED_DRAFT);
+      const text = raw.includes('currentLevel')
+        ? // THE INSTRUCTION-LEVEL READ (docs/17 row 289): the model reads the
+          // instruction BEFORE the stat-block call, and its number binds.
+          JSON.stringify({ level: 5, quote: 'making her level 5' })
+        : raw.includes('Fill the StatBlock for')
+          ? JSON.stringify({ ...STAT_BLOCK, level: '5', hp: 42, hpFormula: '9d6 + 9' })
+          : JSON.stringify(AUTHORED_DRAFT);
       return Promise.resolve({ text, modelUsed: TEST_MODEL, fallback: null });
     });
 
@@ -662,8 +666,9 @@ describe('the batch destination check scopes the instruction to the row the run 
     expect(after.data.sourceLine).toBe('Bestiary p.316');
     expect(after.data.originToken).toBe(`chunk:${CHUNK_ID}`);
     // An aimed run's statblock step RAN (the instruction lifted the boundary):
-    // the birth run spent one call, this change spent two (draft + statblock).
-    expect(chatMock).toHaveBeenCalledTimes(3);
+    // the birth run spent one call, this change spent three — the draft, the
+    // instruction-level read (docs/17 row 289) and the stat block.
+    expect(chatMock).toHaveBeenCalledTimes(4);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30_000);
 

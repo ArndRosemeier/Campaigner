@@ -296,6 +296,13 @@ describe('a DIRECT instruction outranks the cast boundary (docs/17 row 284)', ()
     const creature = await seedCitedNpc(campaign);
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(NPC_DRAFT), modelUsed: 'test-model', fallback: null })
+      // THE INSTRUCTION-LEVEL READ (docs/17 row 289): the model reads the
+      // owner's words BEFORE the stat-block call, and its number binds.
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ level: 5, quote: 'making it level 5' }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
       .mockResolvedValueOnce({
         text: JSON.stringify(LEVEL5_STATBLOCK),
         modelUsed: 'test-model',
@@ -313,10 +320,10 @@ describe('a DIRECT instruction outranks the cast boundary (docs/17 row 284)', ()
       expect((await getRun(runId))?.status).toBe('completed');
     });
 
-    // THE BOUNDARY YIELDED: the step RAN (two calls — draft + statblock), where
-    // the same row without an instruction spends one and skips (the sibling pin
-    // above).
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    // THE BOUNDARY YIELDED: the step RAN (three calls — draft, the
+    // instruction-level read, then the stat block), where the same row without
+    // an instruction spends one and skips (the sibling pin above).
+    expect(chatMock).toHaveBeenCalledTimes(3);
     const run = await getRun(runId);
     const statblockStep = run?.steps.find((step) => step.name === 'statblock');
     expect(statblockStep?.status).toBe('done');

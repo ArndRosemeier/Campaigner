@@ -1538,6 +1538,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
         modelUsed: 'test-model',
         fallback: null,
       })
+      // THE INSTRUCTION-LEVEL READ (docs/17 row 289): the model reads the typed
+      // sentence BEFORE the stat-block call, and its answer is what binds.
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ level: 5, quote: 'make this mob a level 5 stat block' }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
       .mockResolvedValueOnce({
         text: JSON.stringify({ ...VALID_STATBLOCK, level: '5', hp: 42 }),
         modelUsed: 'test-model',
@@ -1753,6 +1760,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     chatMock
       .mockResolvedValueOnce({
         text: JSON.stringify({ ...VALID_DRAFT, name: switched.name, needsStatBlock: false }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      // The instruction-level read (docs/17 row 289): the typed sentence is read
+      // by the model here too, so the run reaches its stat block.
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ level: 5, quote: 'make this mob a level 5 stat block' }),
         modelUsed: 'test-model',
         fallback: null,
       })

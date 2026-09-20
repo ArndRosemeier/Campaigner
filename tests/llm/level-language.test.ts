@@ -1,17 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   entityProseLevel,
   firstLevelInText,
-  instructionLevel,
   moduleStatedLevel,
   partyLevelLine,
   partLevelForMention,
   withoutPartyLevelLines,
 } from '@/llm/roomBudget';
+import { readInstructionLevel } from '@/llm/instructionLevel';
 import { LEVEL_WORDS, levelWordsPattern } from '@/llm/language';
 import { GENERATION_LANGUAGES } from '@/domain/settings';
 import type { Module } from '@/domain';
+
+/**
+ * The owner's INSTRUCTION is read by the MODEL, never by the pattern this file's
+ * other arms pin (docs/17 row 289, AGENTS rule 5): the two are different texts
+ * and different questions. `firstLevelInText` reads the app's own MODULE prose;
+ * `readInstructionLevel` reads the GM's human free text through ONE structured,
+ * zod-validated call. The mock below exists so the pinned arm can exercise that
+ * seam without a network.
+ */
+vi.mock('@/llm/openrouter', () => ({
+  chat: vi.fn(),
+  MissingApiKeyError: class MissingApiKeyError extends Error {
+    constructor() {
+      super('No OpenRouter API key configured');
+      this.name = 'MissingApiKeyError';
+    }
+  },
+}));
+
+const chatMock = vi.mocked((await import('@/llm/openrouter')).chat);
+
+afterEach(() => {
+  chatMock.mockReset();
+});
 
 /**
  * THE LEVEL READER READS THE LANGUAGE THE APP GENERATES IN (docs/17 row 253).
@@ -50,6 +74,13 @@ import type { Module } from '@/domain';
  * 6. the reader's two MEASURED false positives are closed (docs/17 row 282):
  *    a level word may not reach across a LINE BREAK to a number, and a non-CJK
  *    word may not abut its digits (`Stufe7`) — CJK keeps its no-separator form.
+ *
+ * SCOPE AFTER docs/17 row 289: this reader now answers ONLY "what level does
+ * the app's own MODULE prose state". The owner's INSTRUCTION is HUMAN free text
+ * and is read by the MODEL (`llm/instructionLevel.readInstructionLevel`, pinned
+ * in `tests/llm/instruction-level.test.ts`); the pre-289
+ * `roomBudget.instructionLevel` wrapper is DELETED, so a regex can never again
+ * be the authority over his words.
  */
 
 /** The module slice `moduleStatedLevel`/`partLevelForMention` read. */
@@ -130,12 +161,34 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
     expect(firstLevelInText('das Niveau der Gruppe')).toBeUndefined();
   });
 
-  it('reads English text whatever the campaign’s language is (the union, not a thread)', () => {
-    // The reader has no language argument at all — that is the design. An
-    // owner typing an English redo instruction about a German module, or an
-    // old English premise, resolves without any caller passing a setting.
-    expect(instructionLevel('redo completely, this time at level 5')).toBe(5);
-    expect(instructionLevel('redo completely, diesmal auf Stufe 5')).toBe(5);
+  it('reads the OWNER’S INSTRUCTION through the MODEL, in any language — the union is the model’s job now (docs/17 row 289)', async () => {
+    // THE PRE-289 PIN WAS `instructionLevel('redo completely, this time at level
+    // 5')` → 5 through the regex. The SUBJECT is live — an instruction must
+    // resolve its level in every language the owner types — but the MECHANISM is
+    // now a structured model read, so the pin is CONVERTED, never deleted. What
+    // survives unchanged is the property that made the vocabulary a UNION in the
+    // first place: the reader has NO language argument, and the owner's words
+    // reach the reader verbatim in whichever language he wrote.
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ level: 5, quote: 'auf Stufe 5' }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    const read = (instruction: string) =>
+      readInstructionLevel({
+        instruction,
+        entityName: 'Marten Graubruch',
+        currentLevel: 3,
+        model: 'test-model',
+        signal: new AbortController().signal,
+      });
+    expect((await read('redo completely, this time at level 5')).level).toBe(5);
+    expect((await read('redo completely, diesmal auf Stufe 5')).level).toBe(5);
+    // BOTH sentences arrived at the model VERBATIM — the German one included,
+    // which the pre-253 English-only pattern could never have read.
+    const contents = chatMock.mock.calls.map((call) => call[0].at(-1)?.content ?? '');
+    expect(contents[0]).toContain('redo completely, this time at level 5');
+    expect(contents[1]).toContain('redo completely, diesmal auf Stufe 5');
     expect(levelWordsPattern().source).not.toContain('undefined');
   });
 

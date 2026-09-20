@@ -162,13 +162,21 @@ export function withoutEntityLevelHintLines(brief: string): string {
 
 /**
  * The FIRST level a piece of text states, in ANY generation language, or
- * `undefined` when it states none — the app's ONE free-text level reader
- * (docs/17 rows 247, 253, 285). Every reader of a level out of PROSE goes
- * through THIS function — two callers:
+ * `undefined` when it states none — the ONE reader of a level out of the app's
+ * own PROSE (docs/17 rows 247, 253, 285). Every reader of a level out of a
+ * MODULE's prose goes through THIS function — one caller:
  *
  * - the NAME-SCOPED prose read (`nameScopedLevel`, the ONE seam the module
- *   prose rung and the legacy brief fallback both ride — docs/17 row 285);
- * - the explicit-instruction reader (`instructionLevel`).
+ *   prose rung and the legacy brief fallback both ride — docs/17 row 285).
+ *
+ * THE OWNER'S INSTRUCTION IS *NOT* READ HERE (docs/17 row 289, AGENTS rule 5).
+ * An instruction is HUMAN free text and is read by a structured, zod-validated
+ * MODEL call (`llm/instructionLevel.readInstructionLevel`); the pattern that
+ * used to answer that question (`instructionLevel` = this function) is DELETED,
+ * because "…level needs to be bumped to 3." resolved nothing through it and a
+ * pattern over human phrasing is the defect the owner banned. What remains here
+ * reads text the APP or its MODULE author generated, where the grammar and the
+ * formatter stay paired.
  *
  * WHY ONE READER, NOT THREE REGEXES. The callers ask the same question of
  * different text, and a second level regex is exactly how the party-level trap
@@ -194,21 +202,6 @@ export function firstLevelInText(text: string): number | undefined {
   if (digits === undefined) return undefined;
   const value = Number(digits);
   return value >= 1 && value <= 20 ? value : undefined;
-}
-
-/**
- * The level an EXPLICIT user instruction fixes, or `undefined` when it fixes
- * none (docs/17 row 247). This is the TOP of the stat-block level precedence:
- * an instruction is the owner speaking about THIS entity right now, so it
- * outranks the module's recorded hint, the module's own prose and the brief.
- *
- * It reads the whole instruction through the ONE text reader, so "make it
- * level 5", "redo completely, this time at level 5" and "level 5" all resolve
- * 5; an instruction that names no level resolves nothing and the module's own
- * sources decide (never an empty string standing in for a level).
- */
-export function instructionLevel(text: string): number | undefined {
-  return firstLevelInText(text);
 }
 
 /**
@@ -259,7 +252,8 @@ export function instructionLevel(text: string): number | undefined {
  * The per-entity channels keep the rest of row 247's honest half: the model's
  * own structured `levelHint` on a record (which the spine prompt already asks
  * for, and which is NAME-SCOPED) and the part's exact level by name above —
- * plus the owner's explicit `instructionLevel`.
+ * plus the owner's explicit instruction, which since docs/17 row 289 is read by
+ * the MODEL (`llm/instructionLevel.readInstructionLevel`), never by a pattern.
  *
  * `name` may be omitted for the SPINE-TIME call, where the module has no parts
  * yet: only source 3 applies, and sources 1–2 genuinely do not exist.

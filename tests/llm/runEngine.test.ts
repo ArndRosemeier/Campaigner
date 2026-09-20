@@ -84,6 +84,16 @@ const VALID_STATBLOCK_AT_7 = { ...VALID_STATBLOCK, level: '7' };
 /** …and at level 5, the owner's mob. */
 const VALID_STATBLOCK_AT_5 = { ...VALID_STATBLOCK, level: '5' };
 
+/**
+ * The INSTRUCTION-LEVEL read's reply (docs/17 row 289): the level the model read
+ * out of the owner's own words, plus the verbatim span it read it from. The
+ * stat-block step makes this call BEFORE its own, so a run carrying an
+ * instruction has ONE extra `chat` call between the draft and the stat block.
+ */
+function instructionReadReply(level: number | null, quote: string | null) {
+  return { text: JSON.stringify({ level, quote }), modelUsed: 'test-model', fallback: null };
+}
+
 const VALID_ENCOUNTER_DRAFT = {
   name: 'Goblin Ambush at the Ford',
   summary: 'A goblin war band contests a river crossing.',
@@ -1103,6 +1113,9 @@ describe('runEngine', () => {
     const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
     chatMock
       .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      // THE INSTRUCTION-LEVEL READ (docs/17 row 289) — the model reads "make it
+      // level 5" BEFORE the stat-block call, and its answer is what binds.
+      .mockResolvedValueOnce(instructionReadReply(5, 'make it level 5'))
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
@@ -1118,24 +1131,228 @@ describe('runEngine', () => {
       { timeout: 20000 },
     );
 
-    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    // The stat-block prompt is the THIRD call: draft, the instruction-level
+    // read, then the block.
+    const statblockPrompt = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
     expect(statblockPrompt).toContain('at level 5');
     expect(statblockPrompt).toContain('the instruction for this change fixes');
     // ONE LEVEL IN THE PROMPT: the contradicted 7 is GONE, paragraph and all.
     expect(statblockPrompt).not.toContain("The module fixes this entity's level: 7");
     expect(statblockPrompt).not.toContain('at level 7');
     // The disagreement is NAMED on the step's existing `notice` field, with the
-    // INSTRUCTION as the winner (not the block wording).
+    // INSTRUCTION as the winner (not the block wording) AND the model's own quote
+    // (docs/17 row 289), so the read is visible and correctable in one step.
     const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
     expect(notice).toContain('The module records level 7 for this entity');
     expect(notice).toContain('your instruction fixes level 5');
+    expect(notice).toContain('read from “make it level 5”');
     expect(notice).not.toContain('its stat block is level');
     // No repair turn was spent: the reply already agreed with the resolution.
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(chatMock).toHaveBeenCalledTimes(3);
     const artifact = await getArtifact(targetId);
     if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
     expect(artifact.data.statBlock?.level).toBe('5');
   }, 20000);
+
+  /**
+   * THE OWNER'S OWN SENTENCE, END TO END (docs/17 row 289) — the exact
+   * regression. His instruction *"…images are preserved, but level needs to be
+   * bumped to 3."* resolved NOTHING through the regex (`instructionLevel` =
+   * `firstLevelInText`: a level word, then whitespace, then digits), so the
+   * chain fell to the entity's MINTED level-1 block, the stat block was BOUND
+   * there, and the prose model wrote the level-3 stats he asked for — his
+   * partial success. The read is now the MODEL's, and it BINDS: the resolved
+   * level reaches the prompt, the notice names the number AND the span the
+   * model read it from, and the row's block really changes.
+   */
+  it('reads the owner’s own sentence through the MODEL and BINDS the level he asked for (docs/17 row 289)', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Vorarbeiter Jost Keil', 1, {
+      statBlock: statBlockSchema.parse({ ...VALID_STATBLOCK, level: '1' }),
+    });
+    chatMock
+      .mockResolvedValueOnce({
+        text: draftReply('Vorarbeiter Jost Keil'),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(instructionReadReply(3, 'level needs to be bumped to 3'))
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_STATBLOCK, level: '3' }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief:
+        'Regenerate the full content of this npc.\n\nAdditional instruction: Keep the description and the images as ' +
+        'they are — images are preserved, but level needs to be bumped to 3.',
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 3');
+    expect(statblockPrompt).toContain('the instruction for this change fixes');
+    // The notice names the number the MODEL read AND the span it read it from,
+    // on the step's EXISTING notice seam (the same one the disagreement uses).
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('your instruction fixes level 3');
+    expect(notice).toContain('read from “level needs to be bumped to 3”');
+    // THE REGRESSION ITSELF: the row's block is the level he asked for, not the
+    // level-1 block the regex-bound chain kept.
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock?.level).toBe('3');
+  }, 20000);
+
+  /**
+   * THE READ IS NAMED EVEN WITH NOTHING TO DISAGREE WITH (docs/17 row 289). A
+   * campaign-owned npc has no minted block and no stored hint, so there is no
+   * `levelDisagreementNotice` sentence — the standalone named read is the ONE
+   * surface that tells the owner which number the model took from his words.
+   */
+  it('names the level it read out of the instruction when no stored hint disagrees (docs/17 row 289)', async () => {
+    const { campaignId, persona } = await seed();
+    const target = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Grix',
+      summary: '',
+      body: '',
+    });
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Grix'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce(instructionReadReply(5, 'make it level 5'))
+      .mockResolvedValueOnce({ text: statReply({ level: '5' }), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'Grix brews in the cellar.\n\nAdditional instruction: make it level 5',
+      targetArtifactId: target.id,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('Your instruction was read as fixing level 5');
+    expect(notice).toContain('“make it level 5”');
+    // The disagreement sentence is NOT there — there was no hint to disagree with.
+    expect(notice).not.toContain('The module records level');
+  }, 20000);
+
+  /**
+   * NO INSTRUCTION ⇒ NO CALL (docs/17 row 289, and the hard constraint that a
+   * run with no instruction behaves byte-identically to today). The read exists
+   * only because the owner used his own words; a run that did not must not pay
+   * for it — the engine's two calls (draft, stat block) are all there are.
+   */
+  it('makes NO instruction-level model call when the run carries no instruction (docs/17 row 289)', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Grix'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply(), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'a goblin alchemist boss for a level 3 party',
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    // EXACTLY the two calls this run always made: draft, then stat block. A read
+    // would be a third.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '').toContain('Fill the StatBlock');
+  }, 20000);
+
+  /**
+   * A FAILED READ IS LOUD AND WRITES NOTHING (docs/17 row 289, AGENTS rule 1):
+   * neither a transport failure nor a reply outside the app's 1..20 domain is
+   * allowed to become "no level" — which would silently bind the block to the
+   * entity's existing level while the instruction asked for another. Both fail
+   * the run with a sentence that names the read, and the row keeps its block.
+   */
+  it('fails the run loudly, and writes nothing, when the instruction-level read fails (docs/17 row 289)', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Vorarbeiter Jost Keil', 1, {
+      statBlock: statBlockSchema.parse({ ...VALID_STATBLOCK, level: '1' }),
+    });
+    const instructionBrief =
+      'Regenerate the full content of this npc.\n\nAdditional instruction: bump the level to 3';
+
+    // ARM ONE — the model call itself fails.
+    chatMock
+      .mockResolvedValueOnce({
+        text: draftReply('Vorarbeiter Jost Keil'),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockRejectedValueOnce(new Error('provider exploded'));
+    const failedRunId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: instructionBrief,
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(failedRunId))?.status).toBe('failed');
+      },
+      { timeout: 20000 },
+    );
+    const failed = await getRun(failedRunId);
+    expect(failed?.errorMessage).toContain("Your instruction's level could not be read by the model");
+    expect(failed?.errorMessage).toContain('provider exploded');
+    expect(failed?.errorMessage).toContain('Nothing was written');
+
+    // ARM TWO — the reply does not satisfy the contract (a level outside 1..20).
+    chatMock
+      .mockResolvedValueOnce({
+        text: draftReply('Vorarbeiter Jost Keil'),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(instructionReadReply(25, 'bump the level to 25'));
+    const invalidRunId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: instructionBrief,
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(invalidRunId))?.status).toBe('failed');
+      },
+      { timeout: 20000 },
+    );
+    expect((await getRun(invalidRunId))?.errorMessage).toContain(
+      "Your instruction's level could not be read by the model",
+    );
+
+    // NOTHING WAS WRITTEN by either failed run: the row still carries its own
+    // level-1 block, never a silent fallback and never a guess.
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock?.level).toBe('1');
+  }, 30000);
 
   /**
    * CLASS E (docs/17 row 285): the last-rung brief fallback is NAME-SCOPED, so a
@@ -1201,6 +1418,8 @@ describe('runEngine', () => {
         modelUsed: 'test-model',
         fallback: null,
       })
+      // THE INSTRUCTION-LEVEL READ (docs/17 row 289), then the block.
+      .mockResolvedValueOnce(instructionReadReply(5, 'making it level 5'))
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
@@ -1219,7 +1438,8 @@ describe('runEngine', () => {
 
     // The instruction's level, not the record's 3, and its own instruction
     // sentence (a user's instruction is not the module's author speaking).
-    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    // THIRD call: draft, the instruction-level read, the block.
+    const statblockPrompt = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
     expect(statblockPrompt).toContain('at level 5');
     expect(statblockPrompt).toContain('the instruction for this change fixes');
     // The step RAN — the veto did not apply — and the row's block is the new one.

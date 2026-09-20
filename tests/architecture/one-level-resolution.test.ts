@@ -69,6 +69,17 @@ import { describe, expect, it } from 'vitest';
  * reader is its ONE caller, so the pre-253 English-only regex is pinned ABSENT
  * rather than renamed: a level word list is a language fact, and a second one
  * is how the reader goes monolingual again (docs/17 row 162 is the same class).
+ *
+ * THE SEVENTH (row 289) is the OWNER'S INSTRUCTION and the end of the pattern
+ * as an authority: his measured sentence *"…images are preserved, but level
+ * needs to be bumped to 3."* resolved NOTHING through `instructionLevel` (a
+ * level word, then whitespace, then digits), so the chain fell to the minted
+ * block and the stat block was bound to the OLD level while the prose model
+ * wrote the level he asked for. The reader is now a structured model call —
+ * `llm/instructionLevel.readInstructionLevel`, defined ONCE and called ONLY by
+ * the engine — and the regex wrapper is DELETED. `firstLevelInText` remains the
+ * ONE reader of a level out of the app's own MODULE prose (the name-scoped
+ * rung, row 285) and is deliberately OUT of the instruction path.
  */
 
 const SRC_DIR = join(process.cwd(), 'src');
@@ -80,6 +91,7 @@ const ROSTER = 'src/llm/encounterRoster.ts';
 const WIKILINKS = 'src/lib/wikilinks.ts';
 const ENTITY_PANEL = 'src/features/modules/entity-panel.tsx';
 const STAT_BLOCK_CARD = 'src/features/campaign/components/stat-block.tsx';
+const INSTRUCTION_LEVEL = 'src/llm/instructionLevel.ts';
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -112,7 +124,7 @@ function filesContaining(needle: string): string[] {
     .map(([file]) => file);
 }
 
-describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => {
+describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', () => {
   it('states the precedence chain at exactly one site, and only in the engine', () => {
     const files = sourceFiles(SRC_DIR);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
@@ -120,9 +132,21 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => 
     expect(
       filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel'),
     ).toEqual([ENGINE]);
-    // The user's instruction is read at that same site, and the module's own
-    // level is consulted there too.
-    expect(filesContaining('instructionLevel(statedInstruction)')).toEqual([ENGINE]);
+    // The user's instruction is read at that same site — BY THE MODEL since
+    // docs/17 row 289. The reader is defined ONCE in its own module and called
+    // ONLY by the engine, and the pre-289 regex wrapper is GONE rather than
+    // renamed: a pattern over the owner's free text may never be the authority
+    // again (AGENTS rule 5), so `export function instructionLevel` is pinned
+    // ABSENT exactly as the pre-253 English-only regex is above.
+    expect(filesContaining('export function instructionLevel')).toEqual([]);
+    expect(filesContaining('export async function readInstructionLevel')).toEqual([
+      INSTRUCTION_LEVEL,
+    ]);
+    expect(
+      filesContaining('readInstructionLevel(')
+        .filter((file) => file !== INSTRUCTION_LEVEL)
+        .sort(),
+    ).toEqual([ENGINE]);
     expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([ENGINE]);
   });
 

@@ -79,6 +79,10 @@ import { getChunksByIds } from '@/db/chunkRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { creatureCopyRefusal } from '@/domain/libraryCopy';
 import { additionalInstructionSection, directInstructionFor } from '@/llm/additionalInstruction';
+// THE owner's instruction is read by the MODEL, never by a pattern (docs/17 row
+// 289, AGENTS rule 5): ONE structured, zod-validated call at the TOP of the
+// stat-block level chain.
+import { readInstructionLevel } from '@/llm/instructionLevel';
 import {
   backgroundActivityLabel,
   clearBackgroundActivity,
@@ -120,11 +124,12 @@ import {
   fixedCastAdvisories,
   fixedCastForEncounter,
   fixedCastSectionFor,
-  // THE ONE free-text level reader and the module's own stated level (docs/17
-  // row 247): every level this step resolves out of prose comes through these,
-  // never a second regex at the call site. Row 285 routes the brief fallback
-  // through `nameScopedLevel`, which is itself the ONE caller of the reader.
-  instructionLevel,
+  // THE ONE reader of a level out of the app's own PROSE and the module's own
+  // stated level (docs/17 rows 247/253/285): every level this step resolves out
+  // of generated text comes through these, never a second regex at the call
+  // site. Row 285 routes the brief fallback through `nameScopedLevel`, which is
+  // itself the ONE caller of the reader. The OWNER'S INSTRUCTION is deliberately
+  // NOT here: since docs/17 row 289 it is read by the MODEL, not a pattern.
   moduleStatedLevel,
   // The ONE name-scoped prose read (docs/17 row 285): the legacy brief
   // fallback reads the sentence around the FIGURE'S NAME, so a level about
@@ -761,11 +766,18 @@ function statBlockLevelIssue(
  * module fixes this entity's level: N." paragraph in the prompt while the clause
  * stated the instruction's number — TWO levels in one prompt, the exact class
  * row 282 fixed for the block.
+ *
+ * ROW 289 CARRIES THE MODEL'S OWN QUOTE on the instruction arm: the instruction's
+ * number is now READ BY THE MODEL, so the sentence that names it also quotes the
+ * span it was read from (`instructionLevelReadNotice` says the same when there is
+ * no disagreement to report) — a wrong read is visible and correctable in one
+ * step, which is the half that makes a model read acceptable (AGENTS rule 5).
  */
 function levelHintDisagreementNotice(
   hint: number,
   winnerPrinted: string,
   winnerSource: 'block' | 'instruction',
+  instructionQuote: string | null = null,
 ): string {
   const lead = `The module records level ${String(hint)} for this entity, but `;
   return winnerSource === 'block'
@@ -774,8 +786,31 @@ function levelHintDisagreementNotice(
         `a mob's stat block is the one source of truth about its level, so the recorded level was not used. ` +
         `Regenerate with an explicit level instruction to change the block.`
     : lead +
-        `your instruction fixes level ${winnerPrinted} — ` +
+        `your instruction fixes level ${winnerPrinted}${
+          instructionQuote === null ? '' : ` (read from “${instructionQuote}”)`
+        } — ` +
         `a direct instruction is the owner speaking about this entity now, so the recorded level was not used.`;
+}
+
+/**
+ * WHAT THE MODEL READ OUT OF THE OWNER'S OWN WORDS (docs/17 row 289) — the
+ * notice that makes a model-backed read acceptable: the number that BINDS the
+ * stat block is named, with the verbatim span it was read from, on the run
+ * step's EXISTING `notice` surface (no second mechanism). Emitted only when the
+ * level really came from the instruction AND no stored-hint disagreement already
+ * named it, so the owner never reads two sentences about one number.
+ *
+ * A read that honestly found NO level emits nothing here: there is no number to
+ * name, the chain falls to the entity's block/hint and the module's statement
+ * exactly as before, and the step's other notices still speak. A read that
+ * FAILED never reaches this function at all — it throws, and the run fails with
+ * the sentence `llm/instructionLevel` composed (rule 1: never a silent "no
+ * level").
+ */
+function instructionLevelReadNotice(level: number, quote: string | null): string {
+  return quote === null
+    ? `Your instruction was read as fixing level ${String(level)}.`
+    : `Your instruction was read as fixing level ${String(level)} — “${quote}”.`;
 }
 
 /**
@@ -3949,7 +3984,11 @@ export class RunEngine {
     // (below):
     //
     // 1. the USER'S EXPLICIT INSTRUCTION — the owner speaking about this entity
-    //    right now outranks everything the data says;
+    //    right now outranks everything the data says. IT IS READ BY THE MODEL
+    //    (docs/17 row 289, AGENTS rule 5), never by a pattern: the number the
+    //    owner asked for is named back on this step's `notice` seam, and a
+    //    failed read is LOUD rather than a silent "no level" (the regex that
+    //    used to answer this resolved NOTHING for "…needs to be bumped to 3.");
     // 2. the entity's OWN MINTED STAT BLOCK, when it already has one — the block
     //    is the one source of truth about a mob's level (docs/17 row 282), so a
     //    stored hint it contradicts must not steer the regeneration back to the
@@ -3983,7 +4022,6 @@ export class RunEngine {
     // artifact editor's "Regenerate with AI" hand-off rebuilt the input from
     // scratch without `entityLevelHint` and its level clause came out EMPTY —
     // the owner's 7 → 13 regression, with no notice at all.
-    const explicitLevel = instructionLevel(statedInstruction);
     // THE MINTED BLOCK's level, read through the ONE reader (`mobLevelFor`, the
     // SAME one the panel's chip and the stat-block card use). `'—'` and an
     // unreadable level read as NO level, so they can never win this chain.
@@ -3992,6 +4030,31 @@ export class RunEngine {
       mintedBlockText === undefined ? undefined : parseLevelSort(mintedBlockText);
     const storedHint = input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint;
     const recordedLevel = mintedBlockLevel ?? storedHint;
+    // SOURCE 1 — THE OWNER'S INSTRUCTION IS READ BY THE MODEL (docs/17 row 289,
+    // AGENTS rule 5: free text is never parsed by a pattern). NO INSTRUCTION ⇒
+    // NO CALL: a run that asked for nothing in its own words makes exactly the
+    // calls and bytes it always did, byte-identically. The read is handed the
+    // entity's NAME and the CURRENT level (`recordedLevel` — the entity's own
+    // block/hint, not the module's statement) so a RELATIVE request ("bump it up
+    // two levels", "zwei Stufen höher") resolves against the number the owner is
+    // looking at. A thrown / malformed / schema-invalid reply is deliberately
+    // NOT caught here: the run FAILS with the sentence `readInstructionLevel`
+    // composed, because a failed read quietly becoming "no level" is the exact
+    // partial success this slice removes (rule 1). A successful `null` is the
+    // model's honest answer that the instruction asks for no level, and it
+    // leaves the chain below to the block/hint/module exactly as today.
+    const instructionRead =
+      statedInstruction === ''
+        ? null
+        : await readInstructionLevel({
+            instruction: statedInstruction,
+            entityName: asString(draft?.name),
+            currentLevel: recordedLevel ?? null,
+            model: resolveChatModel(settings, input.persona.model),
+            reasoningEffort: settings.defaultReasoningEffort,
+            signal,
+          });
+    const explicitLevel = instructionRead?.level ?? undefined;
     const placementModule =
       input.placementModuleId === undefined ? undefined : await getModule(input.placementModuleId);
     const moduleLevel =
@@ -4036,6 +4099,10 @@ export class RunEngine {
             storedHint,
             winningPrinted,
             explicitLevel !== undefined ? 'instruction' : 'block',
+            // The MODEL's own quote rides the instruction arm (docs/17 row 289):
+            // the sentence that names the number also shows the span it was read
+            // from, so a wrong read is visible and correctable in one step.
+            instructionRead?.quote ?? null,
           )
         : null;
     // THE BRIEF THE STAT-BLOCK STEP READS. When a source above the stored hint
@@ -4346,6 +4413,14 @@ export class RunEngine {
       // The stored hint lost to the minted block (docs/17 row 282) — the same
       // existing notice list, so the disagreement is never silent.
       levelDisagreement,
+      // WHAT THE MODEL READ OUT OF THE OWNER'S WORDS (docs/17 row 289) — the
+      // same EXISTING notice list, and only when no disagreement above already
+      // named the number, so one number never gets two sentences. This is the
+      // half that makes a model-backed read acceptable: a wrong read is visible
+      // and correctable in one step.
+      levelDisagreement === null && instructionRead?.level != null
+        ? instructionLevelReadNotice(instructionRead.level, instructionRead.quote)
+        : null,
       // A direct instruction authored numbers onto a cast creature (docs/17 row
       // 284) — named on the SAME notice list, so the transition is never silent.
       castAuthoringNotice,
