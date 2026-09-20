@@ -49,7 +49,7 @@ const DECISIONS: Record<string, SiteDecision> = {
   'src/llm/runEngine.ts': {
     decision: 'record',
     reason:
-      'the run funnel: executeFrom records through recordChatModelInUse when resolveChatModel(settings, persona.model) === settings.defaultChatModel. Its other five resolveChatModel( sites are run steps reached only through that funnel (runVisionDungeonMap included), so they need no second call; a persona-override or image-mode run is excluded by the funnel comparison itself',
+      'the run funnel: executeFrom records through recordChatModelInUse when resolveChatModel(settings, persona.model) === settings.defaultChatModel. Its other six resolveChatModel( sites are run steps reached only through that funnel (runVisionDungeonMap included, and the statblock step\'s instruction-level read added by docs/17 row 289 with them), so they need no second call; a persona-override or image-mode run is excluded by the funnel comparison itself',
   },
   'src/llm/moduleGen.ts': {
     decision: 'record',
@@ -132,7 +132,7 @@ const RESOLUTION_POPULATION: Record<string, { resolveChatModel: number; defaultC
   'src/llm/modelFallback.ts': { resolveChatModel: 1, defaultChatModel: 2 },
   'src/llm/moduleGen.ts': { resolveChatModel: 0, defaultChatModel: 15 },
   'src/llm/modulePlan.ts': { resolveChatModel: 0, defaultChatModel: 2 },
-  'src/llm/runEngine.ts': { resolveChatModel: 6, defaultChatModel: 1 },
+  'src/llm/runEngine.ts': { resolveChatModel: 7, defaultChatModel: 1 },
 };
 
 /** The ONE in-use recording seam's call population (its definition counts). */
