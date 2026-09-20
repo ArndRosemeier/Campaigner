@@ -14,6 +14,7 @@ import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
 import { reconcileInterruptedModuleGens } from '@/llm/moduleGenReconcile';
+import { reconcileInterruptedPdfImports } from '@/ingest/ingestReconcile';
 import { onPageResumed } from '@/lib/pageLiveness';
 import {
   applyBackgroundTitle,
@@ -282,6 +283,18 @@ export function AppShell(): JSX.Element {
     // never touching a row a live pass (or another tab's lock) still owns.
     void reconcileInterruptedModuleGens().catch((error: unknown) => {
       toastError('Could not reconcile interrupted module generations', error);
+    });
+    // The rulebook twin (docs/17 row 266): a PDF import creates its row BEFORE
+    // the extraction, so a tab reloaded or discarded mid-import left a book
+    // reading 'processing…' forever — and the Rules page offers its Retry…
+    // control only for 'error', so nothing could move the row. Start is the
+    // load-bearing moment (a discarded tab RELOADS, and this page has started
+    // no import yet); it is deliberately NOT wired to `onPageResumed` below,
+    // because a merely suspended tab resumes its OWN extraction and failing
+    // that row would invent the defect this removes. The write is loud and
+    // leaves a row another tab holds the ingest lease on alone.
+    void reconcileInterruptedPdfImports().catch((error: unknown) => {
+      toastError('Could not reconcile interrupted PDF imports', error);
     });
     // Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
     // Seeding after mount (not in main.tsx) so failures surface as toasts.

@@ -12,6 +12,7 @@ import type * as IngestFiles from '@/ingest/ingestFiles';
 import { defaultSettings, newId, ruleChunkSchema, spellDataSchema, type RuleChunk } from '@/domain';
 import { saveSettings } from '@/db/settingsRepo';
 import { createPackBook, createRulebook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
+import { INTERRUPTED_PDF_IMPORT_MESSAGE } from '@/ingest/ingestReconcile';
 import { putChunks } from '@/db/chunkRepo';
 import { clearDatabase } from './db/helpers';
 import { expectBlockedReason, expectBlockedReasonMenuItem } from './helpers/blocked-reason';
@@ -242,6 +243,46 @@ describe('rules screen', () => {
     const { listRulebooks } = await import('@/db/rulebookRepo');
     expect(await listRulebooks()).toHaveLength(0);
     expect(await db.chunks.count()).toBe(0);
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('re-imports from a reconciled interrupted import (the retry path from the wedged state)', async () => {
+    // The row exactly as the start-up reconcile leaves it (docs/17 row 266):
+    // 'error' with the named sentence, which is the status this menu item is
+    // shown on — before the reconcile the same row said `processing…` and
+    // offered NOTHING, which is the defect.
+    const wedged = await createRulebook({
+      title: 'torn-scan',
+      system: 'generic-d20',
+      filename: 'torn.pdf',
+    });
+    await updateRulebook(wedged.id, {
+      status: 'error',
+      errorMessage: INTERRUPTED_PDF_IMPORT_MESSAGE,
+    });
+
+    renderAppAt(ROUTES.rules);
+
+    const title = await screen.findByText('torn-scan', {}, { timeout: 10000 });
+    const card = title.closest('li') as HTMLElement;
+    expect(within(card).getByText(INTERRUPTED_PDF_IMPORT_MESSAGE)).toBeInTheDocument();
+
+    // Retry… is the row's way forward, and it is NOT gated by the import flag.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Menu for torn-scan' }));
+    await screen.findByTestId(`retry-book-${wedged.id}`, {}, { timeout: 10000 });
+
+    // Choosing the PDF (the hidden input the menu item clicks) re-imports it
+    // through the REAL ingest — the recovery actually recovers.
+    const retryInput = card.querySelector('input[type="file"]');
+    if (retryInput === null) throw new Error('the retry file input is missing');
+    Object.defineProperty(retryInput, 'files', { value: [fixtureFile()] });
+    fireEvent.change(retryInput);
+
+    expect(await screen.findByText(/Re-imported “sample-rulebook”/, {}, { timeout: 15000 })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('sample-rulebook')).toBeInTheDocument();
+    }, { timeout: 15000 });
     await flushAsyncUpdates();
   }, 30000);
 

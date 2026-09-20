@@ -5,6 +5,7 @@ import { ruleChunkSchema, type Rulebook } from '@/domain/rulebook';
 import { putChunks } from '@/db/chunkRepo';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
+import { ingestLockName, withGenerationLock } from '@/lib/generationLocks';
 import { runIngestPipeline } from '@/ingest/pipeline';
 import type { IngestRequest, IngestResponse } from '@/workers/ingest.worker';
 import { errorMessage } from '@/lib/errors';
@@ -17,6 +18,15 @@ import { errorMessage } from '@/lib/errors';
  * in-app viewer renders them; retention happens here, never via a later
  * attach: there is no path that hands a file to an existing book).
  * Environments without Worker (tests) run the same pipeline inline.
+ *
+ * THE FILE IS READ ONCE (docs/17 row 266). `ingestBuffers` is the ONE place
+ * that decides which buffer the pipeline consumes, so a large PDF is held in
+ * THIS thread exactly once for the whole extraction — the pre-266 shape took
+ * `arrayBuffer.slice(0)` up front and kept two full copies alive on the main
+ * thread for minutes, which is the memory an iPad tab suspension is made of.
+ * The extraction also holds the ingest lease (`lib/generationLocks`), which
+ * makes the row's `'processing'` status a claim another tab's start-up
+ * reconciler can check rather than guess at (docs/17 row 266).
  */
 
 export interface IngestProgress {
@@ -30,6 +40,34 @@ export interface IngestResult {
   chunkCount: number;
   /** Pages with no extractable text (scanned PDFs) — the UI warns when > 0. */
   emptyPages: number;
+}
+
+/**
+ * The ONE decision about which buffer the pipeline is handed (docs/17 row
+ * 266) — pure, so the "held once" property is testable without a device.
+ *
+ * `retained` is the single main-thread copy of the PDF and is what `pdfFiles`
+ * stores on success. `pipeline` is what the extraction consumes:
+ *
+ * - WITH a Worker, it is that SAME buffer — `postMessage` without a transfer
+ *   list STRUCTURED-CLONES it, so the worker (and pdfjs inside it) detaches
+ *   its own clone and this thread's copy survives untouched. No copy is made
+ *   here.
+ * - WITHOUT a Worker (tests, older browsers) pdfjs runs IN this thread and
+ *   transfers the buffer it is given to its own worker, DETACHING it — so the
+ *   in-process path hands over a copy, and only then. One extra copy in an
+ *   environment with no worker boundary is inherent; an extra copy in the
+ *   production worker path is the double-hold this slice removes.
+ */
+export interface IngestBuffers {
+  retained: Uint8Array<ArrayBuffer>;
+  pipeline: ArrayBuffer;
+}
+
+export function ingestBuffers(bytes: Uint8Array<ArrayBuffer>, inWorker: boolean): IngestBuffers {
+  if (inWorker) return { retained: bytes, pipeline: bytes.buffer };
+  const copy = bytes.slice();
+  return { retained: bytes, pipeline: copy.buffer };
 }
 
 /** Strips the .pdf extension for the default book title. */
@@ -49,11 +87,11 @@ export async function ingestPdf(
     const capMb = Math.round(PDF_MAX_BYTES / (1024 * 1024));
     throw new Error(`"${file.name}" is ${String(mb)} MB — the per-PDF import limit is ${String(capMb)} MB`);
   }
-  const arrayBuffer = await file.arrayBuffer();
-  // pdfjs TRANSFERS the buffer to its worker during extraction (the original
-  // arrives detached — "Cannot perform Construct on a detached ArrayBuffer"),
-  // so the retained copy is taken BEFORE the pipeline runs.
-  const retainedBytes = new Uint8Array(arrayBuffer.slice(0));
+  // ONE read, ONE main-thread copy (docs/17 row 266): the read buffer is what
+  // gets retained, and `ingestBuffers` decides what the pipeline consumes.
+  const retainedBytes = new Uint8Array(await file.arrayBuffer());
+  const inWorker = typeof Worker !== 'undefined';
+  const { pipeline } = ingestBuffers(retainedBytes, inWorker);
   const book = await createRulebook({
     title: titleFromFilename(file.name),
     system,
@@ -66,35 +104,41 @@ export async function ingestPdf(
   };
 
   try {
-    const result =
-      typeof Worker === 'undefined'
-        ? await runIngestPipeline(arrayBuffer, system, trackProgress)
-        : await runInWorker({ bookId: book.id, arrayBuffer, system }, trackProgress);
+    // The ingest LEASE (docs/17 row 266) is held across the extraction AND
+    // the persistence, so `ingest/ingestReconcile` can tell a live import
+    // (this page or another tab) from a row a discarded tab left behind.
+    // Advisory, like every generation lock: with no Web Locks API the work
+    // runs directly and the reconcile's guard is the status re-read alone.
+    return await withGenerationLock(ingestLockName(book.id), async () => {
+      const result = inWorker
+        ? await runInWorker({ bookId: book.id, arrayBuffer: pipeline, system }, trackProgress)
+        : await runIngestPipeline(pipeline, system, trackProgress);
 
-    const base = Date.now();
-    const chunks = result.chunks.map((draft, index) =>
-      ruleChunkSchema.parse({
-        ...draft,
-        ...stampNewEntity(base + index),
+      const base = Date.now();
+      const chunks = result.chunks.map((draft, index) =>
+        ruleChunkSchema.parse({
+          ...draft,
+          ...stampNewEntity(base + index),
+          bookId: book.id,
+        }),
+      );
+      await putChunks(chunks);
+      // Retain the original bytes (source-viewers arc): the ONE copy read
+      // above, written after the chunks persist so a failed run leaves no
+      // bytes behind. Re-ingest replaces via the `&bookId` unique index — one
+      // row per book, always.
+      await putBookPdf({
         bookId: book.id,
-      }),
-    );
-    await putChunks(chunks);
-    // Retain the original bytes (source-viewers arc): the copy taken before
-    // the pipeline, written after the chunks persist so a failed run leaves
-    // no bytes behind. Re-ingest replaces via the `&bookId` unique index —
-    // one row per book, always.
-    await putBookPdf({
-      bookId: book.id,
-      bytes: retainedBytes,
-      filename: file.name,
-      mimeType: file.type === '' ? 'application/pdf' : file.type,
+        bytes: retainedBytes,
+        filename: file.name,
+        mimeType: file.type === '' ? 'application/pdf' : file.type,
+      });
+      const ready = await updateRulebook(book.id, {
+        status: 'ready',
+        pageCount: result.pageCount,
+      });
+      return { book: ready, chunkCount: chunks.length, emptyPages: result.emptyPages };
     });
-    const ready = await updateRulebook(book.id, {
-      status: 'ready',
-      pageCount: result.pageCount,
-    });
-    return { book: ready, chunkCount: chunks.length, emptyPages: result.emptyPages };
   } catch (error) {
     const message = errorMessage(error);
     await updateRulebook(book.id, { status: 'error', errorMessage: message });

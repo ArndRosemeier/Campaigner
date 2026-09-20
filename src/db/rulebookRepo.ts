@@ -160,6 +160,58 @@ export async function updateRulebook(id: string, patch: RulebookPatch): Promise<
 }
 
 /**
+ * Every PDF-origin book whose persisted status is `'processing'` (docs/17 row
+ * 266) — the population the start-up reconcile owns.
+ *
+ * The `status` INDEX is read (the table carries one), and the `origin` split
+ * is applied after the parse because a pack book is NOT a PDF import: it has
+ * no file to re-select, so the PDF recovery sentence would be a lie on it.
+ * Pack rows are reconciled by their own slice (see docs/18 §5).
+ */
+export async function listProcessingPdfBooks(): Promise<Rulebook[]> {
+  const rows = await db.rulebooks.where('status').equals('processing').toArray();
+  return rows.map(parseRulebookRow).filter((book) => book.origin === 'pdf');
+}
+
+/**
+ * The interrupted-import reconcile write (docs/17 row 266): marks a PDF book
+ * whose row still says `'processing'` as `'error'` with `errorMessage`, which
+ * is the status the Rules page already offers its `Retry…` control on — so
+ * the row stops being a forever-`processing…` card and becomes a named
+ * failure with a way forward.
+ *
+ * The status and origin are re-read INSIDE the transaction, so a pipeline
+ * that finished between the reconcile's read and this write (or a row that
+ * was never an import) is left alone: the write is idempotent, and after it
+ * lands the row is no longer `'processing'`.
+ *
+ * Returns the failed row, or `undefined` when there was nothing to fail. The
+ * CROSS-TAB lease is deliberately NOT read here (it is async, and the module
+ * twin's in-transaction predicate exists for a page-local registry this row
+ * type has none of) — the caller reads `isGenerationLockHeld` before opening
+ * the transaction; see `ingest/ingestReconcile`.
+ */
+export async function failInterruptedPdfImport(
+  id: Id,
+  errorMessage: string,
+): Promise<Rulebook | undefined> {
+  return db.transaction('rw', db.rulebooks, async () => {
+    const current = await db.rulebooks.get(id);
+    if (current === undefined) return undefined;
+    const book = parseRulebookRow(current);
+    if (book.status !== 'processing' || book.origin !== 'pdf') return undefined;
+    const updated = rulebookSchema.parse({
+      ...book,
+      status: 'error',
+      errorMessage,
+      updatedAt: Date.now(),
+    });
+    await db.rulebooks.put(updated);
+    return updated;
+  });
+}
+
+/**
  * Deletes a book, its chunks and its retained PDF bytes. Embeddings are
  * kept: they are content-addressed by chunk-text hash and may be shared
  * across books (pruning is a library-management concern, not a delete

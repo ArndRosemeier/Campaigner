@@ -65,6 +65,8 @@ import type {
 import { saveSettings, readSettings } from '@/db/settingsRepo';
 import { DEFAULT_CHAT_MODEL } from '@/domain/settings';
 import { INTERRUPTED_MODULE_GEN_MESSAGE } from '@/llm/moduleGenReconcile';
+import { INTERRUPTED_PDF_IMPORT_MESSAGE } from '@/ingest/ingestReconcile';
+import { createRulebook, getRulebook } from '@/db/rulebookRepo';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
@@ -156,6 +158,16 @@ describe('app-shell-boot-reconcile.test.tsx', () => {
     return { campaignId: campaign.id, moduleId: saved.id };
   }
 
+  /** A PDF book row in exactly the state a tab discarded mid-import leaves. */
+  async function seedWedgePdfImport(): Promise<string> {
+    const book = await createRulebook({
+      title: 'torn-scan',
+      system: 'dnd5e',
+      filename: 'torn.pdf',
+    });
+    return book.id;
+  }
+
   beforeEach(async () => {
     useThemeStore.setState({ theme: DEFAULT_THEME });
     await clearDatabase();
@@ -227,6 +239,35 @@ describe('app-shell-boot-reconcile.test.tsx', () => {
       // The unfinished part slot rewound, which is what makes the resume path
       // write exactly the parts that were lost.
       expect(row?.parts[0]?.status).toBe('pending');
+    }, 20_000);
+
+    it("reconciles a PDF import a discarded tab left 'processing' — and the Retry the row never had", async () => {
+      const bookId = await seedWedgePdfImport();
+
+      renderAppAt(ROUTES.rules);
+
+      // The owner-visible outcome, on the library he was staring at: a named
+      // failure with a way forward, never a card that says `processing…`
+      // forever (`Retry…` is offered only for `error`, so before this the row
+      // had no control that could move it at all).
+      const card = await screen.findByText('torn-scan', {}, { timeout: 10_000 });
+      await waitFor(() => {
+        expect(screen.getByText(INTERRUPTED_PDF_IMPORT_MESSAGE)).toBeInTheDocument();
+      });
+      expect(card.closest('li')).not.toBeNull();
+
+      const row = await actDrained(() => getRulebook(bookId));
+      expect(row?.status).toBe('error');
+      expect(row?.errorMessage).toBe(INTERRUPTED_PDF_IMPORT_MESSAGE);
+
+      // …and the recovery the message names is on the card's own menu.
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Menu for torn-scan' }));
+      expect(
+        await screen.findByTestId(`retry-book-${bookId}`, {}, { timeout: 10_000 }),
+      ).toBeInTheDocument();
+      await user.keyboard('{Escape}');
+      await flushAsyncUpdates();
     }, 20_000);
 
     it('leaves a module alone when a live pass owns it (the same guard, through the UI)', async () => {

@@ -1,23 +1,25 @@
 import type { Id } from '@/domain';
 
 /**
- * Web Locks around a generation pass (docs/17 row 110, docs/18 §2.2/§4).
+ * Web Locks around a long pass — a module forge (docs/17 row 110) or a PDF
+ * ingest (docs/17 row 266) — docs/18 §2.2/§4.
  *
  * TWO jobs, and both are stated here because they are the reason this is a
  * seam and not an inline `navigator.locks.request` call site:
  *
  * 1. **Freeze mitigation.** Chromium's desktop freeze criteria explicitly
  *    list "the page holds a Web Lock" (and an open IndexedDB transaction) as
- *    an opt-out. A multi-minute module forge that holds a lock for its whole
- *    pass is therefore a page the browser is told not to freeze — the cheap,
- *    documented half of the owner's "can we make the browser keep giving the
- *    app the resources" question.
- * 2. **The cross-tab LEASE for the module row.** The module row's
- *    `status: 'generating'` is a claim, not a fact: reconciliation rewrites
- *    such a row only when NOTHING in this page owns a live controller, and a
- *    held lock with the same name is the one signal that says "another tab is
- *    writing this module right now" (a second browser tab is the case where a
- *    page-local registry cannot know). `isGenerationLockHeld` is that read.
+ *    an opt-out. A multi-minute module forge OR a multi-minute PDF extraction
+ *    that holds a lock for its whole pass is therefore a page the browser is
+ *    told not to freeze — the cheap, documented half of the owner's "can we
+ *    make the browser keep giving the app the resources" question.
+ * 2. **The cross-tab LEASE for the row.** A row's `status: 'generating'`
+ *    (a module) or `status: 'processing'` (a PDF ingest) is a claim, not a
+ *    fact: reconciliation rewrites such a row only when NOTHING in this page
+ *    owns a live controller, and a held lock with the same name is the one
+ *    signal that says "another tab is writing this row right now" (a second
+ *    browser tab is the case where a page-local registry cannot know).
+ *    `isGenerationLockHeld` is that read.
  *
  * ADVISORY, NEVER A DEPENDENCY. When `navigator.locks` is absent (older
  * browsers, jsdom, node) the pass runs unchanged; when the lock is held
@@ -35,6 +37,16 @@ export const GENERATION_LOCK_PREFIX = 'campaigner:generation:';
 /** The lock name for one module's forge pass (spine, parts, post-generation). */
 export function moduleGenLockName(moduleId: Id): string {
   return `${GENERATION_LOCK_PREFIX}module-gen:${moduleId}`;
+}
+
+/**
+ * The lock name for one PDF ingest pass (docs/17 row 266). The ingest holds
+ * it across the extraction AND the persistence of the chunks/bytes, so the
+ * start-up reconciler (`ingest/ingestReconcile`) can tell a row another tab
+ * is genuinely importing from one a discarded tab left behind.
+ */
+export function ingestLockName(bookId: Id): string {
+  return `${GENERATION_LOCK_PREFIX}pdf-ingest:${bookId}`;
 }
 
 /** The subset of the Web Locks API this module uses (absent ⇒ no mitigation). */
