@@ -214,6 +214,19 @@ describe('a cited row is never asked for a stat block', () => {
     const statblockStep = run?.steps.find((step) => step.name === 'statblock');
     expect(statblockStep?.status).toBe('skipped');
     expect((statblockStep?.output as { skipped?: string }).skipped).toContain('library creature');
+    // THE NOTICE TELLS THE TRUE REASON (docs/17 row 287). The refill kept the
+    // block and the step's OWN record says the CAST BOUNDARY skipped it — so the
+    // finalize notice must say the boundary, and must NOT assert the draft's
+    // answer, which the draft never gave on this path. Before the fix this read
+    // "the draft marked … as needing no stat block": a wrong reason for a run
+    // whose model was never even asked.
+    const finalizeStep = run?.steps.find((step) => step.name === 'finalize');
+    const keptNotice = (finalizeStep?.output as { notice?: string } | null | undefined)?.notice ?? '';
+    expect(keptNotice).toContain('The stat block was NOT regenerated');
+    expect(keptNotice).toContain('cast creature');
+    expect(keptNotice).toContain('Bestiary p.132');
+    expect(keptNotice).not.toContain('the draft marked');
+    expect(keptNotice).not.toContain('needing no stat block');
 
     const after = await getArtifact(creature.id);
     if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');

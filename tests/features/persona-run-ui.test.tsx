@@ -6,14 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
 import { artifactPath } from '@/app/routes';
-import { createArtifact, publishToLibrary } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { db } from '@/db/db';
-import { newId, type Campaign, type Persona } from '@/domain';
+import { newId, statBlockSchema, type Campaign, type Persona } from '@/domain';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
+import {
+  additionalInstructionOf,
+  withAdditionalInstruction,
+} from '@/llm/additionalInstruction';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { useProgressStore } from '@/lib/progress';
@@ -1470,12 +1474,173 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
       'grounded in that module',
     );
     expect(screen.getByRole('combobox', { name: 'Artifact to refill' })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Focus for the refill, e.g. emphasize her role in the finale')).toHaveValue(
-      'Generate the full content of this npc: summary, body and details. Its name, relations and images are preserved.',
-    );
+    // THE BOX IS NOW THE OWNER'S OWN WORDS (docs/17 row 287), not the app's
+    // framing: it starts EMPTY, and its placeholder says what it is — an
+    // instruction about this artifact. The framing is held separately and rides
+    // the run automatically (pinned below).
+    expect(
+      screen.getByPlaceholderText(
+        'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+      ),
+    ).toHaveValue('');
     // Placement + extras do not apply to a targeted refill.
     expect(screen.queryByRole('combobox', { name: 'Module' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('run-extras')).not.toBeInTheDocument();
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  /**
+   * THE CHANNEL, BOTH DIRECTIONS (docs/17 row 287). The owner's report was a
+   * targeted refill whose typed request never became a DIRECT INSTRUCTION: the
+   * panel produced no `Additional instruction:` paragraph, so the statblock
+   * step's draft veto discarded it and the mob stayed level 3. The panel now
+   * routes the box through the ONE composer, and these two pins are the two
+   * halves of that promise — a typed request becomes the exact paragraph the
+   * engine reads, and an EMPTY box leaves the brief byte-identical to the
+   * framing the panel always sent.
+   */
+  const REFILL_FRAMING =
+    'Regenerate the full content of this npc — summary, body and details. Its name, relations and images are preserved.';
+
+  it('a targeted refill sends the typed words as the ONE additional instruction, and the level resolves', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Vorarbeiter Jost Keil',
+      summary: 'A level 3 foreman.',
+      body: 'He runs the pit.',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: statBlockSchema.parse({ ...VALID_STATBLOCK, level: '3' }),
+      },
+    });
+    // THE DRAFT DECLINES STATS — the answer that discarded the owner's request.
+    // The instruction must outrank it (docs/17 row 247) and the level must come
+    // from the instruction, not the row's 3 (docs/17 row 287).
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_DRAFT, name: target.name, needsStatBlock: false }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_STATBLOCK, level: '5', hp: 42 }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    act(() => {
+      useContentRefillRequest.getState().request(target.id, 'npc', true);
+    });
+    const box = await screen.findByPlaceholderText(
+      'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+    );
+    // The owner's own words, verbatim — the sentence from his report.
+    await user.type(box, 'make this mob a level 5 stat block');
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // THE CHANNEL: the brief is the framing PLUS the ONE paragraph the engine's
+    // composer produces — byte-for-byte, through the same function.
+    expect(run?.userBrief).toBe(
+      withAdditionalInstruction(REFILL_FRAMING, 'make this mob a level 5 stat block'),
+    );
+    // The app's framing is NOT mistaken for the owner's words: reading the
+    // instruction back out yields the TYPED text alone.
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBe(
+      'make this mob a level 5 stat block',
+    );
+
+    // THE CONSEQUENCE, end to end: the draft's `needsStatBlock:false` did not
+    // veto the explicit instruction, the step RAN, and the level came from the
+    // instruction — the owner's level-5 case now produces level 5.
+    await waitFor(
+      async () => {
+        expect((await getRun(runs[0]?.id ?? ''))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+    const finished = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    expect(finished?.steps.find((step) => step.name === 'statblock')?.status).toBe('done');
+    const after = await actDrained(() => getArtifact(target.id));
+    if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(after.data.statBlock?.level).toBe('5');
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('a targeted refill with an EMPTY box sends the framing byte-identical, with no instruction paragraph', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Stiller Gesell',
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    // The ordinary prose refill with no instruction: the draft's honest "no
+    // stat block" answer is a deliberate, pinned outcome (docs/17 row 247).
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...VALID_DRAFT, name: target.name, needsStatBlock: false }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    act(() => {
+      useContentRefillRequest.getState().request(target.id, 'npc', true);
+    });
+    // No typing: the box stays empty, and the run must still carry the app's
+    // framing — NOT an empty brief and NOT a framing that grew a paragraph.
+    await screen.findByPlaceholderText(
+      'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+    );
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // BYTE-IDENTICAL: the framing, and exactly the framing.
+    expect(run?.userBrief).toBe(REFILL_FRAMING);
+    // ...and the engine reads NO instruction out of it.
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBeNull();
+    await waitFor(
+      async () => {
+        expect((await getRun(runs[0]?.id ?? ''))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
     // The request store is file-global: clear it so later tests don't react.
     act(() => {
       useContentRefillRequest.getState().clear();

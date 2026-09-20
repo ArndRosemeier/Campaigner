@@ -271,6 +271,10 @@ describe('in-place refill parity (module grounding)', () => {
     const keptNotice = (finalizeStep?.output as { notice?: string } | null | undefined)?.notice ?? '';
     expect(keptNotice).toContain('The stat block was NOT regenerated');
     expect(keptNotice).toContain('Kael');
+    // ...and it names the DRAFT as the reason, because that is the step's own
+    // recorded reason on this path — never the cast boundary (docs/17 row 287).
+    expect(keptNotice).toContain('the draft marked');
+    expect(keptNotice).not.toContain('cast creature');
   }, 30000);
 
   it('names the degrade in prompt and step notice when the owning module row is gone', async () => {

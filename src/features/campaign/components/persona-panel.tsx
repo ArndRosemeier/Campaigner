@@ -48,6 +48,7 @@ import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import { defaultSettings, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
+import { withAdditionalInstruction } from '@/llm/additionalInstruction';
 import { rejectionIssues } from '@/llm/rejectionReason';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
@@ -203,6 +204,20 @@ export function PersonaPanel({
   const [personaId, setPersonaId] = useState<string>('');
   const [autonomy, setAutonomy] = useState<Autonomy>('auto');
   const [brief, setBrief] = useState('');
+  /**
+   * The APP'S OWN framing for a targeted refill, kept SEPARATE from the owner's
+   * words (docs/17 row 287). The two travel together through the ONE composer
+   * (`withAdditionalInstruction`) at `start()`: the framing is the brief, and
+   * the text in the box rides it as the ONE `Additional instruction:` paragraph
+   * — the channel `runEngine` already reads (`directInstructionFor`), so a
+   * request typed into this box stops being invisible to the statblock step.
+   * Held per TARGET ARTIFACT: a framing composed for one row never leaks onto a
+   * different target or onto a non-refill persona. Null for every run that is
+   * not an artifact-editor refill hand-off.
+   */
+  const [refillFraming, setRefillFraming] = useState<{ artifactId: string; text: string } | null>(
+    null,
+  );
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>('assistant');
@@ -280,6 +295,9 @@ export function PersonaPanel({
     setTargetArtifactId(requestArtifactId);
     setAutonomy('auto');
     setTab('assistant');
+    // An illustration hand-off is not a refill: drop any framing a previous
+    // refill left behind so it can never ride an image prompt (docs/17 row 287).
+    setRefillFraming(null);
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
 
@@ -300,7 +318,14 @@ export function PersonaPanel({
     if (persona === undefined) return; // personas not loaded yet
     setPersonaId(persona.id);
     setTargetArtifactId(refillRequestId);
-    setBrief(refillBrief(refillKind, refillRegenerate));
+    // The framing is the app's own task text, held SEPARATELY from the brief
+    // box, which now carries only the OWNER'S instruction for this artifact
+    // (docs/17 row 287). The two meet in the ONE composer at start(), so an
+    // empty box sends the framing BYTE-IDENTICAL (the deliberate
+    // no-instruction arms stay green) while a typed request travels the
+    // `Additional instruction:` channel the engine already reads.
+    setRefillFraming({ artifactId: refillRequestId, text: refillBrief(refillKind, refillRegenerate) });
+    setBrief('');
     setAutonomy('auto');
     setTab('assistant');
     clearRefillRequest();
@@ -337,6 +362,21 @@ export function PersonaPanel({
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
+    // THE BRIEF THE ENGINE RECEIVES (docs/17 row 287). For the artifact
+    // editor's targeted refill the app's framing is the task and the box's text
+    // is the OWNER'S instruction about THIS artifact; they are joined by the ONE
+    // composer the change seam already uses, so the words travel the
+    // `Additional instruction:` paragraph `directInstructionFor` reads. The
+    // framing is held per target, so it rides ONLY the row it was composed for
+    // — never a different target and never a non-refill persona. With an empty
+    // box `withAdditionalInstruction` returns the framing untouched: the
+    // no-instruction brief is byte-identical to the one this panel always sent.
+    const refillFramingText =
+      isTargetedRefill && refillFraming?.artifactId === targetArtifactId
+        ? refillFraming.text
+        : null;
+    const runBrief =
+      refillFramingText === null ? brief : withAdditionalInstruction(refillFramingText, brief);
     if (selectedPersona.mode === 'encounter') {
       // Regenerate keeps the target encounter's own preset (docs/11 D10): an
       // existing map is never silently re-tiered. A fresh run passes NO
@@ -350,7 +390,7 @@ export function PersonaPanel({
         campaign,
         persona: selectedPersona,
         autonomy,
-        brief,
+        brief: runBrief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         // The schema-defaulted read (F8 cosmetic alignment): the queue paths
         // read the aspect through getSettings()' schema default — this
@@ -382,7 +422,7 @@ export function PersonaPanel({
         campaign,
         persona: selectedPersona,
         autonomy,
-        brief,
+        brief: runBrief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         targetArtifactId,
       });
@@ -395,7 +435,7 @@ export function PersonaPanel({
         campaign,
         persona: selectedPersona,
         autonomy,
-        brief,
+        brief: runBrief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         targetArtifactId,
       });
@@ -406,7 +446,7 @@ export function PersonaPanel({
       campaign,
       persona: selectedPersona,
       autonomy,
-      brief,
+      brief: runBrief,
       pinnedChunkIds: pinned.map((chunk) => chunk.id),
       ...(placementModuleId !== '' ? { placementModuleId } : {}),
       extras: tickedExtras(),
@@ -533,7 +573,7 @@ export function PersonaPanel({
                     isImage
                       ? 'Optional image focus, e.g. night scene'
                       : isTargetedRefill
-                        ? 'Focus for the refill, e.g. emphasize her role in the finale'
+                        ? 'Instruction for this artifact, e.g. rebuild the stat block at level 5'
                         : 'Optional focus, e.g. timeline consistency'
                   }
                   value={brief}

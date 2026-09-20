@@ -2028,6 +2028,16 @@ function effectiveReasoningEffort(persona: Persona, settings: Settings): Reasoni
     : settings.defaultReasoningEffort;
 }
 
+/**
+ * The statblock step's skip sentence when the DRAFT answered `needsStatBlock:
+ * false` (docs/17 rows 247, 287). Hoisted because TWO readers must agree on the
+ * bytes: the step WRITES it into its skip record, and the refill notice READS
+ * that record back to tell the draft's answer from the cast-creature boundary —
+ * a second literal at the read site is exactly the drift that let a cast
+ * boundary be reported as a draft answer.
+ */
+const STATBLOCK_DRAFT_VETO_SKIP = 'the draft marked this character as not needing a stat block';
+
 export class RunEngine {
   private listeners = new Set<Listener>();
   private controllers = new Map<Id, AbortController>();
@@ -3921,7 +3931,7 @@ export class RunEngine {
       return {
         step: this.finishStep(
           steps[stepIndex],
-          { skipped: 'the draft marked this character as not needing a stat block' },
+          { skipped: STATBLOCK_DRAFT_VETO_SKIP },
           'skipped',
         ),
       };
@@ -7367,17 +7377,34 @@ export class RunEngine {
         // "changed" while the numbers he asked about were untouched. The step's
         // OWN record is the evidence (the statblock step was skipped and the row
         // already carries a block), not a re-derivation of the merge.
+        //
+        // THE REASON IS READ OFF THAT RECORD, never asserted (docs/17 row 287).
+        // This step has TWO skip sentences — the cast-creature boundary and the
+        // draft's veto — and reporting the draft's answer for a boundary skip was
+        // a wrong reason (AGENTS rule 2). The draft veto is the ONE skip whose
+        // sentence is a fixed literal (`STATBLOCK_DRAFT_VETO_SKIP`, the same
+        // constant the step writes), so the comparison is exact; the boundary
+        // case reports the step's OWN sentence, which names the origin and the
+        // boundary rather than inventing a reason.
         const statBlockStep = steps.find((candidate) => candidate.name === 'statblock');
+        const statBlockSkipRaw = (statBlockStep?.output as { skipped?: unknown } | null | undefined)
+          ?.skipped;
+        const statBlockSkip = typeof statBlockSkipRaw === 'string' ? statBlockSkipRaw : '';
+        // The notice is gated on the RECORD it reports: a skip with no sentence
+        // is not evidence, and speaking anyway is how the wrong reason shipped.
         const keptStatBlock =
           kind === 'npc' &&
           target.kind === 'npc' &&
           target.data.statBlock !== null &&
-          statBlockStep?.status === 'skipped';
+          statBlockStep?.status === 'skipped' &&
+          statBlockSkip !== '';
         const refillNotice = [
           aliasDrift,
           keptStatBlock
-            ? `The stat block was NOT regenerated: the draft marked «${target.name}» as needing no stat block, ` +
-              `so the one already on the row is kept. Ask for the stat block explicitly (an instruction naming it) to rebuild it.`
+            ? statBlockSkip === STATBLOCK_DRAFT_VETO_SKIP
+              ? `The stat block was NOT regenerated: the draft marked «${target.name}» as needing no stat block, ` +
+                `so the one already on the row is kept. Ask for the stat block explicitly (an instruction naming it) to rebuild it.`
+              : `The stat block was NOT regenerated: ${statBlockSkip} The one already on the row is kept.`
             : '',
         ]
           .filter((part) => part !== '')
