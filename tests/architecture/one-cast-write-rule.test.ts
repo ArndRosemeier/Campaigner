@@ -77,4 +77,38 @@ describe('one cast-write rule (SOURCE SCAN, docs/17 row 284)', () => {
     // it may lift, so a refusal can never be reached without consulting it.
     expect(readAt).toBeLessThan(boundaryAt);
   });
+
+  it('passes the instruction to the batch destination ONLY for the row the run was AIMED at (docs/17 row 286)', () => {
+    const BATCH = 'src/features/modules/entity-batch.ts';
+    const batch = CODE[BATCH];
+    // Non-vacuity: the file is in the scan, and the destination check really is
+    // the site that reads the PRODUCED artifact back.
+    expect(batch).toBeDefined();
+    expect(batch?.includes('await artifactRepo.getArtifact(outcome.resultArtifactId)')).toBe(true);
+    // WHAT THE SITE PASSES — the expression itself, not merely that the file
+    // asks the predicate, so a bare `castCreatureWritePermitted(destination,
+    // instruction)` or `(destination, undefined)` reds THIS arm.
+    //
+    // THE ARGUMENT IS INERT TODAY, and this arm DECLARES that rather than
+    // implying a regression guard (docs/17 row 286, MEASURED): on the AIMED path
+    // the engine authors the block and `mergeRefillData` stamps
+    // `statBlockAuthored` (runEngine.ts:1515) BEFORE this check reads the row at
+    // :824, so the predicate is already true whatever argument arrives; and the
+    // `undefined` arm (a CREATE batch) is unreachable because a CREATE run lands
+    // on the fresh artifact it just created, never a cast row. This arm is
+    // therefore the ONLY pin that reds when the argument changes — a drift
+    // DECLARATION, not a behavioural claim.
+    expect(
+      batch?.includes(
+        'castCreatureWritePermitted(destination, aimedAtThisRow ? instruction : undefined)',
+      ),
+    ).toBe(true);
+    // ...and "aimed" is the target IDENTITY, never a name match: the run's own
+    // result artifact must be the row the target carried.
+    expect(
+      batch?.includes(
+        'const aimedAtThisRow = target.artifactId !== undefined && target.artifactId === outcome.resultArtifactId',
+      ),
+    ).toBe(true);
+  });
 });

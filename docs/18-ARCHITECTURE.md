@@ -3292,3 +3292,38 @@ figure, so one figure never draws two sentences about its level.
   moved; the clause is pinned by substring assertions in
   `tests/llm/moduleGen.test.ts`, extended here, and every pre-283 substring is
   byte-identical.
+
+### §5 (the fifth cast-write site's argument, docs/17 row 286) — the argument is INERT, and the pins say so
+
+`entity-batch.ts:829` asks the ONE cast-write rule for the batch's DESTINATION,
+with the owner's instruction only when the run was AIMED at that row
+(`aimedAtThisRow ? instruction : undefined`). MEASURED (docs/17 row 286), that
+TERNARY'S ARGUMENT IS BEHAVIOURALLY INERT TODAY — a DECLARATION of intent, not a
+live guard — for three reasons, each proved rather than inferred:
+
+- On the AIMED path an instruction lifts the cast boundary INSIDE the engine
+  (`runEngine.ts:3845`): the statblock step authors, and `mergeRefillData`
+  (`:1515`) stamps `statBlockAuthored` on the row BEFORE the batch's destination
+  check reads it at `:824`. The predicate is therefore already true
+  (`npcStatsAreAuthored`) whatever argument arrives.
+- The `undefined` arm is UNREACHABLE: a CREATE run lands on the fresh artifact it
+  just created (`runFinalize` calls `createArtifact` unconditionally for a
+  non-refill run), which carries no cast stamps. MEASURED: a CREATE batch that
+  collided with a cast row's name produced a SECOND, stamp-free row and refused
+  nothing; a module record with a bestiary slot never reaches this check at all
+  (the cast arm above returns first).
+- An AIMED change with NO instruction is refused EARLIER, at the change seam's
+  own route (`change-artifact.ts:257`), so the batch refusal branch is reachable
+  only by calling `runEntityBatch` directly — a unit pin on the batch's contract,
+  not a production path.
+
+**RESIDUAL, AND IT IS THE DISPATCHER'S:** the inert argument is a candidate for
+REMOVAL (or for keeping as a guard for a future non-change caller that carries an
+`artifactId` target), and this tests-only slice deliberately does not decide it.
+What landed instead: a SOURCE arm declaring the exact expression (red under BOTH
+argument substitutions) and TWO end-to-end arms through the REAL `runEntityBatch`
+pinning the aimed BOUNDARY (an instruction authors and stamps; none refuses),
+red-proven by boundary injections (`&& (false as boolean)` → the refusal arm;
+`|| true` → the authoring arm), NOT by the argument substitution. The argument
+drift itself has NO behavioural pin, and cannot have one: it changes no reachable
+outcome.

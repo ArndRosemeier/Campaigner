@@ -8348,3 +8348,24 @@ pins red; the boundary DELETED → the narrowness pin and the merge refusal red;
 the change seam's refusal removed → 2 red; the origin stamps dropped when a run
 authors → the identity assertions red. Every file restored byte-identically
 (`sha256sum -c pristine.sha256` OK); no two injected hashes equal.
+
+**THE FIFTH SITE'S ARGUMENT IS PINNED BY DECLARATION, NOT BY BEHAVIOUR (docs/17
+row 286) — the brief's premise was REFUTED by measurement.** A fourth arm in
+`tests/architecture/one-cast-write-rule.test.ts` declares WHAT the batch's
+destination check passes (`castCreatureWritePermitted(destination,
+aimedAtThisRow ? instruction : undefined)`, and the aim's identity definition),
+and two arms in `tests/features/entity-batch-cast-description.test.ts` drive the
+aimed boundary END TO END through the REAL `runEntityBatch` (previously
+uncovered: `change-artifact.test.ts` mocks it) — an instruction AUTHORS on a cast
+row and stamps `statBlockAuthored`, none REFUSES. The ternary's ARGUMENT is
+behaviourally INERT: substituting `undefined` (or `instruction`) reds the SOURCE
+arm only, because the run stamps `statBlockAuthored` before the destination check
+reads the row, the CREATE arm is unreachable (MEASURED: it produces a fresh,
+stamp-free row), and the aimed-no-instruction case is refused earlier at the
+change seam. So the two end-to-end arms are red-proven by BOUNDARY injections
+(`&& (false as boolean)` → the refusal arm; `|| true` → the authoring arm), while
+the argument drift has no behavioural pin. Arm (b)'s refusal branch is reachable
+only by calling `runEntityBatch` directly — a unit pin, not a production path.
+Every injection type-clean, `entity-batch.ts` `1858d83b…` restored byte-identically;
+no two arms identical. Removing the inert argument is a LATER `src/` decision
+(docs/18 §5), deliberately not taken by this tests-only slice.

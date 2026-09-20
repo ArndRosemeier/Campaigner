@@ -11,6 +11,8 @@ import { createRulebook } from '@/db/rulebookRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import {
+  castCreatureLabel,
+  castCreatureWriteRefusal,
   createModule,
   moduleDocumentText,
   ruleChunkSchema,
@@ -562,6 +564,153 @@ describe('a description run that does not complete is loud, and the cast still s
     expectCopiedCreature(row);
     expect(row.body).toBe(NAMED_ONLY_PROSE);
     expect(batchTargets(module, await listArtifactsByCampaign(campaign.id), 'npc')).toEqual([]);
+    consoleSpy.mockRestore();
+  }, 30_000);
+});
+
+/**
+ * THE FIFTH ENFORCEMENT SITE, DRIVEN END TO END (docs/17 row 286). Row 284
+ * folded the cast-write rule onto ONE predicate, and this batch's DESTINATION
+ * check asks it too — with the owner's instruction ONLY when the run was AIMED
+ * at the row (`targetArtifactId`, the change seam). This gap was found because
+ * `tests/features/change-artifact.test.ts` MOCKS `runEntityBatch`, so although
+ * `change-artifact.ts:374` is what drives a batch target carrying an
+ * `artifactId`, NOTHING drove the REAL destination check on the aimed path.
+ *
+ * WHAT THE MEASUREMENT THEN SHOWED, stated here because it refuted the brief's
+ * premise: the ternary's ARGUMENT is behaviourally INERT today. Substituting a
+ * bare `undefined` (or a bare `instruction`) at `entity-batch.ts:829` reds the
+ * SOURCE arm in `tests/architecture/one-cast-write-rule.test.ts` and NOTHING
+ * here, because:
+ *
+ * - on the AIMED path an instruction lifts the cast boundary INSIDE the engine
+ *   (`runEngine.ts:3845`): the statblock step authors, and `mergeRefillData`
+ *   (`:1515`) stamps `statBlockAuthored` BEFORE this check reads the row at
+ *   `:824`, so the predicate is already true whatever argument arrives;
+ * - the `undefined` arm (a CREATE batch that collided with a cast row's NAME)
+ *   is UNREACHABLE: a CREATE run lands on the fresh artifact it just created,
+ *   which carries no cast stamps (MEASURED: the collided batch produced a
+ *   second, stamp-free row and refused nothing);
+ * - an AIMED change WITHOUT an instruction is refused earlier, at the change
+ *   seam's own route (`change-artifact.ts:257`), so arm (b) below exercises the
+ *   batch's contract directly, not a production path.
+ *
+ * SO WHAT THESE ARMS ARE: end-to-end coverage of the AIMED BOUNDARY through the
+ * REAL batch (the row is born the way production births one, via the batch's own
+ * cast path, and the change re-enters through the same `instruction` channel the
+ * change seam uses). They pin what the boundary DOES — an instruction authors
+ * and stamps, no instruction refuses — and they are RED-PROVEN by boundary
+ * injections, not by the argument substitution: disabling the refusal
+ * (`&& (false as boolean)`) reds arm (b); forcing it (`|| true`) reds arm (a).
+ * The argument-scoping drift itself is pinned by the source arm only.
+ */
+describe('the batch destination check scopes the instruction to the row the run was AIMED at (docs/17 row 286)', () => {
+  /** The cast row a CHANGE aims at, born through the batch's own cast path so
+   * its shape (the copied numbers, the stamped origin, the authored prose) is
+   * production's rather than a hand-built fixture. */
+  async function aimedCastRow(module: Module, campaign: Campaign): Promise<NpcArtifact> {
+    await runEntityBatch({ module, campaign, kind: 'npc', targets: [{ name: AGATHA }] });
+    const row = await castRow(campaign.id);
+    // The precondition these arms rest on: a COPY with no authored flag — the
+    // exact row the destination boundary protects.
+    expect(row.data.statBlockAuthored).toBeUndefined();
+    expectCopiedCreature(row);
+    return row;
+  }
+
+  it('an AIMED change carrying the instruction authors on the cast row and stamps it authored', async () => {
+    const { campaign, module } = await seedModule(NAMED_ONLY_PROSE);
+    const row = await aimedCastRow(module, campaign);
+    // The instruction below asks for level 5, and the engine BINDS the block it
+    // asked for (docs/17 row 247): the transport must answer with a block at
+    // that level, or the run is rejected for the mismatch and this arm would
+    // measure the wrong thing. The birth run above already used the file's
+    // default responder; only this change run is re-aimed.
+    chatMock.mockImplementation((messages) => {
+      const raw = JSON.stringify(messages);
+      const text = raw.includes('Fill the StatBlock for')
+        ? JSON.stringify({ ...STAT_BLOCK, level: '5', hp: 42, hpFormula: '9d6 + 9' })
+        : JSON.stringify(AUTHORED_DRAFT);
+      return Promise.resolve({ text, modelUsed: TEST_MODEL, fallback: null });
+    });
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA, artifactId: row.id }],
+      // THE SAME CHANNEL the change seam uses (`change-artifact.ts`'s
+      // `runEntityBatch({ …, instruction })`), which renders it into the brief's
+      // ONE `Additional instruction:` paragraph. The owner's own shape.
+      instruction: 'redo this completely, this time making her level 5',
+    });
+
+    // THE BOUNDARY YIELDED to the owner's own words about THIS row.
+    expect(result.failed).toEqual([]);
+    expect(result.generated).toEqual([AGATHA]);
+    expect(result.produced).toEqual([
+      { name: AGATHA, artifactId: row.id, statBlock: 'regenerated' },
+    ]);
+
+    const after = await castRow(campaign.id);
+    expect(after.body).toBe(AUTHORED_BODY);
+    // The numbers are the campaign's own now — the level the instruction asked
+    // for — and the origin survives as PROVENANCE and identity (docs/17 row
+    // 284).
+    expect(after.data.statBlockAuthored).toBe(true);
+    expect(after.data.statBlock?.level).toBe('5');
+    expect(after.data.sourceLine).toBe('Bestiary p.316');
+    expect(after.data.originToken).toBe(`chunk:${CHUNK_ID}`);
+    // An aimed run's statblock step RAN (the instruction lifted the boundary):
+    // the birth run spent one call, this change spent two (draft + statblock).
+    expect(chatMock).toHaveBeenCalledTimes(3);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it('the SAME aimed change WITHOUT an instruction REFUSES at the destination, and writes nothing', async () => {
+    const { campaign, module } = await seedModule(NAMED_ONLY_PROSE);
+    const row = await aimedCastRow(module, campaign);
+    // The refusal is written through the batch's ONE reporting funnel (a
+    // `console.error` record), so the console-hygiene guard is satisfied the way
+    // this file's run-not-completed arm already does: a spy, not noise.
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA, artifactId: row.id }],
+    });
+
+    const [failure] = result.failed;
+    expect(failure?.name).toBe(AGATHA);
+    expect(failure?.kind).toBe('refused');
+    expect(failure?.message).toBe(castCreatureWriteRefusal(AGATHA, AGATHA));
+    expect(failure?.runId).toBeDefined();
+    expect(result.produced).toEqual([]);
+    expect(result.generated).toEqual([]);
+    expect(result.cast).toEqual([]);
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      `Refused to write a generated entity onto ${castCreatureLabel(AGATHA)}`,
+      expect.any(Error),
+    );
+
+    // The refusal is the batch's DESTINATION write (rename/re-scope/tag): the
+    // run's own prose refill already landed (the cast arm above does the same
+    // refill), while what the boundary protects — the library's COPY, its
+    // stamped origin and the not-yet-authored flag — is untouched. No
+    // instruction means the statblock step was skipped, so the change run spent
+    // one call where the aimed-with-instruction arm spent two.
+    //
+    // REACHABILITY, stated because it bounds what this arm proves: this refusal
+    // branch is reachable ONLY by calling `runEntityBatch` directly — production
+    // refuses an aimed change with no instruction EARLIER, at the change seam's
+    // own route (`change-artifact.ts:257`). It is a unit pin on the batch's
+    // contract, not a production path.
+    const after = await castRow(campaign.id);
+    expect(after.data.statBlockAuthored).toBeUndefined();
+    expectCopiedCreature(after);
+    expect(chatMock).toHaveBeenCalledTimes(2);
     consoleSpy.mockRestore();
   }, 30_000);
 });
