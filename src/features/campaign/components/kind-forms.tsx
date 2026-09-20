@@ -14,9 +14,9 @@ import type { AnyArtifact,
   PlotArcArtifactData,
   StatBlock,
 } from '@/domain';
-import { blankStatBlock, CANONICAL_ROOM_MARKERS, npcDataIsCastCreature } from '@/domain';
+import { blankStatBlock, CANONICAL_ROOM_MARKERS, npcDataIsCastCreature, npcStatsAreAuthored } from '@/domain';
 import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
-import { BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
+import { AuthoredStatBlock, BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 
@@ -92,6 +92,13 @@ export function NpcForm({
   personalityReadOnlyReason,
 }: NpcFormProps) {
   const [editingStatBlock, setEditingStatBlock] = useState(false);
+  // WHICH KIND OF NUMBERS THIS ROW HOLDS (docs/17 row 284) — the distinction the
+  // cast boundary never had to make before a direct instruction could author a
+  // cast row: a pure COPY (the library's numbers, read-only, nothing to edit) or
+  // an AUTHORED block that merely HAS a cast origin (the row's own numbers, so
+  // the ordinary Edit/Remove affordances apply while the origin stays disclosed).
+  const castCopy = npcDataIsCastCreature(data) && !npcStatsAreAuthored(data);
+  const authoredFromCast = npcDataIsCastCreature(data) && npcStatsAreAuthored(data);
 
   function patch(next: Partial<NpcArtifactData>): void {
     onChange({ ...data, ...next });
@@ -127,13 +134,16 @@ export function NpcForm({
       <div className="flex flex-col gap-2 border-t pt-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Stat block</h2>
-          {/* A CAST creature (docs/11 D3; docs/17 row 255b) owns a COPY of the
+          {/* A PURE CAST COPY (docs/11 D3; docs/17 row 255b) owns a COPY of the
               library's block — it is not a run's to author (the cast-row refill
               refuses such a block before any model call), so the "Add stat
               block"/Edit/Remove affordances are NOT offered here: those numbers
               render read-only below, labelled with their source (ledger row
-              134). */}
-          {npcDataIsCastCreature(data) ? null : data.statBlock === null ? (
+              134). AN AUTHORED-FROM-CAST ROW (docs/17 row 284) is the other half:
+              a direct instruction authored its numbers, so they are the row's
+              own and the ordinary affordances apply — while the origin stays
+              disclosed as provenance by `AuthoredStatBlock` below. */}
+          {castCopy ? null : data.statBlock === null ? (
             <Button
               size="xs"
               variant="outline"
@@ -167,17 +177,25 @@ export function NpcForm({
             </div>
           )}
         </div>
-        {npcDataIsCastCreature(data) && (
+        {castCopy ? (
           <BorrowedStatBlock
             npcName={artifactName}
             copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
           />
-        )}
-        {!npcDataIsCastCreature(data) && data.statBlock !== null && !editingStatBlock && (
-          <StatBlockCard statBlock={data.statBlock} name={artifactName} />
-        )}
-        {!npcDataIsCastCreature(data) && data.statBlock !== null && editingStatBlock && (
+        ) : authoredFromCast && data.statBlock === null ? (
+          <AuthoredStatBlock
+            npcName={artifactName}
+            copy={{ statBlock: null, sourceLine: data.sourceLine }}
+          />
+        ) : data.statBlock === null ? null : editingStatBlock ? (
           <StatBlockForm statBlock={data.statBlock} onChange={setStatBlock} />
+        ) : authoredFromCast ? (
+          <AuthoredStatBlock
+            npcName={artifactName}
+            copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
+          />
+        ) : (
+          <StatBlockCard statBlock={data.statBlock} name={artifactName} />
         )}
       </div>
     </div>

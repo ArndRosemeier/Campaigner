@@ -105,6 +105,61 @@ export function npcDataIsCastCreature(data: NpcArtifactData): boolean {
 }
 
 /**
+ * The row's numbers are the campaign's OWN, not the library's copy (docs/17 row
+ * 284).
+ *
+ * A cast creature row carries its origin stamps FOREVER — they are its identity
+ * (the portrait key and the creature-reuse key ride `originToken`, docs/17 rows
+ * 255b/268/269) — so the stamps alone cannot say whether the block beside them
+ * is the library's copy or a block an AI AUTHORED under a direct instruction.
+ * That second question is this function, and it is what makes "a copy" and "an
+ * authored block that HAS an origin" distinguishable for good: the flag is set
+ * when a direct instruction lifts the cast boundary, and it survives every later
+ * write. A null block with the flag set is an authored row the owner emptied,
+ * not a broken copy.
+ */
+export function npcStatsAreAuthored(data: NpcArtifactData): boolean {
+  return data.statBlockAuthored === true;
+}
+
+/**
+ * Is there a DIRECT instruction — the owner speaking about THIS entity? ONE
+ * reader of that question, so "an explicit instruction outranks the boundary"
+ * means the same bytes everywhere (docs/17 rows 247 and 284).
+ */
+export function hasDirectInstruction(instruction: string | undefined): boolean {
+  return (instruction ?? '').trim() !== '';
+}
+
+/**
+ * THE ONE RULE for whether an AI write may AUTHOR numbers onto this row (docs/17
+ * row 284). The owner, verbatim: *"yes of course, direct instructions need to be
+ * honored not ignored."*
+ *
+ * A cast creature's numbers are the library's COPY and no run may author over
+ * them — that boundary is unchanged — EXCEPT when the owner gave a DIRECT
+ * instruction about this entity, which outranks it (exactly as docs/17 row 247
+ * ruled for the draft veto), or when the row's numbers are ALREADY the
+ * campaign's own (`npcStatsAreAuthored`): there is then no library copy left to
+ * protect, and the row behaves as the authored NPC it has become.
+ *
+ * EVERY enforcement point asks THIS question and no other: the statblock step
+ * and the refill merge (`llm/runEngine`), the encounter mint's link-not-write
+ * guard, the change seam's route (`features/modules/change-artifact`) and the
+ * entity batch's destination check. A second mechanism, or this rule spelled
+ * again at a call site, is the fragmentation AGENTS rule 4 forbids (docs/18 §2).
+ */
+export function castCreatureWritePermitted(
+  artifact: AnyArtifact | NpcArtifact,
+  directInstruction: string | undefined,
+): boolean {
+  if (artifact.kind !== 'npc') return true;
+  if (!npcDataIsCastCreature(artifact.data)) return true;
+  if (npcStatsAreAuthored(artifact.data)) return true;
+  return hasDirectInstruction(directInstruction);
+}
+
+/**
  * How a CAST CREATURE NPC is named in user-facing copy: the house «Name»
  * quoting convention plus the fact that the row is a creature's. ONE spelling,
  * so every refusal and toast about such a row reads the same.

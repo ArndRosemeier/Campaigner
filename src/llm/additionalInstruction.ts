@@ -78,3 +78,27 @@ export function additionalInstructionOf(brief: string): string | null {
   const head = `${ADDITIONAL_INSTRUCTION_LABEL} `;
   return brief.startsWith(head) ? brief.slice(head.length) : null;
 }
+
+/**
+ * THE direct instruction of ONE run step (docs/17 rows 247, 284): the owner's own
+ * words about THIS entity, from the two places they can reach a step — the
+ * Details view's retry/resume text (`extraInstruction`) and the brief's ONE
+ * `Additional instruction:` paragraph (the change seam, read by
+ * `additionalInstructionOf` above). Empty when the owner asked for nothing.
+ *
+ * WHY A COMPOSER AND NOT THE EXPRESSION AT EACH SITE. A step that REFUSES or
+ * AUTHORS must read this before it decides, and TWO steps now decide on it — the
+ * statblock step (may it author?) and `runFinalize`'s refill merge (may the
+ * drafted block land?). Two spellings of "did the owner ask for something" would
+ * drift the moment one of them learned a third source, and a merge that saw no
+ * instruction while the step saw one would fail a run the owner explicitly
+ * asked for — an instruction dropped in silence, which AGENTS rules 1-2 forbid.
+ * The repair recursions deliberately do NOT pass their own text here: a repair
+ * continuation is the app talking to itself (docs/17 row 247).
+ */
+export function directInstructionFor(brief: string, extraInstruction: string): string {
+  return [extraInstruction, additionalInstructionOf(brief) ?? '']
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+    .join('\n');
+}

@@ -5,7 +5,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import { citationBookTitle, rulebookDisplayTitle } from '@/domain/encounterResolve';
 import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign, foreignAliasNames } from '@/db/artifactRepo';
-import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
+import { castCreatureLabel, castCreatureWritePermitted, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { getRulebook } from '@/db/rulebookRepo';
 import { libraryCitationForSlot } from '@/domain/libraryCreature';
@@ -107,10 +107,16 @@ export async function alignEntityName(
 ): Promise<AliasCollision[]> {
   const artifact = await artifactRepo.getArtifact(artifactId);
   if (artifact === undefined) return [];
+  // ALIGNING TO THE ROW'S OWN NAME IS A NO-OP, and it is checked BEFORE the cast
+  // refusal (docs/17 row 284): a change aimed at a cast row always passes that
+  // row's OWN name — it re-designs the entity, it never renames it — and the
+  // refusal belongs to the RENAME, not to the write. Ordering it first is what
+  // keeps the owner's honored instruction from arriving with a refusal toast
+  // about a rename nobody asked for.
+  if (sameAliasName(artifact.name, entityName)) return [];
   if (isCastCreatureNpc(artifact)) {
     throw new Error(castCreatureWriteRefusal(artifact.name, entityName));
   }
-  if (sameAliasName(artifact.name, entityName)) return [];
   const modelName = artifact.name;
   // The "is the old name already an alias?" question is the MERGE's own
   // dedupe (docs/17 row 121): the comparison lives in `domain/artifactAlias`
@@ -808,8 +814,20 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           // invented NPC's name became the linked creature's — the
           // owner-reported defect this whole arc answers. The refusal is LOUD (a
           // per-entity failure + its toast) and writes nothing.
+          //
+          // THE ONE RULE DECIDES IT (docs/17 row 284), with the instruction
+          // honestly scoped to the row it is ABOUT: a run AIMED at this row
+          // (`targetArtifactId`, the change seam) carries the owner's own words
+          // for it, so the boundary yields to them; a CREATE batch that merely
+          // collided with a cast row's name has spoken about a DIFFERENT entity,
+          // so it passes NO instruction and the boundary stands exactly as it did.
           const destination = await artifactRepo.getArtifact(outcome.resultArtifactId);
-          if (destination !== undefined && isCastCreatureNpc(destination)) {
+          const aimedAtThisRow =
+            target.artifactId !== undefined && target.artifactId === outcome.resultArtifactId;
+          if (
+            destination !== undefined &&
+            !castCreatureWritePermitted(destination, aimedAtThisRow ? instruction : undefined)
+          ) {
             const refusal = castCreatureWriteRefusal(destination.name, target.name);
             recordFailure({
               name: target.name,

@@ -10,6 +10,7 @@ import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, updateRun } from '@/db/runRepo';
 import { composedFailureMessage, runEngine, type StartRunInput } from '@/llm/runEngine';
 import {
+  npcCreatureIdentity,
   npcDataSchema,
   newId,
   type Campaign,
@@ -17,6 +18,7 @@ import {
   type Persona,
   type StatBlock,
 } from '@/domain';
+import { withAdditionalInstruction } from '@/llm/additionalInstruction';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -223,6 +225,10 @@ describe('a cited row is never asked for a stat block', () => {
     expect(after.data.statBlock).toEqual(NPC_STATBLOCK);
     expect(after.data.sourceLine).toBe('Bestiary p.132');
     expect(after.data.originToken).toBe(`chunk:${creature.chunkId}`);
+    // … and the row is STILL A COPY: no instruction means the boundary stands,
+    // so the authored-with-origin flag is NOT set by a plain regenerate (docs/17
+    // row 284, the narrow half of the lift).
+    expect(after.data.statBlockAuthored).toBeUndefined();
     expect((await listRevisions(creature.id)).length).toBeGreaterThan(revisionsBefore.length);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
@@ -262,6 +268,69 @@ describe('a cited row is never asked for a stat block', () => {
     if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
     expect(after.data.statBlock?.hp).toBe(22);
     expect((after.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30000);
+});
+
+describe('a DIRECT instruction outranks the cast boundary (docs/17 row 284)', () => {
+  /** The block the model returns when the owner asked for level 5 — the level
+   * the instruction resolves, which the run BINDS (docs/17 row 247). */
+  const LEVEL5_STATBLOCK: StatBlock = { ...NPC_STATBLOCK, level: '5', hp: 42, hpFormula: '9d6 + 9' };
+
+  it('AUTHORS the block on a cast row, stamps it authored, and keeps the origin as provenance', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const persona = await seedPersona();
+    const creature = await seedCitedNpc(campaign);
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(NPC_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(LEVEL5_STATBLOCK),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    // The owner's own words, through the ONE seam that renders them into the
+    // brief (so this pin exercises the reader the engine really uses).
+    const brief = withAdditionalInstruction(
+      'Refill this NPC with real prose.',
+      'redo this completely, this time making it level 5',
+    );
+    const runId = await runEngine.startRun({ ...INPUT(campaign, persona, creature.id), brief });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    // THE BOUNDARY YIELDED: the step RAN (two calls — draft + statblock), where
+    // the same row without an instruction spends one and skips (the sibling pin
+    // above).
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const run = await getRun(runId);
+    const statblockStep = run?.steps.find((step) => step.name === 'statblock');
+    expect(statblockStep?.status).toBe('done');
+    // THE TRANSITION IS NAMED, on the step's EXISTING notice seam, and it names
+    // the row and its origin (docs/17 row 284 — never a silent change of what the
+    // row IS).
+    const notice = (statblockStep?.output as { notice?: string }).notice ?? '';
+    expect(notice).toContain('was a cast creature');
+    expect(notice).toContain('Goblin Warrior');
+    expect(notice).toContain('Bestiary p.132');
+    expect(notice).toContain('AUTHORS new numbers');
+
+    const after = await getArtifact(creature.id);
+    if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    // THE NUMBERS ARE THE ROW'S OWN, at the level the instruction asked for.
+    expect(after.data.statBlock?.level).toBe('5');
+    expect(after.data.statBlock?.hp).toBe(42);
+    expect(after.data.statBlockAuthored).toBe(true);
+    // THE ORIGIN STAMPS SURVIVE AS PROVENANCE, byte for byte — and the identity
+    // the portrait key and the creature-reuse key ride (`originToken`) is
+    // UNCHANGED, so a level change orphans no portrait and re-labels nothing.
+    expect(after.data.sourceLine).toBe('Bestiary p.132');
+    expect(after.data.originToken).toBe(`chunk:${creature.chunkId}`);
+    expect(npcCreatureIdentity(after)?.key).toBe(`chunk:${creature.chunkId}`);
+    // The prose still landed (this is a refill, not a stat-only write).
+    expect(after.summary).toBe(NPC_DRAFT.summary);
+    expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 });

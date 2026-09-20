@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { CODE, filesWith } from '../helpers/sourceCode';
+
 /**
  * THE ONE COPY OPERATION (docs/17 row 255a, AGENTS §Centralization obligation 2).
  *
@@ -21,32 +23,10 @@ import { describe, expect, it } from 'vitest';
  * The source list comes from Vite's own `import.meta.glob` with `?raw` — the
  * hand-rolled source walker (`codeOf`) is a BASELINED multi-site population in
  * this suite (docs/17 row 212), and adding a second copy of it would be the very
- * defect this file exists to pin.
+ * defect this file exists to pin. Since docs/17 row 284 the glob + needle
+ * lookup itself lives in ONE place, `tests/helpers/sourceCode` (the tripwire
+ * caught this file's copy and a new pin's as a pair and they were FOLDED).
  */
-
-const RAW: Record<string, string> = import.meta.glob('/src/**/*.{ts,tsx}', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-});
-
-/** Comment-stripped, whitespace-collapsed source per repo-relative path. */
-const CODE: Record<string, string> = Object.fromEntries(
-  Object.entries(RAW).map(([path, text]) => [
-    path.replace(/^\//, ''),
-    text
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '')
-      .replace(/\s+/g, ' '),
-  ]),
-);
-
-/** The `src/` files whose CODE contains the needle. */
-function filesWith(needle: string): string[] {
-  return Object.keys(CODE)
-    .filter((path) => CODE[path]?.includes(needle) === true)
-    .sort();
-}
 
 describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
   it('mints the origin token in the identity layer and the copy seam alone', () => {

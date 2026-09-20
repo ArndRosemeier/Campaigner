@@ -26,7 +26,9 @@ import {
   encounterLocationKindSchema,
   entranceMarkerConfig,
   gridDimensionsFor,
+  castCreatureWritePermitted,
   isCastCreatureNpc,
+  npcStatsAreAuthored,
   mobCasterLevel,
   mobSpellChips,
   mobSpellIndex,
@@ -76,7 +78,7 @@ import {
 import { getChunksByIds } from '@/db/chunkRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { creatureCopyRefusal } from '@/domain/libraryCopy';
-import { additionalInstructionOf, additionalInstructionSection } from '@/llm/additionalInstruction';
+import { additionalInstructionSection, directInstructionFor } from '@/llm/additionalInstruction';
 import {
   backgroundActivityLabel,
   clearBackgroundActivity,
@@ -1471,18 +1473,21 @@ function mergeRefillData(
   kind: ArtifactKind,
   draftData: ArtifactData,
   target: AnyArtifact,
+  directInstruction: string,
 ): ArtifactData {
   if (target.kind !== kind) return draftData;
   if (kind === 'npc' && target.kind === 'npc' && 'appearance' in draftData) {
     const previous = target.data;
-    // THE REFUSED PAIR IS NEVER CONSTRUCTED (docs/11 §A cited row's REFILL,
-    // docs/17 row 112).
-    // A CAST CREATURE's numbers are never a run's to author — under the
-    // one-representation model (docs/17 row 255b) the row OWNS the copy of the
-    // library's block. The statblock step is forced off for such a target
-    // (`runStatblock`), so this refusal is unreachable from the pipeline it just
-    // ran; it is reachable from a run PERSISTED before that rule (resumed, or
-    // with an edited statblock step), which is exactly why the refusal is here
+    // THE CAST BOUNDARY, through its ONE rule (docs/17 rows 279/284): a cast
+    // creature's numbers are the library's COPY and no run may author over them —
+    // UNLESS the owner gave a direct instruction about this entity, or the row's
+    // numbers are already their own (`castCreatureWritePermitted`, the SAME call
+    // `runStatblock` makes, fed the SAME `directInstructionFor` bytes that step
+    // was fed). THE REFUSED PAIR IS STILL NEVER CONSTRUCTED (docs/11 §A cited
+    // row's REFILL, docs/17 row 112): the statblock step is forced off for a
+    // protected cast target, so this refusal is unreachable from the pipeline it
+    // just ran; it is reachable from a run PERSISTED before that rule (resumed,
+    // or with an edited statblock step), which is exactly why the refusal is here
     // rather than assumed away (docs/17 row 137 recorded the second constructor
     // this guard closes).
     //
@@ -1490,26 +1495,37 @@ function mergeRefillData(
     // discard the numbers the module owns as "the library's" and sever the
     // disclosed origin, and keeping both would put an authored block beside a
     // row the whole arc says is a copy.
-    if (isCastCreatureNpc(target) && draftData.statBlock !== null) {
+    const mayAuthor = castCreatureWritePermitted(target, directInstruction);
+    if (!mayAuthor && draftData.statBlock !== null) {
       const origin = previous.sourceLine;
       throw new Error(
         `Refusing to write «${target.name}»: it is a cast creature — its numbers are the copy this ` +
           `module owns of ${origin ?? 'a library creature'} ` +
           `(originToken), so no run may author a stat block over it. ` +
-          `Nothing was written — its prose is unchanged and the copy stands.`,
+          `Nothing was written — its prose is unchanged and the copy stands. ` +
+          `Ask for the change in your own words to author new numbers on it.`,
       );
     }
+    // THE TRANSITION IS RECORDED (docs/17 row 284): the first time a direct
+    // instruction authors a cast copy's numbers, the row stops being a copy and
+    // the flag says so — while the origin stamps survive as PROVENANCE and
+    // identity (the portrait and creature-reuse keys ride `originToken`). This is
+    // the smallest honest route: one additive boolean, no Dexie version, and no
+    // second marker invented at a surface.
+    const authoredHere = isCastCreatureNpc(target) && draftData.statBlock !== null;
     return {
       appearance: draftData.appearance,
       personality: draftData.personality,
-      // A refill that skipped its statblock step keeps the target's frozen
-      // COPY. On a cast creature `draftData.statBlock` is null by construction
-      // (the step never asks), so a block can only arrive on a resumed pre-fix
-      // run — the refusal above is what makes that structural rather than
-      // assumed.
-      statBlock: isCastCreatureNpc(target) ? previous.statBlock : draftData.statBlock ?? previous.statBlock,
+      // A refill that skipped its statblock step keeps the target's numbers: the
+      // frozen COPY on a protected cast row (`draftData.statBlock` is null there
+      // by construction), or the row's own authored block otherwise.
+      statBlock: mayAuthor ? draftData.statBlock ?? previous.statBlock : previous.statBlock,
       ...(previous.sourceLine === undefined ? {} : { sourceLine: previous.sourceLine }),
       ...(previous.originToken === undefined ? {} : { originToken: previous.originToken }),
+      // The flag, once set, SURVIVES every later refill (a row that has authored
+      // numbers is not a copy again just because this run asked for no new
+      // ones).
+      ...(authoredHere || npcStatsAreAuthored(previous) ? { statBlockAuthored: true } : {}),
       // The run stamp survives only while the row is still MACHINE-owned: it
       // is what tells a later cast that this row has not been written in yet
       // (docs/11 D4). A refill IS the writing-in, so it is cleared here and
@@ -1681,23 +1697,23 @@ async function materializeMonsterNpc(
     // 137, which corrects row 112's OWN audit — that audit named
     // `mergeRefillData` the one pair-builder, and it was wrong).
     //
-    // A row carrying `creatureRef` is a CAST CREATURE: its numbers are the
-    // LIBRARY's, and `npcDataSchema` refuses an authored block beside that
-    // citation BY NAME. Such a row is ALSO stat-less by construction
-    // (`statBlock: null` sits in the SAME literal as the citation — the ONE
-    // cast function in `db/creatureRepo` is its sole creator), so the
-    // `statBlock === null` test below is TRUE for it and used to write the
-    // model's block on: `creatureRef` + `statBlock` on one row.
+    // A CAST CREATURE row's numbers are the LIBRARY creature's copy, and
+    // `npcDataSchema` refuses an authored block beside that shape BY NAME. Such a
+    // row is ALSO stat-less by construction (`statBlock: null` sits in the SAME
+    // literal as the copy — the ONE cast function in `db/creatureRepo` is its
+    // sole creator), so the `statBlock === null` test below would be TRUE for it
+    // and used to write the model's block on: a cast origin + an authored block
+    // on one row.
     //
     // WHY the model had a block at all — the fault was OURS, not its: the
     // fixed-cast brief ORDERS a scene member that is a cast row to embed the
     // library creature's own block as this monster's complete inline
     // `statBlock` (`roomBudget.fixedCastSectionFor`, fed by
     // `fixedCastStatsFor`'s citation branch), and nothing in the draft
-    // contract mentions `creatureRef` — the model never learns it exists.
+    // contract mentions the origin — the model never learns it exists.
     // Obeying the brief built the pair. The same guard covers the no-fixed-cast
     // case, where a model-authored block happens to match a campaign-wide cast
-    // row by name: the row's citation still wins.
+    // row by name: the row's own numbers still win.
     //
     // And the failure REPEATED forever, which is what made the owner's report
     // deterministic across a fresh retry: `anyArtifactSchema.parse` runs BEFORE
@@ -1705,12 +1721,17 @@ async function materializeMonsterNpc(
     // stat-less and every retry walked the identical path.
     //
     // So: LINK, never write. The caller wraps the returned id as an
-    // `npc-ref`, and the reader takes that row's numbers from the library
-    // through the ONE derived rule (`domain/encounterResolve.
-    // resolveDerivedNpcStats`) — nothing is lost, because the block the model
-    // embedded WAS the library's own block. The schema refusal stays exactly as
-    // it is: this guard removes the constructor, the backstop stands.
-    if (isCastCreatureNpc(existing)) {
+    // `npc-ref`, and the reader takes that row's numbers from the copy through
+    // the ONE derived rule. The schema refusal stays exactly as it is: this guard
+    // removes the constructor, the backstop stands.
+    //
+    // THE QUESTION GOES THROUGH THE ONE RULE (docs/17 row 284), with NO direct
+    // instruction — the encounter run's instruction is about the ENCOUNTER, not
+    // about this byproduct row, so the owner has not spoken about it here. A
+    // library COPY is therefore protected exactly as before; a row whose numbers
+    // are already the campaign's own is not a copy any more and takes the
+    // ordinary `statBlock === null` path below, like any authored npc.
+    if (!castCreatureWritePermitted(existing, undefined)) {
       cache.set(key, existing.id);
       return existing.id;
     }
@@ -2805,7 +2826,7 @@ export class RunEngine {
             ? this.runEncounterRosterFinalize(runId, stepIndex, steps, input)
             : this.runEncounterFinalize(runId, stepIndex, steps, input);
         }
-        return this.runFinalize(runId, stepIndex, steps, input);
+        return this.runFinalize(runId, stepIndex, steps, input, extraInstruction);
     }
   }
 
@@ -3804,7 +3825,24 @@ export class RunEngine {
       input.targetArtifactId === undefined
         ? undefined
         : await getAnyArtifact(input.targetArtifactId);
-    if (refillTarget !== undefined && isCastCreatureNpc(refillTarget)) {
+    // THE USER'S OWN INSTRUCTION, read off the two places it can reach this
+    // step (docs/17 row 247): `extraInstruction` (the Details view's retry /
+    // resume) and the brief's ONE `Additional instruction:` paragraph (the
+    // change seam, `features/modules/change-artifact`). Read through the ONE
+    // composer (`directInstructionFor`) and ABOVE BOTH vetoes below, because an
+    // explicit instruction is the owner speaking about THIS entity and may not be
+    // discarded by a draft answer — nor by the cast-creature boundary, which it
+    // OUTRANKS (docs/17 row 284, the owner: *"yes of course, direct instructions
+    // need to be honored not ignored."*). Reading it AFTER a refusal is the
+    // measured defect this ordering exists for.
+    const statedInstruction = directInstructionFor(input.brief, userInstruction);
+    // THE CAST-CREATURE BOUNDARY, through its ONE rule (docs/17 rows 279/284):
+    // a cast row's numbers are the library's COPY and are never authored here —
+    // unless the owner gave a direct instruction about this entity, or the row's
+    // numbers are already its own. `castCreatureWritePermitted` answers all three
+    // and is the SAME call the refill merge, the encounter mint and the change
+    // seam make, so the rule cannot drift between them.
+    if (refillTarget !== undefined && !castCreatureWritePermitted(refillTarget, statedInstruction)) {
       // The identity is read through its ONE accessor (`domain/creature`),
       // never by reaching into `data` here. A cast row names its origin by the
       // STAMPED line (docs/17 row 255b); the pre-copy pointer it replaced was
@@ -3818,22 +3856,13 @@ export class RunEngine {
           {
             skipped:
               `this npc is a cast creature: its stat block is the copy this module owns of a ` +
-              `library creature (${origin}) — the numbers are the library's and are never authored here`,
+              `library creature (${origin}) — the numbers are the library's and are never authored here. ` +
+              `Ask for a change in your own words to author new numbers on it.`,
           },
           'skipped',
         ),
       };
     }
-    // THE USER'S OWN INSTRUCTION, read off the two places it can reach this
-    // step (docs/17 row 247): `extraInstruction` (the Details view's retry /
-    // resume) and the brief's ONE `Additional instruction:` paragraph (the
-    // change seam, `features/modules/change-artifact`). Read BEFORE the draft's
-    // veto below, because an explicit instruction is the owner speaking about
-    // THIS entity and must not be discarded by a draft answer.
-    const statedInstruction = [userInstruction, additionalInstructionOf(input.brief) ?? '']
-      .map((part) => part.trim())
-      .filter((part) => part !== '')
-      .join('\n');
     // M4-C: the draft decides whether this character needs stats at all —
     // generating a full stat block for a contact or merchant is wasted
     // effort. The step is marked skipped (visible in the run row).
@@ -3842,6 +3871,26 @@ export class RunEngine {
     // answered `needsStatBlock: false` while being told to redo the entity must
     // not turn that into a silent keep of the old one — the owner's second
     // symptom, "it recreated everything BUT the stat block".
+    //
+    // THE TRANSITION IS NAMED (docs/17 row 284, AGENTS rules 1-2). A direct
+    // instruction has just lifted the cast boundary, so the block this run writes
+    // is the CAMPAIGN's own where the library's copy stood — a change in what the
+    // row IS, not a detail. It rides this step's EXISTING `notice` seam (the same
+    // one the level disagreement uses), never a second advisory mechanism.
+    let castAuthoringNotice: string | null = null;
+    if (
+      refillTarget?.kind === 'npc' &&
+      isCastCreatureNpc(refillTarget) &&
+      !npcStatsAreAuthored(refillTarget.data) &&
+      statedInstruction !== ''
+    ) {
+      const origin = refillTarget.data.sourceLine ?? 'originToken';
+      castAuthoringNotice =
+        `«${refillTarget.name}» was a cast creature: its stat block was the copy this campaign owned of a ` +
+        `library creature (${origin}). The instruction you gave AUTHORS new numbers on this row — they are ` +
+        `this campaign's own from now on, and its portrait and creature identity are unchanged.`;
+      debugLog('run', 'statblock authoring onto a cast creature (a direct instruction outranks the boundary)');
+    }
     const draftDecision = this.effectiveDraft(steps);
     if (draftDecision?.needsStatBlock === false && statedInstruction === '') {
       debugLog('run', 'statblock skipped: draft marked needsStatBlock=false');
@@ -4233,6 +4282,9 @@ export class RunEngine {
       // The stored hint lost to the minted block (docs/17 row 282) — the same
       // existing notice list, so the disagreement is never silent.
       levelDisagreement,
+      // A direct instruction authored numbers onto a cast creature (docs/17 row
+      // 284) — named on the SAME notice list, so the transition is never silent.
+      castAuthoringNotice,
     ]
       .filter((note): note is string => note !== null)
       .join(' ');
@@ -6598,7 +6650,17 @@ export class RunEngine {
     stepIndex: number,
     steps: RunStep[],
     input: StartRunInput,
+    /**
+     * The run's step instruction, threaded through for ONE read: the refill
+     * merge must ask the cast boundary the SAME question the statblock step
+     * asked, or a direct instruction the step honored could be refused at the
+     * write (docs/17 row 284). Read through `directInstructionFor` exactly as
+     * `runStatblock` reads it — the retry lane's text and the brief's paragraph,
+     * never the repair continuations.
+     */
+    extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status']; artifactId?: Id }> {
+    const directInstruction = directInstructionFor(input.brief, extraInstruction);
     const draft = this.effectiveDraft(steps) ?? {};
     // PROVENANCE (docs/17 row 93): read ONCE, here, and hand it to every
     // artifact write below — the text each one persists came from the draft
@@ -7278,7 +7340,7 @@ export class RunEngine {
             // Fields the draft pipeline cannot re-produce survive the refill
             // (mergeRefillData): a player's human-owned PC fields, and an
             // existing stat block the refill declined to regenerate.
-            data: mergeRefillData(kind, data, target),
+            data: mergeRefillData(kind, data, target, directInstruction),
           },
           { source: 'persona', runId },
         );

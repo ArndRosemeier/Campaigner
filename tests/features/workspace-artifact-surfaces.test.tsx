@@ -12,6 +12,7 @@ import {
   getAnyArtifact,
   getArtifact,
   listGlobalArtifacts,
+  updateArtifact,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -419,6 +420,79 @@ describe('a cast row renders its COPIED numbers', () => {
     expect(within(borrowed).getByTestId('borrowed-stat-block-origin')).toHaveTextContent(
       'NPC: Aunt Agatha (stats from Bestiary p.4)',
     );
+    await flushAsyncUpdates();
+  });
+});
+
+describe('a cast row AUTHORED under a direct instruction reads as the campaign’s own (docs/17 row 284)', () => {
+  /** The same cast row, after a direct instruction authored its numbers: the
+   * block is the row's own (level 5 / 42 hp) and the origin stamps survive as
+   * provenance and identity. */
+  async function seedAuthoredFromCast(campaignId: string): Promise<Artifact> {
+    const cast = await seedCastRow(campaignId);
+    if (cast.kind !== 'npc' || cast.data.statBlock === null) {
+      throw new Error('the cast row is not a statful npc');
+    }
+    await updateArtifact(cast.id, {
+      data: {
+        ...cast.data,
+        statBlock: { ...cast.data.statBlock, level: '5', hp: 42 },
+        statBlockAuthored: true,
+      },
+    });
+    const artifact = await getArtifact(cast.id);
+    if (artifact === undefined) throw new Error('the authored row vanished');
+    return artifact;
+  }
+
+  it('the editor shows the numbers as the campaign’s OWN, discloses the origin as provenance, and offers the ordinary controls', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const artifact = await seedAuthoredFromCast(campaign.id);
+
+    renderEditor(artifact, campaign.id);
+    await flushAsyncUpdates();
+
+    const authored = await screen.findByTestId('authored-stat-block');
+    // THE TWO FACTS, SAID SEPARATELY: the numbers are this campaign's, and the
+    // creature this row began as is still disclosed. The copy wording is GONE —
+    // a surface that went on calling the library's what the campaign wrote is the
+    // lie this row removes.
+    expect(within(authored).getByTestId('authored-stat-block-badge')).toHaveTextContent(
+      'Authored for this campaign',
+    );
+    expect(within(authored).getByTestId('authored-stat-block-origin')).toHaveTextContent(
+      'NPC: Aunt Agatha (authored for this campaign; originated from Bestiary p.4)',
+    );
+    // The VALUES are the authored ones, not the library fixture's 22.
+    expect(within(authored).getByText('HP').parentElement?.textContent).toContain('42');
+    expect(screen.queryByTestId('borrowed-stat-block')).toBeNull();
+    expect(screen.queryByText('Copied from the library')).toBeNull();
+    // An authored block is the owner's to edit — the affordances a row whose
+    // numbers are its own always had.
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    // The IDENTITY is untouched: the token the portrait and the creature-reuse
+    // answer ride is still there (a level change orphans no portrait).
+    if (artifact.kind !== 'npc') throw new Error('not an npc');
+    expect(artifact.data.originToken).toBeDefined();
+    expect(artifact.data.sourceLine).toBe('Bestiary p.4');
+    await flushAsyncUpdates();
+  });
+
+  it('the read-only card draws the same authored arm, never the copy badge', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const artifact = await seedAuthoredFromCast(campaign.id);
+    if (artifact.kind !== 'npc') throw new Error('not an npc');
+
+    render(<NpcCard npc={artifact} />);
+
+    const card = await screen.findByTestId('play-npc-card');
+    const authored = await within(card).findByTestId('authored-stat-block');
+    expect(within(authored).getByText('HP').parentElement?.textContent).toContain('42');
+    expect(within(authored).getByTestId('authored-stat-block-origin')).toHaveTextContent(
+      'originated from Bestiary p.4',
+    );
+    expect(within(card).queryByTestId('borrowed-stat-block')).toBeNull();
     await flushAsyncUpdates();
   });
 });

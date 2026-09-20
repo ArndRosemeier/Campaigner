@@ -10,11 +10,11 @@ import type {
   NpcArtifactData,
   StatBlock,
 } from '@/domain';
-import { npcDataIsCastCreature } from '@/domain';
+import { npcDataIsCastCreature, npcStatsAreAuthored } from '@/domain';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { WriterModelId } from '@/components/writer-model-id';
 import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
-import { BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
+import { AuthoredStatBlock, BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 
@@ -101,18 +101,28 @@ export function NpcCard({
         {/* A CAST creature's numbers are the copy the campaign owns (docs/17
             row 255b) — read-only and labelled, the SAME render the editor's
             details panel makes (ledger row 134), so this card never shows a
-            named zombie with a portrait and nothing else. An unconverted row
-            still resolves through its legacy `creatureRef` inside that render. */}
-        {npcDataIsCastCreature(data) ? (
+            named zombie with a portrait and nothing else. A row a direct
+            instruction AUTHORED keeps its origin but its numbers are its own, so
+            it renders the authored arm rather than the copy one (docs/17 row
+            284) — the card may not go on calling the library's what the campaign
+            wrote. */}
+        {!npcDataIsCastCreature(data) ? (
+          data.statBlock !== null ? (
+            <div className="text-base">
+              <StatsCard statBlock={data.statBlock} name={npc.name} />
+            </div>
+          ) : null
+        ) : npcStatsAreAuthored(data) ? (
+          <AuthoredStatBlock
+            npcName={npc.name}
+            copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
+          />
+        ) : (
           <BorrowedStatBlock
             npcName={npc.name}
             copy={{ statBlock: data.statBlock, sourceLine: data.sourceLine }}
           />
-        ) : data.statBlock !== null ? (
-          <div className="text-base">
-            <StatsCard statBlock={data.statBlock} name={npc.name} />
-          </div>
-        ) : null}
+        )}
       </div>
       {showWriterModel && (
         <WriterModelId model={npc.writerModel} testId="npc-card-writer-model" />

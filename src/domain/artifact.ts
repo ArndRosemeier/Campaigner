@@ -272,6 +272,21 @@ export const npcDataSchema = z.object({
    */
   originToken: z.string().optional(),
   /**
+   * The row's stat block is the CAMPAIGN's own, AUTHORED by a run under
+   * a direct instruction — not the library creature's copy (docs/17 row 284).
+   *
+   * The cast origin stamps (`sourceLine` / `originToken`) must SURVIVE as
+   * PROVENANCE and identity: the portrait key and the creature-reuse key ride
+   * `originToken`, so stripping them to record "these numbers are ours now"
+   * would orphan the portrait and re-label the creature. This additive flag is
+   * the smallest honest way for the record to tell "a copy" from "an authored
+   * block that HAS an origin" (`domain/creature.npcStatsAreAuthored`), and it is
+   * what makes the boundary lift durable rather than a per-run mood. Additive +
+   * optional: every row written before it is a copy or an ordinary authored NPC
+   * and parses unchanged; no Dexie version is owed.
+   */
+  statBlockAuthored: z.boolean().optional(),
+  /**
    * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
    * one did: the GENERATION seam's own provenance, so a later pass can tell a
    * freshly cast, prose-less row from one a module designer has since written

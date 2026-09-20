@@ -210,6 +210,20 @@ export function derivedStatOrigin(npcName: string, creatureOrigin: string): stri
 }
 
 /**
+ * The provenance label of an AUTHORED stat block on a row that STILL carries a
+ * cast origin (docs/17 row 284) — the sibling of `derivedStatOrigin`, and
+ * deliberately a different sentence: these numbers are the row's OWN, authored
+ * under a direct instruction, so reusing the copy-arm words ("stats from …")
+ * would be a lie about where the numbers came from. What survives is the
+ * PROVENANCE the cast stamps exist for: which library creature this row began
+ * as. ONE composer beside its copy-arm sibling, so the two surfaces that
+ * disclose it (the editor's form and the read-only card) cannot drift.
+ */
+export function authoredStatOrigin(npcName: string, creatureOrigin: string): string {
+  return `NPC: ${npcName} (authored for this campaign; originated from ${creatureOrigin})`;
+}
+
+/**
  * THE one missing-ref reason: the display label AND the structured identity
  * behind it, built TOGETHER so a caller can never hold one without the other.
  * The cited creature's own name rides along when the citation stamped one — a

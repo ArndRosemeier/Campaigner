@@ -266,21 +266,17 @@ describe('the instruction is optional and only ever ADDS a paragraph', () => {
 });
 
 describe('the citation survives every writer', () => {
-  it('REFUSES the AI on a creature-carrying npc, naming the reason and the remedy', async () => {
-    // REWRITTEN (ledger row 106). The old model's guard refused because an
-    // `npc` carrying a hidden `monsterChunkId` was "really" a creature. The
-    // ratified model splits the facts apart: `creatureRef` is a CITATION and
-    // the row around it is AUTHORED (docs/11 D3/D4, the owner's Aunt Agatha
-    // path). The refusal survives anyway — and is now the ONLY sensible answer,
-    // for a reason the old model could not state: `castCreatureAsNpc` is
-    // idempotent per (campaign, module, NAME, identity), so a writer that
-    // renamed this row would let the module generator cast a SECOND row for the
-    // same creature while this one still exists. The refusal names that, and it
-    // writes nothing at all (docs/17 row 101, re-based on the cast seam).
-    //
-    // The alternative — let the AI rewrite the prose and protect only
-    // `creatureRef` — is a real option the owner may prefer; it is NOT what the
-    // code does, and a test may not pin a behaviour the code refuses to have.
+  it('REFUSES a regenerate with NO instruction on a creature-carrying npc, naming the reason and the remedy', async () => {
+    // AMENDED BY docs/17 row 284, named rather than quietly moved. This pin used
+    // to pass an instruction ('Make it a chief.') and expect a refusal; the
+    // owner's ruling is the opposite — *"yes of course, direct instructions need
+    // to be honored not ignored."* — so the refusal survives for the case it is
+    // actually about: a caller that asked for a REGENERATION and said nothing
+    // about this entity. `castCreatureAsNpc` is idempotent per (campaign, module,
+    // NAME, identity), so a writer that renamed this row would let the module
+    // generator cast a SECOND row for the same creature while this one still
+    // exists — that is what the sentence names, and it still writes nothing at
+    // all. The instruction half is the sibling pin below.
     const world = await seedWorld();
     const chunkId = newId();
     const creature = await createArtifact({
@@ -300,7 +296,7 @@ describe('the citation survives every writer', () => {
     const { db } = await import('@/db');
     const runsBefore = await db.runs.count();
 
-    const result = await changeArtifact({ artifactId: creature.id, instruction: 'Make it a chief.' });
+    const result = await changeArtifact({ artifactId: creature.id });
 
     expect(result.status).toBe('refused');
     if (result.status !== 'refused') throw new Error('expected a refusal');
@@ -322,6 +318,46 @@ describe('the citation survives every writer', () => {
     expect(after.data.originToken).toBe(`chunk:${chunkId}`);
     expect(after.data.sourceLine).toBe('Bestiary p.132');
     expect(after.name).toBe('Goblin Boss');
+  });
+
+  it('an EXPLICIT instruction reaches the entity lane on a creature-carrying npc (docs/17 row 284)', async () => {
+    // The owner's ruling, at the seam: a direct instruction is the owner speaking
+    // about THIS entity, so it outranks the cast boundary and the row is
+    // re-designed IN PLACE — the same run, the same row, the same identity.
+    const world = await seedWorld();
+    const chunkId = newId();
+    const creature = await createArtifact({
+      campaignId: world.campaign.id,
+      moduleId: world.module.id,
+      kind: 'npc',
+      name: 'Goblin Boss',
+      summary: '',
+      body: '',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: null,
+        sourceLine: 'Bestiary p.132',
+        originToken: `chunk:${chunkId}`,
+      },
+    });
+    runEntityBatchMock.mockResolvedValue(produced('Goblin Boss', creature.id));
+
+    const result = await changeArtifact({
+      artifactId: creature.id,
+      instruction: 'redo this completely, this time making it level 5',
+    });
+
+    expect(result).toMatchObject({ status: 'changed', operation: 'entity-redesign' });
+    const call = runEntityBatchMock.mock.calls[0]?.[0] as {
+      instruction?: string;
+      targets?: { name: string; artifactId?: string }[];
+    };
+    expect(call.targets).toEqual([{ name: 'Goblin Boss', artifactId: creature.id }]);
+    expect(call.instruction).toBe('redo this completely, this time making it level 5');
+    // The seam did not invent a second writer: the row's own identity is what the
+    // run was aimed at, and the module slot it took was released.
+    expect(isModuleGenerationClaimed(world.module.id)).toBe(false);
   });
 
   it('a player character is UNSUPPORTED — the Party is authored, and nothing runs', async () => {
@@ -381,7 +417,7 @@ describe('the citation survives every writer', () => {
     expect(runEntityBatchMock).not.toHaveBeenCalled();
   });
 
-  it('a creature-carrying npc never claims the module generation slot — it is refused before the slot is taken', async () => {
+  it('a NO-instruction change on a creature-carrying npc never claims the module generation slot — it is refused before the slot is taken', async () => {
     // The refusal above must be a TRUE no-op: not a claim that is taken and
     // then released, and not a claimed slot leaked on the refusal path (a leak
     // would block every later write for that module with no visible reason).
@@ -396,7 +432,7 @@ describe('the citation survives every writer', () => {
       data: { appearance: '', personality: '', statBlock: null, originToken: 'chunk:legacy-ref' },
     });
 
-    const result = await changeArtifact({ artifactId: creature.id, instruction: 'x' });
+    const result = await changeArtifact({ artifactId: creature.id });
 
     expect(result.status).toBe('refused');
     expect(runEntityBatchMock).not.toHaveBeenCalled();

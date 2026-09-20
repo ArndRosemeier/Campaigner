@@ -8317,3 +8317,34 @@ now carries the complex-encounter fixture the two vision tests had copied
 byte-for-byte. `*Baseline.json` edits were DELETE-ONLY (the deleted
 `cast-row-borrowed-stats-scan` and `monster-source-citation` sites and one stale
 entry).
+
+## One cast-write rule, and the source-scan helper it folded (docs/17 row 284)
+
+`tests/architecture/one-cast-write-rule.test.ts` (3 source pins) holds the ONE
+predicate a direct instruction now outranks: `domain/creature
+.castCreatureWritePermitted` is DEFINED once and ASKED from exactly the declared
+enforcement homes (the engine's statblock step, refill merge and encounter mint;
+the change seam's route; the entity batch's destination check), and — the pin
+that matches the measured defect — in `runEngine.ts` the instruction read
+(`directInstructionFor`) sits BEFORE the statblock step's boundary call, so a
+refusal can never be reached without consulting the owner's words. It also pins
+the expression's FOLD: `additionalInstructionOf(` no longer appears in the
+engine, because "did the owner ask for something" is composed in one place.
+
+**THE TRIPWIRE CAUGHT THIS SLICE'S OWN COPY AT BIRTH, AND IT WAS FOLDED.** The
+first draft of that pin carried its own `import.meta.glob` + normalization +
+`filesWith`, byte-identical to `one-library-copy.test.ts`'s, and
+`no-duplicate-implementations.test.ts` reddened it BY NAME (112-char normalized
+body, two sites, not in the inventory). It was folded, not blessed: the glob and
+the needle lookup now live in `tests/helpers/sourceCode.ts` (`CODE`,
+`filesWith`), both pins import them, and **NO `*Baseline.json` was edited** (the
+pair was never baselined, so the fold simply returns the population to one site).
+This is the second time the tripwire caught a copy at birth in this arc and the
+second time the cure was a fold.
+
+RED-PROVEN, arms in `<worktree>/.gate-logs/row284-writer/` (`arms.md` + the raw
+`injectA..D.log`): the predicate reverted to the unconditional boundary → 2 named
+pins red; the boundary DELETED → the narrowness pin and the merge refusal red;
+the change seam's refusal removed → 2 red; the origin stamps dropped when a run
+authors → the identity assertions red. Every file restored byte-identically
+(`sha256sum -c pristine.sha256` OK); no two injected hashes equal.

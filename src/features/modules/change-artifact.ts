@@ -1,5 +1,5 @@
 import type { ArtifactKind, AnyArtifact, Campaign, DungeonMapPath, Id } from '@/domain';
-import { ENTITY_KINDS, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
+import { ENTITY_KINDS, castCreatureWritePermitted, castCreatureWriteRefusal } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getModule } from '@/db/moduleRepo';
@@ -39,8 +39,8 @@ import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy
  * | `encounter`                         | `features/campaign/encounterRegen` | the requested one of the two EXISTING operations |
  * | `npc` / `location` / `event` /      | `features/modules/entity-batch`  | re-designs the row IN PLACE through               |
  * | `faction` / `note`                  | (with `buildEntityBrief`)        | `runEngine`'s refill (identity preserved)         |
- * | `npc` carrying a `creatureRef`      | REFUSED — `isCastCreatureNpc`    | a RATIFIED boundary: nothing is written at all    |
- * | (a CAST CREATURE npc, docs/11 D4)   |                                  |                                                   |
+ * | `npc` carrying a cast origin       | REFUSED — `castCreatureWritePermitted` | no instruction ⇒ nothing is written at all |
+ * | (a CAST CREATURE npc, docs/11 D4)   | (docs/17 row 284)                | an INSTRUCTION ⇒ the entity lane, as the owner ruled |
  * | `pc`                                | UNSUPPORTED — the Party is authored | no persona produces a player character         |
  * | `plotarc`                           | UNSUPPORTED — outside the entity lane | the arc engine is not a module entity kind    |
  *
@@ -240,16 +240,21 @@ type ChangeRoute =
  * is not a user-facing refusal.
  */
 function resolveChangeRoute(artifact: AnyArtifact, request: ChangeArtifactRequest): ChangeRoute {
-  // RATIFIED BOUNDARY (owner decision, docs/17 row 101, re-based on the
-  // cast seam by the core-mob arc): a CAST CREATURE npc is this module's own
-  // row for a LIBRARY creature, and its name IS the citation — an instruction
-  // that renamed or rewrote it would stop every encounter and battle citing
-  // that creature from finding it. This is a deliberate exception to "change
-  // any artifact", not debt and not a TODO: the refusal names the reason and
-  // the remedy, writes nothing at all, and can never be reported as success.
-  // `isCastCreatureNpc` is the ONLY classification of such a row (never a
-  // second reading of `creatureRef` at a call site).
-  if (isCastCreatureNpc(artifact)) {
+  // THE CAST BOUNDARY, through its ONE rule (docs/17 rows 101, 284). A CAST
+  // CREATURE npc is this module's own row for a LIBRARY creature, and its name IS
+  // the citation — a run that renamed it would stop every encounter and battle
+  // citing that creature from finding it. But the owner's ruling is decisive:
+  // *"yes of course, direct instructions need to be honored not ignored."* A
+  // caller that brought an explicit instruction gets the entity lane; a caller
+  // that asked for a regeneration with NO instruction still gets this refusal,
+  // which names the reason and the remedy, writes nothing at all, and can never
+  // be reported as success.
+  //
+  // `castCreatureWritePermitted` is the ONLY spelling of that rule (never a
+  // second reading of the origin stamps at a call site), and the instruction is
+  // read here BEFORE anything is claimed, called or written — the same bytes the
+  // statblock step and the refill merge will read off the brief.
+  if (!castCreatureWritePermitted(artifact, request.instruction)) {
     return {
       status: 'refused',
       artifactId: artifact.id,
