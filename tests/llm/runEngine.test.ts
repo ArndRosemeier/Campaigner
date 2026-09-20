@@ -946,27 +946,30 @@ describe('runEngine', () => {
   }, 30000);
 
   /**
-   * THE OWNER'S RULING (docs/17 row 282), REVERSING ROW 247's PREMISE HALF: a
-   * module-created mob takes the level of the PART that names it — STRUCTURED
-   * data, scoped by NAME — and the PREMISE's prose is not a level source at all.
-   * The owner, verbatim: *"Its very sloppy to infer all mobs levels from a
-   * CAMPAIGN premise … And this was about 1 NPC."* Here the band is a 1–3 RANGE
-   * and the premise's only statement is `level 5`; the mentioning part states 1,
-   * so 1 binds and the premise's 5 must not appear in the prompt.
+   * THE HONEST REVIVAL OF THE PREMISE (docs/17 row 285, AMENDING the shape of
+   * row 282's ruling — deliberately, and spelled out): a module-created mob takes
+   * the level of the sentence that NAMES it, whether that sentence is in its part
+   * or in the premise; the PREMISE's MODULE-WIDE inference stays dead. The owner,
+   * verbatim: *"Its very sloppy to infer all mobs levels from a CAMPAIGN premise
+   * … And this was about 1 NPC."* The defect was inferring ALL mobs' levels from
+   * the premise, so the revival is NAME-SCOPED: here the premise says `level 5`
+   * ABOUT [[Marten Graubruch]], the part names him and states no level, and the
+   * band is a 1–3 RANGE — so the named sentence is the module's only statement
+   * about him and 5 must bind.
    */
-  it('a module-created mob takes the PART’s level by name — the PREMISE is not a level source (docs/17 row 282)', async () => {
+  it('a module-created mob takes the level of the PREMISE sentence that NAMES it — never a module-wide premise read (docs/17 row 285)', async () => {
     const { campaignId, persona } = await seed();
     const moduleId = await seedPremiseLevelModule(campaignId, 'Marten Graubruch', 5, 3);
     chatMock
-      // The draft names the entity it was asked about, so the PART-level lookup
-      // by name can resolve (the part is the structured, name-scoped source).
+      // The draft names the entity it was asked about, so the name-scoped prose
+      // lookup can resolve (the premise sentence names him).
       .mockResolvedValueOnce({
         text: draftReply('Marten Graubruch'),
         modelUsed: 'test-model',
         fallback: null,
       })
-      // A reply at the band's own 3: a level the part does not state, so the fix
-      // must repair it, not store it.
+      // A reply at the band's own 3: a level the named sentence does not state,
+      // so the fix must repair it, not store it.
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
@@ -985,16 +988,18 @@ describe('runEngine', () => {
     );
 
     const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).toContain('at level 1');
+    // THE NAMED SENTENCE'S 5 BINDS: it is a statement about THIS gnome — the
+    // module-wide read of the premise is the thing row 282 killed, not the
+    // name-scoped one (docs/17 row 285).
+    expect(statblockPrompt).toContain('at level 5');
     expect(statblockPrompt).toContain("the module's author fixed this entity's level");
-    // THE PREMISE'S 5 IS NOWHERE: it is one npc's story detail, not a level.
-    expect(statblockPrompt).not.toContain('at level 5');
+    expect(statblockPrompt).not.toContain('at level 1, grounded');
     // The deviation is named with the level that actually resolved, and a reply
     // that never honours it is REJECTED rather than persisted (docs/17 row 247's
     // binding half, unchanged).
     const run = await getRun(runId);
     expect(run?.errorMessage).toContain('written at level "3"');
-    expect(run?.errorMessage).toContain('not the 1 this run resolved');
+    expect(run?.errorMessage).toContain('not the 5 this run resolved');
     const artifact = await getArtifact(run?.resultArtifactId ?? '');
     expect(artifact).toBeUndefined();
   }, 20000);
@@ -1078,6 +1083,103 @@ describe('runEngine', () => {
     const noBlockNotice = stepNotice((await getRun(noBlockRunId))?.steps[2]?.output);
     expect(noBlockNotice).not.toContain('The module records level 7 for this entity');
   }, 30000);
+
+  /**
+   * CLASS D (docs/17 row 285): the prompt must carry ONE level when an
+   * INSTRUCTION faces a stored hint and there is NO minted block yet. Row 282
+   * fixed this for the block case, but its condition REQUIRED a minted block —
+   * so with none, the generated "The module fixes this entity's level: N."
+   * paragraph stayed in the prompt while the clause stated the instruction's
+   * number: two exact levels in one prompt. The SAME disagreement seam now
+   * covers it — the notice names the INSTRUCTION as the winner and the hint
+   * paragraph is stripped — never a second mechanism.
+   */
+  it('strips the generated hint paragraph when an INSTRUCTION outranks the stored hint and there is NO minted block (docs/17 row 285)', async () => {
+    const { campaignId, persona } = await seed();
+    const HINT_PARAGRAPH =
+      "The module fixes this entity's level: 7. Build this entity at exactly that level; it overrides the party level above, and a description or stat block that prints another level must say so rather than drift.";
+    // NO statBlock option: the row has NO minted block yet, which is the arm
+    // row 282's condition could not reach.
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK_AT_5), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: `Regenerate the full content of this npc.\n\n${HINT_PARAGRAPH}\n\nAdditional instruction: make it level 5`,
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 5');
+    expect(statblockPrompt).toContain('the instruction for this change fixes');
+    // ONE LEVEL IN THE PROMPT: the contradicted 7 is GONE, paragraph and all.
+    expect(statblockPrompt).not.toContain("The module fixes this entity's level: 7");
+    expect(statblockPrompt).not.toContain('at level 7');
+    // The disagreement is NAMED on the step's existing `notice` field, with the
+    // INSTRUCTION as the winner (not the block wording).
+    const notice = stepNotice((await getRun(runId))?.steps[2]?.output);
+    expect(notice).toContain('The module records level 7 for this entity');
+    expect(notice).toContain('your instruction fixes level 5');
+    expect(notice).not.toContain('its stat block is level');
+    // No repair turn was spent: the reply already agreed with the resolution.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const artifact = await getArtifact(targetId);
+    if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(artifact.data.statBlock?.level).toBe('5');
+  }, 20000);
+
+  /**
+   * CLASS E (docs/17 row 285): the last-rung brief fallback is NAME-SCOPED, so a
+   * level about ANOTHER figure cannot win it. The old read was
+   * `firstLevelInText(withoutPartyLevelLines(brief))` — the FIRST level anywhere
+   * in the brief — so a sentence about a different figure, appearing earlier,
+   * decided THIS entity's level. A campaign-owned npc has no other source, so
+   * this arm reaches the fallback for real; the brief names our figure and
+   * another one, and the other one's 9 is first.
+   */
+  it('never lets a level about ANOTHER figure win the brief fallback — the read is name-scoped (docs/17 row 285)', async () => {
+    const { campaignId, persona } = await seed();
+    const target = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Grix',
+      summary: '',
+      body: '',
+    });
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Grix'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply(), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // ANOTHER figure's sentence carries the first (and only) level; OUR
+      // figure's own sentence states none.
+      brief: 'The level 9 guardian [[Alraune]] blocks the gate.\n\n[[Grix]] brews in the cellar.',
+      targetArtifactId: target.id,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    // THE OTHER FIGURE'S 9 DOES NOT RESOLVE: our sentence names Grix and states
+    // no level, so nothing exact resolved and no clause is built from it.
+    expect(statblockPrompt).not.toContain('at level 9, grounded');
+    expect(statblockPrompt).toContain(', grounded in the rule excerpts.');
+  }, 20000);
 
   /**
    * THE OWNER'S REPORT, ARM TWO (docs/17 row 247): "redo this completely, this

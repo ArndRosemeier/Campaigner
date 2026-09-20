@@ -808,14 +808,18 @@ export function entityLevelHintFor(
  * block authored from scratch (docs/17 row 247) — the spine-time half of "the
  * module's own STRUCTURED level must actually reach resolution".
  *
- * WHAT THE STATED LEVEL IS, SINCE docs/17 row 282: STRUCTURE ONLY — an EXACT
- * band (`levelMin === levelMax`), never the premise's prose. `moduleStatedLevel`
- * removed the premise source after the owner's ruling (*"Its very sloppy to
- * infer all mobs levels from a CAMPAIGN premise … And this was about 1 NPC."*):
- * one sentence about one level-7 gnome was stamped on every npc of a levels-1–2
- * module, whose Smith had minted level-1 blocks. The name-scoped channels carry
- * a per-entity level instead — the model's own `levelHint` on the record (this
- * function never overwrites it) and the part's level by name.
+ * WHAT THE STATED LEVEL IS, SINCE docs/17 row 282 AND ITS ROW-285 AMENDMENT:
+ * this SPINE-TIME call passes no name and no parts, so `moduleStatedLevel`
+ * reaches only its EXACT band arm (`levelMin === levelMax`) — never a prose
+ * sentence. The reason row 282 removed the module-wide premise read stands
+ * unchanged (*"Its very sloppy to infer all mobs levels from a CAMPAIGN premise
+ * … And this was about 1 NPC."*): one sentence about one level-7 gnome was
+ * stamped on every npc of a levels-1–2 module, whose Smith had minted level-1
+ * blocks. Row 285 keeps that ban and adds the NAME-SCOPED channels — the
+ * model's own `levelHint` on the record (this function never overwrites it),
+ * the part's level by name, and a sentence that NAMES the figure (read at RUN
+ * resolution, where the name is known). A sentence about no figure, or about a
+ * different one, still stamps nothing here.
  *
  * THE DEFECT IT STILL CLOSES. `levelHint` was written ONLY by the spine MODEL:
  * when the planner answered `"levelHint": null` (or when a name was introduced

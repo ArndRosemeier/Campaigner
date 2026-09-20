@@ -25,11 +25,26 @@ import { describe, expect, it } from 'vitest';
  * prose.
  *
  * THE FOURTH (row 282, the owner's levels-1–2 module showing `level 7` on every
- * npc) was a SOURCE that should never have existed: the PREMISE. Its half is
- * pinned here too — `moduleStatedLevel` reads STRUCTURE only (an exact band and
- * the mentioning part by name), the block outranks a stored hint that
+ * npc) was a SOURCE that should never have existed: the MODULE-WIDE PREMISE
+ * read. Its half is pinned here too — the block outranks a stored hint that
  * contradicts it, and the block is read through ONE reader by the chip, the
  * stat-block card and the engine.
+ *
+ * THE SIXTH (row 285, the owner's *"That level 3 mob had in its prose that its
+ * level 5 … It was ignored on multiple occasions."*) was a MISSING RUNG plus an
+ * unscoped fallback: there was NO entity-prose source at all, so a part's
+ * STRUCTURED band outranked the figure's OWN sentence (specificity inverted,
+ * entity > part > module), an instruction facing a stored hint with no block
+ * left TWO levels in one prompt, and the last-rung brief read was not
+ * name-scoped. The cure is ONE name-scoped prose seam
+ * (`roomBudget.nameScopedLevel`, called by `entityProseLevel` for the module
+ * prose and by the engine for its brief fallback) reading the sentence around
+ * the figure's NAME through the EXISTING `wikilinks.sentenceAround` and the
+ * EXISTING `firstLevelInText` — never a second sentence reader, never a second
+ * level regex. The pins below hold the seam to ONE definition and hold
+ * `moduleStatedLevel`'s PROSE-BEFORE-BAND order; the behavioural arms live in
+ * `tests/llm/level-language.test.ts` (I1/I2 and the non-vacuity half) and
+ * `tests/llm/runEngine.test.ts` (D and E).
  *
  * The pins are SOURCE SCANS because the drift they catch is invisible: a second
  * call site that rebuilds `StartRunInput` reads correctly today and silently
@@ -62,6 +77,7 @@ const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const MODULE_GEN = 'src/llm/moduleGen.ts';
 const LANGUAGE = 'src/llm/language.ts';
 const ROSTER = 'src/llm/encounterRoster.ts';
+const WIKILINKS = 'src/lib/wikilinks.ts';
 const ENTITY_PANEL = 'src/features/modules/entity-panel.tsx';
 const STAT_BLOCK_CARD = 'src/features/campaign/components/stat-block.tsx';
 
@@ -162,6 +178,38 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253)', () => 
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([MODULE_GEN, ENGINE]);
+  });
+
+  it('reads a NAMED figure’s prose through ONE name-scoped seam, ABOVE either band (docs/17 row 285)', () => {
+    // THE SEAM, defined once: "the level this text states ABOUT this name".
+    // `entityProseLevel` composes it for the module (part sentence, then
+    // premise sentence); the engine's brief fallback calls it directly. Both
+    // ride THIS one function, so a rename or a second copy reds here.
+    expect(filesContaining('export function nameScopedLevel')).toEqual([ROOM_BUDGET]);
+    expect(filesContaining('export function entityProseLevel')).toEqual([ROOM_BUDGET]);
+    expect(
+      filesContaining('nameScopedLevel(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([ENGINE]);
+    // It reads the EXISTING sentence reader and the EXISTING level grammar —
+    // a second one of either is the drift this whole file exists to catch.
+    expect(filesContaining('export function sentenceAround')).toEqual([WIKILINKS]);
+    expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
+    // THE ORDER IS THE CURE (docs/17 row 285): inside `moduleStatedLevel` the
+    // PROSE rung is consulted BEFORE the mentioning part's structured band, so
+    // a figure's own sentence is more specific than the part it sits in. A swap
+    // back to the pre-285 order reds HERE.
+    const roomBudget = readFileSync(join(process.cwd(), ROOM_BUDGET), 'utf8');
+    const proseRung = roomBudget.indexOf('const fromProse = entityProseLevel(module, name)');
+    const partRung = roomBudget.indexOf('const fromPart = partLevelForMention(module, name)');
+    expect(proseRung, 'the prose rung exists').toBeGreaterThan(-1);
+    expect(partRung, 'the part-band rung exists').toBeGreaterThan(-1);
+    expect(partRung, 'the prose rung sits ABOVE the structured band').toBeGreaterThan(proseRung);
+    // And the prose rung itself is name-scoped with the `'nothing'` arm: a
+    // sentence that names nobody is not evidence about anyone.
+    expect(roomBudget).toContain("nameScopedLevel(part.markdown, name, 'nothing')");
+    expect(roomBudget).toContain("nameScopedLevel(module.spine?.premise ?? '', name, 'nothing')");
   });
 
   it('routes the brief-text fallback through the ONE party-line exclusion, and leaves no raw-brief reader', () => {
