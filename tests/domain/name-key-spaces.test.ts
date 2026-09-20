@@ -150,7 +150,15 @@ const BOUNDARIES: Record<string, string> = {
   'domain/artifactAlias.ts': 'the primitive itself — its definition IS the fold',
   'db/mobPortraitCache.ts': "row 165's survivor — `isCanonicalCitation`, the portrait path another slice owns",
   'domain/module.ts': "sameSlot's BOOK half (a book title is not a name, row 161) + the entity lookups' emptiness probes",
-  'llm/roomBudget.ts': 'partLevelForMention — an emptiness probe only; the real comparison beside it is a tier call',
+  // `llm/roomBudget.ts` USED to be declared here ("partLevelForMention — an
+  // emptiness probe only"): row 285's `firstPartMentioning` refactor replaced
+  // that probe's `name.trim().toLowerCase()` with a plain `name.trim() === ''`
+  // guard and routed the mention test through the ONE alias-aware pair
+  // (`extractWikiLinks` + `sameAliasName`), so the hand-rolled KEY spelling this
+  // map licenses no longer exists in the file. THE ENTRY IS DELETED, NOT
+  // REWRITTEN: the scan's own doctrine is that a boundary entry which no longer
+  // carries the shape "licenses nothing and lies about the tree", and keeping a
+  // stale licence alive would be the silent-gain direction this pin forbids.
   'llm/schemas.ts': 'a zod enum case coercion — a VALUE transform, not a key',
   'llm/moduleGen.ts': 'the MODULE_TONE_BANS keyword registry lookup, not a name',
   'features/campaign/components/alias-editor.tsx': 'the FORM — it rejects a keystroke a person just typed (row 121/162)',
