@@ -22,17 +22,23 @@ import {
   exportDependenciesSchema,
   exportMissingImageSchema,
   foldCreatureKey,
+  moduleDocumentPlanSchema,
   moduleSchema,
   personaRunSchema,
+  readStoredDocumentPlan,
   storedImageSchema,
   type DependencyAnalysis,
   type CreatureImage,
+  type DocumentPlanSection,
   type EncounterArtifactData,
   type ExportCitation,
   type ExportDependencies,
   type ExportMissingImage,
+  type ModuleDocumentPlan,
+  type StoredDocumentPlan,
 } from '@/domain';
 import { listRevisions } from '@/db/artifactRepo';
+import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { bytesFromBase64 } from '@/lib/base64';
 import { fileSlug } from '@/lib/fileSlug';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
@@ -638,6 +644,254 @@ function healRulebookSources(
   };
 }
 
+// --- The ONE id-remap pass over a loaded campaign (docs/17 row 256) ----------
+
+/**
+ * A reference inside an imported file that names NOTHING in this workspace:
+ * not one of the file's own rows (so no fresh id exists to point at) and not a
+ * SHARED LIBRARY row (so there is nothing to adopt). Kept as its own class so
+ * the loud refusal is greppable and a caller can tell it from a zod failure
+ * (`withImportMitigation` passes it through untouched, like
+ * `MissingDependenciesError`).
+ *
+ * Thrown INSIDE the import transaction, so the one rw transaction rolls the
+ * whole import back and the campaign picker's toast names the relation rather
+ * than offering a campaign whose links dangle (AGENTS rule 1: a relation that
+ * cannot be restored is an error, never a silently kept dead id).
+ */
+export class DanglingImportReferenceError extends Error {
+  readonly from: string;
+  readonly targetId: Id;
+  readonly field: string;
+
+  constructor(from: string, targetId: Id, field: string) {
+    super(
+      `Import references ${targetId} from ${from} (${field}), but that artifact is neither in the ` +
+        'export nor in this workspace’s shared library — the relation cannot be restored. ' +
+        'Re-export the campaign with that artifact included, or import the library pack that holds it, ' +
+        'and try again.',
+    );
+    this.name = 'DanglingImportReferenceError';
+    this.from = from;
+    this.targetId = targetId;
+    this.field = field;
+  }
+}
+
+/**
+ * THE ONE id-remap pass over a loaded campaign (docs/17 row 256). Every
+ * id-bearing field of every row the import writes goes through `artifact` /
+ * `module` here, so a second per-field mechanism cannot be born beside it
+ * (AGENTS rule 4).
+ *
+ * THREE OUTCOMES PER ID, and the difference between them is the whole fix:
+ *
+ * 1. IN THE IMPORT ⇒ the file's own fresh id (`artifactIds`/`moduleIds`). This
+ *    is what makes `links[].targetId` and a module's `documentPlan` point at
+ *    the imported copies instead of the exporting database's ids.
+ * 2. A LIBRARY ROW ⇒ the id is KEPT and registered on `pendingLibraryIds`,
+ *    because a reference to a global library artifact is a save/load
+ *    DEPENDENCY and the owner's rule is that core rows are only ever COPIED
+ *    (docs/17 row 257). `importExport` then hands the pending ids to the ONE
+ *    adoption seam (`db/libraryAdopt.adoptLibraryArtifacts`) in the same call,
+ *    which copies the row into the campaign and repoints the reference to the
+ *    copy. Nothing about the reference survives as a library pointer.
+ * 3. A ROW THIS WORKSPACE ALREADY HOLDS (another campaign's artifact) ⇒ kept
+ *    as it is. A SELECTION export is documented to carry only a subset of its
+ *    campaign (`buildCampaignExport`), so a reference to a row outside the
+ *    file is legitimate and must not become an error.
+ *
+ * AND THE TWO WAYS A MISS LANDS, which is the distinction the row is about:
+ *
+ * - `relation` — a field that EXISTS ONLY to name a row inside the loaded
+ *   campaign: `links[].targetId` and the plan's `source`/`companion`. A miss
+ *   here is a broken relation (and, for the plan, silent degradation to the
+ *   procedural outline), so it is a NAMED refusal.
+ * - `reference` — a field with its own documented foreign-reference meaning:
+ *   a battle's seeding encounter, a battle token, a frozen seed handle, a
+ *   run's target/result/context. A miss here keeps the id EXACTLY as it is and
+ *   is NAMED by the arm that already owns that field (the adoption seam's
+ *   `danglingBattleEncounter`, the token dangling arm, the `missing ref`
+ *   badge), never re-pointed at a guess — the row-259/268 rule.
+ *
+ * IMAGE IDS ARE DELIBERATELY NOT REMAPPED, and this comment is the reason so
+ * the next reader does not "fix" them: images are inserted with their own `id`
+ * preserved (`importExport`'s image loop), so a stored `coverImageId`,
+ * `imageIds`, `data.mapImageId`, `board.mapImageId` or a plan section's
+ * `images` entry is already valid in the importing database. Only a LIBRARY
+ * IMAGE id is a dependency, and that half belongs to the adoption seam's image
+ * pass (docs/17 row 270) — not here.
+ *
+ * The class exists rather than a bag of closures because `importExport`'s
+ * transaction body is already long: the answers live in ONE object so the next
+ * id-bearing field added to a row goes through it instead of growing a fourth
+ * `artifactIds.get(id) ?? id` fallback (the defect this row removes).
+ */
+class ImportIdRemap {
+  private readonly artifactIds: ReadonlyMap<Id, Id>;
+  private readonly moduleIds: ReadonlyMap<Id, Id>;
+  private readonly globalIds: ReadonlySet<Id>;
+  private readonly knownIds: ReadonlySet<Id>;
+  readonly pendingLibraryIds = new Set<Id>();
+
+  constructor(options: {
+    artifactIds: ReadonlyMap<Id, Id>;
+    moduleIds: ReadonlyMap<Id, Id>;
+    globalIds: ReadonlySet<Id>;
+    knownIds: ReadonlySet<Id>;
+  }) {
+    this.artifactIds = options.artifactIds;
+    this.moduleIds = options.moduleIds;
+    this.globalIds = options.globalIds;
+    this.knownIds = options.knownIds;
+  }
+
+  /** The fresh artifact id, the KEPT library id (registered as pending for
+   * adoption), the id of a row this workspace already holds, or a NAMED
+   * refusal — the strict arm, for a field that exists only to name an
+   * in-campaign relation (`links`, a plan's source/companion). */
+  relation(id: Id, from: string, field: string): Id {
+    const resolved = this.resolve(id);
+    if (resolved !== undefined) return resolved;
+    throw new DanglingImportReferenceError(from, id, field);
+  }
+
+  /** The tolerant arm, for a field with its own foreign-reference meaning: a
+   * miss keeps the id exactly as it is, for the arm that owns that field's
+   * loud surface to name (never a silent substitution, never a guess). */
+  reference(id: Id): Id {
+    return this.resolve(id) ?? id;
+  }
+
+  /** The fresh module id, or a named refusal — never a silent `null`. */
+  module(id: Id, from: string, field: string): Id {
+    const fresh = this.moduleIds.get(id);
+    if (fresh !== undefined) return fresh;
+    // The module arm keeps its own long-standing sentence (an existing pin
+    // asserts its words): a module-owned row whose module is absent is the
+    // documented v2 break, told apart from the v1 rescue by the file version.
+    throw new Error(
+      `Import references the module ${id} of ${from}, which is outside the export` +
+        (field === '' ? '' : ` (${field})`),
+    );
+  }
+
+  /** A nullable strict-arm artifact reference. */
+  relationOrNull(id: Id | null, from: string, field: string): Id | null {
+    return id === null ? null : this.relation(id, from, field);
+  }
+
+  /** A nullable tolerant-arm artifact reference. */
+  referenceOrNull(id: Id | null): Id | null {
+    return id === null ? null : this.reference(id);
+  }
+
+  /** A nullable module reference. */
+  moduleOrNull(id: Id | null, from: string, field: string): Id | null {
+    return id === null ? null : this.module(id, from, field);
+  }
+
+  private resolve(id: Id): Id | undefined {
+    const fresh = this.artifactIds.get(id);
+    if (fresh !== undefined) return fresh;
+    if (this.globalIds.has(id)) {
+      this.pendingLibraryIds.add(id);
+      return id;
+    }
+    if (this.knownIds.has(id)) return id;
+    return undefined;
+  }
+}
+
+/**
+ * The shared classification every id-bearing field feeds, from ONE bulk read of
+ * every id an exported row names that the file itself does not carry:
+ *
+ * - `globals` — the SHARED LIBRARY rows (`campaignId === null`, the ONLY global
+ *   marker, `db/libraryAdopt`'s own rule). A reference to one is a save/load
+ *   DEPENDENCY, so the remap keeps the id and hands it to the adoption seam.
+ * - `known` — ids that resolve to SOME artifact row here (a library row, or a
+ *   row of another campaign). They stay as they are: a SELECTION export is
+ *   documented to carry only a subset of its campaign, so a reference to a row
+ *   outside the file is legitimate, not a dangling relation.
+ *
+ * An id in NEITHER set is the genuinely gone target (docs/17 row 268's rule):
+ * nothing in the file, nothing in the library, nothing anywhere in this
+ * workspace — and THAT is what refuses the import by name instead of being
+ * silently kept.
+ */
+async function classifyExternalIds(
+  candidateIds: Iterable<Id>,
+): Promise<{ globals: Set<Id>; known: Set<Id> }> {
+  const ids = [...new Set(candidateIds)];
+  const globals = new Set<Id>();
+  const known = new Set<Id>();
+  if (ids.length === 0) return { globals, known };
+  const rows = await db.artifacts.bulkGet(ids);
+  for (const row of rows) {
+    if (row === undefined) continue;
+    known.add(row.id);
+    if (row.campaignId === null) globals.add(row.id);
+  }
+  return { globals, known };
+}
+
+/** Remap a plan section's artifact references through the ONE pass; parts and
+ * IMAGE ids are untouched (a `planIndex` is identity, an image id is preserved
+ * on import). */
+function remapPlanSection(section: DocumentPlanSection, plan: ImportIdRemap): DocumentPlanSection {
+  const where = `the document plan section “${section.title}”`;
+  return {
+    ...section,
+    source:
+      section.source.type === 'part'
+        ? section.source
+        : {
+            type: section.source.type,
+            artifactId:
+              section.source.type === 'artifact'
+                ? plan.relation(section.source.artifactId, where, 'its source')
+                : plan.relation(section.source.artifactId, where, 'its encounter source'),
+          },
+    companion:
+      section.companion === null || section.companion === undefined
+        ? section.companion
+        : { artifactId: plan.relation(section.companion.artifactId, where, 'its companion') },
+  };
+}
+
+/**
+ * The sections of a module's stored plan when it is a VALID plan, else `[]` —
+ * the candidate-id read that feeds the shared-library classification, so an
+ * absent or corrupt plan contributes nothing and is left exactly as it is.
+ */
+function validPlanSections(stored: unknown): readonly DocumentPlanSection[] {
+  const read: StoredDocumentPlan = readStoredDocumentPlan(stored);
+  return read.status === 'valid' ? read.plan.sections : [];
+}
+
+/**
+ * Remap what a module's `data.documentPlan` names, or answer `null` when the
+ * stored value is absent or NOT a valid plan (nothing to remap — the value
+ * rides through verbatim, because a corrupt plan is the PDF's documented loud
+ * failure and `readStoredDocumentPlan` remains its ONE reader, domain/
+ * documentPlan's stated contract).
+ *
+ * The read side and the write side share ONE verdict: `readStoredDocumentPlan`
+ * produces the `StoredDocumentPlan` this switches on, so the import can never
+ * disagree with the renderer about what a valid plan is.
+ */
+function remapStoredDocumentPlan(stored: unknown, plan: ImportIdRemap): unknown {
+  if (stored === null || stored === undefined) return null;
+  const read: StoredDocumentPlan = readStoredDocumentPlan(stored);
+  if (read.status !== 'valid') return null;
+  const remapped: ModuleDocumentPlan = moduleDocumentPlanSchema.parse({
+    ...read.plan,
+    sections: read.plan.sections.map((section) => remapPlanSection(section, plan)),
+  });
+  return remapped;
+}
+
 /**
  * Imports an export as a NEW campaign (existing data is never merged or
  * overwritten): fresh ids for the campaign, every module/artifact/revision/
@@ -750,6 +1004,45 @@ export async function importExport(
         });
 
   let created = 0;
+  // THE ONE REMAP TABLE IS BUILT BEFORE THE TRANSACTION OPENS (docs/17 row
+  // 256): modules are written FIRST (their ids anchor artifact `moduleId`s),
+  // but a module's own `documentPlan` names ARTIFACT ids — so the artifact
+  // re-id map has to exist before the first module write, not after the
+  // artifact loop like the scattered `artifactIds.get(...)` fallbacks assumed.
+  // The ids are minted here, outside the transaction, so a rolled-back import
+  // simply discards them.
+  const artifactIds = new Map<Id, Id>(
+    parsed.artifacts.map((artifact) => [artifact.id, crypto.randomUUID()] as const),
+  );
+  const moduleIds = new Map<Id, Id>(
+    (parsed.modules ?? []).map((module) => [module.id, crypto.randomUUID()] as const),
+  );
+  // Every id an exported row names that the file itself does not carry — the
+  // candidate set for the shared-library classification below.
+  const externalCandidateIds = new Set<Id>();
+  for (const artifact of parsed.artifacts) {
+    for (const link of artifact.links) externalCandidateIds.add(link.targetId);
+  }
+  for (const module of parsed.modules ?? []) {
+    for (const section of validPlanSections(module.documentPlan)) {
+      if (section.source.type !== 'part') externalCandidateIds.add(section.source.artifactId);
+      if (section.companion !== null && section.companion !== undefined) {
+        externalCandidateIds.add(section.companion.artifactId);
+      }
+    }
+  }
+  for (const battle of parsed.battles ?? []) {
+    if (battle.encounterArtifactId !== null) externalCandidateIds.add(battle.encounterArtifactId);
+    if (battle.reseed !== null) externalCandidateIds.add(battle.reseed.encounterArtifactId);
+  }
+  for (const run of parsed.runs ?? []) {
+    if (run.resultArtifactId !== null) externalCandidateIds.add(run.resultArtifactId);
+    if (run.targetArtifactId !== null) externalCandidateIds.add(run.targetArtifactId);
+    for (const id of run.contextArtifactIds ?? []) externalCandidateIds.add(id);
+  }
+  const { globals: globalIds, known: knownIds } = await classifyExternalIds(externalCandidateIds);
+  const remap = new ImportIdRemap({ artifactIds, moduleIds, globalIds, knownIds });
+
   await db.transaction(
     'rw',
     [
@@ -765,14 +1058,16 @@ export async function importExport(
     async () => {
       await db.campaigns.add(campaign);
 
-      // Modules first: their re-id map anchors artifact `moduleId`s below.
-      const moduleIds = new Map<Id, Id>();
+      // Modules first: their re-id map anchors artifact `moduleId`s below, and
+      // their `documentPlan` names artifacts through the SAME remap pass.
       for (const exported of parsed.modules ?? []) {
-        const moduleId = crypto.randomUUID();
-        moduleIds.set(exported.id, moduleId);
+        const moduleId = moduleIds.get(exported.id);
+        if (moduleId === undefined) throw new Error(`Import lost the re-id for module ${exported.id}`);
+        const plan = remapStoredDocumentPlan(exported.documentPlan, remap);
         await db.modules.add(
           moduleSchema.parse({
             ...exported,
+            ...(plan === null ? {} : { documentPlan: plan }),
             id: moduleId,
             campaignId: newCampaignId,
             createdAt: stamp,
@@ -825,45 +1120,56 @@ export async function importExport(
         );
       }
 
-      const artifactIds = new Map<Id, Id>();
       for (const exported of parsed.artifacts) {
-        const artifactId = crypto.randomUUID();
-        artifactIds.set(exported.id, artifactId);
+        const artifactId = artifactIds.get(exported.id);
+        if (artifactId === undefined) {
+          throw new Error(`Import lost the re-id for artifact ${exported.id}`);
+        }
         const { revisions, ...artifactFields } = exported;
         // A module-owned artifact whose module is NOT in the export is a
         // BREAK, not a scope preference — the two cases are told apart by the
         // file's own version (v1 predates modules entirely; every v2 export
         // carries the campaign's modules, `buildCampaignExport`).
         const exportedModuleId = artifactFields.moduleId;
-        const remappedModuleId =
-          exportedModuleId === null ? null : (moduleIds.get(exportedModuleId) ?? null);
-        if (
-          exportedModuleId !== null &&
-          remappedModuleId === null &&
-          parsed.version !== 1
-        ) {
-          // Loud, exactly like the battle path below for the identical
-          // breakage (AGENTS rule 1): silently demoting the row to campaign
-          // scope would move a module's artifact out of its module — the one
-          // thing only the explicit scope moves may do — and hide a
-          // corrupt/edited export behind a plausible-looking row.
-          throw new Error(
-            `Import references the module ${exportedModuleId} of artifact "${artifactFields.name}", ` +
-              'which is outside the export',
-          );
+        let remappedModuleId: Id | null = null;
+        if (exportedModuleId !== null) {
+          if (parsed.version === 1) {
+            // v1 ONLY: a pre-M3-E file whose artifacts were module-owned on
+            // the source side but whose `modules` table never traveled
+            // demotes to campaign level — the documented legacy rescue
+            // (07-MILESTONE-3 M3-E), kept and tested as the one exception.
+            remappedModuleId = moduleIds.get(exportedModuleId) ?? null;
+          } else {
+            remappedModuleId = remap.module(
+              exportedModuleId,
+              `artifact "${artifactFields.name}"`,
+              '',
+            );
+          }
         }
         await db.artifacts.add(
           artifactSchema.parse({
             ...artifactFields,
+            // THE ONE REMAP PASS, on the field the export wrote VERBATIM
+            // (docs/17 row 256): every relation follows the artifact re-id map
+            // like a battle token or a run target already did, a target that
+            // is a SHARED LIBRARY row is kept and adopted after the
+            // transaction, and a target that is neither is NAMED and refuses
+            // the import. Before this, every relation in an imported campaign
+            // dangled.
+            links: artifactFields.links.map((link) => ({
+              ...link,
+              targetId: remap.relation(
+                link.targetId,
+                `the ${artifactFields.kind} “${artifactFields.name}”`,
+                `its “${link.relation}” link`,
+              ),
+            })),
             ...(artifactFields.kind === 'encounter'
               ? { data: healRulebookSources(exported.id, artifactFields.data, manifestByCite) }
               : {}),
             id: artifactId,
             campaignId: newCampaignId,
-            // v1 ONLY: a pre-M3-E file whose artifacts were module-owned on
-            // the source side but whose `modules` table never traveled
-            // demotes to campaign level — the documented legacy rescue
-            // (07-MILESTONE-3 M3-E), kept and tested as the one exception.
             moduleId: remappedModuleId,
             createdAt: stamp,
             updatedAt: stamp,
@@ -884,29 +1190,20 @@ export async function importExport(
       }
 
       for (const exported of parsed.battles ?? []) {
-        const moduleId = moduleIds.get(exported.moduleId);
-        if (moduleId === undefined) {
-          throw new Error(
-            `Import references a battle for module ${exported.moduleId} outside the export`,
-          );
-        }
-        const remapTokenArtifact = (id: Id | null): Id | null =>
-          id === null ? null : (artifactIds.get(id) ?? id);
+        const moduleId = remap.module(exported.moduleId, 'a battle', 'its module');
         await db.battles.add(
           battleSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
             campaignId: newCampaignId,
             moduleId,
-            encounterArtifactId: remapTokenArtifact(exported.encounterArtifactId),
+            encounterArtifactId: remap.referenceOrNull(exported.encounterArtifactId),
             reseed:
               exported.reseed === null
                 ? null
                 : {
                     ...exported.reseed,
-                    encounterArtifactId:
-                      artifactIds.get(exported.reseed.encounterArtifactId) ??
-                      exported.reseed.encounterArtifactId,
+                    encounterArtifactId: remap.reference(exported.reseed.encounterArtifactId),
                   },
             board: {
               ...exported.board,
@@ -918,7 +1215,7 @@ export async function importExport(
               // it verbatim would put unfolded bytes back into a folded DB.
               tokens: exported.board.tokens.map((token) => ({
                 ...token,
-                artifactId: remapTokenArtifact(token.artifactId),
+                artifactId: remap.referenceOrNull(token.artifactId),
                 ...(token.creatureKey === undefined
                   ? {}
                   : { creatureKey: foldCreatureKey(token.creatureKey) }),
@@ -930,15 +1227,22 @@ export async function importExport(
                       ...exported.board.stage,
                       tokens: exported.board.stage.tokens.map((token) => ({
                         ...token,
-                        artifactId: remapTokenArtifact(token.artifactId),
+                        artifactId: remap.referenceOrNull(token.artifactId),
                         ...(token.creatureKey === undefined
                           ? {}
                           : { creatureKey: foldCreatureKey(token.creatureKey) }),
                       })),
                     },
             },
+            // A DERIVED npc-ref freezes its seed row under the ARTIFACT id
+            // (`domain/battle.seedFighters[].id`), and the repo's stats lookup
+            // keys on it — so the seed row moves with the token that cites it
+            // through the SAME pass (a rulebook/inline fighter's id is a
+            // synthetic handle the map does not hold, and stays exactly as it
+            // was).
             seedFighters: exported.seedFighters.map((fighter) => ({
               ...fighter,
+              id: remap.reference(fighter.id),
               ...(fighter.creatureKey === undefined
                 ? {}
                 : { creatureKey: foldCreatureKey(fighter.creatureKey) }),
@@ -950,27 +1254,23 @@ export async function importExport(
       }
 
       for (const exported of parsed.runs ?? []) {
+        const from = `the run ${exported.id}`;
         await db.runs.add(
           personaRunSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
             campaignId: newCampaignId,
-            resultArtifactId:
-              exported.resultArtifactId === null
-                ? null
-                : (artifactIds.get(exported.resultArtifactId) ?? exported.resultArtifactId),
-            targetArtifactId:
-              exported.targetArtifactId === null
-                ? null
-                : (artifactIds.get(exported.targetArtifactId) ?? exported.targetArtifactId),
-            placementModuleId:
-              exported.placementModuleId === null
-                ? null
-                : (moduleIds.get(exported.placementModuleId) ?? null),
+            resultArtifactId: remap.referenceOrNull(exported.resultArtifactId),
+            targetArtifactId: remap.referenceOrNull(exported.targetArtifactId),
+            placementModuleId: remap.moduleOrNull(
+              exported.placementModuleId,
+              from,
+              'its placement module',
+            ),
             contextArtifactIds:
               exported.contextArtifactIds === null
                 ? null
-                : exported.contextArtifactIds.map((id) => artifactIds.get(id) ?? id),
+                : exported.contextArtifactIds.map((id) => remap.reference(id)),
             createdAt: stamp,
             updatedAt: stamp,
           }),
@@ -979,6 +1279,28 @@ export async function importExport(
 
     },
   );
+  // THE LIBRARY HALF, THROUGH THE ONE ADOPTION SEAM (docs/17 rows 256/268):
+  // a reference that named a SHARED LIBRARY row is kept by the remap pass as a
+  // pending id and handed to `adoptLibraryArtifacts` here — AFTER the
+  // transaction, because adoption copies the library row into a campaign that
+  // must already exist. The seam copies each row (cloned images, stored
+  // origin) and REWRITES the reference to the campaign's copy in the same
+  // transaction; a gone library row is left exactly as it is and NAMED in the
+  // report, which is also the startup retry's worklist. Without this call an
+  // imported campaign would keep a library pointer — the save/load dependency
+  // the owner forbade — and no Dexie version would ever re-key it.
+  if (remap.pendingLibraryIds.size > 0) {
+    await db.transaction(
+      'rw',
+      [db.artifacts, db.revisions, db.images, db.campaigns, db.settings, db.battles],
+      (tx) =>
+        adoptLibraryArtifacts({
+          tx,
+          reason: 'write',
+          pendingRefs: { campaignId: newCampaignId, ids: [...remap.pendingLibraryIds] },
+        }),
+    );
+  }
   return {
     campaignId: newCampaignId,
     createdArtifacts: created,

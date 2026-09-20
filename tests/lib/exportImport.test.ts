@@ -22,7 +22,10 @@ import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import {
   contentCreatureKey,
   createModule as buildModule,
+  globalArtifactSchema,
+  moduleDocumentPlanSchema,
   newId,
+  readStoredDocumentPlan,
   ruleChunkSchema,
   stageSnapshotSchema,
   statBlockSchema,
@@ -36,6 +39,7 @@ import {
   buildExport,
   buildZip,
   checkImportDependencies,
+  DanglingImportReferenceError,
   EXPORT_FORMAT_VERSION,
   exportFileName,
   formatDriftedCitations,
@@ -785,6 +789,274 @@ describe('export v2', () => {
     ).find((row) => row.name === 'Grimm');
     expect(imported?.moduleId).toBeNull();
     expect(imported?.id).not.toBe(owned.id);
+  });
+
+  /**
+   * docs/17 row 256 — the ONE id-remap pass over a loaded campaign. Two known
+   * instances were closed here: a module's `documentPlan` (written VERBATIM, so
+   * every plan lost its references and fell back to the procedural outline) and
+   * `links[].targetId` (written VERBATIM while the artifact got a fresh id, so
+   * EVERY relation in an imported campaign dangled). The library half lands on
+   * the ONE adoption seam, and a relation that names nothing at all refuses the
+   * import by name.
+   */
+  describe('the id-remap pass on import (docs/17 row 256)', () => {
+    it('keeps a module’s documentPlan BY VALUE — its artifacts are the imported copies, its parts and images are untouched', async () => {
+      const campaign = await createCampaign({ name: 'Planned', system: 'dnd5e' });
+      const module = await saveModuleRow(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'The Warren',
+          concept: '',
+          levelMin: 1,
+          levelMax: 3,
+          tone: '',
+          sizeDial: 'standard',
+        }),
+      );
+      const encounter = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Ambush',
+        data: encounterDataWith([]) as never,
+      });
+      const note = await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'The Bell' });
+      const image = await createImage({
+        campaignId: campaign.id,
+        blob: new Blob(['map-bytes'], { type: 'image/png' }),
+        mimeType: 'image/png',
+        width: 10,
+        height: 10,
+        source: 'uploaded',
+      });
+      // A plan in the shape the planner seam writes (`patchModule`).
+      await patchModule(module.id, {
+        documentPlan: moduleDocumentPlanSchema.parse({
+          sections: [
+            {
+              title: 'The Fight',
+              role: 'gm-note',
+              audience: 'gm',
+              source: { type: 'encounter', artifactId: encounter.id },
+              images: [image.id],
+            },
+            {
+              title: 'The Bell',
+              role: 'explanation',
+              audience: 'all',
+              source: { type: 'artifact', artifactId: note.id },
+              companion: { artifactId: encounter.id },
+              images: [],
+            },
+            {
+              title: 'Before the Gate',
+              role: 'read-aloud',
+              audience: 'all',
+              source: { type: 'part', planIndex: -1 },
+              images: [],
+            },
+          ],
+          plannedByModel: 'vendor/planner-1',
+          plannedAt: 1_700_000_000_000,
+        }),
+      });
+
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+      const result = await importExport(exported);
+
+      const importedModule = (await listModulesByCampaign(result.campaignId))[0];
+      if (importedModule === undefined) throw new Error('imported module missing');
+      const read = readStoredDocumentPlan(importedModule.documentPlan);
+      if (read.status !== 'valid') throw new Error(`imported plan is ${read.status}`);
+      const importedEncounter = (
+        await db.artifacts.where('campaignId').equals(result.campaignId).toArray()
+      ).find((row) => row.name === 'Ambush');
+      const importedNote = (
+        await db.artifacts.where('campaignId').equals(result.campaignId).toArray()
+      ).find((row) => row.name === 'The Bell');
+      if (importedEncounter === undefined || importedNote === undefined) {
+        throw new Error('imported artifacts missing');
+      }
+      const sections = read.plan.sections;
+      // BY VALUE: every named artifact is the IMPORTED copy, never the
+      // exporting database's id.
+      expect(sections[0]?.source).toEqual({
+        type: 'encounter',
+        artifactId: importedEncounter.id,
+      });
+      expect(sections[1]?.source).toEqual({ type: 'artifact', artifactId: importedNote.id });
+      expect(sections[1]?.companion).toEqual({ artifactId: importedEncounter.id });
+      // A part section is identity (`planIndex`), never remapped.
+      expect(sections[2]?.source).toEqual({ type: 'part', planIndex: -1 });
+      // The plan survives the real import path as a WHOLE, provenance included.
+      expect(read.plan.plannedByModel).toBe('vendor/planner-1');
+      expect(read.plan.plannedAt).toBe(1_700_000_000_000);
+      // IMAGE ids are NOT remapped (images are inserted with their own id).
+      expect(sections[0]?.images).toEqual([image.id]);
+      expect(importedModule.coverImageId).toBe(module.coverImageId);
+    });
+
+    it('remaps every links[].targetId to the imported copy', async () => {
+      const campaign = await createCampaign({ name: 'Linked', system: 'dnd5e' });
+      const tower = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'location',
+        name: 'Old Tower',
+      });
+      const keeper = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Keeper' });
+      await updateArtifact(keeper.id, {
+        links: [{ targetId: tower.id, relation: 'guards' }],
+      });
+
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+      const result = await importExport(exported);
+      const rows = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
+      const importedKeeper = rows.find((row) => row.name === 'Keeper');
+      const importedTower = rows.find((row) => row.name === 'Old Tower');
+      if (importedKeeper === undefined || importedTower === undefined) {
+        throw new Error('imported artifacts missing');
+      }
+      expect(importedKeeper.links).toEqual([
+        { targetId: importedTower.id, relation: 'guards' },
+      ]);
+      // Nothing in the restored campaign still points at the exporting id.
+      expect(importedKeeper.links[0]?.targetId).not.toBe(tower.id);
+    });
+
+    it('REFUSES an import whose link names an artifact that is gone everywhere, naming it', async () => {
+      const campaign = await createCampaign({ name: 'Dangling', system: 'dnd5e' });
+      await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Fragment' });
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+        artifacts: { links: { targetId: string; relation: string }[] }[];
+      };
+      const goneId = newId();
+      exported.artifacts[0]?.links.push({ targetId: goneId, relation: 'quotes' });
+
+      await expect(importExport(exported)).rejects.toBeInstanceOf(DanglingImportReferenceError);
+      // The one rw transaction rolled the whole import back: no second campaign.
+      expect(await listCampaigns()).toHaveLength(1);
+    });
+
+    it('ADOPTS a library link through the ONE seam and repoints it at the campaign copy', async () => {
+      const campaign = await createCampaign({ name: 'Importer', system: 'dnd5e' });
+      const globalNpc = globalArtifactSchema.parse({
+        ...stampNewEntity(),
+        campaignId: null,
+        moduleId: null,
+        kind: 'npc',
+        name: 'Sage of the Vale',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        writerModel: '',
+        data: { appearance: '', personality: '', statBlock: null },
+      });
+      await db.artifacts.put(globalNpc);
+      const keeper = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Keeper' });
+      await updateArtifact(keeper.id, {
+        links: [{ targetId: globalNpc.id, relation: 'consults' }],
+      });
+
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+      const result = await importExport(exported);
+      const rows = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
+      const importedKeeper = rows.find((row) => row.name === 'Keeper');
+      if (importedKeeper === undefined) throw new Error('imported keeper missing');
+      const target = importedKeeper.links[0]?.targetId;
+      expect(target).not.toBe(globalNpc.id);
+      const copy = rows.find((row) => row.id === target);
+      // The reference points at the campaign's OWN copy of the library row ...
+      expect(copy?.name).toBe('Sage of the Vale');
+      expect(copy?.copiedFromArtifactId).toBe(globalNpc.id);
+      // ... no library pointer survives in the restored campaign ...
+      expect(rows.every((row) => row.links.every((link) => link.targetId !== globalNpc.id))).toBe(
+        true,
+      );
+      // ... and the shared library row SURVIVES beside the copy.
+      expect((await db.artifacts.get(globalNpc.id))?.campaignId).toBeNull();
+    });
+
+    it('ADOPTS a battle keyed to a LIBRARY encounter and keys it to the campaign copy', async () => {
+      const campaign = await createCampaign({ name: 'Book battle', system: 'dnd5e' });
+      const globalEncounter = globalArtifactSchema.parse({
+        ...stampNewEntity(),
+        campaignId: null,
+        moduleId: null,
+        kind: 'encounter',
+        name: 'Ford ambush',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        writerModel: '',
+        data: encounterDataWith([
+          { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+        ]) as never,
+      });
+      await db.artifacts.put(globalEncounter);
+      const module = await saveModuleRow(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'The Ford',
+          concept: '',
+          levelMin: 1,
+          levelMax: 3,
+          tone: '',
+          sizeDial: 'standard',
+        }),
+      );
+      // The PRE-FIX shape, exactly: the file was written when the battle's
+      // seeding encounter was a LIBRARY row (no campaign copy existed).
+      await ensureBattleForEncounter(campaign.id, module.id, globalEncounter.id);
+
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+      const result = await importExport(exported);
+
+      const battles = await db.battles.where('campaignId').equals(result.campaignId).toArray();
+      expect(battles).toHaveLength(1);
+      const key = battles[0]?.encounterArtifactId;
+      expect(key).toBeDefined();
+      expect(key).not.toBe(globalEncounter.id);
+      const copy = key === null || key === undefined ? undefined : await db.artifacts.get(key);
+      // The key is a CAMPAIGN row now, and its origin names the library row.
+      expect(copy?.campaignId).toBe(result.campaignId);
+      expect(copy?.copiedFromArtifactId).toBe(globalEncounter.id);
+      // No library key survives anywhere in the restored campaign's battle.
+      expect(battles[0]?.reseed?.encounterArtifactId ?? null).not.toBe(globalEncounter.id);
+    });
+
+    it('leaves a battle whose encounter was in no table exactly as it was (the retry arm owns it)', async () => {
+      const campaign = await createCampaign({ name: 'Gone encounter', system: 'dnd5e' });
+      const module = await saveModuleRow(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'The Warren',
+          concept: '',
+          levelMin: 1,
+          levelMax: 3,
+          tone: '',
+          sizeDial: 'standard',
+        }),
+      );
+      const goneId = newId();
+      await ensureBattleForEncounter(campaign.id, module.id, goneId);
+
+      const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+      const result = await importExport(exported);
+      const battles = await db.battles.where('campaignId').equals(result.campaignId).toArray();
+      // LEFT exactly as it was — never re-keyed to a guess — for the adoption
+      // seam's `danglingBattleEncounter` arm to name (docs/17 row 268).
+      expect(battles[0]?.encounterArtifactId).toBe(goneId);
+    });
   });
 
   it('still parses v1 files (no v2 tables, version 1)', async () => {

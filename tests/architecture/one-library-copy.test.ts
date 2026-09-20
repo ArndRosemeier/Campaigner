@@ -195,20 +195,24 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
     expect(filesWith('export function rosterArtifactIds(')).toEqual(['src/domain/rosterRefs.ts']);
   });
 
-  it('DEFINES the adoption seam once and routes the migration, the retry and the write path through it', () => {
+  it('DEFINES the adoption seam once and routes the migration, the retry, the write path and the IMPORT path through it', () => {
     expect(filesWith('export async function adoptLibraryArtifacts(')).toEqual([
       'src/db/libraryAdopt.ts',
     ]);
-    // The THREE declared callers: the v26 upgrade body, the start-up retry, and
-    // the live write path (which adopts BEFORE a reference is born) — no fourth
-    // copy of the operation anywhere.
+    // The FOUR declared callers: the v26 upgrade body, the start-up retry, the
+    // live write path (which adopts BEFORE a reference is born), and the IMPORT
+    // path (docs/17 row 256 — a restored file's library references are adopted
+    // after its transaction, so no restored campaign keeps a library pointer) —
+    // no fifth copy of the operation anywhere.
     expect(filesWith('adoptLibraryArtifacts(')).toEqual([
       'src/db/db.ts',
       'src/db/libraryAdopt.ts',
       'src/db/libraryAdoptLive.ts',
       'src/db/libraryAdoptRetry.ts',
+      'src/lib/exportImport.ts',
     ]);
-    // The upgrade body and the retry are the ONLY callers — no per-site copy.
+    // The upgrade body and the retry are the ONLY callers of the copy half — no
+    // per-site copy.
     expect(filesWith('adoptedArtifactRow(')).toEqual([
       'src/db/libraryAdopt.ts',
       'src/domain/libraryAdopt.ts',

@@ -754,6 +754,37 @@ describe('battle rows adopt their library tokens (docs/17 row 259)', () => {
     expect((await db.settings.get('settings'))?.libraryAdopt).toEqual(persisted);
   });
 
+  it('the RETRY path RE-KEYS a re-landed battle encounter key (docs/17 row 256 at-rest restoration)', async () => {
+    // The at-rest restoration case: a battle row lands carrying a LIBRARY
+    // encounter key that the v28/v29 upgrade bodies will never see again (they
+    // already ran on this install) — e.g. a whole-database backup restored over
+    // the current schema. The start-up retry runs the SAME seam, which collects
+    // `encounterArtifactId` and its re-seed stamp like any other library
+    // reference, so the key is re-pointed onto the campaign's own copy rather
+    // than left as a save/load dependency.
+    const source = globalEncounter();
+    await db.artifacts.put(source);
+    const battle = await putBattle(CAMPAIGN, []);
+    await db.battles.update(battle.id, {
+      encounterArtifactId: source.id,
+      reseed: { at: Date.now(), encounterArtifactId: source.id, encounterName: source.name },
+    });
+
+    const report = await retryLibraryAdoptions();
+    expect(report.adopted).toHaveLength(1);
+    const copyId = report.adopted[0]?.copyId ?? '';
+    expect(copyId).not.toBe('');
+    const after = await db.battles.get(battle.id);
+    expect(after?.encounterArtifactId).toBe(copyId);
+    expect(after?.reseed?.encounterArtifactId).toBe(copyId);
+    // The library row SURVIVES beside the campaign's copy (the owner's rule).
+    expect((await db.artifacts.get(source.id))?.campaignId).toBeNull();
+    // Idempotent: a second launch adopts nothing and repoints nothing.
+    const again = await retryLibraryAdoptions();
+    expect(again.adopted).toEqual([]);
+    expect(again.repointed).toBe(0);
+  });
+
   it('remaps the frozen seed handle of a DERIVED npc-ref, so the token keeps its stats', async () => {
     // A derived library npc: no stored block of its own, only a `creatureRef`.
     // `db/battleSeed` freezes its resolved block under the ARTIFACT id, so the
