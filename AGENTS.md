@@ -266,7 +266,13 @@ sharing one working tree share one git index, and `git commit` commits the
 whole index — file-disjointness does NOT protect the commit phase (real
 incident: a purge commit swept a concurrent writer's staged feature work
 under the wrong subject). Same-tree writers therefore serialize: one
-writer stages, commits and pushes at a time. When separate worktrees are
+writer stages, commits and pushes at a time — and the serialization is
+MECHANICAL, not a glance: a bare `git commit` takes whatever a peer left
+staged, so a same-tree commit stages EXPLICITLY and commits with that same
+pathspec (`git add <paths> && git commit -m … -- <paths>`), or refuses when
+`git diff --cached --name-only` names a file it did not edit. Real incident, the
+second of this class: a docs-only landing swept a peer session's staged board
+record into its own commit (docs/17 row 275). When separate worktrees are
 used:
 
 1. **File disjointness applies to `src/` — and CANNOT hold for the docs.** Every
