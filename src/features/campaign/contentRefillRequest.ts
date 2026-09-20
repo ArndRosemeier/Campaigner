@@ -1,13 +1,31 @@
 import { create } from 'zustand';
 
-import type { ArtifactKind, Id } from '@/domain';
+import { ARTIFACT_KIND_SINGULAR, type ArtifactKind, type Id } from '@/domain';
+
+/**
+ * The app's own framing for a refill of `kind` (docs/17 rows 287/288). It is a
+ * PURE function of the kind and whether the artifact already has a body — the
+ * two facts the hand-off already carries — so the panel DERIVES it at
+ * `start()` from the target on screen rather than remembering a copy that can
+ * drift from the target it names. It lives HERE, beside the request channel
+ * whose `kind`/`regenerate` it reads, so the sentence has ONE home and the
+ * panel's pins can assert the derivation through it.
+ */
+export function refillBrief(kind: ArtifactKind, regenerate: boolean): string {
+  const noun = ARTIFACT_KIND_SINGULAR[kind].toLowerCase();
+  return regenerate
+    ? `Regenerate the full content of this ${noun} — summary, body and details. Its name, relations and images are preserved.`
+    : `Generate the full content of this ${noun}: summary, body and details. Its name, relations and images are preserved.`;
+}
 
 interface ContentRefillRequestState {
   artifactId: Id | null;
   /** The artifact's kind — the panel selects the smith persona producing it. */
   kind: ArtifactKind | null;
-  /** True when the artifact already has body content — the panel words the
-   * pre-filled brief as a regeneration. */
+  /** True when the artifact already has body content. The panel DERIVES the
+   * framing from the target it is about to run against (`refillBrief`), so
+   * this stays the editor's record of WHY it asked, never the panel's source
+   * for the wording (docs/17 row 288). */
   regenerate: boolean;
   requestedAt: number;
   request: (artifactId: Id, kind: ArtifactKind, regenerate: boolean) => void;

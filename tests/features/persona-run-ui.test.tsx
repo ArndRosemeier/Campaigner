@@ -13,6 +13,7 @@ import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { db } from '@/db/db';
 import { newId, statBlockSchema, type Campaign, type Persona } from '@/domain';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
+import { refillBrief } from '@/features/campaign/contentRefillRequest';
 import { runEngine } from '@/llm/runEngine';
 import {
   additionalInstructionOf,
@@ -1497,11 +1498,17 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
    * THE CHANNEL, BOTH DIRECTIONS (docs/17 row 287). The owner's report was a
    * targeted refill whose typed request never became a DIRECT INSTRUCTION: the
    * panel produced no `Additional instruction:` paragraph, so the statblock
-   * step's draft veto discarded it and the mob stayed level 3. The panel now
-   * routes the box through the ONE composer, and these two pins are the two
-   * halves of that promise — a typed request becomes the exact paragraph the
-   * engine reads, and an EMPTY box leaves the brief byte-identical to the
-   * framing the panel always sent.
+   * step's draft veto discarded it and the mob stayed level 3. The panel routes
+   * the box through the ONE composer, and these pins are the two halves of that
+   * promise — a typed request becomes the exact paragraph the engine reads, and
+   * an EMPTY box leaves the brief byte-identical to the framing the panel
+   * always sent.
+   *
+   * The framing itself is DERIVED from the target on screen (docs/17 row 288,
+   * pins below), so these arms seed a target the real hand-off can actually
+   * produce: `ContentAiSection` passes `hasContent = artifact.body.trim() !== ''`
+   * as `regenerate` (pinned in feature-shell-and-editor), so a regenerate
+   * request names an artifact WITH a body.
    */
   const REFILL_FRAMING =
     'Regenerate the full content of this npc — summary, body and details. Its name, relations and images are preserved.';
@@ -1594,12 +1601,19 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     const user = userEvent.setup();
     const { campaign } = await seed();
     const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    // RE-SEEDED, NOT RELAXED (docs/17 row 288): the assertion below is row
+    // 287's, byte for byte. Only its SEED was impossible — it requested
+    // `regenerate: true` for an artifact with `body: ''`, a pair the editor's
+    // hand-off cannot produce (`regenerate` IS `body.trim() !== ''`). The
+    // framing is now derived from the target's body, so this arm seeds the
+    // body the regenerate request implies; the body-less case has its own arm
+    // below.
     const target = await createArtifact({
       campaignId: campaign.id,
       kind: 'npc',
       name: 'Stiller Gesell',
       summary: '',
-      body: '',
+      body: 'He keeps the ledger.',
       data: { appearance: '', personality: '', statBlock: null },
     });
     // The ordinary prose refill with no instruction: the draft's honest "no
@@ -1645,6 +1659,230 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     act(() => {
       useContentRefillRequest.getState().clear();
     });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  /**
+   * THE REGRESSION (docs/17 row 288). Row 287 held the framing in STATE keyed by
+   * the artifact the hand-off named. The target select has NO `disabled` prop,
+   * so the owner can switch it after a hand-off; the key then refused the
+   * remembered framing and the run went out with an EMPTY brief — silently
+   * dropping the app's "Regenerate the full content of this npc…" task text
+   * that the panel had always sent. The framing is DERIVED from the target on
+   * screen at start() now, so a switched target receives ITS OWN framing.
+   */
+  it('a targeted refill whose target is CHANGED after the hand-off still sends the app framing — not an empty brief', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const handedOff = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Erster Knecht',
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    const switched = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Zweiter Knecht',
+      summary: '',
+      body: 'He waits by the winch.',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...VALID_DRAFT, name: switched.name, needsStatBlock: false }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    act(() => {
+      useContentRefillRequest.getState().request(handedOff.id, 'npc', false);
+    });
+    await screen.findByPlaceholderText(
+      'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+    );
+    // The select lists every artifact and is NOT disabled: the owner switches.
+    await user.click(screen.getByRole('combobox', { name: 'Artifact to refill' }));
+    await user.click(await screen.findByRole('option', { name: switched.name }));
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // The SWITCHED target's own framing — the regenerate wording (it has a
+    // body), and above all NOT the empty string row 287 produced here.
+    expect(run?.userBrief).toBe(REFILL_FRAMING);
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBeNull();
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('a targeted refill whose target is CHANGED after the hand-off still appends the typed instruction paragraph', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const handedOff = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Dritter Knecht',
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    const switched = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Vierter Knecht',
+      summary: '',
+      body: 'He oils the gears.',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_DRAFT, name: switched.name, needsStatBlock: false }),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({ ...VALID_STATBLOCK, level: '5', hp: 42 }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    act(() => {
+      useContentRefillRequest.getState().request(handedOff.id, 'npc', false);
+    });
+    const box = await screen.findByPlaceholderText(
+      'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Artifact to refill' }));
+    await user.click(await screen.findByRole('option', { name: switched.name }));
+    await user.type(box, 'make this mob a level 5 stat block');
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // The app's framing still rides, and the owner's words still ride it as the
+    // ONE paragraph the engine reads — through the ONE composer.
+    expect(run?.userBrief).toBe(
+      withAdditionalInstruction(REFILL_FRAMING, 'make this mob a level 5 stat block'),
+    );
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBe(
+      'make this mob a level 5 stat block',
+    );
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('a targeted refill of an artifact with NO body sends the first-generation framing, derived through refillBrief', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Frischer Gesell',
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...VALID_DRAFT, name: target.name, needsStatBlock: false }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    act(() => {
+      useContentRefillRequest.getState().request(target.id, 'npc', false);
+    });
+    await screen.findByPlaceholderText(
+      'Instruction for this artifact, e.g. rebuild the stat block at level 5',
+    );
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // THE DERIVATION, asserted through the ONE place the sentence lives: a
+    // body-less target is a FIRST generation, never the regeneration wording.
+    expect(run?.userBrief).toBe(refillBrief('npc', false));
+    expect(run?.userBrief).not.toBe(REFILL_FRAMING);
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBeNull();
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it("a non-targeted run's brief is exactly the box's text — no app framing and no instruction paragraph", async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({
+        text: JSON.stringify(VALID_DRAFT),
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(VALID_STATBLOCK),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: persona.name }));
+    const typed = 'a goblin alchemist boss for a level 3 party';
+    await user.type(screen.getByLabelText('Brief'), typed);
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
+    // The framing rides ONLY a targeted refill: a fresh create's brief is the
+    // box's text, byte for byte, with no paragraph glued on.
+    expect(run?.userBrief).toBe(typed);
+    expect(additionalInstructionOf(run?.userBrief ?? '')).toBeNull();
     await flushAsyncUpdates();
   }, 30000);
 

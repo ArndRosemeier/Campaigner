@@ -52,7 +52,7 @@ import { withAdditionalInstruction } from '@/llm/additionalInstruction';
 import { rejectionIssues } from '@/llm/rejectionReason';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
-import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
+import { refillBrief, useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
 import type { PostCreateExtra } from '@/domain';
@@ -92,15 +92,6 @@ function resolveRefillPersona(personas: readonly Persona[], kind: ArtifactKind):
     if (bySlug !== undefined) return bySlug;
   }
   return personas.find((persona) => persona.mode === 'generate' && persona.producesKind === kind);
-}
-
-/** The pre-filled brief for a refill request (truthfully worded: an empty
- * artifact is a first generation, not a regeneration). */
-function refillBrief(kind: ArtifactKind, regenerate: boolean): string {
-  const noun = ARTIFACT_KIND_SINGULAR[kind].toLowerCase();
-  return regenerate
-    ? `Regenerate the full content of this ${noun} — summary, body and details. Its name, relations and images are preserved.`
-    : `Generate the full content of this ${noun}: summary, body and details. Its name, relations and images are preserved.`;
 }
 
 /** One "After creation" extra: the offered set derives from the CHOSEN
@@ -204,20 +195,6 @@ export function PersonaPanel({
   const [personaId, setPersonaId] = useState<string>('');
   const [autonomy, setAutonomy] = useState<Autonomy>('auto');
   const [brief, setBrief] = useState('');
-  /**
-   * The APP'S OWN framing for a targeted refill, kept SEPARATE from the owner's
-   * words (docs/17 row 287). The two travel together through the ONE composer
-   * (`withAdditionalInstruction`) at `start()`: the framing is the brief, and
-   * the text in the box rides it as the ONE `Additional instruction:` paragraph
-   * — the channel `runEngine` already reads (`directInstructionFor`), so a
-   * request typed into this box stops being invisible to the statblock step.
-   * Held per TARGET ARTIFACT: a framing composed for one row never leaks onto a
-   * different target or onto a non-refill persona. Null for every run that is
-   * not an artifact-editor refill hand-off.
-   */
-  const [refillFraming, setRefillFraming] = useState<{ artifactId: string; text: string } | null>(
-    null,
-  );
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>('assistant');
@@ -295,9 +272,6 @@ export function PersonaPanel({
     setTargetArtifactId(requestArtifactId);
     setAutonomy('auto');
     setTab('assistant');
-    // An illustration hand-off is not a refill: drop any framing a previous
-    // refill left behind so it can never ride an image prompt (docs/17 row 287).
-    setRefillFraming(null);
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
 
@@ -308,7 +282,6 @@ export function PersonaPanel({
   // target makes finalize write INTO the artifact.
   const refillRequestId = useContentRefillRequest((state) => state.artifactId);
   const refillKind = useContentRefillRequest((state) => state.kind);
-  const refillRegenerate = useContentRefillRequest((state) => state.regenerate);
   const refillRequestedAt = useContentRefillRequest((state) => state.requestedAt);
   const clearRefillRequest = useContentRefillRequest((state) => state.clear);
   useEffect(() => {
@@ -318,18 +291,16 @@ export function PersonaPanel({
     if (persona === undefined) return; // personas not loaded yet
     setPersonaId(persona.id);
     setTargetArtifactId(refillRequestId);
-    // The framing is the app's own task text, held SEPARATELY from the brief
-    // box, which now carries only the OWNER'S instruction for this artifact
-    // (docs/17 row 287). The two meet in the ONE composer at start(), so an
-    // empty box sends the framing BYTE-IDENTICAL (the deliberate
-    // no-instruction arms stay green) while a typed request travels the
-    // `Additional instruction:` channel the engine already reads.
-    setRefillFraming({ artifactId: refillRequestId, text: refillBrief(refillKind, refillRegenerate) });
+    // The box starts EMPTY: it carries only the OWNER'S instruction for this
+    // artifact, while the app's own framing is DERIVED at start() from the
+    // selected target itself (docs/17 row 288). Nothing about the framing is
+    // remembered — the target select stays open, and a changed target must
+    // still receive the framing its own kind and body call for.
     setBrief('');
     setAutonomy('auto');
     setTab('assistant');
     clearRefillRequest();
-  }, [refillRequestId, refillKind, refillRegenerate, refillRequestedAt, personas, clearRefillRequest]);
+  }, [refillRequestId, refillKind, refillRequestedAt, personas, clearRefillRequest]);
 
   // Remembered extras defaults (aspect pattern): the dialog pre-ticks from
   // Settings.runExtras and persists toggles.
@@ -362,18 +333,31 @@ export function PersonaPanel({
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
-    // THE BRIEF THE ENGINE RECEIVES (docs/17 row 287). For the artifact
-    // editor's targeted refill the app's framing is the task and the box's text
-    // is the OWNER'S instruction about THIS artifact; they are joined by the ONE
-    // composer the change seam already uses, so the words travel the
-    // `Additional instruction:` paragraph `directInstructionFor` reads. The
-    // framing is held per target, so it rides ONLY the row it was composed for
-    // — never a different target and never a non-refill persona. With an empty
-    // box `withAdditionalInstruction` returns the framing untouched: the
-    // no-instruction brief is byte-identical to the one this panel always sent.
+    // THE BRIEF THE ENGINE RECEIVES (docs/17 rows 287/288). For the artifact
+    // editor's targeted HAND-OFF the app's framing is the task and the box's
+    // text is the OWNER'S instruction about THIS artifact; they are joined by
+    // the ONE composer the change seam already uses, so the words travel the
+    // `Additional instruction:` paragraph `directInstructionFor` reads.
+    //
+    // The framing is DERIVED here, from the selection that is actually on
+    // screen — the persona's kind and whether the SELECTED target has a body —
+    // and never remembered (row 288). The artifact editor's request already
+    // carries exactly those two facts (`ContentAiSection` passes
+    // `hasContent = artifact.body.trim() !== ''`, pinned in
+    // feature-shell-and-editor), so a remembered copy added a second source of
+    // truth that could drift from the target it named: the target select stays
+    // OPEN after a hand-off, and switching it used to drop the app's task text
+    // entirely, sending an empty brief. Reading the target at start() makes
+    // that unrepresentable. With an empty box `withAdditionalInstruction`
+    // returns the framing untouched: the no-instruction brief is
+    // byte-identical to the one this panel always sent.
+    const targetArtifact = targetArtifacts.find((artifact) => artifact.id === targetArtifactId);
     const refillFramingText =
-      isTargetedRefill && refillFraming?.artifactId === targetArtifactId
-        ? refillFraming.text
+      isTargetedRefill && selectedPersona.producesKind !== undefined
+        ? refillBrief(
+            selectedPersona.producesKind,
+            targetArtifact !== undefined && targetArtifact.body.trim() !== '',
+          )
         : null;
     const runBrief =
       refillFramingText === null ? brief : withAdditionalInstruction(refillFramingText, brief);
@@ -384,7 +368,6 @@ export function PersonaPanel({
       // choice > the encounter's locationKind > the Settings fallback); the
       // Settings page's Encounter-maps default is that fallback, not a
       // per-run override.
-      const targetArtifact = targetArtifacts.find((artifact) => artifact.id === targetArtifactId);
       const targetPreset = targetArtifact?.kind === 'encounter' ? targetArtifact.data.preset : undefined;
       const runId = await runEngine.startRun({
         campaign,
