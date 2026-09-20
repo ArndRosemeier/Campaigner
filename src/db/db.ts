@@ -1258,6 +1258,45 @@ export class CampaignerDB extends Dexie {
       .upgrade(async (tx) => {
         await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
       });
+    // Version 30 (docs/17 row 270): THE BATTLE ROW'S OWN COPIES — the map
+    // image. v26 adopted a campaign's references to GLOBAL library ARTIFACTS
+    // (cloning their images), v27 the battle tokens, v28/29 the seeding
+    // encounter. `battle.board.mapImageId` and its stage snapshot are a
+    // DIFFERENT id space: `db/battleSeed.resolveMapImageId` freezes a linked
+    // location's `map`-role cover, or an adopted encounter's own
+    // `data.mapImageId`, and BOTH can be LIBRARY image ids — so a battle row
+    // stores a library image id and dangles the moment the library is
+    // re-ingested. v29 already ran on the owner's install and a landed upgrade
+    // body never re-runs, so the image half needs its own version (the
+    // row-259/263/268 reasoning, one id space over): the SAME seam collects and
+    // clones the library image, repoints the board, its stage snapshot AND the
+    // encounter's `data.mapImageId`, and NAMES a map image whose blob is gone.
+    // The store shape is UNCHANGED — this is a data conversion, and the seam is
+    // idempotent, so a workspace with nothing to say writes nothing.
+    this.version(30)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId, encounterArtifactId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        ideaBoards: 'id, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await adoptLibraryArtifacts({ tx, reason: 'upgrade' });
+      });
   }
 }
 

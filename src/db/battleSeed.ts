@@ -30,6 +30,7 @@ import {
 import { pcFightersOf } from '@/db/fighterStats';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
+import { copyStatBlockSpellsFromDb } from '@/db/libraryCopy';
 
 /**
  * Seeding a battle from an encounter artifact (09-MILESTONE-5 M5-C):
@@ -169,6 +170,20 @@ export async function expandRosterEntries(
   const tokens: BattleToken[] = [];
   for (const [monsterIndex, entry] of entries.entries()) {
     const resolved = await resolveMonsterEntryWithRepos(entry);
+    // THE FROZEN SEED ROW IS A COPY (docs/17 row 270): the block frozen onto
+    // `seedFighters[]` is what the battle card reads, so its spells must carry
+    // the library's own entries and render with the pack UNINSTALLED — the same
+    // rule every `copyCreatureStats` caller obeys, through the SAME spell seam
+    // (`db/libraryCopy.copyStatBlockSpellsFromDb`). A LEGACY `rulebook` citation
+    // is the one arm that reaches here BARE (the v24 migration copies what it
+    // can, and this seed resolves the rest at read time); a copied/inline block
+    // already carries its entries and passes through byte-identically. A name
+    // the library does not hold is left exactly as it was — loud, never
+    // dropped — and a spell-less block costs no corpus read.
+    const statBlock =
+      resolved.statBlock === null
+        ? null
+        : await copyStatBlockSpellsFromDb(resolved.statBlock);
     // ONE identity per roster entry, resolved the same way for every shape and
     // for BOTH token paths below (docs/17 row 165): a cited creature whose
     // library row did not resolve keeps the portrait its citation names, and an
@@ -182,7 +197,7 @@ export async function expandRosterEntries(
           ? `${entry.name} ${String(number)}`
           : entry.name;
       const at = options.placeAt(monsterIndex, index) ?? fallbackSpawnPoint(tokens.length);
-      if (resolved.statBlock === null) {
+      if (statBlock === null) {
         statless.push(`${label} (${resolved.origin === '' ? 'no stats' : resolved.origin})`);
         const statlessToken: BattleToken = {
           id: newId(),
@@ -210,8 +225,8 @@ export async function expandRosterEntries(
         tokens.push(statlessToken);
         continue;
       }
-      const maxHp = resolved.statBlock.hp;
-      const bonus = abilityModifier(resolved.statBlock.abilities.dex);
+      const maxHp = statBlock.hp;
+      const bonus = abilityModifier(statBlock.abilities.dex);
       let artifactId: Id;
       if (entry.source.type === 'npc-ref') {
         artifactId = entry.source.artifactId;
@@ -239,7 +254,7 @@ export async function expandRosterEntries(
             name: entry.name,
             maxHp,
             initiativeBonus: bonus,
-            statBlock: resolved.statBlock,
+            statBlock,
             originLabel: resolved.origin,
           });
         }
@@ -271,7 +286,7 @@ export async function expandRosterEntries(
             // The library block is frozen ON the row (docs/17 row 255b): the
             // card reads this, so uninstalling the pack cannot strip an
             // already-seeded battle of its AC and attacks.
-            statBlock: resolved.statBlock,
+            statBlock,
             originLabel: resolved.origin,
           });
         } else {
@@ -294,7 +309,7 @@ export async function expandRosterEntries(
           maxHp,
           initiativeBonus: bonus,
           // The copy's own bytes are frozen on the row (docs/17 row 255b).
-          statBlock: resolved.statBlock,
+          statBlock,
           originLabel: resolved.origin,
           ...(entry.originToken === undefined || identity === null
             ? {}

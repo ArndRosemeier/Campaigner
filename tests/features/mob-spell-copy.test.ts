@@ -6,11 +6,16 @@ import { putChunks } from '@/db/chunkRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { loadSpellIndexesFor } from '@/db/spellRepo';
+import { createArtifact } from '@/db/artifactRepo';
+import { seedBattleFromEncounter } from '@/db/battleSeed';
+import { createCampaign } from '@/db/campaignRepo';
 import {
   copiedSpellEntry,
+  encounterDataSchema,
   mobCasterLevel,
   mobSpellChipDetail,
   mobSpellChips,
+  newId,
   ruleChunkSchema,
   spellAtRank,
   spellDataSchema,
@@ -317,5 +322,73 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
     if (result.status !== 'copied') throw new Error('the fixture creature must be copyable');
     expect(result.copy.statBlock.spells).toBeUndefined();
     expect(consulted).toBe(false);
+  });
+
+  /**
+   * docs/17 row 270 — THE FROZEN BATTLE SEED IS A COPY TOO. `db/battleSeed`
+   * freezes the resolved block onto `seedFighters[]` and the battle card reads
+   * THAT row (`db/creatureRepo`'s frozen arm), so a seed is a copy by the same
+   * rule as every mob row: it must render its spell entries with the library
+   * ABSENT. A LEGACY `rulebook` citation is the arm that arrives BARE here (the
+   * v24 migration copies what it can; this seed resolves the rest at read
+   * time), so the seed stamps the library's entries through the SAME spell seam
+   * the copy operation uses (`db/libraryCopy.copyStatBlockSpellsFromDb`).
+   *
+   * WHAT jsdom CANNOT PROVE: the rendering of the chip (the DOM, the sheet).
+   * What it proves is the DATA that render reads — `domain/mobSpells
+   * .mobSpellChips` over the frozen block with an EMPTY index answers exactly
+   * as over the library's own block, which is the whole property in question.
+   */
+  it('freezes the library’s spell entry onto a battle seed, so the card answers with the library ABSENT', async () => {
+    const { chunkId } = await installLibrary();
+    const campaign = await createCampaign({ name: 'Seed campaign', system: SYSTEM });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Caster ambush',
+      data: encounterDataSchema.parse({
+        difficulty: 'medium',
+        levelHint: '7',
+        monsters: [
+          {
+            name: 'Nirklex',
+            count: 1,
+            notes: '',
+            treasure: '',
+            source: { type: 'rulebook', chunkId },
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      }),
+    });
+
+    const { battle } = await seedBattleFromEncounter(campaign.id, newId(), encounter.id);
+    const seed = battle.seedFighters[0];
+    if (seed?.statBlock == null) throw new Error('the frozen seed row must carry a block');
+    const assignment = seed.statBlock.spells?.[0] as MobSpellAssignment;
+    expect(copiedSpellEntry(assignment)).toEqual(FIREBALL);
+
+    // THE ACCEPTANCE: delete the WHOLE library — the frozen copy still answers,
+    // and the library's own bare block answers nothing over the same index.
+    const { db } = await import('@/db/db');
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+    const frozen = mobSpellChips(
+      seed.statBlock.spells,
+      mobCasterLevel(seed.statBlock.level),
+      new Map(),
+    );
+    expect(frozen.map((chip) => chip.resolved)).toEqual([true, true]);
+    expect(frozen.map((chip) => chip.libraryName)).toEqual(['Fireball', 'Ignition']);
+    const bare = mobSpellChips(libraryStatBlock().spells, 7, new Map());
+    expect(bare.map((chip) => chip.resolved)).toEqual([false, false]);
   });
 });

@@ -278,6 +278,55 @@ describe('one library-adoption operation (SOURCE SCAN, docs/17 row 257)', () => 
       expect(CODE[path]).toContain('db.battles');
     }
   });
+
+  /**
+   * THE IMAGE HALF (docs/17 row 270) — a SECOND ID SPACE of the SAME operation,
+   * and the shapes that would drift invisibly: an image id is not an artifact
+   * id, so a well-meaning per-site image copy (or a second image rewriter at
+   * the seed) would look correct where it was written and leave the board's
+   * `mapImageId` pointing at the library. The collector, the rewriter and the
+   * gone arm live in the ONE seam, and `adoptedArtifactRow` remains the ONE
+   * copy constructor whose `data` a caller may repoint.
+   */
+  it('collects, rewrites and NAMES the map image through the ONE seam', () => {
+    // The two collectors and the map-image rewriter are DEFINED once…
+    expect(filesWith('export function libraryImageIds(')).toEqual(['src/domain/libraryAdopt.ts']);
+    expect(filesWith('export function battleMapImageIds(')).toEqual(['src/domain/libraryAdopt.ts']);
+    expect(filesWith('export function danglingBattleMapImages(')).toEqual([
+      'src/domain/libraryAdopt.ts',
+    ]);
+    // …and each has exactly ONE caller: the tx-taking seam.
+    expect(filesWith('libraryImageIds')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    expect(filesWith('battleMapImageIds')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    expect(filesWith('danglingBattleMapImages')).toEqual([
+      'src/db/libraryAdopt.ts',
+      'src/domain/libraryAdopt.ts',
+    ]);
+    // The SAME `resolve` answers both id spaces: the battle rewriter's map arm
+    // and the artifact rewriter's `data.mapImageId` arm take the copy map the
+    // artifact half filled — never a second lookup of their own.
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain('const boardMap = repointMap(');
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain('const stageMap = repointMap(');
+    expect(CODE['src/domain/libraryAdopt.ts']).toContain('data = { ...(data as object), mapImageId: replacement }');
+    // The image clone is ONE expression, in the db half.
+    expect(filesWith('bytes: new Uint8Array(image.bytes)')).toEqual(['src/db/libraryAdopt.ts']);
+    // The spell half of the frozen seed takes the ONE spell seam: the seed never
+    // reads the corpus index itself (that would be a second corpus read).
+    expect(filesWith('copyStatBlockSpellsFromDb(')).toEqual([
+      'src/db/battleSeed.ts',
+      'src/db/libraryCopy.ts',
+    ]);
+    expect(filesWith('export function copyStatBlockSpellsFromDb(')).toEqual([
+      'src/db/libraryCopy.ts',
+    ]);
+    expect(CODE['src/db/battleSeed.ts']?.includes('spellIndexLookup(')).toBe(false);
+  });
 });
 
 /**

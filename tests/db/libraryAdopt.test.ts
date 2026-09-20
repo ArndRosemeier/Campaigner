@@ -18,13 +18,13 @@ import {
 } from '@/domain';
 import { defaultSettings } from '@/domain/settings';
 import { formatLibraryAdopt } from '@/domain/libraryAdoptRepair';
-import { tokenFromFighter } from '@/domain/battle/board';
+import { tokenFromFighter, captureStageSnapshot } from '@/domain/battle/board';
 import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { adoptDraftLibraryReferences } from '@/db/libraryAdoptLive';
 import { retryLibraryAdoptions } from '@/db/libraryAdoptRetry';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { getBattleByEncounter, getBattleForEncounter } from '@/db/battleRepo';
+import { getBattleByEncounter, getBattleForEncounter, saveBattleStage } from '@/db/battleRepo';
 import {
   adoptedCopyIdOf,
   createArtifact,
@@ -962,5 +962,159 @@ describe('a battle seeded from a LIBRARY encounter survives the library row (doc
     // no library id survives on the row.
     expect(second.battle.reseed?.encounterArtifactId).toBe(second.battle.encounterArtifactId);
     expect(JSON.stringify(second.battle)).not.toContain(libraryEncounter.id);
+  });
+});
+
+/**
+ * docs/17 row 270 — THE BATTLE ROW'S OWN COPIES: the MAP IMAGE.
+ *
+ * `battle.board.mapImageId` / `board.stage.mapImageId` are stored IMAGE ids, a
+ * different table (and a different id space) from every artifact reference the
+ * adoption seam collected before. `db/battleSeed.resolveMapImageId` freezes
+ * them from a LINKED location's `map`-role cover, or from the encounter's own
+ * `data.mapImageId` — and when that image is a LIBRARY row the board stores a
+ * library id that dangles the moment the pack is re-ingested. The pins below
+ * are the brief's: REACHABILITY through the REAL seed path, the clone +
+ * repoint (board, its stage snapshot, AND the encounter's own battlemap), the
+ * library-being-deletable acceptance, idempotence, and the loud gone arm.
+ */
+describe('the battle row’s map image is a CAMPAIGN copy (docs/17 row 270)', () => {
+  /** A campaign encounter whose ONLY battlemap is a LINKED location's `map`-role
+   * cover — exactly the chain `db/battleSeed.resolveMapImageId` walks. */
+  async function libraryMappedEncounter(locationId: Id): Promise<Artifact> {
+    return createArtifact({
+      campaignId: CAMPAIGN,
+      kind: 'encounter',
+      name: 'Sunken ford',
+      data: encounterData([
+        { name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+      ]),
+      links: [{ targetId: locationId, relation: 'at' }],
+    });
+  }
+
+  it('REACHABLE: the REAL seed path freezes a LIBRARY image id onto the board', async () => {
+    // PROVEN, not hand-built: a GLOBAL location whose cover is a `map`-role
+    // LIBRARY image, linked from a CAMPAIGN encounter, battle seeded through the
+    // production entry point.
+    await seedLibraryImage();
+    const location = globalLocation();
+    await db.artifacts.put(location);
+    const encounter = await libraryMappedEncounter(location.id);
+
+    const { battle } = await seedBattleFromEncounter(CAMPAIGN, newId(), encounter.id);
+
+    // Campaign data now STORES a library image id…
+    expect(battle.board.mapImageId).toBe(IMAGE);
+    expect((await db.images.get(IMAGE))?.campaignId).toBeNull();
+    // …and the encounter it read was the campaign's own row (nothing was
+    // adopted on this path, so the freeze is the seed's own doing).
+    expect((await getArtifact(encounter.id))?.copiedFromArtifactId).toBeUndefined();
+  });
+
+  it('CLONES and REPOINTS the board, its stage snapshot AND the encounter’s own battlemap', async () => {
+    await seedLibraryImage();
+    const location = globalLocation();
+    await db.artifacts.put(location);
+    const encounter = await libraryMappedEncounter(location.id);
+    // The OTHER reachable shape: a campaign encounter whose OWN designed
+    // battlemap names the library image directly (an adopted library encounter
+    // before docs/17 row 270 did exactly this). It is the SOURCE a re-seed
+    // would freeze again, so leaving it would re-mint the dependency.
+    const ownMap = await createArtifact({
+      campaignId: CAMPAIGN,
+      kind: 'encounter',
+      name: 'Ford camp',
+      data: { ...encounterData([]), mapImageId: IMAGE },
+    });
+    const { battle } = await seedBattleFromEncounter(CAMPAIGN, newId(), encounter.id);
+    expect(battle.board.mapImageId).toBe(IMAGE);
+    // ⚑ Set stage copies the board's map into the SECOND stored carrier.
+    const staged = await saveBattleStage(battle.id, captureStageSnapshot(battle.board));
+    expect(staged.board.stage?.mapImageId).toBe(IMAGE);
+
+    await adopt();
+
+    const after = await db.battles.get(battle.id);
+    const boardMap = after?.board.mapImageId ?? '';
+    expect(boardMap).not.toBe(IMAGE);
+    // The stage snapshot moved with the board — one map, two carriers.
+    expect(after?.board.stage?.mapImageId).toBe(boardMap);
+    const clone = await db.images.get(boardMap);
+    expect(clone?.campaignId).toBe(CAMPAIGN);
+    expect(clone?.role).toBe('map');
+    expect(Array.from(clone?.bytes ?? new Uint8Array())).toEqual([1, 2, 3, 4]);
+    // The library blob SURVIVES, still library-scoped (a copy, never a move).
+    expect((await db.images.get(IMAGE))?.campaignId).toBeNull();
+    // The encounter's own designed battlemap names the SAME campaign clone.
+    const ownRow = await getArtifact(ownMap.id);
+    if (ownRow?.kind !== 'encounter') throw new Error('the encounter row is missing');
+    expect(ownRow.data.mapImageId).toBe(boardMap);
+
+    // THE ACCEPTANCE: delete the library artifact AND its image — the board
+    // still has its map, from the campaign's own bytes.
+    await db.artifacts.delete(location.id);
+    await db.images.delete(IMAGE);
+    const survivor = await db.images.get((await db.battles.get(battle.id))?.board.mapImageId ?? '');
+    expect(survivor?.campaignId).toBe(CAMPAIGN);
+    expect(Array.from(survivor?.bytes ?? new Uint8Array())).toEqual([1, 2, 3, 4]);
+
+    // IDEMPOTENT: a second pass makes no copy and rewrites nothing.
+    const second = await adopt();
+    expect(second.adopted).toEqual([]);
+    expect(second.repointed).toBe(0);
+    expect(second.unresolved).toEqual([]);
+  });
+
+  it('a LIBRARY encounter’s own battlemap is repointed on its COPY — the live arm the seed runs', async () => {
+    // THE LIVE ARM, not merely historical: `campaignOwnedEncounter` adopts the
+    // global encounter and hands the seed the COPY, and `adoptedArtifactRow`
+    // used to spread `data` verbatim — so the copy's `data.mapImageId` still
+    // named the LIBRARY image and the FIRST "Run battle" froze that id onto the
+    // board. The image is deliberately NOT in the encounter's gallery/cover:
+    // `data.mapImageId` is a stored image reference of its own.
+    await seedLibraryImage();
+    const libraryEncounter = globalEncounter('Ford ambush');
+    await db.artifacts.put(libraryEncounter);
+    const mapped = globalArtifactSchema.parse({
+      ...libraryEncounter,
+      id: newId(),
+      data: { ...libraryEncounter.data, mapImageId: IMAGE },
+    });
+    await db.artifacts.put(mapped);
+
+    const { battle } = await seedBattleFromEncounter(CAMPAIGN, newId(), mapped.id);
+
+    const owned = await getArtifact(battle.encounterArtifactId ?? '');
+    expect(owned?.copiedFromArtifactId).toBe(mapped.id);
+    if (owned?.kind !== 'encounter') throw new Error('the adopted encounter is missing');
+    expect(owned.data.mapImageId).not.toBe(IMAGE);
+    expect(battle.board.mapImageId).toBe(owned.data.mapImageId);
+    expect((await db.images.get(owned.data.mapImageId ?? ''))?.campaignId).toBe(CAMPAIGN);
+    // The library row and blob SURVIVE, still library-scoped.
+    expect((await db.images.get(IMAGE))?.campaignId).toBeNull();
+  });
+
+  it('NAMES a map image that went GONE after the seed — the id is KEPT, never a guess', async () => {
+    await seedLibraryImage();
+    const location = globalLocation();
+    await db.artifacts.put(location);
+    const encounter = await libraryMappedEncounter(location.id);
+    const { battle } = await seedBattleFromEncounter(CAMPAIGN, newId(), encounter.id);
+    expect(battle.board.mapImageId).toBe(IMAGE);
+    // The library blob is GONE (re-ingested under a new id, or deleted): there
+    // is nothing to copy, and pointing the board at a placeholder is forbidden.
+    await db.images.delete(IMAGE);
+
+    const report = await adopt();
+
+    expect(report.unresolved.map((entry) => entry.name)).toContain(IMAGE);
+    // The id is LEFT EXACTLY as it was.
+    expect((await db.battles.get(battle.id))?.board.mapImageId).toBe(IMAGE);
+
+    // LOUD: the report reaches settings and the ONE sentence prints it.
+    const persisted = (await db.settings.get('settings'))?.libraryAdopt;
+    if (persisted === undefined || persisted === null) throw new Error('no report persisted');
+    expect(formatLibraryAdopt(persisted)).toContain(IMAGE);
   });
 });

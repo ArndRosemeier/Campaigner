@@ -15,11 +15,15 @@ import {
   NOT_GLOBAL_ARTIFACT_REASON,
   adoptedArtifactRow,
   battleLibraryReferenceIds,
+  battleMapImageIds,
   danglingBattleEncounter,
+  danglingBattleMapImages,
   danglingBattleTokens,
+  libraryImageIds,
   libraryReferenceIds,
   repointArtifactRow,
   repointBattleRow,
+  repointLibraryReferences,
   type LibraryBattleRefs,
   type PendingLibraryReferences,
 } from '@/domain/libraryAdopt';
@@ -204,6 +208,67 @@ export async function adoptLibraryArtifacts(
     const created: Artifact[] = [];
 
     /**
+     * THE IMAGE HALF OF THE COPY (docs/17 row 270) — the ONE image clone, used
+     * by the artifact half below AND by the map-image pass, and CACHED per
+     * campaign pass. The cache is not an optimisation: the linked library
+     * LOCATION whose cover became a board's map and the BOARD that froze the
+     * same blob are two holders of ONE library image, and the copy rule
+     * ("cloned, never shared") must not store a multi-megabyte battlemap twice
+     * in the same campaign.
+     *
+     * The clone carries the bytes, the mime type, the dimensions and the ROLE
+     * (a `map` cover must stay a `map`, or `db/battleSeed.resolveMapImageId`
+     * stops finding a board). It registers itself in `copies`, so the SAME
+     * `resolve` the artifact and battle repoints use answers an image id too.
+     */
+    const imageClones = new Map<Id, Id>();
+    const cloneImage = async (image: StoredImage): Promise<Id> => {
+      const known = imageClones.get(image.id);
+      if (known !== undefined) return known;
+      const clone: StoredImage = {
+        ...stampNewEntity(),
+        campaignId,
+        bytes: new Uint8Array(image.bytes),
+        mimeType: image.mimeType,
+        width: image.width,
+        height: image.height,
+        prompt: image.prompt,
+        model: image.model,
+        source: image.source,
+        role: image.role,
+      };
+      await images.put(clone);
+      imageClones.set(image.id, clone.id);
+      copies.set(image.id, clone.id);
+      return clone.id;
+    };
+
+    /** Every LIBRARY image id this campaign's rows and battles named, and every
+     * one of those that resolved to an existing row — the two facts the map
+     * pass needs, read once per candidate (never a full table scan: image rows
+     * carry the blobs). */
+    const decidedImages = new Set<Id>();
+    const knownImageIds = new Set<Id>();
+    const adoptImage = async (imageId: Id): Promise<void> => {
+      if (decidedImages.has(imageId)) return;
+      decidedImages.add(imageId);
+      const image = (await images.get(imageId)) as StoredImage | undefined;
+      if (image === undefined) return;
+      knownImageIds.add(imageId);
+      // A campaign-scoped image is already the campaign's own — an adopted
+      // copy's cloned cover, or a gallery row. Only a LIBRARY image is copied.
+      if (image.campaignId !== null) return;
+      const cloneId = await cloneImage(image);
+      report.adopted.push({
+        globalId: imageId,
+        copyId: cloneId,
+        name: 'a battlemap image',
+        kind: 'image',
+        reused: false,
+      });
+    };
+
+    /**
      * THE COPY HALF, for one referenced library row. Answers the campaign copy
      * (existing or fresh), or `undefined` when no copy could be made — in which
      * case the reference is LEFT INTACT and the reason is named.
@@ -247,6 +312,10 @@ export async function adoptLibraryArtifacts(
         ...new Set([
           ...source.imageIds,
           ...(source.coverImageId === null ? [] : [source.coverImageId]),
+          // THE ENCOUNTER'S DESIGNED BATTLEMAP (docs/17 row 270) need not appear
+          // in the gallery or the cover at all, yet it IS a stored image
+          // reference, so it joins the clone set.
+          ...libraryImageIds(source),
         ]),
       ];
       for (const imageId of sourceImageIds) {
@@ -255,20 +324,7 @@ export async function adoptLibraryArtifacts(
           missingImages.push(imageId);
           continue;
         }
-        const clone: StoredImage = {
-          ...stampNewEntity(now),
-          campaignId,
-          bytes: new Uint8Array(image.bytes),
-          mimeType: image.mimeType,
-          width: image.width,
-          height: image.height,
-          prompt: image.prompt,
-          model: image.model,
-          source: image.source,
-          role: image.role,
-        };
-        await images.put(clone);
-        imageMapping.set(imageId, clone.id);
+        imageMapping.set(imageId, await cloneImage(image));
       }
       if (missingImages.length > 0) {
         report.unresolved.push({
@@ -278,6 +334,11 @@ export async function adoptLibraryArtifacts(
           unexpected: false,
         });
       }
+      // The copy's stored IMAGE references inside `data` (the encounter's
+      // battlemap) are rewritten through the SAME mapping as its gallery and
+      // cover — the ONE rewriter, so the copy cannot keep a library id one arm
+      // deeper than the others (docs/17 row 270).
+      const repointedSource = repointLibraryReferences(source, (id) => imageMapping.get(id));
       const copy = adoptedArtifactRow(
         source,
         campaignId,
@@ -287,6 +348,7 @@ export async function adoptLibraryArtifacts(
             .filter((id): id is Id => id !== undefined),
           coverImageId:
             source.coverImageId === null ? null : (imageMapping.get(source.coverImageId) ?? null),
+          ...(repointedSource === null ? {} : { data: repointedSource.data }),
         },
         now,
       );
@@ -370,6 +432,24 @@ export async function adoptLibraryArtifacts(
     }
 
     /**
+     * THE IMAGE HOLDERS (docs/17 row 270) — the SECOND id space of the same
+     * operation: an encounter's DESIGNED battlemap (`data.mapImageId`) and a
+     * battle's `board.mapImageId` / stage copy are stored LIBRARY IMAGE ids, and
+     * a battle row frozen from a library encounter's map or a linked library
+     * location's `map` cover carries one today. They take the SAME copy path
+     * (`cloneImage`), never `adoptOne` — an image id is not an artifact id, so
+     * the artifact pass would answer it NOT_GLOBAL_ARTIFACT. Run AFTER the
+     * artifact copies so a cover the artifact half already cloned is REUSED
+     * rather than stored twice.
+     */
+    for (const row of [...campaignRows, ...created]) {
+      for (const imageId of libraryImageIds(row)) await adoptImage(imageId);
+    }
+    for (const battle of campaignBattles) {
+      for (const imageId of battleMapImageIds(battle)) await adoptImage(imageId);
+    }
+
+    /**
      * THE REPOINT PASS — the declared holder set, one rewrite per row. It runs
      * AFTER every copy exists and inside the SAME transaction, so no reference
      * is ever left pointing at a row that was just removed from its reach. The
@@ -425,6 +505,18 @@ export async function adoptLibraryArtifacts(
           name: danglingEncounter,
           reason:
             'this battle is KEYED by its seeding encounter, and that row is in no campaign and not in the shared library, so there is nothing to adopt and the key is left exactly as it is rather than re-keyed to a guess — the provenance/spawn source cannot be read until the encounter is restored (re-import the pack, or recreate it)',
+          unexpected: false,
+        });
+      }
+      // THE MAP'S GONE ARM (docs/17 row 270): a board/stage image whose blob is
+      // in NO table has nothing to copy, so the id is LEFT as it is and NAMED
+      // here — the surface renders a blank board with no reason of its own.
+      for (const goneImageId of danglingBattleMapImages(battle, knownImageIds)) {
+        report.unresolved.push({
+          where: battleWhere(battle),
+          name: goneImageId,
+          reason:
+            'this battle’s map image is in no campaign and not in the shared library — it was re-ingested or deleted after the board froze the id, so there is nothing to copy and the board is left pointing at the same id rather than a guess; re-import the artwork (or pick a new battlemap) to restore the map',
           unexpected: false,
         });
       }

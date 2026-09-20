@@ -141,6 +141,24 @@ export function libraryReferenceIds(holder: LibraryReferenceHolder): Id[] {
   return ids;
 }
 
+/**
+ * THE image half of the ONE artifact collector (docs/17 row 270): the library
+ * IMAGE ids an artifact row cites — an encounter's DESIGNED battlemap
+ * (`encounter.data.mapImageId`), which `db/battleSeed.resolveMapImageId` reads
+ * and freezes onto the board. Empty for every other kind: an image id is not
+ * reachable from a location/event/npc row's stored data.
+ *
+ * It is deliberately SEPARATE from `libraryReferenceIds` (artifact ids): images
+ * live in the `images` table, so the two answers are filtered against different
+ * tables and merging them would make one collector that must be read twice to
+ * be understood. Same operation, two id spaces.
+ */
+export function libraryImageIds(holder: LibraryReferenceHolder): Id[] {
+  if (holder.kind !== 'encounter') return [];
+  const mapImageId = (holder.data as { mapImageId?: unknown } | null | undefined)?.mapImageId;
+  return typeof mapImageId === 'string' ? [mapImageId] : [];
+}
+
 /** "Has this campaign already adopted that library artifact?" — the ONE
  * idempotence rule, answered from the STORED origin id (never from names: two
  * library artifacts can share one, which is why aliases exist; and never from
@@ -152,7 +170,10 @@ export function isAdoptedCopyOf(row: AnyArtifact, globalId: Id): boolean {
 /**
  * Build the campaign-scoped COPY of a global library artifact. PURE: the images
  * have already been CLONED by the caller (a clone is IO) and are passed in as a
- * mapping's RESULT, so this function never decides to share a blob.
+ * mapping's RESULT, so this function never decides to share a blob. The same is
+ * true of `images.data`: when the caller repointed a stored IMAGE id inside the
+ * row's `data` (an encounter's `data.mapImageId`, docs/17 row 270) it passes the
+ * rewritten block in; otherwise the source's own `data` is cloned verbatim.
  *
  * The copy keeps the SOURCE's NAME — deliberately, and it is load-bearing:
  * prose `[[Name]]` wikilinks store no id, and `lib/wikilinks.scopeTier` ranks a
@@ -169,7 +190,7 @@ export function isAdoptedCopyOf(row: AnyArtifact, globalId: Id): boolean {
 export function adoptedArtifactRow(
   source: GlobalArtifact,
   campaignId: Id,
-  images: { imageIds: readonly Id[]; coverImageId: Id | null },
+  images: { imageIds: readonly Id[]; coverImageId: Id | null; data?: unknown },
   now: number = Date.now(),
 ): Artifact {
   return artifactSchema.parse({
@@ -180,6 +201,10 @@ export function adoptedArtifactRow(
     moduleId: null,
     imageIds: [...images.imageIds],
     coverImageId: images.coverImageId,
+    // The `data` block is the source's OWN unless the caller repointed a stored
+    // IMAGE id inside it (an encounter's `data.mapImageId`, docs/17 row 270) —
+    // a `structuredClone` cannot know which of its keys was a library reference.
+    data: images.data ?? source.data,
     copiedFromArtifactId: source.id,
     currentRevision: 1,
   });
@@ -211,12 +236,29 @@ export function repointLibraryReferences(
 
   let data = holder.data;
   if (holder.kind === 'encounter') {
-    const monsters = (holder.data as { monsters?: unknown } | null | undefined)?.monsters;
+    const encounterData = holder.data as
+      | { monsters?: unknown; mapImageId?: unknown }
+      | null
+      | undefined;
+    const monsters = encounterData?.monsters;
     if (Array.isArray(monsters)) {
       const repointed = repointRosterArtifactIds(monsters as MonsterEntry[], resolve);
       if (repointed !== null) {
         changed = true;
         data = { ...(holder.data as object), monsters: repointed };
+      }
+    }
+    // THE ENCOUNTER'S DESIGNED BATTLEMAP (docs/17 row 270): `data.mapImageId` is
+    // a stored IMAGE reference — the SOURCE `db/battleSeed.resolveMapImageId`
+    // freezes onto every battle board. Leaving it pointing at a library image
+    // would re-mint the board's library id on the next re-seed, so it is
+    // repointed through the SAME `resolve` as every other reference.
+    const mapImageId = encounterData?.mapImageId;
+    if (typeof mapImageId === 'string') {
+      const replacement = resolve(mapImageId);
+      if (replacement !== undefined && replacement !== mapImageId) {
+        changed = true;
+        data = { ...(data as object), mapImageId: replacement };
       }
     }
   }
@@ -272,9 +314,17 @@ export interface LibraryBattleTokenRef {
 export interface LibraryBattleRefs {
   board?:
     | {
+        /**
+         * The board's battlemap — an IMAGE id, so it is not an artifact
+         * reference and rides the image half of this seam (docs/17 row 270)
+         * rather than the token collector.
+         */
+        mapImageId?: Id | null | undefined;
         tokens?: readonly LibraryBattleTokenRef[] | undefined;
         stage?:
           | (Record<string, unknown> & {
+              /** The stage snapshot's copy of `board.mapImageId`. */
+              mapImageId?: Id | null | undefined;
               tokens?: readonly LibraryBattleTokenRef[] | undefined;
             })
           | null
@@ -339,6 +389,26 @@ export function battleLibraryReferenceIds(battle: LibraryBattleRefs): Id[] {
 }
 
 /**
+ * THE battle's IMAGE references (docs/17 row 270): its `board.mapImageId` and
+ * the saved stage snapshot's copy of it — the map slot the table renders.
+ *
+ * A SEPARATE id space from `battleLibraryReferenceIds` (artifact ids), because
+ * an image lives in the `images` table: the caller filters this list against
+ * the image rows and the artifact list against the artifact rows. The two
+ * carriers are BOTH live (`⚑ Set stage` copies the board's map into the stage,
+ * and `resetBattleToStage` restores it), so a stage snapshot left behind would
+ * be the same defect one revision later.
+ */
+export function battleMapImageIds(battle: LibraryBattleRefs): Id[] {
+  const ids: Id[] = [];
+  const board = battle.board?.mapImageId;
+  if (board !== null && board !== undefined) ids.push(board);
+  const stage = battle.board?.stage?.mapImageId;
+  if (stage !== null && stage !== undefined) ids.push(stage);
+  return ids;
+}
+
+/**
  * Rewrite a battle row's library references to their campaign copies: the
  * board tokens, the stage snapshot's tokens, the frozen seed rows whose id is a
  * repointed handle (a derived `npc-ref` freezes its seed row under the artifact
@@ -388,6 +458,22 @@ export function repointBattleRow<T extends LibraryBattleRefs>(
   const boardTokens = live === null ? null : repointTokens(live.tokens ?? []);
   const stage = live?.stage ?? null;
   const stageTokens = stage === null ? null : repointTokens(stage.tokens ?? []);
+  // THE MAP SLOT (docs/17 row 270): an image id is not an artifact id, but it
+  // rides the SAME `resolve` — the caller's copy map holds both id spaces, and
+  // an id with no copy answers `undefined`, so a gone library image is LEFT as
+  // it is (named by the caller) rather than pointed at a guess.
+  const repointMap = (
+    mapImageId: Id | null | undefined,
+  ): { mapImageId: Id | null | undefined; changed: boolean } => {
+    if (mapImageId === null || mapImageId === undefined) return { mapImageId, changed: false };
+    const replacement = resolve(mapImageId);
+    if (replacement === undefined || replacement === mapImageId) {
+      return { mapImageId, changed: false };
+    }
+    return { mapImageId: replacement, changed: true };
+  };
+  const boardMap = repointMap(live?.mapImageId);
+  const stageMap = repointMap(stage?.mapImageId);
   const seeds = repointSeeds(battle.seedFighters ?? []);
   // THE SEEDING ENCOUNTER (docs/17 row 268): a LIBRARY-scoped key is re-keyed
   // onto the campaign's own copy, and the re-seed stamp's copy of the same id
@@ -409,6 +495,8 @@ export function repointBattleRow<T extends LibraryBattleRefs>(
   const changed =
     (boardTokens?.changed ?? false) ||
     (stageTokens?.changed ?? false) ||
+    boardMap.changed ||
+    stageMap.changed ||
     seeds.changed ||
     encounterChanged ||
     reseedChanged;
@@ -418,8 +506,17 @@ export function repointBattleRow<T extends LibraryBattleRefs>(
       ? null
       : {
           ...live,
+          ...(boardMap.changed ? { mapImageId: boardMap.mapImageId } : {}),
           tokens: boardTokens?.tokens ?? [],
-          ...(stage === null ? {} : { stage: { ...stage, tokens: stageTokens?.tokens ?? [] } }),
+          ...(stage === null
+            ? {}
+            : {
+                stage: {
+                  ...stage,
+                  ...(stageMap.changed ? { mapImageId: stageMap.mapImageId } : {}),
+                  tokens: stageTokens?.tokens ?? [],
+                },
+              }),
         };
   const next = {
     ...battle,
@@ -495,4 +592,27 @@ export function danglingBattleEncounter(
   const encounterArtifactId = battle.encounterArtifactId;
   if (encounterArtifactId === null || encounterArtifactId === undefined) return undefined;
   return knownArtifactIds.has(encounterArtifactId) ? undefined : encounterArtifactId;
+}
+
+/**
+ * THE battle map's GONE arm (docs/17 row 270): a `board.mapImageId` (or its
+ * stage copy) whose blob is in NO image table — the library was re-ingested, or
+ * the image was deleted, after the battle froze the id.
+ *
+ * Adoption cannot invent bytes, so the id is LEFT EXACTLY as it is and NAMED
+ * here rather than repointed to a placeholder (AGENTS rule 1). The surface
+ * itself is SILENT about this (a missing map image renders a blank board with
+ * no reason), which is why the adoption report carries the name — the same
+ * reasoning as `danglingBattleTokens`. Deduped: the board and its stage
+ * snapshot legitimately carry the SAME id, and one gone image is one fact.
+ */
+export function danglingBattleMapImages(
+  battle: LibraryBattleRefs,
+  knownImageIds: ReadonlySet<Id>,
+): Id[] {
+  const out: Id[] = [];
+  for (const imageId of battleMapImageIds(battle)) {
+    if (!knownImageIds.has(imageId) && !out.includes(imageId)) out.push(imageId);
+  }
+  return out;
 }

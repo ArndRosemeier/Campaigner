@@ -163,10 +163,17 @@ export async function copyCreatureStats(
  * placeholder-filled (AGENTS rule 1). That is not a silent hole: the resolver
  * reports it as the loud unresolved chip it has always been, on the copy
  * exactly as on the library row.
+ *
+ * IT IS EXPORTED because a copy is not always made by `copyCreatureStats`: the
+ * battle seed FREEZES an already-resolved block onto `seedFighters[]`
+ * (`db/battleSeed.expandRosterEntries`, docs/17 row 270), and a frozen block is
+ * a copy by the same rule — the card renders it with the library absent. That
+ * caller takes this SAME seam, so there is still exactly one expression that
+ * puts a library entry onto an assignment.
  */
-async function copyStatBlockWithSpells(
+export async function copyStatBlockWithSpells(
   statBlock: StatBlock,
-  lookups: CreatureCopyLookups,
+  lookups: Pick<CreatureCopyLookups, 'spellIndex'>,
 ): Promise<StatBlock> {
   const assignments = statBlock.spells;
   if (assignments === null || assignments === undefined) return statBlock;
