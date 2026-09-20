@@ -3247,6 +3247,44 @@ tripwire (docs/17 row 212) scans `tests/**` too, so a copied helper body would b
 a NEW baselined duplicate — the unit assertion over `documentTextFields`' output
 is the cheaper, honest pin (docs/17 row 218's own note).
 
+### The ingest stat-block reader refuses an unstated number (docs/17 row 290, docs/18 §2/§5, docs/02 §Step 3)
+
+`src/ingest/statblock.ts` read an anchor-dense PDF span into a stat block and
+then FILLED what the source had not stated (`ac ?? 10`, `hp ?? 1`, all six
+abilities `?? 10`), so an invented AC/HP/array was persisted on the chunk and
+cited into encounters. The reader now returns `null` unless the text itself
+stated **AC, HP and all six abilities** — the numbers `domain/statblock.StatBlock`
+REQUIRES — and `speed`/`CR`/`level` stay optional. `src/ingest/chunker.ts` mints
+a `statblock` chunk ONLY for a successful parse; a refused span's lines go
+through the new ONE `appendToSection` and stay in the surrounding prose chunk.
+The old admission bar (`coreFounds`) is deleted with the defaults it fed.
+
+| fact pinned | where |
+|---|---|
+| **The refusals** — a text with AC+HP but no ability line is `null` (the exact case the old defaults turned into six `10`s); a text stating only SOME abilities is `null`; a text missing AC is `null`; a text missing HP is `null` | `tests/ingest/statblock.test.ts` (`REFUSES a block with no ability line…`, `REFUSES a block that states only SOME abilities`, `REFUSES a block with no AC, and one with no HP…`) |
+| **A complete read is UNCHANGED** — the 5e fixture is asserted as an EXACT whole-object equality (every field, `extras.CR` included), so a regression in any single field reds the pin rather than passing on the fields no test happened to name | `tests/ingest/statblock.test.ts` (`reads a COMPLETE block into the exact same shape as before`) |
+| **The optional fields stay optional** — a block with AC/HP/abilities and no speed/CR/level parses, with `speed: ''`, `level: ''` and `extras: {}` (the shape's own blank, not a fabricated value) | `tests/ingest/statblock.test.ts` (`keeps speed, CR and level OPTIONAL…`) |
+| **The caller mints NOTHING for a refused span** — no chunk has `chunkType === 'statblock'`; the span's text is inside a `section` chunk with the heading path in force and finite pages | `tests/ingest/chunker.test.ts` (`mints NO statblock chunk for a span the source did not complete`) |
+| **The span stays INSIDE the surrounding prose** — prose before and after the refused span land in ONE section chunk with it, rather than a chunk of its own | `tests/ingest/chunker.test.ts` (`keeps a refused span INSIDE the surrounding prose chunk…`) |
+| **The walk continues PAST the refusal** — a later complete block under its own heading is still detected and parsed (AC 13), and the refused span's text is still present | `tests/ingest/chunker.test.ts` (`walks PAST a refused span and still reads a later complete block`) |
+| **The real fixture still reads** — the committed `sample-rulebook.pdf` yields its complete statblock chunk (AC 17 / HP 66 / STR 14) | `tests/ingest/pipeline.test.ts` (pre-existing, green through the change) |
+
+**THE PINS WERE RED-PROVEN BY INJECTION** (`python3 .gate-logs/row290/inject.py`,
+raw logs `.gate-logs/row290/<arm>-*.log`; `tsc -b` exit 0 on EVERY injected tree
+— NOT a lone `tsc --noEmit -p tsconfig.app.json`, which does not cover
+`tests/**`; sha256 printed before and after every arm; all restored
+BYTE-IDENTICALLY). **A** `ac ?? 10` restored → RED 1 (the no-AC arm). **B**
+`hp ?? 1` restored → RED 1 (the no-HP arm). **C** the six `abilities.* ?? 10`
+restored → RED 5 (both ability refusal arms AND all three chunker arms). **D**
+the caller minting a chunk on refusal (the pre-290 shape) → RED 3 (the three
+chunker arms) with every statblock arm GREEN on the same tree — the split that
+proves the caller pins see the caller and not the parser. **E** the CR capture
+deleted → RED 3 (the exact-whole-shape pin plus both complete-block pins). **F**
+`speed ?? '30 ft.'` → RED 1 (the optional-fields pin). **THE FIXTURE RESIDUAL IS
+MEASURED, NOT GUESSED:** the ONE committed real PDF fixture detects 1 stat-block
+span and 1 parses completely — **0 of 1 refuses** — so the refusal arms are
+synthetic and the fixture count is stated as measured (docs/18 §5).
+
 ### One HTML→text seam for the ingest layer (docs/17 row 143, docs/18 §2.2)
 
 > **AMENDED BY REFERENCE (docs/17 row 149, landing 2).** Everything below is the

@@ -104,6 +104,68 @@ describe('chunkLines', () => {
     expect(chunks[0]?.statBlock?.extras.CR).toBe('2');
   });
 
+  it('mints NO statblock chunk for a span the source did not complete (docs/17 row 290)', () => {
+    // ≥3 anchors still detect the span, but no ability line is stated, so the
+    // old shape persisted six invented 10s. The refusal keeps the text as
+    // prose and mints no statblock chunk at all.
+    const chunks = chunkLines([
+      ...line('Goblin Boss', { headingLevel: 1, page: 3 }),
+      ...body('Armor Class 15'),
+      ...body('Hit Points 33'),
+      ...body('Speed 30 ft.'),
+      ...body('This creature states no ability scores at all.'),
+    ]);
+
+    expect(chunks.some((chunk) => chunk.chunkType === 'statblock')).toBe(false);
+    const prose = chunks.filter((chunk) => chunk.chunkType === 'section');
+    const text = prose.map((chunk) => chunk.text).join('\n');
+    expect(text).toContain('Armor Class 15');
+    expect(text).toContain('This creature states no ability scores at all.');
+    prose.forEach((chunk) => {
+      expect(chunk.headingPath).toEqual(['Goblin Boss']);
+      expect(Number.isFinite(chunk.pageStart)).toBe(true);
+    });
+  });
+
+  it('keeps a refused span INSIDE the surrounding prose chunk, not in a chunk of its own', () => {
+    const chunks = chunkLines([
+      ...line('Goblin Camp', { headingLevel: 1, page: 3 }),
+      ...body('The camp holds a battered goblin and its pet.'),
+      ...body('Armor Class 15'),
+      ...body('Hit Points 33'),
+      ...body('Speed 30 ft.'),
+      ...body('The creature guards the cooking fire.'),
+    ]);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.chunkType).toBe('section');
+    expect(chunks[0]?.text).toContain('battered goblin');
+    expect(chunks[0]?.text).toContain('Armor Class 15');
+    expect(chunks[0]?.text).toContain('cooking fire');
+  });
+
+  it('walks PAST a refused span and still reads a later complete block', () => {
+    const chunks = chunkLines([
+      ...line('Bestiary', { headingLevel: 1 }),
+      ...body('Armor Class 9'),
+      ...body('Hit Points 2'),
+      ...body('Speed 10 ft.'),
+      ...body('This one states no ability scores at all.'),
+      ...line('Second Creature', { headingLevel: 2 }),
+      ...body('Armor Class 13'),
+      ...body('Hit Points 22'),
+      ...body('STR 10 DEX 12 CON 11 INT 9 WIS 10 CHA 8'),
+    ]);
+
+    const statblocks = chunks.filter((chunk) => chunk.chunkType === 'statblock');
+    expect(statblocks).toHaveLength(1);
+    expect(statblocks[0]?.statBlock?.ac).toBe(13);
+    expect(statblocks[0]?.headingPath).toEqual(['Bestiary', 'Second Creature']);
+    expect(chunks.map((chunk) => chunk.text).join('\n')).toContain(
+      'states no ability scores at all',
+    );
+  });
+
   it('emits a table chunk when 3+ consecutive lines have 3+ cells each', () => {
     const chunks = chunkLines([
       ...line('Encounter table', { headingLevel: 1 }),

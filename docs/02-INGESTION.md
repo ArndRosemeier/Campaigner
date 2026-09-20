@@ -86,12 +86,16 @@ match ≥ 3 of these regexes (case-insensitive):
 /\bChallenge\b|\bCR\b\s*\d+|\bLevel\b\s*\d+/
 ```
 
-The block ends at the next heading of level ≤ 2 or after 80 lines. The whole
-block becomes one chunk `{chunkType:'statblock'}`; additionally try
-`parseStatBlock(text): StatBlock | null` — a best-effort regex parser filling
-the normalized `StatBlock` (parse abilities row, AC, HP, speed; everything not
-matched goes into `extras` or stays only in `text`). Parser failure is fine:
-`statBlock: null`, chunk keeps type `statblock`.
+The block ends at the next heading of level ≤ 2 or after 80 lines. The span is
+then read by `parseStatBlock(text): StatBlock | null` into the normalized
+`StatBlock` (parse abilities row, AC, HP, speed, CR, level; everything not
+matched stays only in `text`). **The reader REFUSES a span that does not STATE
+every number the shape requires** — AC, HP and all six abilities — and NEVER
+substitutes a default for one it did not find (docs/17 row 290, AGENTS rule 1):
+`speed`, `CR` and `level` are optional, but a missing AC/HP/ability yields
+`null`, never an invented `10`/`1`. A refused span mints NO
+`{chunkType:'statblock'}` chunk: its lines stay in the surrounding prose chunk
+and the walk continues past them.
 
 **Table detection**: a run of ≥ 3 consecutive lines where each line has ≥ 3
 segments separated by gaps > 2× the median char width → one chunk

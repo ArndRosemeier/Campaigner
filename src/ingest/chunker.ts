@@ -1,4 +1,5 @@
 import type { GameSystem } from '@/domain/gameSystem';
+import type { StatBlock } from '@/domain/statblock';
 import type { Line } from '@/ingest/types';
 import type { ChunkType, UnhashedChunk } from '@/domain/rulebook';
 import { detectStatBlock, parseStatBlock } from '@/ingest/statblock';
@@ -28,49 +29,21 @@ export function chunkLines(
   function flushSection(): void {
     if (section === null) return;
     if (section.text.trim().length >= MIN_SECTION_CHARS) {
-      chunks.push(makeChunk('section', section.lines, section.text, section.path, system));
+      chunks.push(makeChunk('section', section.lines, section.text, section.path));
     }
     section = null;
   }
 
-  let i = 0;
-  while (i < kept.length) {
-    const line = kept[i];
-    if (line === undefined) break;
-
-    if (line.headingLevel > 0) {
-      flushSection();
-      // Level n replaces the stack from depth n on.
-      const depth = Math.min(line.headingLevel - 1, headingPath.length);
-      headingPath.length = depth;
-      headingPath.push(line.text);
-      i += 1;
-      continue;
-    }
-
-    const span = detectStatBlock(kept, i);
-    if (span !== null && span.start === i) {
-      flushSection();
-      const blockLines = kept.slice(span.start, span.end);
-      const text = blockLines.map((blockLine) => blockLine.text).join('\n');
-      chunks.push(makeChunk('statblock', blockLines, text, [...headingPath], system));
-      i = span.end;
-      continue;
-    }
-
-    const tableEnd = tableRunEnd(kept, i);
-    if (tableEnd !== null) {
-      flushSection();
-      const tableLines = kept.slice(i, tableEnd);
-      const text = tableLines.map((tableLine) => tableLine.cells.join(' | ')).join('\n');
-      chunks.push(makeChunk('table', tableLines, text, [...headingPath], system));
-      i = tableEnd;
-      continue;
-    }
-
+  /**
+   * Appends one body line to the running section, splitting at the nearest
+   * sentence boundary once `MAX_SECTION_CHARS` is reached. ONE place owns the
+   * section text/lines pairing, so the sentence-boundary split cannot desync
+   * them (their desync once produced ±Infinity pages).
+   */
+  function appendToSection(bodyLine: Line): void {
     section ??= { lines: [], text: '', path: [...headingPath] };
-    section.lines.push(line);
-    section.text = section.text === '' ? line.text : `${section.text}\n${line.text}`;
+    section.lines.push(bodyLine);
+    section.text = section.text === '' ? bodyLine.text : `${section.text}\n${bodyLine.text}`;
 
     // Overflow: split at the nearest sentence boundary, snapped back to the
     // end of a whole line (a raw sentence boundary can fall mid-line, which
@@ -105,7 +78,6 @@ export function chunkLines(
           headLines,
           headLines.map((headLine) => headLine.text).join('\n'),
           section.path,
-          system,
         ),
       );
       section = {
@@ -114,6 +86,62 @@ export function chunkLines(
         path: [...headingPath],
       };
     }
+  }
+
+  let i = 0;
+  while (i < kept.length) {
+    const line = kept[i];
+    if (line === undefined) break;
+
+    if (line.headingLevel > 0) {
+      flushSection();
+      // Level n replaces the stack from depth n on.
+      const depth = Math.min(line.headingLevel - 1, headingPath.length);
+      headingPath.length = depth;
+      headingPath.push(line.text);
+      i += 1;
+      continue;
+    }
+
+    const span = detectStatBlock(kept, i);
+    if (span !== null && span.start === i) {
+      const blockLines = kept.slice(span.start, span.end);
+      const text = blockLines.map((blockLine) => blockLine.text).join('\n');
+      const statBlock = parseStatBlock(text, system);
+      if (statBlock !== null) {
+        flushSection();
+        chunks.push(
+          makeChunk('statblock', blockLines, text, [...headingPath], statBlock),
+        );
+        i = span.end;
+        continue;
+      }
+      // REFUSED (docs/17 row 290): the source did not state every number the
+      // shape requires, so NO statblock chunk is minted — the span stays prose.
+      // Consume the lines as body text up to the next heading so the walk keeps
+      // the heading path right and continues past the refused span.
+      let refusedEnd = i;
+      for (let j = span.start; j < span.end; j += 1) {
+        const blockLine = kept[j];
+        if (blockLine === undefined || blockLine.headingLevel > 0) break;
+        appendToSection(blockLine);
+        refusedEnd = j + 1;
+      }
+      i = refusedEnd;
+      continue;
+    }
+
+    const tableEnd = tableRunEnd(kept, i);
+    if (tableEnd !== null) {
+      flushSection();
+      const tableLines = kept.slice(i, tableEnd);
+      const text = tableLines.map((tableLine) => tableLine.cells.join(' | ')).join('\n');
+      chunks.push(makeChunk('table', tableLines, text, [...headingPath]));
+      i = tableEnd;
+      continue;
+    }
+
+    appendToSection(line);
     i += 1;
   }
   flushSection();
@@ -126,7 +154,7 @@ function makeChunk(
   spanLines: readonly Line[],
   text: string,
   headingPath: string[],
-  system: GameSystem,
+  statBlock: StatBlock | null = null,
 ): UnhashedChunk {
   // Guard against empty spans (would yield ±Infinity, which the schema
   // rejects); after the line-synced split this should never trigger.
@@ -137,7 +165,7 @@ function makeChunk(
     pageEnd: pages.length === 0 ? 1 : Math.max(...pages),
     headingPath,
     text,
-    statBlock: chunkType === 'statblock' ? parseStatBlock(text, system) : null,
+    statBlock,
   };
 }
 

@@ -3,9 +3,14 @@ import type { StatBlock } from '@/domain/statblock';
 import type { Line } from '@/ingest/types';
 
 /**
- * Stat-block detection & best-effort parsing (02-INGESTION.md step 3).
+ * Stat-block detection & honest parsing (02-INGESTION.md step 3).
  * A stat block starts when within a 6-line window ≥ 3 of the anchor regexes
  * match; it ends at the next heading of level ≤ 2 or after 80 lines.
+ *
+ * THE REFUSAL RULE (docs/17 row 290): a span the parser cannot read in FULL is
+ * not a stat block. `parseStatBlock` returns `null` unless the source itself
+ * stated AC, HP and all six abilities — the numbers the normalized `StatBlock`
+ * shape requires — and NEVER substitutes a default for one it did not find.
  */
 
 const ANCHOR_REGEXES: RegExp[] = [
@@ -105,20 +110,37 @@ function parsePieces(text: string): ParsedPieces {
 }
 
 /**
- * Best-effort stat-block parser filling the normalized `StatBlock`; null when
- * the text doesn't look enough like a stat block (fewer than 3 of the core
- * pieces AC/HP/speed/abilities were found). Unmatched fields keep defaults;
- * unmatched content (traits etc.) simply stays in the chunk text.
+ * Reads a stat block out of extracted PROSE, or `null` when the text did not
+ * STATE every number the normalized shape requires.
+ *
+ * The bar is the SHAPE's own: `StatBlock` requires `ac`, `hp` and all six
+ * abilities, so a text that states fewer is prose, not a stat block. Filling in
+ * `ac ?? 10`, `hp ?? 1` or an ability `?? 10` would persist an invented combat
+ * number on the chunk and let an encounter cite it as a printed one — AGENTS
+ * rule 1, and indistinguishable downstream from a real read (docs/17 row 290).
+ * Speed, CR and level stay OPTIONAL exactly as the shape carries them: a block
+ * may legitimately print none, and those fields are display strings the shape
+ * already blanks.
+ *
+ * The caller (`ingest/chunker.chunkLines`) mints NO statblock chunk for a
+ * refused span — the span's text stays in the surrounding prose, where it can
+ * still be read and searched.
  */
 export function parseStatBlock(text: string, system: GameSystem): StatBlock | null {
   const pieces = parsePieces(text);
-  // Under exactOptionalPropertyTypes, Object.values(Partial<Record<…>>) is
-  // already number[] (absent keys are skipped at runtime).
-  const parsedAbilities = Object.values(pieces.abilities);
-  const coreFounds =
-    [pieces.ac, pieces.hp, pieces.speed].filter((value) => value !== undefined).length +
-    (parsedAbilities.length >= 3 ? 1 : 0);
-  if (coreFounds < 3) return null;
+  const { str, dex, con, int, wis, cha } = pieces.abilities;
+  if (
+    pieces.ac === undefined ||
+    pieces.hp === undefined ||
+    str === undefined ||
+    dex === undefined ||
+    con === undefined ||
+    int === undefined ||
+    wis === undefined ||
+    cha === undefined
+  ) {
+    return null;
+  }
 
   const extras: Record<string, string> = {};
   if (pieces.cr !== undefined) extras.CR = pieces.cr;
@@ -128,19 +150,12 @@ export function parseStatBlock(text: string, system: GameSystem): StatBlock | nu
     level: pieces.level ?? '',
     size: '',
     creatureType: '',
-    ac: pieces.ac ?? 10,
+    ac: pieces.ac,
     acNote: pieces.acNote ?? '',
-    hp: pieces.hp ?? 1,
+    hp: pieces.hp,
     hpFormula: pieces.hpFormula ?? '',
     speed: pieces.speed ?? '',
-    abilities: {
-      str: pieces.abilities.str ?? 10,
-      dex: pieces.abilities.dex ?? 10,
-      con: pieces.abilities.con ?? 10,
-      int: pieces.abilities.int ?? 10,
-      wis: pieces.abilities.wis ?? 10,
-      cha: pieces.abilities.cha ?? 10,
-    },
+    abilities: { str, dex, con, int, wis, cha },
     saves: '',
     skills: '',
     senses: '',
