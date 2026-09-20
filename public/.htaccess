@@ -6,6 +6,21 @@ DirectoryIndex index.html
   # RewriteBase is patched by deploy-sync.ps1 to match -BasePath
   RewriteBase /Campaigner/
 
+  # HTTPS IS REQUIRED, and this is where it is enforced (docs/17 row 262). On http
+  # the service worker, `navigator.storage` and the clipboard are all silently
+  # unavailable, so every iPad hardening in that row is worth less until this
+  # redirect holds. SCOPED TO THIS DIRECTORY on purpose: the domain root serves
+  # other content, and this file only governs the app path.
+  #
+  # THE X-Forwarded-Proto TEST IS NOT BELT-AND-BRACES: nginx fronts this host, so
+  # Apache can see plain http on a request that arrived over TLS, and a rule that
+  # tested %{HTTPS} alone would redirect forever. Both conditions must hold before
+  # anything is redirected, and `!https` (a negated substring test) also accepts a
+  # comma-separated forwarded list.
+  RewriteCond %{HTTPS} !on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,QSA]
+
   RewriteCond %{REQUEST_FILENAME} -f [OR]
   RewriteCond %{REQUEST_FILENAME} -d
   RewriteRule ^ - [L]
