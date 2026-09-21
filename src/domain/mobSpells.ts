@@ -289,10 +289,23 @@ export function mobSpellChips(
  * rule 1): which spell, and which mob. Used by the stat-block boundary (the
  * one repair turn, then the persisted notice) so an invented spell can never
  * be quiet.
+ *
+ * THE SPELL HALF IS PREFIXED HERE (docs/17 row 304). An issue text the resolver
+ * wrote already names its spell ("the spell «X» is not in this campaign's
+ * imported spell library"), but a RULE THROW carries only `error.message` — a
+ * player of the owner's four-spell mob got four identical
+ * "Cannot convert undefined or null to object" lines that never said WHICH
+ * spell failed, which is exactly the ambiguity this function's own contract
+ * promises not to leave. The prefix keeps the `«»` spelling this module already
+ * uses and is skipped when the issue already names it, so no sentence grows a
+ * doubled name.
  */
 export function mobSpellIssues(chips: readonly MobSpellChip[], mobName: string): string[] {
   return chips.flatMap((chip) =>
-    chip.issues.map((issue) => `the mob «${mobName}» assigns a spell it cannot use: ${issue}`),
+    chip.issues.map((issue) => {
+      const named = issue.includes(`«${chip.name}»`) ? issue : `the spell «${chip.name}»: ${issue}`;
+      return `the mob «${mobName}» assigns a spell it cannot use: ${named}`;
+    }),
   );
 }
 

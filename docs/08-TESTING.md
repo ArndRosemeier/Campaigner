@@ -8884,3 +8884,45 @@ OUTPUT; the six call sites' composed patterns are held by their existing
 families, not by a new one. And the population arm is a source scan — it sees a
 byte-equal copy, never a paraphrase of the class in different syntax. A
 tripwire, not a proof.
+
+## The legacy spell payload heals at the READ, and the differential that proves it (docs/17 row 304)
+
+**THE REGRESSION THIS FAMILY EXISTS FOR.** A PF2e mob («Hanno Beilert», level 2, Message/Shield/Animate
+Rope/Sanctuary) produced one run issue per spell — *"the mob «Hanno Beilert» assigns a spell it cannot use: Cannot
+convert undefined or null to object"* — thrown by `spellHeightening.baseValues`'s `Object.entries(spell.damage)`.
+The reachable shape is a STORED `spell` chunk whose `spellData` has the `damage` key ABSENT: the first `spellData`
+payload commit (`a8c5180`) had no `damage`, `damage: spellDamageMapSchema.default({})` arrived four commits later
+(`c37e4de`) with the promise that it *"keeps a payload written before this field readable"*, and NOTHING re-parsed
+between Dexie and the rule — `loadSpellChunksFor` → `listChunksByType` (a raw `toArray()`) → `spellCorpusEntries`
+passed `chunk.spellData` through. The four spells are the tell: all four have no damage.
+
+**WHY NO EXISTING TEST COULD SEE IT.** Every fixture in the repo builds its payload through `spellDataSchema.parse`
+— the exact step that applies the default and HIDES the shape — and Message/Shield/Animate Rope/Sanctuary appear
+nowhere under `tests/`. A fixture-driven test of the resolver cannot go red for a defect that lives in the STORED
+row's shape.
+
+**THE PIN, AND HOW IT DIFFERS FROM A FIXTURE.** `tests/db/spell-legacy-payload.test.ts` (NEW, 5) writes the row
+with `db.chunks.put(...)` and NO parse, then drives the REAL, unmocked chain
+`loadSpellChunksFor('pathfinder2e')` → `spellCorpusEntries` → `mobSpellIndex` → `mobSpellChips([...four names], 2)`
+→ `mobSpellIssues` and requires `[]`. The same file also pins the two boundaries a reader is entitled to: a row the
+schema really REJECTS (`damage: null`) still throws `ZodError` at the read (the seam heals a MISSING key, never a
+schema-invalid payload), and a currently-written payload comes back byte-identical.
+
+**RED → GREEN, WATCHED.** RED (the source fix reversed, same test file): **3 failed | 2 passed**, the differential
+printing the owner's exact sentence four times —
+`Received: ["the mob «Hanno Beilert» assigns a spell it cannot use: Cannot convert undefined or null to object", ×4]`
+— and the issue-naming arm failing on
+`expected 'the mob «Hanno Beilert» assigns a spe…' to contain 'the spell «Message»: '`. GREEN: **5/5**. Raw logs:
+`.gate-logs/row304/focused-RED2.log` and `.gate-logs/row304/focused-GREEN.log` in the writer's worktree.
+
+**THE NEIGHBOURHOOD STAYS GREEN, UNCHANGED.** 153/153 across the spell families (`domain/mobSpells`,
+`domain/spellHeightening`, `domain/spellData`, `features/mob-spell-chips`, `features/spell-rows`,
+`llm/mob-spells`, `llm/mob-spells-lanes`, `rules-page`, `features/mob-spell-copy`) and 252/252 across 41 files
+including the whole `tests/architecture` cohort — the row-212/215 duplication tripwire 18/18 with NO baseline edit.
+The two `.toEqual` assertions on the UNRESOLVED-arm sentence were deliberately NOT rewritten: `mobSpellIssues`
+prefixes the chip's name only when the issue text does not already name it, so those bytes are unchanged (the
+prefix-skip is the reason, stated here so a future copy of this sentence is not mistaken for drift).
+
+**WHAT IT DOES NOT PROVE.** It cannot prove the owner's on-disk rows predate `c37e4de` (no test reads his Dexie);
+it proves the read boundary now honours the default the schema already declares. It is also not a migration: the
+healed payload is parsed per read, exactly like the item lane.
