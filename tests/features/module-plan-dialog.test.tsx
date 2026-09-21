@@ -19,6 +19,7 @@ import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { buildCampaignExport, importExport } from '@/lib/exportImport';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * THE DOCUMENT PLAN SURFACE (docs/17 row 109, docs/05 §Module PDF). What the
@@ -292,6 +293,16 @@ describe('planning and regenerating', () => {
 
     await user.click(screen.getByTestId('module-plan-audience-0'));
     await user.click(await screen.findByRole('option', { name: 'GM only' }));
+
+    // THE ACT-LEAK WINDOW (docs/08-TESTING.md §Console guard, the fix-forward the
+    // row-298 integrated gate forced): the Base UI Select's own state update and the
+    // Dexie live query both settle on fake-indexeddb's timed queue AFTER the last
+    // act-wrapped click, and the raw `await getModule(...)` below turns the event
+    // loop — so the guard saw 42 act() warnings from `SelectRoot` inside
+    // `PlanSections` and failed this test while the file passed ALONE (11/11), i.e.
+    // a scheduling-order flake, not a broken assertion. ONE drain before the raw
+    // awaits closes the window at its source; ALLOWED_NOISE stays untouched.
+    await flushAsyncUpdates();
 
     await waitFor(async () => {
       const row = await getModule(module.id);
