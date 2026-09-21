@@ -1125,6 +1125,48 @@ export type ModulePatch = Partial<
   Omit<Module, keyof BaseEntity | 'campaignId' | 'id'>
 >;
 
+/** The four fields that decide a campaign module list's ARC order (docs/17 row
+ * 297) — exactly what `compareModulesByStartLevel` reads, so the contract is
+ * visible in the signature rather than buried in a sort at a call site. */
+export type ModuleArcOrder = Pick<Module, 'levelMin' | 'levelMax' | 'createdAt' | 'id'>;
+
+/**
+ * THE DISPLAY ORDER of a campaign's module list (owner request, docs/17 row
+ * 297): a campaign is an ARC, and the module list is how it is read. Sorting by
+ * recency put the module he touched last on top — a fact about his editing
+ * session, not about where the module sits in the story — while the
+ * `{levelMin}–{levelMax}` badge the list already renders IS that position. So
+ * the list reads by START LEVEL, level 1 first.
+ *
+ * THE ORDER IS TOTAL AND FULLY SPECIFIED — four keys, in this order:
+ *   1. `levelMin` ASC — the "start level" the owner named;
+ *   2. `levelMax` ASC — of two modules that start at the same level, the
+ *      narrower one first;
+ *   3. `createdAt` ASC — story order within a level, the SAME tie-break
+ *      `BoardPage`'s "prior modules, story order" already uses;
+ *   4. `id` — so a tie never depends on the array's own order.
+ *
+ * THIS IS NOT THE REPO'S ORDER, AND THE TWO MUST NOT BE UNIFIED.
+ * `moduleRepo.listModulesByCampaign` answers a DIFFERENT question — "which
+ * modules exist, of this campaign" — and keeps its `updatedAt` DESC ("newest
+ * first"): the SEMANTIC callers (the run engine's module grounding,
+ * `moduleGen`, `canvasChat`, `orphanSweep`, `artifactAutoPromote`, the campaign
+ * export) depend on that order, and it is pinned. The DISPLAY seam
+ * (`features/modules/hooks.useModules`) sorts the repo's rows with THIS
+ * comparator, so every module LIST a human reads — the modules page, the
+ * campaign tree and every picker — shares ONE arc order without changing what
+ * the semantic callers see. Each order keeps its own seam; a future reader must
+ * not "unify" them (docs/18 §2).
+ */
+export function compareModulesByStartLevel(a: ModuleArcOrder, b: ModuleArcOrder): number {
+  return (
+    a.levelMin - b.levelMin ||
+    a.levelMax - b.levelMax ||
+    a.createdAt - b.createdAt ||
+    a.id.localeCompare(b.id)
+  );
+}
+
 /** Input for creating a new module; identity/timestamps are stamped. */
 export interface NewModule {
   campaignId: Id;

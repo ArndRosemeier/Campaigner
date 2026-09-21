@@ -86,6 +86,26 @@ describe('moduleRepo', () => {
     expect(titles).toEqual(['Older', 'Newer']);
   });
 
+  it('keeps newest-first even where it CONTRADICTS the display arc order (docs/17 row 297)', async () => {
+    // The arm above is not discriminating against a level sort: both of its
+    // modules share a level band, so `createdAt` ASC happens to agree with the
+    // bumped recency order. THIS fixture makes the two orders disagree on
+    // purpose — the level-5 module is the most recently touched, so the
+    // display's arc order is (Low, High) and the repo's contract is the
+    // REVERSE. A future "unification" of the two orders reds here.
+    const campaignId = newId();
+    const low = await createModule(
+      buildModule({ campaignId, title: 'Low', concept: '', levelMin: 1, levelMax: 2, sizeDial: 'sketch' }),
+    );
+    const high = await createModule(
+      buildModule({ campaignId, title: 'High', concept: '', levelMin: 5, levelMax: 6, sizeDial: 'sketch' }),
+    );
+    await db.modules.update(high.id, { updatedAt: low.updatedAt + 1000 });
+
+    const titles = (await listModulesByCampaign(campaignId)).map((row) => row.title);
+    expect(titles).toEqual(['High', 'Low']);
+  });
+
   it('patchModule merges a partial and persists it', async () => {
     const created = await createModule(
       buildModule({

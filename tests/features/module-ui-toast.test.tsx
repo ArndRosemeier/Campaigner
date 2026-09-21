@@ -280,6 +280,55 @@ describe('modules-list.test.tsx', () => {
       await flushAsyncUpdates();
     }, 20_000);
 
+    it('reads the module list in ARC order — start level first, NOT recency (docs/17 row 297)', async () => {
+      // THE RECENCY ORDER CONTRADICTS THE LEVEL ORDER ON PURPOSE: the level-5
+      // chapter was edited last and the level-1 chapter first, so a page still
+      // reading the repo's "newest first" order would render later → middle →
+      // early. `listModulesByCampaign` must KEEP that recency order for its
+      // semantic callers; only this DISPLAY order changes.
+      await seedBuiltInPersonas();
+      const campaign = await createCampaign({ name: 'The Arc', system: 'dnd5e' });
+      const anchor = Date.now();
+      const seedChapter = async (
+        title: string,
+        levelMin: number,
+        levelMax: number,
+        updatedAt: number,
+      ): Promise<Module> => {
+        const saved = await saveModule(
+          buildModule({
+            campaignId: campaign.id,
+            title,
+            concept: '',
+            levelMin,
+            levelMax,
+            sizeDial: 'sketch',
+          }),
+        );
+        await db.modules.update(saved.id, { updatedAt });
+        return saved;
+      };
+      const later = await seedChapter('The Later Chapter', 5, 6, anchor + 3000);
+      const middle = await seedChapter('The Middle Chapter', 3, 4, anchor + 2000);
+      const early = await seedChapter('The Early Chapter', 1, 2, anchor + 1000);
+
+      renderAppAt(modulesPath(campaign.id));
+      await screen.findAllByText('The Early Chapter', {}, { timeout: 10_000 });
+      await waitFor(() => {
+        expect(screen.getAllByTestId(/^module-board-link-/)).toHaveLength(3);
+      });
+
+      // Assert the RENDER ORDER, not merely presence: the board link each row
+      // carries is unique to that row, and the query returns DOM order.
+      const rows = screen.getAllByTestId(/^module-board-link-/);
+      expect(rows.map((row) => row.getAttribute('data-testid'))).toEqual([
+        `module-board-link-${early.id}`,
+        `module-board-link-${middle.id}`,
+        `module-board-link-${later.id}`,
+      ]);
+      await flushAsyncUpdates();
+    }, 20_000);
+
     it('opens the New Module dialog without starting a generation run', async () => {
       const user = userEvent.setup();
       const { campaignId } = await seedModules();

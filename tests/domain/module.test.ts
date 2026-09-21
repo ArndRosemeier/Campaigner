@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  compareModulesByStartLevel,
   createModule,
   entityKindFor,
   moduleEntityKindSchema,
   moduleSchema,
+  type ModuleArcOrder,
   type ModuleEntityKind,
 } from '@/domain';
 
@@ -162,5 +164,75 @@ describe('entityKindFor', () => {
   it('returns undefined for unknown or blank names', () => {
     expect(entityKindFor(records, 'Nobody')).toBeUndefined();
     expect(entityKindFor(records, '   ')).toBeUndefined();
+  });
+});
+
+/**
+ * THE ARC ORDER of a campaign's module list (docs/17 row 297): `levelMin`
+ * ascending, then `levelMax` ascending, then `createdAt` ascending, then `id` —
+ * the ONE display order `features/modules/hooks.useModules` applies. The repo's
+ * own read keeps "newest first" for its semantic callers; the two orders are
+ * different questions (docs/18 §2).
+ */
+describe('compareModulesByStartLevel (docs/17 row 297)', () => {
+  const chapter = (
+    id: string,
+    levelMin: number,
+    levelMax: number,
+    createdAt: number,
+  ): ModuleArcOrder => ({ id, levelMin, levelMax, createdAt });
+
+  /** The ids `compareModulesByStartLevel` puts the list in. */
+  const arcOrder = (list: readonly ModuleArcOrder[]): string[] =>
+    [...list].sort(compareModulesByStartLevel).map((module) => module.id);
+
+  it('orders by START LEVEL ascending — level 1 first, whatever the input order', () => {
+    const first = chapter('first', 1, 4, 1);
+    const third = chapter('third', 3, 3, 1);
+    const second = chapter('second', 2, 2, 1);
+    expect(arcOrder([first, third, second])).toEqual(['first', 'second', 'third']);
+    // The reverse input MUST give the same sequence — this is the "total order"
+    // half of the comparator's contract, not a stable-sort accident.
+    expect(arcOrder([third, second, first])).toEqual(['first', 'second', 'third']);
+  });
+
+  it('breaks a same start level by the NARROWER range first (levelMax ascending)', () => {
+    const wide = chapter('wide', 3, 6, 1);
+    const narrow = chapter('narrow', 3, 4, 1);
+    expect(arcOrder([wide, narrow])).toEqual(['narrow', 'wide']);
+    expect(arcOrder([narrow, wide])).toEqual(['narrow', 'wide']);
+  });
+
+  it('breaks a same range by createdAt — story order within a level', () => {
+    const later = chapter('later', 1, 2, 200);
+    const earlier = chapter('earlier', 1, 2, 100);
+    expect(arcOrder([later, earlier])).toEqual(['earlier', 'later']);
+  });
+
+  it('breaks a FULL tie by id, so the order never depends on the array', () => {
+    const b = chapter('b', 1, 2, 100);
+    const a = chapter('a', 1, 2, 100);
+    expect(arcOrder([b, a])).toEqual(['a', 'b']);
+    expect(arcOrder([a, b])).toEqual(['a', 'b']);
+  });
+
+  it('is a TOTAL order: every rotation and the reversal sort to ONE sequence', () => {
+    // One duplicate pair at (1, 2, 10) so `id` is really exercised, a wider
+    // module at the same start level, and gaps between the level groups.
+    const list = [
+      chapter('c', 1, 2, 5),
+      chapter('a', 1, 2, 10),
+      chapter('b', 1, 2, 10),
+      chapter('d', 1, 3, 1),
+      chapter('e', 3, 4, 100),
+      chapter('f', 5, 5, 1),
+    ];
+    const expected = ['c', 'a', 'b', 'd', 'e', 'f'];
+    expect(arcOrder(list)).toEqual(expected);
+    for (let offset = 0; offset < list.length; offset += 1) {
+      const rotated = [...list.slice(offset), ...list.slice(0, offset)];
+      expect(arcOrder(rotated), `rotation by ${String(offset)}`).toEqual(expected);
+    }
+    expect(arcOrder([...list].reverse())).toEqual(expected);
   });
 });

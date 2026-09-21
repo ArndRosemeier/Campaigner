@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import type { Id, Module, ModuleDocumentVersion } from '@/domain';
+import { compareModulesByStartLevel, type Id, type Module, type ModuleDocumentVersion } from '@/domain';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 
@@ -27,9 +27,25 @@ export function useModuleVersions(id: Id | undefined): ModuleDocumentVersion[] |
   );
 }
 
+/**
+ * A campaign's modules for the UI, in ARC ORDER (docs/17 row 297): start level
+ * ascending, then the narrower range, then `createdAt`, then `id` —
+ * `domain/module.compareModulesByStartLevel`. THE display seam: every module
+ * LIST a human reads (the modules page, the campaign tree, the pickers) sorts
+ * here, so they cannot drift apart.
+ *
+ * The repo's own read (`listModulesByCampaign`) deliberately keeps its
+ * "newest first" order for the SEMANTIC callers that depend on it; this hook
+ * is where the human-facing order is applied, and it is the ONLY place
+ * `compareModulesByStartLevel` is called.
+ */
 export function useModules(campaignId: Id | undefined): Module[] | undefined {
   return useLiveQuery(
-    async () => (campaignId === undefined ? undefined : listModulesByCampaign(campaignId)),
+    async () => {
+      if (campaignId === undefined) return undefined;
+      const modules = await listModulesByCampaign(campaignId);
+      return [...modules].sort(compareModulesByStartLevel);
+    },
     [campaignId],
   );
 }
