@@ -188,14 +188,20 @@ export function BestiaryFetchSection(): JSX.Element {
   async function runFetch(adapterId: string, recipeId: string): Promise<void> {
     if (running) return;
     setState(adapterId, { kind: 'fetching', detail: 'Starting…' });
+    // ONE progress handler for BOTH phases (docs/17 row 315): the download
+    // phase (`onFetchProgress`, a `PackFetchProgress`) and the import phase
+    // (`onProgress`, a `PackImportProgress`) reported the identical thing, and
+    // `progressDetail` already reads the union — so ONE arrow taking the common
+    // shape is handed to both options, byte-identical to the two copies it
+    // replaces (a narrower-parameter callback is exactly what each option
+    // accepts, so neither callback's behaviour is weakened).
+    function applyProgress(progress: PackFetchProgress | PackImportProgress): void {
+      setState(adapterId, { kind: 'fetching', detail: progressDetail(progress) });
+    }
     try {
       const result = await fetchAndImportPack(adapterId, recipeId, {
-        onFetchProgress: (progress) => {
-          setState(adapterId, { kind: 'fetching', detail: progressDetail(progress) });
-        },
-        onProgress: (progress) => {
-          setState(adapterId, { kind: 'fetching', detail: progressDetail(progress) });
-        },
+        onFetchProgress: applyProgress,
+        onProgress: applyProgress,
       });
       setState(adapterId, { kind: 'done', result });
       // Loud on fallback (16 §1.1 amendment): when the ref chain fired, the

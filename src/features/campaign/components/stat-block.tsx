@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-
 import { Input } from '@/components/ui/input';
 import { TextBlocks } from '@/components/text-blocks';
 import {
@@ -17,6 +15,7 @@ import {
   ExtrasEditor,
   type PairRow,
 } from '@/features/campaign/components/list-editors';
+import { Field } from '@/features/campaign/components/form-field';
 import { MobSpellChips } from '@/features/spells/mob-spell-chips';
 import { mobLevelText } from '@/llm/encounterRoster';
 
@@ -36,15 +35,6 @@ function toNamedTextRows(items: readonly NamedText[]): PairRow[] {
 
 function fromNamedTextRows(rows: readonly PairRow[]): NamedText[] {
   return rows.map((row) => ({ name: row.a, text: row.b }));
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-      {label}
-      {children}
-    </label>
-  );
 }
 
 function TextField({

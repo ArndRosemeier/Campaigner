@@ -25,18 +25,10 @@ import {
 } from '@/domain';
 import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { AuthoredStatBlock, BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
+import { Field } from '@/features/campaign/components/form-field';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { partLevelMentionFor } from '@/llm/roomBudget';
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-      {label}
-      {children}
-    </label>
-  );
-}
 
 function TextAreaField({
   label,

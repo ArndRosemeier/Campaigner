@@ -3,7 +3,7 @@ import { moduleCreationPool } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
-import { getSettings } from '@/db/settingsRepo';
+import { getSettings, maxParallelWorkers } from '@/db/settingsRepo';
 import { buildImagePrompt } from '@/llm/imagePromptDraft';
 import { generateOneImage } from '@/llm/oneImage';
 import type { ImagePromptDraft } from '@/llm/schemas';
@@ -52,10 +52,7 @@ export const useEntityImageQueue = createJobQueue<ImageQueueJob>({
   settledDetail: (job, outcome) =>
     outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
   failureTitle: (job) => `Could not generate an image for "${job.name}"`,
-  workerCount: async () => {
-    const settings = await getSettings();
-    return Math.max(1, settings.maxParallelRequests);
-  },
+  workerCount: maxParallelWorkers,
   process: processJob,
 });
 

@@ -115,6 +115,24 @@ export async function getSettings(): Promise<Settings> {
 }
 
 /**
+ * THE app's background-parallelism worker count (docs/17 row 315): the owner's
+ * "Parallel requests" setting resolved into the number the app fans work out
+ * with, floored at 1 so a corrupt or legacy row can never mean "run nothing".
+ * ONE derivation, and it lives beside `getSettings` because this is the module
+ * that knows which setting bounds concurrency: the three image queues pass it
+ * straight to `createJobQueue` as their `workerCount` (matching that factory's
+ * own `() => Promise<number>` shape, not wrapping it in a second identical
+ * arrow), and `features/modules/entity-batch` passes it to
+ * `lib/parallel.mapWithConcurrency`. Four byte-identical spellings of
+ * `Math.max(1, settings.maxParallelRequests)` existed until the duplicate-body
+ * tripwire named the three `workerCount` copies as group `7422a6200878f5a8`.
+ */
+export async function maxParallelWorkers(): Promise<number> {
+  const settings = await getSettings();
+  return Math.max(1, settings.maxParallelRequests);
+}
+
+/**
  * Pure read (no default-row write) — for read-only contexts such as Dexie
  * liveQuery; callers see defaults without persisting them. A stored draft that
  * no longer validates reads as `null` here instead of failing the whole row:

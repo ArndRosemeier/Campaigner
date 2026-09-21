@@ -1,31 +1,5 @@
 {
   "note": "DEBT, NOT A LICENCE. One entry per duplicate group the tripwire found in src/ at base 7b390de. Folding a copy FORCES its entry out: tests/architecture/no-duplicate-implementations.test.ts reds BY NAME on any entry whose sites no longer match the tree (folded, renamed or moved), so a stale blessing cannot survive. Never add an entry to make a new duplicate green; baseline one only with a written reason and a named fold slice.",
   "scope": "Every src/**/*.ts and src/**/*.tsx file, with NO path excluded (tests/ is out of scope by design: fixtures repeat legitimately). Floor: 75 normalized characters. See the test's doc comment for the normalization, why the floor is 75 rather than 120, and what the tripwire cannot see (paraphrases and bodies under the floor).",
-  "groups": [
-    {
-      "hash": "12c29e97676c2c29",
-      "reason": "Two identical local Field label wrappers (kind-forms.tsx, stat-block.tsx); fold onto the one shared form-field primitive. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/features/campaign/components/kind-forms.tsx:Field",
-        "src/features/campaign/components/stat-block.tsx:Field"
-      ]
-    },
-    {
-      "hash": "7422a6200878f5a8",
-      "reason": "Three image-queue modules copy the same settings to worker-count read; fold onto one queue helper (their settledDetail copies sit just under the floor and are a separate floor decision). Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/features/campaign/mob-portrait-queue.ts:workerCount",
-        "src/features/covers/cover-image-queue.ts:workerCount",
-        "src/features/modules/entity-image-queue.ts:workerCount"
-      ]
-    },
-    {
-      "hash": "b54ed0a3f602f5cd",
-      "reason": "onFetchProgress and onProgress are the same progress handler spelled twice in one component; fold onto one. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/features/settings/bestiary-fetch-section.tsx:onFetchProgress",
-        "src/features/settings/bestiary-fetch-section.tsx:onProgress"
-      ]
-    }
-  ]
+  "groups": []
 }

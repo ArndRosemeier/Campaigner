@@ -3,7 +3,7 @@ import { moduleDocumentText, type Campaign, type Id, type Module, type StoredIma
 import { getCampaign, updateCampaign } from '@/db/campaignRepo';
 import { createImage, deleteImageIfUnreferenced } from '@/db/imageRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
-import { getSettings } from '@/db/settingsRepo';
+import { getSettings, maxParallelWorkers } from '@/db/settingsRepo';
 import { buildImagePrompt } from '@/llm/imagePromptDraft';
 import { generateOneImage } from '@/llm/oneImage';
 import type { ImagePromptDraft } from '@/llm/schemas';
@@ -64,10 +64,7 @@ export const useCoverImageQueue = createJobQueue<CoverImageJob>({
     job.kind === 'module'
       ? `Could not generate a cover for module "${job.name}"`
       : `Could not generate a cover for campaign "${job.name}"`,
-  workerCount: async () => {
-    const settings = await getSettings();
-    return Math.max(1, settings.maxParallelRequests);
-  },
+  workerCount: maxParallelWorkers,
   process: processJob,
 });
 

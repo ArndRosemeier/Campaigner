@@ -12,7 +12,7 @@ import { libraryCitationForSlot, NoLevelAppropriateCreatureError } from '@/domai
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { libraryCreatureLevelSort } from '@/llm/encounterRoster';
 import { listPersonas } from '@/db/personaRepo';
-import { getSettings } from '@/db/settingsRepo';
+import { maxParallelWorkers } from '@/db/settingsRepo';
 import { isRunWithdrawn, runEngine, runNotCompletedReason, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 import { errorMessage } from '@/lib/errors';
 import {
@@ -625,8 +625,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     if (persona === undefined) {
       throw new Error(`No persona available to detail ${kind}s — check Settings → Personas`);
     }
-    const settings = await getSettings();
-    const limit = Math.max(1, settings.maxParallelRequests);
+    const limit = await maxParallelWorkers();
     // The fixed-cast pool (docs/11): encounter briefs build AFTER the
     // NPC/monster results land — the batch orchestration runs encounters
     // last (post-generation's kind order), and this snapshot re-reads the

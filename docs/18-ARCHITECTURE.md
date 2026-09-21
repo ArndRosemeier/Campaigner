@@ -148,6 +148,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | **Read a campaign system's imported SPELL CORPUS — and index it by the ONE comparable name** (docs/17 row 184) | `db/spellRepo.ts` is the ONE spell-corpus read: `loadSpellChunksFor(system)` composes the two rules the app already owns — `db/rulebookRepo.readyBookIds(system)` (the ONE ready-book rule, MOVED here from `search/search.ts` by row 184 and re-exported by `@/search`, so every existing caller is unchanged; a `db` module importing the retrieval barrel was both a layering inversion and a live coupling — three LLM tests mock `@/search` with only `searchRules`, so the imported `readyBookIds` arrived `undefined` and every stat-block run threw) and `chunkRepo.listChunksByType('spell')` (the ONE chunk-type read, docs/17 row 182) — and returns the chunks with their spell PAYLOADS PARSED at that boundary (`parseSpellChunks`, docs/17 row 304 — a legacy payload heals through the schema's own default and a schema-invalid one fails loudly HERE), while a chunk with NO payload passes through untouched so each caller keeps its own loud corrupt-row reporting; the pure projection `domain/spellData.spellCorpusEntries` (a spell chunk → `{ chunkId, name, rank, cantrip, data }`, MOVED down from `features/spells/spell-rows` by row 184's verification because `db`/`llm` importing a FEATURE is the same layering inversion as importing the retrieval barrel; `features/spells/spell-rows` re-exports it so the feature keeps its public surface, and it owns the corrupt-row SKIP whose loud report is `buildSpellRows`'s `data-error` rows); `loadSpellIndexesFor(systems)` is the ONE index builder (`domain/mobSpells.mobSpellIndex`, keyed by `domain/artifactAlias.comparableName`, first-wins) and `statBlockSystems(blocks)` the small collector the two PDF exporters share. Consumers: `features/spells/SpellsPage` (the list), `features/spells/mob-spell-chips` (a stat block's chips), `llm/runEngine.spellLibraryFor` (prompt + validation) and both PDF exporters' async pre-passes | the NOT-Z column: a second `where('chunkType').equals('spell')` or a hand-rolled `status === 'ready' && system === …` filter (the chunk-type read and the ready-book rule are each already single-site); a case-folding `name.trim().toLowerCase()` comparison instead of `comparableName` (the ONE comparable form, docs/18 §2.1); a cached module-scope index that a rules-pack re-import cannot refresh (the run engine reads per LLM step by design); merging two systems' corpora into one index (each system gets its OWN map); **a second ready-book filter** — the two component copies (`bestiary-roster`, `SpawnPicker`) were folded onto `listReadyRulebooks` and `tests/db/ready-book-seam.test.ts` reds the predicate by file (a single book's status BADGE is a different question and is not the needle); **a corpus read that is not scoped to its system or its ready books** — `tests/db/spellRepo.test.ts` seeds a ready PF2E book AND a ready dnd5e book that both carry `spell` chunks and requires each read to return only its own, in BOTH directions (since ledger 194 the dnd5e half is a REAL corpus rather than a probe: the dnd5e adapter imports `type: 'spell'` documents into the same lane, so the scoping pin protects two live lanes), plus the not-ready book's chunk dropped, plus the per-system index (`loadSpellIndexesFor`) and the collector (`statBlockSystems`) — the dispatcher's arm D (`readyBookIds(system)` → `readyBookIds()`) changed this file's bytes and left every OTHER test green, which is why this pin exists. **AMENDED BY REFERENCE (docs/17 row 207): the rule is NOT fully held by the spell corpus alone.** Three GENERATION reads escaped it — the module PARTS rule excerpts (`llm/moduleGen.ruleExcerptSection` called `searchRules` with no `system`), the module creator's bestiary window (`llm/creatorRoster` → `db/creatureRepo.listLibraryCreatures()`) and the CAST that resolves it (`features/modules/entity-batch.libraryCitationForEntity`), so a Pathfinder 2e campaign with a dnd5e book installed could ground, offer and CAST cross-system content. Row 207 closes that seam with ONE optional `system` on the creature pool (`listLibraryCreatures(system)`, filtered by the OWNING BOOK's system) plus `system` in the search options; the spell-corpus rule above is UNCHANGED, and the global Rules page / bestiary browser / wiki-link publisher remain deliberately unscoped |
 
 
+| **Resolve how many background workers a pump or panel may run — the ONE `maxParallelRequests` derivation** (docs/17 row 315) | `db/settingsRepo.maxParallelWorkers(): Promise<number>` — the owner's "Parallel requests" setting floored at 1 (`Math.max(1, settings.maxParallelRequests)`), living beside `getSettings` because THIS module is the one that knows which setting bounds concurrency. FOUR byte-identical spellings existed until the duplicate-body tripwire named the three `workerCount` copies (group `7422a6200878f5a8`): the three image queues now pass it STRAIGHT to `createJobQueue` as `workerCount: maxParallelWorkers` (matching that factory's own `() => Promise<number>` shape — a wrapping one-line arrow would be the same copy again and the tripwire would still see three sites), and `features/modules/entity-batch` passes it to `lib/parallel.mapWithConcurrency` | a per-queue or per-batch arrow re-spelling `Math.max(1, settings.maxParallelRequests)` (the folded copy — the tripwire reds it by hash `7422a6200878f5a8`, and a single one is caught by grepping `maxParallelRequests`); a second derivation that reads the setting as a limit WITHOUT the floor and the ONE home (`features/settings/settings-section.tsx`'s `maxParallelRequests` read/`updateSettings` call is the SETTING's own control, not a worker count); moving the policy into `lib/jobQueue` or `lib/parallel` (both take an explicit `workerCount`/`limit` deliberately, so neither knows the app's settings) |
+
 ### 2.2 LLM (`src/llm`)
 
 | To do X | Use Y | NOT Z |
@@ -341,6 +343,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 | **Show the owner what the scene was READ AS ASSERTING — the encounter's asserted cast** (docs/17 row 309) | `domain/artifact.encounterDataSchema.assertedCast` — the additive optional `[{name, count}]` the SCENE-READING draft transcribed, persisted on the encounter row (no Dexie bump) — plus ONE sentence from `llm/sceneAuthority.assertedCastAdvisory` rendered into the EXISTING `data.budgetAdvisory` block the encounter editor (`features/campaign/components/kind-forms.tsx`) already prints and the step notice carries. The list is the same value the gates enforce and the budget exempts, read straight off the row in the editor, so a wrong read is correctable in one step | a second panel, badge, toast or notice surface for the asserted cast (the advisory block is the ONE channel); re-deriving the list at render, in the editor or on resume (the row's value is the contract); showing an EMPTY list (an empty advisory line is never rendered); rendering the list as an editable free-text field (the JSON reply is the writer; the owner's correction path is a regenerate, and a hand-typed list is still enforced by the same gates) |
 
+| **Label a form control — the ONE `Field` wrapper** (docs/17 row 315) | `features/campaign/components/form-field.Field` — the one `<label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">` composition (the caption above its control) that the artifact kind forms (`kind-forms.tsx`'s `TextAreaField` and every inline `Field`) and the stat-block editor (`stat-block.tsx`'s `TextField`/`NumberField`) render through. Each of those two files carried a byte-identical PRIVATE copy until the duplicate-body tripwire named them (group `12c29e97676c2c29`); both now IMPORT this export — no second definition and no re-export shim | a private `Field` copy in a feature component (the folded defect — two copies red the tripwire by hash `12c29e97676c2c29`, and one is caught by grepping `function Field(`); a re-export shim (`stat-block.tsx` re-exporting it would be a second NAME for one function, while the defect this row removes was a second DEFINITION — the import edge is the honest one); a new label primitive beside `components/ui/label.tsx` (that is the bare `<Label>` element; the caption+control composition has no other home) |
 | **Render the panel a module page shows when its campaign or module is GONE** (docs/17 row 316) | `features/modules/missing-entity-panel.MissingEntityPanel({ message, campaignId })` — THE one missing-entity panel for every module-scoped page: a muted `<p>` carrying the caller's `message` over the one `Back to modules` link (`modulesPath(campaignId)`), which is why the message is the only thing a caller supplies and the DOM is identical to the three local panels it replaces. Its call sites are the board's two null-row guards (`campaign === null` / `module === null`), the canvas's same two, the reader's same two, AND the canvas's no-planned-parts branch — a fourth INLINE copy of the same panel that the tripwire could never see (it was never a named function), folded in the same landing. The tripwire group `1996f7df8ca0ab87` was exactly the three named copies, and the fold is a byte-MOVE: the survivors' normalized body hash is unchanged, so pasting any one of the deleted copies back beside this file reds the tripwire by naming that hash again (measured) | a fourth `Missing*` function or a second inline copy of the panel (the measured RED above); a page-local variant with its own classes or link label; generalizing this seam to a configurable link target so `features/campaign`'s `MissingPane`/`GraphPage.Missing` could ride it — those are a DIFFERENT panel (a different container, an optional link, `Back to campaigns`), recorded here as a boundary rather than folded |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
@@ -3093,8 +3096,10 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   46 sites in `src/` at base `7b390de` — the seven `isRecord` helpers the
   owner named were only 7 of the 46 sites — and its TEST-TREE extension is
   DONE (docs/17 row 212, seam row in §3).** The `src/` capture predates row
-  171's `isRecord` fold and row 214's `parseFile` fold, so that inventory holds
-  14 groups / 32 sites today.
+  171's `isRecord` fold and row 214's `parseFile` fold, so that inventory is
+  NOT the capture: every group it recorded has since been folded, each with its
+  baseline line DELETED, so with docs/17 rows 315 and 316 the `src/` inventory
+  is EMPTY — the arc's intended end state.
   Every group is recorded (with a reason) in
   `tests/architecture/duplicateImplementationsBaseline.json`, which is DEBT,
   not a licence. **The test tree is now in scope too** — `tests/**/*.ts(x)`
@@ -3144,19 +3149,26 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
     `publicationSourceLine` pair was the `src/` half of row 215's measured
     cross-tree class; the TEST-side reference copy had already been folded, and
     row 312 moved the surviving pair into `text.ts` with it.
-  - The image-queue trio `mob-portrait-queue.ts` / `cover-image-queue.ts` /
-    `entity-image-queue.ts` copies `workerCount` ×3 — and its `settledDetail`
-    copies normalize to 74 characters, ONE character under the floor, so the
-    tripwire does not compare them (a floor decision recorded, not a silent
-    gap).
-  - The local `Field` label wrapper ×2, `getChunkByContentHash` ×2. The
+  - **The image-queue trio's `workerCount` ×3 is FOLDED (docs/17 row 315)** —
+    `mob-portrait-queue.ts`, `cover-image-queue.ts` and `entity-image-queue.ts`
+    now pass the ONE `db/settingsRepo.maxParallelWorkers` to `createJobQueue`
+    (and `entity-batch.ts`'s identical inline derivation went with them), so its
+    baseline line is DELETED. Its `settledDetail` copies are deliberately
+    UNTOUCHED and still normalize to 74 characters, ONE character under the
+    floor, so the tripwire does not compare them (a floor decision recorded, not
+    a silent gap).
+  - The local `Field` label wrapper ×2 is FOLDED (docs/17 row 315) onto
+    `features/campaign/components/form-field.Field`, its baseline line DELETED;
+    `getChunkByContentHash` ×2 is untouched by this arc. The
     `Missing*` panels ×3 (`MissingModule` / `MissingBoard` / `MissingCanvas`)
     are FOLDED (docs/17 row 316) onto the ONE
     `features/modules/missing-entity-panel.MissingEntityPanel`, and the
     `1996f7df8ca0ab87` line is DELETED — together with a FOURTH inline copy of
     the same panel in `CanvasPage` that was never a named function and so was
     never visible to the tripwire. Every module-scoped page (board, canvas,
-    reader) now renders that one component. docs/17 row 312 also folded the two
+    reader) now renders that one component. **With rows 315 and 316 landed as a
+    union, the `src/` inventory is EMPTY — the arc's intended end state.** docs/17
+    row 312 also folded the two
     same-file pairs this list did not spell out — `createModule`/`saveModule`
     (one validated upsert, `createModule` is an alias now) and
     `captureStageSnapshot`/`cloneStageSnapshot` (one deep copy, parameterised
@@ -3975,6 +3987,76 @@ out of prose. The folded pair was arithmetic over already-parsed level keys, so
 the level READER's deliberately ASCII boundary (the bullet above, docs/17 row
 253) is untouched — no vocabulary, no pattern and no prompt byte moved.
 
+### §5 (the cycle-2 UI duplicate folds, docs/17 row 315) — what was folded, why the seam is its own twin, and the tripwire arms
+
+**FOLDED, three baseline groups** (the owner-directed dedup arc,
+`.gate-logs/plans/duplicate-fold-arc.md`; cycle 2, writer A). Each line was
+DELETED from `duplicateImplementationsBaseline.json` in the same landing, and the
+tripwire is GREEN with the three lines gone (18/18); the `src/` inventory is down
+to ONE group (the `Missing*` panels ×3, docs/17 row 316's slice).
+
+- `12c29e97676c2c29`, the `Field` label wrapper ×2 (`kind-forms.tsx`,
+  `stat-block.tsx`) → ONE exported
+  `features/campaign/components/form-field.Field`, imported by both files, no
+  re-export shim. The new module was preferred over exporting from either
+  consumer because a generic caption+control composition does not belong to the
+  stat-block module, and the two files' import edge already existed in the other
+  direction.
+- `7422a6200878f5a8`, the settings→worker-count read ×3
+  (`mob-portrait-queue.ts`, `cover-image-queue.ts`, `entity-image-queue.ts`) →
+  ONE exported async `db/settingsRepo.maxParallelWorkers()`; each becomes a
+  REFERENCE (`workerCount: maxParallelWorkers`), which is what makes the fold
+  real — a helper each site still called in a two-line identical arrow would have
+  left the population at three. `features/modules/entity-batch.ts`'s identically
+  spelled inline derivation (`Math.max(1, settings.maxParallelRequests)`) is
+  folded onto the same seam, so the derivation is ONE expression app-wide. It
+  lives beside `getSettings` because that module is the one that knows which
+  setting bounds concurrency; `lib/jobQueue` and `lib/parallel` deliberately take
+  an explicit `workerCount`/`limit` and know nothing about settings.
+- `b54ed0a3f602f5cd`, `onFetchProgress` + `onProgress` ×2 in
+  `bestiary-fetch-section.tsx` → ONE local `applyProgress(progress:
+  PackFetchProgress | PackImportProgress)` handed to BOTH options. The two
+  original arrows differed only in their parameter type, `progressDetail` already
+  reads the union, and a wider-parameter callback is exactly what each option
+  accepts — so neither phase's reporting changed, and neither callback was
+  weakened.
+
+**DELIBERATELY LEFT, with the reason.** The image-queue trio's `settledDetail` ×3
+is unchanged and still normalizes to 74 characters, ONE under the floor (the
+separate floor decision recorded above).
+
+**THE SEAM IS ITS OWN TWIN, and that is why ONE re-born copy is enough to red
+here** (a measurement, not an assumption): each surviving seam's body normalizes
+to the SAME hash as the copies it replaced, so a single private copy re-created
+at a call site is a 2-site population and the tripwire names both. Row 313's "a
+fold that stops one short is invisible" gap therefore does NOT apply to these
+three folds — the grep is still the belt, but the tripwire has teeth on the first
+copy.
+
+**THE TRIPWIRE ARMS (the differential; every arm's hash printed with `sha256sum`,
+none identical, every file restored byte-identically from a copy under
+`.gate-logs/row315-arms/backup` — never `git checkout` — with a `trap` restoring
+on exit; raw per-arm logs `.gate-logs/row315-arms/arm-*.log`).** Pristine
+hashes: baseline `d6ea2542…`, `stat-block.tsx` `e69704f5…`,
+`cover-image-queue.ts` `1331f065…`, `entity-image-queue.ts` `cc12c22c…`,
+`bestiary-fetch-section.tsx` `771c9b20…`; the restore reproduces all five
+exactly. **A** pristine → GREEN 18/18. **B** the `12c29e97676c2c29` line restored
+(`dcdf0ff6…`) → RED 1, `STALE BASELINE ENTRY — 12c29e97676c2c29`. **C** the
+`7422a6200878f5a8` line restored (`6bfa2c49…`) → RED, same sentence. **D** the
+`b54ed0a3f602f5cd` line restored (`24d4b09f…`) → RED, same sentence. **E** a
+private `Field` copy re-injected into `stat-block.tsx` (`a9c8d8ed…`) → RED 1,
+`NEW DUPLICATE — shared normalized body 12c29e97676c2c29 (118 chars) is
+implemented at 2 sites`, naming `form-field.tsx:Field` beside
+`stat-block.tsx:Field`. **F** the `workerCount` arrow re-injected into ONE queue
+(`cover-image-queue.ts` `cb1f9885…`) → RED 1, `NEW DUPLICATE —
+7422a6200878f5a8 (103 chars) … 2 sites`, naming
+`settingsRepo.ts:maxParallelWorkers` beside `cover-image-queue.ts:workerCount`
+(the seam-is-its-own-twin measurement above). **G** the same arrow re-injected
+into TWO queues (`cb1f9885…`, `entity-image-queue.ts` `9bca3f64…`) → RED 1, the
+same hash at 3 sites. **H** the two progress arrows re-spelled in
+`bestiary-fetch-section.tsx` (`1a28ff3c…`) → RED 1, `b54ed0a3f602f5cd (84 chars)
+… 3 sites`, naming `applyProgress` beside both re-born arrows. Restored hashes
+equal the pristine ones exactly; no two arms share a hash, so no probe is void.
 ### §5 (the module-panel fold, docs/17 row 316) — the fourth copy the tripwire could not see, and the empty-inventory end state
 
 The `Missing*` panels are ONE component now

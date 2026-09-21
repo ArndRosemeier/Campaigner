@@ -11,7 +11,7 @@ import { creatureImageIdsByKey } from '@/db/creatureImages';
 import { canonicalCreatureName, isCanonicalCitation } from '@/db/mobPortraitCache';
 import { db } from '@/db/db';
 import { createImage } from '@/db/imageRepo';
-import { getSettings } from '@/db/settingsRepo';
+import { getSettings, maxParallelWorkers } from '@/db/settingsRepo';
 import { generateOneImage, type GeneratedOneImage } from '@/llm/oneImage';
 import {
   buildImagePrompt,
@@ -164,10 +164,7 @@ export const useMobPortraitQueue = createJobQueue<MobPortraitJob>({
   settledDetail: (job, outcome) =>
     outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
   failureTitle: (job) => `Could not generate a portrait for "${job.name}"`,
-  workerCount: async () => {
-    const settings = await getSettings();
-    return Math.max(1, settings.maxParallelRequests);
-  },
+  workerCount: maxParallelWorkers,
   process: processJob,
 });
 
