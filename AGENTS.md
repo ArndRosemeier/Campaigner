@@ -292,6 +292,33 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
   set per-commit via
   `git -c user.name='Campaigner Dev' -c user.email='dev@campaigner.local' commit`.
 - One logical task per commit; push to `origin/main` after committing.
+- **PUSHING IS PUBLISHING — ALWAYS CONFIRM THE PUBLISH** (owner-directed,
+  2026-09-21, verbatim: *"you can make this a local rule to always publish when
+  you push."*). In this project a push to `main` **IS the deploy**: the
+  `Deploy to futuremagic.de` workflow runs on every push to `main` (and on
+  `workflow_dispatch`), builds, and FTP-uploads `dist/` to
+  `/webseiten/Campaigner/`. So "I pushed it" is not "it is live", and a push is
+  not finished until the publish is confirmed:
+  1. **Every push to `main` publishes, documentation-only included** — there is
+     no such thing as a push here that does not re-run the deploy, so never skip
+     the confirmation because the diff was prose or records.
+  2. **Confirm the run after the push** — read the workflow's conclusion from the
+     GitHub API (`https://api.github.com/repos/ArndRosemeier/Campaigner/actions/runs?per_page=3`,
+     unauthenticated works for this public repo) rather than assuming, and prefer
+     the run whose `head_sha` is the commit just pushed.
+  3. **A FAILED publish is NAMED in the next report to the owner**, with the run
+     link and what the live version therefore still is — the workflow's last step
+     is the FTP upload, so a failure leaves the PREVIOUS bundle serving and the
+     owner testing code that never shipped (owner, verbatim: *"Just tell me so i
+     know the current version is not up."*). Keep pushing: the next push
+     re-triggers the deploy.
+  4. **The live badge is the owner's window into this** — check
+     `https://futuremagic.de/Campaigner/build-status.json` when a publish matters
+     to what he sees; it is generated at BUILD time from the board, so a payload
+     that lags the newest landing is expected until the next deploy and is not a
+     defect (`scripts/buildStatus.mjs`).
+  5. If the project ever gains a separate publish step beside the deploy, it runs
+     as part of the push, in the same routine — never as a remembered extra.
 
 ## Parallel writers
 
