@@ -8451,3 +8451,58 @@ equal. The row-212/215 tripwire stayed GREEN with **NO `*Baseline.json` edit** �
 its own catch in this slice (a `userContentAt` helper byte-identical to
 `mob-spells-lanes.test.ts`'s `lastPrompt`) was REPLACED by `promptOf`, which is
 loud on a missing call: a different contract, not a renamed copy.
+
+## The module list reads as an arc, and the two orders stay two (docs/17 row 297)
+
+The owner's report was a DISPLAY complaint — *"Modules in a campaign right now
+are sorted by inverse recency (the latest on top), I would like them to be
+sorted by start level."* — and the cure is ONE pure comparator applied at ONE
+display seam, so the family is deliberately small and three-layered.
+
+**Behaviour, `tests/domain/module.test.ts` (+5).** Each of the comparator's four
+keys gets its own arm — `levelMin` ascending whatever the input order,
+`levelMax` ascending at one start level, `createdAt` ascending (story order),
+`id` on a FULL tie — plus the TOTALITY arm: a six-module list with a duplicate
+pair, a same-start-level wider module and gaps between the level groups is
+sorted, then every ROTATION and the REVERSAL of it must produce the one expected
+sequence. The totality arm is what makes "a tie never depends on the array" a
+measurement rather than a claim about `Array.prototype.sort`.
+
+**Source, `tests/architecture/one-module-list-order.test.ts` (NEW, 3).** Built on
+the ONE `tests/helpers/sourceCode` glob (never a ninth hand-rolled walker — the
+row-212 BASELINED population). (1) The comparator is DEFINED once, in
+`src/domain/module.ts`, and its four keys appear IN ORDER inside the body. (2) It
+is referenced from exactly ONE production file, the display seam
+`src/features/modules/hooks.ts`, which holds exactly ONE `.sort(` and it is the
+comparator's — and the hook names no `updatedAt` at all. (3) The repo's own read
+`src/db/moduleRepo.ts` still sorts
+`rows.map(parseModuleRow).sort((a, b) => b.updatedAt - a.updatedAt)` and contains
+no comparator reference. Both halves live in ONE test so neither order can be
+silently swapped for the other.
+
+**Rendered, `tests/features/module-ui-toast.test.tsx` (+1).** Three modules
+seeded so the repo's recency order CONTRADICTS the level order (the level-5
+chapter edited last, the level-1 chapter first), asserted through the DOM order
+of the rows' unique `module-board-link-<id>` testids — the page must read level
+1 → 3 → 5, which is the arm that fails if the display still used recency.
+
+**RED-PROVEN, arms in `.gate-logs/row297-injections/` with every sha256 printed
+before and after, every file restored byte-identically, `tsc -b` exit 0 on every
+injected tree** (a lone `tsc --noEmit -p tsconfig.app.json` does NOT cover
+`tests/`, docs/17 row 288): (A) `levelMin` reversed → RED 3 node + RED 1
+rendered; (B) `levelMax` reversed → RED 3 node (the rendered fixture has
+distinct start levels, so it stays green — the arms are not interchangeable;
+the source key-order arm reds too); (C) `createdAt` + `id` reversed → RED 4
+node; (D) the display seam stops sorting (sort plus its import, so the injected
+tree stays type-clean) → RED 1 source + RED 1 rendered (the fall-back-to-recency
+arm); (E) `listModulesByCampaign` swapped for a hand-rolled level sort → RED 1
+source + RED 1 behavioural. No two injected hashes equal.
+
+**THE MEASURED GAP THIS FAMILY CLOSED.** The pre-existing repo-order pin
+(`tests/db/moduleRepo.test.ts`'s newest-first flip) turned out NOT to be
+discriminating against a level sort: both of its modules share one band, so
+`createdAt` ASC coincides with the bumped recency order and arm E left it GREEN.
+One discriminating arm was added there — a level-5 module touched LAST, so the
+display's arc order is the REVERSE of the repo's — and arm E reds it by name.
+The row-212/215 tripwire ran 18/18 GREEN with **NO `*Baseline.json` edit**. No
+existing pin asserted the old display order, so none was updated or deleted.
