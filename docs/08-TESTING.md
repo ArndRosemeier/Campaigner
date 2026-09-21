@@ -8743,18 +8743,22 @@ half (the drift this exists for is invisible to behaviour on today's fixtures �
 two copies agree until one is edited) and a BEHAVIOURAL half (the grammar's
 semantics are pinned where the code lives).
 
-**Source, `tests/architecture/one-slot-label-pattern.test.ts` (NEW, 2).** Built
+**Source, `tests/architecture/one-slot-label-pattern.test.ts` (NEW, 2; EXTENDED to 4 by docs/17 row 300).** Built
 on the ONE `tests/helpers/sourceCode` glob (never a hand-rolled walker — the
 row-212 baselined population). (1) The anchored, optionally-numbered grammar
 string `(?: \\d+)?$` appears in EXACTLY ONE `src/` file, the seam — so a
 reinvention at a call site reds NAMING both it and the seam — and the
-metacharacter escape CLASS is asserted inside that same file. (2)
+metacharacter escape CLASS **used to be** asserted inside that same file. (2)
 `matchesSlotLabel(` occurs exactly once in each of the seam and its two declared
 callers and nowhere else (a third caller reds by name), and neither caller
 contains a `new RegExp(` any more, so the pre-fold shape cannot be reborn beside
-the seam. The escape class is deliberately NOT a file-population needle: five
-other seams in `src/` escape their own literals with the same class (named in
-docs/18 §5, and NOT folded by this row).
+the seam. **AMENDED BY docs/17 row 300:** the escape class is now a
+file-population needle of its OWN in this same file — the in-seam assertion is
+inverted (the slot seam must NOT hold the class and MUST import the seam), and
+`filesWith(ESCAPE_CLASS)` must equal exactly `['src/domain/escapeRegExp.ts']`.
+The two sentences that follow were true of row 295 and are kept as its record:
+they are SUPERSEDED, not current (the class IS a file-population needle now, and
+the five other spellings WERE folded, with the sixth, by row 300).
 
 **Behaviour, `tests/domain/battle-engine.test.ts` (+4).** (1) a bare name and
 its numbered labels match while everything unanchored does not (`Goblin Chief`,
@@ -8795,3 +8799,88 @@ pin, `battle-engine` 55, `battleSeed` 29, `toast-surfaces` 52, `battleRepo` 17,
 row-212/215 tripwire `no-duplicate-implementations` **18/18 with NO
 `*Baseline.json` edit**. NO suite lock, NO full run (the dispatcher owns the
 integrated gate).
+
+## The ONE RegExp-literal escape (docs/17 row 300)
+
+The metacharacter class `.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` was spelled at
+SIX sites — `domain/battle/board.matchesSlotLabel`, `llm/language.levelWordsPattern`,
+`llm/promptScaffolding`'s two marker builders, `llm/campaignGrounding.wordBoundaryPattern`,
+`llm/roomBudget.withoutEntityLevelHintLines` and
+`features/rules/search-browser.Highlight`. Every result becomes a `RegExp`
+SOURCE, so a drift does not throw: it changes WHICH characters a pattern reads
+literally, and three of the six feed text SENT TO THE MODEL, where the prompt
+bytes are pinned. All six now import `domain/escapeRegExp.escapeRegExp`; the two
+local wrappers (`promptScaffolding.escapeLiteral`, `roomBudget`'s `escaped`
+arrow) are DELETED rather than redirected. The family has a SOURCE half (the
+drift is invisible to behaviour while the copies agree), a DIFFERENTIAL half
+(the bytes are the contract) and the existing prompt families as PRESERVATION
+evidence.
+
+**Source, `tests/architecture/one-slot-label-pattern.test.ts` (EXTENDED, 2→4).**
+The row-295 file carries the new arms rather than a seventh scan (the brief is
+explicit, and AGENTS obligation 2 is per-IDEA, not per-scan). Its original
+in-seam `ESCAPE_CLASS` assertion is INVERTED — the slot seam must not hold the
+class and must import the seam — and two new arms run over the same
+`tests/helpers/sourceCode` glob: (1) `filesWith(ESCAPE_CLASS)` equals EXACTLY
+`['src/domain/escapeRegExp.ts']`, so a seventh spelling ANYWHERE under `src/**`
+reds and NAMES the offending path beside the seam; (2)
+`filesWith("from '@/domain/escapeRegExp'")` equals the six declared sites in
+sorted order, each of them contains `escapeRegExp(` and none contains the class,
+with the seam defining it exactly once. The declared six are a literal list, so
+adding or retiring a caller is a deliberate edit rather than a silent drift.
+
+**Differential, `tests/domain/escapeRegExp.test.ts` (NEW, 4).** The pre-fold
+inline expression is kept as a TEST-LOCAL ORACLE — deliberately the RETIRED
+bytes, so a change to the seam REDS rather than being copied along (the opposite
+of the cross-tree duplication row 215 forbids; its body is far under the
+tripwire's 75-normalized-character floor, and the test's own header says why).
+The arms: (1) the differential over the named inputs — a plain name, the empty
+string, every metacharacter at once, metacharacters ONLY, a single `.`, real
+names carrying metacharacters (`Attack (ranged)`, `Wolf [pack]`, `yes|no`,
+`a*b+c?d`, `^start$end`, `path\to\thing`), an ALREADY-escaped string (escaping is
+not idempotent and both copies must still agree), an emoji, a NUL, a newline and
+a tab, German prose with `ß`, and a long mixed name; (2) the NON-VACUITY control
+— the oracle changes bytes for more than ten of those inputs and for all ten
+metacharacters, so a class that quietly stopped escaping cannot "agree" by being
+an identity; (3) the differential over the WHOLE ASCII range, one character at a
+time and as one string; (4) the property the six sites rely on — the escaped
+literal matches ITSELF, while an unescaped `A.B` also claims `AxB` and the
+escaped one does not.
+
+**RED-PROVEN, arms in `.gate-logs/row300-injections/` (`arm.sh` + raw per-arm
+`-tsc.log`/`-vitest.log`), every arm `tsc -b` exit 0 on the INJECTED tree with
+the build info CLEARED first** (never a lone `tsc --noEmit -p
+tsconfig.app.json`, which does not cover `tests/**`, docs/17 row 288; sha256
+printed before AND after; every file restored BYTE-IDENTICALLY; no two injected
+hashes equal — pristine `escapeRegExp.ts 6b02c803…`, `search-browser.tsx
+0677e5d5…`). **A** a SEVENTH spelling as a NEW file
+(`src/llm/escapingCopyInjected.ts`, `62c977b6…`) → **RED 1**, the population arm,
+naming the new path beside `[src/domain/escapeRegExp.ts]`. **B** the seam's
+class widened so it also escapes `-` (`escapeRegExp.ts` → `653c690e…`) → **RED
+3** across BOTH files — the population needle's own seam, the source arm's "the
+class is IN the seam", and the differential at `ASCII 45: expected '\-' to be
+'-'` — the arm that proves the differential is the byte-preservation instrument.
+**C** a declared site re-spells the class inline and drops its import
+(`search-browser.tsx` → `9ae965f1…`) → **RED 2** (the population arm and the
+six-site import arm, both naming `src/features/rules/search-browser.tsx`) while
+`tests/search-browser.test.tsx` stayed **3/3 GREEN on the same tree** — the
+measurement that the SOURCE pin is the mechanism guard and behaviour is not.
+
+**PRESERVATION EVIDENCE — the fold changed no bytes.** FOCUSED IN-TURN at
+DEFAULT workers: **520/520 across 24 files**. `no-duplicate-implementations`
+**18/18 with NO `*Baseline.json` edit** (every folded body is under the floor),
+`unicodeTextHygiene` **11/11 with NO `DECLARED_SITES` edit** (the new module
+carries no ASCII-only text regex), and the prompt-byte families stayed GREEN
+UNCHANGED — `language` 8, `level-language` 14, `campaignGrounding` 23,
+`roomBudget` 47, `structuredPartyLevel` 19, `module-gen-and-provenance` 101,
+`rejectionReason` 24, `mob-spells` 5, `mob-spells-lanes` 12, `runEngine-refill`
+13, `runEngine` 48, `runEngine-grounding` 2, `runEngine-grounding-expansion` 9 —
+plus `battle-engine` 55, `battleSeed` 29, `toast-surfaces` 52, `search-browser`
+3, `one-level-resolution` 8, `one-spells-shape` 6, `entity-level-hint-batch` 5.
+NO suite lock, NO full run (the dispatcher owns the integrated gate).
+
+**WHAT IT DOES NOT PROVE.** The differential pins the escaping function's
+OUTPUT; the six call sites' composed patterns are held by their existing
+families, not by a new one. And the population arm is a source scan — it sees a
+byte-equal copy, never a paraphrase of the class in different syntax. A
+tripwire, not a proof.
