@@ -49,9 +49,10 @@ described self-containedly in `docs/22-DEVELOPMENT-PROCESS.md`.
 ## Board
 
 ```
-reconciled: 3200807 · 2026-09-21T16:20Z (SESSION START of CoS session-66d8aa43-ffdd-43e3-b637-06ec93548dbb)
+reconciled: 0b2b2b2 · 2026-09-21T19:30Z (SESSION START of CoS session-b276401e-48d8-4c02-b2fb-7494264a77da — the owner ARCHIVED session-66d8aa43 and handed the role over; nothing was in flight at the take-over: no writers, no worktrees, no branches but `main`, registry empty, suite lock free, HEAD=origin/main and the tree clean)
 SESSION  | cos=session-c2da6d4f-3506-428f-a828-de12da4f3fbb | started=2026-09-20 | model=deepseek-official/deepseek-flash | state=STOPPED (superseded 2026-09-21) | note=THE LONGRUN CoS: landed rows 276–302, retired every writer/worktree/branch it opened; its last pushed tree `9424f09` deployed GREEN.
-SESSION  | cos=session-66d8aa43-ffdd-43e3-b637-06ec93548dbb | started=2026-09-21 | model=deepseek-official/deepseek-flash (inherited route) | state=LIVE (owner-designated: *"you are my chief of staff here"*) | note=reconciled at `9424f09`, fixed nine stale records (`4c2e473`, `3200807`), compacted this board; holds ONE standing goal, PAUSED; wake events only.
+SESSION  | cos=session-66d8aa43-ffdd-43e3-b637-06ec93548dbb | started=2026-09-21 | model=deepseek-official/deepseek-flash (inherited route) | state=STOPPED (ARCHIVED 2026-09-21) | note=reconciled at `9424f09`, fixed nine stale records and compacted this board (row 303). Its last event is an `approval/asked` at 18:33:41 for a `danger-full-access` write to `~/apps`, so its apps.futuremagic.de publish never completed (it fails closed); nothing was staged.
+SESSION  | cos=session-b276401e-48d8-4c02-b2fb-7494264a77da | started=2026-09-20 | model=deepseek-official/deepseek-flash | state=LIVE (owner-designated 2026-09-21) | note=reconciled at `0b2b2b2`; landed rows 274 (the session-record preset trap) and 275 (the commit-sweep incident) plus the AGENTS commit-pathspec guard (`07f227b`). Holds ONE standing goal, PAUSED; wake events only.
 NOTE | older CoS sessions and every reconciliation before 2026-09-21 are in this file's git history (`git log --follow docs/20-ORCHESTRATION.md`); nothing needed to act is in them.
 
 DECIDED-OWNER | id=publish-on-push | 2026-09-21 | EVERY PUSH TO `main` IS A DEPLOY, and the publish is CONFIRMED (workflow conclusion + live badge), never assumed; a failed deploy is NAMED with its run link and what is still live, and pushing continues. Verbatim: *"always publish when you push."* Binding in AGENTS §Workflow.
