@@ -21,7 +21,7 @@ import {
   WrenchIcon,
 } from 'lucide-react';
 
-import { modulePath, modulesPath } from '@/app/routes';
+import { modulePath } from '@/app/routes';
 import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import {
@@ -86,6 +86,7 @@ import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { ModuleRestockButton } from '@/features/modules/module-restock-button';
 import { PeekModal } from '@/features/modules/peek-modal';
+import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import { CanvasWriterModel } from '@/features/modules/canvas/canvas-writer-model';
@@ -459,10 +460,10 @@ export function CanvasPage(): JSX.Element {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
   if (campaign === null) {
-    return <MissingCanvas message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingEntityPanel message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   if (module === null) {
-    return <MissingCanvas message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingEntityPanel message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
   // Explicitly narrowed: the handlers below are hoisted function declarations,
@@ -470,19 +471,10 @@ export function CanvasPage(): JSX.Element {
   const currentCampaign: Campaign = campaign;
   if (currentModule.spine === null || currentModule.spine.partPlan.length === 0 || initialDoc === null) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <p className="text-sm text-muted-foreground">
-          This module has no planned parts yet — the canvas edits its parts once the spine exists.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          render={<Link to={modulesPath(campaignId)} />}
-          nativeButton={false}
-        >
-          Back to modules
-        </Button>
-      </div>
+      <MissingEntityPanel
+        message="This module has no planned parts yet — the canvas edits its parts once the spine exists."
+        campaignId={campaignId}
+      />
     );
   }
 
@@ -2277,20 +2269,4 @@ function saveBlockedReason(busy: boolean, previewOpen: boolean): string | null {
   if (busy) return MODULE_GENERATING_REASON;
   if (previewOpen) return 'Preview is read-only. Switch to Edit (the header toggle) to save your edits.';
   return null;
-}
-
-function MissingCanvas({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="text-sm text-muted-foreground">{message}</p>
-      <Button
-        variant="outline"
-        size="sm"
-        render={<Link to={modulesPath(campaignId)} />}
-        nativeButton={false}
-      >
-        Back to modules
-      </Button>
-    </div>
-  );
 }

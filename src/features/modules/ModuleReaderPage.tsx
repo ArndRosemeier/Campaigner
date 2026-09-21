@@ -47,6 +47,7 @@ import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
+import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
@@ -295,7 +296,7 @@ export function ModuleReaderPage(): JSX.Element {
   }
   if (campaign === null) {
     return (
-      <MissingModule
+      <MissingEntityPanel
         message="This campaign does not exist (it may have been deleted)."
         campaignId={campaignId}
       />
@@ -303,7 +304,7 @@ export function ModuleReaderPage(): JSX.Element {
   }
   if (module === null) {
     return (
-      <MissingModule message="This module does not exist (it may have been deleted)." campaignId={campaignId} />
+      <MissingEntityPanel message="This module does not exist (it may have been deleted)." campaignId={campaignId} />
     );
   }
 
@@ -862,17 +863,6 @@ function ModuleGenTailsBridge({ moduleId }: { moduleId: Id }): null {
     [moduleId],
   );
   return null;
-}
-
-function MissingModule({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="text-sm text-muted-foreground">{message}</p>
-      <Button variant="outline" size="sm" render={<Link to={modulesPath(campaignId)} />} nativeButton={false}>
-        Back to modules
-      </Button>
-    </div>
-  );
 }
 
 function StatusBadge({ status, errorMessage }: { status: Module['status']; errorMessage: string }): JSX.Element {

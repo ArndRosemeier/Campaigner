@@ -11,15 +11,6 @@
       ]
     },
     {
-      "hash": "1996f7df8ca0ab87",
-      "reason": "Three identical missing-entity panels (MissingBoard / MissingCanvas / MissingModule, differing only in the message and the back link); fold onto one shared component. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/features/modules/board/BoardPage.tsx:MissingBoard",
-        "src/features/modules/canvas/CanvasPage.tsx:MissingCanvas",
-        "src/features/modules/ModuleReaderPage.tsx:MissingModule"
-      ]
-    },
-    {
       "hash": "7422a6200878f5a8",
       "reason": "Three image-queue modules copy the same settings to worker-count read; fold onto one queue helper (their settledDetail copies sit just under the floor and are a separate floor decision). Owed; out of this detector slice's scope.",
       "sites": [

@@ -15,7 +15,7 @@ import { ArrowLeftIcon, BanIcon, LoaderCircleIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { modulePath, modulesPath } from '@/app/routes';
+import { modulePath } from '@/app/routes';
 import {
   CANVAS_PREMISE_NODE_KEY,
   canvasPartNodeKey,
@@ -27,6 +27,7 @@ import {
 } from '@/domain';
 import { getModule, patchModule } from '@/db/moduleRepo';
 import { saveModulePartText } from '@/features/modules/partText';
+import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
 import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -464,10 +465,10 @@ export function BoardPage(): JSX.Element {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
   if (campaign === null) {
-    return <MissingBoard message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingEntityPanel message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   if (module === null) {
-    return <MissingBoard message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingEntityPanel message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
   const currentCampaign: Campaign = campaign;
@@ -628,15 +629,4 @@ function priorSlicesFor(priorModules: readonly Module[]) {
       }))
       .filter((part) => part.markdown !== ''),
   }));
-}
-
-function MissingBoard({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <p className="text-sm text-muted-foreground">{message}</p>
-      <Button variant="outline" size="sm" render={<Link to={modulesPath(campaignId)} />} nativeButton={false}>
-        Back to modules
-      </Button>
-    </div>
-  );
 }

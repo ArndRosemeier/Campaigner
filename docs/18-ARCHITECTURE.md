@@ -341,6 +341,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 | **Show the owner what the scene was READ AS ASSERTING — the encounter's asserted cast** (docs/17 row 309) | `domain/artifact.encounterDataSchema.assertedCast` — the additive optional `[{name, count}]` the SCENE-READING draft transcribed, persisted on the encounter row (no Dexie bump) — plus ONE sentence from `llm/sceneAuthority.assertedCastAdvisory` rendered into the EXISTING `data.budgetAdvisory` block the encounter editor (`features/campaign/components/kind-forms.tsx`) already prints and the step notice carries. The list is the same value the gates enforce and the budget exempts, read straight off the row in the editor, so a wrong read is correctable in one step | a second panel, badge, toast or notice surface for the asserted cast (the advisory block is the ONE channel); re-deriving the list at render, in the editor or on resume (the row's value is the contract); showing an EMPTY list (an empty advisory line is never rendered); rendering the list as an editable free-text field (the JSON reply is the writer; the owner's correction path is a regenerate, and a hand-typed list is still enforced by the same gates) |
 
+| **Render the panel a module page shows when its campaign or module is GONE** (docs/17 row 316) | `features/modules/missing-entity-panel.MissingEntityPanel({ message, campaignId })` — THE one missing-entity panel for every module-scoped page: a muted `<p>` carrying the caller's `message` over the one `Back to modules` link (`modulesPath(campaignId)`), which is why the message is the only thing a caller supplies and the DOM is identical to the three local panels it replaces. Its call sites are the board's two null-row guards (`campaign === null` / `module === null`), the canvas's same two, the reader's same two, AND the canvas's no-planned-parts branch — a fourth INLINE copy of the same panel that the tripwire could never see (it was never a named function), folded in the same landing. The tripwire group `1996f7df8ca0ab87` was exactly the three named copies, and the fold is a byte-MOVE: the survivors' normalized body hash is unchanged, so pasting any one of the deleted copies back beside this file reds the tripwire by naming that hash again (measured) | a fourth `Missing*` function or a second inline copy of the panel (the measured RED above); a page-local variant with its own classes or link label; generalizing this seam to a configurable link target so `features/campaign`'s `MissingPane`/`GraphPage.Missing` could ride it — those are a DIFFERENT panel (a different container, an optional link, `Back to campaigns`), recorded here as a boundary rather than folded |
+
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
 - **Parse-on-read** (docs/01 §Repository layer): every repo read zod-parses
@@ -3147,9 +3149,14 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
     copies normalize to 74 characters, ONE character under the floor, so the
     tripwire does not compare them (a floor decision recorded, not a silent
     gap).
-  - The `Missing*` panels ×3 (`MissingModule` / `MissingBoard` /
-    `MissingCanvas`), the local `Field` label wrapper ×2,
-    `getChunkByContentHash` ×2. docs/17 row 312 also folded the two
+  - The local `Field` label wrapper ×2, `getChunkByContentHash` ×2. The
+    `Missing*` panels ×3 (`MissingModule` / `MissingBoard` / `MissingCanvas`)
+    are FOLDED (docs/17 row 316) onto the ONE
+    `features/modules/missing-entity-panel.MissingEntityPanel`, and the
+    `1996f7df8ca0ab87` line is DELETED — together with a FOURTH inline copy of
+    the same panel in `CanvasPage` that was never a named function and so was
+    never visible to the tripwire. Every module-scoped page (board, canvas,
+    reader) now renders that one component. docs/17 row 312 also folded the two
     same-file pairs this list did not spell out — `createModule`/`saveModule`
     (one validated upsert, `createModule` is an alias now) and
     `captureStageSnapshot`/`cloneStageSnapshot` (one deep copy, parameterised
@@ -3967,3 +3974,32 @@ ones exactly.
 out of prose. The folded pair was arithmetic over already-parsed level keys, so
 the level READER's deliberately ASCII boundary (the bullet above, docs/17 row
 253) is untouched — no vocabulary, no pattern and no prompt byte moved.
+
+### §5 (the module-panel fold, docs/17 row 316) — the fourth copy the tripwire could not see, and the empty-inventory end state
+
+The `Missing*` panels are ONE component now
+(`features/modules/missing-entity-panel.MissingEntityPanel`), and the
+`1996f7df8ca0ab87` baseline line is DELETED (the `src/` inventory 4 → 3 at this
+commit; the three lines left are row 315's slice, so the arc's intended end
+state is an EMPTY `src/` inventory — a future group is a NEW duplicate, never a
+known-debt item).
+
+- **A fourth copy existed that the tripwire cannot see.**
+  `canvas/CanvasPage.tsx`'s no-planned-parts branch was the SAME JSX written
+  INLINE — never a named function, and the detector scans named function bodies
+  only. It carries the same classes, the same `Back to modules` link and the
+  same props shape, so it was folded onto the same seam with its message as the
+  only change. This is the second measured instance of the detector's blind
+  spot (row 313's near-twin was the first): the fold is proven by GREPPING the
+  three names, never by the tripwire alone.
+- **The fold is a byte-MOVE.** The survivor's normalized body hash is
+  `1996f7df8ca0ab87` — the SAME hash the three deleted copies carried. That is
+  what makes the seam its own "exactly one" pin: pasting any deleted copy back
+  beside this file is a 2-site population and reds by naming that hash.
+- **THE DECLARED BOUNDARY.** `features/campaign/WorkspacePage.MissingPane` and
+  `features/campaign/GraphPage.Missing` are near-twins, NOT copies: a different
+  container (`GraphPage`'s message is a bare inline run, no `<p>`), an optional
+  link, and `Back to campaigns` instead of `Back to modules`. Generalizing this
+  seam to a configurable destination for them would be speculative generality
+  serving a different idea, so they are left with this note.
+
