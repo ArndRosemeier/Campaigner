@@ -108,6 +108,36 @@ function fakeImageBytes(seedText: string): Blob {
   return new Blob([seedText], { type: 'image/webp' });
 }
 
+/**
+ * Starts an image run on `targetId` and drives it to the pick pause, returning
+ * the run and the candidates ITS OWN pick step offered (the row-306 pins need
+ * more than one run in a test).
+ */
+async function startToPick(
+  campaignId: Id,
+  persona: Persona,
+  targetId: Id,
+): Promise<{ runId: Id; candidates: Id[] }> {
+  const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+  await waitFor(async () => {
+    expect((await getRun(runId))?.status).toBe('awaiting_user');
+  });
+  await runEngine.editStep(
+    runId,
+    0,
+    { parsed: VALID_PROMPT_DRAFT },
+    input(campaignId, persona, targetId),
+  );
+  await waitFor(async () => {
+    const run = await getRun(runId);
+    expect(run?.steps).toHaveLength(3);
+    expect(run?.status).toBe('awaiting_user');
+  });
+  const pick = (await getRun(runId))?.steps.find((step) => step.name === 'pick');
+  const raw = (pick?.output as { candidates?: unknown } | null | undefined)?.candidates;
+  return { runId, candidates: Array.isArray(raw) ? (raw as Id[]) : [] };
+}
+
 beforeEach(async () => {
   await clearDatabase();
   intakeImageMock.mockImplementation((blob: Blob) =>
@@ -344,6 +374,67 @@ describe('illustrator run (image persona)', () => {
     expect(target?.imageIds).toEqual([]);
     expect(target?.coverImageId).toBeNull();
     expect(await getImage(candidates.imageIds[0] ?? '')).toBeUndefined();
+  });
+
+  it('REFUSES a keep naming ids another run offered — loudly, and writes nothing (docs/17 row 306)', async () => {
+    const { campaignId, persona, targetId } = await seed();
+    const otherTarget = await createArtifact({
+      campaignId,
+      kind: 'location',
+      name: 'The Second Lighthouse',
+      summary: 'A second storm-lashed beacon.',
+      body: 'Another tower of black stone.',
+    });
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('one'), fakeImageBytes('two')],
+      costUsd: null,
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
+    });
+
+    // Run 1 on the first artifact: keep BOTH of its own candidates, so its ids
+    // are STORED images by the time run 2 asks for a pick.
+    const first = await startToPick(campaignId, persona, targetId);
+    expect(first.candidates).toHaveLength(2);
+    await runEngine.pickImages(first.runId, first.candidates);
+    await waitFor(async () => {
+      expect((await getRun(first.runId))?.status).toBe('completed');
+    });
+    expect((await getArtifact(targetId))?.imageIds).toEqual(first.candidates);
+
+    // Run 2 on the OTHER artifact, kept with run 1's ids — the owner's exact
+    // shape. The backstop refuses it BY NAME, before any write: the target is
+    // untouched, the run still pauses, and run 2's OWN candidate rows were NOT
+    // pruned away (the corruption this row exists for).
+    const second = await startToPick(campaignId, persona, otherTarget.id);
+    expect(second.candidates).toHaveLength(2);
+    const foreignFailure = await runEngine.pickImages(second.runId, first.candidates).then(
+      () => new Error('expected the foreign keep to be refused'),
+      (error: unknown) => error,
+    );
+    expect((await getArtifact(otherTarget.id))?.imageIds).toEqual([]);
+    expect((await getArtifact(otherTarget.id))?.coverImageId).toBeNull();
+    expect((await getRun(second.runId))?.status).toBe('awaiting_user');
+    for (const id of second.candidates) expect(await getImage(id)).toBeDefined();
+
+    // …and it said so LOUDLY, naming the run and every offending id.
+    expect(foreignFailure).toBeInstanceOf(Error);
+    const foreignMessage = (foreignFailure as Error).message;
+    expect(foreignMessage).toMatch(/image pick was refused/i);
+    expect(foreignMessage).toContain(second.runId);
+    for (const id of first.candidates) expect(foreignMessage).toContain(id);
+
+    // The repeat-run shape: a SUPERSEDED candidate from an earlier attempt on
+    // the SAME artifact is refused the same way, and its rows survive too.
+    const third = await startToPick(campaignId, persona, otherTarget.id);
+    const supersededId = second.candidates[0] ?? '';
+    const supersededFailure = await runEngine.pickImages(third.runId, [supersededId]).then(
+      () => new Error('expected the superseded candidate to be refused'),
+      (error: unknown) => error,
+    );
+    expect((await getArtifact(otherTarget.id))?.imageIds).toEqual([]);
+    for (const id of third.candidates) expect(await getImage(id)).toBeDefined();
+    expect((supersededFailure as Error).message).toMatch(/image pick was refused/i);
+    expect((supersededFailure as Error).message).toContain(supersededId);
   });
 
   it('fails with a clear message when image generation is disabled in Settings', async () => {

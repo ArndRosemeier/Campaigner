@@ -778,7 +778,16 @@ export function PersonaPanel({
               </div>
             )}
 
-            {activeRunId !== null && <ActiveRun runId={activeRunId} campaign={campaign} />}
+            {activeRunId !== null && (
+              // The run ↔ UI lifetime boundary (docs/17 row 306): a per-run
+              // subtree MUST be keyed by the run id, or one run's UI state
+              // (the image pick `selected`, the prompt edits, the encounter
+              // pick, the stream) survives into the next run. Without this key
+              // a second illustration kept the FIRST run's candidate ids and
+              // wrote them into the second artifact, deleting its own images.
+              // Precedent: WorkspacePage keys its editor by artifact id.
+              <ActiveRun key={activeRunId} runId={activeRunId} campaign={campaign} />
+            )}
           </div>
         </TabsContent>
 

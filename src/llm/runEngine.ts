@@ -876,6 +876,38 @@ function imageStepNotice(generated: {
 }
 
 /**
+ * THE one membership rule for both pick paths (docs/17 row 306, AGENTS rule 4):
+ * every id a keep names MUST be a candidate THIS run's own pick step offered.
+ * It returns that candidate list, so both callers enforce membership AND prune
+ * discards from ONE read.
+ *
+ * The image pick had no such check, and a keep carrying the PREVIOUS run's
+ * already-stored ids was written into the next artifact while its own candidate
+ * rows were pruned away as unreferenced. A keep carrying superseded candidate
+ * ids from an earlier attempt on the same artifact failed the same way. Both are
+ * now a LOUD refusal raised BEFORE any write: the artifact stays untouched and
+ * this run's own candidates are NOT pruned (AGENTS rules 1/2).
+ */
+function assertPickKeepsOwnCandidates(
+  run: PersonaRun,
+  keep: readonly Id[],
+  pickLabel: string,
+): Id[] {
+  const pickStep = run.steps.find((step) => step.name === 'pick');
+  const raw = (pickStep?.output as { candidates?: unknown } | null | undefined)?.candidates;
+  const candidates = Array.isArray(raw) ? (raw as Id[]) : [];
+  const foreign = keep.filter((id) => !candidates.includes(id));
+  if (foreign.length > 0) {
+    throw new Error(
+      `The ${pickLabel} pick was refused: ${
+        foreign.length === 1 ? 'this id is' : 'these ids are'
+      } not a candidate of run ${run.id} — ${foreign.join(', ')}`,
+    );
+  }
+  return candidates;
+}
+
+/**
  * The draft-prompt section that grounds an in-place refill in its owning
  * module (parity with automatic module generation, 08 §M4-C). Pure over the
  * STORED grounding, so pause/resume and the repair turn render it
@@ -6133,7 +6165,10 @@ export class RunEngine {
   }
 
   async pickEncounterMap(runId: Id, keep: readonly Id[], input: StartRunInput): Promise<void> {
-    if (keep.length !== 1) throw new Error('Select exactly one generated battlemap');
+    const selected = keep[0];
+    if (keep.length !== 1 || selected === undefined) {
+      throw new Error('Select exactly one generated battlemap');
+    }
     const run = await getRun(runId);
     if (run?.status !== 'awaiting_user' && run?.status !== 'needs_review') return;
     if (briefRosterOnlyMarker(run.steps)) {
@@ -6143,12 +6178,10 @@ export class RunEngine {
       throw new Error('A vision-located map has no candidates to pick — its single map is selected by contract');
     }
     const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
-    const pick = run.steps[stepIndex];
-    const candidates = (pick?.output as { candidates?: Id[] } | undefined)?.candidates ?? [];
-    const selected = keep[0];
-    if (selected === undefined || !candidates.includes(selected)) {
-      throw new Error('Selected battlemap is not a candidate from this run');
-    }
+    // Membership is the ONE shared pick validator the image pick also calls
+    // (docs/17 row 306) — a map that is not this run's candidate is refused
+    // here, before any prerequisite read or write below.
+    const candidates = assertPickKeepsOwnCandidates(run, keep, 'battlemap');
     // Map approval is the last human boundary before finalize. Validate every
     // prerequisite here so a corrupt/rejected earlier step stays reviewable
     // instead of failing asynchronously after the user clicks Use map.
@@ -6768,6 +6801,12 @@ export class RunEngine {
     const target = await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
 
+    // Backstop (docs/17 row 306): a keep naming an id THIS run never offered —
+    // the previous run's already-stored ids, or a superseded attempt's — is a
+    // LOUD refusal raised BEFORE any write, so the target stays untouched and
+    // this run's own candidates are NOT pruned away. The returned list is this
+    // run's own candidates, read once and reused by the prune below.
+    const candidates = assertPickKeepsOwnCandidates(run, keep, 'image');
     const existing = new Set(target.imageIds);
     const kept = keep.filter((id) => !existing.has(id));
     // A run stays anchored to its campaign, but kept images become library
@@ -6777,11 +6816,6 @@ export class RunEngine {
     // the candidate scan runs; pass only discards — kept global images were
     // re-anchored above and campaign reference scans intentionally cannot
     // see them.
-    const pickStep = run.steps.find((step) => step.name === 'pick');
-    const pickOutput = (pickStep?.output ?? {}) as { candidates?: unknown };
-    const candidates = Array.isArray(pickOutput.candidates)
-      ? (pickOutput.candidates as Id[])
-      : [];
     const keepIds = new Set(keep);
     await attachImagesToArtifact(targetId, {
       appendImageIds: kept,

@@ -10,6 +10,7 @@ import { createArtifact, getArtifact, publishToLibrary } from '@/db/artifactRepo
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
+import { getImage } from '@/db/imageRepo';
 import { db } from '@/db/db';
 import { newId, statBlockSchema, type Campaign, type Persona } from '@/domain';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
@@ -135,7 +136,11 @@ async function setAutonomy(
   await user.click(await screen.findByRole('option', { name: label }));
 }
 
-/** Each test seeds exactly one campaign and starts exactly one run. */
+/**
+ * Each test seeds exactly one campaign and starts exactly one run — except the
+ * row-306 A→B sequence pin, which starts TWO and therefore resolves them by
+ * target through `runIdForTarget` below.
+ */
 async function onlyRunId(): Promise<string> {
   const campaigns = await listCampaigns();
   const campaign = campaigns[0];
@@ -148,6 +153,45 @@ async function onlyRunId(): Promise<string> {
     throw new Error(`expected exactly one run, found ${runs.length}`);
   }
   return run.id;
+}
+
+/** The one run illustrating `artifactId` (the row-306 pin starts two runs). */
+async function runIdForTarget(artifactId: string): Promise<string> {
+  const campaigns = await listCampaigns();
+  const campaign = campaigns[0];
+  if (campaigns.length !== 1 || campaign === undefined) {
+    throw new Error(`expected one campaign, found ${campaigns.length}`);
+  }
+  const matches = (await listRunsByCampaign(campaign.id)).filter(
+    (candidate) => candidate.targetArtifactId === artifactId,
+  );
+  const run = matches[0];
+  if (matches.length !== 1 || run === undefined) {
+    throw new Error(`expected exactly one run for ${artifactId}, found ${matches.length}`);
+  }
+  return run.id;
+}
+
+/** The pick step's OWN candidates for the run illustrating `artifactId`. */
+async function candidatesForTarget(artifactId: string): Promise<string[]> {
+  const run = await getRun(await runIdForTarget(artifactId));
+  const pick = run?.steps.find((step) => step.name === 'pick');
+  return ((pick?.output as { candidates?: string[] } | null | undefined)?.candidates ?? []);
+}
+
+/**
+ * Selects `name` in the "Artifact to illustrate" combobox, starts the run and
+ * continues past the prompt-draft pause, so the caller lands on the pick view.
+ */
+async function illustrateTarget(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string,
+): Promise<void> {
+  await user.click(await screen.findByRole('combobox', { name: 'Artifact to illustrate' }));
+  await user.click(await screen.findByRole('option', { name }));
+  await user.click(screen.getByTestId('start-run'));
+  const edit = await screen.findByTestId('image-prompt-edit', {}, { timeout: 10_000 });
+  await user.click(within(edit).getByTestId('continue-image'));
 }
 
 beforeEach(async () => {
@@ -754,6 +798,137 @@ describe('PersonaPanel run lifecycle', () => {
 
     await flushAsyncUpdates();
   }, 30000);
+
+  it('image run: a second artifact receives its OWN candidates, not the previous run\u2019s (row 306)', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const settings = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await settings.saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+      imageModel: 'cap-test/panel-model',
+    });
+    const illustrator = await createPersona({
+      slug: 'illustrator-two-runs',
+      name: 'Illustrator Two Runs',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const playerA = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'pc',
+      name: 'Player A',
+      summary: 'A minimalist player character.',
+      body: 'Player A.',
+    });
+    const playerB = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'pc',
+      name: 'Player B',
+      summary: 'A second minimalist player character.',
+      body: 'Player B.',
+    });
+    // TWO candidates per run: the pick needs BOTH clickable, and a selection
+    // stale from the previous run hits the 2-item cap and turns both clicks
+    // into silent no-ops (persona-panel.tsx's `previous.length >= 2 ? …`).
+    generateImagesMock.mockResolvedValue({
+      images: [
+        new Blob(['candidate-one'], { type: 'image/webp' }),
+        new Blob(['candidate-two'], { type: 'image/webp' }),
+      ],
+      costUsd: 0.01,
+      cappedToOne: false,
+      modelUsed: 'test-image-model',
+      fallback: null,
+      filteredCount: 0,
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await setAutonomy(user, 'Manual');
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: illustrator.name }));
+
+    // ---- Run A: illustrate Player A and keep BOTH of its own candidates.
+    await illustrateTarget(user, playerA.name);
+    await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
+    await flushAsyncUpdates();
+    const candidatesA = await actDrained(() => candidatesForTarget(playerA.id));
+    expect(candidatesA).toHaveLength(2);
+    for (const id of candidatesA) {
+      await user.click(screen.getByRole('button', { name: `Candidate ${id}` }));
+    }
+    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 2 selected');
+    await user.click(screen.getByTestId('keep-selected'));
+    await waitFor(
+      async () => {
+        const run = await getRun(await runIdForTarget(playerA.id));
+        expect(run?.status).toBe('completed');
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+    expect((await actDrained(() => getArtifact(playerA.id)))?.imageIds).toEqual(candidatesA);
+
+    // ---- Run B: the SAME panel stays mounted and now illustrates the OTHER
+    // artifact — the exact A→B sequence the owner ran. A per-run subtree that
+    // is not keyed by the run id reuses run A's component instance, so run A's
+    // `selected` array survives into run B.
+    await illustrateTarget(user, playerB.name);
+    await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
+    await flushAsyncUpdates();
+    const candidatesB = await actDrained(() => candidatesForTarget(playerB.id));
+    expect(candidatesB).toHaveLength(2);
+    expect(candidatesB).not.toEqual(candidatesA);
+
+    for (const id of candidatesB) {
+      await user.click(screen.getByRole('button', { name: `Candidate ${id}` }));
+    }
+    // THE SILENT NO-OP PIN: with run A's two ids still selected, each click hit
+    // the 2-item cap and changed nothing — the keep below then wrote run A's ids
+    // into run B. Pressed candidates are the proof the clicks were real.
+    for (const id of candidatesB) {
+      expect(screen.getByRole('button', { name: `Candidate ${id}` })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    }
+    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 2 selected');
+    await user.click(screen.getByTestId('keep-selected'));
+    await waitFor(
+      async () => {
+        const run = await getRun(await runIdForTarget(playerB.id));
+        expect(run?.status).toBe('completed');
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+
+    const [artifactB, artifactA, ...candidateBRows] = await actDrained(() =>
+      Promise.all([
+        getArtifact(playerB.id),
+        getArtifact(playerA.id),
+        ...candidatesB.map((id) => getImage(id)),
+      ]),
+    );
+    // 1. B received ITS OWN candidates — not A's (the owner's corruption was
+    //    exactly A's ids landing on B).
+    expect(artifactB?.imageIds).toEqual(candidatesB);
+    expect(candidatesB).toContain(artifactB?.coverImageId);
+    // 2. A is untouched.
+    expect(artifactA?.imageIds).toEqual(candidatesA);
+    // 3. B's own candidate rows SURVIVED the keep's prune (the wrong keep
+    //    deleted them as unreferenced).
+    expect(candidateBRows.every((row) => row !== undefined)).toBe(true);
+  }, 60000);
 
   it('shows the no-pack notice for encounter runs only when no ready pack exists (fix-02 decision 6)', async () => {
     const user = userEvent.setup();
