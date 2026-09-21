@@ -8634,3 +8634,67 @@ stays green on the same tree — the two footers are separately wired);
 **copy-sentence** a re-spelled rule + sentence in a second pack file ⇒ **RED 2**
 (both source-scan arms). The row-212/215 duplication tripwire ran GREEN with
 **NO `*Baseline.json` edit**.
+## The typed sentence's entity kind comes from the model, and no pattern reads it (docs/17 row 293)
+
+The family is **one NEW source pin plus one NEW rendered file, plus the deletion
+of the pin that asserted the defect**, because the claim has two halves that fail
+in different ways: a resurrected guesser is invisible to behaviour on today's
+fixtures, and a wrong DEFAULT is invisible to a source scan.
+
+**Source, `tests/architecture/one-kind-source.test.ts` (NEW, 2).** Built on the
+ONE `tests/helpers/sourceCode` glob (never a ninth hand-rolled walker — the
+row-212 baselined population). (1) `guessKindFromSentence` appears in NO `src/`
+file (the non-vacuity arm proves the walk sees the tree). (2) The kind's two
+positive spellings are asserted in `stub-popover.tsx` —
+`useState<StubKind | null>(recordedKind ?? null)` and
+`if (!userPickedRef.current) setKind(classified.kind)` — and the popover +
+`persona-request.ts` pair must contain NONE of `new RegExp`, `.test(`, `.exec(`,
+`.match(`, `.matchAll(`, the constructor and four call shapes any keyword
+classifier is USED through. The search is DECLARED in the test's doc comment,
+not implied; the positive halves prove the scan reads the right bytes.
+
+**Rendered, `tests/features/stub-popover-kind.test.tsx` (NEW, 4).** The popover
+is rendered DIRECTLY with `classifyEntityName` mocked to a promise the test
+resolves by hand — the only way to observe the in-flight state. All four arms use
+the German sentence `Die Gilde im Keller`, which the deleted pattern read as
+`npc`. (1) NO preselected kind before the verdict (the trigger reads
+`Classifying…`, and no kind value exists), then the verdict's `faction`; (2) the
+owner's manual `location` wins over a later `faction` verdict AND is the kind the
+stub is actually written with (read back from the database); (3) a RECORDED kind
+is shown immediately and `classifyEntityName` is never called (the unchanged
+path); (4) a rejected classification leaves the select unselected ("Choose a kind
+…"), renders `stub-kind-failed`, calls `toastError`, blocks both Create and
+Generate, writes NOTHING and invents no `npc`.
+
+**The defect pinners, DELETED and NAMED.**
+`tests/features/persona-request.test.ts`'s `describe('guessKindFromSentence')`
+asserted the regex's three guesses (location/faction/npc) — it pinned the DEFECT
+itself, so the whole family and the import are DELETED and replaced by the two
+files above; nothing was weakened. One neighbour needed a timing amendment,
+also named: `tests/features/module-reader.test.tsx`'s two-step-confirm arm now
+waits for the classification's kind before pressing Create, because Create is
+(correctly) blocked until a kind exists. That file's other popover arms were
+already waiting on the verdict.
+
+**ARMS — each `tsc -b` exit 0 on the INJECTED tree (never a lone
+`tsc --noEmit -p tsconfig.app.json`, which does not cover `tests/**`, docs/17 row
+288), sha256 printed before AND after, every file restored BYTE-IDENTICALLY, no
+two injected hashes equal** (patches and raw logs under
+`.gate-logs/row293-injections/`): **A** the guesser RESURRECTED as an exported
+seam → **RED 2** (both source arms; `persona-request.ts`
+`f990c0b0…`→`f15a318e…`→restored); **B** a DEAD regex literal added to the
+popover → **RED 1** (the pattern-shape arm; the name arm stays GREEN on the same
+tree, so the two halves of the source pin are separately proven;
+`b4d0b393…`→`8775ee93…`→restored); **C** `recordedKind ?? 'npc'` (the silent
+default reborn) → **RED 3** (source needle + "no preselected kind" + the failure
+arm) with the recorded-kind arm GREEN, so the default and the recorded path are
+separable (`3463b304…`); **D** the manual-pick guard removed → **RED 1**, exactly
+the manual-pick arm (`cad2b434…`); **E** `setClassifyFailed(true)` removed →
+**RED 1**, exactly the visible-failure arm (`41e3a3fa…`); **F** `recordedKind`
+ignored → **RED 2** (source needle + the recorded-kind arm; `f3ec60cb…`).
+
+FOCUSED IN-TURN at DEFAULT workers: **88/88 across the 8-file touched/neighbour
+cohort** (including the row-212/215 tripwire `no-duplicate-implementations`
+18/18 with **NO `*Baseline.json` edit**) and **118/118 across the 8-file
+`persona-request` brief cohort**. NO suite lock, NO full run (the dispatcher owns
+the integrated gate).
