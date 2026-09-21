@@ -250,6 +250,14 @@ export interface NewPersonaRun {
   /** Dungeon preset (docs/11 D10); null/omitted = standard / not an encounter run. */
   encounterPreset?: EncounterPreset | null;
   /**
+   * The OWNER-SET exact party level for an encounter this run CREATES
+   * (docs/17 row 291); null/omitted = unset, and a sizing run then REFUSES
+   * loudly rather than inventing a level. Ignored when `targetArtifactId`
+   * names an existing encounter — that row's own `partyLevel` is the
+   * owner-set source there.
+   */
+  encounterPartyLevel?: number | null;
+  /**
    * Dungeon-map path override for ONE run (docs/11 vision path, D18
    * steering); null/omitted = no override (the Settings default governs).
    */
@@ -283,6 +291,7 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     targetArtifactId: input.targetArtifactId ?? null,
     encounterMapAspect: input.encounterMapAspect ?? null,
     encounterPreset: input.encounterPreset ?? null,
+    encounterPartyLevel: input.encounterPartyLevel ?? null,
     dungeonMapPath: input.dungeonMapPath ?? null,
     placementModuleId: input.placementModuleId ?? null,
     runExtras: input.runExtras ?? null,

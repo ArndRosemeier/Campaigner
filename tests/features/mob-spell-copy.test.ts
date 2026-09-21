@@ -349,7 +349,7 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
       name: 'Caster ambush',
       data: encounterDataSchema.parse({
         difficulty: 'medium',
-        levelHint: '7',
+        levelHint: '', partyLevel: 7,
         monsters: [
           {
             name: 'Nirklex',

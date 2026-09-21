@@ -176,7 +176,7 @@ async function seedEncounterWith(moduleId: string, monsters: MonsterEntry[]): Pr
   const encounter = await createArtifact({
     campaignId, moduleId, kind: 'encounter', name: 'Crypt',
     data: {
-      difficulty: 'medium', levelHint: '1', monsters, terrain: '', tactics: '', treasure: '',
+      difficulty: 'medium', levelHint: '', partyLevel: 1, monsters, terrain: '', tactics: '', treasure: '',
       mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
       siteShape: 'single', budgetAdvisory: '',
     },

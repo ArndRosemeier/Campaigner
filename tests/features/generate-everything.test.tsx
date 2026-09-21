@@ -540,7 +540,7 @@ describe('the entity sidebar control', () => {
     // artifact-data union narrows its members to `never`).
     const data: EncounterArtifactData = {
       difficulty: 'medium',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [
         {
           name: 'Gelatinous Cube',

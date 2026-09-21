@@ -282,10 +282,13 @@ function encounterMonsterSchema<S extends z.ZodType>(
  * spell contract; `statBlock` defaults to the stored superset, which is what the
  * no-corpus arm and the parse boundary use.
  *
- * The field ORDER is the stored contract's own (pinned): `monsters` sits between
- * `levelHint` and `terrain`, exactly where it was before this factory existed,
- * so the reply's `contract.keys` line and the strict schema's property order do
- * not move.
+ * The field ORDER is the stored contract's own (pinned): `monsters` sits
+ * directly after `difficulty` and before `terrain`. `levelHint` used to sit
+ * between them and is GONE from this contract (docs/17 row 291): the model no
+ * longer writes an encounter's party level at all — the level is the exact
+ * level of the module part that mentions the encounter, else the owner's
+ * structured `partyLevel` — so the reply's `contract.keys` line and the strict
+ * schema's property order moved by exactly that one field.
  */
 export function encounterDraftSchemaFor(
   system: GameSystem,
@@ -294,7 +297,6 @@ export function encounterDraftSchemaFor(
   return z.object({
     ...draftBase,
     difficulty: z.string(),
-    levelHint: z.string(),
     monsters: z.array(encounterMonsterSchema(statBlockSchemaFor(system, spellCorpus))),
     terrain: z.string(),
     tactics: z.string(),
@@ -337,7 +339,6 @@ function encounterGeneratorBriefBaseSchema<S extends z.ZodType>(statBlock: S) {
     summary: substanceText('summary'),
     body: substanceText('body'),
     difficulty: z.string(),
-    levelHint: z.string(),
     terrain: z.string(),
     tactics: z.string(),
     treasure: z.string(),
@@ -369,7 +370,8 @@ function encounterGeneratorBriefBaseSchema<S extends z.ZodType>(statBlock: S) {
          * This room's own challenge target (docs/11 D12): the party level
          * this room ALONE should challenge. Absentable: strict mode forces
          * the key; `null` parses to undefined and the run stamps the
-         * encounter's parsed levelHint instead.
+         * encounter's RESOLVED party level instead (docs/17 row 291 — the
+         * mentioning part's exact level, else the owner-set structured one).
          */
         targetLevel: absentable(rosterIndex),
       }),
@@ -382,12 +384,13 @@ function encounterGeneratorBriefBaseSchema<S extends z.ZodType>(statBlock: S) {
     }
     // D12 amendment (fill-grade arc): a DUNGEON COMPLEX requires every room
     // to carry an explicit targetLevel — the party level that room alone
-    // should challenge. A digit-free levelHint used to leave complex rooms
-    // 'unverified' (advisory-only); now the missing field is a named schema
-    // issue that rides the brief's EXISTING one-repair turn, then rejects
-    // loudly. Single arenas stay optional (stampTargetLevels fills from the
-    // level hint when present). Bounded to the VALID complex shapes (4–10):
-    // a 2–3-room reply is still the D11 site-shape issue named one level up.
+    // should challenge. A complex with no resolvable party level used to leave
+    // rooms 'unverified' (advisory-only); now the missing field is a named
+    // schema issue that rides the brief's EXISTING one-repair turn, then
+    // rejects loudly. Single arenas stay optional (stampTargetLevels fills
+    // from the encounter's resolved party level). Bounded to the VALID complex
+    // shapes (4–10): a 2–3-room reply is still the D11 site-shape issue named
+    // one level up.
     if (brief.rooms.length > 3) {
       for (const [roomIndex, room] of brief.rooms.entries()) {
         if (room.targetLevel === undefined) {

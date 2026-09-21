@@ -78,7 +78,7 @@ function encounterRow(id: string, campaignId: string | null, source: unknown): R
     writerModel: '',
     data: {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [{ name: 'Troll', count: 2, notes: '', treasure: '', source }],
       terrain: '',
       tactics: '',

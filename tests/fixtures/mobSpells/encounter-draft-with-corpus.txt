@@ -25,4 +25,4 @@ Individual creature carries follow the creature-coin guidance in the excerpts; t
 Field guidance for this encounter:
 - "locationKind": where the encounter takes place — "dungeon" (underground/ruin complex), "building" (indoor structure), "wilderness" (open terrain), or "other" when nothing fits.
 
-Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","difficulty","levelHint","monsters","terrain","tactics","treasure","substitutions","locationKind"]
+Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","difficulty","monsters","terrain","tactics","treasure","substitutions","locationKind"]

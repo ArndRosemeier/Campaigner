@@ -273,7 +273,7 @@ describe('battle board layer', () => {
       name: 'Bridge ambush',
       data: {
         difficulty: 'deadly',
-        levelHint: '5',
+        levelHint: '', partyLevel: 5,
         monsters: [
           {
             name: 'Troll',

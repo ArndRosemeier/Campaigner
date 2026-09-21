@@ -8,7 +8,6 @@ import {
   collectPackRosterWithRetry,
   formatRosterSection,
   parseLevelSort,
-  parseRosterTargetLevel,
   rosterNameIndex,
   type PackRosterDeps,
   type PackRosterEntry,
@@ -141,19 +140,17 @@ describe('parseLevelSort', () => {
   });
 });
 
-describe('parseRosterTargetLevel (12-BESTIARY-PACKS §7 ratified chain, step a)', () => {
-  it('parses the first digit run of the free-text hint deterministically', () => {
-    expect(parseRosterTargetLevel('5')).toBe(5);
-    expect(parseRosterTargetLevel('4–6')).toBe(4);
-    expect(parseRosterTargetLevel('CR 5')).toBe(5);
-    expect(parseRosterTargetLevel(' 12 ')).toBe(12);
-    expect(parseRosterTargetLevel('level 3 party')).toBe(3);
-  });
-
-  it('returns undefined for a hint without digits — a legitimate preference state, not an error', () => {
-    expect(parseRosterTargetLevel('')).toBeUndefined();
-    expect(parseRosterTargetLevel('mid')).toBeUndefined();
-    expect(parseRosterTargetLevel('—')).toBeUndefined();
+describe('the free-text target-level reader is GONE (docs/17 row 291)', () => {
+  it('no module exports a pattern that parses a level out of a hint string', async () => {
+    // The DELETED defect, asserted by NAME: `parseRosterTargetLevel` was
+    // `/(\d+)/.exec(levelHint)` over a stored string the MODEL wrote, so
+    // "CR 12 for 4 players" sized the window at 12 and "3/4 of the party" at
+    // 3. The level is now the mentioning part's EXACT `levelBand`, else the
+    // owner's structured `partyLevel` — no free text is read for a level
+    // anywhere on the encounter path. The module must not even export the
+    // name, so a re-born pattern reds here (AGENTS rule 5).
+    const module = (await import('@/llm/encounterRoster')) as unknown as Record<string, unknown>;
+    expect(module.parseRosterTargetLevel).toBeUndefined();
   });
 });
 

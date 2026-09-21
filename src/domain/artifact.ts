@@ -555,11 +555,64 @@ export function drawFillGrade(random: () => number = Math.random): number {
   return last.max;
 }
 
+/**
+ * The inclusive bounds of an encounter's OWNER-SET party level (docs/17 row
+ * 291). ONE pair of constants: the stored field refuses anything outside them
+ * and the editor's structured number input states the SAME range, so the form
+ * can never offer a level the boundary then rejects (AGENTS rule 4). A value
+ * outside the range — or a non-integer — is a LOUD validation failure, never a
+ * silent clamp (AGENTS rules 1/3).
+ */
+export const ENCOUNTER_PARTY_LEVEL_MIN = 1;
+export const ENCOUNTER_PARTY_LEVEL_MAX = 20;
+
+export const encounterPartyLevelSchema = z
+  .number()
+  .int({
+    message: "an encounter's party level must be a whole number — it is never rounded",
+  })
+  .min(ENCOUNTER_PARTY_LEVEL_MIN, {
+    message: `an encounter's party level must be at least ${String(ENCOUNTER_PARTY_LEVEL_MIN)}`,
+  })
+  .max(ENCOUNTER_PARTY_LEVEL_MAX, {
+    message: `an encounter's party level must be at most ${String(ENCOUNTER_PARTY_LEVEL_MAX)}`,
+  });
+
 const encounterDataShape = z.object({
   /** e.g. 'medium', 'deadly', or free text. */
   difficulty: z.string(),
-  /** Party level this encounter targets. */
+  /**
+   * DEPRECATED (docs/17 row 291): the party-level FREE TEXT a model used to
+   * write. NO path reads it for a level any more — the level is the exact
+   * level of the module part that mentions the encounter
+   * (`roomBudget.partLevelForMention`), else the owner-set `partyLevel` below.
+   *
+   * The key is KEPT because it is stored data: every encounter row written
+   * before row 291 carries a string here, and the parse-on-read contract is
+   * "an old row loads with no error state". Keeping the key also keeps the
+   * many existing encounter fixtures (and the PDF/canvas readers' TYPE) valid,
+   * so the change is a behaviour change and never a data migration. New writes
+   * carry `''` (an honest "nothing recorded"), and the editor no longer shows
+   * an input for it.
+   */
   levelHint: z.string(),
+  /**
+   * THE OWNER-SET EXACT PARTY LEVEL (docs/17 row 291) — the level this fight is
+   * made for when NO module part mentions the encounter (a campaign-level
+   * encounter, a module with no parts, a module whose text never names it).
+   *
+   * The ONE source of an encounter's party level is the part that mentions it
+   * (`roomBudget.partLevelForMention`, its EXACT `levelBand` — the part IS the
+   * level); this field is the owner's STRUCTURED answer for the honest
+   * no-part case, never written by a model, never defaulted, never derived
+   * from the module's `levelMin`/`levelMax` range (a range is not a level).
+   * Unset with no mentioning part makes a sizing run REFUSE loudly
+   * (`runEngine`), rather than invent a number.
+   *
+   * Additive + optional, NO Dexie bump: legacy rows parse with the field
+   * absent, and the editor's structured input is the ONE surface that sets it.
+   */
+  partyLevel: encounterPartyLevelSchema.optional(),
   monsters: z.array(monsterEntrySchema),
   terrain: z.string(),
   tactics: z.string(),

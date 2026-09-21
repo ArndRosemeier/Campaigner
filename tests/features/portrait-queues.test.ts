@@ -522,7 +522,7 @@ describe('post-run-extras.test.ts', () => {
     suggestedTags: ['dungeon'],
     body: '# The Drowned Cellars',
     difficulty: 'deadly',
-    levelHint: '5',
+    levelHint: '', partyLevel: 5,
     monsters: [{ name: 'Kuo-toa', count: 3, notes: 'ambushers', statBlock: ENCOUNTER_STATBLOCK }],
     terrain: 'flooded cellars',
     tactics: 'drag intruders under',
@@ -539,7 +539,7 @@ describe('post-run-extras.test.ts', () => {
     summary: 'Kuo-toa in flooded cellars.',
     body: '# The Drowned Cellars\nRoom prose.',
     difficulty: 'deadly',
-    levelHint: '5',
+    levelHint: '', partyLevel: 5,
     terrain: 'flooded cellars',
     tactics: '',
     treasure: '',
@@ -735,6 +735,8 @@ describe('post-run-extras.test.ts', () => {
       });
 
       const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
         ...RUN_INPUT(campaignId, personaId),
         extras: { image: true, statBlock: false, mobPortraits: false, battlemap: false },
       });
@@ -775,6 +777,8 @@ describe('post-run-extras.test.ts', () => {
       );
 
       const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
         ...RUN_INPUT(campaignId, personaId),
         extras: { image: true, statBlock: false, mobPortraits: false, battlemap: false },
       });
@@ -811,6 +815,8 @@ describe('post-run-extras.test.ts', () => {
       });
 
       const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
         ...RUN_INPUT(campaignId, personaId),
         extras: { image: false, statBlock: false, mobPortraits: false, battlemap: false },
       });
@@ -837,6 +843,8 @@ describe('post-run-extras.test.ts', () => {
       });
 
       const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
         ...RUN_INPUT(campaignId, personaId),
         extras: { image: false, statBlock: true, mobPortraits: false, battlemap: false },
       });
@@ -883,6 +891,8 @@ describe('post-run-extras.test.ts', () => {
       // RUN_INPUT carries the NPC-shaped persona object; this run needs the
       // encounter persona's own shape (mode/producesKind drive the step plan).
       const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
         ...RUN_INPUT(campaign.id, smith.id),
         persona: { ...smith, producesKind: 'encounter', mode: 'generate' },
         extras: { image: false, statBlock: false, mobPortraits: true, battlemap: false },
@@ -1029,6 +1039,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         placementModuleId: module.id,
       });
       await waitFor(async () => {
@@ -1083,6 +1095,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
       });
       await waitFor(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
@@ -1111,7 +1125,7 @@ describe('post-run-extras.test.ts', () => {
         name: 'Ford Ambush',
         data: {
           difficulty: '',
-          levelHint: '',
+          levelHint: '', partyLevel: 5,
           monsters: [],
           terrain: '',
           tactics: '',
@@ -1136,6 +1150,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'refill the stub',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         targetArtifactId: stub.id,
       });
       await waitFor(async () => {
@@ -1175,6 +1191,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         placementModuleId: module.id,
       });
       await waitFor(async () => {
@@ -1202,6 +1220,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         encounterMapAspect: '4:3',
       });
       await waitFor(async () => {
@@ -1249,6 +1269,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         placementModuleId: module.id,
       });
       await waitFor(async () => {
@@ -1376,6 +1398,8 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
         placementModuleId: module.id,
       });
       await waitFor(async () => {
@@ -1703,7 +1727,7 @@ describe('invented-creature-portraits.test.ts', () => {
       ...(writerModel === undefined ? {} : { writerModel }),
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: monsters.map((monster) => ({
           name: monster.name,
           count: monster.count,
@@ -2526,7 +2550,7 @@ describe('mob-portrait-npc-ref.test.ts', () => {
       name: 'The boggy footbridge',
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: monsters.map((monster) => ({
           name: monster.name,
           count: monster.count,
@@ -3042,7 +3066,7 @@ describe('mob-portrait-queue.test.ts', () => {
       name: 'Goblin warren',
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: monsters.map((monster) => ({
           name: monster.name,
           count: monster.count,
@@ -4206,7 +4230,7 @@ describe('mob-portrait-regen.test.ts', () => {
       name: 'Goblin warren',
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: monsters.map((monster) => ({
           name: monster.name,
           count: monster.count,
@@ -4479,7 +4503,7 @@ describe('mob-portrait-regen.test.ts', () => {
         name: 'Ogre den',
         data: {
           difficulty: 'medium',
-          levelHint: '1',
+          levelHint: '', partyLevel: 1,
           monsters: [
             {
               name: 'Ogre',

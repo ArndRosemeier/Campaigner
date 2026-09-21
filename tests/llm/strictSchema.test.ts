@@ -63,7 +63,10 @@ describe('strictJsonSchema', () => {
       'suggestedTags',
       'body',
       'difficulty',
-      'levelHint',
+      // `levelHint` is GONE from the model contract (docs/17 row 291): the
+      // model no longer answers an encounter level at all, so the field must
+      // not appear in the strict JSON schema the reply is bound to. Removing
+      // it here pins the emission, not just the parse.
       'monsters',
       'terrain',
       'tactics',
@@ -145,7 +148,7 @@ describe('strictJsonSchema', () => {
       suggestedTags: 'goblins',
       body: 'b',
       difficulty: 'easy',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [
         { name: 'Goblin', count: '2', notes: '', treasure: '', sourceChunkIndex: null, sourceName: null, statBlock: null },
       ],

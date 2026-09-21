@@ -22,7 +22,7 @@ export async function seedComplexEncounterTarget(
     links: [],
     data: {
       difficulty: 'old',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [
         {
           name: 'Tomb Ogre',

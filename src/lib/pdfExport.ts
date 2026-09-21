@@ -316,7 +316,17 @@ function dataSections(
     case 'encounter': {
       add('Encounter details', [
         ...labelValue('Difficulty', artifact.data.difficulty),
-        ...labelValue('Party level', artifact.data.levelHint),
+        // THE OWNER-SET PARTY LEVEL ONLY (docs/17 row 291). The deprecated
+        // stored `levelHint` was the MODEL's free-text level claim and is never
+        // read for a level again — printing it as "Party level" was the lie this
+        // slice deletes. A part-derived level (the module part that mentions
+        // the encounter) is not reachable from this artifact-scoped exporter,
+        // so it prints no line here rather than a wrong one: the editor and the
+        // run name it (docs/18 §5 records the residual).
+        ...labelValue(
+          'Party level',
+          artifact.data.partyLevel === undefined ? '' : String(artifact.data.partyLevel),
+        ),
         ...labelValue('Terrain', artifact.data.terrain),
         ...labelValue('Tactics', artifact.data.tactics),
         ...labelValue('Treasure', artifact.data.treasure),

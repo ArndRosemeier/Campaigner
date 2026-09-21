@@ -278,7 +278,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
     name: 'Bridge ambush',
     data: {
       difficulty: 'deadly',
-      levelHint: '5',
+      levelHint: '', partyLevel: 5,
       monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } }],
       terrain: '',
       tactics: 'Regenerates — a GM tactic note.',
@@ -372,7 +372,7 @@ async function seedKeyedBattle(options: {
     name: 'Temple ambush',
     data: {
       difficulty: 'hard',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: options.treasure ?? MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
       terrain: '',
       tactics: '',
@@ -424,7 +424,7 @@ describe('one battle per encounter (owner repro)', () => {
       name: 'Second ambush',
       data: {
         difficulty: 'hard',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: [
           {
             name: 'Ogre',
@@ -3915,7 +3915,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
       name: 'Split ambush',
       data: {
         difficulty: 'hard',
-        levelHint: '4',
+        levelHint: '', partyLevel: 4,
         monsters: [1, 2, 3].map((number) => ({
           name: `Cultist ${String(number)}`,
           count: 1,

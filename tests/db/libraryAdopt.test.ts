@@ -147,7 +147,7 @@ function globalLocation(): GlobalArtifact {
 function encounterData(monsters: unknown[]) {
   return encounterDataSchema.parse({
     difficulty: 'medium',
-    levelHint: '5',
+    levelHint: '', partyLevel: 5,
     monsters,
     terrain: '',
     tactics: '',

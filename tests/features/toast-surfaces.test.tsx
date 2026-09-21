@@ -1286,7 +1286,7 @@ describe('spawn-picker.test.tsx', () => {
       name: 'Bridge ambush',
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: roster,
         terrain: '',
         tactics: '',

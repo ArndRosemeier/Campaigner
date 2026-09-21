@@ -241,7 +241,7 @@ async function seedEncounter(): Promise<{
     body: 'They come up out of the water.',
     data: {
       difficulty: 'severe',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [
         {
           name: 'Cave Fisher',

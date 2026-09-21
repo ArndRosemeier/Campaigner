@@ -406,6 +406,8 @@ const ENCOUNTER_INPUT = (
   autonomy: 'auto',
   brief: 'A temple gate encounter',
   pinnedChunkIds: [],
+  // The create dialog's structured party level (docs/17 row 291).
+  encounterPartyLevel: 5,
   encounterMapAspect: '4:3',
 });
 
@@ -436,7 +438,7 @@ const ENCOUNTER_BRIEF = {
   summary: 'Cultists guard a ruined gate.',
   body: '# Ash Gate\nA room-by-room battle.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'broken pillars',
   tactics: 'fall back through the gate',
   treasure: 'obsidian key',

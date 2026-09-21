@@ -85,7 +85,7 @@ const COMPLEX_BRIEF = {
   summary: 'A four-room crypt under the ash temple.',
   body: '# Ash Temple\nFour rooms of cultists.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'crypt stone',
   tactics: 'hold the lines',
   treasure: 'cult hoard',
@@ -179,6 +179,8 @@ function input(
     autonomy: 'manual',
     brief: 'A four-room crypt encounter',
     pinnedChunkIds: [],
+    // The create dialog's structured party level (docs/17 row 291).
+    encounterPartyLevel: 5,
     encounterMapAspect: '4:3',
   };
 }
@@ -660,7 +662,7 @@ const REPOPULATE_BRIEF = {
   summary: 'A four-room crypt under the ash temple.',
   body: '# Ash Temple\nFour rooms of cultists.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'crypt stone',
   tactics: 'hold the lines',
   treasure: 'cult hoard',

@@ -36,7 +36,7 @@ let moduleB: Id;
 function encounterData(monsters: unknown[]) {
   return encounterDataSchema.parse({
     difficulty: 'medium',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters,
     terrain: '',
     tactics: '',
@@ -279,7 +279,7 @@ describe('modulesReferencingOwnedArtifacts (delete scan)', () => {
       name: 'Brawl',
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: [
           { name: 'Roster Ogre', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: rostered.id } },
         ],
@@ -312,7 +312,7 @@ describe('modulesReferencingOwnedArtifacts (delete scan)', () => {
       name: 'Home Fight',
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: [
           { name: 'Homebody', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } },
         ],

@@ -182,7 +182,7 @@ async function seedInventedPortrait(
 function encounterData(monsters: EncounterArtifactData['monsters']): EncounterArtifactData {
   return {
     difficulty: 'medium',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters,
     terrain: '',
     tactics: '',

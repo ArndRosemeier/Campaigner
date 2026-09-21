@@ -681,7 +681,7 @@ describe('editor-surfaces.test.tsx', () => {
   function complexEncounterData(layout: EncounterArtifactData['layout']): EncounterArtifactData {
     return {
       difficulty: 'old',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [],
       terrain: '',
       tactics: '',
@@ -1055,7 +1055,7 @@ describe('editor-surfaces.test.tsx', () => {
         body: '',
         data: {
           difficulty: 'old',
-          levelHint: '4',
+          levelHint: '', partyLevel: 4,
           monsters: [
             {
               name: 'Tomb Ogre',
@@ -1181,7 +1181,7 @@ describe('editor-surfaces.test.tsx', () => {
         body: '',
         data: {
           difficulty: 'old',
-          levelHint: '4',
+          levelHint: '', partyLevel: 4,
           monsters: [
             {
               name: 'Tomb Ogre',
@@ -1243,7 +1243,7 @@ describe('editor-surfaces.test.tsx', () => {
         body: '',
         data: {
           difficulty: 'old',
-          levelHint: '3',
+          levelHint: '', partyLevel: 3,
           monsters: [
             {
               name: 'Tomb Ogre',

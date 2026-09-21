@@ -18,7 +18,7 @@ import {
   missingRefsSummary,
   type MissingRefStrand,
 } from '@/features/campaign/components/missing-refs-summary';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, encounterDataFixture as encounterData } from '../db/helpers';
 
 function renderBannerAt(campaignId: string): void {
   render(
@@ -26,23 +26,6 @@ function renderBannerAt(campaignId: string): void {
       <MissingRefsBanner />
     </MemoryRouter>,
   );
-}
-
-function encounterData(monsters: unknown[]): Record<string, unknown> {
-  return {
-    difficulty: 'medium',
-    levelHint: '1',
-    monsters,
-    terrain: '',
-    tactics: '',
-    treasure: '',
-    mapImageId: null,
-    layout: null,
-    preset: 'standard',
-    locationKind: 'other',
-    siteShape: 'single',
-    budgetAdvisory: '',
-  };
 }
 
 beforeEach(clearDatabase);

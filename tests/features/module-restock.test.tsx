@@ -57,7 +57,7 @@ vi.mock('@/lib/toast', async (importOriginal) => {
 function encounterData(): EncounterArtifactData {
   return {
     difficulty: '',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters: [],
     terrain: '',
     tactics: '',

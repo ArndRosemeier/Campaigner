@@ -370,7 +370,7 @@ describe('D5/D8 — the encounter side may cite, and the library is read-only', 
     // the encounter side is not merely told not to cast, it CANNOT SPEAK it.
     const parsed = encounterDataSchema.parse({
       difficulty: 'medium',
-      levelHint: '2',
+      levelHint: '', partyLevel: 2,
       monsters: [
         {
           name: 'Goblin',

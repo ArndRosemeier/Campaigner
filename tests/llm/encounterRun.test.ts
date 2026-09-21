@@ -14,6 +14,8 @@ import {
   createPersona,
   createModule as buildModule,
   defaultSettings,
+  modulePartSchema,
+  moduleSpineSchema,
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
@@ -21,7 +23,7 @@ import {
   type Persona,
   type StatBlock,
 } from '@/domain';
-import { createModule as persistModule, deleteModule } from '@/db/moduleRepo';
+import { createModule as persistModule, deleteModule, saveModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
 import { runEngine } from '@/llm/runEngine';
 import {
@@ -113,7 +115,7 @@ const DRAFT = {
   suggestedTags: ['ambush'],
   body: '# Ambush at the ford',
   difficulty: 'deadly',
-  levelHint: '5',
+  levelHint: '', partyLevel: 5,
   monsters: [
     { name: 'Troll', count: 2, notes: 'cut off the retreat', sourceChunkIndex: 0 },
     { name: 'Cultist', count: 4, notes: 'netters', statBlock: monsterBlock() },
@@ -342,7 +344,10 @@ type EncounterCampaign = Awaited<ReturnType<typeof createCampaign>>;
 async function runSmithAgainst(
   campaign: EncounterCampaign,
   persona: Persona,
-  stub: { levelHint: string; moduleId?: Id },
+  /** The stub encounter's stored shape (docs/17 row 291): `partyLevel` is the
+   *  owner-set structured level a no-part encounter is sized at — the free-text
+   *  `levelHint` is kept as the deprecated, never-read key an old row carries. */
+  stub: { levelHint: string; partyLevel?: number; moduleId?: Id },
   sourceName: string,
 ): Promise<{ runId: Id; userContent: string }> {
   const stubArtifact = await createArtifact({
@@ -353,6 +358,7 @@ async function runSmithAgainst(
     data: {
       difficulty: '',
       levelHint: stub.levelHint,
+      ...(stub.partyLevel === undefined ? {} : { partyLevel: stub.partyLevel }),
       monsters: [],
       terrain: '',
       tactics: '',
@@ -425,6 +431,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     // The retrieve step ran a statblock-restricted second search (startRun
@@ -510,6 +518,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
       placementModuleId: module.id,
     });
     await vi.waitFor(async () => {
@@ -549,6 +559,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
     await vi.waitFor(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
@@ -600,6 +612,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
       placementModuleId: module.id,
     });
     await vi.waitFor(async () => {
@@ -621,8 +635,8 @@ describe('encounter runs (M3-B)', () => {
     const { campaign, persona } = await seed();
     const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
     searchRulesMock.mockResolvedValue([]);
-    const first = await runSmithAgainst(campaign, persona, { levelHint: '1' }, 'Goblin Boss');
-    const second = await runSmithAgainst(campaign, persona, { levelHint: '2' }, 'Goblin Boss');
+    const first = await runSmithAgainst(campaign, persona, { levelHint: '', partyLevel: 1 }, 'Goblin Boss');
+    const second = await runSmithAgainst(campaign, persona, { levelHint: '', partyLevel: 2 }, 'Goblin Boss');
 
     async function copiedEntryOf(runId: Id) {
       const stored = await getRun(runId);
@@ -662,6 +676,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
     await vi.waitFor(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
@@ -706,7 +722,7 @@ describe('encounter runs (M3-B)', () => {
       tags: ['module:Ruins'],
       links: [{ targetId: bridge.id, relation: 'at' }],
       data: {
-        difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
+        difficulty: '', levelHint: '', partyLevel: 5, monsters: [], terrain: '', tactics: '', treasure: '',
         mapImageId, layout: null, preset: 'dungeon', locationKind: 'wilderness', siteShape: 'single', budgetAdvisory: '',
       },
     });
@@ -775,6 +791,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A goblin ambush for level 1',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     // The draft prompt carries the roster section with the pack creature.
@@ -809,6 +827,8 @@ describe('encounter runs (M3-B)', () => {
       fallback: null,
     });
     const runId = await runEngine.startRun({
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
       campaign, persona, brief: 'A goblin ambush', autonomy: 'auto', pinnedChunkIds: [],
     });
     await vi.waitFor(() => {
@@ -837,6 +857,8 @@ describe('encounter runs (M3-B)', () => {
       fallback: null,
     });
     const runId = await runEngine.startRun({
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
       campaign, persona, brief: 'A goblin ambush with treasure', autonomy: 'auto', pinnedChunkIds: [],
     });
     await vi.waitFor(() => {
@@ -874,6 +896,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A shadow ambush',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -930,6 +954,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'The footbridge scene',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -997,6 +1023,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'The footbridge scene',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1057,6 +1085,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'The footbridge scene',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1105,6 +1135,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'Two risen lumberjacks, motionless on the narrow boggy footbridge',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
     await vi.waitFor(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
@@ -1169,6 +1201,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'The footbridge scene',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1213,6 +1247,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1268,6 +1304,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1324,6 +1362,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     await vi.waitFor(async () => {
@@ -1372,6 +1412,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'An orc ambush for level 1',
       autonomy: 'auto',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
     await vi.waitFor(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
@@ -1418,6 +1460,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A cult ambush',
       autonomy: 'manual',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
     await vi.waitFor(async () => {
       expect((await getRun(runId))?.status).toBe('awaiting_user');
@@ -1476,6 +1520,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A bridge ambush for level 5',
       autonomy: 'auto',
       pinnedChunkIds: [trollChunkId],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     // The draft prompt lists the PINNED chunk as citation excerpt [0].
@@ -1536,6 +1582,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A tavern wrestling match',
       autonomy: 'auto',
       pinnedChunkIds: [sectionChunk.id],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     // The pinned chunk still grounds the draft as an excerpt…
@@ -1595,6 +1643,8 @@ describe('encounter runs (M3-B)', () => {
       brief: 'A goblin warband with a troll',
       autonomy: 'auto',
       pinnedChunkIds: [goblinChunkId],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
     });
 
     // Citation order is deterministic: pinned first (pin order), then ranked
@@ -1627,7 +1677,7 @@ describe('encounter runs (M3-B)', () => {
   });
 
   describe('roster prompt-window ordering (12-BESTIARY-PACKS §7 ratified chain)', () => {
-    it('orders the window by distance to the target encounter levelHint and resolves names outside it', async () => {
+    it("orders the window by distance to the target encounter's OWNER-SET party level, and resolves names outside it", async () => {
       const { campaign, persona } = await seed();
       await seedLargePackBook(305);
       searchRulesMock.mockResolvedValue([]);
@@ -1635,67 +1685,108 @@ describe('encounter runs (M3-B)', () => {
       const { runId, userContent } = await runSmithAgainst(
         campaign,
         persona,
-        { levelHint: '300' },
-        'Creature 001',
+        { levelHint: '', partyLevel: 20 },
+        'Creature 305',
       );
 
-      // Closest 300 of levels 1..305 = levels 6..305: the five farthest
-      // (1..5) drop out, the near-target 301..305 are in — the ascending
-      // window would have shown exactly the opposite tail.
+      // Closest 300 of levels 1..305 around 20: only the five FARTHEST
+      // (301..305) drop out, so the visible set is 001..300 — while the ORDER
+      // leads with the target and its neighbors instead of level 1.
       expect(userContent).toContain('(roster truncated; 5 more)');
-      expect(userContent).toContain('Creature 305 (305)');
-      expect(userContent).not.toContain('Creature 001 (1)');
-      // Distance order around 300; the 299/301 tie breaks by level ascending.
-      expect(rosterLineAt(userContent, 'Creature 300 (300)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 299 (299)'),
+      expect(userContent).toContain('Creature 001 (1)');
+      expect(userContent).not.toContain('Creature 305 (305)');
+      // Distance order around 20; the 19/21 tie breaks by level ascending.
+      expect(rosterLineAt(userContent, 'Creature 020 (20)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 019 (19)'),
       );
-      expect(rosterLineAt(userContent, 'Creature 299 (299)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 301 (301)'),
+      expect(rosterLineAt(userContent, 'Creature 019 (19)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 021 (21)'),
       );
-      expect(rosterLineAt(userContent, 'Creature 301 (301)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 298 (298)'),
+      expect(rosterLineAt(userContent, 'Creature 021 (21)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 018 (18)'),
       );
 
-      // Resolution is NOT windowed: the draft cites Creature 001, which is
-      // outside the visible window, and the all-entries index resolves it.
+      // Resolution is NOT windowed: the draft cites Creature 305, which the
+      // window truncated away, and the all-entries index still resolves it.
       const storedRun = await getRun(runId);
       const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
       const { db } = await import('@/db/db');
-      const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 001');
+      const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 305');
       if (cited === undefined) throw new Error('cited chunk missing');
-      await expectCopiedRosterEntry(artifact.data.monsters[0], cited.id, 'Creature 001');
+      await expectCopiedRosterEntry(artifact.data.monsters[0], cited.id, 'Creature 305');
     });
 
-    it('parses levelHint variants at the run-engine boundary (first digit run wins)', async () => {
+    it('takes the window target from the PART that mentions the encounter (docs/17 row 291)', async () => {
       const { campaign, persona } = await seed();
       await seedLargePackBook(305);
       searchRulesMock.mockResolvedValue([]);
+      const draftModule = await persistModule(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'Descent Module',
+          concept: 'A descent through the ash halls.',
+          levelMin: 4,
+          levelMax: 6,
+          tone: '',
+          sizeDial: 'standard',
+        }),
+      );
+      // THE PART IS THE LEVEL. The pre-291 tests here parsed the encounter's
+      // free-text `levelHint` at the run-engine boundary ("4–6" → 4, "CR 5" →
+      // 5 — the first digit run), a pattern over a model-written string that
+      // docs/17 row 291 DELETES. The structured `levelBand` of the part that
+      // names the encounter is the one source now.
+      const module = await saveModule({
+        ...draftModule,
+        spine: moduleSpineSchema.parse({
+          premise: 'Ash premise.',
+          themes: [],
+          partPlan: [{ title: 'Ash Gate', levelBand: '4', synopsis: '', levelUpTrigger: '' }],
+        }),
+        parts: [
+          modulePartSchema.parse({
+            planIndex: 0,
+            markdown: 'The party reaches [[Window Probe]] beyond the doors.',
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+          }),
+        ],
+      });
 
-      const band = await runSmithAgainst(campaign, persona, { levelHint: '4–6' }, 'Creature 305');
-      // "4–6" parses to 4: the window leads with level 4 and its neighbors,
-      // and the far tail (301..305) is truncated away.
-      expect(rosterLineAt(band.userContent, 'Creature 004 (4)')).toBeLessThan(
-        rosterLineAt(band.userContent, 'Creature 003 (3)'),
+      const { userContent } = await runSmithAgainst(
+        campaign,
+        persona,
+        { levelHint: '', moduleId: module.id },
+        'Creature 305',
       );
-      expect(rosterLineAt(band.userContent, 'Creature 003 (3)')).toBeLessThan(
-        rosterLineAt(band.userContent, 'Creature 005 (5)'),
-      );
-      expect(band.userContent).toContain('Creature 001 (1)');
-      expect(band.userContent).not.toContain('Creature 305 (305)');
-      expect(band.userContent).toContain('(roster truncated; 5 more)');
 
-      const cr = await runSmithAgainst(campaign, persona, { levelHint: 'CR 5' }, 'Creature 305');
-      // "CR 5" parses to 5 — the first digit run anywhere in the hint.
-      expect(rosterLineAt(cr.userContent, 'Creature 005 (5)')).toBeLessThan(
-        rosterLineAt(cr.userContent, 'Creature 004 (4)'),
+      // The window leads with the PART's exact level 4 and its neighbors.
+      expect(rosterLineAt(userContent, 'Creature 004 (4)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 003 (3)'),
       );
+      expect(rosterLineAt(userContent, 'Creature 003 (3)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 005 (5)'),
+      );
+      expect(userContent).toContain('Creature 001 (1)');
+      expect(userContent).not.toContain('Creature 305 (305)');
     });
 
-    it('falls back to the owning module level-band midpoint when the levelHint has no digits', async () => {
+    it('REFUSES loudly when no part mentions the encounter and no owner-set level exists (the midpoint is GONE)', async () => {
       const { campaign, persona } = await seed();
       await seedLargePackBook(305);
       searchRulesMock.mockResolvedValue([]);
+      // An INLINE stat block: this test is about the level refusal at
+      // finalize, not about citation resolution.
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({
+          ...DRAFT,
+          monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', statBlock: monsterBlock() }],
+        }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
       const module = await persistModule(
         buildModule({
           campaignId: campaign.id,
@@ -1707,56 +1798,40 @@ describe('encounter runs (M3-B)', () => {
           sizeDial: 'standard',
         }),
       );
-
-      const { runId, userContent } = await runSmithAgainst(
-        campaign,
-        persona,
-        { levelHint: '', moduleId: module.id },
-        'Creature 001',
-      );
-
-      // Midpoint (18+20)/2 = 19: the window leads with level 19 and its
-      // neighbors — not the ascending level 1 — while the closest-300 set
-      // (levels 1..300) is unchanged and still truncated by 5.
-      expect(rosterLineAt(userContent, 'Creature 019 (19)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 018 (18)'),
-      );
-      expect(rosterLineAt(userContent, 'Creature 018 (18)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 020 (20)'),
-      );
-      expect(rosterLineAt(userContent, 'Creature 020 (20)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 017 (17)'),
-      );
-      expect(userContent).toContain('Creature 001 (1)');
-      expect(userContent).toContain('(roster truncated; 5 more)');
-      await vi.waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
+      const stub = await createArtifact({
+        campaignId: campaign.id,
+        moduleId: module.id,
+        kind: 'encounter',
+        name: 'Window Probe',
+        body: 'prose.',
+        data: {
+          difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+          siteShape: 'single', budgetAdvisory: '',
+        },
       });
-    });
 
-    it('keeps the ascending window when neither a levelHint nor a module band applies', async () => {
-      const { campaign, persona } = await seed();
-      await seedLargePackBook(305);
-      searchRulesMock.mockResolvedValue([]);
-
-      const { userContent } = await runSmithAgainst(
+      // The module's RANGE no longer becomes a level: `(18 + 20) / 2 = 19` was
+      // the last midpoint in the encounter path and is deleted (docs/17 row
+      // 291). An owned module whose text never names the encounter, with no
+      // owner-set party level, FAILS BY NAME instead of silently ordering the
+      // window and sizing the fight at an invented number.
+      const runId = await runEngine.startRun({
         campaign,
         persona,
-        { levelHint: '' },
-        'Creature 305',
+        brief: 'A probe encounter',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+        targetArtifactId: stub.id,
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('failed');
+      });
+      expect((await getRun(runId))?.errorMessage).toContain(
+        'No party level is resolvable for "Window Probe"',
       );
-
-      // No target anywhere in the chain: the window is the historical
-      // level/name ascending order, byte-identical to the pre-chain behavior.
-      expect(rosterLineAt(userContent, 'Creature 001 (1)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 002 (2)'),
-      );
-      expect(rosterLineAt(userContent, 'Creature 002 (2)')).toBeLessThan(
-        rosterLineAt(userContent, 'Creature 003 (3)'),
-      );
-      expect(userContent).not.toContain('Creature 305 (305)');
-      expect(userContent).toContain('(roster truncated; 5 more)');
     });
+
 
     it('fails loudly when a module-scoped target references a module that does not exist', async () => {
       const { campaign, persona } = await seed();
@@ -1831,6 +1906,8 @@ describe('encounter runs (M3-B)', () => {
         brief: 'A bridge ambush for level 5',
         autonomy: 'auto',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
       });
       await vi.waitFor(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
@@ -1876,6 +1953,8 @@ describe('encounter runs (M3-B)', () => {
         brief: 'A troll bridge',
         autonomy: 'auto',
         pinnedChunkIds: [],
+        // The create dialog's structured party level (docs/17 row 291).
+        encounterPartyLevel: 5,
       });
       await vi.waitFor(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
@@ -1905,7 +1984,7 @@ describe('encounter runs (M3-B)', () => {
         body: '',
         data: {
           difficulty: 'deadly',
-          levelHint: '5',
+          levelHint: '', partyLevel: 5,
           monsters: [{ name: 'Troll', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',
@@ -1983,7 +2062,7 @@ describe('encounter runs (M3-B)', () => {
         body: '',
         data: {
           difficulty: 'deadly',
-          levelHint: '5',
+          levelHint: '', partyLevel: 5,
           monsters: [
             { name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
             { name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
@@ -2093,7 +2172,7 @@ describe('encounter runs (M3-B)', () => {
         body: '',
         data: {
           difficulty: 'deadly',
-          levelHint: '5',
+          levelHint: '', partyLevel: 5,
           monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: '',
           tactics: '',

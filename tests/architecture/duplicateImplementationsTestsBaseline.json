@@ -710,14 +710,6 @@
       ]
     },
     {
-      "hash": "95c74619aee67166",
-      "reason": "Two encounter-data builders (`encounterData` in missing-refs-banner, `encounterDataWith` in exportImport) with the same medium encounter shape; a shared encounter fixture helper is a fold candidate.",
-      "sites": [
-        "tests/features/missing-refs-banner.test.tsx:encounterData",
-        "tests/lib/exportImport.test.ts:encounterDataWith"
-      ]
-    },
-    {
       "hash": "98c795cdaff32cef",
       "reason": "Three `attachOneImage` helpers (deleteArtifactsOfKind, deleteCampaignWorkspace, removeAllGeneratedContent); a shared image-attach fixture helper is a real fold candidate.",
       "sites": [
@@ -1113,15 +1105,6 @@
       "sites": [
         "tests/ingest/packs/dnd5e-equipment.test.ts:firstItem",
         "tests/ingest/packs/pf2e-equipment.test.ts:firstItem"
-      ]
-    },
-    {
-      "hash": "f0f97fe51cc73df8",
-      "reason": "Three React harnesses inside encounter-form.test.tsx (`StatefulEncounterForm` twice, `FillGradeHarness`); one local form harness is a real fold candidate.",
-      "sites": [
-        "tests/features/encounter-form.test.tsx:StatefulEncounterForm",
-        "tests/features/encounter-form.test.tsx:FillGradeHarness",
-        "tests/features/encounter-form.test.tsx:StatefulEncounterForm"
       ]
     },
     {

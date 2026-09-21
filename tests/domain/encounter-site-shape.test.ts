@@ -44,7 +44,7 @@ function layoutWithRooms(count: number): NonNullable<EncounterArtifactData['layo
 function baseData(overrides: Partial<EncounterArtifactData> = {}): Record<string, unknown> {
   return {
     difficulty: '',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters: [],
     terrain: '',
     tactics: '',
@@ -241,7 +241,7 @@ describe('legacy complex budget note (docs/11 D12, amended by the fill-grade arc
 describe('fillGrade field (docs/11 D12 amendment — additive optional, no Dexie bump)', () => {
   const baseData = {
     difficulty: 'hard',
-    levelHint: '4',
+    levelHint: '', partyLevel: 4,
     monsters: [],
     terrain: '',
     tactics: '',

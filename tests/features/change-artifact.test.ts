@@ -107,7 +107,7 @@ async function seedEncounter(world: World): Promise<string> {
     body: 'The vault.',
     data: {
       difficulty: '',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [],
       terrain: '',
       tactics: '',

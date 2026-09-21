@@ -10,7 +10,7 @@ import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
 import { sameAliasName } from '@/domain';
-import { parseLevelSort, parseRosterTargetLevel } from '@/llm/encounterRoster';
+import { parseLevelSort } from '@/llm/encounterRoster';
 import { levelWordsPattern } from '@/llm/language';
 import {
   ENTITY_LEVEL_HINT_HIERARCHY,
@@ -274,23 +274,8 @@ export function moduleStatedLevel(
 }
 
 /**
- * The referencing part's EXACT level for an encounter mention (docs/11):
- * the first module part (plan order) whose markdown carries the encounter's
- * `[[Name]]` mention supplies its `levelBand` as the exact party level —
- * parts carry single levels, so a "2–4 module" is a 2-part, a 3-part and a
- * 4-part, never band math. A pathological multi-level band string on one
- * part deterministically parses to its LOW end (the first digit run).
- *
- * Returns undefined when there is nothing honest to report — no mention in
- * any part (the premise carries no levelBand, so a premise-only mention
- * does not count), no spine entry for the containing part, or a band with
- * no digits — and the caller keeps today's free-text fallback chain
- * (`parseRosterTargetLevel` over `levelHint`/brief). Never throws for data
- * conditions: a missing level is a legitimate state, not a failure.
- */
-/**
  * The FIRST part (plan order) whose markdown carries `[[name]]` — the ONE
- * "which part mentions this entity" rule that `partLevelForMention` and
+ * "which part mentions this entity" rule that `partLevelMentionFor` and
  * `entityProseLevel` both ask (docs/17 row 285, AGENTS rule 4), so a figure's
  * STRUCTURED band and its PROSE sentence read the SAME part and cannot
  * disagree about where its paragraph is. `undefined` when no part mentions it.
@@ -308,18 +293,57 @@ function firstPartMentioning(
   );
 }
 
-export function partLevelForMention(
+/**
+ * The part that MENTIONS an entity, with BOTH facts a surface needs: its plan
+ * TITLE and its EXACT level (docs/17 row 291). `partLevelForMention` is this
+ * function's level half, so "which part mentions it" and "what level is it"
+ * can never be answered twice — the editor names the part the run sized the
+ * fight from, and it reads the SAME pick.
+ *
+ * THE LEVEL IS THE PART'S EXACT LEVEL, never band math: a module generated for
+ * a range builds exactly one part per level, each with an EXACT `levelBand`
+ * ("2–4" is a 2-part, a 3-part and a 4-part). A pathological multi-level band
+ * string on one part deterministically parses to its LOW end (the first digit
+ * run) — a field the app itself defines, so reading it is a syntax read, never
+ * a prose read. `undefined` when no part mentions the name, the spine has no
+ * entry for the containing part, or its band carries no digits.
+ */
+export interface PartMention {
+  /** The mentioning part's plan title — the part NAMED on the form. */
+  partTitle: string;
+  /** The mentioning part's EXACT level (its structured `levelBand`). */
+  level: number;
+}
+
+export function partLevelMentionFor(
   module: Pick<Module, 'spine' | 'parts'>,
   name: string,
-): number | undefined {
+): PartMention | undefined {
   if (name.trim() === '') return undefined;
   // FIRST mention wins: the containing part decides, deterministically.
   const part = firstPartMentioning(module, name);
   if (part === undefined) return undefined;
-  const band = module.spine?.partPlan[part.planIndex]?.levelBand;
-  if (band === undefined) return undefined;
-  const digits = /(\d+)/.exec(band)?.[1];
-  return digits === undefined ? undefined : Number(digits);
+  const plan = module.spine?.partPlan[part.planIndex];
+  if (plan === undefined) return undefined;
+  const digits = /(\d+)/.exec(plan.levelBand)?.[1];
+  return digits === undefined ? undefined : { partTitle: plan.title, level: Number(digits) };
+}
+
+/**
+ * The referencing part's EXACT level for an encounter mention (docs/17 rows 11
+ * and 291) — `partLevelMentionFor`'s level half, the ONE answer to "what level
+ * is this encounter made for" when a part mentions it. `undefined` when there
+ * is no honest answer (no part mentions it, no spine entry for the containing
+ * part, a band with no digits), which is a legitimate state: the caller then
+ * reads the OWNER-SET structured level (`partyLevel` /
+ * `StartRunInput.encounterPartyLevel`) and REFUSES loudly when that is unset
+ * too. Never throws for data conditions.
+ */
+export function partLevelForMention(
+  module: Pick<Module, 'spine' | 'parts'>,
+  name: string,
+): number | undefined {
+  return partLevelMentionFor(module, name)?.level;
 }
 
 /**
@@ -402,22 +426,38 @@ export function entityProseLevel(
 }
 
 /**
- * The ONE party-level resolver an encounter's roster WINDOW and the
- * Cartographer's brief share (docs/17 row 180 centralization): the referencing
- * part's exact level when the module text mentions the encounter, else the
- * encounter's own free-text level hint. Both callers read THIS function, so
- * "ordered by level distance to the target" and "budgeted at the party level"
- * cannot come to mean two different levels for the same encounter (the
- * two-resolver divergence the policy arc folded). Undefined when neither
- * source yields a digit — a legitimate state, never an invented level.
+ * The ONE party-level resolver every encounter-sizing path asks — the roster
+ * WINDOW, the Cartographer's brief guidance, the Smith's content guidance and
+ * the room `targetLevel` stamping (docs/17 rows 180 and 291).
+ *
+ * THE PART IS THE LEVEL. A module generated for a level range builds exactly
+ * one part per level, each with an EXACT `levelBand`, and the first part (plan
+ * order) whose markdown carries the encounter's `[[Name]]` supplies ITS level.
+ * There is no midpoint, no band arithmetic and no free text: an earlier version
+ * fell through to a regex over a model-written `levelHint` string and, in one
+ * fallback, to `(levelMin + levelMax) / 2` — two invented answers to a question
+ * the part already answers.
+ *
+ * When NO part mentions the encounter (a campaign-level encounter, a module
+ * with no parts, a module that never names it) the ONLY other honest source is
+ * the OWNER's structured number — `EncounterArtifactData.partyLevel` for an
+ * existing row, `StartRunInput.encounterPartyLevel` for a run that creates one.
+ * `undefined` means the owner has not stated one, and the SIZING steps refuse
+ * loudly rather than invent it (AGENTS rule 1); the context-only callers (the
+ * roster window's ordering, a guidance line) simply carry no level.
+ *
+ * Every caller reads THIS function, so "ordered by level distance to the
+ * target", "budgeted at the party level" and "the rooms default to" cannot come
+ * to mean three different levels for the same encounter (the resolver
+ * divergence the policy arc folded, docs/17 row 180).
  */
 export function encounterPartyLevel(
   module: Pick<Module, 'spine' | 'parts'> | undefined,
   encounterName: string,
-  levelHint: string,
+  ownerSetLevel: number | undefined,
 ): number | undefined {
-  const fromParts = module === undefined ? undefined : partLevelForMention(module, encounterName);
-  return fromParts ?? parseRosterTargetLevel(levelHint);
+  const fromPart = module === undefined ? undefined : partLevelForMention(module, encounterName);
+  return fromPart ?? ownerSetLevel;
 }
 
 /**
@@ -760,7 +800,7 @@ export function checkRoomBudget(room: BudgetRoomInput): RoomBudgetVerdict {
       sumLevels: sum,
       advisory:
         `Room "${room.roomName}": no target level is derivable (the room carries no targetLevel and the ` +
-        'encounter\'s level hint has no digits) — challenge not budget-verified. Set a target level in the editor.',
+        "encounter states no party level) — challenge not budget-verified. Set the Party level in the editor.",
     };
   }
   const expectation = room.complex && room.fillGrade !== undefined

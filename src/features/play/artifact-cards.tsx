@@ -186,9 +186,15 @@ export function EncounterCard({
             {data.difficulty}
           </Badge>
         )}
-        {data.levelHint !== '' && (
+        {/* THE OWNER-SET PARTY LEVEL (docs/17 row 291). The deprecated stored
+            `levelHint` was a model-written free-text level and is never read
+            as a level again — this badge printed it as if it were one. A
+            part-derived level needs the owning module row, which this card
+            does not hold, so it renders nothing rather than a stale string
+            (docs/18 §5 records the residual). */}
+        {data.partyLevel !== undefined && (
           <Badge variant="outline" className="h-auto max-w-full whitespace-normal">
-            {data.levelHint}
+            {String(data.partyLevel)}
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1.5">

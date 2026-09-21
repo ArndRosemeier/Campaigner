@@ -78,7 +78,7 @@ const BRIEF = {
   summary: 'Skeletons in the crypt.',
   body: '# Crypt\nRoom prose.',
   difficulty: 'medium',
-  levelHint: '3',
+  levelHint: '', partyLevel: 3,
   terrain: '',
   tactics: '',
   treasure: '',
@@ -148,7 +148,7 @@ async function seedParkedEncounterRun(campaignName: string): Promise<{
     name: 'Crypt of the delete',
     data: {
       difficulty: '',
-      levelHint: '',
+      levelHint: '', partyLevel: 3,
       monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
       terrain: '',
       tactics: '',
@@ -182,6 +182,8 @@ async function seedParkedEncounterRun(campaignName: string): Promise<{
     autonomy: 'auto',
     brief: `Generate a room layout and battlemap for "${encounter.name}".`,
     pinnedChunkIds: [],
+    // The create dialog's structured party level (docs/17 row 291).
+    encounterPartyLevel: 3,
     targetArtifactId: encounter.id,
     encounterMapAspect: defaultSettings().encounterMapAspect,
     unattended: true,

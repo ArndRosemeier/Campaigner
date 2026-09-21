@@ -249,7 +249,7 @@ describe('deriveAutomationDeviation', () => {
       body: '',
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: [
           {
             name: 'Goblin',
@@ -427,7 +427,7 @@ describe('the two actions answer different questions', () => {
         body: '',
         data: {
           difficulty: 'medium',
-          levelHint: '1',
+          levelHint: '', partyLevel: 1,
           monsters: [],
           terrain: '',
           tactics: '',

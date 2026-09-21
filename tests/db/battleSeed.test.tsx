@@ -153,7 +153,7 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
     name: 'Bridge ambush',
     data: {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: (over.monsters ?? []).map((monster) => ({
         ...(monster.entry ?? {}),
         name: monster.name,

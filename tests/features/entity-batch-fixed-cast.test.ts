@@ -192,7 +192,7 @@ describe('encounter batch briefs pin the landed fixed cast', () => {
       links: [],
       data: {
         difficulty: '',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: [],
         terrain: '',
         tactics: '',

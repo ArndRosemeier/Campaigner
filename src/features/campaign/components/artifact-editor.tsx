@@ -202,6 +202,18 @@ export function ArtifactEditor({
   }, [draft]);
 
   /**
+   * The encounter's owning module, LIVE (docs/17 row 291): the editor's Party
+   * level field shows the EXACT level of the part that mentions this encounter,
+   * so it must follow the module row rather than a snapshot — a part rewritten
+   * elsewhere moves the level the run will use, and the form has to say so.
+   * `undefined` while the row loads, `null` for a campaign-level encounter.
+   */
+  const owningModule = useLiveQuery(
+    async () => (artifact.moduleId === null ? null : ((await getModule(artifact.moduleId)) ?? null)),
+    [artifact.moduleId],
+  );
+
+  /**
    * Adopts a row whose stored state moved underneath the draft (a revision
    * restore, or a write the editor itself made): the draft AND the last-saved
    * snapshot move to the fresh row in one step, so the pending-autosave effect
@@ -510,6 +522,8 @@ export function ArtifactEditor({
                 data={draft.data}
                 campaignArtifacts={campaignArtifacts}
                 campaignSystem={campaignSystem}
+                name={draft.name}
+                module={owningModule}
                 onChange={(data) => {
                   setDraft((previous) => ({ ...previous, kind: 'encounter', data }));
                 }}

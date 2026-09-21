@@ -134,7 +134,7 @@ async function seed(): Promise<void> {
     body: 'The gate fight happens at high tide.',
     data: encounterDataSchema.parse({
       difficulty: 'hard',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       terrain: 'Flooded flagstones.',
       tactics: 'They fight from the ledges.',
       treasure: 'The tide-hoard.',

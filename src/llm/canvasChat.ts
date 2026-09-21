@@ -1475,7 +1475,14 @@ function encounterKindLines(artifact: EncounterRow, extras: ArtifactDetailsExtra
   const lines: string[] = [];
   const facts = [
     `difficulty ${data.difficulty === '' ? '(none recorded)' : data.difficulty}`,
-    `level hint ${data.levelHint === '' ? '(none recorded)' : data.levelHint}`,
+    // THE OWNER-SET PARTY LEVEL (docs/17 row 291). The deprecated stored
+    // `levelHint` was a model-written free-text level and is never read as a
+    // level again; a module encounter gets its level from the part that
+    // mentions it, which this artifact-scoped renderer cannot see, so it says
+    // so rather than printing a stale string (docs/18 §5 records the residual).
+    data.partyLevel === undefined
+      ? 'party level (not set on the row — a module part that mentions this encounter decides it)'
+      : `party level ${String(data.partyLevel)}`,
     `shape ${data.siteShape === 'complex' ? 'complex — a multi-room dungeon played along the layout path' : 'single — one arena'}`,
     `map preset ${data.preset}`,
     `location kind ${data.locationKind}`,

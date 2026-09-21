@@ -135,7 +135,7 @@ describe('CampaignPickerPage import dependencies', () => {
       name: 'Goblin ambush',
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: [
           {
             name: 'Vexra',

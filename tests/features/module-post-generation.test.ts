@@ -160,7 +160,7 @@ async function seedEncounter(
     body: '',
     data: {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters,
       terrain: '',
       tactics: '',
@@ -389,7 +389,7 @@ describe('runModulePostGeneration', () => {
       body: '',
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: [],
         terrain: '',
         tactics: '',

@@ -9,16 +9,25 @@ import type { AnyArtifact,
   FactionArtifactData,
   GameSystem,
   LocationArtifactData,
+  Module,
   NpcArtifactData,
   PcArtifactData,
   PlotArcArtifactData,
   StatBlock,
 } from '@/domain';
-import { blankStatBlock, CANONICAL_ROOM_MARKERS, npcDataIsCastCreature, npcStatsAreAuthored } from '@/domain';
+import {
+  blankStatBlock,
+  CANONICAL_ROOM_MARKERS,
+  ENCOUNTER_PARTY_LEVEL_MAX,
+  ENCOUNTER_PARTY_LEVEL_MIN,
+  npcDataIsCastCreature,
+  npcStatsAreAuthored,
+} from '@/domain';
 import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { AuthoredStatBlock, BorrowedStatBlock } from '@/features/campaign/components/borrowed-stats';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
+import { partLevelMentionFor } from '@/llm/roomBudget';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -534,10 +543,30 @@ export interface EncounterFormProps {
   campaignArtifacts: readonly AnyArtifact[];
   /** The campaign's game system — scopes the rulebook stat-block dialog. */
   campaignSystem: GameSystem;
+  /**
+   * The encounter's ARTIFACT NAME — the mention the party-level part lookup
+   * reads (docs/17 row 291). Passed separately from `data` because the name
+   * lives on the artifact row, not in the kind form's data.
+   */
+  name: string;
+  /**
+   * The encounter's owning MODULE row, live (docs/17 row 291): the party level
+   * is the EXACT level of the first part whose text mentions this encounter.
+   * `null` = this encounter is campaign-level; `undefined` = the module row is
+   * still loading (the field renders its owner-set form until it resolves).
+   */
+  module: Module | null | undefined;
   onChange: (data: EncounterArtifactData) => void;
 }
 
-export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChange }: EncounterFormProps) {
+export function EncounterForm({
+  data,
+  campaignArtifacts,
+  campaignSystem,
+  name,
+  module,
+  onChange,
+}: EncounterFormProps) {
   function patch(next: Partial<EncounterArtifactData>): void {
     onChange({ ...data, ...next });
   }
@@ -549,6 +578,15 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
   const layout = data.layout;
   const canBeSingle = layout == null || (layout.rooms.length === 1 && layout.corridors.length === 0);
   const canBeComplex = layout == null || layout.rooms.length >= 2;
+
+  // THE PARTY LEVEL (docs/17 row 291): a module part that MENTIONS this
+  // encounter IS the level the fight is made for — derived, shown read-only,
+  // named. Only when NO part mentions it does the owner set it, through the
+  // STRUCTURED number below (AGENTS rule 5: never a free-text level). The
+  // run refuses loudly when neither exists, so the field states which case
+  // the row is in rather than leaving the owner guessing.
+  const partMention = module == null ? undefined : partLevelMentionFor(module, name);
+  const partyLevelValue = data.partyLevel === undefined ? '' : String(data.partyLevel);
 
   return (
     <div className="flex flex-col gap-3">
@@ -572,14 +610,55 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           />
         </Field>
         <Field label="Party level">
-          <Input
-            value={data.levelHint}
-            placeholder="e.g. 3"
-            className="h-7 text-sm"
-            onChange={(event) => {
-              patch({ levelHint: event.target.value });
-            }}
-          />
+          {partMention === undefined ? (
+            <>
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={ENCOUNTER_PARTY_LEVEL_MIN}
+                max={ENCOUNTER_PARTY_LEVEL_MAX}
+                step={1}
+                value={partyLevelValue}
+                placeholder={`${String(ENCOUNTER_PARTY_LEVEL_MIN)}–${String(ENCOUNTER_PARTY_LEVEL_MAX)}`}
+                className="h-7 text-sm"
+                data-testid="encounter-party-level"
+                onChange={(event) => {
+                  const raw = event.target.value.trim();
+                  if (raw === '') {
+                    patch({ partyLevel: undefined });
+                    return;
+                  }
+                  // A STRUCTURED number, validated here exactly as the stored
+                  // schema validates it: a non-integer or an out-of-range value
+                  // is never written (the boundary would reject it), and it is
+                  // never silently clamped into a different level (AGENTS
+                  // rule 1). The controlled value therefore keeps the last
+                  // valid number on screen.
+                  const value = Number(raw);
+                  if (!Number.isInteger(value)) return;
+                  if (value < ENCOUNTER_PARTY_LEVEL_MIN || value > ENCOUNTER_PARTY_LEVEL_MAX) return;
+                  patch({ partyLevel: value });
+                }}
+              />
+              <span className="text-[11px] font-normal text-muted-foreground">
+                No module part mentions this encounter — set the exact party level the fight is made for.
+              </span>
+            </>
+          ) : (
+            <>
+              <Input
+                readOnly
+                value={String(partMention.level)}
+                aria-label="Party level"
+                title="Derived from the module part that mentions this encounter — edit the part to change it."
+                className="h-7 text-sm"
+                data-testid="encounter-party-level"
+              />
+              <span className="text-[11px] font-normal text-muted-foreground">
+                Part “{partMention.partTitle}” mentions this encounter — its exact level is the party level.
+              </span>
+            </>
+          )}
         </Field>
       </div>
       <MonsterListEditor

@@ -117,6 +117,12 @@ async function startRun(
   }
   await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
   await user.click(await screen.findByRole('option', { name: persona.name }));
+  // A FRESH encounter needs the owner-set structured party level (docs/17 row
+  // 291): the create dialog's field is the ONE source for an encounter no
+  // module part mentions, and the panel refuses to start without it. The field
+  // only renders for an encounter persona.
+  const partyLevel = screen.queryByTestId('encounter-party-level');
+  if (partyLevel !== null) await user.type(partyLevel, '3');
   await user.type(screen.getByLabelText('Brief'), 'a goblin alchemist boss for a level 3 party');
   await user.click(screen.getByTestId('start-run'));
 }
@@ -450,7 +456,7 @@ describe('PersonaPanel run lifecycle', () => {
         summary: 'Cultists guard a ruined gate.',
         body: '# Ash Gate\nA room-by-room battle.',
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         terrain: '',
         tactics: '',
         treasure: '',
@@ -579,7 +585,7 @@ describe('PersonaPanel run lifecycle', () => {
         summary: 'Cultists guard a ruined gate.',
         body: '# Ash Gate\nA room-by-room battle.',
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         terrain: '',
         tactics: '',
         treasure: '',

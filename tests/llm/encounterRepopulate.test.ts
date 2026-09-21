@@ -80,7 +80,7 @@ const REPOPULATE_BRIEF = {
   summary: 'A four-room crypt under the ash temple.',
   body: '# Ash Temple\nFour rooms of cultists.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'crypt stone',
   tactics: 'hold the lines',
   treasure: 'cult hoard',
@@ -232,7 +232,7 @@ async function seedComplexTarget(
     body: 'Existing prose.',
     links: [],
     data: {
-      difficulty: 'old', levelHint: '4',
+      difficulty: 'old', levelHint: '', partyLevel: 4,
       monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId, preset: 'dungeon', locationKind: 'dungeon',
@@ -288,7 +288,7 @@ async function seedSingleTarget(
     body: 'Gate prose.',
     links: [],
     data: {
-      difficulty: 'old', levelHint: '3',
+      difficulty: 'old', levelHint: '', partyLevel: 3,
       monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'standard', locationKind: 'other',
@@ -314,7 +314,7 @@ function smithDraft(overrides: Record<string, unknown> = {}) {
     suggestedTags: ['ambush'],
     body: '# Ambush at the ford',
     difficulty: 'deadly',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters: [
       { name: 'Ash Cultist', count: 2, notes: 'cut off the retreat', treasure: '', statBlock: INLINE_STATBLOCK },
     ],
@@ -811,7 +811,7 @@ describe('singles keep today\u2019s behavior under the new buttons', () => {
       summary: 'A gate fight.',
       body: '# Gate\nOne fight.',
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       terrain: 'gatehouse',
       tactics: 'hold',
       treasure: 'none',
@@ -862,7 +862,7 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
       sizeDial: 'standard', difficulty: 'much-harder',
     }));
     const target = await seedSingleTarget(
-      campaign.id, goblinChunkId, { levelHint: '1', difficulty: 'normal' }, module.id,
+      campaign.id, goblinChunkId, { levelHint: '', partyLevel: 1, difficulty: 'normal' }, module.id,
     );
     chatMock.mockResolvedValue({ text: JSON.stringify(smithDraft()), modelUsed: 'test-model', fallback: null });
 
@@ -884,7 +884,7 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
     expect(prompt).toContain('(targetLevel + 2) × 2');
   });
 
-  it("keeps the row's own level and difficulty when the reply claims level 9, and warns loudly", async () => {
+  it("sizes the fight from the row's OWN party level and keeps its difficulty when the reply claims otherwise", async () => {
     const { campaign } = await setup();
     const goblinChunkId = await seedPackBook();
     const module = await saveModule(createModule({
@@ -897,13 +897,15 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
     const target = await seedSingleTarget(
       campaign.id,
       goblinChunkId,
-      { levelHint: '1', difficulty: 'normal', layout: singleRoomLayoutFixture() },
+      { levelHint: '', partyLevel: 1, difficulty: 'normal', layout: singleRoomLayoutFixture() },
       module.id,
     );
-    // The mocked reply claims level 9 and fields two level-9 creatures.
+    // The mocked reply claims difficulty "deadly" and fields two level-9
+    // creatures. It has NO level field to claim any more (docs/17 row 291:
+    // the model stopped writing an encounter level), which is exactly why the
+    // row's structured `partyLevel` is the one source.
     chatMock.mockResolvedValue({
       text: JSON.stringify(smithDraft({
-        levelHint: '9',
         difficulty: 'deadly',
         monsters: [
           { name: 'Ash Cultist', count: 2, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '9' } },
@@ -920,31 +922,36 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
     // WARN-AND-ACCEPT is preserved (docs/11 D14): the roster DID land.
     expect(after.data.monsters).toHaveLength(1);
     expect(after.data.monsters[0]?.name).toBe('Ash Cultist');
-    // The row's own level and difficulty are inputs: the reply did not
-    // rewrite them.
-    expect(after.data.levelHint).toBe('1');
+    // The row's own STRUCTURED level and difficulty are inputs: the reply did
+    // not rewrite them, and the deprecated stored string is never read as a
+    // level (docs/17 row 291) and never repopulated from the reply.
+    expect(after.data.partyLevel).toBe(1);
+    expect(after.data.levelHint).toBe('');
     expect(after.data.difficulty).toBe('normal');
-    // The room was stamped from the ENCOUNTER's level (1), not the reply's 9.
+    // The room was stamped from the ENCOUNTER's resolved level (1), not the
+    // reply's level-9 creatures.
     expect(after.data.layout?.rooms[0]?.targetLevel).toBe(1);
     // The over-band advisory is present and visible, computed against the
     // row's own band (target level 1 ⇒ at most 3 creature-levels): two
     // level-9 creatures sum to 18.
     expect(after.data.budgetAdvisory).toContain('ships over its challenge budget');
     expect(after.data.budgetAdvisory).toContain('a band of at most 3 for target level 1');
-    // The kept value is spoken LOUDLY, never silently preserved.
-    expect(after.data.budgetAdvisory).toContain("the encounter's OWN level is kept");
-    expect(after.data.budgetAdvisory).toContain('designed at level 9');
+    // The kept DIFFICULTY is spoken LOUDLY, never silently preserved. There is
+    // NO level-drift sentence any more: the reply carries no level to disagree
+    // with (this arm pinned the deleted free-text drift notice).
     expect(after.data.budgetAdvisory).toContain('labelled this fight "deadly"');
+    expect(after.data.budgetAdvisory).not.toContain('designed at level');
+    expect(after.data.budgetAdvisory).not.toContain("OWN level is kept");
   });
 
-  it('a FRESH encounter generation still writes the model\'s level and difficulty (the lane this must not break)', async () => {
+  it('a FRESH encounter generation records the create-dialog party level and the drafted difficulty', async () => {
     const { campaign } = await setup();
     await seedPackBook();
     const { db } = await import('@/db');
     const smith = await db.personas.where('slug').equals('encounter-smith').first();
     if (smith === undefined) throw new Error('smith missing');
     chatMock.mockResolvedValue({
-      text: JSON.stringify(smithDraft({ levelHint: '9', difficulty: 'deadly' })),
+      text: JSON.stringify(smithDraft({ difficulty: 'deadly' })),
       modelUsed: 'test-model',
       fallback: null,
     });
@@ -955,15 +962,18 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
       autonomy: 'auto',
       brief: 'Design a brand new fight.',
       pinnedChunkIds: [],
+      // The create dialog's STRUCTURED party level (docs/17 row 291): a fresh
+      // encounter has no row yet and no module part mentions it, so this IS
+      // the ONE source — the reply no longer carries a level at all.
+      encounterPartyLevel: 9,
     });
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
     const created = await getArtifact((await getRun(runId))?.resultArtifactId ?? '');
     if (created?.kind !== 'encounter') throw new Error('fresh encounter missing');
-    // No target row states a level, so the model's values are the row's —
-    // the preserve rule is deliberately target-gated.
-    expect(created.data.levelHint).toBe('9');
+    expect(created.data.partyLevel).toBe(9);
+    expect(created.data.levelHint).toBe('');
     expect(created.data.difficulty).toBe('deadly');
   });
 });

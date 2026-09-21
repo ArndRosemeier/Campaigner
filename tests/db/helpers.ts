@@ -95,3 +95,32 @@ export async function recentsAfterSettlingWrites(): Promise<string[]> {
   await updateSettings({});
   return (await getSettings()).recentChatModels;
 }
+
+/**
+ * A single-arena encounter's stored data, for tests that only care that a
+ * roster row exists (docs/17 row 291 fold). `missing-refs-banner`'s
+ * `encounterData` and `exportImport`'s `encounterDataWith` were
+ * byte-identical copies — named by the row-212/215 duplication tripwire —
+ * so the ONE definition lives here and both call sites import it.
+ *
+ * `levelHint` is the DEPRECATED stored key (kept so old rows load, NEVER read
+ * for a level); `partyLevel` is the OWNER-SET structured level the encounter
+ * path sizes a no-part fight at.
+ */
+export function encounterDataFixture(monsters: unknown[]): Record<string, unknown> {
+  return {
+    difficulty: 'medium',
+    levelHint: '',
+    partyLevel: 1,
+    monsters,
+    terrain: '',
+    tactics: '',
+    treasure: '',
+    mapImageId: null,
+    layout: null,
+    preset: 'standard',
+    locationKind: 'other',
+    siteShape: 'single',
+    budgetAdvisory: '',
+  };
+}

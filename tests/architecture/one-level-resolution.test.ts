@@ -92,6 +92,21 @@ const WIKILINKS = 'src/lib/wikilinks.ts';
 const ENTITY_PANEL = 'src/features/modules/entity-panel.tsx';
 const STAT_BLOCK_CARD = 'src/features/campaign/components/stat-block.tsx';
 const INSTRUCTION_LEVEL = 'src/llm/instructionLevel.ts';
+const ARTIFACT_DOMAIN = 'src/domain/artifact.ts';
+const KIND_FORMS = 'src/features/campaign/components/kind-forms.tsx';
+const ENTITY_BATCH = 'src/features/modules/entity-batch.ts';
+
+/**
+ * The files that size an encounter's fight (docs/17 row 291): the engine that
+ * asks the seam, the seam itself, the editor form that names the part, and the
+ * module batch whose brief carries the party line.
+ */
+const ENCOUNTER_LEVEL_FILES: readonly string[] = [
+  ENGINE,
+  ROOM_BUDGET,
+  KIND_FORMS,
+  ENTITY_BATCH,
+];
 
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
@@ -286,6 +301,69 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
+  });
+
+  it('makes the PART the only encounter level, and holds the pattern and the midpoint ABSENT (docs/17 row 291)', () => {
+    // THE FREE-TEXT READER IS DELETED, not renamed. `parseRosterTargetLevel`
+    // was `/(\d+)/.exec(levelHint)` over a string the MODEL wrote: "CR 12 for 4
+    // players" sized the window at 12 and "3/4 of the party" at 3. The name
+    // must not exist in any spelling (AGENTS rule 5).
+    expect(filesContaining('parseRosterTargetLevel')).toEqual([]);
+    // THE BAND MIDPOINT is not a level either: the ONE fallback that turned a
+    // module's `levelMin`..`levelMax` RANGE into an encounter's level is gone,
+    // so the two sizing paths (the roster window and the brief) cannot disagree
+    // about whether a range is a level — neither reads one. The pin is scoped to
+    // the encounter path's files: `llm/moduleGen` keeps a midpoint of its own
+    // for the module creator's BESTIARY WINDOW ordering (which library creature
+    // to OFFER) — a different question with no encounter involved, recorded as
+    // deliberately unmoved in docs/18 §5.
+    expect(
+      scanned()
+        .filter(
+          ([file, text]) =>
+            ENCOUNTER_LEVEL_FILES.includes(file) &&
+            text.includes('(module.levelMin + module.levelMax) / 2'),
+        )
+        .map(([file]) => file),
+    ).toEqual([]);
+    // THE STORED `levelHint` IS DECLARED EXACTLY ONCE — the deprecated domain
+    // key old rows carry (kept so an old row parses with no error state) — and
+    // it is NEVER REACHED as `data.levelHint` anywhere in `src/` (the model no
+    // longer writes it either: `levelHint: z.string()` is that one domain
+    // declaration, not a reply contract).
+    expect(filesContaining('levelHint: z.string()')).toEqual([ARTIFACT_DOMAIN]);
+    expect(
+      scanned()
+        .filter(([, text]) => /(?:\.|^)data\.levelHint\b/.test(text))
+        .map(([file]) => file),
+    ).toEqual([]);
+    // THE ONE SEAM: every encounter party level comes from
+    // `encounterPartyLevel`, defined once in `roomBudget` and called ONLY by
+    // the engine — the roster window, the brief guidance and every room-stamping
+    // site ask it, so a fourth caller cannot invent a fourth answer.
+    expect(filesContaining('export function encounterPartyLevel')).toEqual([ROOM_BUDGET]);
+    expect(
+      filesContaining('encounterPartyLevel(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([ENGINE]);
+    // …and the part read underneath it is ONE function carrying BOTH facts the
+    // form needs (the part's TITLE and its exact level); `partLevelForMention`
+    // is its level half, so the band read exists once. The form is the only
+    // caller of the title half.
+    expect(filesContaining('export function partLevelMentionFor')).toEqual([ROOM_BUDGET]);
+    expect(
+      filesContaining('partLevelMentionFor(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([KIND_FORMS]);
+    // The level half keeps its one non-engine caller: the module entity batch's
+    // brief carries the party line at the same mention position.
+    expect(
+      filesContaining('partLevelForMention(')
+        .filter((file) => file !== ROOM_BUDGET)
+        .sort(),
+    ).toEqual([ENTITY_BATCH]);
   });
 
   it('aims the hint by TWO cases and judges an out-of-band target for participants only (docs/17 row 283)', () => {

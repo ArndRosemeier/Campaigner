@@ -119,7 +119,7 @@ async function seedModuleDocument(): Promise<{
     body: 'They come up out of the water.',
     data: {
       difficulty: 'deadly',
-      levelHint: '5',
+      levelHint: '', partyLevel: 5,
       monsters: [],
       terrain: 'wet planks',
       tactics: 'surround and drag under',

@@ -62,7 +62,6 @@ const BRIEF = {
   summary: 'Cultists guard a ruined gate.',
   body: '# Ash Gate\nA room-by-room battle.',
   difficulty: 'hard',
-  levelHint: '4',
   terrain: 'broken pillars',
   tactics: 'fall back through the gate',
   treasure: 'obsidian key',
@@ -83,7 +82,6 @@ const COMPLEX_BRIEF = {
   summary: 'A four-room crypt under the ash temple.',
   body: '# Ash Temple\nFour rooms of cultists.',
   difficulty: 'hard',
-  levelHint: '4',
   terrain: 'crypt stone',
   tactics: 'hold the lines',
   treasure: 'cult hoard',
@@ -230,6 +228,11 @@ function input(
     brief: 'A temple gate encounter',
     pinnedChunkIds: [],
     encounterMapAspect: '4:3',
+    // The create dialog's STRUCTURED party level (docs/17 row 291) — what the
+    // old reply fixture's `levelHint: '', partyLevel: 4` used to be read as. A targetless
+    // encounter run has no mentioning part and no row, so this is the ONE
+    // honest source; unset, the run refuses.
+    encounterPartyLevel: 4,
     ...(targetArtifactId === undefined ? {} : { targetArtifactId }),
   };
 }
@@ -302,7 +305,8 @@ describe('Encounter Cartographer run', () => {
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     expect(artifact.data.layout?.rooms).toHaveLength(1);
-    // The budget loop stamped the encounter's parsed levelHint onto the room.
+    // The budget loop stamped the run's RESOLVED party level (the create
+    // dialog's structured number here) onto the room — never a reply string.
     expect(artifact.data.layout?.rooms[0]?.targetLevel).toBe(4);
     expect(artifact.data.budgetAdvisory).toBe('');
     expect(artifact.data.mapImageId).toBe(candidates[0]);
@@ -687,7 +691,7 @@ describe('Encounter Cartographer run', () => {
       body: 'Keep this prose.',
       links: [{ targetId: newId(), relation: 'at' }],
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
@@ -743,7 +747,7 @@ describe('Encounter Cartographer run', () => {
       coverImageId: null,
       writerModel: '',
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
@@ -835,7 +839,7 @@ describe('Encounter Cartographer run', () => {
       body: 'Existing prose.',
       links: [],
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
@@ -871,7 +875,7 @@ describe('Encounter Cartographer run', () => {
       body: 'Existing prose.',
       links: [],
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
@@ -1026,7 +1030,7 @@ describe('Encounter Cartographer run', () => {
       body: '',
       links: [],
       data: {
-        difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
+        difficulty: '', levelHint: '', partyLevel: 4, monsters: [], terrain: '', tactics: '', treasure: '',
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
@@ -1246,7 +1250,7 @@ describe('Encounter Cartographer run', () => {
         name: 'Ruin in the Woods',
         body: 'Keep this prose.',
         data: {
-          difficulty: 'hard', levelHint: '4',
+          difficulty: 'hard', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: 'old terrain', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard',
@@ -1275,7 +1279,7 @@ describe('Encounter Cartographer run', () => {
         name: 'Open Cave Mouth',
         body: 'Keep this prose.',
         data: {
-          difficulty: 'hard', levelHint: '4',
+          difficulty: 'hard', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' as const } }],
           terrain: 'old terrain', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard',
@@ -1380,22 +1384,21 @@ describe('Encounter Cartographer run', () => {
 
   describe('asymmetric per-room budget loop (docs/11 D12)', () => {
     /** A single-arena brief whose arena badly overruns its band. */
-    function overBrief(level: string, levelHint: string): typeof BRIEF {
+    function overBrief(level: string): typeof BRIEF {
       return {
         ...BRIEF,
-        levelHint,
         monsters: [{ name: 'Ash Cultist', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level } }],
       };
     }
 
     it('runs the too-hard repair through the EXISTING single repair turn', async () => {
       const { campaign, cartographer } = await setup();
-      // First reply: one level-10 creature against a level-1 band of 3.
+      // First reply: one level-10 creature against a level-1 band of 2.
       // Repair reply: the same arena with a level-1 creature — fits.
       chatMock
-        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('10', '1')), modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('1', '1')), modelUsed: 'test-model', fallback: null });
-      const runInput = input(campaign, cartographer);
+        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('10')), modelUsed: 'test-model', fallback: null })
+        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('1')), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer), encounterPartyLevel: 1 };
       const runId = await runEngine.startRun(runInput);
       await waitForRun(async () => {
         expect((await getRun(runId))?.status).toBe('awaiting_user');
@@ -1416,8 +1419,8 @@ describe('Encounter Cartographer run', () => {
       const { campaign, cartographer } = await setup();
       // The model never fixes the overrun: the bounded retry is spent, the
       // room ships with its target lowered (2 → 1) and the advisory.
-      chatMock.mockResolvedValue({ text: JSON.stringify(overBrief('10', '2')), modelUsed: 'test-model', fallback: null });
-      const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const };
+      chatMock.mockResolvedValue({ text: JSON.stringify(overBrief('10')), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const, encounterPartyLevel: 2 };
       const runId = await runEngine.startRun(runInput);
       await waitForRun(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
@@ -1490,7 +1493,11 @@ describe('Encounter Cartographer run', () => {
       chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
       const runInput = {
         ...input(campaign, cartographer),
-        brief: 'A level 5 dungeon under the ash temple',
+        brief: 'A dungeon under the ash temple',
+        // The level is the STRUCTURED create-dialog value (docs/17 row 291).
+        // The old fixture read "A level 5 dungeon…" out of the free-text brief
+        // with a pattern — the rule-5 defect this slice deletes.
+        encounterPartyLevel: 5,
         encounterPreset: 'dungeon' as const,
       };
       const runId = await runEngine.startRun(runInput);
@@ -1502,7 +1509,7 @@ describe('Encounter Cartographer run', () => {
       // The fresh-brief roster sizing seam (docs/11 D12 amendment).
       expect(briefContent).toContain('A complex of N rooms needs roughly one fight per room — size the roster for N fights');
       // Stocking numbers from the drawn fill grade (mocked 70) at the
-      // parsed party level: 70% of the level-5 band (7) ≈ 4.9 levels ≈ 2.
+      // STRUCTURED party level: 70% of the level-5 band (7) ≈ 4.9 levels ≈ 2.
       expect(briefContent).toContain('fill grade is 70%');
       expect(briefContent).toContain('roughly 4.9 creature-levels (≈2 creatures)');
 
@@ -1562,7 +1569,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
@@ -1652,7 +1659,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: roster,
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
@@ -1702,7 +1709,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: roster,
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
@@ -1743,7 +1750,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
@@ -1827,7 +1834,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, preset: 'standard', locationKind: 'dungeon',
@@ -1850,7 +1857,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '4',
+          difficulty: 'old', levelHint: '', partyLevel: 4,
           monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' as const } }],
           terrain: '', tactics: '', treasure: '',
           mapImageId: null, preset: 'standard', locationKind: 'other',
@@ -2160,7 +2167,7 @@ describe('Encounter Cartographer run', () => {
         body: 'Existing prose.',
         links: [],
         data: {
-          difficulty: 'old', levelHint: '2',
+          difficulty: 'old', levelHint: '', partyLevel: 2,
           monsters: [
             { name: 'Halvar', count: 1, notes: '', treasure: '', source: { type: 'none' as const } },
             { name: 'Crypt Rat', count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
@@ -2175,7 +2182,6 @@ describe('Encounter Cartographer run', () => {
       // via the inline path) and stocks the remaining rooms fresh.
       chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         ...COMPLEX_BRIEF,
-        levelHint: '2',
         monsters: [
           { name: 'Halvar', count: 1, notes: '', treasure: '', statBlock: halvarStats },
           { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },

@@ -169,8 +169,10 @@ export const encounterMapRoomBriefSchema = z.object({
   /**
    * The room's own challenge target (docs/11 D12): the level this room alone
    * should challenge. The Cartographer brief may set it per room; the run
-   * stamps the encounter's parsed levelHint when omitted. Optional — the
-   * budget loop treats "no derivable target" as loud-unverified, never silent.
+   * stamps the encounter's RESOLVED party level when omitted (docs/17 row 291
+   * — the mentioning part's exact level, else the owner-set `partyLevel`).
+   * Optional — the budget loop treats "no derivable target" as loud-unverified,
+   * never silent.
    */
   targetLevel: z.number().int().optional(),
 });
@@ -271,8 +273,9 @@ export const layoutRoomSchema = z.object({
   /**
    * This room's own challenge target (docs/11 D12): the level this room
    * alone should challenge. Additive + optional — legacy rooms parse without
-   * it. Stamped from the Cartographer brief (or the encounter's parsed
-   * levelHint) at generation; the asymmetric budget loop may LOWER it a step
+   * it. Stamped from the Cartographer brief (or the encounter's RESOLVED party
+   * level, docs/17 row 291) at generation; the asymmetric budget loop may
+   * LOWER it a step
    * (floor 1) when the room's creatures overrun its band, and the final
    * (possibly lowered) value persists here, visible and owner-editable.
    */

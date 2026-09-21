@@ -67,7 +67,7 @@ async function seedEncounter(): Promise<{ campaignId: string; encounter: AnyArti
     body: 'The gate.',
     data: {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [],
       terrain: '',
       tactics: '',
@@ -230,7 +230,7 @@ async function seedModuleEncounter(difficulty: ModuleDifficulty | null): Promise
     body: 'The fight.',
     data: {
       difficulty: '',
-      levelHint: '2',
+      levelHint: '', partyLevel: 2,
       monsters: [],
       terrain: '',
       tactics: '',

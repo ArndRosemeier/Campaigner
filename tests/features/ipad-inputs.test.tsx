@@ -170,7 +170,9 @@ describe('iPad batch D: coarse-pointer 16px floor', () => {
       budgetAdvisory: '',
     };
     render(
-      <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={vi.fn()} />,
+      <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null} onChange={vi.fn()} />,
     );
     const monsterName = screen.getByLabelText('Monster name');
     expectCoarseText(monsterName);

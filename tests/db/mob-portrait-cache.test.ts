@@ -151,7 +151,7 @@ async function addEncounter(
     name: 'Rat warren',
     data: {
       difficulty: 'medium',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: monsters.map((monster) => ({
         name: monster.name,
         count: monster.count,

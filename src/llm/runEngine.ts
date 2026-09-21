@@ -109,7 +109,6 @@ import {
   formatRosterSection,
   mobLevelFor,
   parseLevelSort,
-  parseRosterTargetLevel,
 } from '@/llm/encounterRoster';
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
@@ -135,7 +134,6 @@ import {
   // fallback reads the sentence around the FIGURE'S NAME, so a level about
   // another figure can never win it.
   nameScopedLevel,
-  partLevelForMention,
   partyLevelLine,
   // The ONE exclusion of the generated party line from the stat-block
   // fallback (docs/17 row 206): the party's level is never an entity's level.
@@ -814,6 +812,26 @@ function instructionLevelReadNotice(level: number, quote: string | null): string
 }
 
 /**
+ * THE LOUD REFUSAL of the no-resolvable-level case (docs/17 row 291). An
+ * encounter's fight is sized at the EXACT level of the module part that
+ * mentions it, else at the owner's structured level — never an invented
+ * number, never the module's range (a range is not a level). A run that can
+ * resolve neither fails with THIS sentence, which names both the state and
+ * the surface that fixes it: the run row's `errorMessage` (AGENTS rule 2).
+ *
+ * ONE composer, so the brief step, the roster-only finalize, the full finalize
+ * and the Smith's in-place fill cannot word the same refusal differently.
+ */
+function encounterPartyLevelRequiredError(encounterName: string): Error {
+  const named = encounterName.trim() === '' ? 'this encounter' : `"${encounterName}"`;
+  return new Error(
+    `No party level is resolvable for ${named}: no module part mentions it and no Party level is set. ` +
+      'A fight is sized at the EXACT level of the module part that mentions the encounter — set the ' +
+      'Party level in the encounter editor (or pick one in the creation dialog) before generating.',
+  );
+}
+
+/**
  * The persisted note for an image-step escalation (imageGen's
  * GeneratedImages.fallback): names the failed first-try model and the
  * fallback that actually produced the image. The reason words the trigger
@@ -935,6 +953,15 @@ export interface StartRunInput {
    * aspect.
    */
   encounterPreset?: EncounterPreset;
+  /**
+   * The OWNER-SET exact party level for an encounter this run CREATES
+   * (docs/17 row 291) — the create dialog's structured number, persisted on
+   * the run row so a pause/resume/retry rebuilds the input that sized the
+   * fight. Ignored when `targetArtifactId` names an existing encounter: that
+   * row's own `partyLevel` is the owner-set source there. Undefined means the
+   * owner has stated none, and a sizing step then REFUSES loudly.
+   */
+  encounterPartyLevel?: number;
   /**
    * Dungeon-map production path for ONE run (docs/11 vision path): the D18
    * steering control's per-run choice for Regenerate everything.
@@ -1171,7 +1198,10 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
     case 'encounter':
       return {
         difficulty: asString(draft.difficulty),
-        levelHint: asString(draft.levelHint),
+        // The model no longer answers a party level (docs/17 row 291): the
+        // deprecated stored key is written empty, and `runFinalize` stamps
+        // `partyLevel` from the ONE seam before the row is created.
+        levelHint: '',
         monsters: Array.isArray(draft.monsters)
           ? (draft.monsters as { name: string; count: number; notes: string; treasure?: string }[]).map((monster) => ({
               ...monster,
@@ -2147,6 +2177,10 @@ export class RunEngine {
       // like the preset above.
       dungeonMapPath:
         input.persona.mode === 'encounter' ? (input.dungeonMapPath ?? null) : null,
+      // The owner-set party level of a CREATED encounter persists like the
+      // preset (docs/17 row 291), so resume/retry sizes the same fight.
+      encounterPartyLevel:
+        input.persona.mode === 'encounter' ? (input.encounterPartyLevel ?? null) : null,
       placementModuleId: input.placementModuleId ?? null,
       runExtras: input.extras ?? null,
       // F8: the run context persists with the row so resumeRun reconstructs
@@ -2373,6 +2407,11 @@ export class RunEngine {
         ...(run.targetArtifactId !== null ? { targetArtifactId: run.targetArtifactId } : {}),
         ...(run.encounterMapAspect !== null ? { encounterMapAspect: run.encounterMapAspect } : {}),
         ...(run.encounterPreset !== null ? { encounterPreset: run.encounterPreset } : {}),
+        // The owner-set CREATE level rides the row like the preset (docs/17
+        // row 291): a resumed/retried creation sizes the same fight.
+        ...(run.encounterPartyLevel !== null
+          ? { encounterPartyLevel: run.encounterPartyLevel }
+          : {}),
         // The D18 per-run path choice rides the row like the preset — a
         // resumed steered run keeps its forced path, never the new default.
         ...(run.dungeonMapPath !== null ? { dungeonMapPath: run.dungeonMapPath } : {}),
@@ -2954,19 +2993,33 @@ export class RunEngine {
   }
 
   /**
+   * The OWNER-SET exact party level an encounter run carries (docs/17 row
+   * 291): the ROW's structured `partyLevel` when the run targets an existing
+   * encounter, else the create dialog's `StartRunInput.encounterPartyLevel`.
+   * ONE precedence expression, so every sizing path reads the SAME owner value
+   * — a second `target.data.partyLevel ?? input.encounterPartyLevel` at a call
+   * site is the drift this exists to prevent (AGENTS rule 4).
+   */
+  private ownerSetPartyLevelFor(
+    input: StartRunInput,
+    target: AnyArtifact | undefined,
+  ): number | undefined {
+    return target?.kind === 'encounter' ? target.data.partyLevel : input.encounterPartyLevel;
+  }
+
+  /**
    * The roster prompt window's target level (12-BESTIARY-PACKS §7), resolved
-   * at the run-engine boundary from what the run carries: (a) for an encounter
-   * target, the SAME party-level chain the Cartographer's brief uses
-   * (`encounterPartyLevel`: the referencing part's exact level, else the
-   * free-text `levelHint` — "5", "4–6", "CR 5", the first digit run wins);
-   * (b) else, when the target is owned by a module, that module's
-   * `levelMin`/`levelMax` band midpoint; (c) else undefined — the window
-   * keeps the level/name-ascending order. The chain is graceful by design: an
-   * empty/unparseable levelHint is a legitimate preference state (the hint is
-   * a user preference string, not data that failed), so it falls to the next
-   * preference. A target artifact claiming module ownership whose module row
-   * is gone is corrupt data and fails loudly instead of silently ordering
-   * without a target.
+   * at the run-engine boundary from what the run carries (docs/17 row 291):
+   * for an encounter target, the ONE party-level seam `encounterPartyLevel`
+   * (the mentioning part's EXACT level, else the owner-set structured level);
+   * every other target has no level source at all, so the window keeps its
+   * level/name-ascending order.
+   *
+   * The module's `levelMin`/`levelMax` RANGE is deliberately NOT a source: a
+   * range is not a level, and the `(levelMin + levelMax) / 2` midpoint this
+   * used to compute was the last place one became one. A target artifact
+   * claiming module ownership whose module row is gone is corrupt data and
+   * fails loudly instead of silently ordering without a target.
    */
   private async rosterTargetLevelFor(input: StartRunInput): Promise<number | undefined> {
     if (input.targetArtifactId === undefined) return undefined;
@@ -2975,14 +3028,10 @@ export class RunEngine {
     // brief validates it before this runs); without one there is no target
     // preference and the window stays ascending.
     if (target === undefined) return undefined;
-    // The encounter's party level comes from the ONE shared resolver the
-    // Cartographer's brief uses (`encounterPartyLevel`, docs/17 row 180): a
-    // part mention beats the free-text hint, so the roster WINDOW's "nearest
-    // level" and the brief's "party level" can never disagree for the same
-    // encounter (the two-resolver divergence this folded).
-    const levelHint = target.kind === 'encounter' ? target.data.levelHint : '';
+    if (target.kind !== 'encounter') return undefined;
+    const ownerSetLevel = this.ownerSetPartyLevelFor(input, target);
     if (target.moduleId === null) {
-      return target.kind === 'encounter' ? parseRosterTargetLevel(levelHint) : undefined;
+      return encounterPartyLevel(undefined, target.name, ownerSetLevel);
     }
     const module = await getModule(target.moduleId);
     if (module === undefined) {
@@ -2990,13 +3039,7 @@ export class RunEngine {
         `roster target level: "${target.name}" references module ${target.moduleId}, which does not exist`,
       );
     }
-    if (target.kind === 'encounter') {
-      return (
-        encounterPartyLevel(module, target.name, levelHint) ??
-        (module.levelMin + module.levelMax) / 2
-      );
-    }
-    return (module.levelMin + module.levelMax) / 2;
+    return encounterPartyLevel(module, target.name, ownerSetLevel);
   }
 
   private async retrieveContext(runId: Id, input: StartRunInput): Promise<RetrieveContext> {
@@ -3441,8 +3484,9 @@ export class RunEngine {
    *
    * A campaign-level target has no owning module, so no MODULE difficulty can
    * honestly be stated there; the clause is omitted and only the level line
-   * renders. A digit-free levelHint yields no line at all (never an invented
-   * number).
+   * renders. A target with NO resolvable party level (no mentioning part, no
+   * owner-set `partyLevel`) yields no line at all — never an invented number;
+   * the SIZING steps refuse loudly instead (docs/17 row 291).
    */
   private async encounterInputGuidanceFor(
     targetArtifactId: Id,
@@ -3451,7 +3495,7 @@ export class RunEngine {
     const target = await getAnyArtifact(targetArtifactId);
     if (target?.kind !== 'encounter') return { levelLine: null, budgetClause: null };
     const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
-    const level = encounterPartyLevel(owningModule, target.name, target.data.levelHint);
+    const level = encounterPartyLevel(owningModule, target.name, target.data.partyLevel);
     return {
       levelLine: level === undefined ? null : partyLevelLine(level),
       budgetClause:
@@ -4863,30 +4907,31 @@ export class RunEngine {
     // field absent (finalize); a single-arena outcome discards it.
     const targetFillGrade = target?.kind === 'encounter' ? target.data.fillGrade : undefined;
     const fillGrade = targetFillGrade ?? drawFillGrade();
-    // Structured level context (docs/11): the party level is the
-    // referencing part's EXACT level — the first part whose markdown carries
-    // the target's [[Name]] mention supplies its levelBand (ONE shared pure
-    // helper, `partLevelForMention` — no second implementation). No mention
-    // in the module text (or no owning module) keeps today's behavior
-    // byte-identical: the structured line stays absent and the free-text
-    // chain below drives.
-    const partLevel = target?.kind === 'encounter' && owningModule !== undefined
-      ? partLevelForMention(owningModule, target.name)
-      : undefined;
-    // The level the rooms' targetLevels will default to (stampTargetLevels):
-    // the SAME ONE chain the roster window resolves (part level, then the
-    // target's own hint) so the two can never disagree for this encounter;
-    // a fresh encounter reads the run brief's text. Without a digit there is
-    // no honest number to render.
-    const promptLevel = target?.kind === 'encounter'
-      ? encounterPartyLevel(owningModule, target.name, target.data.levelHint)
-      : parseRosterTargetLevel(input.brief);
+    // THE encounter's party level, resolved ONCE for this whole brief step
+    // through the ONE seam (docs/17 row 291): the mentioning part's EXACT
+    // level, else the owner-set structured level (the row's `partyLevel` for a
+    // regeneration, the create dialog's `encounterPartyLevel` for a fresh
+    // create). ONE value drives the generated party line, the stocking numbers
+    // AND the rooms' stamped `targetLevel`, so "the level the model is told"
+    // and "the level the deterministic check uses" cannot disagree — the
+    // divergence the pre-291 part-level/free-text pair produced.
+    //
+    // A run that can resolve NEITHER refuses LOUDLY here, before the model
+    // call: a fight is never sized at an invented number (AGENTS rule 1), and
+    // the size of the module's RANGE is deliberately not a source (a range is
+    // not a level).
+    const encounterName = target?.kind === 'encounter' ? target.name : '';
+    const partyLevel = encounterPartyLevel(
+      owningModule,
+      encounterName,
+      this.ownerSetPartyLevelFor(input, target),
+    );
+    if (partyLevel === undefined) throw encounterPartyLevelRequiredError(encounterName);
     // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
     // share as concrete creature-levels at the level the rooms default to.
-    // Null for a 'verbatim' budget or a digit-free level — the qualitative
-    // clause still applies, never an invented number. Rendered ABOVE the
-    // roster contract, which the append clauses cite.
-    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, budget);
+    // Null for a 'verbatim' budget — the qualitative clause still applies.
+    // Rendered ABOVE the roster contract, which the append clauses cite.
+    const stockingNumbers = fillGradeStockingFor(fillGrade, partyLevel, budget);
     // Fixed-cast glue for the unpinned first generation (docs/11): the map
     // brief carries no fixed-cast summaries of its own, so unpinning the
     // Smith stub's generics would drop a fixed-cast NPC (ledger row 59).
@@ -5016,7 +5061,7 @@ export class RunEngine {
       SCENE_AUTHORITY_SECTION,
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
-      partLevel === undefined ? null : partyLevelLine(partLevel),
+      partyLevelLine(partyLevel),
       `Map aspect: ${aspect}`,
       presetShapeClause,
       stockingNumbers,
@@ -5051,7 +5096,7 @@ export class RunEngine {
       // Asymmetric per-room budget loop (docs/11 D12): the targetLevel
       // contract + the documented per-system band.
       roomBudgetGuidanceFor(budget),
-      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
+      `Reply with JSON only using every field: name, summary, body, difficulty, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -5092,19 +5137,19 @@ export class RunEngine {
     ];
     const budgetChunks = budgetChunkIds.length === 0 ? [] : await getChunksByIds(budgetChunkIds);
     const chunkById = new Map(budgetChunks.map((chunk) => [chunk.id, chunk]));
-    /** Stamps the encounter's parsed levelHint onto rooms with no target. */
-    const stampTargetLevels = (brief: EncounterGeneratorBrief): EncounterGeneratorBrief => {
-      const hintLevel = parseRosterTargetLevel(brief.levelHint);
-      return {
-        ...brief,
-        rooms: brief.rooms.map((room) => ({
-          ...room,
-          ...(room.targetLevel === undefined && hintLevel !== undefined
-            ? { targetLevel: hintLevel }
-            : {}),
-        })),
-      };
-    };
+    /**
+     * Stamps the encounter's RESOLVED party level onto rooms the model left
+     * without a `targetLevel` (docs/17 row 291): the SAME `partyLevel` the
+     * prompt's party line and the stocking numbers were built from, never a
+     * value parsed back out of the reply.
+     */
+    const stampTargetLevels = (brief: EncounterGeneratorBrief): EncounterGeneratorBrief => ({
+      ...brief,
+      rooms: brief.rooms.map((room) => ({
+        ...room,
+        ...(room.targetLevel === undefined ? { targetLevel: partyLevel } : {}),
+      })),
+    });
     /**
      * Budget verdicts for a stamped brief. Fresh runs resolve each monster's
      * level through its citation/inline source; regenerate runs resolve the
@@ -6221,12 +6266,19 @@ export class RunEngine {
         }
       }
     }
-    const hintLevel = parseRosterTargetLevel(parsed.levelHint);
+    // The encounter's party level, through the ONE seam (docs/17 row 291): the
+    // mentioning part's EXACT level, else the target row's owner-set
+    // `partyLevel`. An unresolvable level REFUSES loudly — a roster is never
+    // restocked against an invented number.
+    const partyLevel = encounterPartyLevel(
+      owningModule,
+      target.name,
+      this.ownerSetPartyLevelFor(input, target),
+    );
+    if (partyLevel === undefined) throw encounterPartyLevelRequiredError(target.name);
     const stampedRooms = targetLayout.rooms.map((room) => ({
       ...room,
-      ...(room.targetLevel === undefined && hintLevel !== undefined
-        ? { targetLevel: hintLevel }
-        : {}),
+      ...(room.targetLevel === undefined ? { targetLevel: partyLevel } : {}),
     }));
     let reconciledLayout = {
       ...targetLayout,
@@ -6498,6 +6550,15 @@ export class RunEngine {
       // encounter placed in a module shares any other-module roster
       // artifacts campaign-wide before the encounter row is created.
       await promoteRosterUses(input.placementModuleId ?? null, monsters);
+      // THE NEW ROW'S OWNER-SET PARTY LEVEL (docs/17 row 291). A CREATE has no
+      // mention yet — the module text was written before this encounter
+      // existed — so the create dialog's structured level (mirrored onto the
+      // run row, `StartRunInput.encounterPartyLevel`) is the ONE source, and
+      // it is written onto the row so every later regeneration reads the same
+      // number from the SAME place. Unresolvable REFUSES loudly; nothing is
+      // created at an invented level.
+      const partyLevel = input.encounterPartyLevel;
+      if (partyLevel === undefined) throw encounterPartyLevelRequiredError(parsed.name);
       const artifact = await createArtifact({
         campaignId: input.campaign.id,
         // Creation-dialog placement (one-off), same as generate finalize.
@@ -6513,7 +6574,10 @@ export class RunEngine {
         writerModel: this.effectiveStepWriterModel(steps, 'brief'),
         data: {
           difficulty: parsed.difficulty,
-          levelHint: parsed.levelHint,
+          // Deprecated, never read for a level (docs/17 row 291): the model no
+          // longer answers a level, and the fight's level lives in `partyLevel`.
+          levelHint: '',
+          partyLevel,
           monsters,
           terrain: parsed.terrain,
           tactics: parsed.tactics,
@@ -6758,9 +6822,16 @@ export class RunEngine {
     moduleId: Id | null | undefined;
     encounterName: string;
     monsters: readonly { name: string }[];
-    levelHint: string;
+    /**
+     * The encounter's ALREADY-RESOLVED party level (docs/17 row 291) — the
+     * caller resolves it through the ONE seam (`encounterPartyLevel`), so this
+     * advisory can never judge the cast against a level the fight was not
+     * sized at. `undefined` = unresolvable, which yields no advisory (the
+     * SIZING step is where an unresolvable level refuses, not here).
+     */
+    partyLevel: number | undefined;
   }): Promise<string[]> {
-    const { campaignId, moduleId, encounterName, monsters, levelHint } = args;
+    const { campaignId, moduleId, encounterName, monsters, partyLevel } = args;
     if (moduleId === null || moduleId === undefined) return [];
     const owner = await getModule(moduleId);
     if (owner === undefined) return [];
@@ -6769,8 +6840,6 @@ export class RunEngine {
     const pool = await listArtifactsByCampaign(campaignId);
     const cast = fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
     if (cast.length === 0) return [];
-    const partyLevel =
-      partLevelForMention(owner, encounterName) ?? parseRosterTargetLevel(levelHint);
     // THE MODULE'S OWN BAND AND THE TARGETS IT RECORDS (docs/17 row 283): the
     // out-of-band check needs the levels the module AIMS its generators at, read
     // through the ONE entity-record reader (the same one the entity batch and
@@ -6958,6 +7027,30 @@ export class RunEngine {
         monsters,
       );
       data.monsters = monsters;
+      // THE ENCOUNTER'S PARTY LEVEL, resolved ONCE here through the ONE seam
+      // (docs/17 row 291) and recorded on the row: the mentioning part's EXACT
+      // level when the draft's name already appears in a placement module's
+      // parts, else the owner-set structured level (the row's `partyLevel` for
+      // an in-place fill, the create dialog's `encounterPartyLevel` for a
+      // create). Unresolvable REFUSES loudly — the Smith lane sized a roster,
+      // so it needs a level exactly like the Cartographer lane.
+      // ONE name for the resolution AND the refusal: a targeted run sizes the
+      // ROW it fills (its stored name is the one a part can mention), a create
+      // sizes the drafted name.
+      const encounterName =
+        encounterOwner?.kind === 'encounter' ? encounterOwner.name : asString(draft.name).trim();
+      const ownLevelModuleId =
+        encounterOwner?.kind === 'encounter'
+          ? encounterOwner.moduleId
+          : (input.placementModuleId ?? null);
+      const ownLevelModule = ownLevelModuleId === null ? undefined : await getModule(ownLevelModuleId);
+      const partyLevel = encounterPartyLevel(
+        ownLevelModule,
+        encounterName,
+        this.ownerSetPartyLevelFor(input, encounterOwner),
+      );
+      if (partyLevel === undefined) throw encounterPartyLevelRequiredError(encounterName);
+      data.partyLevel = partyLevel;
     }
 
     // Fixed-cast advisories (docs/11): the scene members the brief pinned
@@ -6978,7 +7071,7 @@ export class RunEngine {
         moduleId: input.placementModuleId ?? null,
         encounterName: asString(draft.name).trim(),
         monsters: data.monsters,
-        levelHint: data.levelHint,
+        partyLevel: data.partyLevel,
       });
       const declaredSubstitutions = substitutionAdvisories(
         asString(draft.name).trim(),
@@ -7136,24 +7229,28 @@ export class RunEngine {
         await updateRun(runId, { resultArtifactId: target.id });
         return { step, artifactId: target.id };
       }
-      // THE ENCOUNTER'S OWN LEVEL AND DIFFICULTY ARE INPUTS ON A REPOPULATE
-      // (docs/17 row 228), never outputs. The row the owner retuned states
-      // them, and this single-room route used to let the generic draft
-      // silently rewrite both: a level-1 repopulate came back as level 9 and
-      // the row's own difficulty label was replaced by the reply's. A value
-      // the target does NOT state (a stub, a legacy row, a fresh create) still
-      // takes the model's — and a FRESH creation never reaches this branch at
-      // all, so that lane keeps writing the model's values (pinned).
+      // THE ENCOUNTER'S OWN DIFFICULTY IS AN INPUT ON A REPOPULATE (docs/17
+      // row 228), never an output: the row the owner retuned states it, and
+      // this single-room route used to let the generic draft silently rewrite
+      // it. A value the target does NOT state (a stub, a legacy row) still
+      // takes the model's.
       //
-      // The KEPT level is also what stamps a target-less room below, so the
-      // deterministic budget check reads the encounter's own level rather than
-      // the reply's claim.
-      const storedLevelHint = target.data.levelHint.trim();
+      // THE PARTY LEVEL IS NOT AN OUTPUT EITHER, and not a model answer at all
+      // any more (docs/17 row 291): it is resolved ONCE through the ONE seam —
+      // the mentioning part's EXACT level, else the row's owner-set
+      // `partyLevel` — and an unresolvable level REFUSES loudly. The reply no
+      // longer carries a level, so there is nothing kept, nothing parsed and
+      // nothing to drift from.
       const storedDifficulty = target.data.difficulty.trim();
-      const draftLevelHint = asString(draft.levelHint).trim();
       const draftDifficulty = asString(draft.difficulty).trim();
-      const effectiveLevelHint = storedLevelHint === '' ? draftLevelHint : storedLevelHint;
       const effectiveDifficulty = storedDifficulty === '' ? draftDifficulty : storedDifficulty;
+      const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
+      const partyLevel = encounterPartyLevel(
+        owningModule,
+        target.name,
+        this.ownerSetPartyLevelFor(input, target),
+      );
+      if (partyLevel === undefined) throw encounterPartyLevelRequiredError(target.name);
       const modelAlias = draftName.trim();
       // The prose checkbox (two-button regeneration): ticked, the draft's
       // name REPLACES the target's (the old name becomes an alias, so links
@@ -7205,8 +7302,8 @@ export class RunEngine {
         // The run's ONE resolved budget (docs/17 rows 180 and 190), from the
         // target's owning module — an in-place fill of a module encounter reads
         // the same recorded policy AND difficulty every other generation of it
-        // uses.
-        const owningModule = target.moduleId === null ? undefined : await getModule(target.moduleId);
+        // uses. The module row is the SAME one the party level resolved
+        // through above (one read, one seam).
         const budget = this.runEncounterBudget(owningModule, input.campaign.system);
         // Fill grade (docs/11 D12 amendment): the row's value always wins;
         // a legacy complex without one draws NOW (draw-once at the refill —
@@ -7214,12 +7311,9 @@ export class RunEngine {
         // check run against a real expectation.
         const fillGrade = isComplex ? (target.data.fillGrade ?? drawFillGrade()) : undefined;
         if (isComplex && fillGrade !== undefined) fillGradeToPersist = fillGrade;
-        const hintLevel = parseRosterTargetLevel(effectiveLevelHint);
         const stampedRooms = targetLayout.rooms.map((room) => ({
           ...room,
-          ...(room.targetLevel === undefined && hintLevel !== undefined
-            ? { targetLevel: hintLevel }
-            : {}),
+          ...(room.targetLevel === undefined ? { targetLevel: partyLevel } : {}),
         }));
         // A copied mob's level comes from its OWN block (docs/17 row 278); there
         // is no library citation left to read a level out of.
@@ -7303,31 +7397,19 @@ export class RunEngine {
         if (verificationAdvisory !== null) advisories.push(verificationAdvisory);
         budgetAdvisory = advisories.join(' ');
       }
-      // A kept value the reply DISAGREED with is spoken LOUDLY (docs/17 row
-      // 228): preserving the encounter's own input silently would be its own
-      // small lie, so the mismatch rides the persisted advisory block (which
-      // the editor shows) and the step notice, exactly like the budget
-      // verdicts. Only a readable disagreement is reported — a digit-free or
-      // empty claim is not one, and a value the row never stated was the
-      // model's to write.
-      const draftHintLevel = parseRosterTargetLevel(draftLevelHint);
-      const statedHintLevel = parseRosterTargetLevel(storedLevelHint);
-      const levelDrift =
-        storedLevelHint !== '' &&
-        draftHintLevel !== undefined &&
-        statedHintLevel !== undefined &&
-        draftHintLevel !== statedHintLevel
-          ? `The repopulate reply was designed at level ${String(draftHintLevel)} but "${target.name}" is set to ` +
-            `level ${String(statedHintLevel)} — the encounter's OWN level is kept; the reply's claimed level was not written.`
-          : null;
+      // A kept DIFFICULTY the reply DISAGREED with is spoken LOUDLY (docs/17
+      // row 228): preserving the encounter's own input silently would be its
+      // own small lie, so the mismatch rides the persisted advisory block
+      // (which the editor shows) and the step notice, exactly like the budget
+      // verdicts. There is NO level half any more (docs/17 row 291): the reply
+      // carries no level, so there is no claim to disagree with.
       const difficultyDrift =
         storedDifficulty !== '' && draftDifficulty !== '' && draftDifficulty !== storedDifficulty
           ? `The repopulate reply labelled this fight "${draftDifficulty}" but "${target.name}" is set to ` +
             `"${storedDifficulty}" — the encounter's OWN difficulty is kept.`
           : null;
-      const inputDrift = [levelDrift, difficultyDrift].filter((part) => part !== null);
-      if (inputDrift.length > 0) {
-        budgetAdvisory = [budgetAdvisory, ...inputDrift]
+      if (difficultyDrift !== null) {
+        budgetAdvisory = [budgetAdvisory, difficultyDrift]
           .filter((part) => part !== '')
           .join(' ');
       }
@@ -7341,10 +7423,10 @@ export class RunEngine {
         moduleId: target.moduleId,
         encounterName: target.name,
         monsters: data.monsters,
-        // The encounter's OWN level when it states one (docs/17 row 228), so
-        // the cast level-mismatch check is never keyed off a reply the row
-        // refused to accept.
-        levelHint: effectiveLevelHint,
+        // The SAME resolved level the rooms were stamped at (docs/17 row 291),
+        // so the cast level-mismatch check can never judge the roster against
+        // a number the fight was not sized at.
+        partyLevel,
       });
       const declaredSubstitutions = substitutionAdvisories(
         target.name,
@@ -7373,11 +7455,11 @@ export class RunEngine {
           // `data` (typed as the ArtifactData union) lost at runtime.
           data: encounterDataSchema.parse({
             ...data,
-            // The encounter's own level and difficulty WIN when the row states
-            // them (docs/17 row 228's input rule): the model's reply is not
-            // allowed to rewrite what the owner retuned. A row that states
-            // neither keeps the reply's value (`effective*` above).
-            levelHint: effectiveLevelHint,
+            // The encounter's own DIFFICULTY WINS when the row states one
+            // (docs/17 row 228's input rule): the model's reply is not allowed
+            // to rewrite what the owner retuned. The PARTY LEVEL is not a
+            // model value at all any more (docs/17 row 291) and rides the
+            // spread above, resolved once through the ONE seam.
             difficulty: effectiveDifficulty,
             // Identity of the artifact wins: an existing battlemap survives a
             // content regeneration untouched — including its persisted preset

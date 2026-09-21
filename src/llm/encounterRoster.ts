@@ -141,21 +141,6 @@ export function mobLevelFor(artifact: AnyArtifact): string | undefined {
 }
 
 /**
- * The prompt window's target level parsed from an encounter's free-text
- * `levelHint` (§7 ratified chain, step (a)): the FIRST digit run in the
- * string, deterministically — "5" → 5, "4–6" → 4, "CR 5" → 5. A hint with no
- * digits ("", "mid") → undefined. This is a graceful preference chain, not a
- * silent fallback of erroneous data: the hint is a user preference string,
- * and "no parseable target" is a legitimate state that falls to the next
- * preference in the chain.
- */
-export function parseRosterTargetLevel(levelHint: string): number | undefined {
-  const match = /(\d+)/.exec(levelHint);
-  const digits = match?.[1];
-  return digits === undefined ? undefined : Number(digits);
-}
-
-/**
  * Distance from the window's target level (`levelDistanceTo`). The CR-less "—"
  * creatures (`levelSort` +Infinity) sit at +Infinity so they always sort after
  * every leveled creature, exactly as today — the guard keeps `∞ − ∞` from

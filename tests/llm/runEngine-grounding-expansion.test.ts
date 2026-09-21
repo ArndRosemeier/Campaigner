@@ -91,7 +91,7 @@ const ENCOUNTER_BRIEF = {
   summary: 'Cultists guard a ruined gate.',
   body: '# Ash Gate\nA room-by-room battle.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'broken pillars',
   tactics: 'fall back through the gate',
   treasure: 'obsidian key',
@@ -201,6 +201,9 @@ const INPUT = (campaign: Campaign, persona: Persona, brief: string): StartRunInp
   autonomy: 'auto' as const,
   brief,
   pinnedChunkIds: [],
+  // The create dialog's structured party level (docs/17 row 291): harmless for
+  // the non-encounter personas, and the ONE source for a fresh encounter.
+  encounterPartyLevel: 5,
 });
 
 function userMessage(callIndex: number): string {

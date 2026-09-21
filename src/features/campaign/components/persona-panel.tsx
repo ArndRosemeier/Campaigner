@@ -45,7 +45,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import { defaultSettings, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
+import { defaultSettings, ENCOUNTER_PARTY_LEVEL_MAX, ENCOUNTER_PARTY_LEVEL_MIN, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { withAdditionalInstruction } from '@/llm/additionalInstruction';
@@ -202,6 +202,12 @@ export function PersonaPanel({
   // deliberately NOT remembered — a stale remembered module would silently
   // scope new artifacts (ratified owner default 3).
   const [placementModuleId, setPlacementModuleId] = useState<string>('');
+  // THE PARTY LEVEL of the encounter this dialog CREATES (docs/17 row 291):
+  // the level the fight is made for. It is a STRUCTURED number, never read out
+  // of the free-text brief (AGENTS rule 5), and it rides the run input so the
+  // created row's `partyLevel` records it. Empty until the owner states one —
+  // the engine REFUSES a sizing run without it rather than inventing a level.
+  const [encounterPartyLevel, setEncounterPartyLevel] = useState<string>('');
   // NOTE: the old one-off "Generate a battlemap" extra is gone — every
   // freshly created encounter gets its battlemap automatically via the
   // unattended map queue (post-run-extras; the module dialog's battlemaps
@@ -362,6 +368,27 @@ export function PersonaPanel({
     const runBrief =
       refillFramingText === null ? brief : withAdditionalInstruction(refillFramingText, brief);
     if (selectedPersona.mode === 'encounter') {
+      // A FRESH encounter has no row yet and no module part that mentions it
+      // (the module text was written before this encounter existed), so the
+      // owner's STRUCTURED number is the ONLY source of the party level
+      // (docs/17 row 291). Refuse to start without one, LOUDLY and by name —
+      // never a level read out of the free-text brief, never an invented one.
+      const createPartyLevel = encounterPartyLevel.trim() === '' ? null : Number(encounterPartyLevel);
+      if (
+        targetArtifactId === '' &&
+        (createPartyLevel === null ||
+          !Number.isInteger(createPartyLevel) ||
+          createPartyLevel < ENCOUNTER_PARTY_LEVEL_MIN ||
+          createPartyLevel > ENCOUNTER_PARTY_LEVEL_MAX)
+      ) {
+        toastError(
+          'Set the Party level',
+          new Error(
+            `A new encounter needs the exact party level it is made for (${String(ENCOUNTER_PARTY_LEVEL_MIN)}–${String(ENCOUNTER_PARTY_LEVEL_MAX)}).`,
+          ),
+        );
+        return;
+      }
       // Regenerate keeps the target encounter's own preset (docs/11 D10): an
       // existing map is never silently re-tiered. A fresh run passes NO
       // preset — Auto — so the brief's resolution chain decides (explicit
@@ -384,10 +411,14 @@ export function PersonaPanel({
           ? { encounterPreset: targetPreset }
           : {}),
         ...(targetArtifactId === '' ? {} : { targetArtifactId }),
-        // Fresh encounter creates carry the dialog's placement + extras;
-        // targeted fills get neither (placement is fresh-create only).
+        // Fresh encounter creates carry the dialog's placement, extras AND the
+        // owner-set party level; targeted fills get none of them (the target
+        // row's own `partyLevel` is the source there, docs/17 row 291).
         ...(targetArtifactId === '' && placementModuleId !== ''
           ? { placementModuleId }
+          : {}),
+        ...(targetArtifactId === '' && createPartyLevel !== null
+          ? { encounterPartyLevel: createPartyLevel }
           : {}),
         ...(targetArtifactId === '' ? { extras: tickedExtras() } : {}),
       });
@@ -593,6 +624,29 @@ export function PersonaPanel({
 
             {createsArtifact && (
               <>
+                {isEncounter && (
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="encounter-party-level">Party level</Label>
+                    <Input
+                      id="encounter-party-level"
+                      data-testid="encounter-party-level"
+                      type="number"
+                      inputMode="numeric"
+                      min={ENCOUNTER_PARTY_LEVEL_MIN}
+                      max={ENCOUNTER_PARTY_LEVEL_MAX}
+                      step={1}
+                      value={encounterPartyLevel}
+                      placeholder={`${String(ENCOUNTER_PARTY_LEVEL_MIN)}–${String(ENCOUNTER_PARTY_LEVEL_MAX)}`}
+                      onChange={(event) => {
+                        setEncounterPartyLevel(event.target.value);
+                      }}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The exact level this fight is made for. A module part that mentions the
+                      encounter would fix it — a new encounter has none, so it is stated here.
+                    </p>
+                  </div>
+                )}
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="module-select">Module</Label>
                   <Select
@@ -1190,6 +1244,9 @@ function EncounterRunActions({
     ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
     ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    // The owner-set CREATE level rides the row like the preset (docs/17
+    // row 291) — a retry/resume sizes the same fight.
+    ...(run.encounterPartyLevel === null ? {} : { encounterPartyLevel: run.encounterPartyLevel }),
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
     ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
     ...(run.runExtras === null ? {} : { extras: run.runExtras }),
@@ -1373,6 +1430,9 @@ function RunActions({
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    // The owner-set CREATE level rides the row like the preset (docs/17
+    // row 291) — a retry/resume sizes the same fight.
+    ...(run.encounterPartyLevel === null ? {} : { encounterPartyLevel: run.encounterPartyLevel }),
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
@@ -1389,6 +1449,7 @@ function RunActions({
     run.targetArtifactId,
     run.encounterMapAspect,
     run.encounterPreset,
+    run.encounterPartyLevel,
     run.dungeonMapPath,
     run.placementModuleId,
     run.runExtras,
@@ -1688,6 +1749,9 @@ function FailedRunActions({
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    // The owner-set CREATE level rides the row like the preset (docs/17
+    // row 291) — a retry/resume sizes the same fight.
+    ...(run.encounterPartyLevel === null ? {} : { encounterPartyLevel: run.encounterPartyLevel }),
     ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),

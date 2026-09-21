@@ -641,7 +641,7 @@ describe('legacy rows (parse-on-read materializes defaults)', () => {
       currentRevision: 1,
       data: {
         difficulty: 'medium',
-        levelHint: '3',
+        levelHint: '', partyLevel: 3,
         monsters: [{ name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' as const } }],
         terrain: '',
         tactics: '',
@@ -1105,7 +1105,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       coverImageId: oldMapId,
       writerModel: '',
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: oldMapId, layout: null, preset: 'standard',
@@ -1134,7 +1134,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       // Regenerate never touches the cover: the existing value is kept.
       coverImageId: oldMapId,
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: freshId, layout: null, preset: 'standard',
@@ -1180,7 +1180,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       coverImageId: oldMapId,
       writerModel: '',
       data: {
-        difficulty: 'old', levelHint: '2',
+        difficulty: 'old', levelHint: '', partyLevel: 2,
         monsters: [],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: oldMapId, layout: null, preset: 'standard',
@@ -1210,7 +1210,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
         anchorImagesTo: null,
         coverImageId: oldMapId,
         data: {
-          difficulty: 'old', levelHint: '2',
+          difficulty: 'old', levelHint: '', partyLevel: 2,
           monsters: [],
           terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
           mapImageId: freshId, layout: null, preset: 'standard',

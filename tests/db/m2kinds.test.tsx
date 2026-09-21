@@ -27,7 +27,7 @@ describe('encounter / plotarc kinds', () => {
       name: 'Ambush at the ford',
       data: {
         difficulty: 'deadly',
-        levelHint: '5',
+        levelHint: '', partyLevel: 5,
         monsters: [
           { name: 'Troll', count: 2, notes: 'regenerates', treasure: '', source: { type: 'none' as const } },
         ],

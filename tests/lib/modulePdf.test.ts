@@ -235,7 +235,7 @@ async function seed(): Promise<Seed> {
     body: 'They come up out of the water.',
     data: {
       difficulty: 'deadly',
-      levelHint: '5',
+      levelHint: '', partyLevel: 5,
       monsters: [
         {
           name: 'Cultist',

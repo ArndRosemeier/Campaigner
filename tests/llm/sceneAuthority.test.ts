@@ -164,7 +164,7 @@ const ENCOUNTER_DRAFT = {
   suggestedTags: [],
   body: '# The Sunken Bridge\nCold water, cold axes.',
   difficulty: 'hard',
-  levelHint: '3',
+  levelHint: '', partyLevel: 3,
   monsters: [{ name: 'Ghoul Soldier', count: 2, notes: '', treasure: '', statBlock: monsterBlock('3') }],
   terrain: 'a narrow boggy footbridge over a knee-deep icy stream',
   tactics: 'they hold the span and do not leave it',
@@ -177,7 +177,7 @@ const ENCOUNTER_BRIEF_REPLY = {
   summary: 'Two drowned men hold a footbridge.',
   body: '# The Sunken Bridge\nCold water, cold axes.',
   difficulty: 'hard',
-  levelHint: '3',
+  levelHint: '', partyLevel: 3,
   terrain: 'a narrow boggy footbridge',
   tactics: 'hold the span',
   treasure: '',
@@ -248,6 +248,9 @@ const INPUT = (campaign: Campaign, persona: Persona, brief: string): StartRunInp
   autonomy: 'auto' as const,
   brief,
   pinnedChunkIds: [],
+  // The create dialog's structured party level (docs/17 row 291) — the ONE
+  // source for a fresh encounter.
+  encounterPartyLevel: 5,
 });
 
 function userMessage(callIndex: number): string {
@@ -312,6 +315,8 @@ describe('the encounter pipeline is told the scene is the truth', () => {
     });
 
     const runId = await runEngine.startRun({
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
       ...INPUT(campaign, persona, SCENE_BRIEF),
       autonomy: 'manual' as const,
     });

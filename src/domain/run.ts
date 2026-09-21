@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ENCOUNTER_PARTY_LEVEL_MAX, ENCOUNTER_PARTY_LEVEL_MIN } from '@/domain/artifact';
 import { BaseEntitySchema } from '@/domain/entity';
 import {
   dungeonMapPathSchema,
@@ -155,6 +156,22 @@ export const personaRunSchema = z.object({
    * runs started before the field existed and for every other persona mode.
    */
   encounterPreset: encounterPresetSchema.nullable().default(null),
+  /**
+   * THE OWNER-SET EXACT PARTY LEVEL for an encounter this run CREATES
+   * (docs/17 row 291) — the create dialog's structured number, mirrored onto
+   * the run row exactly like `encounterPreset`, so a pause/resume/retry
+   * reconstructs the input that sized the fight. Null for every other run,
+   * and for a run that targets an EXISTING encounter (there the row's own
+   * `partyLevel` is the owner-set source). Additive `.default(null)` —
+   * parse-on-read, no Dexie bump.
+   */
+  encounterPartyLevel: z
+    .number()
+    .int()
+    .min(ENCOUNTER_PARTY_LEVEL_MIN)
+    .max(ENCOUNTER_PARTY_LEVEL_MAX)
+    .nullable()
+    .default(null),
   /**
    * Dungeon-map production path override for ONE run (docs/11 vision path):
    * the D18 steering control's per-run choice. Persisted so pause/resume/

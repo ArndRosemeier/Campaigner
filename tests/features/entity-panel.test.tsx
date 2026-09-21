@@ -386,7 +386,7 @@ describe('EntityPanel', () => {
     ): EncounterArtifactData {
       return {
         difficulty: 'old',
-        levelHint: '4',
+        levelHint: '', partyLevel: 4,
         monsters: [],
         terrain: '',
         tactics: '',

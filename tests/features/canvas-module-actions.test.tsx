@@ -179,7 +179,7 @@ async function seedWorld(overrides: Parameters<typeof saveModule>[0] extends nev
     body: '',
     data: {
       difficulty: 'medium',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [],
       terrain: '',
       tactics: '',
@@ -268,7 +268,7 @@ describe('"Fix module problems" on the canvas', () => {
       body: '',
       data: {
         difficulty: 'medium',
-        levelHint: '2',
+        levelHint: '', partyLevel: 2,
         monsters: [],
         terrain: '',
         tactics: '',

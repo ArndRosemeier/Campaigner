@@ -25,6 +25,29 @@ import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 
 /**
+ * ONE controlled harness for `EncounterForm` (docs/17 row 291 fold). The form is
+ * a controlled component, so a keystroke must feed back through state — and
+ * THREE byte-identical local copies (two named `StatefulEncounterForm` in
+ * different describes, one `FillGradeHarness`) lived in this file until the
+ * row-212/215 duplication tripwire named them. One declaration now serves all
+ * three call sites, so the copies cannot drift apart again.
+ */
+function StatefulEncounterForm({ initial }: { initial: EncounterArtifactData }) {
+  const [data, setData] = useState(initial);
+  return (
+    <EncounterForm
+      data={data}
+      campaignArtifacts={[]}
+      campaignSystem="dnd5e"
+      name="Probe Encounter"
+      module={null}
+      onChange={setData}
+    />
+  );
+}
+
+
+/**
  * Encounter editor monster sources (07-MILESTONE-3 M3-B): a per-row source
  * selector (NPC link / rulebook / inline / none) and the resolved
  * "Stat blocks" panel with origin badges — dangling refs show a visible
@@ -98,6 +121,8 @@ describe('encounter form monster sources', () => {
         data={data}
         campaignArtifacts={[npc]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={vi_noop}
       />,
     );
@@ -144,6 +169,8 @@ describe('encounter form monster sources', () => {
         data={data}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={(next) => {
           latest = next;
         }}
@@ -199,6 +226,8 @@ describe('encounter form monster sources', () => {
         data={data}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={vi_noop}
       />,
     );
@@ -265,6 +294,8 @@ describe('encounter form monster sources', () => {
         data={data}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={vi_noop}
       />,
     );
@@ -326,6 +357,8 @@ describe('encounter form monster sources', () => {
         data={data}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={(next) => {
           latest = next;
         }}
@@ -381,10 +414,6 @@ function vi_noop(): (data: EncounterArtifactData) => void {
 describe('encounter form site shape, path reorder and target levels (docs/11 D11/D12)', () => {
   beforeEach(clearDatabase);
 
-  function StatefulEncounterForm({ initial }: { initial: EncounterArtifactData }) {
-    const [data, setData] = useState(initial);
-    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
-  }
 
   function singleData(overrides: Partial<EncounterArtifactData> = {}): EncounterArtifactData {
     return {
@@ -481,13 +510,9 @@ describe('encounter form site shape, path reorder and target levels (docs/11 D11
 describe('encounter form fill grade (docs/11 D12 amendment)', () => {
   beforeEach(clearDatabase);
 
-  function FillGradeHarness({ initial }: { initial: EncounterArtifactData }) {
-    const [data, setData] = useState(initial);
-    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
-  }
 
   it('offers the fill-grade input for complexes only (empty = drawn once)', () => {
-    const { unmount } = render(<FillGradeHarness initial={twoRoomData()} />);
+    const { unmount } = render(<StatefulEncounterForm initial={twoRoomData()} />);
     const input = screen.getByRole('spinbutton', { name: 'Fill grade' });
     expect(input).toHaveValue(null);
     expect(screen.getByText(/Left empty, the first map generation draws one/)).toBeInTheDocument();
@@ -498,13 +523,15 @@ describe('encounter form fill grade (docs/11 D12 amendment)', () => {
     expect(screen.getByText(/the only automatic generation/)).toBeInTheDocument();
     unmount();
     // A single arena has no rooms to stock — no field, honest copy.
-    render(<EncounterForm data={singleComplexFree()} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={vi_noop()} />);
+    render(<EncounterForm data={singleComplexFree()} campaignArtifacts={[]} campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null} onChange={vi_noop()} />);
     expect(screen.queryByRole('spinbutton', { name: 'Fill grade' })).not.toBeInTheDocument();
   });
 
   it('writes an owner-set fill grade and clears back to auto (the field unsets)', async () => {
     const user = userEvent.setup();
-    render(<FillGradeHarness initial={twoRoomData()} />);
+    render(<StatefulEncounterForm initial={twoRoomData()} />);
     const input = screen.getByRole('spinbutton', { name: 'Fill grade' });
     await user.type(input, '65');
     expect(input).toHaveValue(65);
@@ -640,6 +667,8 @@ function StatefulEncounterFormSwitch({
       data={data}
       campaignArtifacts={[]}
       campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
       onChange={(next) => {
         setData(next);
         onChange(next);
@@ -653,10 +682,6 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
 
   /** Controlled harness: EncounterForm is a controlled component — the
    *  parent owns the data, so keystrokes must feed back through state. */
-  function StatefulEncounterForm({ initial }: { initial: EncounterArtifactData }) {
-    const [data, setData] = useState(initial);
-    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
-  }
 
   function layoutData(): EncounterArtifactData {
     return {
@@ -762,6 +787,8 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
         }}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"
+        name="Probe Encounter"
+        module={null}
         onChange={vi_noop()}
       />,
     );

@@ -175,7 +175,7 @@ async function seed(): Promise<Seed> {
     body: 'They come up out of the water.',
     data: {
       difficulty: 'severe',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [
         { name: 'Cultist', count: 4, notes: 'netters', treasure: CULTIST_TREASURE, source: { type: 'none' as const } },
         // Carries NOTHING: the mob that must contribute no row and no line.
@@ -201,7 +201,7 @@ async function seed(): Promise<Seed> {
     body: 'Cold water to the waist.',
     data: {
       difficulty: 'moderate',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [
         { name: 'Ghoul', count: 3, notes: '', treasure: GHOUL_TREASURE, source: { type: 'none' as const } },
       ],
@@ -224,7 +224,7 @@ async function seed(): Promise<Seed> {
     body: 'Bare shelves.',
     data: {
       difficulty: 'trivial',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [
         { name: 'Rat', count: 5, notes: '', treasure: '   ', source: { type: 'none' as const } },
       ],

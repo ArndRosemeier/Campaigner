@@ -158,7 +158,7 @@ async function seedWorld(): Promise<{ campaign: Campaign; moduleId: Id }> {
     links: [],
     data: {
       difficulty: '',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       monsters: [],
       terrain: '',
       tactics: '',
@@ -517,7 +517,7 @@ describe('Smith finalize fixed-cast advisories (full runs)', () => {
         body: '# The Howling Pit\nThe pit gapes below.',
         suggestedTags: [],
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters,
         terrain: 'A reeking pit.',
         tactics: 'Swarm the rim.',
@@ -542,6 +542,8 @@ describe('Smith finalize fixed-cast advisories (full runs)', () => {
       autonomy: 'auto',
       brief: 'A pit fight at level 1.',
       pinnedChunkIds: [],
+      // The create dialog's structured party level (docs/17 row 291).
+      encounterPartyLevel: 5,
       placementModuleId: moduleId,
     };
     const runId = await runEngine.startRun(runInput);

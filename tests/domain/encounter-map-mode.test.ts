@@ -51,7 +51,7 @@ describe('encounter map mode derivation (docs/11 natural-site mode)', () => {
   it('persists the owner override additively (legacy rows parse to derive)', () => {
     const base = {
       difficulty: 'hard',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [],
       terrain: '',
       tactics: '',

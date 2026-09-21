@@ -70,7 +70,7 @@ const COMPLEX_BRIEF = {
   summary: 'A four-room crypt under the ash temple.',
   body: '# Ash Temple\nFour rooms of cultists.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'crypt stone',
   tactics: 'hold the lines',
   treasure: 'cult hoard',
@@ -108,7 +108,7 @@ const SMITH_DRAFT = {
   suggestedTags: ['ambush'],
   body: '# Ambush at the ford\nA single fight.',
   difficulty: 'deadly',
-  levelHint: '3',
+  levelHint: '', partyLevel: 3,
   monsters: [
     { name: 'Ash Cultist', count: 2, notes: 'cut off the retreat', treasure: '', statBlock: INLINE_STATBLOCK },
   ],
@@ -203,7 +203,7 @@ async function seedSingleTarget(campaignId: Id): Promise<Artifact & { kind: 'enc
     body: 'Gate prose.',
     links: [],
     data: {
-      difficulty: 'old', levelHint: '3',
+      difficulty: 'old', levelHint: '', partyLevel: 3,
       monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
       terrain: '', tactics: '', treasure: '',
       mapImageId: newId(), preset: 'standard', locationKind: 'other',

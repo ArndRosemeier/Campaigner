@@ -124,7 +124,7 @@ describe('a model-prose field renders through the ONE wiki renderer', () => {
       summary: `They spring it at [[${RESOLVED}]].`,
       data: {
         difficulty: 'hard',
-        levelHint: '4',
+        levelHint: '', partyLevel: 4,
         monsters: [
           {
             name: 'Cultist',
@@ -302,7 +302,7 @@ describe('the peek modal (the module reader’s entity card) threads its own poo
       summary: `They spring it at [[${RESOLVED}]].`,
       data: {
         difficulty: 'hard',
-        levelHint: '4',
+        levelHint: '', partyLevel: 4,
         monsters: [],
         terrain: '',
         tactics: '',

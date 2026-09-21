@@ -92,7 +92,7 @@ async function seed(): Promise<void> {
     name: 'Salt Gate Ambush',
     data: encounterDataSchema.parse({
       difficulty: 'hard',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       terrain: 'Flooded flagstones.',
       tactics: 'They fight from the ledges.',
       treasure: 'The tide-hoard.',

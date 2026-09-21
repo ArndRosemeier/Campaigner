@@ -363,7 +363,7 @@ describe('citedChunkIdsFor enumerates exactly what collectDependencies reads', (
       currentRevision: 1,
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: [
           {
             name: 'Goblin Warrior',

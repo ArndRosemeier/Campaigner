@@ -47,7 +47,7 @@ import {
 } from '@/lib/exportImport';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { db } from '@/db/db';
-import { clearDatabase } from '../db/helpers';
+import { clearDatabase, encounterDataFixture as encounterDataWith } from '../db/helpers';
 
 /**
  * Export/import round-trip (06-MILESTONES M2): whole-campaign and selection
@@ -399,23 +399,6 @@ function fixtureStatBlock(over: Partial<StatBlock> = {}): StatBlock {
     extras: {},
     ...over,
   });
-}
-
-function encounterDataWith(monsters: unknown[]): Record<string, unknown> {
-  return {
-    difficulty: 'medium',
-    levelHint: '1',
-    monsters,
-    terrain: '',
-    tactics: '',
-    treasure: '',
-    mapImageId: null,
-    layout: null,
-    preset: 'standard',
-    locationKind: 'other',
-    siteShape: 'single',
-    budgetAdvisory: '',
-  };
 }
 
 /**

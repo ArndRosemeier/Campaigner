@@ -238,7 +238,7 @@ function encounterDraftReply(withCorpus: boolean): Record<string, unknown> {
     suggestedTags: ['ambush'],
     body: '# Ambush at the ford',
     difficulty: 'deadly',
-    levelHint: '5',
+    levelHint: '', partyLevel: 5,
     monsters: [
       {
         name: 'Cultist',
@@ -286,7 +286,7 @@ function cartographerBriefReply(spells: readonly { name: string; castRank?: numb
     summary: 'Cultists guard a ruined gate.',
     body: '# Ash Gate\nA room-by-room battle.',
     difficulty: 'hard',
-    levelHint: '4',
+    levelHint: '', partyLevel: 4,
     terrain: 'broken pillars',
     tactics: 'fall back through the gate',
     treasure: 'obsidian key',
@@ -327,6 +327,8 @@ function cartographerInput(
     autonomy: 'manual',
     brief: 'A temple gate encounter',
     pinnedChunkIds: [],
+    // The create dialog's structured party level (docs/17 row 291).
+    encounterPartyLevel: 5,
     encounterMapAspect: '4:3',
   };
 }

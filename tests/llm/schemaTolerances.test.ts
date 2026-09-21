@@ -121,7 +121,7 @@ describe('draft and report tolerances', () => {
       summary: 'S',
       body: 'B',
       difficulty: 'hard',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [{ name: 'Goblin', count: '2', notes: '' }],
       terrain: '',
       tactics: '',

@@ -42,7 +42,7 @@ describe('encounter locationKind (docs/11 D10 amendment)', () => {
   it('parses legacy encounter rows without the field to the unclassified default', () => {
     const legacy = {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [],
       terrain: '',
       tactics: '',

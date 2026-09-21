@@ -7,6 +7,8 @@ Where the scene states nothing you design freely: silence is not a constraint, a
 
 Campaign: Ember (Pathfinder 2e)
 
+Party of 4 adventurers at level 5.
+
 Map aspect: 4:3
 
 Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party's way in.
@@ -37,4 +39,4 @@ Each room carries a "targetLevel": the party level this room alone should challe
 MODULE DIFFICULTY (the owner's setting for this whole module — NOT the per-encounter "difficulty" field of your reply): Normal. This module is tuned for the party's baseline: size each room as the excerpts state. No numeric budget is computed under this module's policy, so this is a DIRECTIONAL instruction only; where the retrieved rule excerpts are in context they remain the law.
 pathfinder2e budget: the GM Core encounter-building rules are the law — when the retrieved rule excerpts include them, follow those budgets VERBATIM per room (exact XP values, never a paraphrase of a Paizo number). When the excerpts do NOT include the encounter-budget rules, set each room's "targetLevel" from the party level and describe the intended difficulty without inventing XP amounts.
 
-Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}], substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.
+Reply with JSON only using every field: name, summary, body, difficulty, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}], substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.

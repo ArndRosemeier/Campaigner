@@ -235,7 +235,7 @@ describe('pdf export definitions', () => {
       name: 'Pier Ambush',
       data: {
         difficulty: 'severe',
-        levelHint: '4',
+        levelHint: '', partyLevel: 4,
         monsters: [
           {
             name: 'Cave Fisher',

@@ -222,7 +222,7 @@ export async function pdfLayoutLargeFixture(): Promise<LayoutFixture> {
     body: 'They come up out of the water.',
     data: {
       difficulty: 'deadly',
-      levelHint: '5',
+      levelHint: '', partyLevel: 5,
       monsters: [
         {
           name: 'Cultist',
@@ -638,7 +638,7 @@ export async function pdfLayoutRepeatFixture(): Promise<{
     body: 'They ring it twice.',
     data: {
       difficulty: 'deadly',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [
         {
           name: 'Bellringer',

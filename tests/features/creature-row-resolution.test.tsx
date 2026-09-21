@@ -354,7 +354,7 @@ describe('the module entity view: a creature row is never a DETAILED entity', ()
       name: 'The Tide Gate',
       data: {
         difficulty: 'medium',
-        levelHint: '2',
+        levelHint: '', partyLevel: 2,
         monsters: [
           {
             name: 'Zombie',

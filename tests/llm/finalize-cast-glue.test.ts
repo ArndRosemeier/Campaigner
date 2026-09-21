@@ -291,7 +291,7 @@ function draftReply(monsterName: string, statBlock: StatBlock): string {
     suggestedTags: ['ambush'],
     body: `# ${ENCOUNTER_NAME}`,
     difficulty: 'hard',
-    levelHint: '3',
+    levelHint: '', partyLevel: 3,
     monsters: [{ name: monsterName, count: 1, notes: 'blocks the way', statBlock }],
     terrain: 'flooded pipe',
     tactics: 'drag them under',
@@ -322,6 +322,8 @@ async function finalizeThrough(
     brief,
     autonomy: 'auto',
     pinnedChunkIds: [],
+    // The create dialog's structured party level (docs/17 row 291).
+    encounterPartyLevel: 5,
     placementModuleId: world.module.id,
   });
   const run = await waitForRunStatus(runId);

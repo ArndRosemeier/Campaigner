@@ -136,7 +136,7 @@ async function addEncounter(over: EncounterOptions = {}): Promise<Artifact> {
     imageIds: over.imageIds ?? [],
     data: {
       difficulty: 'medium',
-      levelHint: '3',
+      levelHint: '', partyLevel: 3,
       monsters: [],
       terrain: '',
       tactics: '',
@@ -356,7 +356,7 @@ const BRIEF = {
   summary: 'Cultists guard a ruined gate.',
   body: '# Ash Gate\nA room-by-room battle.',
   difficulty: 'hard',
-  levelHint: '4',
+  levelHint: '', partyLevel: 4,
   terrain: 'broken pillars',
   tactics: 'fall back through the gate',
   treasure: 'obsidian key',
@@ -460,7 +460,7 @@ describe('regenerate finalize slot-replace (runEngine)', () => {
       imageIds: [oldMap.id],
       data: {
         difficulty: 'old',
-        levelHint: '2',
+        levelHint: '', partyLevel: 2,
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' as const } }],
         terrain: 'old terrain',
         tactics: 'old tactics',

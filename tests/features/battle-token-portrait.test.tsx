@@ -257,7 +257,7 @@ async function seedRulebookBattle(): Promise<{ moduleId: string; chunkId: string
     name: 'Goblin warren',
     data: {
       difficulty: 'medium',
-      levelHint: '1',
+      levelHint: '', partyLevel: 1,
       // A COPIED library mob (docs/17 row 255a): it owns the block, so the
       // battle card answers with the pack UNINSTALLED.
       monsters: [
@@ -308,7 +308,7 @@ async function seedNpcRefBattle(): Promise<{ moduleId: string; npcId: string; pc
     name: 'Bridge ambush',
     data: {
       difficulty: 'deadly',
-      levelHint: '5',
+      levelHint: '', partyLevel: 5,
       monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } }],
       terrain: '',
       tactics: '',
@@ -429,7 +429,7 @@ describe('battle-card mob portrait action', () => {
       name: 'Copied warren',
       data: {
         difficulty: 'medium',
-        levelHint: '1',
+        levelHint: '', partyLevel: 1,
         monsters: [
           {
             name: 'Goblin Boss',
@@ -696,7 +696,7 @@ describe('battle-card stat block with the library uninstalled', () => {
       name: 'Ford ambush',
       data: {
         difficulty: 'medium',
-        levelHint: '5',
+        levelHint: '', partyLevel: 5,
         monsters: [
           {
             name: 'Vale Sage',
@@ -785,7 +785,7 @@ describe('a battle seeded from a LIBRARY encounter (docs/17 row 268)', () => {
       writerModel: '',
       data: {
         difficulty: 'medium',
-        levelHint: '5',
+        levelHint: '', partyLevel: 5,
         monsters: [{ name: 'Stamp', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }],
         terrain: '',
         tactics: '',

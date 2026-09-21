@@ -1211,7 +1211,18 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
   } else if (artifact.kind === 'encounter') {
     pushSections(
       out,
-      monsterHeaderKicker(artifact.data.difficulty, artifact.data.levelHint),
+      // THE OWNER-SET PARTY LEVEL (docs/17 row 291). The deprecated stored
+      // `levelHint` was the MODEL's free-text level claim and is never read
+      // for a level again; printing it in the kicker was part of the lie this
+      // slice deletes. A part-derived level (the module part that mentions the
+      // encounter) is not reachable from this artifact-scoped renderer, so
+      // such an encounter prints the difficulty alone rather than a number
+      // nobody stated — the part's own section heading already carries its
+      // level (docs/18 §5 records the residual).
+      monsterHeaderKicker(
+        artifact.data.difficulty,
+        artifact.data.partyLevel === undefined ? '' : String(artifact.data.partyLevel),
+      ),
       ...artifact.data.monsters.map((monster, index): Content => {
         const resolved = state.input.rosterResolution?.[artifact.id]?.[index];
         // THE box rule and THE reference rule, both shared with the

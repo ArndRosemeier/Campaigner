@@ -118,7 +118,7 @@ export function scaffoldingEchoIssues(fields: readonly DebrisScanField[]): strin
  *
  * Everything else is checked: `body`, `summary`, `appearance`, `personality`,
  * `concept`, `notes`, `inhabitants`, `pointsOfInterest[].name`/`.description`,
- * `hooks`, `goals`, `methods`, `resources`, `ranks`, `difficulty`, `levelHint`,
+ * `hooks`, `goals`, `methods`, `resources`, `ranks`, `difficulty`,
  * `terrain`, `tactics`, `treasure`, `monsters[].notes`/`treasure`, stat-block
  * prose leaves, the spine's `premise`/`themes`/`partPlan[]` text, a part's
  * whole markdown.

@@ -161,7 +161,7 @@ async function seedReader(options: { statBlock: StatBlock | null }): Promise<{
     body: 'They come up out of the water.',
     data: {
       difficulty: 'severe',
-      levelHint: '4',
+      levelHint: '', partyLevel: 4,
       monsters: [
         copiedEntry(chunk),
         { name: NAME_ONLY, count: 2, notes: '', treasure: '', source: { type: 'none' as const } },
