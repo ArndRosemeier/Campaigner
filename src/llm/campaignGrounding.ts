@@ -1,4 +1,5 @@
 import type { AnyArtifact, Id, Module } from '@/domain';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 import {
   buildWikiGraph,
   wikiGraphNodeLabel,
@@ -234,7 +235,7 @@ export function detectCampaignEntities(
  * Boundaries are Unicode-aware letters/numbers (names are prose, not ASCII):
  * "Grix" matches in "Grix's" but not inside "Grixstone". */
 function wordBoundaryPattern(name: string): RegExp {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegExp(name);
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu');
 }
 

@@ -1,4 +1,5 @@
 import type { EntityKind } from '@/domain';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 import { GROUNDING_SECTION_HEADER } from '@/llm/campaignGrounding';
 
 /**
@@ -279,13 +280,9 @@ interface ScaffoldingMarker {
   readonly pattern: RegExp;
 }
 
-function escapeLiteral(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /** A marker with NO interpolation slot: the whole literal sentence or header. */
 function literalMarker(label: string, literal: string): ScaffoldingMarker {
-  return { label, pattern: new RegExp(escapeLiteral(literal), 'g') };
+  return { label, pattern: new RegExp(escapeRegExp(literal), 'g') };
 }
 
 /**
@@ -305,7 +302,7 @@ function slottedMarker(
     // `[^\n"]+` — the slot is the quoted name the composer interpolated; it
     // cannot span a line break or another quote (so a marker can never swallow
     // two unrelated sentences into a "match").
-    pattern: new RegExp(`${escapeLiteral(prefix)}[^\\n"]+${escapeLiteral(suffix)}`, 'g'),
+    pattern: new RegExp(`${escapeRegExp(prefix)}[^\\n"]+${escapeRegExp(suffix)}`, 'g'),
   };
 }
 

@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { BookOpenIcon, ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon, SearchIcon } from 'lucide-react';
 
 import type { ChunkType, RuleChunk } from '@/domain/rulebook';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 import { Badge } from '@/components/ui/badge';
 import { HelpButton } from '@/help/HelpButton';
 import { Button } from '@/components/ui/button';
@@ -324,7 +325,7 @@ function Snippet({ text, query }: { text: string; query: string }): JSX.Element 
 function Highlight({ text, terms }: { text: string; terms: string[] }): JSX.Element {
   if (terms.length === 0) return <>{text}</>;
   const pattern = new RegExp(
-    `(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    `(${terms.map((term) => escapeRegExp(term)).join('|')})`,
     'gi',
   );
   const parts = text.split(pattern);

@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@/llm/openrouter';
 import { GENERATION_LANGUAGES, generationLanguageLabel } from '@/domain/settings';
 import type { GenerationLanguage } from '@/domain/settings';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 
 /**
  * Generation-language enforcement: every LLM prompt sent through the
@@ -153,7 +154,7 @@ const CJK_TAIL = /[\u3005-\u3007\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\u
 export function levelWordsPattern(): RegExp {
   const alternatives = GENERATION_LANGUAGES.flatMap(({ code }) =>
     LEVEL_WORDS[code].map((word) => {
-      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escaped = escapeRegExp(word);
       const separator = CJK_TAIL.test(word.slice(-1)) ? '[\\p{Zs}\\t]*' : '[\\p{Zs}\\t]+';
       return `(?:${escaped})${separator}`;
     }),

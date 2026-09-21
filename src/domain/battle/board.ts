@@ -9,6 +9,7 @@ import {
   type StagingGround,
 } from '@/domain/battle';
 import { newId, type Id } from '@/domain/entity';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 
 /**
  * Board mechanics (09-MILESTONE-5 M5-B, ported from GM Cockpit's
@@ -86,7 +87,8 @@ export function fallbackSpawnPoint(index: number): { x: number; y: number } {
  * THE slot-label grammar (docs/17 row 295): does an on-board token LABEL
  * occupy the slot for `name` — the name exactly ("Goblin"), or the name with
  * ONE `" <n>"` numbering suffix ("Goblin 2", "Goblin 12")? Anchored at BOTH
- * ends, every regex metacharacter in the name escaped, so a name that PREFIXES
+ * ends, every regex metacharacter in the name quoted through the ONE
+ * `domain/escapeRegExp` seam (docs/17 row 300), so a name that PREFIXES
  * another ("Goblin" vs "Goblin Chief") never claims the longer name's slots.
  *
  * This is the ONE home for the rule BOTH spawn paths count with:
@@ -97,7 +99,7 @@ export function fallbackSpawnPoint(index: number): { x: number; y: number } {
  * `tests/architecture/one-slot-label-pattern.test.ts` holds it single-site.
  */
 export function matchesSlotLabel(label: string, name: string): boolean {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escaped = escapeRegExp(name);
   return new RegExp(`^${escaped}(?: \\d+)?$`).test(label);
 }
 

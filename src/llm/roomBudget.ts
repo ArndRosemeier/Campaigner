@@ -12,6 +12,7 @@ import { comparableName } from '@/domain/artifactAlias';
 import { sameAliasName } from '@/domain';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { levelWordsPattern } from '@/llm/language';
+import { escapeRegExp } from '@/domain/escapeRegExp';
 import {
   ENTITY_LEVEL_HINT_HIERARCHY,
   ENTITY_LEVEL_HINT_LABEL,
@@ -152,9 +153,8 @@ export function withoutPartyLevelLines(brief: string): string {
  * trailing `.` after the digit is the paragraph's own shape.
  */
 export function withoutEntityLevelHintLines(brief: string): string {
-  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(
-    `${escaped(ENTITY_LEVEL_HINT_LABEL)}\\d{1,2}\\.${escaped(ENTITY_LEVEL_HINT_HIERARCHY)}`,
+    `${escapeRegExp(ENTITY_LEVEL_HINT_LABEL)}\\d{1,2}\\.${escapeRegExp(ENTITY_LEVEL_HINT_HIERARCHY)}`,
     'g',
   );
   return brief.replace(pattern, '');
