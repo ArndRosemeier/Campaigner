@@ -8731,3 +8731,67 @@ cohort** (including the row-212/215 tripwire `no-duplicate-implementations`
 18/18 with **NO `*Baseline.json` edit**) and **118/118 across the 8-file
 `persona-request` brief cohort**. NO suite lock, NO full run (the dispatcher owns
 the integrated gate).
+
+## The ONE slot-label grammar (docs/17 row 295)
+
+The rule "how many on-board slots does this name already occupy" was written
+twice — `db/battleSeed.spawnRosterInstance` built the pattern inline and
+`features/play/battle/spawn-picker-logic.slotPatternFor` re-implemented it,
+admitting in its own comment that it "mirrors" the first. Both now ask
+`domain/battle/board.matchesSlotLabel(label, name)`, so the family has a SOURCE
+half (the drift this exists for is invisible to behaviour on today's fixtures —
+two copies agree until one is edited) and a BEHAVIOURAL half (the grammar's
+semantics are pinned where the code lives).
+
+**Source, `tests/architecture/one-slot-label-pattern.test.ts` (NEW, 2).** Built
+on the ONE `tests/helpers/sourceCode` glob (never a hand-rolled walker — the
+row-212 baselined population). (1) The anchored, optionally-numbered grammar
+string `(?: \\d+)?$` appears in EXACTLY ONE `src/` file, the seam — so a
+reinvention at a call site reds NAMING both it and the seam — and the
+metacharacter escape CLASS is asserted inside that same file. (2)
+`matchesSlotLabel(` occurs exactly once in each of the seam and its two declared
+callers and nowhere else (a third caller reds by name), and neither caller
+contains a `new RegExp(` any more, so the pre-fold shape cannot be reborn beside
+the seam. The escape class is deliberately NOT a file-population needle: five
+other seams in `src/` escape their own literals with the same class (named in
+docs/18 §5, and NOT folded by this row).
+
+**Behaviour, `tests/domain/battle-engine.test.ts` (+4).** (1) a bare name and
+its numbered labels match while everything unanchored does not (`Goblin Chief`,
+`Goblin2`, `Goblin `, `Goblin 2x`, `Goblin 2 3`, `XGoblin`); (2) a PREFIX name
+never claims the longer name's slots in either direction; (3) every regex
+metacharacter is escaped (`A.B` does not match `AxB`, `A+B` does not match
+`AAAB`, `C$D` does not match `CD`, `[E]` does not match `E`); (4) an emoji and a
+NUL name are literals (`Goblin 👺` / `Go\u0000blin` match themselves and their
+numbered labels, and a `.` does not stand in for the NUL).
+
+**PRESERVATION EVIDENCE — the pre-existing behavioural pins on BOTH callers ran
+GREEN through the fold, unamended:** `tests/db/battleSeed.test.tsx`'s
+`spawnRosterInstance` numbering arms (the seeded `Goblin Boss 1..3` continuing to
+`Goblin Boss 4`, the `npc-ref` `Vexra` → `Vexra 2` arm) and
+`tests/features/toast-surfaces.test.tsx`'s `countLabelSlots` arm (`Goblin` claims
+`Goblin 2` but not `Goblin Chef`). No pin asserted the old duplicated SHAPE, so
+none needed updating.
+
+**RED-PROVEN, arms in `.gate-logs/row295-injections/` (`run.sh` + raw per-arm
+`-tsc.log`/`-vitest.log`), every arm `tsc -b` exit 0 on the INJECTED tree**
+(never a lone `tsc --noEmit -p tsconfig.app.json`, which does not cover
+`tests/**`, docs/17 row 288), sha256 printed before AND after, every file
+restored BYTE-IDENTICALLY, no two injected hashes equal (clean:
+`board.ts de2e4e6d…`, `battleSeed.ts fdcd8b15…`): **A** the escaping removed at
+the seam (`board.ts` → `ac207e96…`) → **RED 2** (the source pin's escape
+assertion + the metacharacter arm); **B** the grammar unanchored (`board.ts` →
+`b49caa9f…`) → **RED 2** (the grammar-needle source arm + the anchoring arm);
+**C** the pattern REINVENTED at ONE call site (`battleSeed.ts` → `d7f6481e…`) →
+**RED 2**, BOTH source arms, the failure naming `src/db/battleSeed.ts` AND
+`src/domain/battle/board.ts`, with the behavioural board suite GREEN on the same
+tree — the measurement that the source pin is the mechanism guard and the
+behavioural arms are not.
+
+**FOCUSED IN-TURN at DEFAULT workers:** **356/356 across 12 files** — the new
+pin, `battle-engine` 55, `battleSeed` 29, `toast-surfaces` 52, `battleRepo` 17,
+`one-library-copy` 13, `battle-surface`, `entity-panel`,
+`one-battle-per-encounter` 5, `deleteArtifactsOfKind`, `orphanSweep`, and the
+row-212/215 tripwire `no-duplicate-implementations` **18/18 with NO
+`*Baseline.json` edit**. NO suite lock, NO full run (the dispatcher owns the
+integrated gate).
