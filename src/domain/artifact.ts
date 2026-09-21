@@ -578,6 +578,29 @@ export const encounterPartyLevelSchema = z
     message: `an encounter's party level must be at most ${String(ENCOUNTER_PARTY_LEVEL_MAX)}`,
   });
 
+/**
+ * ONE asserted figure of an encounter's scene (docs/11 §The scene is the
+ * truth, docs/17 row 309). Its shape is deliberately minimal — a name and a
+ * count — because the app enforces it and the owner reads it; anything richer
+ * would be prose in a structured costume.
+ *
+ * `count` is 1 when the text states no number ("the undead king" → 1, "two
+ * risen lumberjacks" → 2). The coercion is a preprocess rather than
+ * `.optional()` because the strict JSON reply schema re-emits an optional
+ * property as required+NULLABLE: a model with nothing to count legitimately
+ * sends `null`, and a bare `.default(1)` would reject exactly that reply and
+ * burn the run's one repair turn on nothing (the `substitutions` precedent).
+ */
+export const assertedCastEntrySchema = z.object({
+  name: z.string(),
+  count: z.preprocess(
+    (value) => value ?? 1,
+    z.coerce.number().int().positive(),
+  ),
+});
+
+export type AssertedCastEntry = z.infer<typeof assertedCastEntrySchema>;
+
 const encounterDataShape = z.object({
   /** e.g. 'medium', 'deadly', or free text. */
   difficulty: z.string(),
@@ -683,7 +706,29 @@ const encounterDataShape = z.object({
     .min(FILL_GRADE_MIN)
     .max(FILL_GRADE_MAX)
     .optional(),
+  /**
+   * THE SCENE'S ASSERTED CAST (docs/11 §The scene is the truth, docs/17 row
+   * 309): one entry per figure the encounter's scene TEXT asserts — the name
+   * the text writes (and the roster entry fielding it must carry) plus the
+   * count it states (1 when it states none).
+   *
+   * The list is TRANSCRIBED by the step that reads the scene (the Smith draft,
+   * `assertedCastEntrySchema` on its reply contract) because the app may never
+   * read prose with a pattern (AGENTS rule 5); it is STORED here so every later
+   * pass on the encounter (the Cartographer's map/stocking run, an in-place
+   * refill, a resume) is bound by it instead of re-deriving it; and it is
+   * SHOWN to the owner through the existing advisory block
+   * (`sceneAuthority.assertedCastAdvisory` → `budgetAdvisory`), so a wrong read
+   * is correctable in one step.
+   *
+   * Additive + optional, NO Dexie bump: a row written before this field existed
+   * parses with it absent and is constrained by nothing. In the fight, every
+   * name here is REQUIRED and the figure is EXEMPT from the challenge budget —
+   * the band bounds only the filler the generator designs.
+   */
+  assertedCast: z.array(assertedCastEntrySchema).optional(),
 });
+
 
 export const encounterDataSchema = z.preprocess(
   (data: unknown) => normalizeEncounterShapeData(data as EncounterShapeDataLike),

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { GameSystem } from '@/domain/gameSystem';
+import { assertedCastEntrySchema } from '@/domain/artifact';
 import { statBlockSchema } from '@/domain/statblock';
 import { statBlockSchemaFor } from '@/llm/statBlockContract';
 
@@ -225,6 +226,24 @@ export const sceneSubstitutionSchema = z.object({
 export type SceneSubstitution = z.infer<typeof sceneSubstitutionSchema>;
 
 /**
+ * The additive, optional `assertedCast` list on the SCENE-READING encounter
+ * contract (the Smith draft — the step whose brief carries the scene text).
+ * The entry schema itself is `domain/artifact`'s (`assertedCastEntrySchema`):
+ * the encounter ROW stores the list, so the artifact schema is its home and
+ * the reply contract is the second reader, never a second definition.
+ *
+ * ABSENT and NULL both read as "the scene names no figure", so a draft stored
+ * before this field existed parses unchanged and constrains nothing — and an
+ * EMPTY list is the legal, expected answer for a vague scene (the
+ * anti-invention half of the rule: silence is not a constraint, and a vague
+ * scene is never a reason to invent an assertion the text does not make).
+ */
+const assertedCast = z.preprocess(
+  (value) => value ?? [],
+  z.array(assertedCastEntrySchema),
+);
+
+/**
  * The additive, optional `substitutions` list on both roster-authoring
  * encounter contracts (the Smith draft and the Cartographer brief).
  *
@@ -302,8 +321,18 @@ export function encounterDraftSchemaFor(
     tactics: z.string(),
     treasure: z.string(),
     /**
+     * THE TRANSCRIBED ASSERTED CAST (docs/11 assertion rule, docs/17 row 309):
+     * the figures this scene's text asserts, as the MODEL read them out of the
+     * prose. Every name here is REQUIRED in the final roster (the app checks
+     * it, repairs once, then fails the run loudly) and is exempt from the
+     * budget arithmetic (the cap bounds the FILLER only). Absent/null = the
+     * scene names no figure — the legal answer for a vague scene.
+     */
+    assertedCast,
+    /**
      * Scene-assertion substitutions the reply must declare (docs/11 assertion
      * rule): a stated creature or place it could not honour. Absent/null = none.
+     * An asserted figure may never appear here — the gate refuses it.
      */
     substitutions: sceneSubstitutions,
     /**

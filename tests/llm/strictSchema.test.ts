@@ -71,6 +71,11 @@ describe('strictJsonSchema', () => {
       'terrain',
       'tactics',
       'treasure',
+      // THE TRANSCRIBED ASSERTED CAST (docs/11 assertion rule, docs/17 row
+      // 309): the scene reader's structured list of the figures the text
+      // asserts — the app checks it against the roster, so the field MUST be
+      // in the strict schema the reply is bound to.
+      'assertedCast',
       // The scene-assertion declaration (docs/11 assertion rule, row 89): the
       // preprocess field emits its OUTPUT shape (the array), like the other
       // tolerant fields above.

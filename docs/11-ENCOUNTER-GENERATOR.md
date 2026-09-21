@@ -2476,6 +2476,125 @@ the two schemas (the advisory call sites then read an absent field as `[]` and
 render nothing). No migration, no stored-data rewrite, no schema version: every
 piece is code plus optional fields no older row ever carried.
 
+#### The asserted cast is TRANSCRIBED, ENFORCED and EXEMPT (owner-decided, docs/17 row 309)
+
+**The owner's rule, verbatim:** *"If the whole purpose of the encounter is to
+defeat the undead king (for example) OF COURSE the generator can not simply
+exclude this. Not sure about a hard cap, i do not think its good (what if there
+are 3 mobs mentioned in the story that just HAVE to be there). Leave this to the
+model. An OCCASIONAL overload is not too bad if its not concentrated into one
+mob. Players can get creative and lure one away, things like that. So, prose
+assertions are absolute, fill up whats missing is my TLDR."* Distilled: prose
+assertions are ABSOLUTE; **fill up what's missing**; the budget governs only the
+FILLER. There is **no cap** — the model decides how many the story needs.
+
+**Why the row-89 rule needed this.** Row 89 made the pipeline DIRECTIONAL
+("whatever the scene STATES is binding") but gave it no way to KNOW what the
+scene stated: the only bridge was `roomBudget.fixedCastForEncounter`, built from
+`[[wiki-links]]` that resolve to an ALREADY-DRAFTED `npc` artifact. A MONSTER
+could never be asserted, a vague scene and a silent one were indistinguishable,
+and a figure the library does not hold could not be demanded at all. The five
+pieces below are ONE mechanism, each with ONE home:
+
+1. **TRANSCRIBE.** The step that READS the scene writes the asserted cast as
+   structured data, because the app may never read prose with a pattern
+   (`AGENTS.md` rule 5 — the model is the reader, the app enforces what it
+   wrote). The shape is `domain/artifact.assertedCastEntrySchema`:
+   `{ name, count }` — `name` is the figure as the text writes it AND the name
+   the roster entry fielding it must carry; `count` is how many the text states
+   (`"two risen lumberjacks"` → 2, a figure with no stated number → 1). The
+   reply contract carries it as the additive optional `assertedCast` list on
+   `llm/schemas.encounterDraftSchemaFor`; ABSENT and NULL both read as "the
+   scene names no figure", and an **EMPTY list is the legal, expected answer for
+   a vague scene** ("silence is not a constraint" still binds — inventing an
+   assertion the text does not make is the anti-invention half of the rule).
+   The clause `llm/sceneAuthority.ASSERTED_CAST_TRANSCRIPTION_SECTION` renders in
+   `runEngine.runDraft` for `kind === 'encounter'` ONLY: that is the step whose
+   brief IS the scene. The Cartographer's brief carries no scene text and no
+   such field, so it transcribes nothing and is BOUND instead (piece 3's second
+   half).
+2. **SURFACE.** The transcribed list is STORED on the encounter row —
+   `encounterDataShape.assertedCast`, additive optional, **no Dexie bump** — and
+   NAMED to the owner through the EXISTING advisory seam:
+   `sceneAuthority.assertedCastAdvisory` renders one sentence into
+   `data.budgetAdvisory`, the same block the budget verdicts, the fixed cast and
+   the substitution reports use, which the step notice and the encounter editor
+   (`features/campaign/components/kind-forms.tsx`) both print. Naming the
+   figures the model read is what makes a wrong read correctable in one step
+   (AGENTS rule 5's pattern). No second reporting channel, never an empty
+   advisory line, and the list survives a pause/resume because the run row's
+   draft step output carries it and finalize reads it back — never re-derived.
+3. **ENFORCE — presence is REQUIRED.** `sceneAuthority.assertedCastIssues`
+   names every asserted figure the roster does not field, matched through the
+   ONE `sameAssertedName` comparison (the app's comparable-name form). The Smith
+   draft runs it at its own boundary with its own repair set: **one repair turn**
+   names the figure and the count, then the reply is REJECTED (the
+   `RejectionReason` `'asserted-cast'`) and the run FAILS LOUDLY — never a
+   shipped fight with a note, never a silent substitution. The Cartographer's
+   `evaluate` gate runs the SAME finding against the roster the reply would
+   actually SHIP (the target's verbatim pin when the pin survives, the reply's
+   roster otherwise): one repair, then rejected. The stored list is the authority
+   for every later pass — `effectiveAssertedCast` unions the reply's own reading
+   with `runEngine.storedAssertedCastFor`'s row read, and
+   `assertedCastSectionFor` renders the stored list as a BINDING section in the
+   Cartographer brief (null when nothing is asserted, so those prompts stay
+   byte-identical). This closes a real hole: a never-mapped dungeon-intent target
+   briefs its whole roster FRESH, so before row 309 the map run could silently
+   replace the scene's own cast. Finally,
+   `sceneAuthority.assertAssertedCastPresent` is the FINALIZE BELT at all four
+   encounter write seams (Smith fresh create, Smith in-place fill, Cartographer
+   full run, roster-only repopulation): a roster that lost an asserted figure
+   THROWS there, so "never a shipped fight without the figure the story is
+   about" is structural rather than promised.
+4. **ENFORCE — budget exemption.** `roomBudget.BudgetRoomInput.assertedNames`
+   excludes asserted creatures from `checkRoomBudget`'s arithmetic — their
+   level, their count and their unreadable-level problem alike — so the sum cap
+   bounds only the **discretionary FILLER**. The complex stocking cap (which
+   sums the verdicts' `sumLevels`) inherits the exemption, and the `'empty'`
+   verdict counts TOTAL instances, so an asserted-only room is not "empty".
+   This is the subtle half and the reason the rule works: without it the
+   over-budget repair would "fix" the fight by **dropping the king**. The lower
+   `'under'` verdict still reads the filler (the filler is what the app stocks;
+   on the dnd5e band it is advisory-only and on `'pf2e-budget'` repairable) —
+   stated here rather than hidden.
+5. **NO SUBSTITUTION FOR AN ASSERTION.** `sceneAuthority
+   .assertedSubstitutionIssues` refuses a declared `substitutions` entry whose
+   `asserted` names an asserted figure, in BOTH roster-authoring lanes: the only
+   legal outcomes for an assertion are FIELDED as written or AUTHORED INLINE
+   (a complete inline `statBlock` for exactly that creature when the library
+   holds no such one). Substitutions stay legitimate for what the scene does NOT
+   assert — the place, the conditions — and the pre-309
+   `roomBudget.substitutionAdvisories` path is unchanged for those.
+
+**Boundaries, named so they are not re-derived.** The `'under'`/`'empty'`
+verdicts read the filler (see 4). A figure named by a `[[wiki-link]]` that
+resolves to a real `npc` row is still handled by the SEPARATE fixed-cast path
+(`roomBudget.fixedCastForEncounter`, docs/17 row 89/283): that is a
+WIKI-LINK cast with artifact-backed stats and level advisories, a different
+input for a different question — not a second mechanism for the asserted cast.
+`assertedCast` is not a general "must appear" list for hand-authored encounters:
+an owner can type one into the row, and the gates and the belt will enforce it,
+which is deliberate (the stored field is the contract).
+
+**The pins** are `tests/llm/assertedCast.test.ts` (NEW): the five outcomes above
+plus the anti-invention arm and the pause/resume arm, each with its revert-proof
+in a comment; the pure arms live there too. `tests/llm/strictSchema.test.ts`
+pins the field's presence in the reply contract,
+`tests/llm/rejectionReason.test.ts`'s deciding-site count moved 9 → 10 with the
+new site named, and the two `tests/fixtures/mobSpells/*-with-corpus.txt` goldens
+were regenerated — **their meaning changed**: they still pin the spells arc's
+byte contribution, no longer the pre-row-309 base prompt.
+
+**Reversal recipe.** Delete `assertedCast` from `domain/artifact.ts` and from
+`encounterDraftSchemaFor`; delete `ASSERTED_CAST_TRANSCRIPTION_SECTION`,
+`assertedCastSectionFor` and the transcription/binding entries from the two
+`runEngine` prompt assemblers; delete the Smith gate and its repair set, the
+Cartographer `evaluate` gate and the four finalize belts; drop `assertedNames`
+from `BudgetRoomInput` (the exemption) and `'asserted-cast'` from
+`REJECTION_REASONS`; restore `SCENE_AUTHORITY_SECTION`'s substitutions
+paragraph. No migration, no stored-data rewrite: a row that carries an
+`assertedCast` still parses and renders exactly as before.
+
 ### Deletion record — the marker path dies entirely (owner: all pixel
 read-back is unnecessary)
 

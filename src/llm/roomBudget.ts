@@ -20,6 +20,7 @@ import {
   FIXED_CAST_SECTION_HEADER,
 } from '@/llm/promptScaffolding';
 import type { SceneSubstitution } from '@/llm/schemas';
+import { sameAssertedName } from '@/llm/sceneAuthority';
 import { extractWikiLinks, resolveWikiLink, sentenceAround } from '@/lib/wikilinks';
 
 /**
@@ -725,6 +726,17 @@ export interface BudgetRoomInput {
   complex: boolean;
   /** The run's ONE resolved budget (docs/17 row 180) — never re-derived. */
   budget: EncounterBudget;
+  /**
+   * THE SCENE'S ASSERTED FIGURES (docs/11 assertion rule, docs/17 row 309):
+   * names the encounter's scene text asserts. They are EXCLUDED from the
+   * arithmetic below — the band bounds only the FILLER the generator designs,
+   * so an occasional overweight fight ships instead of being "repaired" by
+   * dropping the figure the story is about. The scene-reading step transcribed
+   * the list (the app never reads prose — AGENTS rule 5) and the presence gate
+   * guarantees the roster fields every one of them. Omitted/empty keeps the
+   * pre-row bytes and numbers exactly.
+   */
+  assertedNames?: readonly string[] | undefined;
 }
 
 export interface RoomBudgetVerdict {
@@ -767,11 +779,19 @@ export function checkRoomBudget(room: BudgetRoomInput): RoomBudgetVerdict {
     issue: null,
     advisory: null,
   };
+  const assertedNames = room.assertedNames ?? [];
   const problems: string[] = [];
   let sum = 0;
   let instances = 0;
   for (const creature of room.creatures) {
     instances += creature.count;
+    // THE SCENE'S ASSERTIONS ARE EXEMPT FROM THE ARITHMETIC (docs/17 row 309):
+    // an asserted figure is not the generator's to size, so it neither counts
+    // toward the band nor turns the room loud-unverified when its level is
+    // unreadable. The band bounds the FILLER; the presence gate owns the
+    // asserted cast. The comparison is the rule's ONE name matcher
+    // (`sceneAuthority.sameAssertedName`), never a second spelling of it.
+    if (assertedNames.some((asserted) => sameAssertedName(asserted, creature.name))) continue;
     const parsed = parseBudgetLevel(creature.level);
     if (parsed.kind === 'level') {
       sum += parsed.value * creature.count;

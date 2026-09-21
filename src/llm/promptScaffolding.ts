@@ -200,6 +200,11 @@ export const FIXED_CAST_SECTION_FOOTER =
 export const SCHEMA_REPAIR_LEAD_IN = 'Your previous reply was invalid JSON for the schema:';
 export const ENCOUNTER_SOURCE_REPAIR_LEAD_IN =
   'Your previous reply left monsters without a resolvable stat-block source:';
+/** The scene-assertion repair lead-in (docs/11 assertion rule, docs/17 row
+ * 309): the reply omitted a figure the scene's text asserts, and the presence
+ * gate insists once before the run fails. */
+export const ASSERTED_CAST_REPAIR_LEAD_IN =
+  'Your previous reply left out figures this scene asserts — every one of them is required in the roster:';
 export const PART_TOO_SHORT_REPAIR_SENTENCE = 'Your previous reply was too short. Write the full part now.';
 
 /* -------------------------------------------------------------------------
@@ -351,6 +356,7 @@ export const SCAFFOLDING_MARKERS: readonly { label: string; pattern: RegExp }[] 
   literalMarker('the fixed-cast section footer', FIXED_CAST_SECTION_FOOTER),
   literalMarker('the schema-repair lead-in', SCHEMA_REPAIR_LEAD_IN),
   literalMarker('the encounter-source repair lead-in', ENCOUNTER_SOURCE_REPAIR_LEAD_IN),
+  literalMarker('the asserted-cast repair lead-in', ASSERTED_CAST_REPAIR_LEAD_IN),
   literalMarker('the part-too-short repair sentence', PART_TOO_SHORT_REPAIR_SENTENCE),
   literalMarker('the mob-spells section header', MOB_SPELL_SECTION_PREFIX),
   literalMarker('the mob-spells repair lead-in', MOB_SPELL_REPAIR_LEAD_IN),

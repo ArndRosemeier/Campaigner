@@ -56,6 +56,9 @@ export const REJECTION_REASONS = [
   /** The reply parsed, but broke the encounter brief's own contract: room
    * shape, roster, coverage or level budget. */
   'brief-contract',
+  /** The reply left out a figure the scene's text asserts, or declared a
+   * substitution covering one (docs/11 assertion rule, docs/17 row 309). */
+  'asserted-cast',
   /** Half-formed unicode escapes in text about to be persisted
    * (`lib/encodingHygiene`). */
   'escape-debris',
@@ -92,6 +95,8 @@ export const REJECTION_CLAUSES: Record<RejectionReason, string> = {
     'the stat block printed a level other than the one the run resolved for the entity, after one automatic repair attempt',
   'brief-contract':
     "the reply parsed, but it broke the encounter brief's own contract (room shape, roster, or level budget) after one automatic repair attempt",
+  'asserted-cast':
+    'the reply left out a figure the scene asserts (or declared a substitution covering one), after one automatic repair attempt',
   'escape-debris':
     'the generated text carries half-formed unicode escapes, which is refused at the boundary that would persist it',
   'scaffolding-echo':

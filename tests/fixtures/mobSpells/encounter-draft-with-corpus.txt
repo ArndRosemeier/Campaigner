@@ -4,8 +4,12 @@ Task: A cultist ambush at the ford
 
 THE SCENE IS THE TRUTH FOR THIS FIGHT.
 The brief above is the scene this encounter must stage. Whatever it states about the opposition — what the creatures are, roughly how many, what they carry, what they are doing — and about the place — its terrain and the conditions the party will fight in — is FIXED: the roster AND the map must match it.
-A stated creature you cannot honour as written is never silently swapped: either build it as a complete inline "statBlock" for exactly the creature the scene describes, or declare the deviation in "substitutions" as { "asserted": what the scene states, "used": what you fielded instead, "reason": why } — an undeclared swap is the failure this rule exists to prevent, and a declared one is reported to the GM.
+A figure the scene asserts is never substituted and never silently swapped: the only outcomes for it are FIELDED under the name the scene states it by — with a complete inline "statBlock" for exactly that creature when the library holds no such one — or a refused reply. A deviation declared in "substitutions" as { "asserted": what the scene states, "used": what you fielded instead, "reason": why } may name only something the scene does NOT assert (a place, a condition, an impression); a substitution that names an asserted figure is refused outright, and a declared substitution is reported to the GM.
 Where the scene states nothing you design freely: silence is not a constraint, and the roster, the map, the tactics, the treasure and the difficulty are yours. A vague scene is never a reason to invent an assertion the text does not make.
+
+TRANSCRIBE the cast this scene ASSERTS into the reply's "assertedCast" list — the app checks that list against your roster and shows it to the GM, so it is how a wrong reading of the scene becomes visible and correctable in one step:
+one entry per figure the text names — { "name": the figure's name as the text writes it AND as your roster entry will carry it (the roster entry must carry exactly that name), "count": how many the text states, or 1 when it states none }.
+Every entry in that list is REQUIRED in this fight, with no cap on how many the story needs: field it, as a complete inline "statBlock" when the library holds no such creature. Reply with an EMPTY list when the scene names no figure at all — an invented assertion is a lie about the scene, and a vague scene is never a reason to invent one.
 
 No rule excerpts available.
 
@@ -25,4 +29,4 @@ Individual creature carries follow the creature-coin guidance in the excerpts; t
 Field guidance for this encounter:
 - "locationKind": where the encounter takes place — "dungeon" (underground/ruin complex), "building" (indoor structure), "wilderness" (open terrain), or "other" when nothing fits.
 
-Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","difficulty","monsters","terrain","tactics","treasure","substitutions","locationKind"]
+Reply with ONLY a JSON object with exactly these fields: ["name","summary","suggestedTags","body","difficulty","monsters","terrain","tactics","treasure","assertedCast","substitutions","locationKind"]

@@ -61,6 +61,7 @@ import {
   schematicCellPx,
   type DungeonMapPath,
   type GameSystem,
+  type AssertedCastEntry,
   type MobSpellIndex,
   type MobSpellVocabulary,
 } from '@/domain';
@@ -159,7 +160,18 @@ import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
-import { SCENE_AUTHORITY_SECTION, sceneSubstitutionsOf } from '@/llm/sceneAuthority';
+import {
+  ASSERTED_CAST_TRANSCRIPTION_SECTION,
+  SCENE_AUTHORITY_SECTION,
+  assertAssertedCastPresent,
+  assertedCastAdvisory,
+  assertedCastIssues,
+  assertedCastOf,
+  assertedCastSectionFor,
+  assertedSubstitutionIssues,
+  effectiveAssertedCast,
+  sceneSubstitutionsOf,
+} from '@/llm/sceneAuthority';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { statBlockResponseFormat } from '@/llm/statBlockContract';
 import { failureKindOf } from '@/llm/failureKind';
@@ -210,6 +222,7 @@ import {
   type RejectionReason,
 } from '@/llm/rejectionReason';
 import {
+  ASSERTED_CAST_REPAIR_LEAD_IN,
   ENCOUNTER_SOURCE_REPAIR_LEAD_IN,
   SCHEMA_REPAIR_LEAD_IN,
   entityNameVerbatimSentence,
@@ -1165,9 +1178,14 @@ function encounterAdvisoryText(
   budgetAdvisory: string,
   encounterName: string,
   substitutions: readonly SceneSubstitution[],
+  assertedCast: readonly AssertedCastEntry[] = [],
 ): string {
-  return [budgetAdvisory, ...substitutionAdvisories(encounterName, substitutions)]
-    .filter((part) => part !== '')
+  return [
+    budgetAdvisory,
+    assertedCastAdvisory(encounterName, assertedCast),
+    ...substitutionAdvisories(encounterName, substitutions),
+  ]
+    .filter((part): part is string => part !== null && part !== '')
     .join(' ');
 }
 
@@ -2195,6 +2213,11 @@ export class RunEngine {
    * the block — the entry is stored and the unresolved chip plus a loud notice
    * are the owner-visible record (the no-invention policy). */
   private spellRepaired = new Set<Id>();
+  /** Scene-assertion repair state per run (docs/11 assertion rule, docs/17 row
+   * 309): one attempt to field the figures the scene text asserts. A second
+   * failure does NOT ship with a note — the reply is rejected and the run fails
+   * loudly (an asserted figure is never silently dropped). */
+  private assertedCastRepaired = new Set<Id>();
   private encounterSchematics = new Map<Id, { dataUrl: string; width: number; height: number }>();
   private encounterLayoutVariants = new Map<Id, number>();
 
@@ -2257,6 +2280,7 @@ export class RunEngine {
     this.statblockRetried.delete(run.id);
     this.sourceRepaired.delete(run.id);
     this.spellRepaired.delete(run.id);
+    this.assertedCastRepaired.delete(run.id);
     this.cancelRequested.delete(run.id);
     if (input.persona.mode === 'encounter') {
       this.encounterLayoutVariants.set(run.id, 0);
@@ -2612,6 +2636,7 @@ export class RunEngine {
     this.statblockRetried.delete(runId);
     this.sourceRepaired.delete(runId);
     this.spellRepaired.delete(runId);
+    this.assertedCastRepaired.delete(runId);
     this.encounterSchematics.delete(runId);
     this.encounterLayoutVariants.delete(runId);
     useProgressStore.getState().finish(encounterProgressId(runId));
@@ -3564,6 +3589,28 @@ export class RunEngine {
     };
   }
 
+  /**
+   * The asserted cast an encounter ROW already holds (docs/11 assertion rule,
+   * docs/17 row 309) — the scene-reading draft's own transcription, persisted
+   * at finalize.
+   *
+   * Every LATER pass on that encounter (the Cartographer's map/stocking run,
+   * an in-place refill, a roster-only repopulation) is BOUND by this list, so an
+   * assertion is never re-derived and never dropped by a lane whose brief
+   * carries no scene text at all — which is exactly the hole the Cartographer's
+   * fresh complex population used to fall through. One read, one place; `[]`
+   * when there is no target, a row of another kind, or a row written before the
+   * field existed (additive, no Dexie bump).
+   */
+  private async storedAssertedCastFor(
+    targetArtifactId: Id | undefined,
+  ): Promise<AssertedCastEntry[]> {
+    if (targetArtifactId === undefined) return [];
+    const target = await getAnyArtifact(targetArtifactId);
+    if (target?.kind !== 'encounter') return [];
+    return target.data.assertedCast ?? [];
+  }
+
   private async runDraft(
     runId: Id,
     stepIndex: number,
@@ -3578,6 +3625,11 @@ export class RunEngine {
     const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not draft artifacts');
+    // The encounter row's OWN asserted cast (docs/17 row 309) — the scene
+    // reading an earlier run persisted. An in-place refill is bound by it (its
+    // scene is the same), so one read serves the prompt section and the gate.
+    const storedAssertedCast =
+      kind === 'encounter' ? await this.storedAssertedCastFor(input.targetArtifactId) : [];
     const contextArtifacts = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const contextSection =
       contextArtifacts.length === 0
@@ -3674,6 +3726,14 @@ export class RunEngine {
       // where it states nothing. Encounter runs only, and null everywhere else
       // so every other kind's prompt is byte-identical (pinned by test).
       kind === 'encounter' ? SCENE_AUTHORITY_SECTION : null,
+      // The TRANSCRIPTION half (docs/17 row 309), immediately after the rule it
+      // serves: the scene reader writes the asserted cast as structured data
+      // because the app never reads prose with a pattern (AGENTS rule 5). The
+      // BINDING half renders too when the target row already transcribed one
+      // (an in-place refill of the same encounter): the persisted list is the
+      // authority, never re-derived.
+      kind === 'encounter' ? ASSERTED_CAST_TRANSCRIPTION_SECTION : null,
+      kind === 'encounter' ? assertedCastSectionFor(storedAssertedCast) : null,
       moduleSection,
       groundingSection,
       contextSection,
@@ -3904,6 +3964,62 @@ export class RunEngine {
       }
     }
     this.spellRepaired.delete(runId);
+
+    // THE SCENE'S ASSERTED CAST IS REQUIRED (docs/11 assertion rule, docs/17
+    // row 309): every figure the scene-reading reply transcribed must be
+    // fielded under exactly that name, and a substitution may not cover one.
+    // ONE repair turn insists; a second failure REJECTS the reply, so the run
+    // fails loudly rather than shipping a fight without a figure the story is
+    // about — never a note on a shipped fight, never a silent substitution.
+    // The budget EXEMPTION (roomBudget's `assertedNames`) is the other half at
+    // the same boundary: the cap may not "repair" this by dropping the figure.
+    const assertedCast =
+      kind === 'encounter'
+        ? effectiveAssertedCast(
+            assertedCastOf((parsed as { assertedCast?: unknown }).assertedCast),
+            storedAssertedCast,
+          )
+        : [];
+    if (kind === 'encounter' && assertedCast.length > 0) {
+      const draftName = asString((parsed as { name?: unknown }).name).trim();
+      const draftMonsters =
+        (parsed as { monsters?: { name: string }[] }).monsters ?? [];
+      const assertedIssues = [
+        ...assertedCastIssues(draftName, assertedCast, draftMonsters),
+        ...assertedSubstitutionIssues(
+          draftName,
+          assertedCast,
+          (parsed as { substitutions?: SceneSubstitution[] }).substitutions ?? [],
+        ),
+      ];
+      if (assertedIssues.length > 0) {
+        if (!this.assertedCastRepaired.has(runId)) {
+          this.assertedCastRepaired.add(runId);
+          debugLog('run', 'encounter reply left asserted figures out — retrying once', {
+            issue: assertedIssues.join('; '),
+          });
+          return this.runDraft(
+            runId,
+            stepIndex,
+            steps,
+            input,
+            signal,
+            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}${ASSERTED_CAST_REPAIR_LEAD_IN}\n- ${assertedIssues.join('\n- ')}\nField every asserted figure under exactly that name (a complete inline "statBlock" when no library creature matches) and declare NO substitution for an asserted figure. Reply with corrected JSON only.`,
+          );
+        }
+        const assertedRejected = this.finishStep(
+          steps[stepIndex],
+          rejectedStepOutput(raw, assertedIssues, ['asserted-cast']),
+          'rejected',
+        );
+        if (input.autonomy === 'manual') {
+          return { step: assertedRejected, runStatus: 'awaiting_user' };
+        }
+        if (input.autonomy === 'auto') return { step: assertedRejected };
+        return { step: assertedRejected, runStatus: 'needs_review' };
+      }
+    }
+    this.assertedCastRepaired.delete(runId);
 
     const spellNotice =
       spellIssueList.length === 0
@@ -4865,6 +4981,14 @@ export class RunEngine {
     if (target !== undefined && target.kind !== 'encounter') {
       throw new Error(`"${target.name}" is not an encounter and cannot be regenerated`);
     }
+    // THE SCENE'S ASSERTED CAST (docs/11 assertion rule, docs/17 row 309): this
+    // brief carries no scene text of its own — it stocks a roster from the
+    // encounter's existing design — so the list the SCENE-READING draft
+    // transcribed (persisted on the row) is what binds it. Without this the
+    // fresh complex population would silently replace the Smith's roster and
+    // drop the figure the scene is about.
+    const storedAssertedCast =
+      target?.kind === 'encounter' ? (target.data.assertedCast ?? []) : [];
     // D10 amendment — the preset resolution order: an explicit per-run
     // choice (the persisted run row; the panel's Auto writes null) beats the
     // regeneration target's own locationKind, which beats the Settings
@@ -5118,6 +5242,13 @@ export class RunEngine {
       // repopulate brief states no scene, and the section's own "where the
       // scene states nothing you design freely" half is what covers that).
       SCENE_AUTHORITY_SECTION,
+      // THE BINDING ASSERTED CAST (docs/11 assertion rule, docs/17 row 309):
+      // this brief carries no scene text, so the list the SCENE-READING draft
+      // persisted on the encounter row is rendered here as a must-appear
+      // contract — the same rule the Smith draft stated, carried into the pass
+      // that actually stocks the rooms. Null (no assertion) renders nothing, so
+      // those prompts stay byte-identical.
+      assertedCastSectionFor(storedAssertedCast),
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       partyLevelLine(partyLevel),
@@ -5263,6 +5394,11 @@ export class RunEngine {
           fillGrade,
           complex: isComplex,
           budget,
+          // THE SCENE'S ASSERTED FIGURES ARE EXEMPT (docs/17 row 309): the band
+          // and the complex stocking cap bound the FILLER the generator
+          // designs, so a heavy asserted cast ships instead of being "repaired"
+          // by dropping the figure the story is about.
+          assertedNames: storedAssertedCast.map((entry) => entry.name),
         }),
       );
     };
@@ -5464,6 +5600,34 @@ export class RunEngine {
           advisory: null,
           expansionActive: false,
         };
+      }
+      // THE SCENE'S ASSERTED CAST IS REQUIRED (docs/11 assertion rule, docs/17
+      // row 309). This lane's reply carries no `assertedCast` field of its own
+      // (its brief states no scene), so the list is the one the encounter ROW
+      // holds — transcribed by the scene-reading draft and persisted — and the
+      // roster it binds is the one this reply would SHIP: the target's verbatim
+      // pin when the pin survives, the reply's own roster otherwise. One repair
+      // turn insists (the gate below returns the issues), then the reply is
+      // rejected and the run fails loudly: an asserted figure is never dropped
+      // and never replaced by a substitution.
+      if (storedAssertedCast.length > 0) {
+        const assertedIssues = [
+          ...assertedCastIssues(
+            brief.name,
+            storedAssertedCast,
+            rosterPin !== undefined && !expansion ? rosterPin : corrected.monsters,
+          ),
+          ...assertedSubstitutionIssues(brief.name, storedAssertedCast, brief.substitutions),
+        ];
+        if (assertedIssues.length > 0) {
+          return {
+            brief: null,
+            issues: assertedIssues,
+            reasons: ['asserted-cast'],
+            advisory: null,
+            expansionActive: false,
+          };
+        }
       }
       const stamped = stampTargetLevels(corrected);
       // The advisory every policy owes the owner (null for the dnd5e band):
@@ -6265,6 +6429,10 @@ export class RunEngine {
       throw new Error('A roster-only repopulation needs an existing encounter to restock');
     }
     if (target.kind !== 'encounter') throw new Error('Encounter repopulation target changed kind');
+    // The scene's asserted cast, read off the row the scene-reading draft wrote
+    // it onto (docs/17 row 309): the restocked roster must still field every
+    // one of them, and they are exempt from the budget below.
+    const storedAssertedCast = target.data.assertedCast ?? [];
     if (input.placementModuleId !== undefined) {
       throw new Error(
         'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
@@ -6377,6 +6545,10 @@ export class RunEngine {
         ...(fillGrade === undefined ? {} : { fillGrade }),
         complex: isComplex,
         budget,
+        // The scene's asserted figures are exempt from the band (docs/17 row
+        // 309): the finalize tail lowers a room's target when it ships over,
+        // and it must never do that BECAUSE of the figure the scene is about.
+        assertedNames: storedAssertedCast.map((entry) => entry.name),
       }),
     );
     const lowered = new Map<number, number>(
@@ -6405,6 +6577,16 @@ export class RunEngine {
     // declaration of what it could not honour is the one thing that must reach
     // the GM with it.
     advisories.push(...substitutionAdvisories(target.name, parsed.substitutions));
+    // The transcribed asserted cast, named on the SAME advisory seam (docs/17
+    // row 309) so the owner reads what the scene was taken to assert — the
+    // wrong-read correction path.
+    const assertedAdvisory = assertedCastAdvisory(target.name, storedAssertedCast);
+    if (assertedAdvisory !== null) advisories.push(assertedAdvisory);
+    // The FINALIZE BELT (docs/17 row 309): the repopulation's own approve gate
+    // already refused a missing asserted figure, so reaching this is a
+    // programming error or a hand-edited run row — and it is thrown, never
+    // written as a note on a shipped fight.
+    assertAssertedCastPresent(target.name, storedAssertedCast, monsters);
     const budgetAdvisory = advisories.join(' ');
     await updateArtifact(
       target.id,
@@ -6418,6 +6600,10 @@ export class RunEngine {
           monsters,
           layout: reconciledLayout,
           budgetAdvisory,
+          // The scene's asserted cast rides unchanged (docs/17 row 309): this
+          // pass replaces the roster, never the reading of the scene, so a
+          // resume/regen keeps checking the same list.
+          ...(storedAssertedCast.length === 0 ? {} : { assertedCast: storedAssertedCast }),
           ...(fillGradeToPersist === undefined ? {} : { fillGrade: fillGradeToPersist }),
         }),
       },
@@ -6467,6 +6653,10 @@ export class RunEngine {
         'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
       );
     }
+    // The scene's asserted cast (docs/17 row 309): the map/stocking run binds
+    // the roster it writes to the list the scene-reading draft transcribed onto
+    // the row, and the finalize belt below refuses a roster that dropped one.
+    const assertedCast = target?.kind === 'encounter' ? (target.data.assertedCast ?? []) : [];
     // Loud existence check (AGENTS rule 1): a module deleted while the run
     // was in flight FAILS the run here — never a dangling artifact whose
     // moduleId points at a removed row.
@@ -6518,6 +6708,11 @@ export class RunEngine {
               ),
             ]
           : target.data.monsters;
+      // THE FINALIZE BELT (docs/17 row 309): the roster about to be written
+      // must field every figure the scene asserts; the brief gate already
+      // repaired and refused, so this is the belt that makes "never a shipped
+      // fight without an asserted figure" structural rather than promised.
+      assertAssertedCastPresent(target.name, assertedCast, expandedMonsters);
       // The re-anchor + content write commit as ONE attach-seam
       // transaction: a crash between the two used to strand a
       // library-scoped unreferenced image while the artifact kept the old
@@ -6549,12 +6744,16 @@ export class RunEngine {
           // So is the shape it just produced (docs/11 D11): the target's old
           // shape may not match the fresh layout's room count.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
+          // The scene's asserted cast rides the spread (docs/17 row 309) and is
+          // named on the advisory seam beside the budget verdict.
+          ...(assertedCast.length === 0 ? {} : { assertedCast }),
           // And the run's own budget verdict (docs/11 D12) replaces the
           // target's stale advisory — the fresh layout was just checked.
           budgetAdvisory: encounterAdvisoryText(
             this.encounterBudgetAdvisory(steps),
             parsed.name,
             parsed.substitutions,
+            assertedCast,
           ),
           // Fill grade (docs/11 D12 amendment): the row's value always wins
           // (never redrawn — owner precedence). Absent + a complex layout
@@ -6656,10 +6855,12 @@ export class RunEngine {
           // single, anything multi-room = complex. The brief boundary
           // enforces 1-or-4–10; the persisted field records the outcome.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
+          ...(assertedCast.length === 0 ? {} : { assertedCast }),
           budgetAdvisory: encounterAdvisoryText(
             this.encounterBudgetAdvisory(steps),
             parsed.name,
             parsed.substitutions,
+            assertedCast,
           ),
           // Fill grade (docs/11 D12 amendment): a complex layout
           // materializing for the FIRST time stamps the value the brief was
@@ -7013,6 +7214,22 @@ export class RunEngine {
     // finalize. Serves BOTH Smith paths: fresh-draft creation and the
     // in-place content run (both write `data.monsters` below).
     if (kind === 'encounter' && 'monsters' in data) {
+      // THE SCENE'S ASSERTED CAST (docs/11 assertion rule, docs/17 row 309):
+      // what this draft transcribed, unioned with what the encounter ROW already
+      // holds (an in-place refill of the same encounter). Written onto the data
+      // BEFORE the roster checks so the budget exemption below and the finalize
+      // belt read the SAME list, and persisted with the row so the next pass on
+      // this encounter is bound by it instead of re-deriving it.
+      const draftAssertedCast = assertedCastOf(
+        (draft as { assertedCast?: unknown }).assertedCast,
+      );
+      const storedAssertedCast = await this.storedAssertedCastFor(input.targetArtifactId);
+      const assertedCast = effectiveAssertedCast(draftAssertedCast, storedAssertedCast);
+      if (assertedCast.length === 0) {
+        delete data.assertedCast;
+      } else {
+        data.assertedCast = assertedCast;
+      }
       // The retrieve output is data at rest — validate it at the boundary
       // exactly like the draft path (storedRetrieveOutput). Garbage must
       // fail the run loudly, never silently become empty citation maps.
@@ -7115,6 +7332,12 @@ export class RunEngine {
       );
       if (partyLevel === undefined) throw encounterPartyLevelRequiredError(encounterName);
       data.partyLevel = partyLevel;
+      // THE FINALIZE BELT (docs/17 row 309): the roster about to be written
+      // must field every figure the scene asserts. The draft step already
+      // repaired once and refused a second time, so reaching here is a
+      // programming error or a hand-edited run row — and it is THROWN, never
+      // written as a note on a shipped fight.
+      assertAssertedCastPresent(encounterName, data.assertedCast ?? [], monsters);
     }
 
     // Fixed-cast advisories (docs/11): the scene members the brief pinned
@@ -7141,7 +7364,19 @@ export class RunEngine {
         asString(draft.name).trim(),
         sceneSubstitutionsOf(draft.substitutions),
       );
-      const advisories = [...castAdvisories, ...declaredSubstitutions];
+      // The TRANSCRIBED asserted cast rides the SAME advisory block (docs/17
+      // row 309): naming the figures the model read out of the scene is what
+      // makes a wrong read correctable in one step — the owner-visible half of
+      // AGENTS rule 5, and the ONLY reporting channel this rule uses.
+      const assertedAdvisory = assertedCastAdvisory(
+        asString(draft.name).trim(),
+        data.assertedCast ?? [],
+      );
+      const advisories = [
+        ...castAdvisories,
+        ...declaredSubstitutions,
+        ...(assertedAdvisory === null ? [] : [assertedAdvisory]),
+      ];
       if (advisories.length > 0) {
         data.budgetAdvisory = [data.budgetAdvisory, ...advisories]
           .filter((part) => part !== '')
@@ -7436,6 +7671,10 @@ export class RunEngine {
             ...(fillGrade === undefined ? {} : { fillGrade }),
             complex: isComplex,
             budget,
+            // The scene's asserted figures are exempt from the band (docs/17
+            // row 309) — the in-place fill may lower a room's target for its
+            // FILLER, never for the figure the scene is about.
+            assertedNames: (data.assertedCast ?? []).map((entry) => entry.name),
           }),
         );
         const lowered = new Map<number, number>(
@@ -7459,8 +7698,16 @@ export class RunEngine {
           .filter((advisory) => advisory !== '');
         const verificationAdvisory = budgetVerificationAdvisory(budget);
         if (verificationAdvisory !== null) advisories.push(verificationAdvisory);
+        // The transcribed asserted cast rides the SAME seam (docs/17 row 309):
+        // the owner reads what the scene was taken to assert on the row he
+        // edits, so a wrong read is correctable in one step.
+        const assertedAdvisory = assertedCastAdvisory(target.name, data.assertedCast ?? []);
+        if (assertedAdvisory !== null) advisories.push(assertedAdvisory);
         budgetAdvisory = advisories.join(' ');
       }
+      // THE FINALIZE BELT (docs/17 row 309): the in-place roster must field
+      // every figure the scene asserts — thrown, never a note.
+      assertAssertedCastPresent(target.name, data.assertedCast ?? [], data.monsters);
       // A kept DIFFICULTY the reply DISAGREED with is spoken LOUDLY (docs/17
       // row 228): preserving the encounter's own input silently would be its
       // own small lie, so the mismatch rides the persisted advisory block

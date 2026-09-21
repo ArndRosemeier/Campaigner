@@ -275,12 +275,14 @@ describe('SCAN — the class is recorded at the site that refuses (docs/17 row 1
     const rejectedStatuses =
       text.split("'rejected',").length - 1 - text.split(promiseVerdict).length + 1;
     const constructions = text.split('rejectedStepOutput(').length - 1;
-    // NINE deciding sites at this base (docs/17 row 152 lists eight by name; the
-    // eighth is the Cartographer's spell-repair refusal, docs/17 row 200, and
-    // the ninth is the stat-block LEVEL-MISMATCH refusal, docs/17 row 247);
+    // TEN deciding sites at this base (docs/17 row 152 lists eight by name; the
+    // eighth is the Cartographer's spell-repair refusal, docs/17 row 200, the
+    // ninth is the stat-block LEVEL-MISMATCH refusal, docs/17 row 247, and the
+    // tenth is the SCENE-ASSERTION refusal, docs/17 row 309 — a roster that
+    // still omits a figure the scene's text asserts after its own repair turn);
     // the counts must be EQUAL, so a new site that calls `finishStep` with
     // 'rejected' and a hand-built output reds this pin.
-    expect(rejectedStatuses).toBe(9);
+    expect(rejectedStatuses).toBe(10);
     expect(constructions).toBe(rejectedStatuses);
     // And no site may hand-roll the output object beside the constructor.
     expect(text).not.toContain("{ raw, issues }, 'rejected'");
