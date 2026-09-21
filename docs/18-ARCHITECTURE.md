@@ -521,6 +521,18 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   trap, AGENTS §The gate and the clock 5) — deliberately stays at the gate's own
   call site, because it is a gate policy, not part of the rule.
 
+- **The board is BOUNDED, and the bound is a TEST** (docs/17 row 303,
+  owner-directed 2026-09-21: the file had reached 349 dense lines).
+  `docs/20-ORCHESTRATION.md` is current state only and names
+  `git show 3200807:docs/20-ORCHESTRATION.md` as the archive for every historical
+  record; `tests/architecture/one-board-rule.test.ts` reds above 140 lines, above
+  500 characters on any line, when a `LANDED` row is not the shape the badge
+  parses, or when no GATE GREEN landing remains — and it runs the REAL
+  `scripts/buildStatus.mjs` over the REAL board, because that file is the badge's
+  input (see §2.3) and a compaction it cannot parse reads `cannot-tell` in the
+  owner's browser. A landing therefore PRUNES the oldest LANDED row; history is
+  `docs/17`'s business, never a growing tail in the board itself.
+
 ## 4. Gotchas
 
 - **A vitest config key that vitest does not read is INERT, not deprecated — and
