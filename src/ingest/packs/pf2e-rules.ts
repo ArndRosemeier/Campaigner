@@ -18,7 +18,9 @@ import {
 } from './text';
 import {
   asPackFileParser,
+  sectionMissFailure,
   type PackAdapter,
+  type PackEntryFailure,
   type PackFileParse,
   type PackSectionEntry,
 } from './types';
@@ -261,7 +263,14 @@ function castLine(doc: ParsedRulesDoc): string | null {
 const HEIGHTENING_HEADING =
   /<strong>\s*Heightened\s*(?:\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\))?\s*<\/strong>/gi;
 
-/** The description mentions heightening at all (case-insensitive). */
+/** The description mentions heightening at all (case-insensitive) — ALSO the
+ *  MISS PROBE of docs/17 row 294: the mention is the loose test for "this
+ *  document HAS a heightening section", while `HEIGHTENING_HEADING` above is
+ *  the VALUE pattern that reads it. A description that mentions Heightened but
+ *  reads NO heading is a MISS: the notes still ride `unparsed` (row 221) AND
+ *  the import report is told, so a document whose markup differs from the
+ *  pattern in hand is no longer indistinguishable from one with no heightening
+ *  at all. */
 const HEIGHTENING_MENTION = /heightened/i;
 
 /**
@@ -327,7 +336,11 @@ function parseHeighteningEntries(html: string): {
  * later arc can render a spell at the rank a mob casts it without a second
  * pass over these packs.
  */
-function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
+function spellDataFor(
+  doc: ParsedRulesDoc,
+  fileName: string,
+  failures: PackEntryFailure[],
+): SpellData | null {
   if (doc.type !== 'spell') return null;
   const cantrip = spellTraitsAreCantrip(doc.system.traits.value);
   const rank = cantrip ? 0 : doc.system.level?.value;
@@ -335,7 +348,17 @@ function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
     throw new Error(`spell "${doc.name}" has neither a cantrip trait nor system.level.value`);
   }
   const heightening = parseHeighteningEntries(doc.system.description.value);
-  return {
+  // ABSENCE vs MISS (docs/17 row 294): a spell with no heightening at all is
+  // normal and SILENT; a description that mentions Heightened while the VALUE
+  // pattern reads no heading is a MISS named on the import report. The notes
+  // row 221 stores stay exactly as they are — this ADDS the report surface.
+  const miss = sectionMissFailure(
+    doc.system.description.value,
+    HEIGHTENING_MENTION,
+    heightening.entries.length > 0,
+    { file: fileName, name: doc.name, section: 'Heightened', entry: 'spell' },
+  );
+  const payload: SpellData = {
     system: 'pathfinder2e',
     rank,
     cantrip,
@@ -359,9 +382,18 @@ function spellDataFor(doc: ParsedRulesDoc): SpellData | null {
     heighteningUnparsed: heightening.unparsed,
     publication: doc.system.publication ?? null,
   };
+  // Pushed after the payload is built, so a document that fails on another
+  // boundary (an unknown tradition, an unreadable rank) never also reports a
+  // miss, and a miss never removes the entry.
+  if (miss !== null) failures.push(miss);
+  return payload;
 }
 
-function mapRulesDoc(doc: ParsedRulesDoc, fileName: string): PackSectionEntry {
+function mapRulesDoc(
+  doc: ParsedRulesDoc,
+  fileName: string,
+  failures: PackEntryFailure[],
+): PackSectionEntry {
   const lines: string[] = [];
   const summary = summaryLine(doc);
   if (summary !== null) lines.push(summary);
@@ -377,7 +409,7 @@ function mapRulesDoc(doc: ParsedRulesDoc, fileName: string): PackSectionEntry {
   if (source !== null) lines.push(source);
   // The structured half rides the SAME entry; non-spells omit the key so the
   // runner persists the chunk they always got (text byte-identical).
-  const spell = spellDataFor(doc);
+  const spell = spellDataFor(doc, fileName, failures);
   return {
     categories: headingCategoriesFor(doc, fileName),
     name: doc.name,
@@ -404,7 +436,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
     }
     const name = typeof doc.name === 'string' ? doc.name : '';
     try {
-      sections.push(mapRulesDoc(pf2eRulesDocSchema.parse(doc), fileName));
+      sections.push(mapRulesDoc(pf2eRulesDocSchema.parse(doc), fileName, failures));
     } catch (error) {
       failures.push({
         file: fileName,

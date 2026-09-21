@@ -8576,3 +8576,61 @@ documentation-only absence assertion in the no-provenance test cannot red under
 the guard's removal and is labelled as documentary (docs/18 §5). The
 row-212/215 tripwire ran 18/18 GREEN with **NO `*Baseline.json` edit**.
 
+
+## The upstream section miss is named, and absence stays silent (docs/17 row 294, docs/18 §2/§5)
+
+**WHAT IS PINNED.** `packs/types.sectionMissFailure` separates a legitimate
+ABSENCE (the section is not in the document at all — nothing is reported) from a
+MISS (the section IS present under markup the adapter's VALUE pattern does not
+read — ONE named `PackEntryFailure` on the import report). Three families, three
+fixture sets, one seam:
+
+- `tests/ingest/packs/dnd5e-foundry.test.ts` — the `At Higher Levels` sentence.
+  **A** a `<strong>At Higher Levels.</strong>` document ⇒ the sentence is
+  extracted and `failures` is empty; **B** the same words under `<span>` (the
+  value pattern's `<strong>` assumption fails) ⇒ the sentence is empty AND
+  exactly one issue naming `At Higher Levels` and `docs/17 row 294`; **C** a
+  document with no such section ⇒ empty and NO issue; plus the REAL Fireball
+  fixture, whose two spellings still read with no issue (the probe changes
+  nothing about extraction).
+- `tests/ingest/packs/pf2e-rules.test.ts` — the heightening notes. The
+  pre-existing pin *"captures an unrecognized Heightened line as LOUD unparsed
+  PLAIN PROSE"* asserted `failures === []` for exactly the present-but-unread
+  case: **it pinned the defect and is UPDATED deliberately**, now asserting the
+  one issue while `heighteningUnparsed` (row 221's stored prose) is unchanged.
+  Two arms join it: a spell with no heightening mention reports nothing
+  (absence), and a readable `Heightened (+2)` reports nothing (the value pattern
+  wins).
+- `tests/ingest/packs/pf2e-journal.test.ts` — the `Section:` and `pg.` footers.
+  **A** both footers under `<em>` ⇒ read, no issue; **B1** a `<strong>Section:
+  …</strong>` footer ⇒ one issue naming `Section`; **B2** a `<span>… pg. 75</span>`
+  citation ⇒ one issue naming `Source citation`; **C** a footer-less divider page
+  ⇒ no issue. A fifth arm drives a drifted page through `importPack` and asserts
+  the miss reaches the seam's OWN public shape — `result.failed` (the list
+  `PackImportReport` renders) and `packMeta.entriesFailed` — while the page still
+  imports (`result.imported === 1`, `book.status === 'ready'`).
+- `tests/architecture/one-section-miss.test.ts` — the exactly-one SOURCE SCAN
+  (obligation 2): ONE definition of the seam in `types.ts`, the three declared
+  families each importing and calling it (journal twice, for its two footers),
+  no FOURTH user, no second composer of the composed sentence anywhere under
+  `src/ingest/packs/**`, and no `console.warn`/`console.error` in the directory
+  (rule 2's channel ban, made mechanical).
+
+**ARMS — each `tsc -b` exit 0 on the INJECTED tree (never a lone
+`tsc --noEmit -p tsconfig.app.json`, which does not cover `tests/**`), sha256
+printed before AND after, every file restored BYTE-IDENTICALLY, no two injected
+hashes equal** (arm scripts and raw logs under `.gate-logs/row294/`):
+**absence-reports** the seam's probe gate deleted, so every unread section is
+reported ⇒ **RED 6** (the dnd5e A/B/C pin, the PF2e absence arm, the journal A/B/C
+pin, and the journal real-fixture arm — absence is load-bearing); **miss-silent**
+the seam returns `null` again ⇒ **RED 5** (all three families' miss pins plus the
+`importPack` report arm, and the source scan's non-vacuity arm, which proves the
+needles really read the seam); **dnd5e-forged** the call site passes `true` for
+the value pattern's own answer ⇒ **RED 1** (the dnd5e pin — the wiring, not just
+the helper); **pf2e-rules-forged** the same forgery there ⇒ **RED 1** (the
+updated heightening pin); **journal-forged** the section footer's read flag
+forged ⇒ **RED 2** (the journal pin AND the report arm, while the citation arm
+stays green on the same tree — the two footers are separately wired);
+**copy-sentence** a re-spelled rule + sentence in a second pack file ⇒ **RED 2**
+(both source-scan arms). The row-212/215 duplication tripwire ran GREEN with
+**NO `*Baseline.json` edit**.

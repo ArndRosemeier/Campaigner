@@ -147,6 +147,57 @@ export function asPackFileParser(
   };
 }
 
+/**
+ * ABSENCE vs MISS for a section an adapter reads out of an UPSTREAM document's
+ * own markup (AGENTS rules 1-2; docs/17 row 294).
+ *
+ * The adapters' VALUE patterns (an `At Higher Levels` heading, a `Heightened`
+ * heading, an `<em>Section: …</em>` footer) read the upstream document's OWN
+ * format, which the adapter is contractually given — a pattern over it is fine,
+ * so rule 5 is NOT the defect here. THE DEFECT IS THE SILENCE: a document that
+ * HAS the section under DIFFERENT markup is indistinguishable from one that
+ * legitimately has none, so the imported row quietly loses content the owner can
+ * never discover.
+ *
+ * This seam separates the two cases, ONCE for every family:
+ *
+ * - `probe` is a deliberately LOOSER test for "the section is present in this
+ *   document at all" (the heading words, case-insensitive, without the value
+ *   pattern's tag/spacing assumptions). `read === false` with the probe ABSENT
+ *   is a legitimate ABSENCE — a spell with no heightening is normal — and
+ *   NOTHING is reported.
+ * - the probe PRESENT with the value pattern matching NOTHING is a MISS: ONE
+ *   `PackEntryFailure` naming the document (`file` + `name`), the section and
+ *   this ledger row, pushed into the SAME `PackFileParse.failures` list the
+ *   adapters already feed — which `packImport` renders as
+ *   `PackImportResult.failed`, `packMeta.entriesFailed` and
+ *   `PackImportReport`. No second notice mechanism and no `console` line
+ *   (rule 2). The entry STILL IMPORTS; only the miss is added.
+ *
+ * The probe is for DETECTION only: it never widens the value pattern, and `read`
+ * is the VALUE pattern's own answer, so a heading whose prose happens to be
+ * empty is READ, never a miss. `probe` is applied with `lastIndex` reset, so a
+ * caller that hands a global regex in still gets one deterministic answer.
+ */
+export function sectionMissFailure(
+  html: string,
+  probe: RegExp,
+  read: boolean,
+  where: { file: string; name: string; section: string; entry: string },
+): PackEntryFailure | null {
+  if (read) return null;
+  probe.lastIndex = 0;
+  if (!probe.test(html)) return null;
+  return {
+    file: where.file,
+    name: where.name,
+    message:
+      `"${where.section}" is present in this document's own markup, but the ` +
+      `${where.entry} reader did not match it — that section was not read ` +
+      `(docs/17 row 294)`,
+  };
+}
+
 /** A user-selected pack file already in memory (loose file or zip member). */
 export interface PackInputFile {
   name: string;

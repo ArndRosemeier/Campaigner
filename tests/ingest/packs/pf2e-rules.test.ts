@@ -271,14 +271,29 @@ describe('foundry-pf2e-rules adapter', () => {
     expect(entry?.spell?.heighteningUnparsed).toEqual([]);
   });
 
-  it('captures an unrecognized Heightened line as LOUD unparsed PLAIN PROSE (never dropped, never markup)', async () => {
+  it('captures an unrecognized Heightened line as LOUD unparsed PLAIN PROSE AND names the miss on the import report (docs/17 row 294)', async () => {
+    // UPDATED DELIBERATELY by docs/17 row 294. This pin used to assert
+    // `failures === []` — it pinned the DEFECT: the heading is PRESENT in the
+    // document's own markup (`<strong>Heightened (special)</strong>`) while the
+    // VALUE pattern reads nothing, so the miss was stored as `unparsed` prose
+    // and the import report could not tell it from a spell with NO heightening
+    // at all. `unparsed` is UNCHANGED (asserted below, docs/17 row 221); the
+    // section miss is now ALSO one named issue on the report the adapter feeds.
     const parsed = await foundryPf2eRulesAdapter.parseFile(
       'spells/spells/rank-2/synthetic-bolt.json',
       syntheticSpellBytes(
         `<p>Base text.</p>\n<p><strong>Heightened (special)</strong> As listed in the @UUID[Compendium.pf2e.journals.JournalEntry.S55aqwWIzpQRFhcq.JournalEntryPage.8gcp880pEWZ9VPnF]{summon} trait.</p>`,
       ),
     );
-    expect(parsed.failures).toEqual([]);
+    expect(parsed.failures).toEqual([
+      {
+        file: 'spells/spells/rank-2/synthetic-bolt.json',
+        name: 'Synthetic Bolt',
+        message:
+          '"Heightened" is present in this document\'s own markup, but the spell ' +
+          'reader did not match it — that section was not read (docs/17 row 294)',
+      },
+    ]);
     const entry = (parsed.sections ?? [])[0];
     expect(entry?.spell?.heighteningEntries).toEqual([]);
     // The line is STILL LOUD (stored) but it is the ingest HTML→text seam's
@@ -286,6 +301,30 @@ describe('foundry-pf2e-rules adapter', () => {
     // reaches a GM (docs/17 row 221).
     expect(entry?.spell?.heighteningUnparsed).toEqual([
       'Heightened (special) As listed in the summon trait.',
+    ]);
+  });
+
+  it('reports NOTHING for a spell that never mentions heightening (ABSENCE is not a miss, docs/17 row 294)', async () => {
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes('<p>Base text with no scaling clause at all.</p>'),
+    );
+    expect(parsed.failures).toEqual([]);
+    const entry = (parsed.sections ?? [])[0];
+    expect(entry?.spell?.heighteningEntries).toEqual([]);
+    expect(entry?.spell?.heighteningUnparsed).toEqual([]);
+  });
+
+  it('reads a KNOWN heading and reports nothing (the value pattern still wins, docs/17 row 294)', async () => {
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes(
+        '<p>Base text.</p><p><strong>Heightened (+2)</strong> The damage increases by 1d6.</p>',
+      ),
+    );
+    expect(parsed.failures).toEqual([]);
+    expect((parsed.sections ?? [])[0]?.spell?.heighteningEntries).toEqual([
+      { kind: 'increment', increment: 2, text: 'The damage increases by 1d6.' },
     ]);
   });
 

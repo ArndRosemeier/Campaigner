@@ -655,6 +655,56 @@ describe('foundry-dnd5e-srd spell documents (row 194)', () => {
     expect(spell?.damage['0']?.formula).toBe('1d4+1');
   });
 
+  it('names an At-Higher-Levels section the value pattern misses, and stays SILENT when the section is absent (docs/17 row 294)', async () => {
+    /** A synthetic dnd5e spell whose description is the ONE input the
+     *  higher-levels reader takes (JSON is valid YAML, so the real parser
+     *  reads it). */
+    const synthetic = (descriptionHtml: string): string =>
+      JSON.stringify({
+        name: 'Synthetic Bolt',
+        type: 'spell',
+        system: { level: 2, description: { value: descriptionHtml } },
+      });
+    const path = 'spells/2nd-level/synthetic-bolt.yml';
+    const missMessage =
+      '"At Higher Levels" is present in this document\'s own markup, but the spell ' +
+      'reader did not match it — that section was not read (docs/17 row 294)';
+
+    // FIXTURE A — the section matches the value pattern: extracted, NO issue.
+    const matched = await parseYaml(
+      path,
+      synthetic(
+        '<p>Base text.</p><p><strong>At Higher Levels.</strong> The damage increases by 1d6.</p>',
+      ),
+    );
+    expect(matched.failures).toEqual([]);
+    expect(matched.sections?.[0]?.spell?.upcast?.sentence).toBe('The damage increases by 1d6.');
+
+    // FIXTURE B — the section is PRESENT but under markup the value pattern
+    // does not read (`<span>`, not `<strong>`): the sentence is EMPTY and
+    // exactly ONE named issue reaches the report the adapter feeds.
+    const missed = await parseYaml(
+      path,
+      synthetic(
+        '<p>Base text.</p><p><span class="heading">At Higher Levels.</span> The damage increases by 1d6.</p>',
+      ),
+    );
+    expect(missed.sections?.[0]?.spell?.upcast?.sentence).toBe('');
+    expect(missed.failures).toEqual([{ file: path, name: 'Synthetic Bolt', message: missMessage }]);
+
+    // FIXTURE C — the document has no such section at all: ABSENCE is a
+    // legitimate silence, never a reported miss.
+    const absent = await parseYaml(path, synthetic('<p>Base text with no scaling clause.</p>'));
+    expect(absent.sections?.[0]?.spell?.upcast?.sentence).toBe('');
+    expect(absent.failures).toEqual([]);
+
+    // The probe is DETECTION-only: the real corpus spelling still reads, so
+    // neither arm moved a byte of the extracted sentence.
+    const real = await parseYaml('spells/3rd-level/fireball.yml', fixtureYaml('spells/3rd-level-fireball.yml'));
+    expect(real.failures).toEqual([]);
+    expect(real.sections?.[0]?.spell?.upcast?.sentence).toContain('the damage increases by 1d6');
+  });
+
   it('fails a malformed spell document LOUDLY instead of importing a partial row', async () => {
     const missingLevel = fixtureYaml('spells/cantrip-fire-bolt.yml').replace('  level: 0\n', '');
     const noLevel = await parseYaml('spells/cantrip/fire-bolt.yml', missingLevel);

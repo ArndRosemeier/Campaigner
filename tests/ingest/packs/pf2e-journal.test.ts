@@ -215,6 +215,119 @@ describe('foundry-pf2e-journal adapter', () => {
     expect(parsed.failures[1]?.message).toContain('page 2:');
   });
 
+  it('names a footer the value pattern misses, and stays SILENT when the page has no footer (docs/17 row 294)', async () => {
+    const journal = (name: string, pages: { name: string; content: string }[]): Uint8Array =>
+      encodeJson({
+        name,
+        pages: pages.map((page) => ({ name: page.name, text: { content: page.content } })),
+      });
+    const path = 'journals/synthetic.json';
+
+    // FIXTURE A — both footers match the value patterns: read, NO issue, and
+    // the heading category + Source line are the ones the real fixture gets.
+    const matched = await foundryPf2eJournalAdapter.parseFile(
+      path,
+      journal('Synthetic Journal', [
+        {
+          name: 'Matched Page',
+          content:
+            '<p>Body.</p><p><em>Section: Running the Game</em><span style="float:right"><em>Pathfinder GM Core pg. 75</em></span></p>',
+        },
+      ]),
+    );
+    expect(matched.failures).toEqual([]);
+    expect(sectionAt(matched.sections ?? [], 0).categories).toEqual(['Running the Game']);
+    expect(sectionAt(matched.sections ?? [], 0).text).toContain('Source: Pathfinder GM Core pg. 75');
+
+    // FIXTURE B1 — the `Section:` footer is PRESENT but under markup the value
+    // pattern does not read (`<strong>`, not `<em>`): exactly ONE named issue.
+    const sectionMissed = await foundryPf2eJournalAdapter.parseFile(
+      path,
+      journal('Synthetic Journal', [
+        { name: 'Wrapped Section Page', content: '<p>Body.</p><p><strong>Section: Running the Game</strong></p>' },
+      ]),
+    );
+    expect(sectionAt(sectionMissed.sections ?? [], 0).categories).toEqual([]);
+    expect(sectionMissed.failures).toEqual([
+      {
+        file: path,
+        name: 'Wrapped Section Page',
+        message:
+          '"Section" is present in this document\'s own markup, but the journal page ' +
+          'reader did not match it — that section was not read (docs/17 row 294)',
+      },
+    ]);
+
+    // FIXTURE B2 — the `pg.` citation is PRESENT but not inside the `<em>`
+    // footer: exactly ONE named issue, and the page still imports.
+    const citationMissed = await foundryPf2eJournalAdapter.parseFile(
+      path,
+      journal('Synthetic Journal', [
+        { name: 'Wrapped Citation Page', content: '<p>Body.</p><p><span>Pathfinder GM Core pg. 75</span></p>' },
+      ]),
+    );
+    expect(sectionAt(citationMissed.sections ?? [], 0).text).not.toContain('Source:');
+    expect(citationMissed.failures).toEqual([
+      {
+        file: path,
+        name: 'Wrapped Citation Page',
+        message:
+          '"Source citation" is present in this document\'s own markup, but the journal ' +
+          'page reader did not match it — that section was not read (docs/17 row 294)',
+      },
+    ]);
+
+    // FIXTURE C — no footer at all (the divider-page shape): ABSENCE is a
+    // legitimate silence, never a reported miss.
+    const absent = await foundryPf2eJournalAdapter.parseFile(
+      path,
+      journal('Synthetic Journal', [
+        { name: 'Divider Page', content: '<p>Sources:</p><ul><li><p>Pathfinder GM Core</p></li></ul>' },
+      ]),
+    );
+    expect(absent.failures).toEqual([]);
+    expect(sectionAt(absent.sections ?? [], 0).categories).toEqual([]);
+    expect(sectionAt(absent.sections ?? [], 0).text).not.toContain('Source:');
+  });
+
+  it('carries the section miss onto the IMPORT REPORT the adapter already feeds (docs/17 row 294)', async () => {
+    // The seam's own PUBLIC shape: `importPack`'s `failed[]` — the list
+    // `PackImportReport` renders and `packMeta.entriesFailed` counts. The page
+    // still imports, so the issue is visible WITHOUT losing the entry.
+    const deps = memoryDeps();
+    const bytes = encodeJson({
+      name: 'Synthetic Journal',
+      pages: [
+        {
+          name: 'Drifted Page',
+          text: {
+            content:
+              '<p>Body.</p><p><strong>Section: Running the Game</strong><span>Pathfinder GM Core pg. 75</span></p>',
+          },
+        },
+      ],
+    });
+    const result = await importPack(
+      FOUNDRY_PF2E_JOURNAL_ADAPTER_ID,
+      [{ name: 'journals/synthetic.json', bytes }],
+      { title: 'Synthetic Journal', deps },
+    );
+    expect(result.imported).toBe(1);
+    expect(result.sectionsImported).toBe(1);
+    expect(result.failed).toHaveLength(2);
+    for (const failure of result.failed) {
+      expect(failure.file).toBe('journals/synthetic.json');
+      expect(failure.name).toBe('Drifted Page');
+      expect(failure.message).toContain('docs/17 row 294');
+    }
+    expect(result.failed.map((failure) => failure.message)).toEqual([
+      expect.stringContaining('"Section"'),
+      expect.stringContaining('"Source citation"'),
+    ]);
+    expect(result.book.packMeta?.entriesFailed).toBe(2);
+    expect(result.book.status).toBe('ready');
+  });
+
   it('imports into a ready book of `section` chunks with the lanes counted in packMeta', async () => {
     const deps = memoryDeps();
     const result = await importPack(

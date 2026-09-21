@@ -13,8 +13,10 @@ import { errorMessage } from '@/lib/errors';
 import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
 import {
   asPackFileParser,
+  sectionMissFailure,
   type PackAdapter,
   type PackEntry,
+  type PackEntryFailure,
   type PackFileParse,
   type PackSectionEntry,
 } from './types';
@@ -1303,16 +1305,37 @@ function damageActivity(
   return null;
 }
 
+/**
+ * The document's OWN "At Higher Levels" heading, as the adapter READS it — the
+ * VALUE pattern (docs/17 row 294). `<strong>At Higher Levels.</strong>` and the
+ * older `<strong>Higher Levels.</strong>` spelling are both real in the corpus.
+ */
+const HIGHER_LEVEL_HEADING =
+  /<strong>\s*(?:at\s+)?higher\s+levels?\.?\s*<\/strong>([\s\S]*?)(?:<\/p>|$)/i;
+
+/**
+ * The section's MISS PROBE (docs/17 row 294) — detection ONLY, never
+ * extraction: the same heading words with ANY tag or spacing (no `<strong>`
+ * assumption, so an `<h3>`/`<em>`/`<span>` spelling is seen), anchored to a
+ * BLOCK START so a mid-sentence mention in the prose ("…at higher levels, the
+ * spell…") is not mistaken for the section. It is NOT an HTML stripper (the
+ * ingest layer has exactly one of those, in `./text`, and its source scan
+ * holds this file to that): nothing is removed or rewritten.
+ */
+const HIGHER_LEVEL_SECTION_PROBE =
+  /(?:^|<\/p>|<br\b[^<>]*>|<hr\b[^<>]*>|<\/h[1-6]>|<\/li>|<\/div>|<\/blockquote>)\s*(?:<[^<>]+>\s*)*(?:at\s+)?higher\s+levels?\b/i;
+
 /** The document's OWN "At Higher Levels" sentence, VERBATIM plain text — the
- *  prose-only fallback (`<strong>At Higher Levels.</strong>` and the older
- *  `<strong>Higher Levels.</strong>` spelling, both real in the corpus). A
- *  document that mentions neither returns `''`; the paragraph is never
- *  paraphrased or recomputed. */
-function higherLevelSentence(html: string): string {
-  const match = /<strong>\s*(?:at\s+)?higher\s+levels?\.?\s*<\/strong>([\s\S]*?)(?:<\/p>|$)/i.exec(html);
-  if (match === null) return '';
+ *  prose-only fallback. `matched` is the VALUE pattern's own answer (TRUE when
+ *  the heading was read, whether or not its prose was empty), so a miss is
+ *  never mistaken for a heading with no text; the paragraph is never
+ *  paraphrased or recomputed. The miss itself is reported by
+ *  `mapSpellDocument` through the ONE `sectionMissFailure` seam. */
+function higherLevelSentence(html: string): { sentence: string; matched: boolean } {
+  const match = HIGHER_LEVEL_HEADING.exec(html);
+  if (match === null) return { sentence: '', matched: false };
   const stripped = htmlToText(match[1] ?? '', BRACKET_LINKS_LINE_BREAKS);
-  return stripped.replace(/\s+/g, ' ').trim();
+  return { sentence: stripped.replace(/\s+/g, ' ').trim(), matched: true };
 }
 
 /**
@@ -1328,6 +1351,7 @@ function higherLevelSentence(html: string): string {
 function mapSpellDocument(
   doc: z.infer<typeof dnd5eSpellImportSchema>,
   fileName: string,
+  failures: PackEntryFailure[],
 ): PackSectionEntry {
   const system = doc.system;
   const cantrip = dnd5eSpellIsCantrip(system.level);
@@ -1356,7 +1380,18 @@ function mapSpellDocument(
     };
   });
   const description = htmlToText(system.description.value, BRACKET_LINKS_LINE_BREAKS);
-  const sentence = higherLevelSentence(system.description.value);
+  const higher = higherLevelSentence(system.description.value);
+  const sentence = higher.sentence;
+  // ABSENCE vs MISS (docs/17 row 294): the document's own markup decides. No
+  // "higher levels" heading at all ⇒ legitimate absence, silent; the section
+  // PRESENT under markup the value pattern does not read ⇒ ONE named issue on
+  // the import report the adapter already feeds. The entry still imports.
+  const miss = sectionMissFailure(
+    system.description.value,
+    HIGHER_LEVEL_SECTION_PROBE,
+    higher.matched,
+    { file: fileName, name: doc.name, section: 'At Higher Levels', entry: 'spell' },
+  );
   const levelLabel = cantrip ? 'Cantrip' : `Level ${String(system.level)}`;
   const schoolName = school === '' ? '' : DND5E_SPELL_SCHOOL_LABELS[school as Dnd5eSpellSchool];
   const castFacts = [
@@ -1382,7 +1417,10 @@ function mapSpellDocument(
   if (description !== '') lines.push(description);
   if (sourceLine !== '') lines.push(`Source: ${sourceLine}`);
 
-  return {
+  // Pushed LAST, after the entry is fully built: a document that fails for
+  // another reason (a bad area template, an unknown school) can never also
+  // report a section miss, and a miss never removes the entry.
+  const entry: PackSectionEntry = {
     categories: spellHeadingCategories(fileName),
     name: doc.name,
     text: [doc.name, ...lines].join('\n'),
@@ -1416,6 +1454,8 @@ function mapSpellDocument(
           : { title: source.book.trim(), license: source.license.trim() },
     },
   };
+  if (miss !== null) failures.push(miss);
+  return entry;
 }
 
 /** The category path a dnd5e spell file's folders state: the level folder
@@ -1466,7 +1506,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
     // mapping fails is a LOUD per-entry failure, never a partial row.
     if (doc.type === 'spell') {
       try {
-        sections.push(mapSpellDocument(dnd5eSpellImportSchema.parse(doc), fileName));
+        sections.push(mapSpellDocument(dnd5eSpellImportSchema.parse(doc), fileName, failures));
       } catch (error) {
         failures.push({
           file: fileName,
