@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -41,6 +41,8 @@ import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
 import { GenerateModuleCoverButton, ModuleCoverHero } from '@/features/covers/cover-art';
 import { EntityPanel } from '@/features/modules/entity-panel';
+import { type PlannedPart, resolveCanvasScrollTarget } from '@/features/modules/canvas/canvasScope';
+import { recallReaderScroll, rememberReaderScroll } from '@/features/modules/readerScroll';
 import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
@@ -174,14 +176,88 @@ export function ModuleReaderPage(): JSX.Element {
     [campaignId, moduleId],
   );
 
-  // `#part-<index>` deep links (quick-find "select scrolls the reader").
+  // The plan sections in render order, shaped as the ONE `#part-<n>` resolver's
+  // `PlannedPart` input. `useMemo` on `module` so a page-local state change (a
+  // ToC toggle, a stub click, an edit-draft keystroke) does not hand the
+  // deep-link effect a fresh array and re-trigger a smooth scroll every render.
+  const plans = useMemo<readonly PlannedPart[]>(() => {
+    const spine = module?.spine ?? null;
+    return spine === null
+      ? []
+      : spine.partPlan.map((plan, planIndex) => ({
+          planIndex,
+          title: plan.title,
+          levelBand: plan.levelBand,
+        }));
+  }, [module]);
+
+  // The four live queries resolve separately, so an effect that touches the
+  // rendered document can run while the page is still the `Loading…` fallback
+  // and never re-run afterwards (nothing it depends on changes again).
+  // `contentReady` is the SAME readiness gate `CanvasPage` uses (docs/18 §2.3):
+  // the scroll container does not EXIST before it, so `documentRef.current` is
+  // null on the first commit.
+  const contentReady =
+    campaign !== undefined &&
+    module !== undefined &&
+    artifacts !== undefined &&
+    globalArtifacts !== undefined;
+  // The reader's own strengthening of that gate: `useLiveQuery` KEEPS its
+  // previous result while the next query is in flight (dexie-react-hooks keeps
+  // the last value across a dep change), so on a `moduleId`-only route change
+  // `contentReady` stays true while the DOM still shows the PREVIOUS module.
+  // Restoring this module's offset against another module's content is exactly
+  // what keying must prevent, so the restore waits for the row that IS this
+  // route's module.
+  const documentReady = contentReady && module !== null && module.id === moduleId;
+
+  // `#part-<index>` deep links (quick-find "select scrolls the reader"): the ONE
+  // `#part-<n>` grammar, `canvasScope.resolveCanvasScrollTarget` — the canvas
+  // reads the same hash through it, so the parse is spelled in exactly one place.
   useEffect(() => {
     if (module === undefined || module === null) return;
-    const match = /^#part-(\d+)$/.exec(location.hash);
-    if (match === null) return;
-    const element = document.getElementById(`part-${match[1] ?? ''}`);
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [location.hash, module]);
+    const target = resolveCanvasScrollTarget(location.search, location.hash, plans);
+    if (target?.kind !== 'part') return;
+    document
+      .getElementById(`part-${String(target.planIndex)}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [location.hash, location.search, module, plans]);
+
+  // The reader's session position memory (docs/17 row 305): remember the pixel
+  // offset when the document goes away — on UNMOUNT and on a `moduleId` change,
+  // never on render, so a module-row liveQuery re-emit cannot clobber it.
+  //
+  // A LAYOUT effect, deliberately: on unmount a PASSIVE effect's cleanup runs
+  // AFTER React detached the container's ref, so reading `documentRef.current`
+  // there would find null and the capture would be a silent no-op. React runs a
+  // deleted parent component's layout destroys while its DOM children are still
+  // attached.
+  useLayoutEffect(() => {
+    return () => {
+      // This cleanup MUST read the LIVE ref, not a node captured in the effect
+      // body: the body runs on the first commit, when the page is still the
+      // `Loading…` fallback and `documentRef.current` is null, and the deps
+      // never change again for that module — a captured node would be null
+      // forever. The linter's suggested fix is the silent no-op this slice
+      // exists to avoid.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const container = documentRef.current;
+      if (container !== null) rememberReaderScroll(moduleId, container.scrollTop);
+    };
+  }, [moduleId]);
+
+  // Re-apply the remembered offset once the content has committed, gated on the
+  // SAME readiness flag the deep-link effect uses. A mount-time-only restore is
+  // the silent no-op the probe proved (the container does not exist on the first
+  // commit). A module with NO remembered offset starts at the TOP: on a
+  // `moduleId`-only route change this same `<div>` is reused, and that is also
+  // what stops module A's offset showing up in module B.
+  useLayoutEffect(() => {
+    if (!documentReady) return;
+    const container = documentRef.current;
+    if (container === null) return;
+    container.scrollTop = recallReaderScroll(moduleId) ?? 0;
+  }, [documentReady, moduleId]);
 
   // Last-used module shortcut (settings.lastModule): opening a reader is the
   // "most recent module" event, so the mount persists it for the TopBar
@@ -214,12 +290,7 @@ export function ModuleReaderPage(): JSX.Element {
       });
   }, [campaignId, moduleId, module]);
 
-  if (
-    campaign === undefined ||
-    module === undefined ||
-    artifacts === undefined ||
-    globalArtifacts === undefined
-  ) {
+  if (!contentReady) {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
   if (campaign === null) {
@@ -243,12 +314,8 @@ export function ModuleReaderPage(): JSX.Element {
 
   const busy = module.status === 'generating';
   const parts = module.parts.slice().sort((a, b) => a.planIndex - b.planIndex);
-  const plans =
-    module.spine !== null
-      ? module.spine.partPlan.map((plan, index) => ({ plan, index }))
-      : [];
-  const hasMissingParts = plans.some(({ index }) => {
-    const part = module.parts.find((entry) => entry.planIndex === index);
+  const hasMissingParts = plans.some(({ planIndex }) => {
+    const part = module.parts.find((entry) => entry.planIndex === planIndex);
     return part?.status !== 'ready';
   });
 
@@ -352,15 +419,15 @@ export function ModuleReaderPage(): JSX.Element {
           >
             Intro
           </button>
-          {plans.map(({ plan, index }) => {
-            const part = module.parts.find((entry) => entry.planIndex === index);
+          {plans.map(({ title, levelBand, planIndex }) => {
+            const part = module.parts.find((entry) => entry.planIndex === planIndex);
             return (
               <button
-                key={index}
+                key={planIndex}
                 type="button"
                 className="flex w-full items-center gap-1.5 truncate rounded px-2 py-1 text-left hover:bg-accent"
                 onClick={() => {
-                  document.getElementById(`part-${String(index)}`)?.scrollIntoView({ behavior: 'smooth' });
+                  document.getElementById(`part-${String(planIndex)}`)?.scrollIntoView({ behavior: 'smooth' });
                 }}
               >
                 <span
@@ -377,7 +444,7 @@ export function ModuleReaderPage(): JSX.Element {
                   )}
                 />
                 <span className="truncate">
-                  {plan.levelBand} · {plan.title}
+                  {levelBand} · {title}
                 </span>
               </button>
             );
@@ -398,7 +465,11 @@ export function ModuleReaderPage(): JSX.Element {
       )}
 
       {/* Document */}
-      <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        ref={documentRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        data-testid="module-reader-scroll"
+      >
         <article className="px-8 py-10 text-[0.9375rem] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             {/* Cover hero (cover-generation arc): the banner renders only
@@ -626,31 +697,31 @@ export function ModuleReaderPage(): JSX.Element {
                 />
               </section>
 
-              {plans.map(({ plan, index }) => {
-                const part = module.parts.find((entry) => entry.planIndex === index);
+              {plans.map(({ title, levelBand, planIndex }) => {
+                const part = module.parts.find((entry) => entry.planIndex === planIndex);
                 return (
-                  <section key={index} id={`part-${String(index)}`} className="mb-12 scroll-mt-4">
+                  <section key={planIndex} id={`part-${String(planIndex)}`} className="mb-12 scroll-mt-4">
                     <div className="mb-3 flex items-baseline gap-3">
-                      <h1 className="font-heading text-2xl font-bold tracking-tight">{plan.title}</h1>
-                      <Badge variant="outline">Levels {plan.levelBand}</Badge>
+                      <h1 className="font-heading text-2xl font-bold tracking-tight">{title}</h1>
+                      <Badge variant="outline">Levels {levelBand}</Badge>
                       <PartActions
                         part={part}
-                        editing={editPartIndex === index}
+                        editing={editPartIndex === planIndex}
                         onEdit={() => {
                           if (part !== undefined) startEditPart(part);
                         }}
                         onRewrite={() => {
-                          requestRewrite(index);
+                          requestRewrite(planIndex);
                         }}
                       />
                     </div>
                     <PartBody
                       part={part}
-                      planIndex={index}
-                      planTitle={plan.title}
+                      planIndex={planIndex}
+                      planTitle={title}
                       artifacts={readerArtifacts}
                       moduleId={module.id}
-                      editing={editPartIndex === index}
+                      editing={editPartIndex === planIndex}
                       editDraft={editDraft}
                       onEditDraftChange={changeEditDraft}
                       onEditSave={saveEditPart}

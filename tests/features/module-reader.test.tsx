@@ -25,6 +25,7 @@ import {
   mergeAliasNames,
   sameAliasName,
 } from '@/domain';
+import { resetReaderScroll } from '@/features/modules/readerScroll';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -186,7 +187,12 @@ async function findPartSection(partIndex: number): Promise<HTMLElement> {
   });
 }
 
-beforeEach(clearDatabase);
+beforeEach(async () => {
+  await clearDatabase();
+  // The reader's position memory is module-scope SESSION state, so wiping the
+  // database does not touch it — a leftover offset would leak between tests.
+  resetReaderScroll();
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -1013,6 +1019,102 @@ describe('ModuleReaderPage', () => {
     expect(screen.queryByTestId('play-encounter-card')).toBeNull();
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('re-applies the module scroll offset after the encounter → battle → back round trip (docs/17 row 305)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Ford Ambush]] waits at the ford before dawn.',
+    });
+    const encounter = await createArtifact({ campaignId, kind: 'encounter', name: 'Ford Ambush' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const scroller = await screen.findByTestId('module-reader-scroll', {}, { timeout: 10_000 });
+    // MEASURED jsdom 30.0.1: `scrollTop` is a plain UNCLAMPED property with no
+    // layout (`scrollHeight`/`clientHeight` are 0), so this value is re-read
+    // verbatim. jsdom can therefore prove the round trip RE-APPLIES the number,
+    // and nothing about whether the number maps to real content, whether the
+    // browser clamps it, or the restore-after-content ORDERING (any assignment
+    // is accepted whenever it runs) — that half is a REAL-BROWSER question
+    // (docs/18 §4).
+    scroller.scrollTop = 700;
+
+    const section = await findPartSection(0);
+    const chip = await waitFor(() => {
+      const found = within(section).getByTestId('wiki-chip');
+      expect(found).toHaveAttribute('data-wiki-name', 'Ford Ambush');
+      return found;
+    });
+    await user.click(chip);
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe(battlePath(campaignId, moduleId, encounter.id));
+      },
+      { timeout: 10_000 },
+    );
+
+    // The in-app return path — `modulePath(...)` with NO hash, so a
+    // URL-remembered position could not work here (BattleSurface's toolbar
+    // "Lift" rides `liftBattle`, the same hash-less destination the empty
+    // state's "Back to module" button uses).
+    const back = await screen.findByTestId('lift-battle', {}, { timeout: 10_000 });
+    await user.click(back);
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe(modulePath(campaignId, moduleId));
+      },
+      { timeout: 10_000 },
+    );
+
+    await waitFor(() => {
+      const restored = screen.getByTestId('module-reader-scroll');
+      // A DIFFERENT element: the reader really did unmount and remount.
+      expect(restored).not.toBe(scroller);
+      // …and the remembered offset came back.
+      expect(restored.scrollTop).toBe(700);
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('keys the scroll memory by module id: another module does not inherit the offset (docs/17 row 305)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    const secondDraft = createModule({
+      campaignId,
+      title: 'The Second Vault',
+      concept: 'A second vault under the ford.',
+      levelMin: 1,
+      levelMax: 2,
+      tone: '',
+      sizeDial: 'standard',
+    });
+    await saveModule({ ...secondDraft, status: 'ready', errorMessage: '' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const scroller = await screen.findByTestId('module-reader-scroll', {}, { timeout: 10_000 });
+    scroller.scrollTop = 700;
+
+    // Leave through the modules list and open the OTHER module: a real user
+    // path, and it exercises the memory's keying rather than the return hash.
+    // (The ToC link renders as an anchor, but the Button primitive gives it
+    // `role="button"`.)
+    await user.click(screen.getByRole('button', { name: /all modules/i }));
+    await screen.findByTestId('modules-page', {}, { timeout: 10_000 });
+    // The row's own open button (its board/canvas affordances also name the
+    // module), so query the TITLE element and take its row button.
+    const rowTitle = await screen.findByText('The Second Vault');
+    const openRow = rowTitle.closest('button');
+    if (openRow === null) throw new Error('module row button not found');
+    await user.click(openRow);
+
+    const other = await screen.findByTestId('module-reader-scroll', {}, { timeout: 10_000 });
+    expect(other).not.toBe(scroller);
+    // Module A's 700 must NOT be applied to module B: a memory that was not
+    // keyed (one global slot) would red exactly here.
+    await waitFor(() => {
+      expect(other.scrollTop).toBe(0);
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
 
   it('keeps the peek card for a NON-encounter link in the module text (docs/17 row 298, the other direction)', async () => {
     const user = userEvent.setup();

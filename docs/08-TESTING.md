@@ -8926,3 +8926,47 @@ prefix-skip is the reason, stated here so a future copy of this sentence is not 
 **WHAT IT DOES NOT PROVE.** It cannot prove the owner's on-disk rows predate `c37e4de` (no test reads his Dexie);
 it proves the read boundary now honours the default the schema already declares. It is also not a migration: the
 healed payload is parsed per read, exactly like the item lane.
+
+## The reader's scroll position survives the session, and the half jsdom cannot prove (docs/17 row 305)
+
+**THE REGRESSION THIS FAMILY EXISTS FOR.** Opening a battle from an `[[Encounter]]` chip in the module text and
+coming back re-mounts `ModuleReaderPage` (the `AppShell` `<Outlet/>` swaps the route element; no keep-alive, no
+route cache) and the document was at `scrollTop = 0` — the owner: *"the module text is rendered fresh and the
+scroll position is not saved."*
+
+**WHAT THE PINS DRIVE, THROUGH THE REAL ROUTER** (`tests/features/module-reader.test.tsx`, +2; the container is
+reached by the new `data-testid="module-reader-scroll"`, never a positional query — the ToC `<nav>` comes and goes
+with `tocOpen`):
+1. **The round trip.** Set `scrollTop = 700` on the container, click the encounter chip (the REAL chip → battle
+   path), leave the battle through its in-app hash-less exit, and require a DIFFERENT element carrying `700`
+   again — the `not.toBe(scroller)` assertion is what proves the reader really unmounted and that the MEMORY, not
+   a surviving DOM node, answered.
+2. **The keying.** Set `700` on module A, leave through the ToC's All modules link, open module B, and require
+   `0`. A memory that was not keyed by module id (one global slot) reds exactly here.
+
+**THE HALF jsdom CANNOT PROVE — MEASURED, NEVER ASSUMED.** jsdom 30.0.1 implements `Element.scrollTop` as a plain
+UNCLAMPED stored property with no layout (`scrollHeight`/`offsetHeight`/`clientHeight` are 0, and even `-20`
+sticks). So the pins prove the offset is RE-APPLIED across a genuine unmount/remount and NOTHING about whether the
+number maps to real content, whether the browser clamps it, or the restore-after-content ORDERING — any assignment
+is accepted whenever it runs. The ordering half is pinned STRUCTURALLY (the restore rides the same `contentReady`
+gate the reader's `#part-<n>` deep link uses) and stays a real-browser check, recorded in docs/18 §4 and §2.3.
+
+**WHY THE CAPTURE IS A LAYOUT EFFECT (a structural reading of React's commit order, not a browser measurement).**
+On unmount a PASSIVE effect's cleanup runs after React detached the container's ref, so `documentRef.current` would
+be null there and the capture a silent no-op. What the differential DOES hold down is that the capture runs at all:
+killing it (arm B below) reds the round-trip assertion.
+
+**RED → GREEN, WATCHED (two arms, each on a `tsc -b` exit-0 injected tree, sha256 before and after, restored
+BYTE-IDENTICALLY, no two hashes equal, raw logs `.gate-logs/diff-arm/`).** Pristine:
+`readerScroll.ts ceb14408e278abad…`, `ModuleReaderPage.tsx f87970f21ca047e0…`. **A** `recallReaderScroll`'s body
+replaced by `null` (`readerScroll.ts` → `3be473e7a08d5686…`) → **RED 1**, exactly the round-trip arm, the keying
+arm still GREEN. **B** the capture remembering a constant `0` instead of `container.scrollTop`
+(`ModuleReaderPage.tsx` → `fc533113212141cb…`) → **RED 1**, the same arm. Both restored to the pristine hashes
+(`sha256sum -c` OK).
+
+**THE EXACTLY-ONE PIN** (`tests/architecture/one-reader-scroll-memory.test.ts`, NEW, 3) rides the ONE source-scan
+helper (`tests/helpers/sourceCode`): the memory is defined once with the reader as its only caller
+(`rememberReaderScroll(`/`recallReaderScroll(` in exactly those two files, `resetReaderScroll(` in one), and the
+`^#part-(\d+)$` grammar lives in exactly ONE `src/` file (`canvasScope.ts`) with both surfaces calling the
+exported resolver — a re-spelled inline copy reds BY FILE. A THIRD arm the same file keeps honest: the resolver's
+caller inventory is declared, so a new caller is a deliberate edit, not a silent one.
