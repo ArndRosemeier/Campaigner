@@ -20,11 +20,7 @@ import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { promoteArtifactForModuleUseLoud } from '@/db/artifactAutoPromote';
 import { generateSingleEntity } from '@/features/modules/entity-detail';
-import {
-  guessKindFromSentence,
-  STUB_KINDS,
-  type StubKind,
-} from '@/features/modules/persona-request';
+import { STUB_KINDS, type StubKind } from '@/features/modules/persona-request';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 const STUB_KIND_LABELS: Readonly<Record<StubKind, string>> = {
@@ -86,16 +82,24 @@ export function StubPopover({
   onClose,
   onLinkExisting,
 }: StubPopoverProps): JSX.Element {
-  // The kind is the MODEL's record when it exists; hand-typed names get a
-  // one-shot normalization call (regex below is only the instant placeholder
-  // while that call is in flight — 08 §M4-C; fix-01 extends the verdict with
-  // the canonical entity the name refers to).
-  const [kind, setKind] = useState<StubKind>(recordedKind ?? guessKindFromSentence(sentence));
+  // The kind is the MODEL's record when it exists; a hand-typed name gets the
+  // one-shot normalization call below (fix-01) and NOTHING ELSE decides it. The
+  // state starts UNSELECTED for a hand-typed name, so the select shows
+  // "Classifying…" while the call is in flight — the pre-293 English keyword
+  // regex (`guessKindFromSentence`) presented a guess as the default and is
+  // DELETED (docs/17 row 293, AGENTS rule 5: free text is read by the model,
+  // never by a pattern). No kind is ever invented, and a failed call leaves the
+  // choice to the owner with the failure named on this surface.
+  const [kind, setKind] = useState<StubKind | null>(recordedKind ?? null);
   const [name, setName] = useState(state.name);
   const [busy, setBusy] = useState(false);
   /** fix-01: the normalization verdict — which canonical entity this name
    * refers to, and its kind. Null while the call is in flight/failed. */
   const [verdict, setVerdict] = useState<{ kind: StubKind; canonical: string } | null>(null);
+  /** The classification call failed: the kind stays UNSELECTED and the failure
+   * is visible here (AGENTS rule 2) — never a silent fall-through to a default
+   * kind. Reset when a new name/context asks again. */
+  const [classifyFailed, setClassifyFailed] = useState(false);
   const [canonicalArtifactName, setCanonicalArtifactName] = useState<string | null>(null);
   /** True once the user picked a kind by hand — the async classification
    * must never clobber a manual choice. */
@@ -114,7 +118,10 @@ export function StubPopover({
    *
    * First true condition wins, per control:
    * - the verdict link and "Create stub" gate on `busy` first (the empty-name
-   *   half of their gates is self-evident and gets no reason);
+   *   and unselected-kind halves of their gates are self-evident — the empty
+   *   field, the select's own "Classifying…"/"Choose a kind…" placeholder — and
+   *   get no reason; an unselected kind is additionally NAMED by
+   *   `stub-kind-failed` when the classification failed, docs/17 row 293);
    * - "Generate" gates on `generating` FIRST, and in that state its OWN label
    *   reads "Generating…" — self-evident, so no reason is attached then.
    */
@@ -126,6 +133,9 @@ export function StubPopover({
   useEffect(() => {
     if (recordedKind !== undefined) return;
     let alive = true;
+    // A new name/context asks the model again: the kind is unselected until the
+    // verdict answers (or the owner picks), and a previous failure is cleared.
+    setClassifyFailed(false);
     listArtifactsByCampaign(campaign.id)
       .then(async (rows) => {
         // Hand-typed-name classification is module creation: the candidate set
@@ -149,7 +159,11 @@ export function StubPopover({
         setVerdict({ kind: classified.kind, canonical: classified.canonical });
       })
       .catch((error: unknown) => {
-        // Loud per AGENTS rule 2; the fallback guess stays selectable.
+        // Loud per AGENTS rules 1-2: the kind stays UNSELECTED (no invented
+        // default) and the failure is named BOTH on this surface and in the
+        // toast — Create/Generate cannot act until a kind exists.
+        if (!alive) return;
+        setClassifyFailed(true);
         toastError('Could not auto-detect the entity kind — pick one below', error);
       });
     return () => {
@@ -204,6 +218,11 @@ export function StubPopover({
   }
 
   async function createStub(): Promise<void> {
+    // The control is DISABLED while the kind is unselected, so this is
+    // unreachable from the UI — the guard is what makes "a stub is never
+    // written with an invented kind" a property of the code, not of the
+    // button's disabled attribute (docs/17 row 293).
+    if (kind === null) return;
     if (canonicalArtifactName !== null && !armedCreate) {
       // Overriding the model's verdict is a two-step act (fix-01).
       setArmedCreate(true);
@@ -237,6 +256,9 @@ export function StubPopover({
    * machinery as the batch runs here, visible on the shared progress bar.
    */
   async function generateInPlace(): Promise<void> {
+    // Same guard as `createStub`: an unselected kind can never reach a
+    // generation (docs/17 row 293).
+    if (kind === null) return;
     if (canonicalArtifactName !== null && !armedGenerate) {
       // Overriding the model's verdict is a two-step act (fix-01).
       setArmedGenerate(true);
@@ -342,8 +364,17 @@ export function StubPopover({
                 }
               }}
             >
-              <SelectTrigger id="stub-kind" size="sm" className="flex-1 pointer-coarse:text-base">
-                <SelectValue />
+              <SelectTrigger
+                id="stub-kind"
+                size="sm"
+                className="flex-1 pointer-coarse:text-base"
+                data-testid="stub-kind"
+              >
+                {/* No kind is selected until the MODEL's verdict (or the
+                    owner's pick) supplies one: the empty start is honest where
+                    the deleted English-keyword guess was not (docs/17 row 293,
+                    AGENTS rule 5). */}
+                <SelectValue placeholder={classifyFailed ? 'Choose a kind…' : 'Classifying…'} />
               </SelectTrigger>
               <SelectContent>
                 {STUB_KINDS.map((stubKind) => (
@@ -354,12 +385,17 @@ export function StubPopover({
               </SelectContent>
             </Select>
           </div>
+          {classifyFailed && kind === null && (
+            <p className="text-xs text-destructive" data-testid="stub-kind-failed">
+              The model could not classify this name — pick a kind above.
+            </p>
+          )}
 
           <BlockedControl testId="stub-create" reason={popoverBlockedReason(busy, false)}>
             <Button
               size="sm"
               variant={armedCreate ? 'destructive' : 'default'}
-              disabled={busy || name.trim() === ''}
+              disabled={busy || kind === null || name.trim() === ''}
               data-testid="stub-create"
               data-armed={armedCreate || undefined}
               onClick={() => void createStub()}
@@ -372,7 +408,7 @@ export function StubPopover({
             <Button
               size="sm"
               variant="outline"
-              disabled={generating || busy || name.trim() === ''}
+              disabled={generating || busy || kind === null || name.trim() === ''}
               data-testid="stub-generate"
               data-armed={armedGenerate || undefined}
               onClick={() => void generateInPlace()}

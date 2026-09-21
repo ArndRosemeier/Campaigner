@@ -1,26 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildEntityBrief, guessKindFromSentence, STUB_KINDS, STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
+import { buildEntityBrief, STUB_KINDS, STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
 
 /**
- * Pure helpers behind the module stub popover (08-MODULE-DESIGNER M4-C):
- * kind guessing from context and the persona brief construction.
+ * Pure helpers behind the module stub popover (08-MODULE-DESIGNER M4-C): the
+ * stub-kind constants and the persona brief construction.
+ *
+ * THE `guessKindFromSentence` FAMILY THAT STOOD HERE IS DELETED, NAMED, per the
+ * brief (docs/17 row 293, AGENTS rule 5): its three arms asserted the DEFECT —
+ * `'The party hides at the old mill' → location`, `'The guild controls the
+ * harbor' → faction`, `'A silent figure watches the docks' → npc` — i.e. that
+ * an ENGLISH keyword pattern decides a hand-typed sentence's entity kind. A
+ * German sentence (`Die Gilde im Keller`) missed both patterns and silently
+ * became `npc`. The kind's source is now the module's recorded kind or the ONE
+ * model classification, and the popover starts UNSELECTED; the source pin lives
+ * in `tests/architecture/one-kind-source.test.ts` and the rendered arms in
+ * `tests/features/stub-popover-kind.test.tsx`. The deleted arms were REPLACED,
+ * not weakened.
  */
-
-describe('guessKindFromSentence', () => {
-  it('guesses location for "at/in the" context', () => {
-    expect(guessKindFromSentence('The party hides at the old mill')).toBe('location');
-    expect(guessKindFromSentence('They arrive in the drowned chapel')).toBe('location');
-  });
-
-  it('guesses faction for organized-group context', () => {
-    expect(guessKindFromSentence('The guild controls the harbor')).toBe('faction');
-  });
-
-  it('defaults to npc', () => {
-    expect(guessKindFromSentence('A silent figure watches the docks')).toBe('npc');
-  });
-});
 
 describe('buildEntityBrief', () => {
   it('includes the name, surrounding context and premise', () => {

@@ -39,23 +39,6 @@ export const STUB_PERSONA_SLUGS: Readonly<Record<StubKind, string>> = {
 };
 
 /**
- * Cheap kind heuristic — INSTANT PLACEHOLDER ONLY (08 §M4-C): the real kind
- * comes from the generator's recorded `module.entityKinds`, or from a
- * one-shot classification call for hand-typed names. This regex never
- * persists anything; the popover kind is always user-confirmable.
- */
-export function guessKindFromSentence(sentence: string): StubKind {
-  const text = sentence.toLowerCase();
-  if (/\b(at|in|inside|near|beneath|under|above|beyond|through)\b/.test(text)) {
-    return 'location';
-  }
-  if (/\b(guild|order|court|cult|clan|company|syndicate|crew|government|council)\b/.test(text)) {
-    return 'faction';
-  }
-  return 'npc';
-}
-
-/**
  * Stub kinds whose drafts carry the structured level context (docs/11):
  * encounters AND npcs. The npc kind covers NPCs and monsters alike (mob
  * artifacts are npc rows; the Smith details both) — a level-6 NPC drafted

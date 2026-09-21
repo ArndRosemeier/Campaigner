@@ -867,6 +867,12 @@ describe('ModuleReaderPage', () => {
     await user.click(chip);
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
 
+    // The kind starts UNSELECTED and is set by the classification verdict
+    // (docs/17 row 293): wait for it, because Create is blocked until it exists.
+    await waitFor(() => {
+      expect(within(popover).getByTestId('stub-kind')).toHaveTextContent('npc');
+    });
+
     // First click ARMS the override — nothing is created yet.
     await user.click(within(popover).getByTestId('stub-create'));
     expect(within(popover).getByTestId('stub-create')).toHaveTextContent(
