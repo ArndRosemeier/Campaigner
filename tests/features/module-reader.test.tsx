@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { artifactPath, modulePath } from '@/app/routes';
+import { artifactPath, battlePath, modulePath } from '@/app/routes';
 import { createArtifact, getArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
@@ -975,6 +975,58 @@ describe('ModuleReaderPage', () => {
 
     const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
     expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('takes an encounter link in the module text STRAIGHT to its battle map, with no peek card (docs/17 row 298)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Ford Ambush]] waits at the ford before dawn.',
+    });
+    const encounter = await createArtifact({ campaignId, kind: 'encounter', name: 'Ford Ambush' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const section = await findPartSection(0);
+    const chip = await waitFor(() => {
+      const found = within(section).getByTestId('wiki-chip');
+      expect(found).toHaveAttribute('data-wiki-name', 'Ford Ambush');
+      return found;
+    });
+    await user.click(chip);
+
+    // The OLD three-hop behaviour — open the encounter card first — is what the
+    // owner asked to change: an encounter chip in the prose must NOT open the
+    // peek modal on its way to the battle.
+    expect(screen.queryByTestId('peek-modal')).toBeNull();
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe(battlePath(campaignId, moduleId, encounter.id));
+      },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByTestId('play-encounter-card')).toBeNull();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('keeps the peek card for a NON-encounter link in the module text (docs/17 row 298, the other direction)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Old Tower]] still stands above the ford.',
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const section = await findPartSection(0);
+    const chip = await waitFor(() => {
+      const found = within(section).getByTestId('wiki-chip');
+      expect(found).toHaveAttribute('data-wiki-name', 'Old Tower');
+      return found;
+    });
+    await user.click(chip);
+
+    // Every OTHER kind keeps today's modal, and the module URL is unchanged.
+    const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
+    expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
+    expect(window.location.pathname).toBe(modulePath(campaignId, moduleId));
     await flushAsyncUpdates();
   }, 20_000);
 

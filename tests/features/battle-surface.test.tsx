@@ -26,6 +26,7 @@ import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule, newId, packRooms, statBlockSchema } from '@/domain';
+import { artifactPath } from '@/app/routes';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { currentBattle, renderSurface } from '../helpers/battle-surface-route';
 import { battleGridStyle } from '@/domain/battle/gridSnap';
@@ -3001,8 +3002,58 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
     expect(screen.getByTestId('battle-surface-empty')).toBeInTheDocument();
     expect(screen.queryByTestId('reseed-battle')).toBeNull();
     expect(screen.queryByTestId('battle-provenance')).toBeNull();
+    // No encounter key ⇒ no card affordance (docs/17 row 298): the entry is
+    // rendered ONLY when the battle names the encounter it belongs to.
+    expect(screen.queryByTestId('open-encounter-card')).toBeNull();
     await flushAsyncUpdates();
   });
+
+  it('starts an UNSEDED encounter from the empty state through the same open-or-seed seam (docs/17 row 298)', async () => {
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Unseeded ford',
+    });
+    const module = await saveModule(
+      createModule({
+        campaignId,
+        title: 'Unseeded Module',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    // A DEEP LINK that names an encounter with no board: today's dead end.
+    await renderSurface(campaignId, module.id, { encounterId: encounter.id, expectBoard: false });
+    expect(screen.getByTestId('battle-surface-empty')).toBeInTheDocument();
+    const start = await screen.findByTestId('start-battle', {}, { timeout: 10_000 });
+
+    await userEvent.setup().click(start);
+
+    // The seam seeded the board and the surface now renders the table — no
+    // detour to the card, no "go press Run battle first".
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('battle-board')).toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    const row = await currentBattle(module.id);
+    expect(row.encounterArtifactId).toBe(encounter.id);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('points the battle header at the encounter card through artifactPath (docs/17 row 298)', async () => {
+    const { moduleId, encounterId } = await seedStandardBattle();
+    await renderSurface(campaignId, moduleId);
+
+    const card = screen.getByTestId('open-encounter-card');
+    // ONE affordance, the existing `artifactPath` helper, the battle's OWN
+    // encounter key — and `liftBattle`'s destination is NOT what this is.
+    expect(card).toHaveAttribute('href', artifactPath(campaignId, encounterId));
+    await flushAsyncUpdates();
+  }, 20_000);
 });
 
 describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => {

@@ -5,7 +5,7 @@ import { SwordsIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
 import { getBattleForEncounter } from '@/db/battleRepo';
-import { runBattle } from '@/features/play/run-battle-seed';
+import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { battlePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 
@@ -19,11 +19,14 @@ import { Button } from '@/components/ui/button';
  * no confirm state and no destructive label here any more: a running board can
  * no longer be destroyed from this affordance.
  *
- * A successful first seed, or an open, navigates straight to that encounter's
- * battle table (the toast only confirms a seed — it never tells the user to go
- * open it themselves). The artifact editor reuses this exact button (directly
- * for module-owned encounters, inside a module picker for campaign-scoped
- * ones), so the open/seed split is one shared implementation.
+ * The open-or-seed ACT is `features/play/open-encounter-battle.openEncounterBattle`
+ * (docs/17 row 298) — extracted so the module reader's encounter link and the
+ * battle surface's empty state cannot drift from this button. This component
+ * only owns the label (which reads the live query) and the navigation.
+ *
+ * The artifact editor reuses this exact button (directly for module-owned
+ * encounters, inside a module picker for campaign-scoped ones), so the
+ * open/seed split is one shared implementation.
  *
  * The seed action itself (`runBattle`) lives in the `run-battle-seed.ts`
  * sibling.
@@ -49,6 +52,8 @@ export function RunBattleButton({
   // owner is looking at has no battle keyed to it — the battle is keyed to the
   // campaign's ADOPTED COPY — so this hop is what keeps "Open battle" honest
   // and what stops a second press from re-seeding a board that already exists.
+  // It is read here for the LABEL ONLY (docs/17 row 298): the press itself asks
+  // the shared seam, which is the authority and re-reads the same resolver.
   const existingBattle = useLiveQuery(
     async () => getBattleForEncounter(campaignId, encounter.id),
     [campaignId, encounter.id],
@@ -63,24 +68,13 @@ export function RunBattleButton({
       variant="outline"
       data-testid="run-battle"
       onClick={() => {
-        // A battle exists for this encounter: OPEN it. Never seed over it — its
-        // state is the table's, and only the in-battle Reseed may replace it.
-        // The path names the battle's OWN key (the campaign-owned encounter),
-        // so the surface resolves it without a hop.
-        if (running) {
+        // The seam names the path's key (the battle's OWN key — the
+        // campaign-owned encounter), or null when the seed failed loudly; a
+        // failed seed must never navigate.
+        void openEncounterBattle({ campaignId, moduleId, encounter }).then((key) => {
+          if (key === null) return;
           onRun?.();
-          navigate(battlePath(campaignId, moduleId, existingBattle.encounterArtifactId ?? encounter.id));
-          return;
-        }
-        // No battle yet for this encounter: seed it, then open it. The seed
-        // answers the row it keyed the battle to — the adopted copy when the
-        // encounter was a LIBRARY row — and the route must name that key.
-        void runBattle(campaignId, moduleId, encounter).then((report) => {
-          if (report === null) return;
-          onRun?.();
-          navigate(
-            battlePath(campaignId, moduleId, report.battle.encounterArtifactId ?? encounter.id),
-          );
+          navigate(battlePath(campaignId, moduleId, key));
         });
       }}
     >

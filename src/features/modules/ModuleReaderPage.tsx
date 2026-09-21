@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   BanIcon,
   ArrowLeftIcon,
@@ -15,7 +15,7 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { boardPath, canvasChatPath, modulesPath } from '@/app/routes';
+import { battlePath, boardPath, canvasChatPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { WriterModelId } from '@/components/writer-model-id';
@@ -46,6 +46,7 @@ import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { PeekModal } from '@/features/modules/peek-modal';
+import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
 import { SpineCheckpoint } from '@/features/modules/spine-checkpoint';
@@ -85,6 +86,7 @@ export function ModuleReaderPage(): JSX.Element {
   // link-existing picker keep the campaign-only pool (10-MILESTONE-6 D).
   const globalArtifacts = useGlobalArtifacts();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [stub, setStub] = useState<StubPopoverState | null>(null);
   const [linkTargetName, setLinkTargetName] = useState<string | null>(null);
@@ -129,8 +131,21 @@ export function ModuleReaderPage(): JSX.Element {
   // `saveEditPart` calls the CURRENT save closure through a ref, so its
   // identity is stable while its behavior is always that of this render.
   const openArtifact = useCallback((artifact: AnyArtifact) => {
+    // AN ENCOUNTER LINK IN THE MODULE TEXT GOES STRAIGHT TO ITS BATTLE MAP
+    // (docs/17 row 298, owner-directed). The shared open-or-seed seam opens the
+    // existing board or seeds the first one — a LOCAL, idempotent act that
+    // never re-seeds (docs/18 §5) — and the click lands on `battlePath`. EVERY
+    // OTHER KIND keeps today's peek modal, exactly as before.
+    if (artifact.kind === 'encounter') {
+      void openEncounterBattle({ campaignId, moduleId, encounter: artifact }).then((key) => {
+        // A failed seed was already reported loudly; never navigate.
+        if (key === null) return;
+        navigate(battlePath(campaignId, moduleId, key));
+      });
+      return;
+    }
     setPeekId(artifact.id);
-  }, []);
+  }, [campaignId, moduleId, navigate]);
   const openStub = useCallback((name: string, anchor: { x: number; y: number }) => {
     setStub({ name, ...anchor });
   }, []);

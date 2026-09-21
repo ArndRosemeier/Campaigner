@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { toast } from 'sonner';
 import {
+  BookOpenIcon,
   DicesIcon,
   EyeIcon,
   EyeOffIcon,
@@ -28,7 +29,7 @@ import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CE
 import { combatHpForToken } from '@/domain/battle/board';
 import { BATTLE_ZOOM_MAX, BATTLE_ZOOM_MIN } from '@/domain/battle/view';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
-import { modulePath } from '@/app/routes';
+import { artifactPath, battlePath, modulePath } from '@/app/routes';
 import {
   activeInitiativeTokenId,
   gmFighterTokenIds,
@@ -84,7 +85,7 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
-import { getArtifact } from '@/db/artifactRepo';
+import { getAnyArtifact, getArtifact } from '@/db/artifactRepo';
 import { creaturePortraitImageIn, tokenCreature } from '@/db/creatureRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { ZoomableImage } from '@/features/images/zoomable-image';
@@ -95,6 +96,7 @@ import {
 } from '@/features/campaign/mob-portrait-queue';
 import { rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
 import { runBattle } from '@/features/play/run-battle-seed';
+import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
@@ -347,6 +349,25 @@ export function BattleSurface(): JSX.Element {
     [encounterArtifactId],
     'loading' as const,
   );
+
+  // THE ROUTE'S OWN encounter, resolved WITHOUT the battle row: a deep link to
+  // an encounter that has NO board yet has no provenance to read, so the
+  // route's id is the source (docs/17 row 298). The read is ANY-SCOPE because
+  // a URL may still name the LIBRARY encounter a battle was adopted from
+  // (docs/17 row 268) — the seam itself makes the campaign-owned copy and
+  // answers the key the route should carry. With a board present this query's
+  // answer is unused; it never gates the surface.
+  const routeEncounter = useLiveQuery(
+    async () => (encounterId === '' ? null : (await getAnyArtifact(encounterId)) ?? null),
+    [encounterId],
+    'loading' as const,
+  );
+  // Narrowed once, so the empty state's Start button (the seam's third caller)
+  // is rendered only when there really is an encounter artifact to seed from.
+  const startableEncounter =
+    routeEncounter !== 'loading' && routeEncounter !== null && routeEncounter.kind === 'encounter'
+      ? routeEncounter
+      : null;
 
   // The initiative reorder gate publishes an epoch when its last drag ends —
   // the reconcile effect re-runs exactly then.
@@ -1740,10 +1761,38 @@ export function BattleSurface(): JSX.Element {
         data-testid="battle-surface-empty"
       >
         <p>No battle is seeded for this encounter yet.</p>
-        <p className="text-sm text-zinc-500">
-          Open this encounter's card in the module reader or the encounter editor and press “Run battle”
-          first.
-        </p>
+        {startableEncounter === null ? (
+          <p className="text-sm text-zinc-500">
+            Open this encounter's card in the module reader or the encounter editor and press “Run
+            battle” first.
+          </p>
+        ) : (
+          // A stale deep link is no longer a DEAD END (docs/17 row 298): the
+          // SAME open-or-seed seam the encounter card and the module text use
+          // seeds this encounter's board and lands the table on it.
+          <p className="text-sm text-zinc-500">
+            Start it here — the board seeds from this encounter’s roster.
+          </p>
+        )}
+        {startableEncounter !== null && (
+          <Button
+            data-testid="start-battle"
+            onClick={() => {
+              void openEncounterBattle({
+                campaignId,
+                moduleId,
+                encounter: startableEncounter,
+              }).then((key) => {
+                // A failed seed was already reported loudly; never navigate.
+                if (key === null) return;
+                navigate(battlePath(campaignId, moduleId, key));
+              });
+            }}
+          >
+            <SwordsIcon aria-hidden data-icon="inline-start" />
+            Start battle
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -1795,6 +1844,23 @@ export function BattleSurface(): JSX.Element {
           <XIcon aria-hidden data-icon="inline-start" />
           Lift
         </Button>
+        {/* The owner's fallback sentence is *"I can always lift then and go to
+            the workspace"* (docs/17 row 298): ONE direct affordance to this
+            battle's encounter CARD, rendered only when the battle carries an
+            encounter key. It uses the existing `artifactPath` helper and does
+            NOT change what `liftBattle` does — one press, one destination. */}
+        {encounterArtifactId !== null && (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="open-encounter-card"
+            render={<Link to={artifactPath(campaignId, encounterArtifactId)} />}
+            nativeButton={false}
+          >
+            <BookOpenIcon aria-hidden data-icon="inline-start" />
+            Encounter card
+          </Button>
+        )}
         <span className="mx-1 h-5 w-px bg-white/10" />
         <Button
           size="sm"

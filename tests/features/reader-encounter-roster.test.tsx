@@ -45,8 +45,12 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * a component in isolation, because the two halves being pinned are the PAGE's
  * behaviour:
  *
- * - the encounter row opens the same peek card as a prose chip, without changing
- *   the module URL; the card keeps the explicit workspace action;
+ * - the encounter's ENTITY-PANEL ROW opens the shared peek card, without
+ *   changing the module URL; the card keeps the explicit workspace action.
+ *   (A `[[Encounter]]` PROSE chip is deliberately different since docs/17 row
+ *   298: it goes straight to the battle map through the open-or-seed seam —
+ *   that direction is pinned in `module-reader.test.tsx`, and the source pin
+ *   below asserts the reader's own branch.)
  * - the card's shared roster panel carries each mob's reference and numbers, and
  *   a citation nothing can resolve stays LOUD by name with no box.
  *
@@ -419,17 +423,27 @@ describe('EXACTLY ONE roster reference implementation in the app', () => {
     expect(reader).not.toContain('see ${');
   });
 
-  it('the reader and prose chips use the same encounter card seam', () => {
+  it('the reader routes an ENCOUNTER chip to the battle seam and every other kind to the shared card', () => {
     const page = code('src/features/modules/ModuleReaderPage.tsx');
     const peek = code('src/features/modules/peek-modal.tsx');
+    // Every NON-encounter chip still opens the ONE entity card, and a panel row
+    // still opens it for any kind (the `onOpenCard` arm below).
     expect(page).toContain('setPeekId(artifact.id)');
-    expect(page).not.toContain("artifact.kind === 'encounter'");
+    // AMENDED DELIBERATELY (docs/17 row 298, NAMED): this assertion used to be
+    // the NEGATION `not.toContain("artifact.kind === 'encounter'")`, which
+    // pinned the exact three-hop behaviour the owner asked to change (an
+    // encounter chip opened the peek card first). The reader now branches on
+    // the kind and sends an encounter through the ONE open-or-seed seam, so the
+    // claim is the POSITIVE one — the branch and its single destination.
+    expect(page).toContain("artifact.kind === 'encounter'");
+    expect(page).toContain('openEncounterBattle(');
     // The peek card gets the SAME pool AND the SAME breadcrumb-push callback
     // its own `[[…]]` body chips use (docs/17 row 217) — so the encounter's
     // model-prose summary and its mobs' notes resolve and open like every other
     // wiki token on the surface. Before row 217 this exact assertion named the
     // one-line form without `onOpenArtifact`; the HTML-comment state it guards
-    // is unchanged (the peek modal is still the only encounter card seam).
+    // is unchanged (the peek modal is still the only encounter card seam — an
+    // encounter CHIP is no longer routed to it, docs/17 row 298).
     expect(peek).toMatch(
       /<EncounterCard[\s\S]*?artifacts=\{artifacts\}[\s\S]*?onOpenArtifact=\{onOpenArtifact\}[\s\S]*?showWriterModel/,
     );

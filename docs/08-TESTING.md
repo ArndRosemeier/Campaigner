@@ -8506,3 +8506,73 @@ One discriminating arm was added there — a level-5 module touched LAST, so the
 display's arc order is the REVERSE of the repo's — and arm E reds it by name.
 The row-212/215 tripwire ran 18/18 GREEN with **NO `*Baseline.json` edit**. No
 existing pin asserted the old display order, so none was updated or deleted.
+
+## The encounter link goes straight to the battle, through ONE seam (docs/17 row 298)
+
+The family is **one new unit file plus arms in three existing behavioural files
+and one architecture scan**, because the claim is a CROSS-SURFACE one: the
+module text's encounter link, the encounter card's button and the battle
+surface's empty state must be the SAME act, and a second implementation must be
+visible to a source scan rather than to discipline.
+
+- `tests/features/open-encounter-battle.test.ts` (**NEW, 5**) — the seam
+  itself. `runBattle` is wrapped with the REAL implementation
+  (`vi.fn(actual.runBattle)`) so the failure arm exercises the real catch/toast,
+  while `seedBattleFromEncounter` and `@/lib/toast` are mocked. Arms: an
+  existing battle is returned and `runBattle` is NOT called (and
+  `seedBattleFromEncounter` is not either); a missing key on the row falls back
+  to the clicked encounter; no battle ⇒ `runBattle` called ONCE with
+  `(campaignId, moduleId, encounter)` and the SEED'S OWN key returned (the
+  library→adopted-copy hop); a fresh seed with no key falls back to the clicked
+  id; a rejected seed returns `null` AND
+  `toastError('Could not seed the battle', error)` fires.
+- `tests/features/module-reader.test.tsx` (**+2**) — the READER, both directions
+  through the REAL reader. An `[[Ford Ambush]]` prose chip navigates to
+  `battlePath(campaignId, moduleId, encounter.id)` and the peek modal /
+  `play-encounter-card` are ABSENT; an `[[Old Tower]]` (location) chip still
+  opens the peek modal and leaves the module URL alone.
+- `tests/features/battle-surface.test.tsx` (**+2, +1 extended**) — the EMPTY
+  state (`start-battle` seeds an unseeded encounter, the board renders, and the
+  row's `encounterArtifactId` is asserted) and the header affordance
+  (`open-encounter-card`'s `href` is `artifactPath(campaignId, encounterId)`);
+  the existing no-provenance test gains the documentation-only absence
+  assertion (docs/18 §5 — the gate's false arm is unreachable by route).
+- `tests/features/reader-encounter-roster.test.tsx` (**AMENDED, named**) — the
+  source scan that asserted `not.toContain("artifact.kind === 'encounter'")`
+  pinned the OLD three-hop behaviour and is rewritten as the positive claim
+  (docs/18 §5).
+- `tests/architecture/one-battle-per-encounter.test.ts` (**+1 test, 2 amended
+  inventories**) — the exactly-one pin: the `openEncounterBattle(` population
+  (the seam + its three callers), the `runBattle(` population (the seam + the
+  in-battle Reseed + its own definition), the amended `battlePath(` and
+  `getBattleForEncounter(` inventories, and the DECLARED gate on the header
+  affordance.
+
+**ARMS — each `tsc -b` exit 0 on the INJECTED tree (never a lone
+`tsc --noEmit -p tsconfig.app.json`, which does not cover `tests/**`), sha256
+printed before AND after, every file restored BYTE-IDENTICALLY, no two injected
+hashes equal** (patches and raw logs under `.gate-logs/row298-injections/`):
+**A** the seam's existing-battle early return deleted → **RED 4** (both seam
+existing arms plus the button's `Open battle` resume and picker-reattach pins —
+so the extraction is behaviour-preserving in the direction that matters);
+**B** the seam returns the clicked id instead of the seed's key → **RED 1**
+(the named key); **C** the seam swallows a failed seed → **RED 1** (`null`);
+**D** the reader stops branching on the encounter kind (the branch condition
+renamed, the cast through `unknown`) → **RED 2** (the behavioural encounter arm
+AND the roster source scan); **E** the reader routes EVERY kind through the
+seam → **RED 1** (the non-encounter peek arm — the change does not over-reach);
+**F** the empty state's `start-battle` testid renamed → **RED 1** (the
+empty-state arm); **G** the header affordance's key guard removed → **RED 1**
+(the declared source gate); **G2** the affordance pointed at `modulePath` →
+**RED 1** (the `href` arm); **H** the empty state bypasses the seam for a direct
+`runBattle` call → **RED 1** (the exactly-one source pin) while the empty-state
+behavioural arm stayed GREEN on the same tree — the measurement that the SOURCE
+pin is the mechanism guard and the behavioural arm is not.
+
+**MEASURED GAP, RECORDED RATHER THAN HIDDEN:** the affordance's
+`encounterArtifactId !== null` gate has NO reachable false arm (a board with no
+encounter key cannot be routed to), so its pin is a declaration; the
+documentation-only absence assertion in the no-provenance test cannot red under
+the guard's removal and is labelled as documentary (docs/18 §5). The
+row-212/215 tripwire ran 18/18 GREEN with **NO `*Baseline.json` edit**.
+
