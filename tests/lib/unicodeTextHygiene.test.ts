@@ -308,8 +308,14 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/domain/persona.ts': 1,
     'src/domain/promptStyle.ts': 1,
     'src/domain/rulebook.ts': 1,
-    'src/features/modules/persona-request.ts': 2,
-    'src/ingest/packs/dnd5e-foundry.ts': 1,
+    // `src/features/modules/persona-request.ts` USED to be declared here (2):
+    // `guessKindFromSentence`'s English keyword regexes over a typed sentence.
+    // Row 293 DELETED that guesser — the entity kind now comes from the module's
+    // recorded kind or the ONE structured classification call — so the file no
+    // longer holds an ASCII-only text regex and its declaration is DELETED, not
+    // rewritten (a declared site that no longer exists lies about the tree, and
+    // its REASONS entry below goes with it).
+    'src/ingest/packs/dnd5e-foundry.ts': 2,
     'src/ingest/packs/pf2e-journal.ts': 2,
     'src/ingest/packs/text.ts': 2,
     'src/ingest/statblock.ts': 11,
@@ -338,10 +344,8 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/domain/promptStyle.ts':
       'the {{placeholder}} grammar of a style: placeholder names are our own ASCII tokens (premise, partText, …), never user prose',
     'src/domain/rulebook.ts': 'a SHA-256 hex digest, same as exportDependencies',
-    'src/features/modules/persona-request.ts':
-      'the INSTANT kind heuristic over a typed sentence: an English keyword list that persists nothing and is always user-confirmable in the popover. Residual and accepted: a false ASCII `\\b` boundary needs an English keyword adjacent to a non-ASCII letter, and the worst outcome is a wrong PLACEHOLDER KIND the user overrides — never a resolution, never stored text',
     'src/ingest/packs/dnd5e-foundry.ts':
-      'the `@abilities.str.mod` FORMULA grammar of the Foundry pack format: machine syntax from the pack, not prose',
+      'TWO machine-format patterns, neither of them prose: the `@abilities.str.mod` FORMULA grammar of the Foundry pack format, and the higher-levels SECTION PROBE row 294 added (`/(?:^|</p>|<br…)\\s*(?:<[^<>]+>\\s*)*(?:at\\s+)?higher\\s+levels?\\b/i`), which matches the pack\u2019s own `<strong>At Higher Levels</strong>` markup to tell a MISS from an absence — the English words are the PUBLISHER\u2019s heading, not user text',
     'src/ingest/packs/pf2e-journal.ts':
       'the `<em>… pg. …</em>` page-reference markup: the English `pg.` abbreviation is printed by the pack\u2019s own publisher',
     'src/ingest/packs/text.ts':
