@@ -200,9 +200,8 @@ function clampHp(value: number, maxHp: number | null): number {
  * the pre-308 bytes.
  */
 function hpRatioFor(resolved: ResolvedCombatHp | null): number | null {
-  if (resolved === null || resolved.maxHp === null) {
-    return null;
-  }
+  if (resolved === null) return null;
+  if (resolved.maxHp === null) return null;
   return resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
 }
 
