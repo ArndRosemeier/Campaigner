@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createArtifact,
@@ -14,16 +14,19 @@ import {
   ensureBattleForEncounter,
   getBattle,
   getBattleByEncounter,
+  getBattleForEncounter,
   listBattlesByModule,
+  normalizeBattleOnOpen,
   patchBattle,
   resetBattleToStage,
   saveBattleBoard,
 } from '@/db/battleRepo';
+import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { createCampaign } from '@/db/campaignRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc, isBattleEmpty } from '@/db/fighterStats';
 import { db } from '@/db/db';
 import { captureStageSnapshot, combatHpForToken, fighterTokens, tokenFromFighter } from '@/domain/battle/board';
-import type { Battle, BattleToken, FighterStats, FighterStatsLookup, StatBlock } from '@/domain';
+import type { Artifact, Battle, BattleToken, FighterStats, FighterStatsLookup, StatBlock } from '@/domain';
 import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
 
@@ -79,6 +82,24 @@ async function addPc(name: string, over: Partial<StatBlock> = {}): Promise<strin
       statBlock: statBlock(over),
       currentHp: statBlock(over).hp,
       initiativeOverride: null,
+      notes: '',
+    },
+  });
+  return pc.id;
+}
+
+/** A pc artifact with NO stat block — the owner's ordinary new player
+ *  (docs/17 row 308): 20 HP by default, an optional own initiative bonus. */
+async function addStatelessPc(name: string, initiativeOverride: number | null = null): Promise<string> {
+  const pc = await createArtifact({
+    campaignId,
+    kind: 'pc',
+    name,
+    data: {
+      playerName: '',
+      statBlock: null,
+      currentHp: 20,
+      initiativeOverride,
       notes: '',
     },
   });
@@ -253,7 +274,7 @@ function requireStats(lookup: FighterStatsLookup, id: string): FighterStats {
 }
 
 describe('normalize-on-write', () => {
-  it('re-ensures a token for every statful PC artifact on every write', async () => {
+  it('re-ensures a token for every PC artifact on every write', async () => {
     const pcId = await addPc('Serren');
     const moduleId = newId();
     const battle = await ensureBattleForEncounter(campaignId, moduleId, newId());
@@ -264,21 +285,32 @@ describe('normalize-on-write', () => {
     expect(fighterTokens(updated.board)).toHaveLength(2);
   });
 
-  it('leaves statless PCs unspawned (loud badge upstream, no placeholder)', async () => {
-    await createArtifact({
-      campaignId,
+  /**
+   * INVERTED at docs/17 row 308 (superseding docs/09 M5-C step 4): this pin
+   * used to read "leaves statless PCs unspawned (loud badge upstream, no
+   * placeholder)" — the behavior the owner's rule REVERSES. Every campaign
+   * player is in every battle, always; a stat block is not required, and no
+   * stat is invented for a fighter the app is not tracking.
+   */
+  it('spawns a token for a STATLESS PC too — no stat block required (docs/17 row 308)', async () => {
+    const statlessId = await addStatelessPc('Statless');
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    expect(battle.board.tokens.map((token) => token.label)).toEqual(['Statless']);
+    const token = battle.board.tokens[0];
+    if (token === undefined) throw new Error('statless PC token was not spawned');
+    expect(token.artifactId).toBe(statlessId);
+    // The artifact owns the PC's HP; the token never carries an instance HP.
+    expect(token.currentHp).toBeNull();
+    const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
+    // Its maximum is UNKNOWN (null) and its bonus is exactly the artifact's
+    // own override (0 here) — never an invented 0-max or a made-up dex.
+    expect(requireStats(stats, statlessId)).toEqual({
       kind: 'pc',
       name: 'Statless',
-      data: {
-        playerName: '',
-        statBlock: null,
-        currentHp: 0,
-        initiativeOverride: null,
-        notes: '',
-      },
+      maxHp: null,
+      initiativeBonus: 0,
+      currentHp: 20,
     });
-    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
-    expect(battle.board.tokens).toEqual([]);
   });
 
   it('re-fills null NPC token HP from the artifact and clamps to [0, maxHp]', async () => {
@@ -351,6 +383,52 @@ describe('normalize-on-write', () => {
     const artifactRow = (await campaignArtifacts()).find((row) => row.kind === 'pc');
     if (artifactRow === undefined) throw new Error('PC artifact missing');
     expect(fighterStatsFromPc(artifactRow)?.currentHp).toBe(10);
+  });
+});
+
+describe('the OPEN-path trigger of the PC-token seam (docs/17 row 308)', () => {
+  async function addEncounter(): Promise<Artifact & { kind: 'encounter' }> {
+    const encounter = await createArtifact({ campaignId, kind: 'encounter', name: 'Ford ambush' });
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    return encounter;
+  }
+
+  it('adds players created AFTER the board went live — and the plain READ adds nothing', async () => {
+    const moduleId = newId();
+    const encounter = await addEncounter();
+    const battle = await ensureBattleForEncounter(campaignId, moduleId, encounter.id);
+    // The board is on the table (the surface's mount write); only THEN do the
+    // players appear — the case a plain open used to miss entirely.
+    await saveBattleBoard(battle.id, { ...battle.board, live: true, everLive: true });
+    const statfulId = await addPc('Serren');
+    const statlessId = await addStatelessPc('Statless');
+
+    // A READ STAYS A READ: the one encounter→battle resolver adds nothing.
+    const readOnly = await getBattleForEncounter(campaignId, encounter.id);
+    expect(fighterTokens(readOnly?.board ?? battle.board)).toEqual([]);
+
+    // The OPEN seam writes them through the ONE normalize-on-write, and names
+    // the battle's own key (the campaign-owned encounter).
+    const key = await openEncounterBattle({ campaignId, moduleId, encounter });
+    expect(key).toBe(encounter.id);
+    const opened = await getBattle(battle.id);
+    expect(fighterTokens(opened?.board ?? battle.board).map((token) => token.artifactId).sort()).toEqual(
+      [statfulId, statlessId].sort(),
+    );
+  });
+
+  it('writes NOTHING when the board already holds every player — an unchanged open is a read', async () => {
+    await addPc('Serren'); // present BEFORE the board exists
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    expect(fighterTokens(battle.board)).toHaveLength(1);
+    const put = vi.spyOn(db.battles, 'put');
+    try {
+      const reopened = await normalizeBattleOnOpen(battle.id);
+      expect(put).not.toHaveBeenCalled();
+      expect(fighterTokens(reopened?.board ?? battle.board)).toHaveLength(1);
+    } finally {
+      put.mockRestore();
+    }
   });
 });
 

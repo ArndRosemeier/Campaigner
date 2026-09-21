@@ -83,6 +83,8 @@ import { newId } from '@/domain/entity';
 const CAMPAIGN_PC = '00000000-0000-4000-8000-000000000000a1';
 const CAMPAIGN_NPC = '00000000-0000-4000-8000-000000000000b2';
 const SEED_MONSTER = '00000000-0000-4000-8000-000000000000c3';
+/** A pc with NO stat block (docs/17 row 308): maxHp is UNKNOWN, bonus is 0. */
+const STATLESS_PC = '00000000-0000-4000-8000-000000000000d4';
 
 const pcStats = {
   kind: 'pc' as const,
@@ -104,6 +106,11 @@ const npcStats = {
 const stats: FighterStatsLookup = (id) => {
   if (id === CAMPAIGN_PC) return pcStats;
   if (id === CAMPAIGN_NPC) return npcStats;
+  if (id === STATLESS_PC) {
+    // A statless PC resolves (never absent) with an UNKNOWN maximum and the
+    // artifact's own HP; its bonus is the override alone, 0 here.
+    return { kind: 'pc', name: 'Wilbert', maxHp: null, initiativeBonus: 0, currentHp: 20 };
+  }
   if (id === SEED_MONSTER) return { kind: 'npc', name: 'Goblin (seed)', maxHp: 7, initiativeBonus: 2, currentHp: null };
   return undefined;
 };
@@ -178,6 +185,16 @@ describe('HP ownership split', () => {
     });
   });
 
+  it('resolves a STATLESS PC with an UNKNOWN maximum and its own HP — never 0 or 20', () => {
+    // docs/17 row 308: the owner's players carry no stat block, and the honest
+    // answer for the maximum is null (unknown), never an invented ceiling.
+    expect(combatHpForToken(pcToken({ artifactId: STATLESS_PC, label: 'Wilbert' }), stats)).toEqual({
+      maxHp: null,
+      currentHp: 20,
+      ownedBy: 'artifact',
+    });
+  });
+
   it('re-fills null NPC token HP from the backing stats and clamps on write', () => {
     const board: BattleBoard = {
       ...emptyBoard(),
@@ -229,7 +246,7 @@ describe('token spawning & staging ground', () => {
     expect(token.currentHp).toBeNull();
   });
 
-  it('ensurePcTokens spawns one token per statful PC, skipping existing ones', () => {
+  it('ensurePcTokens spawns one token per PC, skipping existing ones', () => {
     const ground = stagingGroundAt(0.5, 0.5, 720, 480, 72);
     const existing = tokenFromFighter(CAMPAIGN_PC, pcStats, 0, true, null);
     const board: BattleBoard = { ...emptyBoard(), stagingGround: ground, tokens: [existing] };
@@ -242,6 +259,21 @@ describe('token spawning & staging ground', () => {
     expect(next.tokens[1]?.artifactId).toBe(SEED_MONSTER);
     // Spawned row-major at the staging ground's second slot.
     expect(next.tokens[1]?.x).toBeCloseTo(spawnPointInStagingGround(0, ground).x, 10);
+  });
+
+  it('spawns a NAME-ONLY token for a statless PC — the PC arm carries no maxHp (docs/17 row 308)', () => {
+    const ground = stagingGroundAt(0.5, 0.5, 720, 480, 72);
+    const board: BattleBoard = { ...emptyBoard(), stagingGround: ground };
+    const next = ensurePcTokens(board, [
+      { artifactId: STATLESS_PC, stats: { kind: 'pc', name: 'Wilbert' } },
+    ]);
+    expect(next.tokens).toHaveLength(1);
+    const token = next.tokens[0];
+    expect(token?.label).toBe('Wilbert');
+    // A PC token NEVER carries instance HP — the artifact owns it — and a
+    // statless PC has no maximum to borrow, so the arm is name-only.
+    expect(token?.currentHp).toBeNull();
+    expect(token?.x).toBeCloseTo(spawnPointInStagingGround(0, ground).x, 10);
   });
 
   it('keeps the board identity when nothing changed', () => {
@@ -313,6 +345,16 @@ describe('initiative', () => {
     expect(() => rollTokenInitiative(pcToken({ artifactId: newId() }), stats)).toThrow();
   });
 
+  it('rolls for a STATLESS PC and freezes exactly its own bonus — no invented dex', () => {
+    // docs/17 row 308: the owner's ruling is that a statless player still
+    // joins initiative; the bonus comes from the pc artifact's own
+    // initiativeOverride (0 here), never from an ability score we invented.
+    const token = rollTokenInitiative(pcToken({ artifactId: STATLESS_PC, label: 'Wilbert' }), stats);
+    expect(token.initiativeBonus).toBe(0);
+    expect(token.initiativeRoll).toBeGreaterThanOrEqual(1);
+    expect(token.initiativeRoll).toBeLessThanOrEqual(20);
+  });
+
   it('sorts by total desc, then bonus desc, then label A–Z', () => {
     const a = npcToken({ label: 'A', initiativeRoll: 12, initiativeBonus: 2 });
     const b = npcToken({ label: 'B', initiativeRoll: 14, initiativeBonus: 0 });
@@ -362,6 +404,13 @@ describe('initiative', () => {
     const hidden = npcToken({ visible: false });
     const board: BattleBoard = { ...emptyBoard(), tokens: [fighter, statless, stamp, hidden] };
     expect(visibleFighterTokenIds(board, stats, new Set())).toEqual([fighter.id]);
+  });
+
+  it('counts a STATLESS PC as an initiative member in both views (docs/17 row 308)', () => {
+    const pc = pcToken({ artifactId: STATLESS_PC, label: 'Wilbert' });
+    const board: BattleBoard = { ...emptyBoard(), tokens: [pc] };
+    expect(visibleFighterTokenIds(board, stats, new Set())).toEqual([pc.id]);
+    expect(gmFighterTokenIds(board, stats, new Set())).toEqual([pc.id]);
   });
 
   it('cycles turns and tracks the active token', () => {

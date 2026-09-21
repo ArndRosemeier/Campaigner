@@ -5,6 +5,7 @@ import type { AnyArtifact, Battle, BattleTokenId, FighterStatsLookup, Id } from 
 import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { getBattleForEncounter } from '@/db/battleRepo';
 import { buildFighterStatsLookup, pcFightersOf } from '@/db/fighterStats';
+import type { FighterStatsLike } from '@/domain/battle/board';
 import { portraitCoveredByVeils } from '@/domain/battle/veil';
 import { veilCellPx } from '@/domain/battle/veil';
 import type { BattleVeil } from '@/domain/battle';
@@ -25,7 +26,7 @@ export interface BattleState {
   stats: FighterStatsLookup;
   coveredTokenIds: ReadonlySet<BattleTokenId>;
   artifacts: AnyArtifact[];
-  pcFighters: { artifactId: Id; stats: { kind: 'pc' | 'npc'; name: string; maxHp: number } }[];
+  pcFighters: { artifactId: Id; stats: FighterStatsLike }[];
 }
 
 export function useBattleState(

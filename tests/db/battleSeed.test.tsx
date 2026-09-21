@@ -23,7 +23,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
 import { createRulebook } from '@/db/rulebookRepo';
-import { fighterTokens } from '@/domain/battle/board';
+import { fighterTokens, spawnPointInStagingGround } from '@/domain/battle/board';
 import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import type { Artifact, EncounterLayout, Id, StatBlock } from '@/domain';
 import {
@@ -93,6 +93,26 @@ async function addPc(name: string): Promise<Artifact> {
       statBlock: statBlock({ hp: 20, abilities: { str: 10, dex: 16, con: 12, int: 10, wis: 10, cha: 10 } }),
       currentHp: 20,
       initiativeOverride: null,
+      notes: '',
+    },
+  });
+}
+
+/** The owner's ordinary new player (docs/17 row 308): NO stat block, 20 HP,
+ *  an optional own initiative bonus — exactly what `createArtifact` defaults. */
+async function addStatlessPc(
+  name: string,
+  initiativeOverride: number | null = null,
+): Promise<Artifact> {
+  return createArtifact({
+    campaignId,
+    kind: 'pc',
+    name,
+    data: {
+      playerName: '',
+      statBlock: null,
+      currentHp: 20,
+      initiativeOverride,
       notes: '',
     },
   });
@@ -468,6 +488,66 @@ describe('roster expansion', () => {
     // Seeded while the board is still prep scratch: monsters hidden, live false.
     expect(battle.board.live).toBe(false);
     expect(battle.board.tokens.find((token) => token.label === 'Troll')?.visible).toBe(false);
+  });
+
+  /**
+   * docs/17 row 308 — the owner's rule: "All campaign players need to be in
+   * all battles, always", with HP and initiative and NO stat block required.
+   * The statless arm is exactly the case this pin exists for: before row 308
+   * `pcFightersOf` dropped it at ONE line and the seed produced no token at
+   * all.
+   */
+  it('seeds EVERY campaign player — a STATLESS PC included, with its own HP and no invented stats', async () => {
+    await addPc('Serren');
+    const statless = await addStatlessPc('Wilbert');
+    const encounter = await addEncounter({});
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+
+    const pcTokens = fighterTokens(battle.board);
+    expect(pcTokens.map((token) => token.label).sort()).toEqual(['Serren', 'Wilbert']);
+    const wilbert = pcTokens.find((token) => token.artifactId === statless.id);
+    if (wilbert === undefined) throw new Error('the statless PC was not seeded');
+    // The artifact owns a PC's HP; the token never carries an instance HP, so
+    // the statless arm needs no maximum at all.
+    expect(wilbert.currentHp).toBeNull();
+    expect(wilbert.initiativeBonus).toBeNull();
+    // Staged row-major in the staging ground beside the statful PC.
+    const ground = battle.board.stagingGround;
+    if (ground === null) throw new Error('the seed produced no staging ground');
+    const slot = spawnPointInStagingGround(pcTokens.indexOf(wilbert), ground);
+    expect(wilbert.x).toBeCloseTo(slot.x, 10);
+    expect(wilbert.y).toBeCloseTo(slot.y, 10);
+
+    // The lookup RESOLVES the statless PC (never absent): its maximum is
+    // unknown (null), its bonus is the artifact's own override (0), and its
+    // current HP is the artifact's 20 — no dex, no AC, no invented numbers.
+    const stats = buildFighterStatsLookup(battle, await listArtifactsByCampaign(campaignId));
+    expect(stats(statless.id)).toEqual({
+      kind: 'pc',
+      name: 'Wilbert',
+      maxHp: null,
+      initiativeBonus: 0,
+      currentHp: 20,
+    });
+  });
+
+  it('re-seeds to exactly the campaign’s players — no duplicates, no losses (docs/17 row 308)', async () => {
+    await addPc('Serren');
+    await addStatlessPc('Wilbert');
+    const encounter = await addEncounter({});
+    const moduleId = newId();
+    const first = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
+    expect(fighterTokens(first.battle.board)).toHaveLength(2);
+    // A player joins between the seed and the re-seed: the fresh board carries
+    // all three, and the seam's dedupe keeps repeated writes at three.
+    const mira = await addStatlessPc('Mira');
+    const again = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
+    const ids = fighterTokens(again.battle.board).map((token) => token.artifactId);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids).toContain(mira.id);
+    const afterWrite = await patchBattle(again.battle.id, {});
+    expect(fighterTokens(afterWrite.board)).toHaveLength(3);
   });
 
   it('stamps provenance and REPLACES a running battle (stage discarded)', async () => {
@@ -849,6 +929,32 @@ describe('pc stats resolution', () => {
     expect(stats?.initiativeBonus).toBe(8);
     expect(stats?.maxHp).toBe(20);
     expect(stats?.currentHp).toBe(20);
+  });
+
+  it('resolves a STATLESS pc with an unknown max, then the SAME artifact behaves as today once a block exists (docs/17 row 308)', async () => {
+    const pc = await addStatlessPc('Wilbert', 3);
+    if (pc.kind !== 'pc') throw new Error('not a pc');
+    // No block: the maximum is UNKNOWN (null) and the bonus is the PC's own
+    // override ALONE — no dex, no ability score invented for a player whose
+    // sheet the app does not own.
+    expect(fighterStatsFromPc(pc)).toEqual({
+      kind: 'pc',
+      name: 'Wilbert',
+      maxHp: null,
+      initiativeBonus: 3,
+      currentHp: 20,
+    });
+    // Authoring a block afterwards changes the answers with NO re-seed and no
+    // second mechanism: the same artifact row now resolves like any statful PC.
+    const updatedData = {
+      ...pc.data,
+      statBlock: statBlock({ hp: 25, abilities: { str: 10, dex: 16, con: 12, int: 10, wis: 10, cha: 10 } }),
+    };
+    await updateArtifact(pc.id, { data: updatedData });
+    const statful = fighterStatsFromPc({ ...pc, data: updatedData });
+    expect(statful?.maxHp).toBe(25);
+    // dex 16 → +3, plus the PC's own +3 override.
+    expect(statful?.initiativeBonus).toBe(6);
   });
 
 describe('entrance-anchored staging (adjudicated)', () => {

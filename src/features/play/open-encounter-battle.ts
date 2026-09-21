@@ -1,5 +1,5 @@
 import type { AnyArtifact, Id } from '@/domain';
-import { getBattleForEncounter } from '@/db/battleRepo';
+import { getBattleForEncounter, normalizeBattleOnOpen } from '@/db/battleRepo';
 import { runBattle } from '@/features/play/run-battle-seed';
 
 /**
@@ -27,6 +27,12 @@ import { runBattle } from '@/features/play/run-battle-seed';
  * A prose click may seed because the seed is LOCAL (no model or image call),
  * idempotent (an existing board is opened, never replaced) and confirmed by the
  * seed toast — the named trade in docs/18 §5.
+ *
+ * OPENING also carries the ONE open-path trigger of the PC-token seam (docs/17
+ * row 308): every campaign player must be on EVERY board, so an open runs the
+ * row's normalize-on-write through `normalizeBattleOnOpen`, which writes ONLY
+ * when a missing PC token was actually added. Opening an unchanged battle
+ * remains a pure read, and an existing board is still never re-seeded.
  */
 export interface OpenEncounterBattleArgs {
   campaignId: Id;
@@ -45,7 +51,12 @@ export async function openEncounterBattle({
   // resolves it without a second hop.
   const existing = await getBattleForEncounter(campaignId, encounter.id);
   if (existing !== undefined) {
-    return existing.encounterArtifactId ?? encounter.id;
+    // ALWAYS means "a player added since this board went live is here too"
+    // (docs/17 row 308): a plain open is a READ, so the ONE PC-token seam is
+    // triggered through the row's own normalize-on-write. It writes ONLY when
+    // the board changed, so opening an unchanged battle stays a pure read.
+    const synced = await normalizeBattleOnOpen(existing.id);
+    return synced?.encounterArtifactId ?? existing.encounterArtifactId ?? encounter.id;
   }
   // No battle yet for this encounter: seed it. The seed answers the row it
   // keyed the battle to — the adopted copy when the encounter was a LIBRARY

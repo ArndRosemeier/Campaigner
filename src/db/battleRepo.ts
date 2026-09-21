@@ -328,8 +328,14 @@ export async function convergeBoardsToRegeneratedMap(
  * backing stats when null and clamped to [0, maxHp]. PC token HP is NEVER
  * written here — the pc artifact owns it (the UI writes damage/heal for PCs
  * through `artifactRepo.updateArtifact`).
+ *
+ * `boardChanged` is a REFERENCE diff: both seams return the SAME board object
+ * when they change nothing, which is what lets the open-path trigger below skip
+ * a pointless put.
  */
-async function normalizeBattle(battle: Battle): Promise<Battle> {
+async function normalizeBattleParts(
+  battle: Battle,
+): Promise<{ battle: Battle; boardChanged: boolean }> {
   // Parse-normalize first (defaults for legacy rows), then normalize-on-write.
   const parsed = battleSchema.parse(battle);
   const [artifacts, globals] = await Promise.all([
@@ -337,9 +343,38 @@ async function normalizeBattle(battle: Battle): Promise<Battle> {
     listGlobalArtifacts(),
   ]);
   const stats = buildFighterStatsLookup(parsed, [...artifacts, ...globals]);
-  let board = ensurePcTokens(parsed.board, pcFightersOf(artifacts));
-  board = fillNpcTokenHp(board, stats);
-  return { ...parsed, board };
+  const board = fillNpcTokenHp(ensurePcTokens(parsed.board, pcFightersOf(artifacts)), stats);
+  return { battle: { ...parsed, board }, boardChanged: board !== parsed.board };
+}
+
+async function normalizeBattle(battle: Battle): Promise<Battle> {
+  return (await normalizeBattleParts(battle)).battle;
+}
+
+/**
+ * The OPEN path's trigger of the ONE PC-token seam (docs/17 row 308).
+ *
+ * Opening a battle is a READ, so a battle that already went `live` gained NO
+ * player created afterwards until the GM happened to touch something — which is
+ * not "all campaign players need to be in all battles, ALWAYS". This runs the
+ * SAME normalize-on-write the save path runs and `put`s ONLY when the board
+ * actually changed: `ensurePcTokens`/`fillNpcTokenHp` preserve the board object
+ * when they change nothing, and every put re-fires the Dexie live queries, so
+ * an unchanged open must not write at all.
+ *
+ * `undefined` means the row vanished between the caller's read and this write
+ * (a concurrent delete) — the board is gone, the caller keeps the key it
+ * resolved, and no placeholder row is invented.
+ */
+export async function normalizeBattleOnOpen(id: Id): Promise<Battle | undefined> {
+  return db.transaction('rw', [db.battles, db.artifacts], async () => {
+    const current = await db.battles.get(id);
+    if (current === undefined) return undefined;
+    const { battle, boardChanged } = await normalizeBattleParts(current);
+    if (!boardChanged) return battle;
+    await db.battles.put(battle);
+    return battle;
+  });
 }
 
 async function requireBoard(id: Id): Promise<BattleBoard> {

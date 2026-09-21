@@ -74,7 +74,11 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
       return {
         playerName: '',
         statBlock: null,
-        currentHp: 0,
+        // Owner-directed (docs/17 row 308): a new player starts at 20 HP, not
+        // 0 — a player's HP is the one number the battle needs from them, and
+        // "0" made every freshly created player start downed. A stat block is
+        // optional (players run their own sheet); this HP is theirs alone.
+        currentHp: 20,
         initiativeOverride: null,
         notes: '',
       };

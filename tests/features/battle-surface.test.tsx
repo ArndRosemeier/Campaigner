@@ -259,6 +259,23 @@ async function addPc(name: string, currentHp: number): Promise<string> {
   return pc.id;
 }
 
+/** A player with NO stat block (docs/17 row 308): HP only, never stats. */
+async function addStatlessPc(name: string, currentHp: number): Promise<string> {
+  const pc = await createArtifact({
+    campaignId,
+    kind: 'pc',
+    name,
+    data: {
+      playerName: '',
+      statBlock: null,
+      currentHp,
+      initiativeOverride: null,
+      notes: '',
+    },
+  });
+  return pc.id;
+}
+
 async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: string; npcId: string; pc1: string }> {
   const pc1 = await addPc('Serren', 20);
   await addPc('Mira', 12);
@@ -2547,6 +2564,33 @@ describe('HP ownership split writes', () => {
     expect(serren.data.currentHp).toBe(13);
     battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Serren')?.currentHp).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('shows a STATLESS PC on the board with its own HP and NO invented ceiling (docs/17 row 308)', async () => {
+    await addStatlessPc('Wilbert', 20);
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(campaignId, moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === 'Wilbert');
+    if (token === undefined) throw new Error('statless PC token missing');
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Wilbert');
+    if (el === undefined) throw new Error('statless PC element missing');
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: token.x * BOARD_W, clientY: token.y * BOARD_H });
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    await flushAsyncUpdates();
+    // The GM readout carries the ONE number that exists — never "HP 20 / 20"
+    // (an invented maximum) and never the no-stats badge: a player has HP even
+    // with no stat block, which is the owner's point of convenience.
+    expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 20 (persists)');
+    expect(screen.queryByTestId('token-no-stats')).toBeNull();
+    // With an UNKNOWN maximum there is no ratio to draw, so no meter renders.
+    expect(screen.queryByTestId('selection-card-hp')).toBeNull();
     await flushAsyncUpdates();
   });
 

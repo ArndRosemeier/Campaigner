@@ -26,7 +26,7 @@ import {
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
 import { CANONICAL_ROOM_MARKERS, isCastCreatureNpc, rosterEntryCreatureIdentity } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
-import { combatHpForToken } from '@/domain/battle/board';
+import { combatHpForToken, type ResolvedCombatHp } from '@/domain/battle/board';
 import { BATTLE_ZOOM_MAX, BATTLE_ZOOM_MIN } from '@/domain/battle/view';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
 import { artifactPath, battlePath, modulePath } from '@/app/routes';
@@ -183,9 +183,27 @@ const ENTRANCE_ROTATION = { north: 0, east: 90, south: 180, west: 270 } as const
 // The tap/drag threshold lives in the gesture machine (single source) —
 const DRAG_THRESHOLD_PX = GESTURE_TAP_THRESHOLD_PX;
 
-/** Damage/heal clamp shared by both HP owners. */
-function clampHp(value: number, maxHp: number): number {
-  return Math.max(0, Math.min(maxHp, value));
+/**
+ * Damage/heal clamp shared by both HP owners. `maxHp === null` is a statless
+ * PC (docs/17 row 308): no ceiling exists, so damage floors at 0 and healing is
+ * unbounded — inventing a maximum here is exactly what the rule forbids.
+ */
+function clampHp(value: number, maxHp: number | null): number {
+  return maxHp === null ? Math.max(0, value) : Math.max(0, Math.min(maxHp, value));
+}
+
+/**
+ * The HP meter ratio, THE ONE rule both HP-bearing surfaces read (the token
+ * ring and the selection card): null when there is no ratio to draw — no
+ * resolved fighter (the loud no-stats badge) or a statless PC whose maximum is
+ * UNKNOWN (docs/17 row 308). A zero maximum still reports 0 (downed), keeping
+ * the pre-308 bytes.
+ */
+function hpRatioFor(resolved: ResolvedCombatHp | null): number | null {
+  if (resolved === null || resolved.maxHp === null) {
+    return null;
+  }
+  return resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
 }
 
 interface LiveDrag {
@@ -2703,7 +2721,7 @@ function TokenView({
   // test treated as smaller, so fog edges stopped covering fine-grid tokens.
   const widthPct = ((tokenSize * token.scale) / content.w) * 100;
   const heightPct = ((tokenSize * token.scale) / content.h) * 100;
-  const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
+  const hpRatio = hpRatioFor(resolved);
   const downed = hpRatio === 0;
   const initials = token.label
     .split(/\s+/u)
@@ -3085,7 +3103,7 @@ function SelectionCard({
   // image this creature's look is.
   const url = useImageUrl(portraitImageId);
   const resolved = combatHpForToken(token, stats);
-  const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
+  const hpRatio = hpRatioFor(resolved);
   const initials = token.label
     .split(/\s+/u)
     .slice(0, 2)
@@ -3141,7 +3159,11 @@ function SelectionCard({
         <div className="flex flex-col gap-1.5 border-t border-white/10 pt-1.5" data-testid="token-controls">
           {resolved !== null ? (
             <p className="text-xs text-zinc-400" data-testid="token-hp">
-              HP {String(resolved.currentHp)} / {String(resolved.maxHp)}
+              {/* A statless PC has no known maximum: the readout keeps the one
+                  number that exists instead of printing an invented ceiling
+                  (docs/17 row 308). */}
+              HP {String(resolved.currentHp)}
+              {resolved.maxHp === null ? '' : ` / ${String(resolved.maxHp)}`}
               {resolved.ownedBy === 'artifact' ? ' (persists)' : ''}
             </p>
           ) : (

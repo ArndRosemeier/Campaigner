@@ -332,19 +332,43 @@ export type SeedFighter = Battle['seedFighters'][number];
 /**
  * Plain-number fighter view the engine consumes (never Dexie): max HP and
  * initiative bonus resolve through `resolveMonsterEntry` for NPCs and
- * `pcDataSchema` for PCs upstream; stats-less artifacts are simply absent
- * from the map — a loud "no stats" badge in the UI, excluded from
- * initiative, never a placeholder number.
+ * `pcDataSchema` for PCs upstream.
+ *
+ * A DISCRIMINATED UNION, because the two kinds honestly differ (docs/17 row
+ * 308): a statless NPC (and a statless seed roster row) is still simply ABSENT
+ * from the lookup — a loud "no stats" badge in the UI, excluded from
+ * initiative, never a placeholder number. A STATLESS PC is NOT absent: the
+ * owner's rule is that every campaign player is in every battle, always, with
+ * initiative and HP, and the owner's own ruling is that players carry no stat
+ * block. Its `maxHp` is therefore `null` (UNKNOWN — never an invented 0 or 20)
+ * and its initiative bonus is exactly `initiativeOverride ?? 0` (no dex, no
+ * ability score invented).
  */
-export interface FighterStats {
-  kind: 'pc' | 'npc';
-  name: string;
-  maxHp: number;
-  /** Initiative bonus at roll time: dex modifier (+ PC-style override). */
-  initiativeBonus: number;
-  /** PCs only: the artifact-owned current HP. NPCs report null (the token owns it). */
-  currentHp: number | null;
-}
+export type FighterStats =
+  | {
+      kind: 'pc';
+      name: string;
+      /**
+       * The pc artifact's stat-block HP, or `null` when the pc has NO stat
+       * block. `null` is a FACT, not a placeholder: a statless PC carries only
+       * its own current HP, and the table surface renders an HP readout with
+       * no ratio and no ceiling instead of inventing a maximum (rule 1).
+       */
+      maxHp: number | null;
+      /** Initiative bonus at roll time: dex modifier (+ the PC's own override). */
+      initiativeBonus: number;
+      /** The artifact-owned current HP (the HP ownership split); null is loud. */
+      currentHp: number | null;
+    }
+  | {
+      kind: 'npc';
+      name: string;
+      maxHp: number;
+      /** Initiative bonus at roll time: dex modifier (+ an npc override). */
+      initiativeBonus: number;
+      /** NPCs report null — the token instance owns current HP. */
+      currentHp: null;
+    };
 
 export type FighterStatsLookup = (artifactId: Id) => FighterStats | undefined;
 

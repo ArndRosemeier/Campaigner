@@ -113,7 +113,8 @@ export function fighterTokens(board: BattleBoard): BattleToken[] {
 }
 
 export interface ResolvedCombatHp {
-  maxHp: number;
+  /** Maximum HP, or `null` when the fighter has no stat block (a statless PC). */
+  maxHp: number | null;
   currentHp: number;
   /** 'artifact' = the pc artifact owns current HP; 'token' = the token instance. */
   ownedBy: 'artifact' | 'token';
@@ -121,8 +122,10 @@ export interface ResolvedCombatHp {
 
 /**
  * HP ownership split (ported verbatim): PCs resolve current HP from their
- * ARTIFACT; NPCs from the TOKEN instance. Missing stats throw — a statless
- * fighter is a loud UI badge elsewhere, never a placeholder number here.
+ * ARTIFACT; NPCs from the TOKEN instance. Absent stats are a loud UI badge
+ * elsewhere, never a placeholder number here; a PC that HAS an artifact but no
+ * stat block still resolves (docs/17 row 308) — its `maxHp` is null, which is
+ * the honest "unknown maximum", never an invented 0 or 20.
  */
 export function combatHpForToken(
   token: BattleToken,
@@ -153,7 +156,7 @@ export function combatHpForToken(
  * otherwise a fresh instance starts at max (the artifact NEVER stores it).
  */
 export function instanceCurrentHpFor(
-  fighter: { kind: 'pc' | 'npc'; name: string; maxHp: number },
+  fighter: FighterStatsLike,
   existingInstanceHp: number | null,
 ): number | null {
   if (fighter.kind !== 'npc') {
@@ -246,12 +249,17 @@ export function tokenFromFighter(
   };
 }
 
-/** Minimal shape `tokenFromFighter` needs (satisfied by FighterStats). */
-export interface FighterStatsLike {
-  kind: 'pc' | 'npc';
-  name: string;
-  maxHp: number;
-}
+/**
+ * Minimal shape `tokenFromFighter`/`instanceCurrentHpFor` need, satisfied by
+ * `FighterStats`. A DISCRIMINATED UNION because a PC token is NAME-ONLY: the
+ * board never reads a PC's max HP (`instanceCurrentHpFor` returns null for
+ * `kind: 'pc'`), and a statless PC has none to give — `{kind: 'pc', name}` is
+ * the honest shape, never `maxHp: 0` and never an invented 20 (docs/17 row
+ * 308). NPCs always carry a real maximum (a stat block or a frozen seed row).
+ */
+export type FighterStatsLike =
+  | { kind: 'pc'; name: string }
+  | { kind: 'npc'; name: string; maxHp: number };
 
 /** Spawns any pc artifact that has no token yet, row-major in the staging ground. */
 export function ensurePcTokens(

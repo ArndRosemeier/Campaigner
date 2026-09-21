@@ -6,9 +6,9 @@ import { createArtifact } from '@/domain/create';
 /**
  * The `pc` artifact kind (09-MILESTONE-5 M5-A): player characters become
  * artifacts — useful before any battle exists and required by the battle as
- * auto-included fighters. The battle engine REQUIRES the stat block for
- * initiative/HP, so `statBlock: null` is a valid-but-loud state, never a
- * silent placeholder.
+ * auto-included fighters. A stat block is OPTIONAL (docs/17 row 308, the
+ * owner's ruling: players carry their own sheet; the app needs only initiative
+ * and HP), and a new player starts at 20 HP so they are never created downed.
  */
 
 describe('pc artifact kind (M5-A)', () => {
@@ -16,7 +16,7 @@ describe('pc artifact kind (M5-A)', () => {
     expect(ARTIFACT_KINDS[0]).toBe('pc');
   });
 
-  it('creates a valid blank PC with human-owned fields defaulted', () => {
+  it('creates a valid blank PC with a stat block optional and 20 HP, never 0', () => {
     const pc = createArtifact({
       campaignId: '00000000-0000-4000-8000-0000000000c1',
       kind: 'pc',
@@ -26,7 +26,7 @@ describe('pc artifact kind (M5-A)', () => {
     expect(pc.data).toEqual({
       playerName: '',
       statBlock: null,
-      currentHp: 0,
+      currentHp: 20,
       initiativeOverride: null,
       notes: '',
     });

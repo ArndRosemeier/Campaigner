@@ -290,9 +290,19 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    DERIVED block onto a `seedFighters` row keyed by the artifact id (the
    rulebook-citation precedent), so every lookup resolves the cast creature;
    an AUTHORED npc-ref keeps resolving through its own row, unchanged.*
-4. Ensure PC tokens: every `pc` artifact of the campaign spawns row-major in
-   the staging ground (default center of the board). Statless PCs are
-   skipped with the same loud badge.
+4. Ensure PC tokens: EVERY `pc` artifact of the campaign spawns row-major in
+   the staging ground (default center of the board), statful or not.
+   **Amended 2026-09-21 by docs/17 row 308 (owner-directed, SUPERSEDING the
+   sentence that stood here):** this step used to read *"Statless PCs are
+   skipped with the same loud badge"*. The owner's rule — *"All campaign
+   players need to be in all battles, always"*, with HP and initiative, and
+   *"Players do not need stats, they just need HPs"* — REVERSES it, and the
+   "same loud badge" it promised for PCs was never implemented anyway (the
+   `pcFightersOf` filter `continue`d in silence). A statless player now gets a
+   token, keeps their own HP (a new PC starts at 20, never 0) and joins
+   initiative with a bonus of `initiativeOverride ?? 0`; no ability score, AC
+   or attack is invented for them. The loud "no combat stats" badge remains
+   exactly what it always was: for a statless NPC.
 5. Stamp the row's `encounterArtifactId`; `live: false` until "Show battle".
 
 ---

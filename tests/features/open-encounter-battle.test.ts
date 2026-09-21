@@ -24,7 +24,10 @@ import type * as runBattleSeedModule from '@/features/play/run-battle-seed';
  * the toast surface are mocked, so no Dexie or Toaster is needed.
  */
 
-vi.mock('@/db/battleRepo', () => ({ getBattleForEncounter: vi.fn() }));
+vi.mock('@/db/battleRepo', () => ({
+  getBattleForEncounter: vi.fn(),
+  normalizeBattleOnOpen: vi.fn(),
+}));
 vi.mock('@/db/battleSeed', () => ({ seedBattleFromEncounter: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 vi.mock('@/features/play/run-battle-seed', async (importOriginal) => {
@@ -32,28 +35,30 @@ vi.mock('@/features/play/run-battle-seed', async (importOriginal) => {
   return { ...actual, runBattle: vi.fn(actual.runBattle) };
 });
 
-const { getBattleForEncounter } = await import('@/db/battleRepo');
+const { getBattleForEncounter, normalizeBattleOnOpen } = await import('@/db/battleRepo');
 const { seedBattleFromEncounter } = await import('@/db/battleSeed');
 const { toastError } = await import('@/lib/toast');
 const { runBattle } = await import('@/features/play/run-battle-seed');
 const { openEncounterBattle } = await import('@/features/play/open-encounter-battle');
 
 const getBattleMock = vi.mocked(getBattleForEncounter);
+const normalizeMock = vi.mocked(normalizeBattleOnOpen);
 const seedMock = vi.mocked(seedBattleFromEncounter);
 const runBattleMock = vi.mocked(runBattle);
 const toastErrorMock = vi.mocked(toastError);
 
 const campaignId: Id = '00000000-0000-4000-8000-0000000000c1';
 const moduleId: Id = '00000000-0000-4000-8000-0000000000m1';
+const battleId: Id = '00000000-0000-4000-8000-0000000000b1';
 const encounter = {
   id: '00000000-0000-4000-8000-0000000000e1',
   kind: 'encounter',
   name: 'Ford Ambush',
 } as unknown as AnyArtifact & { kind: 'encounter' };
 
-/** A battle row carrying only the field the seam reads. */
+/** A battle row carrying only the fields the seam reads. */
 function battleRow(encounterArtifactId: Id | null): Battle {
-  return { encounterArtifactId } as Battle;
+  return { id: battleId, encounterArtifactId } as Battle;
 }
 
 beforeEach(() => {
@@ -71,6 +76,10 @@ describe('openEncounterBattle', () => {
     expect(getBattleMock).toHaveBeenCalledWith(campaignId, encounter.id);
     expect(runBattleMock).not.toHaveBeenCalled();
     expect(seedMock).not.toHaveBeenCalled();
+    // OPENING carries the ONE PC-token trigger (docs/17 row 308): the row is
+    // normalized so a player added after the board went live is on it too.
+    expect(normalizeMock).toHaveBeenCalledTimes(1);
+    expect(normalizeMock).toHaveBeenCalledWith(battleId);
   });
 
   it('falls back to the clicked encounter when the existing row carries no key', async () => {
@@ -96,6 +105,9 @@ describe('openEncounterBattle', () => {
     expect(runBattleMock).toHaveBeenCalledWith(campaignId, moduleId, encounter);
     expect(seedMock).toHaveBeenCalledTimes(1);
     expect(seedMock).toHaveBeenCalledWith(campaignId, moduleId, encounter.id);
+    // A SEED needs no open-path sync: the fresh board already carries every
+    // player through the same seam (docs/17 row 308).
+    expect(normalizeMock).not.toHaveBeenCalled();
   });
 
   it('falls back to the clicked encounter when the fresh seed names no key', async () => {
