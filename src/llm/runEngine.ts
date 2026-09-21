@@ -112,6 +112,7 @@ import {
   parseLevelSort,
 } from '@/llm/encounterRoster';
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
+import { Emitter } from '@/llm/emitter';
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
 import {
   ROOM_BUDGET_OVER_MARGIN,
@@ -2180,8 +2181,30 @@ function effectiveReasoningEffort(persona: Persona, settings: Settings): Reasoni
  */
 const STATBLOCK_DRAFT_VETO_SKIP = 'the draft marked this character as not needing a stat block';
 
+/**
+ * The ONE `getArtifactStatBlock` reader every `resolveEntryLevels` call site
+ * injects (docs/17 row 278; the two identical copies inside this file were
+ * folded here by row 313). It answers an `npc-ref` entry's own minted block, or
+ * `null` when the artifact is missing, is not an npc, or carries no block.
+ *
+ * The artifact READ is the one twist and therefore the parameter: `getArtifact`
+ * for a campaign row, `getAnyArtifact` where the id may name a global library
+ * row. Nothing else about the shape may vary — a second hand-written reader is
+ * how the two copies drifted apart in the first place.
+ */
+function artifactStatBlockReader(
+  readArtifact: (id: Id) => Promise<AnyArtifact | undefined>,
+): (artifactId: Id) => Promise<StatBlock | null> {
+  return async (artifactId) => {
+    const artifact = await readArtifact(artifactId);
+    if (artifact?.kind !== 'npc') return null;
+    return artifact.data.statBlock;
+  };
+}
+
 export class RunEngine {
-  private listeners = new Set<Listener>();
+  /** The ONE emitter primitive (docs/18 §2.2); the listeners are `EngineEvent` subscribers. */
+  private readonly emitter = new Emitter<EngineEvent>();
   private controllers = new Map<Id, AbortController>();
   /**
    * Runs whose in-flight pipeline the owner deliberately stopped — the cancel
@@ -2222,14 +2245,11 @@ export class RunEngine {
   private encounterLayoutVariants = new Map<Id, number>();
 
   on(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+    return this.emitter.on(listener);
   }
 
   private emit(event: EngineEvent): void {
-    for (const listener of this.listeners) listener(event);
+    this.emitter.emit(event);
   }
 
   /** Starts a run; resolves with the run id once the row exists. */
@@ -5362,11 +5382,7 @@ export class RunEngine {
         rosterPin === undefined
           ? undefined
           : await resolveEntryLevels(rosterPin, {
-              getArtifactStatBlock: async (artifactId) => {
-                const artifact = await getAnyArtifact(artifactId);
-                if (artifact?.kind !== 'npc') return null;
-                return artifact.data.statBlock;
-              },
+              getArtifactStatBlock: artifactStatBlockReader(getAnyArtifact),
             });
       const levelFor = (monsterIndex: number): string | undefined => {
         if (rosterPin !== undefined && monsterIndex < rosterPin.length) {
@@ -6518,11 +6534,7 @@ export class RunEngine {
     // A copied mob's level comes from its OWN block (docs/17 row 278); there is
     // no library citation left to read a level out of.
     const levels = await resolveEntryLevels(monsters, {
-      getArtifactStatBlock: async (artifactId) => {
-        const artifact = await getArtifact(artifactId);
-        if (artifact?.kind !== 'npc') return null;
-        return artifact.data.statBlock;
-      },
+      getArtifactStatBlock: artifactStatBlockReader(getArtifact),
     });
     // The budget loop's deterministic tail (no repair turn at finalize):
     // over rooms step their target down (floor 1); 'empty'/'under' rooms
@@ -7617,11 +7629,7 @@ export class RunEngine {
         // A copied mob's level comes from its OWN block (docs/17 row 278); there
         // is no library citation left to read a level out of.
         const levels = await resolveEntryLevels(data.monsters, {
-          getArtifactStatBlock: async (artifactId) => {
-            const artifact = await getArtifact(artifactId);
-            if (artifact?.kind !== 'npc') return null;
-            return artifact.data.statBlock;
-          },
+          getArtifactStatBlock: artifactStatBlockReader(getArtifact),
         });
         const assignments = reconcileRoomAssignments(
           stampedRooms,

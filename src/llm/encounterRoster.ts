@@ -198,12 +198,20 @@ function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>
 }
 
 /**
- * Lowercased names that occur in more than one distinct ready pack book
- * (fix-02 decision 5). Same-book duplicates resolve by the landed recency
- * order and never get a suffix — the disambiguator is for cross-book
+ * Names that occur in more than one distinct ready pack book (fix-02 decision
+ * 5) — THE ONE cross-book duplicate reader, for BOTH pack prompt windows: the
+ * roster's creature listing (`buildPackRoster`) and the item pool
+ * (`encounterItems.buildItemPool`). Same-book duplicates resolve by the landed
+ * recency order and never get a suffix — the disambiguator is for cross-book
  * ambiguity only.
+ *
+ * The entry shape is the argument rather than a named type: the two windows
+ * carry different printed columns and only the name and the owning book decide
+ * the answer, so the seam is structural over exactly those two fields.
  */
-function duplicatedAcrossBooks(entries: readonly PackRosterEntry[]): Set<string> {
+export function duplicatedAcrossBooks(
+  entries: readonly { name: string; bookId: Id }[],
+): Set<string> {
   const booksPerName = new Map<string, Set<Id>>();
   for (const entry of entries) {
     const key = comparableName(entry.name);

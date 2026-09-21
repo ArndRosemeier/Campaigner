@@ -28,45 +28,12 @@
       ]
     },
     {
-      "hash": "3f6bbcb1f9833cad",
-      "reason": "encounterItems.levelDistance and encounterRoster.levelDistanceTo are the same level-distance arithmetic under two names; fold onto one seam. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/llm/encounterItems.ts:levelDistance",
-        "src/llm/encounterRoster.ts:levelDistanceTo"
-      ]
-    },
-    {
-      "hash": "6cb7f0cd682b51d6",
-      "reason": "Three runner/engine classes copy the same on() listener add/delete (the EventEmitter shape); fold onto one emitter primitive. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/llm/chainRunner.ts:on",
-        "src/llm/moduleGen.ts:on",
-        "src/llm/runEngine.ts:on"
-      ]
-    },
-    {
       "hash": "7422a6200878f5a8",
       "reason": "Three image-queue modules copy the same settings to worker-count read; fold onto one queue helper (their settledDetail copies sit just under the floor and are a separate floor decision). Owed; out of this detector slice's scope.",
       "sites": [
         "src/features/campaign/mob-portrait-queue.ts:workerCount",
         "src/features/covers/cover-image-queue.ts:workerCount",
         "src/features/modules/entity-image-queue.ts:workerCount"
-      ]
-    },
-    {
-      "hash": "a7a5d7c440a27f8a",
-      "reason": "The same getArtifactStatBlock arrow is defined twice inside runEngine.ts (two call scopes) and the two definitions are one implementation; delete one and share it. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/llm/runEngine.ts:getArtifactStatBlock",
-        "src/llm/runEngine.ts:getArtifactStatBlock"
-      ]
-    },
-    {
-      "hash": "b47d99bc17b7b8a6",
-      "reason": "encounterItems and encounterRoster copy the same cross-book dedupe (name to book-set map); fold onto one seam. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/llm/encounterItems.ts:duplicatedAcrossBooks",
-        "src/llm/encounterRoster.ts:duplicatedAcrossBooks"
       ]
     },
     {

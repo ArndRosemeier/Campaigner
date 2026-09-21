@@ -1,4 +1,5 @@
 import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
+import { Emitter } from '@/llm/emitter';
 import { isRunWithdrawn, runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 
 /**
@@ -86,7 +87,8 @@ function stepStatusForRun(run: PersonaRun): ChainStepStatus {
 }
 
 export class ChainRunner {
-  private listeners = new Set<ChainListener>();
+  /** The ONE emitter primitive (docs/18 §2.2); the listeners are `ChainState` subscribers. */
+  private readonly emitter = new Emitter<ChainState>();
   private state: ChainState = { steps: [], currentIndex: 0, status: 'idle' };
   private cancelRequested = false;
   /** Inputs needed to resume a paused chain. */
@@ -99,10 +101,7 @@ export class ChainRunner {
   } | null = null;
 
   on(listener: ChainListener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+    return this.emitter.on(listener);
   }
 
   private emit(): void {
@@ -112,7 +111,7 @@ export class ChainRunner {
       status: this.state.status,
     };
     this.state = snapshot;
-    for (const listener of this.listeners) listener(snapshot);
+    this.emitter.emit(snapshot);
   }
 
   getState(): ChainState {

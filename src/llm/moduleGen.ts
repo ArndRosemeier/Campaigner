@@ -44,6 +44,7 @@ import {
   promptStyleForModule,
   spineContractValues,
 } from '@/llm/promptStyles';
+import { Emitter } from '@/llm/emitter';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 // The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
 // WHICH creatures may a module entity be cast from? The answer is the window
@@ -115,25 +116,8 @@ export type ModuleGenEvent =
   | { kind: 'part-thinking'; moduleId: Id; planIndex: number; delta: string }
   | { kind: 'done'; moduleId: Id };
 
-type Listener = (event: ModuleGenEvent) => void;
-
-class ModuleGenEmitter {
-  private listeners = new Set<Listener>();
-
-  on(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  emit(event: ModuleGenEvent): void {
-    for (const listener of this.listeners) listener(event);
-  }
-}
-
-/** The generator event bus (mirrors runEngine's in-memory emitter). */
-export const moduleGenEvents = new ModuleGenEmitter();
+/** The generator event bus (the ONE emitter primitive, docs/18 §2.2). */
+export const moduleGenEvents = new Emitter<ModuleGenEvent>();
 
 /** In-flight generation per module; a second start on the same row throws. */
 const controllers = new Map<Id, AbortController>();

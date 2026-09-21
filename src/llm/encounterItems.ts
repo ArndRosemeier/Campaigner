@@ -3,6 +3,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import { listChunksByBooks } from '@/db/chunkRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
+import { duplicatedAcrossBooks, levelDistanceTo } from '@/llm/encounterRoster';
 import { errorMessage } from '@/lib/errors';
 
 /**
@@ -111,10 +112,6 @@ export function itemLevelSort(level: string): number {
   throw new Error(`cannot order items by level "${level}"`);
 }
 
-function levelDistance(levelSort: number, targetLevel: number): number {
-  return Number.isFinite(levelSort) ? Math.abs(levelSort - targetLevel) : Number.POSITIVE_INFINITY;
-}
-
 function itemLine(entry: ItemPoolEntry, duplicatedNames: ReadonlySet<string>): string {
   const details = [
     entry.category,
@@ -129,24 +126,6 @@ function itemLine(entry: ItemPoolEntry, duplicatedNames: ReadonlySet<string>): s
   // than one ready pack book — unique names stay bare (fix-02 decision 5).
   if (!duplicatedNames.has(comparableName(entry.name))) return base;
   return `${base} — ${entry.bookTitle}`;
-}
-
-/**
- * Lowercased names that occur in more than one distinct ready pack book.
- * Same-book duplicates resolve by the landed recency order and never get a
- * suffix — the disambiguator is for cross-book ambiguity only.
- */
-function duplicatedAcrossBooks(entries: readonly ItemPoolEntry[]): Set<string> {
-  const booksPerName = new Map<string, Set<Id>>();
-  for (const entry of entries) {
-    const key = comparableName(entry.name);
-    const books = booksPerName.get(key) ?? new Set<Id>();
-    books.add(entry.bookId);
-    booksPerName.set(key, books);
-  }
-  return new Set(
-    [...booksPerName.entries()].filter(([, books]) => books.size > 1).map(([key]) => key),
-  );
 }
 
 /**
@@ -177,7 +156,7 @@ export function buildItemPool(
       ? (a, b) =>
           a.levelSort - b.levelSort || a.priceSort - b.priceSort || a.name.localeCompare(b.name)
       : (a, b) =>
-          levelDistance(a.levelSort, targetLevel) - levelDistance(b.levelSort, targetLevel) ||
+          levelDistanceTo(a.levelSort, targetLevel) - levelDistanceTo(b.levelSort, targetLevel) ||
           a.levelSort - b.levelSort ||
           a.priceSort - b.priceSort ||
           a.name.localeCompare(b.name),
