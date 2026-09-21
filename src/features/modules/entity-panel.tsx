@@ -35,7 +35,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
-import { entityKindFor, entityLevelHintFor, sameAliasName } from '@/domain';
+import { entityKindFor, entityLevelHintFor, isCastCreatureNpc, sameAliasName } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -71,7 +71,10 @@ import {
 } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { runEntityBatch } from '@/features/modules/entity-batch';
-import { reportEntityBatchFailures } from '@/features/modules/entity-batch-report';
+import {
+  reportEntityBatchFailures,
+  reportEntityBatchNotices,
+} from '@/features/modules/entity-batch-report';
 import {
   classifyNewModuleEntityNames,
   NORMALIZATION_FAILURE_MESSAGE,
@@ -765,6 +768,16 @@ export function EntityPanel({
         total: targets.length,
         failures: result.failed,
       });
+      // ...and the batch's DESIGNED DECISIONS (docs/17 row 302): a cast that had
+      // no library creature at the entity's recorded level was authored at that
+      // level instead. Same seam, its own list — nothing here failed.
+      reportEntityBatchNotices({
+        module,
+        campaign,
+        kind,
+        total: targets.length,
+        notices: result.notices,
+      });
     } catch (error) {
       toastError('Batch generation failed', error);
     } finally {
@@ -1357,6 +1370,40 @@ export function EntityPanel({
   );
 }
 
+/**
+ * THE ONE sentence a level chip carries (docs/17 rows 282 and 302).
+ *
+ * TWO chips use it and there is exactly one composer, so the labelled INTENT
+ * ("no block minted yet"), the ordinary disagreement, and the CAST-ROW
+ * disagreement can never be worded in two places. The CAST case is the row-302
+ * correction: a cast row's block is the LIBRARY COPY's stats (`sourceLine` /
+ * `originToken` are present — `domain/creature.isCastCreatureNpc`), so the chip
+ * names the copy's level and does NOT offer "regenerate with an explicit level"
+ * — that sentence describes AUTHORING numbers over a copy, which is the
+ * deliberate act docs/17 row 284 made explicit and never the remedy for a row
+ * whose whole point is borrowed stats.
+ */
+function levelHintChipTitle(input: {
+  levelHint: number;
+  /** The minted/copied block's printed level, or `undefined` when none exists. */
+  blockLevel: string | undefined;
+  /** The row's stats are a library copy's (a cast creature npc). */
+  castRow: boolean;
+}): string {
+  const hint = String(input.levelHint);
+  if (input.blockLevel === undefined) {
+    return `The module asks its generators to build this entity at level ${hint} — no stat block is minted yet, so this is an INTENT, not the mob's level`;
+  }
+  if (input.castRow) {
+    return (
+      `The module records level ${hint} for this entity, but the library creature it cites is level ` +
+      `${input.blockLevel} — the block wins. This row's stats are that library copy's, so a level on the ` +
+      'module record does not author numbers over them'
+    );
+  }
+  return `The module records level ${hint} for this entity, but its minted stat block is level ${input.blockLevel} — the block wins. Regenerate with an explicit level to change it`;
+}
+
 function EntityRow({
   entry,
   focused,
@@ -1387,6 +1434,10 @@ function EntityRow({
   // `level 7` on every npc beside minted level-1 blocks.
   const levelHint = entityLevelHintFor(module.entityKinds, entry.name);
   const blockLevel = entry.artifact === undefined ? undefined : mobLevelFor(entry.artifact);
+  // A CAST ROW's block is the LIBRARY COPY's (docs/17 row 302): its chip must
+  // name that copy and must never offer the "regenerate with an explicit level"
+  // remedy, which describes authoring numbers over a copy (row 284).
+  const castRow = entry.artifact !== undefined && isCastCreatureNpc(entry.artifact);
   // The disagreement is NAMED, never two silent numbers (docs/17 row 282): the
   // block wins and the intent badge says so in words. The comparison goes
   // through the ONE grammar, so `1/2` and `—` are read the way the rest of the
@@ -1473,7 +1524,7 @@ function EntityRow({
           <Badge
             variant="outline"
             className="shrink-0 border-sky-500/60 px-1 text-[10px] font-medium text-sky-700 dark:text-sky-400"
-            title={`The module asks its generators to build this entity at level ${String(levelHint)} — no stat block is minted yet, so this is an INTENT, not the mob's level`}
+            title={levelHintChipTitle({ levelHint, blockLevel, castRow })}
             data-testid="entity-level-hint"
             data-name={entry.name}
             data-level={String(levelHint)}
@@ -1485,7 +1536,7 @@ function EntityRow({
           <Badge
             variant="outline"
             className="shrink-0 border-amber-500/60 px-1 text-[10px] font-medium text-amber-700 dark:text-amber-400"
-            title={`The module records level ${String(levelHint)} for this entity, but its minted stat block is level ${blockLevel} — the block wins. Regenerate with an explicit level to change it`}
+            title={levelHintChipTitle({ levelHint, blockLevel, castRow })}
             data-testid="entity-level-hint"
             data-name={entry.name}
             data-level={String(levelHint)}

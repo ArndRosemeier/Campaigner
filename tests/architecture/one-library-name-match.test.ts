@@ -110,4 +110,28 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
     // name match of its own — was deleted by the clean cut (docs/17 row 278),
     // so the tx-caller arm of this pin has no subject left.
   });
+
+  it('reads a candidate level through the ONE reader, INJECTED into the seam (docs/17 row 302)', () => {
+    const ROSTER = 'src/llm/encounterRoster.ts';
+    const filesWith = (needle: RegExp): string[] =>
+      SOURCES.filter((file) => needleCount(file, needle) > 0).map(repoPath).sort();
+    // THE READER — "what level does this library creature's own stat block
+    // state?" — is DEFINED once, beside the ONE grammar it composes
+    // (`mobLevelText` + `parseLevelSort`), and nowhere else: a second reader is
+    // how the level grammar goes plural.
+    expect(filesWith(/export function libraryCreatureLevelSort\(/)).toEqual([ROSTER]);
+    // ...and it is reached from exactly ONE place — the live cast wrapper, which
+    // hands it to the seam as an INJECTED dependency. The injection is the
+    // design: `domain/libraryCreature` may not import `llm/**` (the seam must
+    // stay a tx-callable leaf, pinned above), and the level is still read
+    // through the ONE grammar because the only reader handed in is this one.
+    expect(filesWith(/libraryCreatureLevelSort/g)).toEqual([LIVE_CALLER, ROSTER].sort());
+    // THE SEAM OWNS NO LEVEL GRAMMAR: it reads the STRUCTURED `statBlock.level`
+    // field and asks the injected reader to order it, so `parseLevelSort` — and
+    // every other spelling of the grammar — has no home in the resolution.
+    expect(needleCount(SEAM_PATH, /parseLevelSort\(/g)).toBe(0);
+    // The handoff is the argument itself, so a caller that supplied a level
+    // WITHOUT the reader is the loud error the seam's own pin covers.
+    expect(needleCount(join(ROOT, LIVE_CALLER), /levelSortOf: libraryCreatureLevelSort/g)).toBe(1);
+  });
 });

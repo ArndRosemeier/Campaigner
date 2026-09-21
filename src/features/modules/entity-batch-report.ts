@@ -6,7 +6,7 @@ import {
   type EntityBatchFailureKind,
 } from '@/features/modules/entity-batch';
 import { errorMessage } from '@/lib/errors';
-import { toastErrorPersistent } from '@/lib/toast';
+import { toastErrorPersistent, toastInfoPersistent } from '@/lib/toast';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
 
 /**
@@ -306,4 +306,131 @@ export function reportEntityBatchFailures(report: EntityBatchFailureReport): voi
   console.error(consoleHeadline(report), payload);
   console.error(`${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_FAILURE_SUMMARY_TAG} ${textLine(payload)}`);
   toastErrorPersistent(batchFailureMessage(report));
+}
+
+/**
+ * A DESIGNED DECISION THE BATCH TOOK, WHICH IS NOT A FAILURE (docs/17 row 302).
+ *
+ * The one kind today is the CAST FALLBACK: the module's entity record asked to
+ * borrow a library creature's stats, the entity RECORDED a level, and the
+ * library held no creature of that name AT that level — so the entity took the
+ * AUTHORED path instead and a stat block was minted at the recorded level. The
+ * artifact EXISTS and is a success (`EntityBatchResult.generated`); what this
+ * record carries is the thing the owner has to hear, because a cast that became
+ * an authored mob is a fact about his module and never a silent substitution
+ * (AGENTS rules 1-2).
+ *
+ * WHY IT IS NOT AN `EntityBatchFailure`. A failure means "no artifact exists",
+ * and the batch-end sentence counts those; folding a produced entity into that
+ * count would make the sentence lie in exactly the way row 117 spent a slice
+ * removing. So a notice rides the SAME seam, the SAME "written down when it
+ * happens" discipline and the SAME pasteable-line-plus-object shape, in its own
+ * list and under its own tags — never a second reporting mechanism.
+ */
+export interface EntityBatchNotice {
+  /** The entity (wiki-link target) the cast fallback belongs to. */
+  name: string;
+  /** THE ONE owner-facing sentence (`castFallbackSentence`). */
+  message: string;
+  /** The creature name the entity's bestiary slot asked to borrow. */
+  wanted: string;
+  /** The recorded level the cast had to honour, and the level the entity was
+   *  authored at instead. */
+  level: number;
+  /** The resolution seam's own sentence behind the miss: which levels the
+   *  library DOES hold for that name, or the nearest creatures it holds — kept
+   *  so the record can be diagnosed without re-running the resolution. */
+  reason: string;
+}
+
+/** The batch-end report for notices: the batch's identity plus its notices. */
+export interface EntityBatchNoticeReport extends EntityBatchFailureContext {
+  notices: readonly EntityBatchNotice[];
+}
+
+/** The greppable TAG of a per-notice record, distinct from every failure tag. */
+export const BATCH_NOTICE_RECORD_TAG = 'entity-batch notice';
+/** The greppable TAG of a notice's live-object entry — a DISTINCT tag for the
+ *  same reason the failure pair uses two (docs/17 row 131): a grep must find
+ *  the line to copy without matching the object to expand. */
+export const BATCH_NOTICE_DETAIL_TAG = 'entity-batch notice detail';
+/** The greppable TAG of the batch-end notice summary. */
+export const BATCH_NOTICE_SUMMARY_TAG = 'entity-batch notice summary';
+
+/**
+ * THE ONE sentence a cast fallback reports, composed HERE so the batch cannot
+ * word it and the report cannot word it differently.
+ *
+ * It names the RECORDED LEVEL, the creature the slot asked for, and what the
+ * app DID instead — authoring at that same level. It is deliberately NOT the
+ * failure sentence: nothing failed, and the entity exists.
+ */
+export function castFallbackSentence(wanted: string, level: number): string {
+  return (
+    `no library creature at level ${String(level)} matched «${wanted}» — ` +
+    `authored at level ${String(level)} instead`
+  );
+}
+
+/** One notice as the console carries it: every field present, JSON-copyable. */
+function payloadNotice(notice: EntityBatchNotice): Record<string, unknown> {
+  return {
+    name: notice.name,
+    wanted: notice.wanted,
+    level: notice.level,
+    message: notice.message,
+    reason: notice.reason,
+  };
+}
+
+/**
+ * Records ONE notice, at the moment the batch took the decision — the same
+ * "the evidence exists even if the batch never reaches its end" discipline as
+ * `recordEntityBatchFailure`, for the same reason (a page reload, the owner's
+ * Stop, a throw out of the batch). TWO entries on purpose: the pasteable
+ * single-line JSON under the record tag, and the same object live for
+ * inspection, under its own tag.
+ */
+export function recordEntityBatchNotice(
+  context: EntityBatchFailureContext,
+  notice: EntityBatchNotice,
+): void {
+  const record = { ...batchContextOf(context), ...payloadNotice(notice) };
+  console.error(`${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_NOTICE_RECORD_TAG} ${textLine(record)}`);
+  console.error(
+    `${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_NOTICE_DETAIL_TAG} — "${notice.name}"`,
+    record,
+  );
+}
+
+/** The owner-facing sentence of a batch-end notice report: the count, what the
+ *  app did, and each entity's own sentence. */
+function batchNoticeMessage(report: EntityBatchNoticeReport): string {
+  const plural = KIND_PLURALS[report.kind];
+  const summary = report.notices
+    .map((notice) => `"${notice.name}" — ${notice.message}`)
+    .join('; ');
+  return (
+    `${String(report.notices.length)} of ${String(report.total)} ${plural} had no library creature at ` +
+    `their recorded level — authored at that level instead (${summary})`
+  );
+}
+
+/**
+ * Reports a finished batch's NOTICES: the batch's own pasteable summary line
+ * and the user-visible toast, in one call so a caller cannot raise one without
+ * the other. A batch with no notices reports nothing at all — no console noise,
+ * no toast — which is every batch before row 302 and every batch whose casts
+ * resolved.
+ *
+ * THE TOAST IS PERSISTENT AND INFORMATIONAL (`toastInfoPersistent`): this is the
+ * row-280 shape — what the app DID, and it must not be missed — not an error.
+ * Raised ONCE per batch rather than once per entity: ten fallbacks must not
+ * stack ten notices on the owner's screen.
+ */
+export function reportEntityBatchNotices(report: EntityBatchNoticeReport): void {
+  if (report.notices.length === 0) return;
+  const payload = { ...batchContextOf(report), notices: report.notices.map(payloadNotice) };
+  console.error(`${BATCH_FAILURE_CONSOLE_PREFIX} ${BATCH_NOTICE_SUMMARY_TAG} ${textLine(payload)}`);
+  toastInfoPersistent(batchNoticeMessage(report));
 }

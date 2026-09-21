@@ -124,6 +124,36 @@ export function libraryCreaturePool(
 }
 
 /**
+ * THE refusal that means "the library holds nothing this entity can be cast
+ * from AT ITS RECORDED LEVEL" (docs/17 row 302).
+ *
+ * It is a NAMED class, not a sentence a caller matches on, because the batch's
+ * answer to it is DESIGNED rather than exceptional: the entity takes the
+ * AUTHORED path and a block is minted at the recorded level, and the run NAMES
+ * what happened on the batch's report funnel. A caller catches exactly this
+ * class and nothing else, so a real failure (a broken pool read, an unreadable
+ * level) can never be mistaken for the fallback (AGENTS rule 1: no catch-all).
+ * It is thrown ONLY when a level was supplied — with no level the seam keeps
+ * its pre-302 refusals byte for byte.
+ */
+export class NoLevelAppropriateCreatureError extends Error {
+  /** The entity whose slot asked for the cast. */
+  readonly entityName: string;
+  /** The creature name the slot asked to borrow the stats of. */
+  readonly wanted: string;
+  /** The recorded level the cast had to honour. */
+  readonly level: number;
+
+  constructor(entityName: string, wanted: string, level: number, message: string) {
+    super(message);
+    this.name = 'NoLevelAppropriateCreatureError';
+    this.entityName = entityName;
+    this.wanted = wanted;
+    this.level = level;
+  }
+}
+
+/**
  * Resolve a module entity's bestiary SLOT to a library CREATURE CITATION — the
  * ONE name match (docs/17 row 161's rules, docs/17 row 166's one comparison).
  *
@@ -136,12 +166,34 @@ export function libraryCreaturePool(
  * title a citation STAMPS (`citationBookTitle`: the row's own title, or nothing
  * — never the placeholder) and is read once for the resolved candidate.
  *
+ * THE ENTITY'S RECORDED LEVEL IS AN OPTIONAL FIFTH ARGUMENT (docs/17 row 302,
+ * the owner: *"Level should really be honored since difficulty is tuned to it.
+ * If no mob can be found at that level that is close enough, generate one."*).
+ * ABSENT it, every byte of this function's behaviour is the pre-302 behaviour:
+ * the same name match, the same two refusals, the same citation. SUPPLIED, the
+ * name matches are FILTERED to candidates whose own stat block is AT that level
+ * — the level read through the caller's injected `levelSortOf`, which binds the
+ * ONE grammar (`encounterRoster.libraryCreatureLevelSort`) — and the resolution
+ * then runs over what is left: exactly one resolves, several still need the
+ * slot's book. The filter is a FILTER, never a new fuzzy match and never a new
+ * constant: the candidate set is still the resolution's own strict name match
+ * (`sameCreatureName`), so a level can never make the seam cast a DIFFERENT
+ * creature than the module asked for.
+ *
+ * WHEN THE FILTER LEAVES NOTHING the seam REFUSES with
+ * `NoLevelAppropriateCreatureError` — the caller's cue to author the entity at
+ * that level instead (the module's recorded slot STAYS; the decision is
+ * re-evaluated per run, so importing the right-level creature later casts it).
+ * That arm covers both spellings of "nothing at that level": the name exists
+ * only at other levels, and the name is not in the library at all. Both name the
+ * facts: the levels the library DOES hold for that name, or `nearest`'s
+ * suggestions when it holds the name nowhere.
+ *
  * Every failure is LOUD and NAMES both halves (AGENTS rules 1-3): a name the
- * library cannot supply, or an ambiguity the slot's book does not narrow to
- * exactly one candidate. `nearest` is the caller's suggestion list (a MESSAGE,
- * never a resolution) and is omitted where no suggestion is wanted — the
- * migration reports the failure into `settings.mobCopyRepair` and needs the
- * reason, not a "did you mean".
+ * library cannot supply, an ambiguity the slot's book does not narrow to
+ * exactly one candidate, or a level nothing answers. `nearest` is the caller's
+ * suggestion list (a MESSAGE, never a resolution) and is omitted where no
+ * suggestion is wanted.
  */
 export async function libraryCitationForSlot(
   entityName: string,
@@ -154,7 +206,16 @@ export async function libraryCitationForSlot(
     nearest?:
       | ((wanted: string, pool: readonly LibraryCreature[]) => readonly LibraryCreature[])
       | undefined;
+    /**
+     * The candidate's own level as an ORDERING KEY, or `undefined` when its
+     * stat block states none. Injected so this module stays a tx-callable leaf
+     * with no `llm/**` dependency; the ONE implementation is
+     * `encounterRoster.libraryCreatureLevelSort`. REQUIRED whenever `level` is
+     * supplied: a level with no reader is a loud refusal, never a silent skip.
+     */
+    levelSortOf?: ((creature: LibraryCreature) => number | undefined) | undefined;
   },
+  level?: number,
 ): Promise<CreatureCitation> {
   const wanted = slot.creature.trim();
   const book = slot.book?.trim() ?? '';
@@ -175,6 +236,45 @@ export async function libraryCitationForSlot(
     );
     return lines.join(', ');
   };
+  // THE LEVEL FILTER (docs/17 row 302). ABSENT a level, `atLevel` IS `sameName`
+  // (the same array), so every line below behaves exactly as before. SUPPLIED,
+  // the candidate set is the name matches whose own stat block is AT that level,
+  // read through the caller's injected ONE grammar — the level is a FILTER over
+  // the resolution's own strict name match, never a fuzzy resolution.
+  let atLevel = sameName;
+  if (level !== undefined) {
+    const levelSortOf = options.levelSortOf;
+    if (levelSortOf === undefined) {
+      throw new Error(
+        `bestiary cast: ${named}, and a recorded level (${String(level)}) was supplied, but no level ` +
+          'reader was — the seam cannot compare levels without the ONE grammar (docs/17 row 302)',
+      );
+    }
+    atLevel = sameName.filter((creature) => levelSortOf(creature) === level);
+    if (atLevel.length === 0) {
+      // NOTHING AT THAT LEVEL — the designed miss the CALLER turns into the
+      // authored path. The message names WHICH nothing: the levels the library
+      // does hold for that name, or (when it holds the name nowhere) the row-114
+      // suggestions through the SAME `nearest` seam — never a second matcher.
+      const held = sameName
+        .map((creature) => creature.statBlock?.level ?? '')
+        .filter((printed) => printed.trim() !== '');
+      const nearest = options.nearest?.(wanted, pool) ?? [];
+      const detail =
+        held.length > 0
+          ? ` — the library holds «${wanted}» at ${held.join(', ')}`
+          : nearest.length === 0
+            ? ''
+            : ` — the nearest creatures this library holds: ${await describe(nearest)}`;
+      throw new NoLevelAppropriateCreatureError(
+        entityName,
+        wanted,
+        level,
+        `bestiary cast: ${named}, but this workspace's library holds no creature of that name at ` +
+          `level ${String(level)}${detail} — the entity is authored at that level instead`,
+      );
+    }
+  }
   if (sameName.length === 0) {
     const nearest = options.nearest?.(wanted, pool) ?? [];
     const suggestion =
@@ -190,24 +290,28 @@ export async function libraryCitationForSlot(
     );
   }
   let resolved: LibraryCreature | undefined;
-  if (sameName.length === 1) {
+  if (atLevel.length === 1) {
     // EXACTLY ONE — RESOLVE IT (docs/17 row 161, rule 2). The slot's book has
     // nothing to disambiguate and is not consulted at all.
-    resolved = sameName[0];
+    resolved = atLevel[0];
   } else {
-    let candidates = sameName;
+    let candidates = atLevel;
     if (book !== '') {
       candidates = [];
-      for (const entry of sameName) {
+      for (const entry of atLevel) {
         if ((await titleFor(entry.chunkId)).toLowerCase() === book.toLowerCase()) {
           candidates.push(entry);
         }
       }
     }
     if (candidates.length !== 1) {
+      // The candidates are the level-filtered set when a level was supplied, so
+      // the sentence names THAT set (and its level); with no level `atLevel` IS
+      // `sameName`, and these bytes are the pre-302 refusal exactly.
+      const atLevelClause = level === undefined ? '' : ` at level ${String(level)}`;
       throw new Error(
-        `bestiary cast: ${named}, but this workspace's library holds ${String(sameName.length)} creatures ` +
-          `of that name (${await describe(sameName)}) — name the book in the entity's bestiary slot ` +
+        `bestiary cast: ${named}, but this workspace's library holds ${String(atLevel.length)} creatures ` +
+          `of that name${atLevelClause} (${await describe(atLevel)}) — name the book in the entity's bestiary slot ` +
           '("book": the book\'s title) so the cast is unambiguous',
       );
     }

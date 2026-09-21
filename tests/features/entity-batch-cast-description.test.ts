@@ -29,6 +29,7 @@ import {
   BATCH_FAILURE_CONSOLE_PREFIX,
   BATCH_FAILURE_RECORD_TAG,
 } from '@/features/modules/entity-batch-report';
+import { parseLevelSort } from '@/llm/encounterRoster';
 import { batchTargets } from '@/features/modules/post-generation';
 import { sha256Hex } from '@/lib/hash';
 import { stripWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
@@ -386,6 +387,113 @@ describe('a cast row the module text only NAMES gets an authored description', (
     // beside it. `buildEntityBrief`'s label, and the token itself.
     expect(transportPayload()).toContain('Where it is mentioned:');
     expect(transportPayload()).toContain('**The risen:** [[Aunt Agatha]] and [[Zombie]].');
+  }, 30_000);
+});
+
+/**
+ * THE CAST FALLBACK (docs/17 row 302), driven end to end through the REAL
+ * engine: the module's entity record records a level the library's creature
+ * cannot honour, so the entity is AUTHORED at the recorded level instead of
+ * being cast at a level the module did not ask for.
+ *
+ * The owner, verbatim: *"Level should really be honored since difficulty is
+ * tuned to it. If no mob can be found at that level that is close enough,
+ * generate one."* The library here holds exactly one Zombie, printed `1/4`,
+ * while the record asks for level 2 — the owner's own screenshot, where a
+ * `level 1` block sat beside a `target level 2` chip on every cast npc.
+ *
+ * What is asserted is the whole arm: an ORDINARY authored npc (no citation, no
+ * source line, no `chunk:` origin token), a block MINTED at the recorded level,
+ * the NAMED sentence on the batch's report funnel, and the module's recorded
+ * slot still in place so a later import of the right-level creature casts it.
+ */
+describe('a slot with NO creature at the recorded level is AUTHORED at that level (docs/17 row 302)', () => {
+  it('mints a block at the recorded level, writes no citation, names it, and keeps the slot', async () => {
+    const { campaign, module } = await seedModule(NAMED_ONLY_PROSE);
+    await patchModule(module.id, {
+      entityKinds: [
+        { name: AGATHA, kind: 'npc', absorbed: [], bestiary: { creature: ZOMBIE }, levelHint: 2 },
+      ],
+    });
+    const leveled = await getModule(module.id);
+    if (leveled === undefined) throw new Error('the module row is missing');
+    // The AUTHORED run asks the model for a block AT the resolved level, and the
+    // engine refuses one that prints anything else (row 197) — so the transport
+    // answers level 2 here, while the LIBRARY's Zombie prints 1/4.
+    chatMock.mockImplementation((messages: unknown[]) => {
+      const raw = JSON.stringify(messages);
+      const text = raw.includes('Fill the StatBlock for')
+        ? JSON.stringify({ ...STAT_BLOCK, level: '2' })
+        : JSON.stringify(AUTHORED_DRAFT);
+      return Promise.resolve({ text, modelUsed: TEST_MODEL, fallback: null });
+    });
+    // A spy replaces the console-hygiene guard's wrapper, so driving a batch
+    // that writes a NOTICE is allowed AND the record is the assertion. The
+    // `unknown[]` annotation is the file's own convention (`recordLines`), and
+    // it is what keeps `call[0]` a real `unknown` rather than `any`.
+    const consoleSpy: MockInstance<(...data: unknown[]) => void> = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+
+    const result = await runEntityBatch({
+      module: leveled,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    // AUTHORED, not cast: nothing was borrowed, so there is no citation at all,
+    // and nothing failed either.
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([]);
+    expect(result.generated).toEqual([AGATHA]);
+    // THE NAMED SENTENCE, on the batch's own report funnel — as a record the
+    // owner can paste, carrying the facts behind the miss.
+    expect(result.notices).toHaveLength(1);
+    const notice = result.notices[0];
+    expect(notice?.name).toBe(AGATHA);
+    expect(notice?.wanted).toBe(ZOMBIE);
+    expect(notice?.level).toBe(2);
+    expect(notice?.message).toBe(
+      'no library creature at level 2 matched «Zombie» — authored at level 2 instead',
+    );
+    expect(notice?.reason).toContain('holds no creature of that name at level 2');
+    // The pasteable record line, distinguished from the live-object detail line
+    // (whose tag is `entity-batch notice detail` — the two tags are distinct on
+    // purpose, docs/17 row 131's measured lesson).
+    const noticePrefix = `${BATCH_FAILURE_CONSOLE_PREFIX} entity-batch notice `;
+    const noticeLines = consoleSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (value): value is string =>
+          typeof value === 'string' && value.startsWith(`${noticePrefix}{`),
+      );
+    expect(noticeLines).toHaveLength(1);
+    const record = JSON.parse(noticeLines[0]?.slice(noticePrefix.length) ?? '') as Record<string, unknown>;
+    expect(record.name).toBe(AGATHA);
+    expect(record.level).toBe(2);
+
+    // THE ROW IS AN ORDINARY MODULE NPC: no citation identity of any kind, and
+    // a stat block MINTED at the recorded level — read through the ONE grammar.
+    const rows = (await listArtifactsByCampaign(campaign.id)).filter(
+      (row) => row.kind === 'npc' && row.name === AGATHA,
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row?.kind !== 'npc') throw new Error('the authored row is missing');
+    expect((row.data as { creatureRef?: unknown }).creatureRef).toBeUndefined();
+    expect(row.data.sourceLine).toBeUndefined();
+    expect(row.data.originToken).toBeUndefined();
+    expect(row.data.statBlock).not.toBeNull();
+    expect(parseLevelSort(row.data.statBlock?.level ?? '')).toBe(2);
+
+    // THE INTENT SURVIVES: the recorded slot is still there, so the decision is
+    // re-evaluated on the next run — and a level-2 Zombie imported later casts.
+    const after = await getModule(module.id);
+    expect(after?.entityKinds.find((entry) => entry.name === AGATHA)?.bestiary).toEqual({
+      creature: ZOMBIE,
+    });
+    consoleSpy.mockRestore();
   }, 30_000);
 });
 
@@ -783,7 +891,12 @@ describe('the deleted description seam stays deleted (source scan)', () => {
       .split('\n')
       .map((line) => line.replace(/\/\/.*$/, ''))
       .join('\n');
-    const guard = code.indexOf("if (slot !== null && kind === 'npc' && target.artifactId === undefined) {");
+    // AMENDED by docs/17 row 302: the guard is BOUND to `castArm` before the
+    // level-aware resolution (so a designed level miss can fall THROUGH to the
+    // authored path), and the cast branch opens on the resolved citation. The
+    // invariant this pin exists for is unchanged: no early `return` inside the
+    // cast branch before its refill run.
+    const guard = code.indexOf('if (castArm && citation !== undefined) {');
     const authoring = code.indexOf('runId = await runEngine.startRun(', guard);
     expect(guard).toBeGreaterThan(-1);
     expect(authoring).toBeGreaterThan(guard);

@@ -8,8 +8,9 @@ import { listArtifactsByCampaign, foreignAliasNames } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWritePermitted, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { getRulebook } from '@/db/rulebookRepo';
-import { libraryCitationForSlot } from '@/domain/libraryCreature';
+import { libraryCitationForSlot, NoLevelAppropriateCreatureError } from '@/domain/libraryCreature';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
+import { libraryCreatureLevelSort } from '@/llm/encounterRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { isRunWithdrawn, runEngine, runNotCompletedReason, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
@@ -23,7 +24,12 @@ import {
 import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
 import { surroundingParagraphs, extractWikiLinks } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
-import { recordEntityBatchFailure } from '@/features/modules/entity-batch-report';
+import {
+  castFallbackSentence,
+  recordEntityBatchFailure,
+  recordEntityBatchNotice,
+  type EntityBatchNotice,
+} from '@/features/modules/entity-batch-report';
 import { toastError } from '@/lib/toast';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { useProgressStore } from '@/lib/progress';
@@ -162,11 +168,19 @@ export async function alignEntityName(
  * Exported so the resolution rule is pinnable where it lives (docs/18 §2): this
  * is the ONE live caller of the seam, and a second implementation of the name
  * match is the defect the separation makes visible.
+ *
+ * IT CARRIES THE ENTITY'S RECORDED LEVEL SINCE docs/17 row 302, and with it the
+ * ONE level reader (`encounterRoster.libraryCreatureLevelSort`) the seam filters
+ * candidates through. `level` is OPTIONAL and the caller omits it when the
+ * module records none: the seam then behaves exactly as it did before row 302
+ * (name match, book disambiguation, the two loud refusals), which is why the
+ * no-level modules and every pre-302 pin are byte-unchanged.
  */
 export async function libraryCitationForEntity(
   entityName: string,
   slot: EntityBestiarySlot,
   system?: GameSystem,
+  level?: number,
 ): Promise<CreatureCitation> {
   const pool = await listLibraryCreatures(system);
   // The books the candidates come from, read ONCE (never one read per
@@ -199,7 +213,11 @@ export async function libraryCitationForEntity(
     // "(…)" qualifier (docs/17 row 114). A query with nothing close yields an
     // empty list, and the seam then says nothing rather than misleading.
     nearest: nearestLibraryCreatures,
-  });
+    // ...and the ONE level reader (docs/17 row 302), so a supplied recorded
+    // level filters the name matches by what the candidates' OWN stat blocks
+    // state. Never read when no level is supplied.
+    levelSortOf: libraryCreatureLevelSort,
+  }, level);
 }
 
 /**
@@ -430,6 +448,18 @@ export interface EntityBatchResult {
    * stands, the portrait is on it — and what did not arrive is the authored
    * prose, which is exactly the failure the owner has to hear about. */
   failed: EntityBatchFailure[];
+  /**
+   * DESIGNED DECISIONS the batch took that are NOT failures (docs/17 row 302):
+   * today exactly one kind, the CAST FALLBACK — an entity whose bestiary slot
+   * asked for a library creature and whose recorded level no candidate answered,
+   * so the entity was AUTHORED at that level instead. The artifact EXISTS and is
+   * in `generated`; what this list carries is what the owner has to hear, in the
+   * same shape the failures use (per-entity name, the ONE sentence, and the raw
+   * facts behind it), reported through the ONE report seam. It is deliberately
+   * NOT folded into `failed`: nothing failed, and a batch-end count of "did not
+   * generate" would be false.
+   */
+  notices: EntityBatchNotice[];
 }
 
 /**
@@ -498,6 +528,13 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const produced: EntityBatchProduced[] = [];
   const failed: EntityBatchFailure[] = [];
   /**
+   * THE DESIGNED DECISIONS of this batch (docs/17 row 302) — today only the cast
+   * fallback. Kept OUT of `failed` (nothing failed: the entity is generated), but
+   * written down through the SAME report seam at the moment it happens, so the
+   * evidence exists even if the batch never reaches its end.
+   */
+  const notices: EntityBatchNotice[] = [];
+  /**
    * THE ONE FUNNEL a failure goes through: it is APPENDED to the batch's list
    * and WRITTEN DOWN through the reporting seam, at the moment it happens —
    * never later, because a batch can die mid-flight (a page reload, the owner's
@@ -509,6 +546,19 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const recordFailure = (failure: EntityBatchFailure): void => {
     failed.push(failure);
     recordEntityBatchFailure({ module, campaign, kind, total }, failure);
+  };
+  /**
+   * THE ONE FUNNEL a cast fallback goes through (docs/17 row 302): the notice is
+   * APPENDED to the batch's list and WRITTEN DOWN through the reporting seam at
+   * the moment it happens, exactly like a failure — the batch can die mid-flight
+   * (a page reload, the owner's Stop), and a notice that were only reported at
+   * batch end would leave no evidence at all. It is a SEPARATE list from
+   * `failed` on purpose: the entity IS produced, so counting it as a failure
+   * would make the batch-end sentence lie.
+   */
+  const recordNotice = (notice: EntityBatchNotice): void => {
+    notices.push(notice);
+    recordEntityBatchNotice({ module, campaign, kind, total }, notice);
   };
   // In-flight entities for the dock detail: name → current run step label.
   const inFlight = new Map<string, string | null>();
@@ -673,8 +723,45 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // second run mints no twin) and its prose is never rewritten by a later
         // cast.
         const slot = castSlotFor(module, target.name);
-        if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
-          const citation = await libraryCitationForEntity(target.name, slot, campaign.system);
+        // THE CAST, LEVEL-AWARE (docs/17 row 302, the owner: *"Level should
+        // really be honored since difficulty is tuned to it. If no mob can be
+        // found at that level that is close enough, generate one."*). The
+        // entity's RECORDED level rides the ONE resolution seam; the level is
+        // omitted (never `null`) when the module records none, so a no-hint
+        // module resolves byte-identically to before.
+        const castArm = slot !== null && kind === 'npc' && target.artifactId === undefined;
+        let citation: CreatureCitation | undefined;
+        if (castArm) {
+          try {
+            citation = await libraryCitationForEntity(
+              target.name,
+              slot,
+              campaign.system,
+              levelHint ?? undefined,
+            );
+          } catch (error) {
+            // THE DESIGNED MISS, and ONLY it (docs/17 row 302): the library
+            // holds no creature of that NAME at the RECORDED LEVEL. The entity
+            // then takes the AUTHORED path below — an ordinary module npc at
+            // the recorded level, no citation and no origin stamps — and what
+            // happened is NAMED on the batch's report funnel. Any other
+            // refusal (an ambiguity, a library read that broke) is re-thrown
+            // and recorded as a failure: a named class, never a catch-all
+            // (AGENTS rule 1).
+            if (!(error instanceof NoLevelAppropriateCreatureError)) throw error;
+            recordNotice({
+              name: target.name,
+              wanted: error.wanted,
+              level: error.level,
+              message: castFallbackSentence(error.wanted, error.level),
+              // The seam's own sentence, with the facts behind the miss (the
+              // levels the library DOES hold for that name, or its nearest
+              // creatures) — carried into the record, never discarded.
+              reason: error.message,
+            });
+          }
+        }
+        if (castArm && citation !== undefined) {
           // The prose the cast row is BORN with: the module's own paragraphs
           // about this entity, at the mention site. A batch target is always a
           // wiki-link of the module text (`post-generation.batchTargets`), so
@@ -925,6 +1012,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     }
     // Stable order: the input target order, not completion order.
     const failureByName = new Map(failed.map((failure) => [failure.name, failure]));
+    const noticeByName = new Map(notices.map((notice) => [notice.name, notice]));
     const producedByName = new Map(produced.map((entry) => [entry.name, entry]));
     return {
       generated,
@@ -936,6 +1024,12 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       failed: targets.flatMap((target) => {
         const failure = failureByName.get(target.name);
         return failure === undefined ? [] : [failure];
+      }),
+      // In target order too, for the same reason: a caller reports what happened
+      // in the order the owner asked for it.
+      notices: targets.flatMap((target) => {
+        const notice = noticeByName.get(target.name);
+        return notice === undefined ? [] : [notice];
       }),
     };
   } finally {

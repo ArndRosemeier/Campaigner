@@ -42,5 +42,8 @@ export function producedEntityResult(name: string, artifactId: string): EntityBa
     cast: [],
     produced: [{ name, artifactId, statBlock: 'regenerated' }],
     failed: [],
+    // No cast fallback happened in this fixture (docs/17 row 302): the entity
+    // was produced by a persona run, so the notices list is empty.
+    notices: [],
   };
 }

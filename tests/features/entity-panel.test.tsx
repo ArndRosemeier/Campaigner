@@ -1105,6 +1105,12 @@ describe('EntityPanel', () => {
     expect(kaelIntent.textContent).toBe('target level 7');
     expect(kaelIntent.getAttribute('title')).toContain('its minted stat block is level 1');
     expect(kaelIntent.getAttribute('title')).toContain('the block wins');
+    // ...and because this row is NOT a cast creature, the ONE composer's other
+    // arm offers the remedy that actually applies to it (docs/17 row 302 pins
+    // the CAST arm's absence of this sentence in the test below).
+    expect(kaelIntent.getAttribute('title')).toContain(
+      'Regenerate with an explicit level to change it',
+    );
     // Bram's own block, and NO intent badge: a module with no hint for a name
     // shows nothing but the fact.
     const bramFact = within(rowFor('Bram')).getByTestId('entity-level-block');
@@ -1142,6 +1148,88 @@ describe('EntityPanel', () => {
     const fact = await screen.findByTestId('entity-level-block');
     expect(fact.textContent).toBe('level 7');
     // One number, one badge: an agreeing intent adds nothing.
+    expect(screen.queryByTestId('entity-level-hint')).toBeNull();
+  });
+
+  it('names the LIBRARY COPY, and drops the authoring remedy, on a CAST row that disagrees (docs/17 row 302)', async () => {
+    // THE RESIDUAL THE FALLBACK CANNOT REMOVE: the owner changes the entity's
+    // recorded level LATER (or overrides it), while the row keeps the copy it
+    // was cast with. The amber chip must then tell the truth about WHICH numbers
+    // these are — and must not offer "regenerate with an explicit level", which
+    // describes authoring numbers over a copy (row 284), never a cast row.
+    const campaign = await createCampaign({ name: 'Cast chip', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 7 }],
+    });
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: { ...blankStatBlock('dnd5e'), level: '1' },
+        // The stamp IS the cast row's identity (docs/17 rows 255b/302): a copy
+        // of a library creature, not a block the app authored at a level.
+        originToken: 'chunk:00000000-0000-4000-8000-000000000001',
+        sourceLine: 'Bestiary p.12',
+      },
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[kael]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const kaelRows = await screen.findAllByTestId('entity-row');
+    const kaelRow = kaelRows.find((row) => row.textContent.includes('Kael'));
+    if (kaelRow === undefined) throw new Error('no entity row for Kael');
+    expect(within(kaelRow).getByTestId('entity-level-block')).toHaveAttribute('data-level', '1');
+    const intentTitle = within(kaelRow).getByTestId('entity-level-hint').getAttribute('title') ?? '';
+    expect(intentTitle).toContain('the library creature it cites is level 1');
+    expect(intentTitle).toContain('the block wins');
+    expect(intentTitle).not.toContain('Regenerate with an explicit level');
+  });
+
+  it('shows NO contradiction at all when a CAST row’s copy IS at the recorded level (docs/17 row 302)', async () => {
+    // THE OWNER'S SCREENSHOT, FIXED: with the cast level-aware, a cast that
+    // landed at the recorded level leaves ONE badge — the block — and no amber
+    // intent chip claiming a contradiction that does not exist.
+    const campaign = await createCampaign({ name: 'Cast agreeing', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 7 }],
+    });
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael',
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: { ...blankStatBlock('dnd5e'), level: '7' },
+        originToken: 'chunk:00000000-0000-4000-8000-000000000002',
+      },
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[kael]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const fact = await screen.findByTestId('entity-level-block');
+    expect(fact.textContent).toBe('level 7');
     expect(screen.queryByTestId('entity-level-hint')).toBeNull();
   });
 });

@@ -141,6 +141,28 @@ export function mobLevelFor(artifact: AnyArtifact): string | undefined {
 }
 
 /**
+ * The ORDERING KEY of a LIBRARY CREATURE's own stat block level — the
+ * creature-shaped sibling of `mobLevelFor` (which reads an ARTIFACT), for the
+ * level-aware cast resolution (docs/17 row 302).
+ *
+ * It is the SAME ONE grammar, composed rather than restated: `mobLevelText`
+ * decides whether the printed `statBlock.level` IS a level (blank and the
+ * summons' `'—'` read as none, and are therefore never "at" any recorded level)
+ * and `parseLevelSort` turns it into the comparable key the creator roster
+ * already orders by. The seam that filters candidates by level takes this
+ * reader INJECTED (`domain/libraryCreature` may not import `llm/**` — it must
+ * stay a tx-callable leaf, docs/18 §1), so a second grammar has nowhere to be
+ * born: the only reader in `src/` is this one, and its only caller is the live
+ * cast wrapper.
+ */
+export function libraryCreatureLevelSort(creature: {
+  statBlock: RuleChunk['statBlock'];
+}): number | undefined {
+  const printed = mobLevelText(creature.statBlock?.level ?? '');
+  return printed === undefined ? undefined : parseLevelSort(printed);
+}
+
+/**
  * Distance from the window's target level (`levelDistanceTo`). The CR-less "—"
  * creatures (`levelSort` +Infinity) sit at +Infinity so they always sort after
  * every leveled creature, exactly as today — the guard keeps `∞ − ∞` from

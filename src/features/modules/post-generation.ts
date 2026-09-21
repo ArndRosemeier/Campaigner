@@ -19,7 +19,10 @@ import {
 import { hasDetailedEntity } from '@/features/modules/detailed-entity';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
-import { reportEntityBatchFailures } from '@/features/modules/entity-batch-report';
+import {
+  reportEntityBatchFailures,
+  reportEntityBatchNotices,
+} from '@/features/modules/entity-batch-report';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { errorMessage } from '@/lib/errors';
@@ -321,6 +324,16 @@ async function runModulePostGenerationUnlocked(
           kind,
           total: names.length,
           failures: result.failed,
+        });
+        // ...and the batch's DESIGNED DECISIONS (docs/17 row 302): an entity
+        // whose bestiary slot found no library creature at its recorded level
+        // was authored at that level instead. Same seam, its own list.
+        reportEntityBatchNotices({
+          module,
+          campaign,
+          kind,
+          total: names.length,
+          notices: result.notices,
         });
       }
     }

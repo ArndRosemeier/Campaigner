@@ -475,8 +475,14 @@ describe('the encounter-generation side cannot express a cast (docs/11 D5, docs/
     }
     // The sweep's encounter lane keeps routing to the ROSTER generator, never
     // to a cast: the batch's cast branch is reachable only for `kind === 'npc'`.
+    // AMENDED by docs/17 row 302: the guard is now BOUND to `castArm` before the
+    // LEVEL-AWARE resolution, because a designed level miss must fall THROUGH to
+    // the authored path — so the scan follows the expression that carries the
+    // same fact, with `kind === 'npc'` still gating it.
     const batch = await fs.readFile('src/features/modules/entity-batch.ts', 'utf8');
-    expect(batch).toContain("if (slot !== null && kind === 'npc' && target.artifactId === undefined)");
+    expect(batch).toContain(
+      "const castArm = slot !== null && kind === 'npc' && target.artifactId === undefined;",
+    );
   });
 });
 
@@ -619,7 +625,13 @@ describe('finalize: the cast path', () => {
 
   it('an unresolvable creature name fails LOUDLY, naming the entity and the creature, and finalizes nothing', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
-    const { campaign, moduleId } = await seedModule();
+    // A RANGE band, deliberately: `moduleStatedLevel` stamps a level only for an
+    // EXACT band, so this module records NO level for the entity and the
+    // resolution keeps its pre-302 loud refusal. WITH a recorded level the same
+    // slot is AUTHORED at that level instead (docs/17 row 302) — the fallback
+    // arm, pinned in `tests/features/entity-batch-cast-description.test.ts` and
+    // beside this file's level-preference arm.
+    const { campaign, moduleId } = await seedModule({ min: 1, max: 3 });
     await runSpineWith(moduleId, campaign, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'Bog Shambler' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
@@ -1096,7 +1108,12 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
   it('refuses a NEAR MISS by naming the nearest creatures, and stays silent when nothing is close', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: 'Zombie-Schläger', hp: 22 });
 
-    const near = await seedModule();
+    // RANGE bands throughout, so NO level is recorded for the entity: this arm
+    // exists for the pre-302 refusal (docs/17 row 114) and that refusal is what
+    // an entity WITHOUT a recorded level still gets. WITH one, the same near
+    // miss is authored at that level and the same nearest-creature list rides
+    // the notice's `reason` — see row 302's own arms below.
+    const near = await seedModule({ min: 1, max: 3 });
     await runSpineWith(near.moduleId, near.campaign, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'zombie schlager' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
@@ -1128,7 +1145,7 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
 
     // A query with nothing close keeps the pre-114 sentence: the suggestion is
     // appended only when there is something worth naming.
-    const far = await seedModule();
+    const far = await seedModule({ min: 1, max: 3 });
     await runSpineWith(far.moduleId, far.campaign, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'Ancient Red Dragon' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
@@ -1146,6 +1163,76 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     const cleanedMessage = cleaned.failed[0]?.message ?? '';
     expect(cleanedMessage).toContain('no creature of that name');
     expect(cleanedMessage).not.toContain('the nearest creatures this library holds');
+  });
+});
+
+/**
+ * THE CAST HONOURS THE ENTITY'S RECORDED LEVEL (docs/17 row 302). The owner,
+ * verbatim: *"Level should really be honored since difficulty is tuned to it. If
+ * no mob can be found at that level that is close enough, generate one."*
+ *
+ * The batch's side of that rule, pinned here with the engine faked:
+ *
+ * - a slot whose library creature sits at ANOTHER level, with a same-name
+ *   creature AT the recorded level available, casts the RIGHT-level chunk (the
+ *   seam's own arms live in `tests/domain/library-creature-seam.test.ts`);
+ * - the module's recorded slot STAYS after the run — the cast is an INTENT
+ *   re-evaluated per run, so importing the right-level creature later casts it.
+ *
+ * The FULL arm — no candidate at the level, so the entity is authored with a
+ * MINTED block at that level, no citation, and the notice on the report funnel —
+ * drives the REAL engine in `tests/features/entity-batch-cast-description.test.ts`,
+ * because a faked engine writes no artifact and cannot prove a minted block.
+ */
+describe("the cast honours the entity's recorded level (docs/17 row 302)", () => {
+  it('casts the creature AT the recorded level, not the one at another level', async () => {
+    const lowChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, level: '1' });
+    const rightChunkId = await seedCreature({
+      bookTitle: 'Tome of Horrors',
+      name: ZOMBIE,
+      hp: 40,
+      level: '3',
+    });
+    // An EXACT band: the module's own level is stamped onto the npc record
+    // (docs/17 row 247), so the cast has a level to honour.
+    const { campaign, moduleId } = await seedModule({ min: 3, max: 3 });
+    await runSpineWith(moduleId, campaign);
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    startRunMock.mockResolvedValue('run-1');
+    waitForRunStatusMock.mockImplementation(async () => {
+      const row = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === AGATHA,
+      );
+      return { status: 'completed', resultArtifactId: row?.id ?? null, errorMessage: '', steps: [] };
+    });
+
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    expect(module.entityKinds.find((entry) => entry.name === AGATHA)?.levelHint).toBe(3);
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    // No fallback: something at level 3 existed, so this is a cast and no notice
+    // was raised.
+    expect(result.notices).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(npc.data.originToken).toBe(`chunk:${rightChunkId}`);
+    expect(npc.data.originToken).not.toBe(`chunk:${lowChunkId}`);
+    // THE INTENT SURVIVES: the module still asks for the creature, so a later
+    // import that supplies the level re-resolves on the next run.
+    const after = await getModule(moduleId);
+    expect(after?.entityKinds.find((entry) => entry.name === AGATHA)?.bestiary).toEqual({
+      creature: ZOMBIE,
+    });
   });
 });
 
