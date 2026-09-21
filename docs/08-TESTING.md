@@ -5890,6 +5890,39 @@ failure it catches:
   **Injected RED, watched:** restoring hint-first order fails this test AND
   the pre-existing part-level pin (2 red of 13).
 
+### The encounter party level is the PART's exact level (docs/17 row 291, docs/18 §2/§5)
+
+The owner's decision — a module part has an EXACT level, and the part an
+encounter is mentioned in IS the level the fight is made for — is pinned at
+three levels: the archived source scan, the behavioural arms, and the refusal.
+
+| fact pinned | where |
+|---|---|
+| **The pattern and the midpoint are GONE, and the level has ONE seam**: `parseRosterTargetLevel` absent in any spelling; the `(module.levelMin + module.levelMax) / 2` fallback absent from the four encounter-path files (scoped — `llm/moduleGen`'s bestiary-window midpoint is a different question and is named as deliberately unmoved); `levelHint: z.string()` declared EXACTLY once (the deprecated domain key); NO `data.levelHint` read anywhere in `src/`; `encounterPartyLevel` defined once in `roomBudget` and called only by `runEngine`; `partLevelMentionFor` defined once with the editor form as its only title consumer | `tests/architecture/one-level-resolution.test.ts` (the row-291 arm) |
+| **The three sizing callers agree**: the part's exact level drives the generated party line, the per-room stocking numbers, the roster WINDOW's order, AND the room `targetLevel` stamping, while the row's `partyLevel` (5) loses to the mentioning part (3) in every one of them | `tests/llm/structuredPartyLevel.test.ts` (the stamped-room arm + the window/line arms) |
+| **The no-part case**: the owner's STRUCTURED `partyLevel` is what sizes the fight and what the model is told; with it unset the run FAILS BY NAME on its own `errorMessage` (a stored `levelHint: '9'` is NOT read) | `tests/llm/structuredPartyLevel.test.ts` (two arms) + `tests/llm/encounterRun.test.ts` (the Smith lane's refusal) |
+| **An OLD stored row still loads**: the deprecated `levelHint` round-trips through `encounterDataSchema` with no error state, `partyLevel` stays unset, and the seam resolves NOTHING from it | `tests/llm/structuredPartyLevel.test.ts` |
+| **The MODEL stops writing a level**: the reply contract's parse strips both `levelHint` and `partyLevel`, and the strict JSON schema the reply is bound to has no `levelHint` key | `tests/llm/structuredPartyLevel.test.ts` + `tests/llm/strictSchema.test.ts` (the amended key list) |
+| **The part is NAMED with its level** (the editor's read-only source) | `tests/llm/structuredPartyLevel.test.ts` (`partLevelMentionFor`) |
+| **The create dialog refuses without a number** and the field reaches the run input | `tests/features/persona-run-ui.test.tsx` (the shared `startRun` helper sets `encounter-party-level`; the panel's guard is the loud surface) |
+
+**Defect pins updated deliberately and NAMED** (each asserted the free-text /
+pattern / midpoint behaviour and would otherwise have blessed the defect):
+`tests/llm/encounter-roster.test.ts`'s `parseRosterTargetLevel` family (the
+regex's five parses) → replaced by an absence arm;
+`tests/llm/structuredPartyLevel.test.ts`'s "no mention falls back byte-identical
+to the levelHint chain" → the owner-set arm plus a refusal arm;
+`tests/llm/encounterRepopulate.test.ts`'s "keeps the row's own level …
+warns loudly" (the stored-string keep + the level-drift notice) → the structured
+row, with the level-drift sentence asserted ABSENT;
+`tests/llm/encounterRun.test.ts`'s `levelHint`-variants / midpoint / ascending
+trio → the owner-set order arm, a PART-sourced order arm and the loud-refusal
+arm; `tests/llm/strictSchema.test.ts`'s draft key list; the two
+`tests/fixtures/mobSpells/*` prompt goldens (regenerated for the contract
+change). Every other encounter fixture in the tree had its numeric
+`levelHint: 'N'` translated to `partyLevel: N` — a mechanical, behaviour-
+preserving migration recorded here so it is not mistaken for a semantic change.
+
 ### The module difficulty setting — a SIBLING of the budget policy (docs/17 row 190, docs/11 D12 amendment, docs/18 §2)
 
 The owner's request ("a difficulty setting in the module creation dialog, 5
