@@ -6,12 +6,16 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  createModule,
+  modulePartSchema,
+  moduleSpineSchema,
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
   type EncounterArtifactData,
   type GameSystem,
   type Id,
+  type Module,
   type RuleChunk,
   type StatBlock,
 } from '@/domain';
@@ -793,5 +797,132 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
       />,
     );
     expect(screen.queryByTestId('room-keys-editor')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The stored shape both row-299 arms mount — empty, because the FORM's
+ * party-level branch is what is under test here, not any stored level.
+ */
+const partyLevelEncounterData: EncounterArtifactData = {
+  difficulty: '',
+  levelHint: '',
+  monsters: [],
+  terrain: '',
+  tactics: '',
+  treasure: '',
+  mapImageId: null,
+  layout: null,
+  preset: 'standard',
+  locationKind: 'other',
+  siteShape: 'single',
+  budgetAdvisory: '',
+};
+
+/**
+ * A two-part module (part 0 banded 2, part 1 banded 3) whose SECOND part
+ * mentions «Undercroft Feast» and nothing else — the same shape
+ * `tests/llm/structuredPartyLevel.test.ts` seeds through the repo, built here
+ * as a plain VALUE because `EncounterForm` reads the module record it is
+ * handed rather than a row (docs/17 row 299).
+ */
+function mentionModule(): Module {
+  return {
+    ...createModule({
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      title: 'The Ash Descent',
+      concept: 'concept',
+      levelMin: 2,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+    }),
+    spine: moduleSpineSchema.parse({
+      premise: 'Ash premise.',
+      themes: [],
+      partPlan: [
+        { title: 'Cinder Gate', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+        { title: 'Ember Halls', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+      ],
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: 'The party reaches the gate. [[Gate Ambush]] waits beyond the doors.',
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+      modulePartSchema.parse({
+        planIndex: 1,
+        markdown: 'Deep inside, [[Undercroft Feast]] fills the hall with chanting.',
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  };
+}
+
+/**
+ * THE RENDERED PARTY-LEVEL BRANCHES (docs/17 row 299). Row 291 gave the
+ * encounter form two branches and left the part-derived one UNPINNED: making
+ * the form never see a part mention left this suite green, so a regression
+ * that showed every encounter the owner-set input instead of the part's exact
+ * level would have red nothing. Both directions are asserted here, the ABSENCE
+ * included — that absence is exactly the regression this pin exists for.
+ */
+describe('encounter form party level — the mentioning part decides, rendered (docs/17 row 299)', () => {
+  beforeEach(clearDatabase);
+
+  it("shows the mentioning part's EXACT level read-only, NAMES the part, and offers NO owner-set input", () => {
+    render(
+      <EncounterForm
+        data={partyLevelEncounterData}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        name="Undercroft Feast"
+        module={mentionModule()}
+        onChange={vi_noop()}
+      />,
+    );
+
+    // The part's OWN band (3) is the level the fight is made for, READ-ONLY —
+    // the owner cannot type a second, disagreeing number over it.
+    const derived = screen.getByTestId('encounter-party-level-readonly');
+    expect(derived).toHaveValue('3');
+    expect(derived).toHaveAttribute('readonly');
+    // …and the part is NAMED, so the source of the number is visible.
+    expect(screen.getByText(/mentions this encounter — its exact level is the party level\./)).toHaveTextContent(
+      'Ember Halls',
+    );
+    // THE ABSENCE ASSERTION (the regression this row pins): a part decides, so
+    // the owner-set structured input must NOT render, in any form.
+    expect(screen.queryByTestId('encounter-party-level')).not.toBeInTheDocument();
+    expect(screen.queryByText(/No module part mentions this encounter/)).not.toBeInTheDocument();
+  });
+
+  it('shows the structured owner-set input, and NO read-only part line, when no part mentions it', () => {
+    render(
+      <EncounterForm
+        data={partyLevelEncounterData}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        name="Unmentioned Lair"
+        module={mentionModule()}
+        onChange={vi_noop()}
+      />,
+    );
+
+    // No mention ⇒ the owner sets the exact level through the STRUCTURED
+    // number (AGENTS rule 5), with the no-mention reason stated.
+    expect(screen.getByTestId('encounter-party-level')).toBeInTheDocument();
+    expect(
+      screen.getByText(/No module part mentions this encounter — set the exact party level the fight is made for\./),
+    ).toBeInTheDocument();
+    // The other direction, asserted as an ABSENCE too: no part-derived field
+    // and no read-only line anywhere.
+    expect(screen.queryByTestId('encounter-party-level-readonly')).not.toBeInTheDocument();
+    expect(screen.queryByText(/mentions this encounter — its exact level is the party level/)).not.toBeInTheDocument();
   });
 });

@@ -652,7 +652,7 @@ export function EncounterForm({
                 aria-label="Party level"
                 title="Derived from the module part that mentions this encounter — edit the part to change it."
                 className="h-7 text-sm"
-                data-testid="encounter-party-level"
+                data-testid="encounter-party-level-readonly"
               />
               <span className="text-[11px] font-normal text-muted-foreground">
                 Part “{partMention.partTitle}” mentions this encounter — its exact level is the party level.
