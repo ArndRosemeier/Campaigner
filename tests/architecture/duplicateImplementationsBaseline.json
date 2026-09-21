@@ -20,14 +20,6 @@
       ]
     },
     {
-      "hash": "39d1cc194600176d",
-      "reason": "pf2e-conditions and pf2e-rules copy the same publication-line reader; fold onto one pack seam (row 171's neighbourhood). Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/ingest/packs/pf2e-conditions.ts:publicationSourceLine",
-        "src/ingest/packs/pf2e-rules.ts:publicationSourceLine"
-      ]
-    },
-    {
       "hash": "7422a6200878f5a8",
       "reason": "Three image-queue modules copy the same settings to worker-count read; fold onto one queue helper (their settledDetail copies sit just under the floor and are a separate floor decision). Owed; out of this detector slice's scope.",
       "sites": [
@@ -42,39 +34,6 @@
       "sites": [
         "src/features/settings/bestiary-fetch-section.tsx:onFetchProgress",
         "src/features/settings/bestiary-fetch-section.tsx:onProgress"
-      ]
-    },
-    {
-      "hash": "b58803d252013535",
-      "reason": "Three pack adapters copy titleCase; fold onto the shared pack-text seam. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/ingest/packs/dnd5e-foundry.ts:titleCase",
-        "src/ingest/packs/pf2e-foundry.ts:titleCase",
-        "src/ingest/packs/pf2e-rules.ts:titleCase"
-      ]
-    },
-    {
-      "hash": "ded5acc48ca75d48",
-      "reason": "createModule and saveModule spell the same validated upsert twice in one file; fold onto one local write helper. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/db/moduleRepo.ts:createModule",
-        "src/db/moduleRepo.ts:saveModule"
-      ]
-    },
-    {
-      "hash": "e86e2559e963f050",
-      "reason": "packFetch and packImport copy the same file-extension helper; fold onto one path helper. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/ingest/packFetch.ts:extensionOf",
-        "src/ingest/packImport.ts:extensionOf"
-      ]
-    },
-    {
-      "hash": "e8a000db1cda0d35",
-      "reason": "captureStageSnapshot and cloneStageSnapshot are the same deep-copy body under two names in board.ts; one seam should carry both. Owed; out of this detector slice's scope.",
-      "sites": [
-        "src/domain/battle/board.ts:captureStageSnapshot",
-        "src/domain/battle/board.ts:cloneStageSnapshot"
       ]
     }
   ]

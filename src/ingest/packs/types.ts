@@ -208,3 +208,23 @@ export interface PackInputFile {
 export async function fileToPackInput(file: File): Promise<PackInputFile> {
   return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
 }
+
+/**
+ * A pack file NAME's extension, lower-cased — `'wolf.JSON'` → `'.json'`, a
+ * name with no dot → `''`. THE one implementation (AGENTS rule 4, docs/17 row
+ * 312): `packImport.ts` carried it as a module function and `packFetch.ts`
+ * re-declared it as a local arrow inside `selectCreatureFiles`, which is how
+ * "which files may this adapter read?" could have drifted between the fetch
+ * selector and the import runner that actually parses them.
+ *
+ * It lives HERE, in the module that declares `PackAdapter.extensions` and
+ * already carries this layer's other file helpers (`fileToPackInput`,
+ * `asPackFileParser`), and both callers already import this module — so the
+ * fold adds no edge and no new module. The read is deliberately DUMB (the last
+ * dot, not a path library): the inputs are the packs' own relative file names
+ * and zip member names, and a second, cleverer spelling is what would drift.
+ */
+export function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot === -1 ? '' : name.slice(dot).toLowerCase();
+}

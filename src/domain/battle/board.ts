@@ -289,24 +289,25 @@ export function ensurePcTokens(
   return changed ? { ...board, tokens } : board;
 }
 
-export function captureStageSnapshot(board: BattleBoard): StageSnapshot {
-  return {
-    mapImageId: board.mapImageId,
-    mapLayout: board.mapLayout === null ? null : { ...board.mapLayout },
-    gridSize: board.gridSize,
-    tokenSize: board.tokenSize,
-    tokens: board.tokens.map((token) => ({ ...token, conditions: [...token.conditions] })),
-    veils: board.veils.map((veil) => ({ ...veil })),
-    effects: board.effects.map((effect) => ({ ...effect })),
-    stagingGround:
-      board.stagingGround === null
-        ? null
-        : { ...board.stagingGround },
-    entrance: board.entrance ? { ...board.entrance } : null,
-  };
-}
-
-export function cloneStageSnapshot(stage: StageSnapshot): StageSnapshot {
+/**
+ * A DEEP COPY of the stage-shaped half of a board — the ONE seam that carries
+ * both uses this operation had (AGENTS rule 4, docs/17 row 312).
+ *
+ * Its parameter is typed `StageSnapshot`, the shape it actually READS: every
+ * field below is a stage field, so it accepts either a whole `BattleBoard`
+ * (capture a board's current stage) or an existing `StageSnapshot` (clone a
+ * saved stage before a reset mutates its tokens). `cloneStageSnapshot` was the
+ * byte-identical second body of exactly this function under a second name;
+ * it is DELETED and its callers call this seam, because "capture" and "clone"
+ * were never two jobs — a field added to `stageSnapshotSchema` had to be
+ * copied in both places or the copy silently dropped it.
+ *
+ * The copy is deliberately SHALLOW per element (`{ ...token }` with a fresh
+ * `conditions` array, `{ ...veil }`, `{ ...effect }`): the stage's own
+ * structure is what a reset must not mutate, and the element payloads are
+ * immutable value data everywhere else in the engine.
+ */
+export function captureStageSnapshot(stage: StageSnapshot): StageSnapshot {
   return {
     mapImageId: stage.mapImageId,
     mapLayout: stage.mapLayout === null ? null : { ...stage.mapLayout },

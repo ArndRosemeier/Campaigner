@@ -10,7 +10,13 @@ import {
 } from '@/domain/spellData';
 import { errorMessage } from '@/lib/errors';
 
-import { htmlToText, isDocumentRecord, parseYamlDocs, BRACKET_LINKS_LINE_BREAKS } from './text';
+import {
+  htmlToText,
+  isDocumentRecord,
+  parseYamlDocs,
+  titleCase,
+  BRACKET_LINKS_LINE_BREAKS,
+} from './text';
 import {
   asPackFileParser,
   sectionMissFailure,
@@ -342,14 +348,6 @@ type ParsedWeapon = z.infer<typeof weaponItemSchema>;
 type ParsedArmorPiece = z.infer<typeof armorPieceSchema>;
 
 // --- Helpers ---------------------------------------------------------------
-
-function titleCase(slug: string): string {
-  return slug
-    .split(/[\s-]+/)
-    .filter((word) => word !== '')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
 
 /** Numeric bonus from a stored numeric scalar; formula strings fail loudly. */
 function numericBonus(value: string | number, what: string): number {

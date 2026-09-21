@@ -15,6 +15,7 @@ import { errorMessage } from '@/lib/errors';
 import { ingestLockName, withGenerationLock } from '@/lib/generationLocks';
 
 import { getPackAdapter } from './packs/registry';
+import { extensionOf } from './packs/types';
 import type {
   PackAdapter,
   PackEntry,
@@ -150,11 +151,6 @@ type ExpandedFile =
   | { kind: 'unsupported-input'; file: PackInputFile }
   // A zip member that is not pack content (code, images, other packs): skipped.
   | { kind: 'unsupported-member'; file: PackInputFile };
-
-function extensionOf(name: string): string {
-  const dot = name.lastIndexOf('.');
-  return dot === -1 ? '' : name.slice(dot).toLowerCase();
-}
 
 function isParseable(adapter: PackAdapter, name: string): boolean {
   return adapter.extensions.includes(extensionOf(name));

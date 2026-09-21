@@ -243,11 +243,19 @@ their documents from `packs/text.parseJsonDocs` / `parseYamlDocs`, so
 "self-contained" no longer covers a per-adapter document parser either — what it
 still honestly describes is each adapter's own SCHEMA and MAPPER, which is the
 part §13.5 and §15.5 are about. **The `publicationSourceLine` half of §15.5's
-parenthetical is NOT folded** — row 147 landed the differential pin
-(`tests/ingest/packs/source-line.test.ts`) and measured all four sites
-byte-identical, but left the fold as the owner's call, because §15.5's own text
-still describes the copies as carried and three of the four sites feed the
-chunk `text` that `contentHash` signs, with no heal path. Note what the precedent
+parenthetical is FOLDED (docs/17 row 312)** — row 147 landed the differential
+pin (`tests/ingest/packs/source-line.test.ts`) and measured all four sites
+byte-identical, then left the fold as the owner's call because §15.5's own text
+still described the copies as carried and three of the four sites feed the
+chunk `text` that `contentHash` signs, with no heal path. The owner's
+duplicate-fold arc took the fold on those terms: the two byte-identical NAMED
+copies (`pf2e-rules.ts`'s private one and `pf2e-conditions.ts`'s exported one)
+are now ONE `packs/text.publicationSourceLine`, moved BYTE-PRESERVING, while
+the two INLINE spellings (`domain/itemData.formatItemText` and
+`pf2e-foundry.ts`'s raw `extras['Source']` form, the same rule without the
+`Source: ` prefix) stay in place and stay pinned by that differential — moving
+those WOULD rewrite hashed bytes. `titleCase` ×3 was folded into the same
+module by the same row. Note what the precedent
 actually rested on, because it is the lesson: this section never contained the
 sentence *"each adapter carries its own helpers"* — it was inferred from §5
 presenting adapters as per-adapter parsers, cited by §13.5, and then cited
@@ -1264,7 +1272,14 @@ on the book, network-free adapters, loud per-entry failures.
   form declared as the one intentional difference), because that sentence above
   still describes the copies as carried. The fold stays the OWNER'S CALL and
   the pin is what makes it safe to defer — a drift between the copies now fails
-  a named test.**
+  a named test. **TAKEN by docs/17 row 312 (see the §5 amendment): the two
+  byte-identical NAMED copies are now the ONE
+  `ingest/packs/text.publicationSourceLine`, moved BYTE-PRESERVING (the emitted
+  line signs a stored `contentHash`, so no byte may change), and `titleCase` ×3
+  was folded into the same module — the "each carries its own strip/Source-line
+  helpers" parenthetical above is now SUPERSEDED in BOTH halves. The two INLINE
+  site 3/site 4 spellings stay, deliberately, because folding them WOULD move
+  hashed bytes; `tests/ingest/packs/source-line.test.ts` remains their pin.**
 - The corpus adapter maps the fetch-relative FOLDER PATH into heading
   categories: the pack folder names the lane ('Feats', 'Spells', 'Actions',
   'Class Features'), the first category folder rides the lane label

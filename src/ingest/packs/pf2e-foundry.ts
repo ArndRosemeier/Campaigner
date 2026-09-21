@@ -9,6 +9,7 @@ import {
   htmlToText,
   isDocumentRecord,
   parseJsonDocs,
+  titleCase,
   AT_BRACE_LABEL_BLOCK_AND_TABLE,
 } from './text';
 import { asPackFileParser, type PackAdapter, type PackEntry, type PackFileParse } from './types';
@@ -240,14 +241,6 @@ type ParsedSpell = z.infer<typeof spellItemSchema>;
 type ParsedSpellcastingEntry = z.infer<typeof spellcastingEntrySchema>;
 
 // --- Helpers ---------------------------------------------------------------
-
-function titleCase(slug: string): string {
-  return slug
-    .split(/[\s-]+/)
-    .filter((word) => word !== '')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
 
 function skillLabel(slug: string): string {
   const lorePrefix = 'lore-';

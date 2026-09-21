@@ -9,9 +9,9 @@ import { importPack, type PackImportDeps } from '@/ingest/packImport';
 import {
   FOUNDRY_PF2E_CONDITIONS_ADAPTER_ID,
   foundryPf2eConditionsAdapter,
-  publicationSourceLine,
 } from '@/ingest/packs/pf2e-conditions';
 import { getPackAdapter, PACK_ADAPTERS } from '@/ingest/packs/registry';
+import { publicationSourceLine } from '@/ingest/packs/text';
 import type { PackSectionEntry } from '@/ingest/packs/types';
 
 import { baseNpc, encodeJson, folderDoc } from './fixtures';

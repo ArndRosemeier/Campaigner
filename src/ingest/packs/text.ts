@@ -69,14 +69,26 @@ import { errorMessage } from '@/lib/errors';
  * shape). Seven call sites, two helpers, one rule, pinned by
  * `tests/ingest/packs/parse-docs.test.ts`.
  *
- * ONE adjacent duplication in this directory is deliberately NOT folded here:
+ * The two PACK-TEXT HELPERS live here too, beside the stripper (docs/17 row
+ * 312): `titleCase` (three byte-identical adapter copies) and
  * `publicationSourceLine` (two byte-identical copies — private in
- * `pf2e-rules.ts`, exported from `pf2e-conditions.ts` — plus two INLINE
- * spellings, `domain/itemData.ts` and `pf2e-foundry.ts`). It is a different
- * idea from document parsing, and three of the four sites feed chunk `text` →
- * `contentHash` with no heal path (see above), so docs/17 row 147 lands the
- * DIFFERENTIAL PIN and leaves the fold as the owner's call: docs/12 §15.5 still
- * describes the copies as carried. Read that row before folding it.
+ * `pf2e-rules.ts`, exported from `pf2e-conditions.ts`). Both are pack-text
+ * conventions: a folder slug spelled as a label, and the per-entry `Source:`
+ * line the adapters append to `PackEntry.text`. They belong beside the
+ * document conventions that produce that text rather than inside one adapter
+ * the others would import ACROSS, which is the coupling this module exists to
+ * avoid.
+ *
+ * `publicationSourceLine` was deliberately NOT folded by docs/17 row 147, which
+ * landed the four-site DIFFERENTIAL PIN (`tests/ingest/packs/source-line.test.ts`)
+ * and left the fold as the owner's call: three of the four sites feed chunk
+ * `text` → `contentHash` with no heal path (see above), and docs/12 §15.5 then
+ * still described the copies as carried. Row 312 folds the two byte-identical
+ * NAMED copies here BYTE-PRESERVING, and the pin stays meaningful: sites 1–2
+ * ARE this seam now, while site 3 (`domain/itemData.formatItemText`) and site 4
+ * (`pf2e-foundry.ts`'s raw `extras['Source']` form — the same rule without the
+ * `Source: ` prefix) remain declared inline spellings, driven end to end by the
+ * real fixtures.
  */
 
 /**
@@ -553,4 +565,62 @@ export function parseYamlDocs(text: string, fileName: string): unknown[] {
     throw new Error(`${fileName}: top-level array holds no documents`);
   }
   return unwrapped;
+}
+
+// --- The pack-text helpers (docs/17 row 312) --------------------------------
+
+/**
+ * A pack folder/label slug spelled as a display label: split on whitespace and
+ * dashes, drop empty words, upper-case each word's first character, join with
+ * ONE space. `'rank-1'` → `'Rank 1'`, `'class-features'` → `'Class Features'`.
+ *
+ * THE one implementation (AGENTS rule 4, docs/17 row 312): three adapters
+ * (`dnd5e-foundry`, `pf2e-foundry`, `pf2e-rules`) carried byte-identical
+ * private copies, each used for its own label table's fallback. It is a
+ * PACK-TEXT convention — a slug rendered for a heading or a trait label — so
+ * it lives here beside `htmlToText`, not in an adapter the others would have to
+ * import across.
+ *
+ * It is deliberately NOT a locale-aware case fold: the slugs are the packs'
+ * own lowercase ASCII folder/file names, and the input is a syntax (the pack's
+ * machine names), never reader prose (AGENTS rule 5's structured-field arm).
+ */
+export function titleCase(slug: string): string {
+  return slug
+    .split(/[\s-]+/)
+    .filter((word) => word !== '')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
+ * The per-entry `Source:` line — verbatim `publication`, never dropped:
+ * `Source: Title (LICENSE)`, `Source: LICENSE` when only the license is known,
+ * and `null` (render NOTHING — never a placeholder, AGENTS rule 1) when both
+ * parts are empty or the publication object is absent.
+ *
+ * THE one implementation of the PREFIXED form (AGENTS rule 4, docs/17 row
+ * 312): `pf2e-conditions` exported it and `pf2e-rules` carried a byte-identical
+ * private copy. Both now call this seam; the two remaining spellings are
+ * DECLARED, not accidental — `domain/itemData.formatItemText` composes the same
+ * prefixed line inline, and `pf2e-foundry.mapNpc` stores the RAW form (this
+ * rule minus the `Source: ` prefix) on the StatBlock's `extras.Source`. All
+ * four are held together by the differential
+ * `tests/ingest/packs/source-line.test.ts`, which drives the real adapters over
+ * the real fixtures plus the six edge shapes.
+ *
+ * The bytes are load-bearing: this line lands in `PackEntry.text` → the stored
+ * chunk `text` → `contentHash`, with no re-stamp migration, so this seam is a
+ * MOVE of the two identical bodies, never a rewrite (docs/17 row 147's
+ * condition for taking the fold).
+ */
+export function publicationSourceLine(
+  publication: { title: string; license: string } | null | undefined,
+): string | null {
+  if (publication === undefined || publication === null) return null;
+  const title = publication.title.trim();
+  const license = publication.license.trim();
+  if (title === '' && license === '') return null;
+  if (title === '') return `Source: ${license}`;
+  return `Source: ${title}${license === '' ? '' : ` (${license})`}`;
 }

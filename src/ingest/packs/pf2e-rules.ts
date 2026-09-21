@@ -14,6 +14,8 @@ import {
   htmlToText,
   isDocumentRecord,
   parseJsonDocs,
+  publicationSourceLine,
+  titleCase,
   AT_BRACE_LABEL_BLOCK_AND_TABLE,
 } from './text';
 import {
@@ -122,29 +124,6 @@ const pf2eRulesDocSchema = z.object({
 });
 
 type ParsedRulesDoc = z.infer<typeof pf2eRulesDocSchema>;
-
-// --- Helpers (the journal/conditions adapters' exact text rules; adapters
-// stay self-contained per 12-BESTIARY-PACKS §5's precedent) -------------------
-
-/** The per-entry source line — verbatim `publication`, never dropped. */
-function publicationSourceLine(
-  publication: { title: string; license: string } | null | undefined,
-): string | null {
-  if (publication === undefined || publication === null) return null;
-  const title = publication.title.trim();
-  const license = publication.license.trim();
-  if (title === '' && license === '') return null;
-  if (title === '') return `Source: ${license}`;
-  return `Source: ${title}${license === '' ? '' : ` (${license})`}`;
-}
-
-function titleCase(slug: string): string {
-  return slug
-    .split(/[\s-]+/)
-    .filter((word) => word !== '')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
 
 /** Spell rank folders spell out `rank-N`; cantrips are their own folder. */
 function folderLabel(slug: string): string {

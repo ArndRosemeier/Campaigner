@@ -7,6 +7,7 @@ import type { Rulebook } from '@/domain/rulebook';
 
 import { importPack, type PackImportDeps, type PackImportProgress, type PackImportResult } from './packImport';
 import { getPackAdapter } from './packs/registry';
+import { extensionOf } from './packs/types';
 import type { PackEntryFailure, PackInputFile } from './packs/types';
 
 /**
@@ -298,10 +299,6 @@ export function selectCreatureFiles(
   paths: readonly string[],
 ): string[] {
   const prefix = `${packId}/`;
-  const extensionOf = (base: string): string => {
-    const dot = base.lastIndexOf('.');
-    return dot === -1 ? '' : base.slice(dot).toLowerCase();
-  };
   // A SINGLE-DOCUMENT pack (rules-text packs arc, docs/12 §15): journal packs
   // are one JournalEntry JSON per file, so the recipe names the file itself
   // ('packs/pf2e/journals/gm-screen.json'). Same metadata-doc rule as below.

@@ -18,7 +18,6 @@ import {
   applyStageReset,
   combatHpForToken,
   captureStageSnapshot,
-  cloneStageSnapshot,
   emptyBoard,
   ensurePcTokens,
   fallbackSpawnPoint,
@@ -784,17 +783,20 @@ describe('scrub & stage reset', () => {
     expect(reset.initiativeOrder).toEqual([]);
   });
 
-  it('carries effect markers through capture, clone and reset (D7)', () => {
+  it('carries effect markers through capture and reset (D7)', () => {
     const effect = { id: newId(), shape: 'disc' as const, x: 0.5, y: 0.5, sizeCells: 2, color: '#ff0000', label: 'Web' };
     const opened: BattleBoard = { ...emptyBoard(), effects: [effect] };
     const stage = captureStageSnapshot(opened);
     expect(stage.effects).toEqual([effect]);
     const drifted: BattleBoard = { ...opened, effects: [] };
-    const reset = applyStageReset(drifted, cloneStageSnapshot(stage), stats, []);
+    // The copy of the SAVED stage goes through the ONE snapshot seam (row 312):
+    // `captureStageSnapshot` accepts a board OR a stage, so the old
+    // `cloneStageSnapshot` twin is gone.
+    const reset = applyStageReset(drifted, captureStageSnapshot(stage), stats, []);
     expect(reset.effects).toEqual([effect]);
   });
 
-  it('carries the entrance through capture, clone and reset (doc 11)', () => {
+  it('carries the entrance through capture and reset (doc 11)', () => {
     const entrance = { x: 0.125, y: 0.041666666666666664, side: 'north' as const };
     const opened: BattleBoard = {
       ...emptyBoard(),
@@ -804,7 +806,7 @@ describe('scrub & stage reset', () => {
     const stage = captureStageSnapshot(opened);
     expect(stage.entrance).toEqual(entrance);
     const drifted: BattleBoard = { ...opened, entrance: null };
-    const reset = applyStageReset(drifted, cloneStageSnapshot(stage), stats, []);
+    const reset = applyStageReset(drifted, captureStageSnapshot(stage), stats, []);
     expect(reset.entrance).toEqual(entrance);
     // Legacy boards stay null.
     expect(captureStageSnapshot(emptyBoard()).entrance).toBeNull();

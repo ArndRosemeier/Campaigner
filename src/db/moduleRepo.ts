@@ -100,13 +100,6 @@ export async function failInterruptedModuleGen(
   });
 }
 
-/** Creates a module row (factory builds + validates). */
-export async function createModule(module: Module): Promise<Module> {
-  const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });
-  await db.modules.put(valid);
-  return valid;
-}
-
 /**
  * The canonical save: full-row validate + put with a fresh `updatedAt`.
  * Overwrites the row wholesale — callers must pass the complete module (read
@@ -117,6 +110,25 @@ export async function saveModule(module: Module): Promise<Module> {
   await db.modules.put(valid);
   return valid;
 }
+
+/**
+ * The historical CREATION name for `saveModule` — THE same validated upsert
+ * (AGENTS rule 4, docs/17 row 312).
+ *
+ * `createModule` and `saveModule` spelled the identical body twice in this
+ * file: same `moduleSchema.parse({ ...module, updatedAt: Date.now() })`, same
+ * `put`, same return. They are one operation under two names, and the
+ * survivor is `saveModule` — the row's documented canonical save, and the one
+ * `patchModule`/`failInterruptedModuleGen` already write through.
+ *
+ * It is an ALIAS rather than a deleted export ON PURPOSE, and the reason is
+ * recorded rather than implied: ~120 callers import this name (the module
+ * creation dialog and `llm/moduleGen` among them), so migrating them is a
+ * mechanical sweep whose only benefit would be a smaller name surface — while
+ * the defect this fold removes is the second IMPLEMENTATION, which is gone.
+ * An alias cannot drift from its target; a second `async function` body can.
+ */
+export const createModule = saveModule;
 
 /** Race-safe read-modify-write patch (statuses, parts, spine…). */
 export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {

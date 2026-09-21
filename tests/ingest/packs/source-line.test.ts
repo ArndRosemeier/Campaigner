@@ -57,11 +57,9 @@ import { describe, expect, it } from 'vitest';
 
 import { formatItemText, type ItemData } from '@/domain/itemData';
 import { PACK_ADAPTERS } from '@/ingest/packs/registry';
-import {
-  foundryPf2eConditionsAdapter,
-  publicationSourceLine,
-} from '@/ingest/packs/pf2e-conditions';
+import { foundryPf2eConditionsAdapter } from '@/ingest/packs/pf2e-conditions';
 import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+import { publicationSourceLine } from '@/ingest/packs/text';
 
 const PACKS = join(process.cwd(), 'tests', 'fixtures', 'packs');
 

@@ -6,6 +6,7 @@ import {
   htmlToText,
   isDocumentRecord,
   parseJsonDocs,
+  publicationSourceLine,
   AT_BRACE_LABEL_BLOCK_AND_TABLE,
 } from './text';
 import {
@@ -66,21 +67,6 @@ const pf2eConditionSchema = z.object({
 });
 
 type ParsedCondition = z.infer<typeof pf2eConditionSchema>;
-
-// --- Helpers (the journal adapter's exact text rules; adapters stay
-// self-contained per 12-BESTIARY-PACKS §5's precedent) ------------------------
-
-/** The per-entry source line — verbatim `publication`, never dropped. */
-export function publicationSourceLine(
-  publication: { title: string; license: string } | null | undefined,
-): string | null {
-  if (publication === undefined || publication === null) return null;
-  const title = publication.title.trim();
-  const license = publication.license.trim();
-  if (title === '' && license === '') return null;
-  if (title === '') return `Source: ${license}`;
-  return `Source: ${title}${license === '' ? '' : ` (${license})`}`;
-}
 
 // --- Mapping ---------------------------------------------------------------
 
