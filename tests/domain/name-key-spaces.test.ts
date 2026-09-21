@@ -72,7 +72,14 @@ const SPACES: Record<string, Record<string, readonly [string, number][]>> = {
   // to a chunk id (creature roster AND item pool — one question, two pools).
   PACK_POOL_NAME_KEY: {
     'llm/encounterRoster.ts': [['comparableName(', 3]],
-    'llm/encounterItems.ts': [['comparableName(', 3]],
+    // TWO now, not three (docs/17 row 313): the item pool's own cross-book
+    // dedupe was the third site and it was FOLDED onto the roster's shared
+    // `duplicatedAcrossBooks`, which keys the name IN THE ROSTER FILE — so the
+    // space still routes every pack-pool name through the ONE comparable form,
+    // with one IMPLEMENTATION fewer. The count is a count, not `>= 1`: a
+    // re-born private copy in this file raises it and reds here beside the
+    // duplicate-body tripwire.
+    'llm/encounterItems.ts': [['comparableName(', 2]],
     // The consumers: the model's sourceName must ASK in the index's key space
     // (two bracket lookups in runEngine + the level lookup in roomBudget).
     'llm/runEngine.ts': [['rosterChunkByName[comparableName(', 2]],
