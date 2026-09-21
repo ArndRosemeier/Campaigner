@@ -970,9 +970,20 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
 }
 
 /**
+ * The candidate-noun agreement rule (docs/17 row 307): a run that offered ONE
+ * candidate has no choice to promise, so every count-bearing string in this
+ * panel derives its wording from the run's OWN candidate count instead of a
+ * second literal. ONE home for "one candidate is never 'candidates'".
+ */
+function countNoun(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural;
+}
+
+/**
  * Run actions for image personas (07-MILESTONE-3 M3-A): the prompt draft is
  * editable fields (the user edits the prompt instead of rerolling images),
- * and the pick step ALWAYS pauses for the user to choose 0–2 candidates.
+ * and the pick step ALWAYS pauses for the user to choose among the run's
+ * candidates (the generate step asks for ONE, docs/17 row 307).
  */
 function ImageRunActions({
   run,
@@ -1007,8 +1018,29 @@ function ImageRunActions({
   }, [paused, draftStep]);
 
   const pickCandidates = ((pickStep?.output as { candidates?: unknown } | null | undefined)?.candidates ?? []) as Id[];
-  // The generate step persists a notice when the model caps candidates at 1
-  // (imageGen's n-retry) — shown so a single candidate is never a surprise.
+  // How many candidates THIS run may keep selected — the run's own candidate
+  // list, never a second literal (docs/17 row 307). The old hardcoded `2` was
+  // a copy of the generate step's count, and once the two disagreed a click
+  // past the cap became a SILENT no-op (row 306).
+  const candidateCount = pickCandidates.length;
+  // ONE toggle for the candidate grid and the preview dialog. Both used to
+  // spell the same cap and the same list surgery separately.
+  const toggleCandidate = (candidateId: Id): void => {
+    setSelected((previous) =>
+      previous.includes(candidateId)
+        ? previous.filter((id) => id !== candidateId)
+        : previous.length >= candidateCount
+          ? previous
+          : [...previous, candidateId],
+    );
+  };
+  const candidateNoun = countNoun(candidateCount, 'Candidate', 'Candidates');
+  const pickLabel =
+    candidateCount > 1 ? `${candidateNoun} — pick up to ${String(candidateCount)}` : candidateNoun;
+  // The generate step persists a notice when a degradation really happened
+  // (escalation fallback, partially filtered candidates) — shown next to the
+  // pick. Asking for ONE candidate (row 307) can never produce the model-cap
+  // notice, so a single candidate is presented as the normal result.
   const generateOutput = run.steps.find((step) => step.name === 'generate')?.output as
     | { notice?: unknown }
     | null
@@ -1088,10 +1120,10 @@ function ImageRunActions({
       )}
 
       {generating && (
-        // No count claimed: whether the model yields 1 or 2 candidates is
-        // only known once the request lands (some models cap n at 1).
+        // No count claimed: the request asks for ONE candidate (docs/17 row
+        // 307); the API's actual answer is only known once it lands.
         <p className="text-xs text-muted-foreground" data-testid="image-generating">
-          Generating candidate images…
+          Generating the candidate image…
         </p>
       )}
 
@@ -1104,7 +1136,7 @@ function ImageRunActions({
       {paused && pickStep?.status === 'done' && (
         <div className="flex flex-col gap-2" data-testid="image-pick">
           <div className="flex items-center justify-between">
-            <Label>Candidates — pick up to 2</Label>
+            <Label>{pickLabel}</Label>
             <span className="text-xs text-muted-foreground">Click to select · Double-click or inspect to enlarge</span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1123,13 +1155,7 @@ function ImageRunActions({
                     aria-label={`Candidate ${candidateId}`}
                     className="block cursor-pointer overflow-hidden rounded"
                     onClick={() => {
-                      setSelected((previous) =>
-                        previous.includes(candidateId)
-                          ? previous.filter((id) => id !== candidateId)
-                          : previous.length >= 2
-                            ? previous
-                            : [...previous, candidateId],
-                      );
+                      toggleCandidate(candidateId);
                     }}
                     onDoubleClick={() => {
                       setPreviewCandidateId(candidateId);
@@ -1192,15 +1218,7 @@ function ImageRunActions({
             currentId={previewCandidateId}
             onClose={() => { setPreviewCandidateId(null); }}
             isSelected={(id) => selected.includes(id)}
-            onSelectCandidate={(id) => {
-              setSelected((previous) =>
-                previous.includes(id)
-                  ? previous.filter((item) => item !== id)
-                  : previous.length >= 2
-                    ? previous
-                    : [...previous, id],
-              );
-            }}
+            onSelectCandidate={toggleCandidate}
             title="Generated image candidate"
           />
         </div>
@@ -1280,7 +1298,7 @@ function EncounterRunActions({
     return (
       <div className="flex flex-col gap-2" data-testid="encounter-map-pick">
         <div className="flex items-center justify-between">
-          <Label>Battlemap candidates</Label>
+          <Label>{countNoun(candidates.length, 'Battlemap candidate', 'Battlemap candidates')}</Label>
           <span className="text-xs text-muted-foreground">Click to select · Double-click or inspect to enlarge</span>
         </div>
         {layout !== null && <EncounterLayoutPreview layout={layout} />}
@@ -1352,7 +1370,7 @@ function EncounterRunActions({
           }}
         >
           <RotateCcwIcon aria-hidden data-icon="inline-start" />
-          Regenerate candidates
+          {countNoun(candidates.length, 'Regenerate candidate', 'Regenerate candidates')}
         </Button>
         <CandidatePreviewDialog
           candidates={candidates}

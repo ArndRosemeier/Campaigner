@@ -455,8 +455,9 @@ export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
 
 /**
  * Image personas (M3-A Illustrator): the prompt draft is the user-editable
- * checkpoint, generate runs the image API, pick ALWAYS pauses (07-MILESTONE-3
- * M3-A) so the user chooses 0–2 candidates on every autonomy level.
+ * checkpoint, generate runs the image API for ONE candidate (docs/17 row 307),
+ * pick ALWAYS pauses (07-MILESTONE-3 M3-A) so the user chooses among the run's
+ * own candidates on every autonomy level.
  */
 const IMAGE_STEP_NAMES = ['prompt-draft', 'generate', 'pick'] as const;
 export type ImageStepName = (typeof IMAGE_STEP_NAMES)[number];
@@ -850,9 +851,35 @@ function imageFallbackNotice(fallback: ChainFallback): string {
 }
 
 /**
+ * How many image candidates a run's generate step ASKS the API for.
+ *
+ * ONE — owner-directed (docs/17 row 307): a second candidate doubled the wait
+ * and the cost for a choice the owner can always redo by re-illustrating, and
+ * the pick UI derives its cap from the run's OWN candidate list, so nothing
+ * outside this constant needs to know the number. It is spelled ONCE for the
+ * two candidate-generating paths (the illustrate persona's generate step and
+ * the encounter map's stylize step); before row 307 they answered the same
+ * question with two different literals (`2` and `unattended ? 1 : 2`).
+ *
+ * `llm/oneImage.generateOneImage` deliberately does NOT read this: it is the
+ * SINGLE-image seam (its callers want exactly one image, never a pick), so it
+ * takes no `n` at all — see its own header.
+ */
+const RUN_IMAGE_CANDIDATES = 1;
+
+/**
  * The persisted note for an image step's degradations (escalation fallback,
  * partially filtered candidates, candidate-count cap) — the image-mode twin
  * of withNotice. Null when the step ran clean.
+ *
+ * The candidate-count cap arm is UNREACHABLE from every `runEngine` image step
+ * after row 307: all three image steps ask for one candidate, and `imageGen`
+ * only raises `cappedToOne` when `n > 1`. It is retained deliberately as the
+ * honest half of this shared builder rather than deleted as dead code — a
+ * builder that would silently DROP a reported cap is the AGENTS-rule-1 hazard
+ * this arm exists for — and it is named here so the next reader does not have
+ * to re-derive whether it can fire. (The tree's one remaining n > 1 caller,
+ * the lab bench, composes its own sentence instead of going through here.)
  */
 function imageStepNotice(generated: {
   fallback: ChainFallback | null;
@@ -6094,7 +6121,7 @@ export class RunEngine {
           usabilityBans,
           `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ');
-    const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
+    const generated = await encounterRunAdapters.generateImages(prompt, RUN_IMAGE_CANDIDATES, {
       model: settings.imageModel,
       signal,
       inputReferences: [{ dataUrl: schematic.dataUrl }],
@@ -6742,7 +6769,7 @@ export class RunEngine {
     const draft = this.effectivePromptDraft(steps);
     if (draft === null) throw new Error('no prompt draft available to generate from');
     const finalPrompt = assembleImagePrompt(draft);
-    const generated = await generateImages(finalPrompt, 2, {
+    const generated = await generateImages(finalPrompt, RUN_IMAGE_CANDIDATES, {
       model: settings.imageModel,
       signal,
     });
@@ -6765,9 +6792,11 @@ export class RunEngine {
       imageIds.push(stored.id);
     }
     // Degradations the user must see (AGENTS rule 1): an escalation fallback
-    // that produced the image, partially filtered candidates, and the model
-    // capping candidates at 1 (e.g. x-ai/grok-imagine-image-2.0) — persist a
-    // notice on the step; the run panel renders it next to the pick UI.
+    // that produced the image and partially filtered candidates — persist a
+    // notice on the step; the run panel renders it next to the pick UI. The
+    // API's candidate-count cap cannot appear here any more: this step asks
+    // for ONE candidate (docs/17 row 307), so `imageGen`'s `n > 1` retry and
+    // the `cappedToOne` flag it raises are structurally inert on this path.
     const notice = imageStepNotice(generated);
     const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd, notice });
     return { step };
@@ -6775,7 +6804,8 @@ export class RunEngine {
 
   /**
    * Pick step (M3-A): ALWAYS pauses (07-MILESTONE-3 M3-A) — on every autonomy
-   * level the user chooses 0–2 candidates.
+   * level the user chooses among THIS run's own candidates (0..N; the generate
+   * step asks for one, docs/17 row 307, so the pick normally offers one).
    */
   private runPick(stepIndex: number, steps: RunStep[]): { step: RunStep; runStatus: PersonaRun['status'] } {
     const generateStep = steps.find((step) => step.name === 'generate');

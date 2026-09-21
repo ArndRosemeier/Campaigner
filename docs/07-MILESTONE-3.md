@@ -109,8 +109,8 @@ async function generateImages(
 ): Promise<{ images: Blob[]; costUsd: number | null }>;
 ```
 
-- One call with `n: 2` yields both candidates — no sequential calls. Decode
-  each `b64_json` (with its `media_type`) → Blob → `imageIntake`.
+- One call with `n: 1` yields the candidate (docs/17 row 307) — no sequential
+  calls. Decode the `b64_json` (with its `media_type`) → Blob → `imageIntake`.
 - Same retry/error policy as `chat()` (429/5xx, 2s/8s, typed errors). No
   streaming. Separate client, same header set (`Authorization`,
   `HTTP-Referer`, `X-Title`).
@@ -135,10 +135,13 @@ artifact. Run steps:
    checkpoint are unchanged. This is the checkpoint that matters: in
    `manual`/`review` the user edits the *prompt*, which is far more effective
    than rerolling images.
-2. **generate**: produce **2 candidates** in a single `/images` call
-   (`n: 2`), store both as StoredImage.
-3. **pick** (always `awaiting_user`, all autonomy levels): user picks 0–2 to
-   keep; kept ids appended to `artifact.imageIds`, first pick offered as cover.
+2. **generate**: produce **1 candidate** in a single `/images` call
+   (`n: RUN_IMAGE_CANDIDATES`, ONE — docs/17 row 307: re-illustrating is the
+   correction path, and two candidates doubled wait and cost for a choice the
+   owner did not need), store it as StoredImage.
+3. **pick** (always `awaiting_user`, all autonomy levels): the user keeps the
+   run's candidate(s) — the pick cap IS the run's own candidate list, normally
+   one; kept ids appended to `artifact.imageIds`, first pick offered as cover.
    Unpicked candidates are deleted.
 
 Engine notes: `PersonaRun.targetArtifactId` **already exists** (review runs
@@ -177,8 +180,8 @@ pauses only on `needs_review`; that gets this one documented exception).
   (WebP where the browser supports it, PNG otherwise), shown as a thumbnail in
   the tree and the editor's Images section.
 - Illustrate an NPC (manual): the prompt-draft checkpoint is editable; one
-  `/images` call yields 2 candidates; picking 1 sets the cover and deletes the
-  other; the run shows the spent `usage.cost`.
+  `/images` call yields 1 candidate (docs/17 row 307); keeping it sets the
+  cover; the run shows the spent `usage.cost`.
 - Deleting an artifact does not delete an image still referenced by one of its
   revisions; deleting the last referencing artifact removes the blob.
 - **M4-C amendment (user-initiated deletes)**: `removeImageFromArtifact`

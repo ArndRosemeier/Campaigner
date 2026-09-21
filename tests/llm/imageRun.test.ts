@@ -12,6 +12,7 @@ import { createPersona, defaultSettings, type Id, type Persona } from '@/domain'
 import { IMAGE_TEXT_NEGATIVE, IMAGE_TEXT_SPARING_CLAUSE } from '@/llm/imagePromptDraft';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
+import { generatedImagesFor } from '../helpers/imageRunFixtures';
 
 /**
  * Illustrator persona (07-MILESTONE-3 M3-A): image-mode pipeline — prompt
@@ -109,6 +110,18 @@ function fakeImageBytes(seedText: string): Blob {
 }
 
 /**
+ * The image-API mock for the count pins: it answers with EXACTLY the number of
+ * images the run requested (`n`), so the run's OWN stored candidates reveal the
+ * count it asked for — the observable pin survives a refactor of the call
+ * (docs/17 row 307).
+ */
+function mockImageApiHonoringCount(): void {
+  generateImagesMock.mockImplementation((_prompt: string, n: number) =>
+    Promise.resolve(generatedImagesFor(n, 'candidate')),
+  );
+}
+
+/**
  * Starts an image run on `targetId` and drives it to the pick pause, returning
  * the run and the candidates ITS OWN pick step offered (the row-306 pins need
  * more than one run in a test).
@@ -165,14 +178,7 @@ describe('illustrator run (image persona)', () => {
     // neither it nor the global chat model may enter `recentChatModels` — the
     // list means "the global first-try chat model was in play".
     await updateSettings({ defaultChatModel: 'global/chat', recentChatModels: ['older/model'] });
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('one'), fakeImageBytes('two')],
-      costUsd: 0.021,
-      cappedToOne: false,
-      modelUsed: 'test-image-model',
-      fallback: null,
-      filteredCount: 0,
-    });
+    mockImageApiHonoringCount();
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -189,10 +195,11 @@ describe('illustrator run (image persona)', () => {
       expect(run?.steps).toHaveLength(3);
       expect(run?.status).toBe('awaiting_user');
     });
-    // The image call really happened on the image model…
+    // The image call really happened on the image model, asking for ONE
+    // candidate (docs/17 row 307)…
     expect(generateImagesMock).toHaveBeenCalledWith(
       expect.any(String),
-      2,
+      1,
       expect.objectContaining({ model: 'google/gemini-2.5-flash-image' }),
     );
     // …and the recents list is UNCHANGED (whole array, after the
@@ -200,13 +207,14 @@ describe('illustrator run (image persona)', () => {
     expect(await recentsAfterSettlingWrites()).toEqual(['older/model']);
   });
 
-  it('manual flow: pauses at prompt-draft, generates 2 candidates on continue, pauses at pick', async () => {
+  it('manual flow: pauses at prompt-draft, stores exactly ONE candidate on continue, pauses at pick (docs/17 row 307)', async () => {
     const { campaignId, persona, targetId } = await seed();
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('one'), fakeImageBytes('two')],
-      costUsd: 0.021,
-    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    // The mock answers with the count it was ASKED for, so the run's own
+    // stored candidates are the observable pin: a generate step that went back
+    // to asking for two would store two and red this test.
+    generateImagesMock.mockImplementation((_prompt: string, n: number) =>
+      Promise.resolve({ ...generatedImagesFor(n, 'candidate'), costUsd: 0.021 }),
+    );
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -249,18 +257,20 @@ describe('illustrator run (image persona)', () => {
     expect(run?.steps.map((step) => step.name)).toEqual(['prompt-draft', 'generate', 'pick']);
     expect(run?.steps[1]?.status).toBe('done');
 
-    // generateImages received the edited prompt and n=2 with the settings model.
+    // generateImages received the edited prompt and asked for n=1 with the
+    // settings model.
     expect(generateImagesMock).toHaveBeenCalledWith(
       expect.stringContaining('Edited prompt'),
-      2,
+      1,
       expect.objectContaining({ model: 'google/gemini-2.5-flash-image' }),
     );
-    // Candidates were stored through the intake pipeline.
+    // THE OBSERVABLE PIN: the run stored exactly ONE candidate — one image
+    // row, and the pick step's candidate list holds that same single id.
     const output = run?.steps[1]?.output as { imageIds: Id[]; costUsd: number };
-    expect(output.imageIds).toHaveLength(2);
+    expect(output.imageIds).toHaveLength(1);
     expect(output.costUsd).toBe(0.021);
     const candidates = await listImagesByIds(output.imageIds);
-    expect(candidates).toHaveLength(2);
+    expect(candidates).toHaveLength(1);
     expect(candidates[0]?.source).toBe('generated');
     expect(candidates[0]?.prompt).toContain('Edited prompt');
 
@@ -271,11 +281,11 @@ describe('illustrator run (image persona)', () => {
 
   it('pickImages appends keeps to the artifact, sets cover, and deletes discards', async () => {
     const { campaignId, persona, targetId } = await seed();
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('one'), fakeImageBytes('two')],
-      costUsd: null,
-    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    // OVER-DELIVERY, deliberate: the request asks for ONE candidate (row 307),
+    // so only a response that carries MORE than was asked for can exercise the
+    // pick's prune of a candidate the user did NOT keep. `imageGen.filteredCount`
+    // already models the API answering with more entries than requested.
+    generateImagesMock.mockResolvedValue(generatedImagesFor(2, 'over-delivered'));
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -310,11 +320,9 @@ describe('illustrator run (image persona)', () => {
   it('targets a global artifact while the run stays campaign-anchored', async () => {
     const { campaignId, persona, targetId } = await seed();
     await publishToLibrary(targetId);
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
-      costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    // Over-delivery again, for the same reason as the test above: this arm
+    // asserts the un-kept candidate is pruned.
+    generateImagesMock.mockResolvedValue(generatedImagesFor(2, 'library'));
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -345,13 +353,9 @@ describe('illustrator run (image persona)', () => {
     expect(await getImage(second)).toBeUndefined();
   });
 
-  it('pickImages with an empty keep discards all candidates and keeps the artifact untouched', async () => {
+  it('pickImages with an empty keep discards the single candidate and keeps the artifact untouched', async () => {
     const { campaignId, persona, targetId } = await seed();
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('only')],
-      costUsd: null,
-    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    generateImagesMock.mockResolvedValue(generatedImagesFor(1, 'only'));
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -385,16 +389,12 @@ describe('illustrator run (image persona)', () => {
       summary: 'A second storm-lashed beacon.',
       body: 'Another tower of black stone.',
     });
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('one'), fakeImageBytes('two')],
-      costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    mockImageApiHonoringCount();
 
-    // Run 1 on the first artifact: keep BOTH of its own candidates, so its ids
-    // are STORED images by the time run 2 asks for a pick.
+    // Run 1 on the first artifact: keep its own candidate, so its id is a
+    // STORED image by the time run 2 asks for a pick.
     const first = await startToPick(campaignId, persona, targetId);
-    expect(first.candidates).toHaveLength(2);
+    expect(first.candidates).toHaveLength(1);
     await runEngine.pickImages(first.runId, first.candidates);
     await waitFor(async () => {
       expect((await getRun(first.runId))?.status).toBe('completed');
@@ -406,7 +406,7 @@ describe('illustrator run (image persona)', () => {
     // untouched, the run still pauses, and run 2's OWN candidate rows were NOT
     // pruned away (the corruption this row exists for).
     const second = await startToPick(campaignId, persona, otherTarget.id);
-    expect(second.candidates).toHaveLength(2);
+    expect(second.candidates).toHaveLength(1);
     const foreignFailure = await runEngine.pickImages(second.runId, first.candidates).then(
       () => new Error('expected the foreign keep to be refused'),
       (error: unknown) => error,
@@ -458,15 +458,15 @@ describe('illustrator run (image persona)', () => {
     expect((await getRun(runId))?.errorMessage).toContain('disabled');
   });
 
-  it('surfaces a candidate-cap notice when the model yields a single image', async () => {
-    // x-ai/grok-imagine-image-2.0-class models cap n at 1: imageGen retries
-    // and reports cappedToOne — the run must NOT continue silently.
+  it('presents ONE candidate with NO cap or partial notice (docs/17 row 307)', async () => {
+    // Before row 307 the illustrate step asked for two candidates, so a
+    // single-candidate answer was a DEGRADATION (x-ai/grok-imagine-image-2.0
+    // caps n at 1) and had to be named. Now the request itself is one, so a
+    // single candidate is the normal result: `imageGen` only raises
+    // `cappedToOne` when `n > 1` (pinned in tests/llm/image-caps.test.ts), and
+    // the step must persist NO notice and NO "single candidate" apology.
     const { campaignId, persona, targetId } = await seed();
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('single')],
-      costUsd: 0.011,
-      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    generateImagesMock.mockResolvedValue(generatedImagesFor(1, 'single'));
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -483,21 +483,20 @@ describe('illustrator run (image persona)', () => {
     const run = await getRun(runId);
     const output = run?.steps[1]?.output as { imageIds: Id[]; notice: string | null };
     expect(output.imageIds).toHaveLength(1);
-    // The degradation is persisted on the step — the run panel renders it.
-    expect(output.notice).toContain('single candidate');
+    // No spurious degradation: neither the cap sentence nor a filtered line.
+    expect(output.notice).toBeNull();
     expect((run?.steps[2]?.output as { candidates: Id[] }).candidates).toHaveLength(1);
   });
 
   it('persists the fallback and partial-filter notices on the generate step', async () => {
-    // The fallback model produced the images after a content filter on the
+    // The fallback model produced the image after a content filter on the
     // first-try model, and one of the returned candidates was filtered —
-    // both degradations must be visible (AGENTS rule 1), mirroring the
-    // cappedToOne notice pattern.
+    // both degradations must be visible (AGENTS rule 1) even on the
+    // one-candidate path (the API answered with more entries than asked for).
     const { campaignId, persona, targetId } = await seed();
     generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('kept')],
+      ...generatedImagesFor(1, 'kept'),
       costUsd: 0.03,
-      cappedToOne: false,
       modelUsed: 'potent/image',
       fallback: { from: 'cheap/image', to: 'potent/image', reason: 'filter' },
       filteredCount: 1,
@@ -525,11 +524,7 @@ describe('illustrator run (image persona)', () => {
 
   it('leaves the generate-step notice null when the run was clean', async () => {
     const { campaignId, persona, targetId } = await seed();
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('one'), fakeImageBytes('two')],
-      costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    mockImageApiHonoringCount();
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -613,11 +608,7 @@ describe('image persona validation', () => {
         statBlock: null,
       },
     });
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('pf1'), fakeImageBytes('pf2')],
-      costUsd: 0.02,
-      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    generateImagesMock.mockResolvedValue(generatedImagesFor(1, 'pf'));
 
     const runInput = {
       campaign: {
@@ -654,7 +645,7 @@ describe('image persona validation', () => {
       'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
     );
     expect(appearanceCall).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(generateImagesMock.mock.calls[0]?.[1]).toBe(2);
+    expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
 
     const pickRun = await getRun(runId);
     expect(pickRun?.steps[0]?.output).toEqual({
@@ -747,11 +738,7 @@ describe('image persona validation', () => {
       summary: 'A ruined border keep.',
       body: '## Courtyard\n**Collapsed** walls, bramble-choked wells.',
     });
-    generateImagesMock.mockResolvedValue({
-      images: [fakeImageBytes('g1'), fakeImageBytes('g2')],
-      costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    mockImageApiHonoringCount();
 
     const runId = await runEngine.startRun({
       campaign: {
@@ -792,10 +779,10 @@ describe('image persona validation', () => {
     };
     expect(run?.steps[0]?.output).toEqual({ parsed: draft });
     // The image API received the assembled deterministic prompt — grounding
-    // plus the default-on text-render guard.
+    // plus the default-on text-render guard — asking for ONE candidate.
     expect(generateImagesMock).toHaveBeenCalledWith(
       `${draft.prompt}\nAvoid: ${IMAGE_TEXT_NEGATIVE}`,
-      2,
+      1,
       expect.anything(),
     );
   });

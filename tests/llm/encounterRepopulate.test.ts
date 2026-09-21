@@ -31,6 +31,7 @@ import { rejectionIssues } from '@/llm/rejectionReason';
 import { chat } from '@/llm/openrouter';
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
 import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
+import { generatedImagesFor } from '../helpers/imageRunFixtures';
 import { useProgressStore } from '@/lib/progress';
 
 /**
@@ -335,7 +336,11 @@ beforeEach(async () => {
   drawFillGradeMock.mockReset();
   drawFillGradeMock.mockReturnValue(70);
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
+  // Honors the requested count (docs/17 row 307): the map path asks for ONE
+  // candidate, and a mock that always answered two would hide the request.
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockImplementation((_prompt, n) =>
+    Promise.resolve(generatedImagesFor(n, 'map')),
+  );
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, mimeType: 'image/webp' }));
 });

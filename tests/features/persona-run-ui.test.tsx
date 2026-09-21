@@ -22,6 +22,7 @@ import {
 } from '@/llm/additionalInstruction';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { generatedImagesFor } from '../helpers/imageRunFixtures';
 import { useProgressStore } from '@/lib/progress';
 import { FAILURE_KIND_GUIDANCE } from '@/domain';
 import { Toaster } from 'sonner';
@@ -519,11 +520,12 @@ describe('PersonaPanel run lifecycle', () => {
         ],
         entryRoomIndex: 0,
       }), modelUsed: 'test-model', fallback: null });
-    generateImagesMock.mockResolvedValue({
-      images: [new Blob(['one'], { type: 'image/webp' })],
-      costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    // The map stylize step asks for ONE candidate (docs/17 row 307) and the
+    // fixture honors that: the pick offers one map, and "Regenerate candidate"
+    // re-runs the stylize step for a fresh one.
+    generateImagesMock.mockImplementation((_prompt: string, n: number) =>
+      Promise.resolve(generatedImagesFor(n, 'map')),
+    );
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -648,11 +650,12 @@ describe('PersonaPanel run lifecycle', () => {
         ],
         entryRoomIndex: 0,
       }), modelUsed: 'test-model', fallback: null });
-    generateImagesMock.mockResolvedValue({
-      images: [new Blob(['one'], { type: 'image/webp' })],
-      costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    // The map stylize step asks for ONE candidate (docs/17 row 307) and the
+    // fixture honors that: the pick offers one map, and "Regenerate candidate"
+    // re-runs the stylize step for a fresh one.
+    generateImagesMock.mockImplementation((_prompt: string, n: number) =>
+      Promise.resolve(generatedImagesFor(n, 'map')),
+    );
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -692,7 +695,7 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates();
   }, 30000);
 
-  it('image run: a candidate-count cap shows a visible notice next to the pick', async () => {
+  it('image run: a real degradation notice shows next to the one-candidate pick (docs/17 row 307)', async () => {
     const user = userEvent.setup();
     const { campaign } = await seed();
     const settings = await import('@/db/settingsRepo');
@@ -721,12 +724,17 @@ describe('PersonaPanel run lifecycle', () => {
     await publishToLibrary(lighthouse.id);
     // The prompt draft is deterministic (buildImagePrompt) — the run never
     // calls chat; the draft pauses with the assembled prompt for editing.
-    // The model capped n at 1 (imageGen reports it; the engine persists the
-    // notice) — the panel must SHOW it, not quietly present one candidate.
+    // The API answered with TWO entries and filtered one of them (a real
+    // degradation that still exists on the one-candidate path): the engine
+    // persists the partial-filter notice and the panel must SHOW it. The
+    // candidate-count CAP notice is deliberately NOT used here — after row 307
+    // both run paths request one image, so `cappedToOne` cannot arise for them
+    // (pinned in tests/llm/image-caps.test.ts), and a fixture that faked it
+    // would pin a state the app cannot reach.
     generateImagesMock.mockResolvedValue({
-      images: [new Blob(['one'], { type: 'image/webp' })],
+      ...generatedImagesFor(1, 'one'),
       costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
+      filteredCount: 1,
     });
     intakeImageMock.mockImplementation((blob: Blob) =>
       Promise.resolve({ blob, width: 64, height: 64, mimeType: 'image/webp' }),
@@ -751,15 +759,20 @@ describe('PersonaPanel run lifecycle', () => {
     const edit = await screen.findByTestId('image-prompt-edit', {}, { timeout: 10_000 });
     await user.click(within(edit).getByTestId('continue-image'));
 
-    // Pick pause: the cap notice is on the page and the pick holds 1 candidate.
+    // Pick pause: the degradation notice is on the page and the pick — the
+    // run's own candidate list, one entry — holds the single candidate.
     const pick = await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
     await flushAsyncUpdates(); // settle the candidates' async ImageThumb loads
-    expect(screen.getByTestId('image-cap-notice').textContent).toContain('single candidate');
+    expect(screen.getByTestId('image-cap-notice').textContent).toContain(
+      '1 of 2 candidates was filtered',
+    );
     expect(within(pick).getAllByRole('button', { name: /Candidate / })).toHaveLength(1);
     // Raw awaited read while the pick view is mounted — actDrained closes the
     // leak window (docs/08 §Console guard).
     const run = await actDrained(async () => getRun(await onlyRunId()));
-    expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain('single candidate');
+    expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain(
+      '1 of 2 candidates was filtered',
+    );
 
     // Inspect button opens the large candidate preview dialog
     const pickStep = run?.steps.find((s) => s.name === 'pick');
@@ -832,20 +845,14 @@ describe('PersonaPanel run lifecycle', () => {
       summary: 'A second minimalist player character.',
       body: 'Player B.',
     });
-    // TWO candidates per run: the pick needs BOTH clickable, and a selection
-    // stale from the previous run hits the 2-item cap and turns both clicks
-    // into silent no-ops (persona-panel.tsx's `previous.length >= 2 ? …`).
-    generateImagesMock.mockResolvedValue({
-      images: [
-        new Blob(['candidate-one'], { type: 'image/webp' }),
-        new Blob(['candidate-two'], { type: 'image/webp' }),
-      ],
-      costUsd: 0.01,
-      cappedToOne: false,
-      modelUsed: 'test-image-model',
-      fallback: null,
-      filteredCount: 0,
-    });
+    // ONE candidate per run (docs/17 row 307) and the mock HONORS the request,
+    // so each run really offers a single pick entry. That is still enough for
+    // the row-306 pin: run A's stale selection FILLS the (derived) one-item
+    // cap, so without the `key` run B's only candidate click is a silent
+    // no-op and its keep carries run A's id.
+    generateImagesMock.mockImplementation((_prompt: string, n: number) =>
+      Promise.resolve(generatedImagesFor(n, 'candidate')),
+    );
 
     render(
       <MemoryRouter>
@@ -857,16 +864,16 @@ describe('PersonaPanel run lifecycle', () => {
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: illustrator.name }));
 
-    // ---- Run A: illustrate Player A and keep BOTH of its own candidates.
+    // ---- Run A: illustrate Player A and keep its own single candidate.
     await illustrateTarget(user, playerA.name);
     await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
     await flushAsyncUpdates();
     const candidatesA = await actDrained(() => candidatesForTarget(playerA.id));
-    expect(candidatesA).toHaveLength(2);
+    expect(candidatesA).toHaveLength(1);
     for (const id of candidatesA) {
       await user.click(screen.getByRole('button', { name: `Candidate ${id}` }));
     }
-    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 2 selected');
+    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 1 selected');
     await user.click(screen.getByTestId('keep-selected'));
     await waitFor(
       async () => {
@@ -886,22 +893,23 @@ describe('PersonaPanel run lifecycle', () => {
     await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
     await flushAsyncUpdates();
     const candidatesB = await actDrained(() => candidatesForTarget(playerB.id));
-    expect(candidatesB).toHaveLength(2);
+    expect(candidatesB).toHaveLength(1);
     expect(candidatesB).not.toEqual(candidatesA);
 
     for (const id of candidatesB) {
       await user.click(screen.getByRole('button', { name: `Candidate ${id}` }));
     }
-    // THE SILENT NO-OP PIN: with run A's two ids still selected, each click hit
-    // the 2-item cap and changed nothing — the keep below then wrote run A's ids
-    // into run B. Pressed candidates are the proof the clicks were real.
+    // THE SILENT NO-OP PIN: with run A's one id still selected, the click hit
+    // the one-item cap (derived from run B's own candidate list) and changed
+    // nothing — the keep below then wrote run A's id into run B. A pressed
+    // candidate is the proof the click was real.
     for (const id of candidatesB) {
       expect(screen.getByRole('button', { name: `Candidate ${id}` })).toHaveAttribute(
         'aria-pressed',
         'true',
       );
     }
-    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 2 selected');
+    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 1 selected');
     await user.click(screen.getByTestId('keep-selected'));
     await waitFor(
       async () => {
@@ -929,6 +937,76 @@ describe('PersonaPanel run lifecycle', () => {
     //    deleted them as unreferenced).
     expect(candidateBRows.every((row) => row !== undefined)).toBe(true);
   }, 60000);
+
+  it('image run: the pick cap is the run\u2019s OWN candidate list, not a fixed 2 (docs/17 row 307)', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const settings = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await settings.saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+      imageModel: 'cap-test/cap-model',
+    });
+    const illustrator = await createPersona({
+      slug: 'illustrator-cap-derivation',
+      name: 'Illustrator Cap',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'pc',
+      name: 'Cap Target',
+      summary: 'A minimalist player character.',
+      body: 'Cap Target.',
+    });
+    // The API OVER-delivers three candidates for the one-image request — the
+    // case `imageGen.filteredCount` already models. All three must be
+    // selectable: the cap IS the run's own candidate list. A second literal
+    // `2` in the pick would silently swallow the third click (the no-op class
+    // row 306 was made of), so this pin reds when the cap is not derived.
+    generateImagesMock.mockResolvedValue(generatedImagesFor(3, 'over-delivered'));
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await setAutonomy(user, 'Manual');
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: illustrator.name }));
+    await illustrateTarget(user, target.name);
+    await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
+    await flushAsyncUpdates();
+
+    const candidates = await actDrained(() => candidatesForTarget(target.id));
+    expect(candidates).toHaveLength(3);
+    for (const id of candidates) {
+      await user.click(screen.getByRole('button', { name: `Candidate ${id}` }));
+    }
+    for (const id of candidates) {
+      expect(screen.getByRole('button', { name: `Candidate ${id}` })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    }
+    expect(screen.getByTestId('keep-selected')).toHaveTextContent('Keep 3 selected');
+    await user.click(screen.getByTestId('keep-selected'));
+    await waitFor(
+      async () => {
+        const run = await getRun(await runIdForTarget(target.id));
+        expect(run?.status).toBe('completed');
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+    expect((await actDrained(() => getArtifact(target.id)))?.imageIds).toEqual(candidates);
+  }, 30000);
 
   it('shows the no-pack notice for encounter runs only when no ready pack exists (fix-02 decision 6)', async () => {
     const user = userEvent.setup();

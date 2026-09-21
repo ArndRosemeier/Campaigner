@@ -24,17 +24,19 @@ import { intakeImage } from '@/lib/imageIntake';
  * this seam's business.
  *
  * WHY THE SEAM TAKES NO `n`, AND WHY THAT IS NOT A LIMITATION. Its two
- * multi-candidate siblings in `runEngine` answer a different question ("how
- * many candidates, and which one does the owner pick?") and stay on
- * `generateImages`: the persona run's generate step (`n = 2` + the pick step)
- * and the encounter map's `unattended ? 1 : 2` pair. On THIS path `n = 1` is
- * fixed, and the candidate-count machinery is structurally inert:
- * `imageGen`'s n-unsupported 400 retry and the `cappedToOne` flag it raises are
- * both guarded by `n > 1`; `filteredCount` can only be non-zero if the API
- * returns MORE entries than were asked for, and an all-filtered response
- * already throws inside `generateImages` ('image API returned no images')
- * before this seam sees it. So no caller here has a degradation to surface,
- * and the seam adds none.
+ * candidate-generating siblings in `runEngine` answer a different question
+ * ("what did the API return, and which one does the owner pick?") and stay on
+ * `generateImages` with the run's own `RUN_IMAGE_CANDIDATES` count (ONE since
+ * docs/17 row 307): the persona run's generate step (+ the pick step) and the
+ * encounter map's stylize step. On THIS path `n = 1` is fixed and there is no
+ * pick at all, so the candidate-count machinery is structurally inert either
+ * way: `imageGen`'s n-unsupported 400 retry and the `cappedToOne` flag it
+ * raises are both guarded by `n > 1`; `filteredCount` can only be non-zero if
+ * the API returns MORE entries than were asked for, and an all-filtered
+ * response already throws inside `generateImages` ('image API returned no
+ * images') before this seam sees it. So no caller here has a degradation to
+ * surface, and the seam adds none — which is exactly why it does not read the
+ * run paths' count constant.
  *
  * THE BOUNDARY, NAMED SO THE NEXT READER DOES NOT HAVE TO RE-DERIVE IT:
  * `runEngine`'s vision-map step generates one map image through the

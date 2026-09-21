@@ -108,6 +108,29 @@ describe('image candidate-count caps', () => {
     expect(calls[0]?.body.n).toBe(1);
   });
 
+  it('a request for ONE image reports NO cap — even for a model remembered as capped (docs/17 row 307)', async () => {
+    // The illustrate generate step and the encounter-map stylize step both ask
+    // for exactly ONE image now (row 307), so this machinery is inert for
+    // them: the cap guard is `n > 1`, and a requested 1 is never a degradation
+    // to surface. The model is first TAUGHT the cap with an n=2 request, so
+    // the module-level memory holds it — the sharpest form of the trap.
+    const model = 'cap-test/one-image-no-notice';
+    responses.push(new Response(CAP_400_BODY, { status: 400 }), imageResponse());
+    captureFetch(responses);
+    await generateImages('learn the cap', 2, { model });
+
+    responses.length = 0;
+    responses.push(imageResponse());
+    const calls = captureFetch(responses);
+    const result = await generateImages('the illustration', 1, { model });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.n).toBe(1);
+    expect(result.cappedToOne).toBe(false);
+    expect(result.images).toHaveLength(1);
+    expect(result.filteredCount).toBe(0);
+  });
+
   it('sends structure reference images through OpenRouter input_references', async () => {
     responses.push(imageResponse());
     const calls = captureFetch(responses);

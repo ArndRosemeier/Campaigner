@@ -17,6 +17,7 @@ import { chat } from '@/llm/openrouter';
 import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, createModule, type Artifact, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
+import { generatedImagesFor } from '../helpers/imageRunFixtures';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -246,7 +247,12 @@ beforeEach(async () => {
   drawFillGradeMock.mockReset();
   drawFillGradeMock.mockReturnValue(70);
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
+  // The stylize adapter mock HONORS the requested count: the map path asks
+  // for ONE candidate (docs/17 row 307), so the run's own stored candidates
+  // are the observable count pin.
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockImplementation((_prompt, n) =>
+    Promise.resolve(generatedImagesFor(n, 'map')),
+  );
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, mimeType: 'image/webp' }));
 });
@@ -281,13 +287,63 @@ async function pickIndexOf(runId: string): Promise<number> {
 
 
 describe('Encounter Cartographer run', () => {
+  it('asks the stylize step for exactly ONE map candidate and stores one (docs/17 row 307)', async () => {
+    // The adapter mock answers with the count it was ASKED for, so the run's
+    // own stored candidates ARE the pin: a stylize step that went back to
+    // `unattended ? 1 : 2` would store two and red this test.
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+
+    expect(candidates).toHaveLength(1);
+    const stylize = (await getRun(runId))?.steps.find((step) => step.name === 'stylize')?.output as {
+      imageIds: Id[];
+    };
+    expect(stylize.imageIds).toHaveLength(1);
+    expect(stylize.imageIds).toEqual(candidates);
+    expect(await getImage(candidates[0] ?? '')).toBeDefined();
+
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+  });
+
+  it('prunes the map candidate the API over-delivered beyond the one requested', async () => {
+    // The one-candidate request can still be answered with MORE entries than
+    // asked for (the case `imageGen.filteredCount` already models). The pick
+    // must keep the chosen one and prune the rest as unreferenced.
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce(
+      generatedImagesFor(2, 'over-delivered'),
+    );
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+    expect(candidates).toHaveLength(2);
+
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(artifact.data.mapImageId).toBe(candidates[0]);
+    expect(await getImage(candidates[0] ?? '')).toBeDefined();
+    expect(await getImage(candidates[1] ?? '')).toBeUndefined();
+  });
+
   it('pauses at brief and pick and finalizes one complete encounter', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
-    expect(candidates).toHaveLength(2);
+    expect(candidates).toHaveLength(1);
     expect(useProgressStore.getState().jobs[0]?.detail).toContain('Waiting');
 
     // The pipeline is brief→layout→schematic→stylize→pick→finalize — NO
@@ -313,7 +369,6 @@ describe('Encounter Cartographer run', () => {
     expect(artifact.data.monsters[0]?.source.type).toBe('inline');
     expect(artifact.imageIds).toContain(candidates[0]);
     expect((await getImage(candidates[0] ?? ''))?.role).toBe('map');
-    expect(await getImage(candidates[1] ?? '')).toBeUndefined();
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
 
@@ -324,12 +379,10 @@ describe('Encounter Cartographer run', () => {
     // content filter on the primary — the step must name both models
     // (AGENTS rule 1: a fallback is never silent).
     vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
-      images: [new Blob(['map-one']), new Blob(['map-two'])],
+      ...generatedImagesFor(1, 'map'),
       costUsd: 0.02,
-      cappedToOne: false,
       modelUsed: 'potent/image',
       fallback: { from: 'cheap/image', to: 'potent/image', reason: 'filter' },
-      filteredCount: 0,
     });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
@@ -929,12 +982,9 @@ describe('Encounter Cartographer run', () => {
 
     // Fresh batch: the generate adapter is called again (a NEW image call),
     // the previous pick output is replaced and the run pauses at pick again.
-    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
-      images: [new Blob(['fresh-one']), new Blob(['fresh-two'])],
-      costUsd: 0.02,
-      cappedToOne: false,
-      modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
-    });
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce(
+      generatedImagesFor(1, 'fresh'),
+    );
     await runEngine.regenerateEncounterCandidates(runId, runInput);
     await waitForRun(async () => {
       const run = await getRun(runId);
@@ -950,7 +1000,7 @@ describe('Encounter Cartographer run', () => {
     expect(JSON.stringify(after?.steps.find((step) => step.name === 'layout'))).toBe(layoutBefore);
     expect(JSON.stringify(after?.steps.find((step) => step.name === 'brief'))).toBe(briefBefore);
     const secondBatch = (after?.steps.find((step) => step.name === 'pick')?.output as { candidates: string[] }).candidates;
-    expect(secondBatch).toHaveLength(2);
+    expect(secondBatch).toHaveLength(1);
     // New candidates replace the old ones — no id carries over.
     expect(secondBatch.some((id) => firstBatch.includes(id))).toBe(false);
     // The discarded batch's unattached images were pruned.

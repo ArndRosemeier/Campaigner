@@ -397,13 +397,17 @@ use rule excerpts).
    as editable inputs; continuing stores them as `userEdit: { parsed: … }`
    (the edit wins over the raw output).
 2. **generate** — one call to `POST /api/v1/images`
-   `{ model: settings.imageModel, prompt, n: 2, output_format: 'webp' }`
+   `{ model: settings.imageModel, prompt, n: RUN_IMAGE_CANDIDATES, output_format: 'webp' }`
+   — ONE since docs/17 row 307 (re-illustrating is the correction path, and two
+   candidates doubled wait and cost for a choice the owner did not need)
    (negative/styleNotes folded into the prompt text). Requires
    `settings.imagesEnabled`; fails with a clear message otherwise. Each
    returned image is stored through the intake pipeline (M3-A §Storage) with
    `source:'generated'`, prompt and model recorded. No pause.
 3. **pick** — ALWAYS pauses (`awaiting_user`) on every autonomy level. The UI
-   shows candidate thumbnails; the user keeps 0–2. Applying the pick appends
+   shows candidate thumbnails; the user keeps what the run offered (one
+   candidate by default), and the pick cap is derived from the run's own
+   candidate list. Applying the pick appends
    kept ids to `targetArtifact.imageIds` (first keep becomes the cover if none
    set), prunes discarded candidate blobs, and completes the run with
    `resultArtifactId` = the target artifact.
