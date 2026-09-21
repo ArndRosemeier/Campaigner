@@ -10,6 +10,7 @@ import {
 import {
   ensurePcTokens,
   fallbackSpawnPoint,
+  matchesSlotLabel,
   spawnPointInStagingGround,
   stagingGroundAt,
   tokenFromFighter,
@@ -560,10 +561,11 @@ export async function spawnRosterInstance(
   // as seeding — spawning another module's monster shares it campaign-wide.
   await promoteRosterUses(battle.moduleId, [entry]);
   // Numbering continues the on-board count: "Goblin", "Goblin 2" … occupy
-  // label slots named exactly or numbered after the entry.
-  const escaped = entry.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const slotPattern = new RegExp(`^${escaped}(?: \\d+)?$`);
-  const existing = battle.board.tokens.filter((token) => slotPattern.test(token.label)).length;
+  // label slots named exactly or numbered after the entry (the ONE slot-label
+  // grammar, docs/17 row 295).
+  const existing = battle.board.tokens.filter((token) =>
+    matchesSlotLabel(token.label, entry.name),
+  ).length;
   const at =
     battle.board.stagingGround === null
       ? fallbackSpawnPoint(battle.board.tokens.length)

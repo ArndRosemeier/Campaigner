@@ -24,6 +24,7 @@ import {
   fallbackSpawnPoint,
   fillNpcTokenHp,
   instanceCurrentHpFor,
+  matchesSlotLabel,
   restoreAllNpcHp,
   scrubArtifactFromBoard,
   spawnPointInStagingGround,
@@ -246,6 +247,51 @@ describe('token spawning & staging ground', () => {
   it('keeps the board identity when nothing changed', () => {
     const board: BattleBoard = { ...emptyBoard(), tokens: [npcToken()] };
     expect(fillNpcTokenHp(board, stats)).toBe(board);
+  });
+});
+
+describe('the ONE slot-label grammar (docs/17 row 295)', () => {
+  it('matches a bare name and its numbered labels, anchored at BOTH ends', () => {
+    expect(matchesSlotLabel('Goblin', 'Goblin')).toBe(true);
+    expect(matchesSlotLabel('Goblin 2', 'Goblin')).toBe(true);
+    expect(matchesSlotLabel('Goblin 12', 'Goblin')).toBe(true);
+    // Anchored: no prefix, no suffix, ONE single space, digits only.
+    expect(matchesSlotLabel('Goblin Chief', 'Goblin')).toBe(false);
+    expect(matchesSlotLabel('Goblin2', 'Goblin')).toBe(false);
+    expect(matchesSlotLabel('Goblin ', 'Goblin')).toBe(false);
+    expect(matchesSlotLabel('Goblin 2x', 'Goblin')).toBe(false);
+    expect(matchesSlotLabel('Goblin 2 3', 'Goblin')).toBe(false);
+    expect(matchesSlotLabel('XGoblin', 'Goblin')).toBe(false);
+  });
+
+  it("never lets a PREFIX name claim the longer name's slots", () => {
+    expect(matchesSlotLabel('Goblin Chief', 'Goblin Chief')).toBe(true);
+    expect(matchesSlotLabel('Goblin Chief 3', 'Goblin Chief')).toBe(true);
+    expect(matchesSlotLabel('Goblin', 'Goblin Chief')).toBe(false);
+    expect(matchesSlotLabel('Goblin 3', 'Goblin Chief')).toBe(false);
+  });
+
+  it('escapes every regex metacharacter in the name', () => {
+    expect(matchesSlotLabel('Goblin (Chief)', 'Goblin (Chief)')).toBe(true);
+    expect(matchesSlotLabel('Goblin (Chief) 2', 'Goblin (Chief)')).toBe(true);
+    expect(matchesSlotLabel('Goblin Chief', 'Goblin (Chief)')).toBe(false);
+    expect(matchesSlotLabel('A.B', 'A.B')).toBe(true);
+    expect(matchesSlotLabel('AxB', 'A.B')).toBe(false);
+    expect(matchesSlotLabel('A+B', 'A+B')).toBe(true);
+    expect(matchesSlotLabel('AAAB', 'A+B')).toBe(false);
+    expect(matchesSlotLabel('C$D', 'C$D')).toBe(true);
+    expect(matchesSlotLabel('CD', 'C$D')).toBe(false);
+    expect(matchesSlotLabel('[E]', '[E]')).toBe(true);
+    expect(matchesSlotLabel('E', '[E]')).toBe(false);
+  });
+
+  it('treats an emoji or NUL name as a literal', () => {
+    expect(matchesSlotLabel('Goblin 👺', 'Goblin 👺')).toBe(true);
+    expect(matchesSlotLabel('Goblin 👺 4', 'Goblin 👺')).toBe(true);
+    expect(matchesSlotLabel('Goblin', 'Goblin 👺')).toBe(false);
+    expect(matchesSlotLabel('Go\u0000blin', 'Go\u0000blin')).toBe(true);
+    expect(matchesSlotLabel('Go\u0000blin 5', 'Go\u0000blin')).toBe(true);
+    expect(matchesSlotLabel('Go.blin', 'Go\u0000blin')).toBe(false);
   });
 });
 

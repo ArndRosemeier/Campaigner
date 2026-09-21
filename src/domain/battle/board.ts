@@ -82,6 +82,25 @@ export function fallbackSpawnPoint(index: number): { x: number; y: number } {
   };
 }
 
+/**
+ * THE slot-label grammar (docs/17 row 295): does an on-board token LABEL
+ * occupy the slot for `name` — the name exactly ("Goblin"), or the name with
+ * ONE `" <n>"` numbering suffix ("Goblin 2", "Goblin 12")? Anchored at BOTH
+ * ends, every regex metacharacter in the name escaped, so a name that PREFIXES
+ * another ("Goblin" vs "Goblin Chief") never claims the longer name's slots.
+ *
+ * This is the ONE home for the rule BOTH spawn paths count with:
+ * `db/battleSeed.spawnRosterInstance` (seeding's in-battle spawn) and
+ * `features/play/battle/spawn-picker-logic.countLabelSlots` (the picker). It
+ * lives in this pure board module because both callers already import it and
+ * `db/` may not import from `features/`;
+ * `tests/architecture/one-slot-label-pattern.test.ts` holds it single-site.
+ */
+export function matchesSlotLabel(label: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}(?: \\d+)?$`).test(label);
+}
+
 export function isStampToken(token: BattleToken): boolean {
   return token.shape === 'circle' || token.shape === 'square';
 }

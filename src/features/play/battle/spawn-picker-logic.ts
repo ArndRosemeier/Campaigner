@@ -1,6 +1,10 @@
 import type { Id, MonsterEntry, StagingGround } from '@/domain';
 import { monsterEntrySchema } from '@/domain';
-import { fallbackSpawnPoint, spawnPointInStagingGround } from '@/domain/battle/board';
+import {
+  fallbackSpawnPoint,
+  matchesSlotLabel,
+  spawnPointInStagingGround,
+} from '@/domain/battle/board';
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
@@ -46,16 +50,13 @@ export function compareSpawnNames(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-/** Escape a token label for the on-board slot-count pattern (mirrors `spawnRosterInstance`). */
-function slotPatternFor(name: string): RegExp {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped}(?: \\d+)?$`);
-}
-
-/** How many on-board label slots a name already occupies ("Goblin", "Goblin 2" …). */
+/**
+ * How many on-board label slots a name already occupies ("Goblin", "Goblin 2" …).
+ * The grammar is `domain/battle/board.matchesSlotLabel` — the ONE seam both
+ * spawn paths count with (docs/17 row 295).
+ */
 export function countLabelSlots(tokens: readonly { label: string }[], name: string): number {
-  const pattern = slotPatternFor(name);
-  return tokens.filter((token) => pattern.test(token.label)).length;
+  return tokens.filter((token) => matchesSlotLabel(token.label, name)).length;
 }
 
 const FREE_SPOT_STEP = 0.025;
