@@ -14,18 +14,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import {
-  buildCampaignExport,
-  buildZip,
-  exportSuggestedName,
-} from '@/lib/exportImport';
-import { EXPORT_JSON_TYPES, EXPORT_ZIP_TYPES, openSaveTarget } from '@/lib/filePicker';
-import { toastError, toastSuccess } from '@/lib/toast';
+import { exportCampaignBundle } from '@/features/campaign/components/export-campaign-bundle';
 
 /**
  * Export (06-MILESTONES M2): a campaign-wide dialog with artifact selection
  * (JSON file or zip bundle). The single-artifact quick export from the tree
- * context menu lives in the `export-single-artifact.ts` sibling.
+ * context menu lives in the `export-single-artifact.ts` sibling; the
+ * acquire-target/build/write sequence EVERY campaign export shares lives in
+ * `export-campaign-bundle.ts` (docs/17 row 322), which the workspace's
+ * selection action bar calls too.
  */
 
 type ExportFormat = 'json' | 'zip';
@@ -85,52 +82,22 @@ export function ExportCampaignDialog({
 
   async function runExport(): Promise<void> {
     setBusy(true);
-    // Gesture-first (backup-section precedent): the native save picker needs
-    // transient user activation, and building the export easily outlives it —
-    // so the destination is acquired inside the click handler, BEFORE the
-    // slow build, and the finished blob is written to it afterwards.
-    let target;
-    try {
-      target = await openSaveTarget({
-        suggestedName: exportSuggestedName(campaignName, format),
-        types: format === 'zip' ? EXPORT_ZIP_TYPES : EXPORT_JSON_TYPES,
-      });
-    } catch (error) {
-      setBusy(false);
-      toastError('Export failed', error);
-      return;
-    }
-    if (target.cancelled) {
-      // The user backed out of the native dialog: the export dialog stays
-      // open with the selection intact — nothing was built, no toast.
-      setBusy(false);
-      return;
-    }
     try {
       const ids = artifacts
         .filter((artifact) => selected.has(artifact.id))
         .map((artifact) => artifact.id);
-      const exported =
-        selected.size === artifacts.length
-          ? await buildCampaignExport(campaignId, undefined, { images: format === 'zip' })
-          : await buildCampaignExport(campaignId, ids, { images: format === 'zip' });
-      if (format === 'zip') {
-        // `buildZip` is async and chunked (docs/17 row 276): the await is what
-        // keeps `busy` honest across the whole build, and a failure lands in
-        // the catch below (toastError), never in a partial download. The
-        // `BlobPart` cast is the backup surface's own precedent (TS strict
-        // rejects `Uint8Array<ArrayBufferLike>` as a BlobPart directly).
-        const zipBytes = await buildZip(exported);
-        await target.write(new Blob([zipBytes as BlobPart], { type: 'application/zip' }));
-      } else {
-        await target.write(
-          new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
-        );
-      }
-      toastSuccess(`Exported ${exported.artifacts.length} artifact(s)`);
-      onOpenChange(false);
-    } catch (error) {
-      toastError('Export failed', error);
+      // Gesture-first + the slow build + the loud failure all live in the ONE
+      // shared seam; this dialog only owns its `busy` gate and the selection.
+      const outcome = await exportCampaignBundle({
+        campaignId,
+        campaignName,
+        // Every artifact selected is the WHOLE-campaign path (an undefined id
+        // list, which is what carries the campaign's tables) — unchanged.
+        artifactIds: selected.size === artifacts.length ? undefined : ids,
+        format,
+        images: format === 'zip',
+      });
+      if (outcome === 'saved') onOpenChange(false);
     } finally {
       setBusy(false);
     }

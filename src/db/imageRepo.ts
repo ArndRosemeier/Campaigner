@@ -207,13 +207,14 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
  * found").
  *
  * `excludeArtifactIds` is the PREDICTION switch, used by exactly one caller:
- * `artifactRepo.describeArtifactKindRemoval` renders the per-region
- * remove-all confirm, which must state how many blobs the cascade frees —
- * i.e. the reference set as it will be once those artifacts and their
- * revision snapshots are gone. The coverage rules stay HERE (one scan, never
- * a second copy tuned for a dialog): the exclusion only filters which rows
- * the scan sees. Display only — no delete path passes it, so what gets
- * pruned is still decided in-transaction by the unrouted scan.
+ * `artifactRepo`'s bulk-removal census (`inspectRemoval`, behind BOTH
+ * `describeArtifactKindRemoval` and `describeArtifactSelectionRemoval`,
+ * docs/17 row 322) renders the removal confirm, which must state how many
+ * blobs the cascade frees — i.e. the reference set as it will be once those
+ * artifacts and their revision snapshots are gone. The coverage rules stay
+ * HERE (one scan, never a second copy tuned for a dialog): the exclusion only
+ * filters which rows the scan sees. Display only — no delete path passes it,
+ * so what gets pruned is still decided in-transaction by the unrouted scan.
  */
 export async function referencedImageIds(
   campaignId: Id,

@@ -1,16 +1,19 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  FileDownIcon,
+  FileUpIcon,
   PlusIcon,
   Trash2Icon,
   WaypointsIcon,
+  XIcon,
 } from 'lucide-react';
 
 import { useModules } from '@/features/modules/hooks';
-import { useScopeToggles } from '@/features/campaign/hooks';
+import { useCampaign, useScopeToggles } from '@/features/campaign/hooks';
 import { ScopeControl } from '@/features/campaign/components/scope-control';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -34,7 +37,9 @@ import {
 } from '@/domain';
 import { defaultArtifactName, mergeAliasNames, sameAliasName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-single-artifact';
-import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
+import { exportCampaignBundle } from '@/features/campaign/components/export-campaign-bundle';
+import { useCampaignImport } from '@/features/campaign/import-flow';
+import { RemoveArtifactsDialog } from '@/features/campaign/components/remove-artifacts-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
@@ -69,8 +74,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { HelpButton } from '@/help/HelpButton';
-import { Input } from '@/components/ui/input';
+import { HelpButton } from '@/help/HelpButton';import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { matchesFilter } from '@/features/campaign/filter';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -174,6 +178,17 @@ export interface CampaignTreeProps {
  * Left pane (05-UI §Campaign tree): filter input, collapsible per-kind
  * sections with counts and `+` buttons, rows with summary tooltip and
  * Rename/Duplicate/Delete context menu.
+ *
+ * MULTI-SELECT (owner request, 2026-09-22; docs/17 row 322): every
+ * CAMPAIGN-LEVEL row carries a checkbox and a small action bar above the tree
+ * offers Export selected (json|zip, selection-only), Remove selected (the ONE
+ * shared confirm, live census) and Import… (into THIS campaign). Module-owned
+ * and library rows carry no checkbox — a module-owned row is out of reach of
+ * the selection removal and a library row is not this campaign's — so the
+ * surface never offers an action that could only fail. The Party IS
+ * selectable (players must be exportable between campaigns) and the bar says
+ * in as many words that it can never be removed; pressing Remove then shows
+ * the seam's own refusal with the confirm disabled.
  */
 export function CampaignTree({
   campaignId,
@@ -193,6 +208,10 @@ export function CampaignTree({
   const [publishTarget, setPublishTarget] = useState<Artifact | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<GlobalArtifact | null>(null);
   const [closedGroups, setClosedGroups] = useState<ReadonlySet<string>>(new Set());
+  /** The multi-select set (campaign-level rows only — see the doc above). */
+  const [selection, setSelection] = useState<ReadonlySet<Id>>(new Set());
+  const [removeSelectionOpen, setRemoveSelectionOpen] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   function setGroupOpenState(group: string, open: boolean): void {
     setClosedGroups((previous) => {
       const next = new Set(previous);
@@ -207,6 +226,10 @@ export function CampaignTree({
   // until they arrive (the control flips to the stored value right after).
   const scopes = useScopeToggles('workspace') ?? defaultScopeToggles('workspace');
   const modules = useModules(campaignId);
+  // The export's suggested filename is derived from the campaign's own name
+  // (the ONE `exportSuggestedName` seam); '' falls back to the documented
+  // `artifact` stem for a symbol-only name.
+  const campaign = useCampaign(campaignId);
 
   const filtered = useMemo(
     () => artifacts.filter((artifact) => matchesFilter(artifact, filter)),
@@ -290,6 +313,56 @@ export function CampaignTree({
     }
     return counts;
   }, [artifacts, scopes.campaign]);
+
+  // THE multi-select set, resolved against the LIVE campaign rows: a row that
+  // was deleted (here or in another tab) drops out of the selection by itself,
+  // so the count, the export and the removal can never name a row that is not
+  // there. Only campaign-level rows are selectable (the checkboxes are
+  // rendered there and nowhere else), and the Party is among them on purpose.
+  const selectedArtifacts = useMemo(
+    () =>
+      artifacts.filter(
+        (artifact) => artifact.moduleId === null && selection.has(artifact.id),
+      ),
+    [artifacts, selection],
+  );
+  const selectedIds = useMemo(
+    () => selectedArtifacts.map((artifact) => artifact.id),
+    [selectedArtifacts],
+  );
+  const partySelected = selectedArtifacts.some((artifact) =>
+    BULK_REMOVE_EXCLUDED_KINDS.includes(artifact.kind),
+  );
+
+  function toggleSelection(id: Id, checked: boolean): void {
+    setSelection((previous) => {
+      const next = new Set(previous);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  // The workspace's selection import (owner request, 2026-09-22): the SAME
+  // picker read path, the SAME dependency gate, the SAME toasts — into THIS
+  // campaign instead of a new one (docs/17 row 322).
+  const importFlow = useCampaignImport({
+    targetCampaignId: campaignId,
+    describeSuccess: (result) => `Imported ${result.createdArtifacts} artifact(s) into this campaign`,
+  });
+
+  async function runSelectionExport(format: 'json' | 'zip'): Promise<void> {
+    await exportCampaignBundle({
+      campaignId,
+      campaignName: campaign?.name ?? '',
+      artifactIds: selectedIds,
+      format,
+      // The selection's point is moving rows BETWEEN campaigns, portraits
+      // included: the JSON arm inlines the binaries rather than dropping them.
+      images: true,
+      selectionOnly: true,
+    });
+  }
 
   async function handleReanchor(artifact: Artifact): Promise<void> {
     try {
@@ -413,6 +486,103 @@ export function CampaignTree({
             Wiki-link graph
           </Button>
           <HelpButton topic="tree" label="artifact library" />
+        </div>
+        {/*
+          The multi-select action bar (owner request, 2026-09-22; docs/17 row
+          322). Import… is always offered — it is how a file lands in THIS
+          campaign; the two selection actions need a selection. The Party is
+          called out in as many words while it is selected: it is exportable
+          but never bulk-removable, and the confirm refuses it by name.
+        */}
+        <div
+          className="mt-1.5 flex flex-wrap items-center gap-1"
+          data-testid="tree-selection-bar"
+        >
+          {partySelected && (
+            <p
+              className="w-full text-xs text-amber-600 dark:text-amber-400"
+              data-testid="party-not-removable"
+            >
+              The Party is exportable, but never removable in bulk — take Party rows out of
+              the selection to use Remove selected.
+            </p>
+          )}
+          <span className="text-xs text-muted-foreground" data-testid="tree-selection-count">
+            {selectedIds.length} selected
+          </span>
+          <Button
+            variant="outline"
+            size="xs"
+            data-testid="export-selection-json"
+            disabled={selectedIds.length === 0}
+            onClick={() => {
+              void runSelectionExport('json');
+            }}
+          >
+            <FileDownIcon aria-hidden data-icon="inline-start" />
+            Export JSON
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            data-testid="export-selection-zip"
+            disabled={selectedIds.length === 0}
+            onClick={() => {
+              void runSelectionExport('zip');
+            }}
+          >
+            <FileDownIcon aria-hidden data-icon="inline-start" />
+            Export ZIP
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            data-testid="remove-selection"
+            disabled={selectedIds.length === 0}
+            onClick={() => {
+              setRemoveSelectionOpen(true);
+            }}
+          >
+            <Trash2Icon aria-hidden data-icon="inline-start" />
+            Remove selected
+          </Button>
+          {selectedIds.length > 0 && (
+            <Button
+              variant="ghost"
+              size="xs"
+              data-testid="clear-selection"
+              onClick={() => {
+                setSelection(new Set());
+              }}
+            >
+              <XIcon aria-hidden data-icon="inline-start" />
+              Clear
+            </Button>
+          )}
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json,application/zip,.zip"
+            className="hidden"
+            data-testid="workspace-import-input"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file !== undefined) void importFlow.handleFile(file);
+              event.target.value = '';
+            }}
+          />
+          <Button
+            variant="outline"
+            size="xs"
+            className="ml-auto"
+            data-testid="workspace-import"
+            onClick={() => {
+              importInputRef.current?.click();
+            }}
+          >
+            <FileUpIcon aria-hidden data-icon="inline-start" />
+            Import…
+          </Button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto overscroll-contain p-2">
@@ -656,6 +826,11 @@ export function CampaignTree({
                                 }
                               : undefined
                           }
+                          selectable
+                          checked={selection.has(artifact.id)}
+                          onCheckedChange={(next) => {
+                            toggleSelection(artifact.id, next);
+                          }}
                         />
                       </li>
                     ))}
@@ -781,15 +956,33 @@ export function CampaignTree({
       </AlertDialog>
 
       {removeKind !== null && (
-        <RemoveKindDialog
+        <RemoveArtifactsDialog
           campaignId={campaignId}
-          kind={removeKind}
+          scope={{ kind: removeKind }}
           open
           onOpenChange={(open) => {
             if (!open) setRemoveKind(null);
           }}
         />
       )}
+
+      {removeSelectionOpen && (
+        <RemoveArtifactsDialog
+          campaignId={campaignId}
+          scope={{ ids: selectedIds }}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRemoveSelectionOpen(false);
+          }}
+          onRemoved={() => {
+            // The rows are gone: the selection that named them is stale, and
+            // an empty bar is the honest state.
+            setSelection(new Set());
+          }}
+        />
+      )}
+
+      {importFlow.dialog}
     </aside>
   );
 }
@@ -816,6 +1009,10 @@ interface TreeRowProps {
   onReanchor?: (() => void) | undefined;
   /** Orphan rows render an explicit "orphaned" badge (never silent). */
   orphaned?: boolean | undefined;
+  /** Campaign-level rows only: the multi-select checkbox (docs/17 row 322). */
+  selectable?: boolean | undefined;
+  checked?: boolean | undefined;
+  onCheckedChange?: ((checked: boolean) => void) | undefined;
 }
 
 /** 16px cover-image thumbnail, shown only when the artifact has one (M3-A). */
@@ -847,6 +1044,9 @@ function TreeRow({
   onAdopt,
   onReanchor,
   orphaned,
+  selectable,
+  checked,
+  onCheckedChange,
 }: TreeRowProps) {
   return (
     <ContextMenu>
@@ -862,6 +1062,28 @@ function TreeRow({
             />
           }
         >
+          {selectable === true && (
+            // The checkbox is the multi-select leaf, not a second row click:
+            // both pointer events stop here so ticking a row never navigates
+            // the editor to it.
+            <span
+              className="flex shrink-0 items-center"
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+              }}
+            >
+              <Checkbox
+                aria-label={`Select ${artifact.name}`}
+                checked={checked === true}
+                onCheckedChange={(next) => {
+                  if (typeof next === 'boolean') onCheckedChange?.(next);
+                }}
+              />
+            </span>
+          )}
           <CoverThumb artifact={artifact} />
           <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
           {orphaned === true && (

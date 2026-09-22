@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PencilIcon, PlusIcon } from 'lucide-react';
 
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { modulesPath, ROUTES, workspacePath } from '@/app/routes';
+import { modulesPath, workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
 import { GAME_SYSTEMS, GAME_SYSTEM_LABELS, type GameSystem } from '@/domain';
 import {
@@ -59,28 +59,11 @@ import { readSettings } from '@/db/settingsRepo';
 import { SparklesIcon } from 'lucide-react';
 import { ExportCampaignDialog } from '@/features/campaign/components/export-dialog';
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
-import {
-  checkImportDependencies,
-  importExport,
-  importZip,
-  MissingDependenciesError,
-  parseExport,
-  parseZipExport,
-  withImportMitigation,
-  type DependencyPolicy,
-  formatDriftedCitations,
-} from '@/lib/exportImport';
-import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
+import { useCampaignImport } from '@/features/campaign/import-flow';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
-import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
-
-/**
- * A file waiting on the dependency decision: the raw payload is stashed so
- * "Import anyway" can run the SAME bytes without re-reading the file.
- */
-type PendingImport = { kind: 'json'; raw: unknown } | { kind: 'zip'; bytes: Uint8Array };
+import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Campaign picker (05-UI §Campaign picker): card grid of campaigns (name,
@@ -89,7 +72,8 @@ type PendingImport = { kind: 'json'; raw: unknown } | { kind: 'zip'; bytes: Uint
  * confirmation; the card menu also opens "Edit campaign…" (name +
  * description — the system is fixed).
  *
- * Import (07-MILESTONE-3 M3-E slice B) is parse-first: the file is parsed
+ * Import (07-MILESTONE-3 M3-E slice B) is parse-first, and since docs/17 row
+ * 322 the whole flow is the ONE `useCampaignImport` hook: the file is parsed
  * and its dependency manifest analyzed BEFORE the import transaction opens.
  * A clean manifest keeps today's one-click path byte-identical; MISSING
  * statblock citations or unmet NPC refs open the dep-summary dialog instead —
@@ -97,7 +81,9 @@ type PendingImport = { kind: 'json'; raw: unknown } | { kind: 'zip'; bytes: Uint
  * encounters with `missing ref` markers plus the campaign banner. A
  * `version-drift` citation (docs/17 row 261) is neither: the import proceeds
  * and the drift is toasted by count, so the one-click path never goes silent
- * over content that came from a different version of a book.
+ * over content that came from a different version of a book. This page imports
+ * as a NEW campaign (the hook's absent-`targetCampaignId` mode, and the only
+ * caller that navigates to the result).
  */
 export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
@@ -107,86 +93,13 @@ export function CampaignPickerPage(): JSX.Element {
   const navigate = useNavigate();
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const importedNavigate = useNav();
-  const [pendingDeps, setPendingDeps] = useState<{
-    analysis: DependencyAnalysis;
-    payload: PendingImport;
-  } | null>(null);
-  const [depsWorking, setDepsWorking] = useState(false);
-
-  async function attemptImport(payload: PendingImport, policy: DependencyPolicy): Promise<void> {
-    const result =
-      payload.kind === 'zip'
-        ? await importZip(payload.bytes, { dependencyPolicy: policy })
-        : await importExport(payload.raw, {}, { dependencyPolicy: policy });
-    toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
-    // Version drift (docs/17 row 261): the import PROCEEDED over citations that
-    // resolved to the same book under a DIFFERENT version. It is not an abort
-    // any more, so the count must ride the success — an unblocked fallback
-    // that said nothing would be the silent failure AGENTS rule 1 forbids.
-    const driftNote = formatDriftedCitations(result.driftedCitations);
-    if (driftNote !== null) toastInfo(driftNote);
-    importedNavigate(workspacePath(result.campaignId));
-  }
-
-  async function handleImportFile(file: File): Promise<void> {
-    let payload: PendingImport;
-    try {
-      // Zip bundles carry image binaries next to the manifest (M3-A).
-      const isZip = file.name.endsWith('.zip') || file.type === 'application/zip';
-      payload = isZip
-        ? { kind: 'zip', bytes: new Uint8Array(await file.arrayBuffer()) }
-        : { kind: 'json', raw: JSON.parse(await file.text()) as unknown };
-    } catch (error) {
-      // Every import-failure toast carries MITIGATION, not just cause:
-      // Zod-shaped failures ride through untouched (the toast seam
-      // humanizes them and appends the version-skew mitigation); anything
-      // else gets the mitigation appended by `withImportMitigation`.
-      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
-      return;
-    }
-    let analysis: DependencyAnalysis;
-    try {
-      // The strict boundary: a pre-cut file is REFUSED by name here, before the
-      // dependency dialog or any write (docs/17 row 278).
-      const manifest =
-        payload.kind === 'zip'
-          ? parseExport(parseZipExport(payload.bytes).manifest).dependencies
-          : parseExport(payload.raw).dependencies;
-      analysis = await checkImportDependencies(manifest);
-    } catch (error) {
-      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
-      return;
-    }
-    if (!analysis.clean) {
-      // Abort-by-default: the dialog, not a toast — nothing imported yet.
-      setPendingDeps({ analysis, payload });
-      return;
-    }
-    try {
-      await attemptImport(payload, 'abort');
-    } catch (error) {
-      if (error instanceof MissingDependenciesError) {
-        // The library changed between analysis and import — same dialog.
-        setPendingDeps({ analysis: error.analysis, payload });
-        return;
-      }
-      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
-    }
-  }
-
-  async function handleImportAnyway(): Promise<void> {
-    const pending = pendingDeps;
-    if (pending === null || depsWorking) return;
-    setDepsWorking(true);
-    try {
-      await attemptImport(pending.payload, 'import-anyway');
-      setPendingDeps(null);
-    } catch (error) {
-      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
-    } finally {
-      setDepsWorking(false);
-    }
-  }
+  const importFlow = useCampaignImport({
+    describeSuccess: (result) =>
+      `Imported ${result.createdArtifacts} artifact(s) as a new campaign`,
+    onImported: (result) => {
+      importedNavigate(workspacePath(result.campaignId));
+    },
+  });
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -222,7 +135,7 @@ export function CampaignPickerPage(): JSX.Element {
               data-testid="import-input"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (file !== undefined) void handleImportFile(file);
+                if (file !== undefined) void importFlow.handleFile(file);
                 event.target.value = '';
               }}
             />
@@ -298,16 +211,7 @@ export function CampaignPickerPage(): JSX.Element {
         )}
       </div>
       <CreateCampaignDialog open={createOpen} onOpenChange={setCreateOpen} />
-      <ImportDepsDialog
-        pending={pendingDeps}
-        working={depsWorking}
-        onAbort={() => {
-          setPendingDeps(null);
-        }}
-        onImportAnyway={() => {
-          void handleImportAnyway();
-        }}
-      />
+      {importFlow.dialog}
     </div>
   );
 }
@@ -555,140 +459,5 @@ function CreateCampaignDialog({ open, onOpenChange }: CreateCampaignDialogProps)
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * Missing-dependency summary (07-MILESTONE-3 M3-E slice B): the abort-by-
- * default gate. Copies the backup-section AlertDialog abort/commit shape;
- * the per-book rows copy the PackImportReport badge/list grammar —
- * `{title, system, expectedChunks, matchLevel}` badges plus the citing
- * artifacts (`encounter → creature`) and the unmet NPC refs.
- *
- * Abort is the default (Cancel + Esc + backdrop — never enters the import
- * transaction, so there is nothing to roll back). "Import anyway" lands the
- * encounters with `missing ref` markers plus the campaign banner.
- */
-function ImportDepsDialog({
-  pending,
-  working,
-  onAbort,
-  onImportAnyway,
-}: {
-  pending: { analysis: DependencyAnalysis; payload: PendingImport } | null;
-  working: boolean;
-  onAbort: () => void;
-  onImportAnyway: () => void;
-}): JSX.Element {
-  const citing = pending === null ? [] : groupCitationsByArtifact(pending.analysis);
-  return (
-    <AlertDialog
-      open={pending !== null}
-      onOpenChange={(open) => {
-        if (!open) onAbort();
-      }}
-    >
-      <AlertDialogContent data-testid="import-deps-dialog">
-        <AlertDialogHeader>
-          <AlertDialogTitle>Import needs missing rulebook content</AlertDialogTitle>
-          <AlertDialogDescription>
-            This export cites stat blocks and references that are not in this library — nothing
-            has been imported yet. Install the listed book(s) in{' '}
-            <Link to={ROUTES.rules} className="underline" data-testid="import-deps-rules-link">
-              Rules
-            </Link>{' '}
-            (“Import bestiary pack”, or re-import the rulebook PDF), then import again — or
-            import anyway and the encounters below will show 'missing ref' until then.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {pending !== null && (
-          <div className="flex max-h-64 flex-col gap-2 overflow-y-auto text-xs">
-            {pending.analysis.books.map((entry) => (
-              <div
-                key={`${entry.book.system}-${entry.book.title}`}
-                className="rounded-md border p-2"
-                data-testid="import-deps-book"
-              >
-                <p className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">
-                    {entry.book.title} ({entry.book.system})
-                  </span>
-                  <Badge
-                    variant={entry.matchLevel === 'L0' ? 'secondary' : entry.matchLevel === 'missing' ? 'destructive' : 'outline'}
-                    data-testid="import-deps-match-level"
-                  >
-                    {entry.matchLevel === 'L0'
-                      ? 'present'
-                      : entry.matchLevel === 'L1'
-                        ? 'version drift'
-                        : entry.matchLevel === 'L2'
-                          ? 'similar content'
-                          : 'missing'}
-                  </Badge>
-                  <Badge variant="secondary" data-testid="import-deps-expected">
-                    {String(entry.book.citedChunkIds.length)} cited
-                  </Badge>
-                </p>
-                {entry.hint !== undefined && (
-                  <p className="mt-1 text-muted-foreground">{entry.hint}</p>
-                )}
-              </div>
-            ))}
-            {citing.length > 0 && (
-              <div className="rounded-md border p-2" data-testid="import-deps-citing">
-                <p className="font-medium">Citing encounters</p>
-                <ul className="mt-1 flex flex-col gap-1">
-                  {citing.map((group) => (
-                    <li key={group.artifactName}>
-                      <span className="font-medium">{group.artifactName}</span>
-                      {' → '}
-                      {group.monsters.map((monster) => (
-                        <span key={monster.monsterName} className="mr-2">
-                          {monster.monsterName}{' '}
-                          <Badge
-                            variant={monster.verdict === 'missing' ? 'destructive' : 'outline'}
-                          >
-                            {monster.verdict === 'missing' ? 'missing' : 'version drift'}
-                          </Badge>
-                        </span>
-                      ))}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {pending.analysis.unmetLibraryRefs.length > 0 && (
-              <div className="rounded-md border p-2" data-testid="import-deps-unmet">
-                <p className="font-medium">NPC references outside the export</p>
-                <ul className="mt-1 flex flex-col gap-1">
-                  {pending.analysis.unmetLibraryRefs.map((ref) => (
-                    <li key={`${ref.artifactId}-${ref.npcArtifactId}`}>
-                      <span className="font-medium">{ref.artifactName}</span>
-                      {' → '}
-                      {ref.npcName ?? ref.npcArtifactId}{' '}
-                      <Badge variant="destructive">{ref.status}</Badge>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-        <AlertDialogFooter>
-          <AlertDialogCancel data-testid="import-deps-abort" disabled={working}>
-            Abort
-          </AlertDialogCancel>
-          <AlertDialogAction
-            data-testid="import-deps-import-anyway"
-            disabled={working}
-            onClick={() => {
-              onImportAnyway();
-            }}
-          >
-            {working ? 'Importing…' : 'Import anyway'}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
   );
 }

@@ -6,8 +6,10 @@ import type * as BattleRepo from '@/db/battleRepo';
 import {
   attachImagesToArtifact,
   createArtifact,
+  deleteArtifactSelection,
   deleteArtifactsOfKind,
   describeArtifactKindRemoval,
+  describeArtifactSelectionRemoval,
   getArtifact,
   listRevisions,
   publishToLibrary,
@@ -30,14 +32,16 @@ import { emptyBoard } from '@/domain/battle/board';
 import { clearDatabase, expectNotFound, seedModuleVersion } from './helpers';
 
 /**
- * Per-region bulk delete (the campaign tree's "remove all" beside a kind's
- * `+`): `deleteArtifactsOfKind` removes every CAMPAIGN-LEVEL artifact of one
- * kind in ONE campaign — one rw transaction over the tables `deleteArtifact`
- * needs, rows re-listed inside it — and nothing else. The guards pinned here:
- * campaign scope only, the global library untouchable, `pc` refused outright,
- * module-owned rows (and module documents/versions) out of reach, other kinds
- * byte-identical, in-tx recount honesty, and a mid-cascade failure rolling
- * the whole pass back.
+ * Bulk artifact removal, BOTH rungs of the seam (docs/17 row 322): the
+ * per-region "remove all" beside a kind's `+` (`deleteArtifactsOfKind`) and
+ * the workspace's caller-chosen multi-select (`deleteArtifactSelection`).
+ * They are ONE body (`runRemovalPass` over `inspectRemoval`): one rw
+ * transaction over the tables `deleteArtifact` needs, the doomed set
+ * re-resolved inside it, and the same census. The guards pinned here: campaign
+ * scope only, the global library untouchable, `pc` refused outright, a
+ * module-owned id and an id that is not a row of this campaign each refused BY
+ * NAME (never silently skipped), other kinds byte-identical, in-tx recount
+ * honesty, and a mid-cascade failure rolling the whole pass back.
  */
 
 let realScrub: (campaignId: Id, artifactId: Id) => Promise<void>;
@@ -449,5 +453,197 @@ describe('deleteArtifactsOfKind — count honesty and failure discipline', () =>
     expect(await listRevisions(first.id)).toHaveLength(2);
     expect(await listRevisions(second.id)).toHaveLength(1);
     expect(await db.battles.get(battle.id)).toBeDefined();
+  });
+});
+
+/**
+ * The SELECTION rung (docs/17 row 322): the caller's own id set rides the SAME
+ * pass and the SAME census, so everything the kind rung guarantees holds here
+ * too — plus the three things a caller-chosen set can name and a kind cannot:
+ * a Party row, a module-owned row, and an id that is not a row of this
+ * campaign. Each is refused BY NAME, and a refusal deletes NOTHING (the whole
+ * pass is one transaction).
+ */
+describe('deleteArtifactSelection — the caller-chosen set', () => {
+  const UNKNOWN_ID = '11111111-1111-4111-8111-111111111111';
+
+  it('removes exactly the named rows with the full cascade, and leaves every survivor byte-identical', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const other = await createCampaign({ name: 'Neighbour', system: 'dnd5e' });
+    const moduleId = await makeModule(campaign.id, 'Ember Vault');
+    const goblin = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Goblin' });
+    await updateArtifact(goblin.id, { body: 'changed' }); // revision 2
+    const hobgoblin = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Hobgoblin',
+    });
+    const pc = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Serren' });
+    const location = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Old Tower',
+      links: [{ targetId: goblin.id, relation: 'ally' }],
+    });
+    const moduleNpc = await createArtifact({
+      campaignId: campaign.id,
+      moduleId,
+      kind: 'npc',
+      name: 'Vault guard',
+    });
+    const neighbourNpc = await createArtifact({
+      campaignId: other.id,
+      kind: 'npc',
+      name: 'Their NPC',
+    });
+    // A SAME-KIND library row: structurally a `campaignId === null` row, never
+    // a row of this campaign, so the selection rung cannot even see it.
+    const librarySource = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Lib Goblin',
+    });
+    const library = await publishToLibrary(librarySource.id);
+    const goblinImage = await attachOneImage(goblin.id, campaign.id);
+    const locationImage = await attachOneImage(location.id, campaign.id);
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Gate fight',
+      data: encounterDataWith([
+        {
+          name: 'Goblin',
+          count: 2,
+          notes: '',
+          treasure: '',
+          source: { type: 'npc-ref', artifactId: goblin.id },
+        },
+      ]),
+    });
+    const encounterBefore = await rows([encounter.id]);
+    const battle = await putBattle(campaign.id, moduleId, { tokens: [tokenFor(goblin.id)] });
+    const survivors = [
+      hobgoblin.id,
+      pc.id,
+      moduleNpc.id,
+      neighbourNpc.id,
+      library.id,
+    ];
+    const before = await rows(survivors);
+    const locationBefore = location.links;
+
+    // The census is the same body the kind rung uses — `kind: null` because a
+    // caller-chosen set spans kinds and has no honest single answer.
+    const census = await describeArtifactSelectionRemoval(campaign.id, [goblin.id]);
+    expect(census.kind).toBeNull();
+    expect(census.artifacts).toBe(1);
+    expect(census.revisions).toBe(3); // create + content edit + image attach
+    expect(census.backLinkedArtifacts).toBe(1);
+    expect(census.battleTokensScrubbed).toBe(1);
+    expect(census.battlesDeleted).toBe(1);
+    expect(census.rosterRefsDangling).toBe(1);
+    expect(census.imagesPruned).toBe(1);
+
+    const removed = await deleteArtifactSelection(campaign.id, [goblin.id]);
+
+    // The live census and the executed pass agree here (nothing landed in
+    // between) — and the toast's numbers come from the in-tx pass.
+    expect(removed).toEqual(census);
+    expect(await getArtifact(goblin.id)).toBeUndefined();
+    // Nothing OUTSIDE the set went: the same-kind sibling, the Party, the
+    // module-owned row, the other campaign's row and the library row are
+    // byte-identical.
+    expect(await rows(survivors)).toEqual(before);
+    // The back-linked survivor keeps working and only loses its link.
+    expect(locationBefore).toEqual([{ targetId: goblin.id, relation: 'ally' }]);
+    expect((await getArtifact(location.id))?.links).toEqual([]);
+    expect(await listRevisions(moduleNpc.id)).toHaveLength(1);
+    expect(await db.battles.get(battle.id)).toBeUndefined();
+    expect(await db.images.get(goblinImage)).toBeUndefined();
+    expect(await db.images.get(locationImage)).toBeDefined();
+    expect(await rows([encounter.id])).toEqual(encounterBefore);
+    // The module row and the Party survive untouched too (the library row is
+    // already covered byte-for-byte above; `getArtifact` is campaign-scoped).
+    expect(await db.modules.get(moduleId)).toBeDefined();
+    expect(await getArtifact(pc.id)).toBeDefined();
+  });
+
+  it('refuses a Party row BY NAME (census and pass) and deletes nothing at all', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const pc = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Serren' });
+    const npc = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Goblin' });
+    const before = await rows([pc.id, npc.id]);
+
+    // The refusal names the Party row AND keeps the seam's own sentence (the
+    // Party's protection is `BULK_REMOVE_EXCLUDED_KINDS`, the ONE constant).
+    await expect(describeArtifactSelectionRemoval(campaign.id, [npc.id, pc.id])).rejects.toThrow(
+      /Clear workspace[\s\S]*"Serren"/,
+    );
+    // The mixed set removes NOTHING: the pass refuses before its first delete.
+    await expect(deleteArtifactSelection(campaign.id, [npc.id, pc.id])).rejects.toThrow(
+      /"Serren"/,
+    );
+    expect(await rows([pc.id, npc.id])).toEqual(before);
+  });
+
+  it('refuses a module-owned id by name and deletes nothing', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const moduleId = await makeModule(campaign.id, 'Ember Vault');
+    const moduleNpc = await createArtifact({
+      campaignId: campaign.id,
+      moduleId,
+      kind: 'npc',
+      name: 'Vault guard',
+    });
+    const plain = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Goblin' });
+    const before = await rows([moduleNpc.id, plain.id]);
+
+    await expect(deleteArtifactSelection(campaign.id, [plain.id, moduleNpc.id])).rejects.toThrow(
+      /module-owned artifacts are out of reach[\s\S]*"Vault guard"/,
+    );
+    expect(await rows([moduleNpc.id, plain.id])).toEqual(before);
+  });
+
+  it('refuses an id that is not a row of this campaign — another campaign, or already gone', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const other = await createCampaign({ name: 'Neighbour', system: 'dnd5e' });
+    const neighbourNpc = await createArtifact({
+      campaignId: other.id,
+      kind: 'npc',
+      name: 'Their NPC',
+    });
+    const goblin = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Goblin' });
+
+    await expect(deleteArtifactSelection(campaign.id, [neighbourNpc.id])).rejects.toThrow(
+      new RegExp(neighbourNpc.id),
+    );
+    await expect(
+      deleteArtifactSelection(campaign.id, [goblin.id, UNKNOWN_ID]),
+    ).rejects.toThrow(new RegExp(UNKNOWN_ID));
+    // A refused set is refused whole: the valid row is still there.
+    expect(await getArtifact(goblin.id)).toBeDefined();
+  });
+
+  it('is honest zeros for an empty selection, and an unknown campaign is loud', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+
+    const census = await describeArtifactSelectionRemoval(campaign.id, []);
+    expect(census).toEqual({
+      kind: null,
+      artifacts: 0,
+      revisions: 0,
+      backLinkedArtifacts: 0,
+      battleTokensScrubbed: 0,
+      battlesDeleted: 0,
+      battleProvenancesLost: 0,
+      imagesPruned: 0,
+      rosterRefsDangling: 0,
+    });
+    const removed = await deleteArtifactSelection(campaign.id, []);
+    expect(removed.artifacts).toBe(0);
+    expect(await db.artifacts.where('campaignId').equals(campaign.id).count()).toBe(1);
+
+    await expectNotFound(deleteArtifactSelection(UNKNOWN_ID, []));
   });
 });

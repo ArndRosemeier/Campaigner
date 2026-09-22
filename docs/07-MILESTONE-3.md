@@ -694,6 +694,21 @@ needed for it, and an import restores the decision whole.
 | `dependencies` manifest + `missingImages` note | Personas, settings |
 | | Rulebooks/chunks themselves — the manifest replaces them |
 
+**Selection scope and the target-campaign import mode (docs/17 row 322, owner
+request 2026-09-22):** a SELECTION-ONLY export (`buildCampaignExport`'s
+`selectionOnly`) carries the selected artifacts + revisions, their referenced
+images, `creatureImages` and the `dependencies` manifest, and NONE of the
+campaign's `modules`/`battles`/`runs` — those keys are ABSENT from the file,
+not empty (exactly the v1 shape). Importing such a file INTO an existing
+campaign (`importExport`/`importZip`'s `targetCampaignId`) mints no campaign,
+writes none of those tables, lands every artifact at CAMPAIGN level
+(`moduleId: null`) in the target — "can always move stuff to modules later" —
+and keeps a reference to a row outside the file EXACTLY as written, so the
+existing loud surfaces name it (the editor's dangling-link row, `missing ref`).
+Without either option the whole-campaign path described here is
+byte-identical; the workspace's multi-select surface that calls both is
+05-UI §Left pane — Campaign tree.
+
 ### Format v1 → v2
 
 `CampaignExport.version` is `1 | 2` (`EXPORT_FORMAT_VERSION = 2`,

@@ -40,6 +40,7 @@ import { adoptLibraryArtifacts } from '@/db/libraryAdopt';
 import { bytesFromBase64 } from '@/lib/base64';
 import { fileSlug } from '@/lib/fileSlug';
 import { LegacyCampaignFileRefusedError, legacyExportRefused } from '@/lib/legacyCampaignFile';
+import { NotFoundError } from '@/lib/errors';
 import { zodIssuesOf } from '@/lib/zodErrorSummary';
 import { StreamingZip } from '@/lib/zipStream';
 import { db } from '@/db/db';
@@ -145,8 +146,9 @@ export function imageFileExtension(mimeType: string): string {
 export async function buildCampaignExport(
   campaignId: Id,
   artifactIds?: readonly Id[],
-  opts: { images?: boolean } = {},
+  opts: { images?: boolean; selectionOnly?: boolean } = {},
 ): Promise<CampaignExport> {
+  const selectionOnly = opts.selectionOnly === true;
   const rawCampaign = await db.campaigns.get(campaignId);
   // Parsed (not raw): legacy rows materialize current defaults (e.g.
   // `coverImageId`) so the export carries them explicitly.
@@ -167,34 +169,52 @@ export async function buildCampaignExport(
   // Whole-campaign tables ride every campaign export (M3-E) — including
   // selection exports, whose artifact subset may dangle a battle token; the
   // manifest and the re-id map keep that honest.
+  //
+  // UNLESS the caller asked for a SELECTION-ONLY export (docs/17 row 322): the
+  // workspace's multi-select moves a handful of rows between campaigns, and
+  // dragging the source campaign's modules/battles/runs into the target is
+  // exactly what it must not do. The three tables are then not even READ (not
+  // merely left empty), so the produced object has no `modules`/`battles`/
+  // `runs` keys at all — the same shape a v1 file has — while the selected
+  // artifacts, their revisions, the referenced images, `creatureImages` and
+  // the dependency manifest all stay.
+  //
   // Rows are schema-parsed (the battle/run parse-normalize precedent) so
   // legacy rows materialize current defaults — including the dropped
   // encounter `verify` step healing on run rows.
   const [modules, battles, runs, creatureImageRows] = await Promise.all([
-    db.modules
-      .where('campaignId')
-      .equals(campaignId)
-      .toArray()
-      .then((rows) => rows.map((row) => moduleSchema.parse(row))),
-    db.battles
-      .where('campaignId')
-      .equals(campaignId)
-      .toArray()
-      .then((rows) => rows.map((row) => battleSchema.parse(row))),
-    db.runs
-      .where('campaignId')
-      .equals(campaignId)
-      .toArray()
-      .then((rows) => rows.map((row) => personaRunSchema.parse(row))),
+    selectionOnly
+      ? Promise.resolve([])
+      : db.modules
+          .where('campaignId')
+          .equals(campaignId)
+          .toArray()
+          .then((rows) => rows.map((row) => moduleSchema.parse(row))),
+    selectionOnly
+      ? Promise.resolve([])
+      : db.battles
+          .where('campaignId')
+          .equals(campaignId)
+          .toArray()
+          .then((rows) => rows.map((row) => battleSchema.parse(row))),
+    selectionOnly
+      ? Promise.resolve([])
+      : db.runs
+          .where('campaignId')
+          .equals(campaignId)
+          .toArray()
+          .then((rows) => rows.map((row) => personaRunSchema.parse(row))),
     db.creatureImages
       .where('campaignId')
       .equals(campaignId)
       .toArray()
       .then((rows) => rows.map((row) => creatureImageSchema.parse(row))),
   ]);
-  exported.modules = modules;
-  exported.battles = battles;
-  exported.runs = runs;
+  if (!selectionOnly) {
+    exported.modules = modules;
+    exported.battles = battles;
+    exported.runs = runs;
+  }
   exported.creatureImages = creatureImageRows;
 
   // Dependency manifest (M3-E): chunk→book joins for rulebook citations,
@@ -422,6 +442,25 @@ export type DependencyPolicy = 'abort' | 'import-anyway';
 
 export interface ImportOptions {
   dependencyPolicy?: DependencyPolicy;
+  /**
+   * Import INTO this EXISTING campaign instead of minting a new one (docs/17
+   * row 322, the workspace's selection import). Set:
+   *
+   * - no campaign is minted and none of the file's `modules`/`battles`/`runs`/
+   *   `creatureImages` is written — the workspace moves a handful of rows
+   *   between campaigns, never the source campaign's tables;
+   * - every imported artifact lands at CAMPAIGN level (`moduleId: null`) in
+   *   the target, whatever the file said — "can always move stuff to modules
+   *   later" is the owner's own answer, and a selection-only file does not
+   *   carry the module it came from;
+   * - references BETWEEN imported rows go through the ONE id-remap pass as
+   *   always; a reference to a row that is NOT in the file keeps its id, the
+   *   tolerant arm both modes already share, and the field that owns its loud
+   *   surface names it (`missing ref`).
+   *
+   * Absent, every byte of the whole-campaign path is unchanged.
+   */
+  targetCampaignId?: Id;
 }
 
 /**
@@ -701,8 +740,14 @@ class ImportIdRemap {
  *
  * An id in NEITHER set is the genuinely gone target (docs/17 row 268's rule):
  * nothing in the file, nothing in the library, nothing anywhere in this
- * workspace — and THAT is what refuses the import by name instead of being
- * silently kept.
+ * workspace. It is NOT refused here — the ONE tolerant rule (docs/17 row 256,
+ * corrected in docs/18 §5 after the strict arm was refuted) KEEPS the id
+ * exactly as the file wrote it, and the arm that already owns that field's
+ * loud surface names it (`missing ref`, the editor's dangling link row,
+ * `danglingBattleEncounter`). That is also what a SELECTION import into an
+ * existing campaign relies on (docs/17 row 322): a relation to a row of the
+ * source campaign that did not travel is legitimate, and inventing a target
+ * for it would be worse than showing the loud miss.
  */
 async function classifyExternalIds(
   candidateIds: Iterable<Id>,
@@ -782,6 +827,13 @@ function remapStoredDocumentPlan(stored: unknown, plan: ImportIdRemap): unknown 
  * `imageIds`/`coverImageId` references stay valid (M3-A). `files` carries
  * zip image binaries keyed by archive path.
  *
+ * OR imports INTO an existing campaign when `options.targetCampaignId` is set
+ * (docs/17 row 322, the workspace's selection import): no campaign is minted,
+ * the file's `modules`/`battles`/`runs`/`creatureImages` are not written, and
+ * every artifact lands at CAMPAIGN level in the target. The reference
+ * rewriting, the dependency policy and the one-transaction rollback below are
+ * the SAME code for both modes; see `ImportOptions.targetCampaignId`.
+ *
  * Reference rewriting (M3-E): artifact `moduleId`s follow the module re-id
  * map; battle tokens/`encounterArtifactId` and run
  * result/target artifacts follow the artifact
@@ -796,7 +848,9 @@ function remapStoredDocumentPlan(stored: unknown, plan: ImportIdRemap): unknown 
  * artifact out of its module (a scope change only the explicit `moveScope`
  * family may make) and hide a corrupt or hand-edited export behind a
  * plausible-looking row. The pre-cut v1 demotion rescue died with the file
- * refusal (docs/17 row 278) — a v1 file never reaches this code.
+ * refusal (docs/17 row 278) — a v1 file never reaches this code. TARGET MODE
+ * is the deliberate exception, and it is not a silent demotion: landing at
+ * campaign level IS the mode's stated contract, selected by the caller.
  *
  * Dependency enforcement (M3-E slice B; the drift split is docs/17 row 261):
  * the manifest is checked against the local library FIRST
@@ -844,7 +898,20 @@ export async function importExport(
 
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
-
+  // TARGET-CAMPAIGN MODE (docs/17 row 322): the file's rows are written into
+  // an EXISTING campaign instead of a freshly minted one. `newCampaignId` is
+  // then never written — only `writeCampaignId` is — and the file's
+  // `modules`/`battles`/`runs`/`creatureImages` are filtered out below, so the
+  // source campaign's tables can never ride a selection into the target.
+  const targeting = options.targetCampaignId !== undefined;
+  const writeCampaignId = options.targetCampaignId ?? newCampaignId;
+  const modulesToWrite = targeting ? [] : (parsed.modules ?? []);
+  const creatureImagesToWrite = targeting ? [] : (parsed.creatureImages ?? []);
+  const battlesToWrite = targeting ? [] : (parsed.battles ?? []);
+  const runsToWrite = targeting ? [] : (parsed.runs ?? []);
+  // The campaign row the whole-campaign path mints. In target mode it is built
+  // and then never used: no campaign may be created (the target EXISTS — the
+  // transaction re-checks that by name).
   const campaign =
     parsed.campaign === null
       ? {
@@ -875,7 +942,7 @@ export async function importExport(
     parsed.artifacts.map((artifact) => [artifact.id, crypto.randomUUID()] as const),
   );
   const moduleIds = new Map<Id, Id>(
-    (parsed.modules ?? []).map((module) => [module.id, crypto.randomUUID()] as const),
+    modulesToWrite.map((module) => [module.id, crypto.randomUUID()] as const),
   );
   // Every id an exported row names that the file itself does not carry — the
   // candidate set for the shared-library classification below.
@@ -883,7 +950,7 @@ export async function importExport(
   for (const artifact of parsed.artifacts) {
     for (const link of artifact.links) externalCandidateIds.add(link.targetId);
   }
-  for (const module of parsed.modules ?? []) {
+  for (const module of modulesToWrite) {
     for (const section of validPlanSections(module.documentPlan)) {
       if (section.source.type !== 'part') externalCandidateIds.add(section.source.artifactId);
       if (section.companion !== null && section.companion !== undefined) {
@@ -891,11 +958,11 @@ export async function importExport(
       }
     }
   }
-  for (const battle of parsed.battles ?? []) {
+  for (const battle of battlesToWrite) {
     if (battle.encounterArtifactId !== null) externalCandidateIds.add(battle.encounterArtifactId);
     if (battle.reseed !== null) externalCandidateIds.add(battle.reseed.encounterArtifactId);
   }
-  for (const run of parsed.runs ?? []) {
+  for (const run of runsToWrite) {
     if (run.resultArtifactId !== null) externalCandidateIds.add(run.resultArtifactId);
     if (run.targetArtifactId !== null) externalCandidateIds.add(run.targetArtifactId);
     for (const id of run.contextArtifactIds ?? []) externalCandidateIds.add(id);
@@ -916,11 +983,22 @@ export async function importExport(
       db.creatureImages,
     ],
     async () => {
-      await db.campaigns.add(campaign);
+      if (targeting) {
+        // The target must EXIST (loud, by name) — a stale id from a page left
+        // open while the campaign was deleted may never strand rows under a
+        // campaign that is not there.
+        const target = await db.campaigns.get(writeCampaignId);
+        if (target === undefined) throw new NotFoundError('Campaign', writeCampaignId);
+      } else {
+        await db.campaigns.add(campaign);
+      }
 
       // Modules first: their re-id map anchors artifact `moduleId`s below, and
-      // their `documentPlan` names artifacts through the SAME remap pass.
-      for (const exported of parsed.modules ?? []) {
+      // their `documentPlan` names artifacts through the SAME remap pass. In
+      // target mode this loop is empty by construction (`modulesToWrite`): a
+      // selection import lands at CAMPAIGN level and never carries the source
+      // campaign's modules.
+      for (const exported of modulesToWrite) {
         const moduleId = moduleIds.get(exported.id);
         if (moduleId === undefined) throw new Error(`Import lost the re-id for module ${exported.id}`);
         const plan = remapStoredDocumentPlan(exported.documentPlan, remap);
@@ -929,7 +1007,7 @@ export async function importExport(
             ...exported,
             ...(plan === null ? {} : { documentPlan: plan }),
             id: moduleId,
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             createdAt: stamp,
             updatedAt: stamp,
           }),
@@ -948,7 +1026,7 @@ export async function importExport(
             id: image.id,
             createdAt: image.createdAt,
             updatedAt: image.updatedAt,
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             bytes,
             mimeType: image.mimeType,
             width: image.width,
@@ -967,12 +1045,12 @@ export async function importExport(
       // with the OLD mint (`name.trim().toLowerCase()`, no NFC), so importing
       // it verbatim would reintroduce legacy bytes into a folded database and
       // split one creature across two slots again.
-      for (const exported of parsed.creatureImages ?? []) {
+      for (const exported of creatureImagesToWrite) {
         await db.creatureImages.add(
           creatureImageSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             creatureKey: foldCreatureKey(exported.creatureKey),
             createdAt: stamp,
             updatedAt: stamp,
@@ -990,7 +1068,13 @@ export async function importExport(
         // BREAK, not a scope preference — the two cases are told apart by the
         // file's own version (v1 predates modules entirely; every v2 export
         // carries the campaign's modules, `buildCampaignExport`).
-        const exportedModuleId = artifactFields.moduleId;
+        //
+        // IN TARGET-CAMPAIGN MODE there is no module resolution at all: the
+        // row lands at CAMPAIGN level (`moduleId: null`) by the mode's own
+        // contract (docs/17 row 322) — the workspace moves a selection between
+        // campaigns and "can always move stuff to modules later", and a
+        // selection-only file carries no modules to re-anchor to.
+        const exportedModuleId = targeting ? null : artifactFields.moduleId;
         let remappedModuleId: Id | null = null;
         if (exportedModuleId !== null) {
           if (parsed.version === 1) {
@@ -1024,7 +1108,7 @@ export async function importExport(
               targetId: remap.reference(link.targetId),
             })),
             id: artifactId,
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             moduleId: remappedModuleId,
             createdAt: stamp,
             updatedAt: stamp,
@@ -1044,13 +1128,13 @@ export async function importExport(
         }
       }
 
-      for (const exported of parsed.battles ?? []) {
+      for (const exported of battlesToWrite) {
         const moduleId = remap.module(exported.moduleId, 'a battle', 'its module');
         await db.battles.add(
           battleSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             moduleId,
             encounterArtifactId: remap.referenceOrNull(exported.encounterArtifactId),
             reseed:
@@ -1108,13 +1192,13 @@ export async function importExport(
         );
       }
 
-      for (const exported of parsed.runs ?? []) {
+      for (const exported of runsToWrite) {
         const from = `the run ${exported.id}`;
         await db.runs.add(
           personaRunSchema.parse({
             ...exported,
             id: crypto.randomUUID(),
-            campaignId: newCampaignId,
+            campaignId: writeCampaignId,
             resultArtifactId: remap.referenceOrNull(exported.resultArtifactId),
             targetArtifactId: remap.referenceOrNull(exported.targetArtifactId),
             placementModuleId: remap.moduleOrNull(
@@ -1152,12 +1236,12 @@ export async function importExport(
         adoptLibraryArtifacts({
           tx,
           reason: 'write',
-          pendingRefs: { campaignId: newCampaignId, ids: [...remap.pendingLibraryIds] },
+          pendingRefs: { campaignId: writeCampaignId, ids: [...remap.pendingLibraryIds] },
         }),
     );
   }
   return {
-    campaignId: newCampaignId,
+    campaignId: writeCampaignId,
     createdArtifacts: created,
     driftedCitations,
   };

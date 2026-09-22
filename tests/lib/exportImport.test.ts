@@ -28,6 +28,7 @@ import {
   statBlockSchema,
   stampNewEntity,
   type DependencyAnalysis,
+  type Id,
   type StatBlock,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
@@ -1134,5 +1135,180 @@ describe('import failure readability', () => {
     expect(wrapped).not.toBe(plain);
     expect(wrapped.message).toContain('Not a Campaigner zip export (manifest missing)');
     expect(wrapped.message).toContain('same version');
+  });
+});
+
+/**
+ * SELECTION export + TARGET-campaign import (docs/17 row 322, the owner's
+ * 2026-09-22 request: select artifacts in the workspace, export them, import
+ * them into the campaign you are in). The two new modes ride the SAME
+ * `buildCampaignExport` / `importExport` bodies: with the options absent every
+ * byte is today's whole-campaign behaviour.
+ */
+describe('selection export and target-campaign import', () => {
+  /** A source campaign with every table a whole-campaign export carries. */
+  async function seedSource(): Promise<{
+    campaignId: Id;
+    moduleId: Id;
+    players: [Id, Id];
+    npcId: Id;
+  }> {
+    const campaign = await createCampaign({ name: 'Source', system: 'dnd5e' });
+    const moduleRow = await saveModuleRow(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Warren',
+        concept: 'goblins below',
+        levelMin: 1,
+        levelMax: 3,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+    );
+    const first = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Serren' });
+    const second = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Bel' });
+    const npc = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Grimm' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Ambush',
+      data: encounterDataWith([]) as never,
+    });
+    await ensureBattleForEncounter(campaign.id, moduleRow.id, encounter.id);
+    await createRun({
+      campaignId: campaign.id,
+      personaId: newId(),
+      autonomy: 'manual',
+      userBrief: 'detail Grimm',
+      targetArtifactId: npc.id,
+    });
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['portrait-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 10,
+      height: 10,
+      source: 'uploaded',
+    });
+    await insertCreatureImageRow({
+      campaignId: campaign.id,
+      creatureKey: 'goblin',
+      imageId: image.id,
+    });
+    await updateArtifact(npc.id, { imageIds: [image.id] });
+    return { campaignId: campaign.id, moduleId: moduleRow.id, players: [first.id, second.id], npcId: npc.id };
+  }
+
+  it('selectionOnly leaves modules/battles/runs OUT and keeps artifacts, images, creatureImages and the manifest', async () => {
+    const { campaignId, players, npcId } = await seedSource();
+
+    const whole = await buildCampaignExport(campaignId);
+    expect(whole.modules).toHaveLength(1);
+    expect(whole.battles).toHaveLength(1);
+    expect(whole.runs).toHaveLength(1);
+    expect(whole.creatureImages).toHaveLength(1);
+    expect(whole.images).toHaveLength(1);
+    expect(whole.dependencies).toBeDefined();
+
+    const selection = await buildCampaignExport(campaignId, [npcId], {
+      images: true,
+      selectionOnly: true,
+    });
+    // The three whole-campaign tables are ABSENT (not merely empty): the
+    // produced object has no such keys, exactly like a v1 file.
+    expect(selection.modules).toBeUndefined();
+    expect(selection.battles).toBeUndefined();
+    expect(selection.runs).toBeUndefined();
+    expect(Object.keys(JSON.parse(JSON.stringify(selection)) as object)).not.toContain('modules');
+    // Everything the selection DOES need stays.
+    expect(selection.artifacts.map((artifact) => artifact.id)).toEqual([npcId]);
+    expect(selection.artifacts[0]?.revisions).toHaveLength(2); // create + image attach
+    expect(selection.images).toHaveLength(1);
+    expect(selection.images?.[0]?.dataBase64).not.toBeNull();
+    expect(selection.creatureImages).toHaveLength(1);
+    expect(selection.dependencies).toBeDefined();
+    expect(selection.campaign?.name).toBe('Source');
+    void players;
+  });
+
+  it('the whole-campaign export is byte-identical with the option absent or false', async () => {
+    const { campaignId } = await seedSource();
+    const absent = await buildCampaignExport(campaignId, undefined, { images: true });
+    const explicit = await buildCampaignExport(campaignId, undefined, {
+      images: true,
+      selectionOnly: false,
+    });
+    // `exportedAt` is the only clock; everything else must be the same object.
+    expect({ ...explicit, exportedAt: 0 }).toEqual({ ...absent, exportedAt: 0 });
+  });
+
+  it('imports a selection into an EXISTING campaign at campaign level, without the source campaign\'s tables', async () => {
+    const { campaignId: sourceId, players, npcId } = await seedSource();
+    const target = await createCampaign({ name: 'Target', system: 'dnd5e' });
+    // The first player links to a row of the SOURCE campaign that is NOT in the
+    // file (legitimate for a selection export), the second to an id that is in
+    // NO table at all (the genuinely gone target).
+    const outsideId = npcId;
+    const goneId = '99999999-9999-4999-8999-999999999999';
+    await updateArtifact(players[0], { links: [{ targetId: outsideId, relation: 'ally' }] });
+    await updateArtifact(players[1], { links: [{ targetId: goneId, relation: 'ally' }] });
+    const sourceBefore = await db.artifacts.where('campaignId').equals(sourceId).toArray();
+
+    const exported = await buildCampaignExport(
+      sourceId,
+      [players[0], players[1]],
+      { images: true, selectionOnly: true },
+    );
+    const result = await importExport(
+      JSON.parse(JSON.stringify(exported)) as unknown,
+      {},
+      { targetCampaignId: target.id },
+    );
+
+    // NOT a new campaign: the target is the campaign you were in.
+    expect(result.campaignId).toBe(target.id);
+    expect(result.createdArtifacts).toBe(2);
+    expect(await listCampaigns()).toHaveLength(2);
+
+    const imported = await db.artifacts.where('campaignId').equals(target.id).toArray();
+    expect(imported).toHaveLength(2);
+    expect(imported.every((row) => row.kind === 'pc')).toBe(true);
+    expect(imported.every((row) => row.moduleId === null)).toBe(true);
+    expect(imported.map((row) => row.name).sort()).toEqual(['Bel', 'Serren']);
+    // Fresh ids — never the source rows' ids.
+    expect(imported.some((row) => players.includes(row.id))).toBe(false);
+    // A reference to a row outside the file keeps its id EXACTLY: the source
+    // row still exists (a cross-campaign reference) and the gone one lands on
+    // the loud surface the editor's link row owns (`(deleted artifact)`).
+    const linksOf = (name: string): string[] =>
+      (imported.find((row) => row.name === name)?.links ?? []).map((link) => link.targetId);
+    expect(linksOf('Serren')).toEqual([outsideId]);
+    expect(linksOf('Bel')).toEqual([goneId]);
+    expect(await db.artifacts.get(goneId)).toBeUndefined();
+    expect(await db.artifacts.get(outsideId)).toBeDefined();
+
+    // The source campaign is untouched, and NOTHING of its tables rode along.
+    expect(await db.artifacts.where('campaignId').equals(sourceId).toArray()).toEqual(sourceBefore);
+    expect(await db.modules.where('campaignId').equals(target.id).count()).toBe(0);
+    expect(await db.battles.where('campaignId').equals(target.id).count()).toBe(0);
+    expect(await listRunsByCampaign(target.id)).toHaveLength(0);
+    expect(await db.creatureImages.where('campaignId').equals(target.id).count()).toBe(0);
+    // The source's own tables are all still there.
+    expect(await db.modules.where('campaignId').equals(sourceId).count()).toBe(1);
+    expect(await db.battles.where('campaignId').equals(sourceId).count()).toBe(1);
+    expect(await listRunsByCampaign(sourceId)).toHaveLength(1);
+  });
+
+  it('an unknown target campaign is refused by name, importing nothing', async () => {
+    const { campaignId, players } = await seedSource();
+    const exported = await buildCampaignExport(campaignId, [players[0]], { selectionOnly: true });
+    await expect(
+      importExport(JSON.parse(JSON.stringify(exported)) as unknown, {}, {
+        targetCampaignId: '77777777-7777-4777-8777-777777777777',
+      }),
+    ).rejects.toThrow(/Campaign/);
+    // No campaign was minted either.
+    expect(await listCampaigns()).toHaveLength(1);
+    expect(await db.artifacts.where('campaignId').equals(campaignId).count()).toBe(4);
   });
 });

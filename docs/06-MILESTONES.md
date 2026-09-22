@@ -68,7 +68,12 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
 > `07-MILESTONE-3.md`.
 
 - Export: JSON (single artifact / selection / whole campaign) + zip bundle;
-  PDF export via pdfmake (GM notes + player handout templates).
+  PDF export via pdfmake (GM notes + player handout templates). **Amended
+  2026-09-22 (docs/17 row 322):** the workspace's multi-select ("Export JSON /
+  Export ZIP" beside "Remove selected" and "Import…") exports a SELECTION-ONLY
+  bundle — the source campaign's modules/battles/runs do not travel — and
+  "Import…" lands the file INTO the campaign you are in, at campaign level.
+  See docs/05 §Left pane — Campaign tree and docs/07 §M3-E.
 - Remaining personas wired (worldbuilder, faction-designer, plot-architect)
   + persona chaining ("writers' room" pipeline view).
 - Continuity Editor persona (checks drafts against existing artifacts).

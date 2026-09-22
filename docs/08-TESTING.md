@@ -126,8 +126,8 @@ Rules:
 - **A disabled-until-live-query confirm action is waited for, never clicked
   blind.** The other half of the same class, and the one that fails with a
   *missing call* rather than noise: the action is `disabled` until its live
-  census/count resolves (`remove-kind-dialog`'s `disabled={removing ||
-  census === null || census === undefined || census.artifacts === 0}`).
+  census/count resolves (`remove-artifacts-dialog`'s `disabled={removing ||
+  counts === undefined || counts.artifacts === 0}`).
   `findByTestId(dialog)` / `findByRole('alertdialog')` resolve on the dialog's
   FIRST PAINT — routinely before that query lands — and a `user.click` on a
   disabled button is a silent no-op, so the seam under test is never called and

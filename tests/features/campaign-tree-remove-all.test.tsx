@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ArtifactRepo from '@/db/artifactRepo';
@@ -23,11 +23,10 @@ import {
   type GlobalArtifact,
   type Id,
 } from '@/domain';
-import { ROUTES, workspacePath } from '@/app/routes';
 import { CampaignTree } from '@/features/campaign/components/campaign-tree';
-import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { clearDatabase } from '../db/helpers';
 import { actDrained } from '../helpers/flush';
+import { renderWorkspace } from '../helpers/workspace';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
@@ -106,17 +105,6 @@ function renderTree(
         selectedArtifactId={undefined}
         onSelectArtifact={vi.fn()}
       />
-    </MemoryRouter>,
-  );
-}
-
-function renderWorkspace(campaignId: Id): void {
-  render(
-    <MemoryRouter initialEntries={[workspacePath(campaignId)]}>
-      <Routes>
-        <Route path={ROUTES.workspace} element={<WorkspacePage />} />
-        <Route path={ROUTES.artifact} element={<WorkspacePage />} />
-      </Routes>
     </MemoryRouter>,
   );
 }
@@ -329,7 +317,7 @@ describe('CampaignTree — remove-all confirm', () => {
     const confirm = await screen.findByTestId('remove-all-npc-confirm');
     const action = within(confirm).getByTestId('remove-all-npc-confirm-action');
     // The confirm action is DISABLED until the dialog's LIVE census resolves
-    // (remove-kind-dialog.tsx:128 — deliberate design: the numbers the user
+    // (remove-artifacts-dialog.tsx — deliberate design: the numbers the user
     // reads must be the campaign's current ones, so the gate must not be
     // weakened). `findByTestId` resolves on the dialog's first paint, which is
     // routinely BEFORE the census lands (measured: 10 of 20 consecutive
