@@ -13,20 +13,15 @@ import type { NamedText, StatBlock } from '@/domain/statblock';
  * deterministically from the artifact's own data — no chat call anywhere in
  * the image-prompt path.
  *
- * Owner-directed amendment (image text-render guard default-on): the
- * `IMAGE_TEXT_NEGATIVE` Avoid list rides EVERY draft unless the caller
- * passes its own `negative` (the explicit-override seam) — covers, entity
- * images, portraits, and the appearance shortcut alike. The vision dungeon
- * path is the one documented carve-out (it needs its room plaques, so it
- * never routes through this contract).
- *
- * Owner-directed amendment (docs/17 row 224, the text-budget REVERSAL): the
- * guard above stopped forbidding text WHOLESALE. The bare text terms are
- * gone, and a POSITIVE clause — `IMAGE_TEXT_SPARING_CLAUSE`, the owner's own
- * wording — rides the composed prompt of both branches instead, so a request
- * for a treasure map, a confession letter or a map with a legend is never
- * overridden by the Avoid list. See the constants below for the incident,
- * the reversal and why the vision path keeps its own clause.
+ * Owner-directed amendment (docs/17 row 319): the text rule is POSITIVE. The
+ * shared text `Avoid:` list is DELETED — both exported names are gone from
+ * `src/`, and docs/17 row 319 records the exact string that was dropped — the
+ * default `negative` is `''` so a default draft carries NO `Avoid:` line at
+ * all, and ONE positive clause — `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`, the owner's
+ * own wording — rides the composed prompt of both branches instead: text the
+ * subject itself needs is welcome and nothing is forbidden. The vision dungeon
+ * path keeps its own plaque clause (documented carve-out, on the constant
+ * below).
  */
 
 /**
@@ -78,67 +73,42 @@ export interface BuildImagePromptOptions {
   /** Trailing steering line (the run engine's retry/continue instruction). */
   extraInstruction?: string | undefined;
   /** Text folded into the draft's `negative` field (surfaced by
-   * `assembleImagePrompt` as `Avoid: …`). DEFAULTS to the shared
-   * `IMAGE_TEXT_NEGATIVE` guard — every caller is guarded unless it passes
-   * its own list. This option is the explicit-override seam: a caller with a
-   * tailored need (the vision dungeon path's room plaques) passes its own
-   * `negative` instead (an explicit `''` opts out — documented carve-outs
-   * only, never by accident). */
+   * `assembleImagePrompt` as `Avoid: …`). There is NO shared avoid list: the
+   * default is `''`, so a caller that supplies nothing emits no `Avoid:` line
+   * at all. This option is the explicit-override seam — a caller with a
+   * tailored need (the battlemap brief's own negative) passes its own list,
+   * and an explicit `''` opts out. */
   negative?: string | undefined;
 }
 
 /**
- * Text-render guard for EVERY image prompt (docs/11 D5, generalized):
- * smart image models otherwise render the grounding prose as captions
- * inside the art (OWNER INCIDENT: the model "tends to render lots of text,
- * explaining the whole plot in the image"). Flows into the final prompt as
- * `Avoid: …` via `assembleImagePrompt`.
+ * The positive text rule (docs/17 row 319) — the OWNER's intent, verbatim:
+ * *"I do not want a text avoid list. I do not want anything that the model
+ * needs to strictly avoid. I want the model to be told to only use text where
+ * it is needed and then it is ok. Any avoid list will capture things that will
+ * be important at some time, i just realized that."*
  *
- * REVERSAL — the incident stands; the first cure was TOO BROAD (docs/17 row
- * 224). Owner report, verbatim: *"Apparently that now led to a negative
- * prompt so that models don't produce ANY text at all anymore. That was not
- * my goal. I instructed a model to make a legend and it did not do it. I
- * would like to discourage the model to use too much text but not forbid it
- * to do any. Something like 'Unless requested otherwise, use text
- * sparingly'. It should still be able to draw a treasure map or a confession
- * letter or a map with a legend."* The reading this comment used to carry —
- * *"'Use text sparingly' hedges are explicitly NOT the fix — this Avoid list
- * is the proven mechanism."* — was WRONG and is REVERSED: the hedge IS the
- * fix (`IMAGE_TEXT_SPARING_CLAUSE`), and the list's BARE text terms were the
- * defect, because an image model reads `Avoid: text, letters, numbers,
- * words` as "render no text at all" — which is exactly what stopped the
- * legend. Those five bare terms are DROPPED; what remains is only the proven
- * failure modes. The clause is the request-coexistence mechanism: it sets
- * the default budget, and "unless requested otherwise" keeps a treasure map,
- * a confession letter or a map with a legend drawable.
- */
-export const IMAGE_TEXT_NEGATIVE =
-  'long paragraphs of text, captions, explanatory text, plot summary, stat block, character sheet, diagram, speech bubbles, watermark, signature, illegible or garbled or misspelled lettering';
-
-/**
- * The positive text-budget clause (docs/17 row 224) — the OWNER's wording,
- * verbatim: *"Something like 'Unless requested otherwise, use text
- * sparingly'."* It rides the COMPOSED PROMPT, never the Avoid list, because
- * the two are read differently: the list names failure modes, while this
- * clause sets the DEFAULT budget and leaves "unless requested otherwise" as
- * the escape hatch for text the request actually asks for.
+ * WHY THERE IS NO AVOID LIST. The original incident stands — a smart image
+ * model "tends to render lots of text, explaining the whole plot in the
+ * image" — but every attempt to name what to forbid captured something a
+ * future request needed (docs/17 rows 62, 224, 319). The owner's decision is
+ * therefore that NOTHING is forbidden: this ONE clause states where text
+ * BELONGS and asks for it to be short, correctly spelled and readable. It
+ * rides the COMPOSED PROMPT of both `buildImagePrompt` branches (BEFORE any
+ * `extraInstruction`, so a request that asks for text follows this
+ * permission) and of both classic-stylize battlemap modes (`runEngine`) —
+ * never an `Avoid:` line, which is now only what an EXPLICIT caller
+ * `negative` supplies.
  *
- * Wired into both `buildImagePrompt` branches (the `appearance` shortcut and
- * the name/summary/description grounding) and into the classic-stylize
- * battlemap prompt (`runEngine`). NOT wired into the vision dungeon path:
- * `buildLabeledMapPrompt`'s "no written text anywhere except the N letter
- * plaques" clause is LOAD-BEARING for its locate pass (the vision camera
- * reads exactly those plaques), so the owner's "map with a legend" need is
- * served by the generic illustration paths instead — docs/17 row 224.
+ * NOT wired into the vision dungeon path:
+ * `visionDungeon.buildLabeledMapPrompt`'s "no written text anywhere except the
+ * N letter plaques" clause is a CALLER-OWNED rule, LOAD-BEARING for its
+ * locate pass (the vision camera reads exactly those plaques), so the owner's
+ * "map with a legend" need is served by the generic illustration paths
+ * instead — docs/17 rows 224/319.
  */
-export const IMAGE_TEXT_SPARING_CLAUSE = 'Unless requested otherwise, use text sparingly.';
-
-/**
- * The mob-portrait name for the shared guard (docs/11 D5): the portrait
- * queues import this symbol, so it stays as an alias — the general list
- * covers the proven portrait list, and the two names denote the same string.
- */
-export const MOB_PORTRAIT_TEXT_NEGATIVE = IMAGE_TEXT_NEGATIVE;
+export const IMAGE_TEXT_WHEN_NEEDED_CLAUSE =
+  "Text is welcome where the subject itself needs it — writing on a letter, a sign, a book or a map's own labels — and wherever the request asks for it; use it only where it is needed, and keep it short, correctly spelled and clearly readable.";
 
 /**
  * The chunk input the mob portrait grounding reads: raw text plus the
@@ -226,9 +196,9 @@ export function portraitGroundingForStatBlock(statBlock: StatBlock): string {
 
 /**
  * Builds the image prompt for one artifact — a pure function, same input →
- * same prompt. Both branches carry the owner's `IMAGE_TEXT_SPARING_CLAUSE`
- * (docs/17 row 224) between the grounding and any `extraInstruction`, so a
- * request that asks for text is the "unless requested otherwise" exception.
+ * same prompt. Both branches carry the owner's `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`
+ * (docs/17 row 319) between the grounding and any `extraInstruction`, so a
+ * request that asks for text follows the permission that precedes it.
  * When the artifact data carries a non-empty `appearance`, the
  * shortcut prompt `"${systemLabel}=>${appearance}"` is used verbatim (the
  * clause and the extra instruction, when set, ride on following lines).
@@ -236,7 +206,9 @@ export function portraitGroundingForStatBlock(statBlock: StatBlock): string {
  * grounds on the artifact's own text — name + kind, summary, and the
  * markdown-stripped body — styled with the game system. With nothing to
  * ground on (no appearance, summary, AND body) it throws: a blank image of
- * nothing is a placeholder, never a fallback (AGENTS rule 1).
+ * nothing is a placeholder, never a fallback (AGENTS rule 1). The default
+ * `negative` is `''` — no shared avoid list exists, so the default prompt
+ * carries no `Avoid:` line.
  */
 export function buildImagePrompt(
   target: ImagePromptTarget,
@@ -250,17 +222,17 @@ export function buildImagePrompt(
   if (appearance !== '') {
     const prompt = [
       `${opts.systemLabel}=>${appearance}`,
-      // The owner's text budget rides BEFORE any trailing instruction, so a
-      // request that asks for text ("…a map with a legend") follows the
-      // "unless requested otherwise" it is the exception to.
-      IMAGE_TEXT_SPARING_CLAUSE,
+      // The owner's positive text rule rides BEFORE any trailing instruction,
+      // so a request that asks for text ("…a map with a legend") follows the
+      // permission it is an instance of.
+      IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
       opts.extraInstruction === undefined || opts.extraInstruction === ''
         ? null
         : opts.extraInstruction,
     ]
       .filter((part) => part !== null)
       .join('\n');
-    return { prompt, negative: opts.negative ?? IMAGE_TEXT_NEGATIVE, styleNotes: '' };
+    return { prompt, negative: opts.negative ?? '', styleNotes: '' };
   }
 
   const summary = target.summary.trim();
@@ -272,8 +244,9 @@ export function buildImagePrompt(
   // 105): this is a MODEL PROMPT, not a rendering — nothing here is read by
   // the owner, and the token is the only place the target's real NAME survives
   // (`[[Encounter:Ash Gate|the gate]]` → the display would drop "Ash Gate"
-  // from the grounding). The image text-render guard is the default negative,
-  // so the syntax cannot print into the picture either. Pinned as-is by
+  // from the grounding). Nothing here is an `Avoid:` line any more (docs/17
+  // row 319 deleted the shared list), so the syntax is pinned as prompt TEXT,
+  // not as a rendering. Pinned as-is by
   // tests/llm/imagePromptDraft.test.ts ("KEEPS a wiki token verbatim").
   const description = markdownToText(target.body);
   if (summary === '' && description === '') {
@@ -285,15 +258,15 @@ export function buildImagePrompt(
     `A ${opts.systemLabel} illustration of ${target.name} (${target.kind}).`,
     summary === '' ? null : `Summary: ${summary}`,
     description === '' ? null : `Description: ${description.slice(0, IMAGE_PROMPT_GROUNDING_MAX_CHARS)}`,
-    // The owner's text budget rides BEFORE any trailing instruction, so a
-    // request that asks for text ("…a map with a legend") follows the
-    // "unless requested otherwise" it is the exception to.
-    IMAGE_TEXT_SPARING_CLAUSE,
+    // The owner's positive text rule rides BEFORE any trailing instruction,
+    // so a request that asks for text ("…a map with a legend") follows the
+    // permission it is an instance of.
+    IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
     opts.extraInstruction === undefined || opts.extraInstruction === ''
       ? null
       : opts.extraInstruction,
   ]
     .filter((part) => part !== null)
     .join('\n');
-  return { prompt, negative: opts.negative ?? IMAGE_TEXT_NEGATIVE, styleNotes: '' };
+  return { prompt, negative: opts.negative ?? '', styleNotes: '' };
 }

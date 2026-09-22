@@ -14,7 +14,6 @@ import { getSettings } from '@/db/settingsRepo';
 import { generateOneImage } from '@/llm/oneImage';
 import {
   buildImagePrompt,
-  MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
   type PortraitGroundingChunk,
 } from '@/llm/imagePromptDraft';
@@ -238,6 +237,6 @@ async function draftCanonicalPrompt(
       body: portraitGroundingForChunk(chunk),
       data: null,
     },
-    { systemLabel, negative: MOB_PORTRAIT_TEXT_NEGATIVE },
+    { systemLabel },
   );
 }

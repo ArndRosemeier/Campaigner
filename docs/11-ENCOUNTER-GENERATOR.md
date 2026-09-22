@@ -756,31 +756,31 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   is borderline and deliberately excluded): smart image models RENDER chunk
   stat text into portraits. When `statBlock` is null (unparsed chunks) the
   helper falls back to raw `chunk.text` verbatim — the loud residual render
-  risk, documented on the helper, never silent. Belt and braces: the
-  text-render guard is default-on EVERYWHERE (`IMAGE_TEXT_NEGATIVE` →
-  `Avoid: long paragraphs of text, captions, explanatory text, plot summary,
-  stat block, character sheet, diagram, speech bubbles, watermark, signature,
-  illegible or garbled or misspelled lettering`), wired as the default
-  `negative` of the shared Illustrator contract — covers, entity images,
-  portraits, the run-engine prompt draft, the classic battlemap stylize
-  (empty brief negative falls back to it), and the `appearance` shortcut
-  (which keeps winning AND carries the guard) are all guarded; a caller
-  passes its own list only as an explicit override. The mob-portrait
-  `MOB_PORTRAIT_TEXT_NEGATIVE` name stays as an alias (identical by identity
-  — the general list covers the proven portrait list). **The guard no longer
-  forbids text wholesale (owner reversal, docs/17 row 224):** the bare terms
-  `text`, `letters`, `numbers`, `words`, `label` are DROPPED from the list,
-  and the owner's positive clause `IMAGE_TEXT_SPARING_CLAUSE` — "Unless
-  requested otherwise, use text sparingly." — rides the COMPOSED prompt of
-  both `buildImagePrompt` branches and the classic battlemap template, so a
-  requested treasure map, confession letter or map with a legend can still
-  be drawn while the caption/plot-summary/stat-block failure modes stay
-  guarded. The ONE carve-out is the vision dungeon path
-  below: it NEEDS its carved room plaques, so it never routes through the
-  Illustrator contract — its tailored "no written text anywhere except the
-  N letter plaques" clause is its guard instead (a blanket no-letters Avoid
-  would fight the locate contract), and the sparing clause is deliberately
-  NOT added there because that clause is load-bearing for the locate pass.
+  risk, documented on the helper, never silent. **The text rule is POSITIVE
+  (owner directive, docs/17 row 319):** there is NO shared text avoid list —
+  `IMAGE_TEXT_NEGATIVE` and its `MOB_PORTRAIT_TEXT_NEGATIVE` alias are
+  DELETED, and `buildImagePrompt`'s default `negative` is `''`, so a default
+  prompt carries NO `Avoid:` line at all. What rides instead is ONE positive
+  clause, `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`: "Text is welcome where the subject
+  itself needs it — writing on a letter, a sign, a book or a map's own labels
+  — and wherever the request asks for it; use it only where it is needed, and
+  keep it short, correctly spelled and clearly readable." It rides the
+  COMPOSED prompt of both `buildImagePrompt` branches and of both classic
+  battlemap stylize modes, so a letter, a sign, a treasure map or a map with a
+  legend is drawn rather than refused. The owner's reason, verbatim: *"Any
+  avoid list will capture things that will be important at some time, i just
+  realized that."* The `negative` option survives as the explicit-override
+  seam (a caller passing its own list still gets an `Avoid:` line; an explicit
+  `''` emits none). **DECLARED BOUNDARY — two CALLER-OWNED rules that are NOT
+  the shared text budget and are both untouched:** (1) the classic battlemap's
+  `usabilityBans` string ("No title banner, no compass rose, no map legend, no
+  scale bar, no grid lines, no text labels, … no white or pale boxes …") — the
+  owner-ratified VTT-usability rule about map FURNITURE and hallucinated
+  geometry (D17 below); and (2) the vision dungeon path's "no written text
+  anywhere except the N letter plaques" clause, which is LOAD-BEARING for the
+  vision locate pass — a "text where needed" permission would fight the
+  plaques the vision camera reads, so the shared clause is deliberately NOT
+  added there (a blanket no-letters Avoid would fight them too).
   **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
   deterministic — no LLM call ("I dont want that extra LLM call. Just use
   the appearance/body."). Failures report loud per mob (`{name, message}`

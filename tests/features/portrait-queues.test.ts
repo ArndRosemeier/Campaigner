@@ -2340,15 +2340,13 @@ describe('entity-image-queue.test.ts', () => {
         expect(seoni?.imageIds).toHaveLength(1);
       });
 
-      // The appearance shortcut wins AND carries the default-on text-render
-      // guard (the negative reaches the final prompt on both builder
-      // branches).
+      // The appearance shortcut wins AND carries the positive text rule; no
+      // avoid list exists any more (docs/17 row 319).
       const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
       expect(finalPrompt).toContain(
         'Pathfinder 2e=>Varisian sorceress with blue robes and tattoos',
       );
-      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
-      expect(finalPrompt).toContain('speech bubbles');
+      expect(finalPrompt).not.toContain('Avoid:');
       expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
       expect(chatMock).not.toHaveBeenCalled();
     });
@@ -3136,20 +3134,20 @@ describe('mob-portrait-queue.test.ts', () => {
       expect(chatMock).not.toHaveBeenCalled();
       // Stat-exempt grounding: the deterministic prompt carries size/type
       // identity — never the raw stat-block text (models render stat digits
-      // into portraits) — plus the text-render negative.
+      // into portraits) — and NO avoid list any more (docs/17 row 319).
       const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
       expect(finalPrompt).not.toContain(GOBLIN_TEXT);
       expect(finalPrompt).not.toContain('HP 21');
       expect(finalPrompt).not.toContain('AC 17');
       expect(finalPrompt).toContain('Large');
       expect(finalPrompt).toContain('giant');
-      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+      expect(finalPrompt).not.toContain('Avoid:');
       // Provenance lands on the image row; the queue and dock drain.
       const coverId = await creatureCoverIdOf(campaignId, creatureKey);
       const stored = await getImage(coverId ?? '');
       expect(stored?.source).toBe('generated');
       expect(stored?.prompt).not.toContain(GOBLIN_TEXT);
-      expect(stored?.prompt).toContain('Avoid: long paragraphs of text');
+      expect(stored?.prompt).not.toContain('Avoid:');
       expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
       expect(useMobPortraitQueue.getState().active).toEqual([]);
       expect(
@@ -3183,7 +3181,7 @@ describe('mob-portrait-queue.test.ts', () => {
       expect(finalPrompt).not.toContain('59');
       expect(finalPrompt).not.toContain('7d10');
       expect(finalPrompt).not.toContain('darkvision 60 ft.');
-      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+      expect(finalPrompt).not.toContain('Avoid:');
     });
 
     it('skips imaged creatures (no re-generation) and drains — with no artifact in sight (D6)', async () => {
@@ -3492,14 +3490,15 @@ describe('mob-portrait-queue.test.ts', () => {
         expect(await creaturePortraitArt(campaignId, creatureKey)).toBe('cover');
       });
       expect(generateImagesMock).toHaveBeenCalledTimes(1);
-      // The grounding came off the COPY's parsed block (size/type identity plus
-      // the text-render negative) — never the deleted chunk's raw text.
+      // The grounding came off the COPY's parsed block (size/type identity,
+      // no shared avoid list — docs/17 row 319) — never the deleted chunk's
+      // raw text.
       const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
       expect(finalPrompt).toContain('Large');
       expect(finalPrompt).toContain('giant');
       expect(finalPrompt).not.toContain(GOBLIN_TEXT);
       expect(finalPrompt).not.toContain('59');
-      expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+      expect(finalPrompt).not.toContain('Avoid:');
       // LOCAL-ONLY: a copy cannot know whether its citation was canonical
       // without the pack, so it never touches the global slot (docs/18 §5).
       expect(await getMobPortraitCacheEntry(creatureKey)).toBeUndefined();

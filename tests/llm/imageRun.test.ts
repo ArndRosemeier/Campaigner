@@ -9,7 +9,7 @@ import { createImage, getImage, listImagesByIds } from '@/db/imageRepo';
 import { getRun } from '@/db/runRepo';
 import { saveSettings, updateSettings } from '@/db/settingsRepo';
 import { createPersona, defaultSettings, type Id, type Persona } from '@/domain';
-import { IMAGE_TEXT_NEGATIVE, IMAGE_TEXT_SPARING_CLAUSE } from '@/llm/imagePromptDraft';
+import { IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 import { generatedImagesFor } from '../helpers/imageRunFixtures';
@@ -233,9 +233,9 @@ describe('illustrator run (image persona)', () => {
           'A Generic d20 illustration of The Lighthouse (location).',
           'Summary: A storm-lashed beacon on a black cliff.',
           'Description: Windswept rocks, gulls, one tower of black stone.',
-          IMAGE_TEXT_SPARING_CLAUSE,
+          IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
         ].join('\n'),
-        negative: IMAGE_TEXT_NEGATIVE,
+        negative: '',
         styleNotes: '',
       },
     });
@@ -639,19 +639,21 @@ describe('image persona validation', () => {
     expect(chatMock).not.toHaveBeenCalled();
 
     // Image generator received the system prefix + appearance AND the
-    // default-on text-render guard assembled onto the final prompt.
+    // default-on positive text rule assembled onto the final prompt — no
+    // `Avoid:` line exists by default (docs/17 row 319).
     const appearanceCall = generateImagesMock.mock.calls[0]?.[0] ?? '';
     expect(appearanceCall).toContain(
       'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
     );
-    expect(appearanceCall).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
+    expect(appearanceCall).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(appearanceCall).not.toContain('Avoid:');
     expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
 
     const pickRun = await getRun(runId);
     expect(pickRun?.steps[0]?.output).toEqual({
       parsed: {
-        prompt: `Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier\n${IMAGE_TEXT_SPARING_CLAUSE}`,
-        negative: IMAGE_TEXT_NEGATIVE,
+        prompt: `Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}`,
+        negative: '',
         styleNotes: '',
       },
     });
@@ -706,8 +708,8 @@ describe('image persona validation', () => {
     const pausedRun = await getRun(runId);
     expect(pausedRun?.steps[0]?.output).toEqual({
       parsed: {
-        prompt: `D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_SPARING_CLAUSE}`,
-        negative: IMAGE_TEXT_NEGATIVE,
+        prompt: `D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}`,
+        negative: '',
         styleNotes: '',
       },
     });
@@ -772,18 +774,15 @@ describe('image persona validation', () => {
         'A Pathfinder 2e illustration of Duskhollow Keep (location).',
         'Summary: A ruined border keep.',
         'Description: Courtyard\nCollapsed walls, bramble-choked wells.',
-        IMAGE_TEXT_SPARING_CLAUSE,
+        IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
       ].join('\n'),
-      negative: IMAGE_TEXT_NEGATIVE,
+      negative: '',
       styleNotes: '',
     };
     expect(run?.steps[0]?.output).toEqual({ parsed: draft });
     // The image API received the assembled deterministic prompt — grounding
-    // plus the default-on text-render guard — asking for ONE candidate.
-    expect(generateImagesMock).toHaveBeenCalledWith(
-      `${draft.prompt}\nAvoid: ${IMAGE_TEXT_NEGATIVE}`,
-      1,
-      expect.anything(),
-    );
+    // plus the positive text rule, and NO `Avoid:` line (docs/17 row 319) —
+    // asking for ONE candidate.
+    expect(generateImagesMock).toHaveBeenCalledWith(draft.prompt, 1, expect.anything());
   });
 });

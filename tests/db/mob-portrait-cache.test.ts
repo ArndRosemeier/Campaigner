@@ -303,8 +303,8 @@ describe('canonical-only invariant', () => {
 
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     // Stat-exempt canonical grounding: size/type identity, never the raw
-    // stat-block text (models render stat digits into portraits), plus the
-    // text-render negative.
+    // stat-block text (models render stat digits into portraits), and NO
+    // avoid list any more (docs/17 row 319).
     const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
     expect(finalPrompt).not.toContain(GIANT_RAT_TEXT);
     expect(finalPrompt).not.toContain('HP 59');
@@ -312,7 +312,7 @@ describe('canonical-only invariant', () => {
     expect(finalPrompt).not.toContain('darkvision 60 ft.');
     expect(finalPrompt).toContain('Large');
     expect(finalPrompt).toContain('beast');
-    expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+    expect(finalPrompt).not.toContain('Avoid:');
     expect(chatMock).not.toHaveBeenCalled();
     const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry).toBeDefined();
@@ -379,8 +379,9 @@ describe('canonical-only invariant', () => {
       expect(finalPrompt, `leaked stat marker: ${marker}`).not.toContain(marker);
     }
     expect(finalPrompt).not.toContain(GIANT_RAT_TEXT);
-    // Belt and braces: the text-render negative rides the canonical draft.
-    expect(finalPrompt).toContain('Avoid: long paragraphs of text');
+    // The positive text rule rides the canonical draft, and no `Avoid:` line
+    // is emitted (docs/17 row 319 deleted the shared list).
+    expect(finalPrompt).not.toContain('Avoid:');
   });
 
   it('a case-insensitive canonical match reuses without generating', async () => {

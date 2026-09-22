@@ -15,7 +15,6 @@ import { getSettings, maxParallelWorkers } from '@/db/settingsRepo';
 import { generateOneImage, type GeneratedOneImage } from '@/llm/oneImage';
 import {
   buildImagePrompt,
-  MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
   portraitGroundingForStatBlock,
 } from '@/llm/imagePromptDraft';
@@ -302,25 +301,21 @@ async function processJob(
   // An invented mob (no artifact, no chunk) is described by nothing but the
   // roster row's own notes — passed on the job, never read back off a row that
   // does not exist (docs/11 D5: an uncited creature is never materialized).
-  // Chunk-grounded jobs (a library citation, or a COPY's own block) carry the
-  // text-render negative explicitly; an invented mob and the creation-dialog
-  // extra ground on their own text and ride the shared default-on guard
-  // (docs/11 D5, generalized).
-  let chunkGrounded = false;
+  // There is no shared text avoid list any more (docs/17 row 319): every
+  // portrait, chunk-grounded or local, rides the same positive
+  // `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` and no caller supplies a `negative`.
   let summary = '';
   let body: string;
   if (job.statBlock !== undefined) {
     // A CONVERTED copy grounds on its OWN block (docs/17 row 269): the row owns
     // the library's bytes, so no library chunk is read and the pack may be
     // uninstalled entirely. The token on the job remains an IDENTITY, never a
-    // resolver. Stat-exempt prose only, exactly as a cited chunk would be, so
-    // the text-render negative rides along (chunkGrounded). The chunkId arm
-    // below is the UNCONVERTED pointer's, and it stays loud when its chunk is
-    // gone; a copy's portrait is LOCAL — it never reads or publishes the global
-    // canonical slot (a copy cannot know whether its citation was canonical
-    // without the pack; see `MobPortraitJob.statBlock`).
+    // resolver. Stat-exempt prose only, exactly as a cited chunk would be. The
+    // chunkId arm below is the UNCONVERTED pointer's, and it stays loud when
+    // its chunk is gone; a copy's portrait is LOCAL — it never reads or
+    // publishes the global canonical slot (a copy cannot know whether its
+    // citation was canonical without the pack; see `MobPortraitJob.statBlock`).
     body = portraitGroundingForStatBlock(job.statBlock);
-    chunkGrounded = true;
   } else if (job.chunkId !== undefined) {
     const chunk = (await getChunksByIds([job.chunkId]))[0];
     if (chunk === undefined) {
@@ -347,10 +342,9 @@ async function processJob(
     }
     // Grounding: the cited chunk's STAT-EXEMPT portrait grounding
     // (portraitGroundingForChunk — size/type identity + traits/actions prose,
-    // never raw stat numbers). The text-render negative rides along (belt and
-    // braces: models must not letter stat text into the portrait).
+    // never raw stat numbers), so models cannot letter stat text into the
+    // portrait.
     body = portraitGroundingForChunk(chunk);
-    chunkGrounded = true;
   } else if (artifact !== undefined) {
     // An authored NPC or an invented mob row: the row's own content grounds the
     // prompt (the appearance shortcut still wins inside the shared contract).
@@ -364,7 +358,7 @@ async function processJob(
     // the creature is described first, never illustrated from its name.
     body = job.grounding ?? '';
   }
-  const prompt = await draftPrompt(job, artifact, summary, body, chunkGrounded);
+  const prompt = await draftPrompt(job, artifact, summary, body);
   // n=1 (owner-ratified): ONE portrait per creature kind. The seam owns the
   // prompt contract assembly, the n=1 call (and why its candidate-count caps
   // cannot fire), the empty-result refusal and the EXIF-safe intake.
@@ -412,15 +406,15 @@ async function commitCachedPortrait(options: {
 /** Prompt-draft for one creature — the shared Illustrator prompt contract
  * (buildImagePrompt: appearance shortcut, body/summary/name grounding) with the
  * queue's wiring: no run row, the campaign's rule system for the style hint,
- * and the grounding text as the description. Chunk-grounded jobs pass the
- * text-render negative explicitly; a local job rides the contract default.
+ * and the grounding text as the description. No caller-owned `negative`: the
+ * shared text avoid list is deleted (docs/17 row 319), so every portrait rides
+ * the positive `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`.
  * Deterministic: no chat call, no repair retry. */
 async function draftPrompt(
   job: MobPortraitJob,
   artifact: AnyArtifact | undefined,
   summary: string,
   body: string,
-  chunkGrounded: boolean,
 ): Promise<ImagePromptDraft> {
   let systemLabel = 'D&D 5e';
   const campaign = await getCampaign(job.campaignId);
@@ -435,7 +429,7 @@ async function draftPrompt(
       body,
       data: artifact?.data ?? null,
     },
-    { systemLabel, negative: chunkGrounded ? MOB_PORTRAIT_TEXT_NEGATIVE : undefined },
+    { systemLabel },
   );
 }
 

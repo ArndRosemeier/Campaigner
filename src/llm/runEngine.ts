@@ -179,8 +179,7 @@ import { failureKindOf } from '@/llm/failureKind';
 import {
   assembleImagePrompt,
   buildImagePrompt,
-  IMAGE_TEXT_NEGATIVE,
-  IMAGE_TEXT_SPARING_CLAUSE,
+  IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
 } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
@@ -6062,16 +6061,15 @@ export class RunEngine {
     const concept = parsed.terrain === ''
       ? `${parsed.theme} dungeon`
       : `${parsed.theme} dungeon — ${parsed.terrain}`;
-    // TEXT-RENDER CARVE-OUT (docs/11 D5, generalized): this path NEVER takes
-    // the shared `IMAGE_TEXT_NEGATIVE` list — a no-letters clause would fight
-    // the room plaques the map NEEDS. Its tailored negative is the builder's
-    // own "no written text anywhere except the N letter plaques" clause (see
-    // `buildLabeledMapPrompt`) — documented here so the carve-out is explicit,
-    // never an accidentally unguarded caller. The owner's positive
-    // `IMAGE_TEXT_SPARING_CLAUSE` (docs/17 row 224) is deliberately NOT added
-    // here either: that plaque clause is LOAD-BEARING for the vision locate
-    // pass, so a "map with a legend" is served by the generic illustration
-    // paths instead of this one.
+    // TEXT-RENDER CARVE-OUT (docs/11 D5, docs/17 rows 224/319): there is no
+    // shared image avoid list any more, so this path's reason to diverge is
+    // simply its OWN rule — the builder's tailored "no written text anywhere
+    // except the N letter plaques" clause (see `buildLabeledMapPrompt`),
+    // which is LOAD-BEARING for the vision locate pass. The owner's positive
+    // `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` is deliberately NOT added here either: a
+    // "text where needed" permission would fight that plaque contract, so a
+    // "map with a legend" is served by the generic illustration paths
+    // instead of this one.
     const prompt = buildLabeledMapPrompt(
       sidecarRooms,
       concept,
@@ -6262,16 +6260,14 @@ export class RunEngine {
 
     // The usability hard-bans are the shared contract tail (docs/11): they
     // pin byte-identical in BOTH modes — the anti-hallucination negatives
-    // (owner-observed white-rectangle failure) never soften. The brief's own
-    // `negative` rides as the `Avoid:` line when the Cartographer wrote one;
-    // an empty brief negative falls back to the shared default-on text-render
-    // guard (docs/11 D5, generalized) — an unguarded stylize is never
-    // accidental, only an explicit custom list. The owner's positive text
-    // budget (docs/17 row 224) rides the COMPOSED prompt in both modes; this
-    // battlemap's own "no map legend / no text labels" hard-ban is the
-    // separate, owner-ratified VTT-usability rule (docs/11 D17) and is NOT
-    // the shared Avoid list, so it keeps governing here.
-    const avoid = parsed.negative === '' ? IMAGE_TEXT_NEGATIVE : parsed.negative;
+    // (owner-observed white-rectangle failure) never soften, and they are a
+    // CALLER-OWNED rule for map furniture and hallucinated geometry, NOT the
+    // shared text budget (docs/17 row 319 deleted that list). The brief's own
+    // `negative` rides as the `Avoid:` line when the Cartographer wrote one,
+    // and is OMITTED entirely when it is empty — there is no fallback to any
+    // shared list. The owner's positive text rule (docs/17 row 319) rides the
+    // COMPOSED prompt in both modes.
+    const avoid = parsed.negative;
     const usabilityBans =
       'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.';
     const prompt = natural
@@ -6285,21 +6281,21 @@ export class RunEngine {
           parsed.terrain === '' ? null : `Site: ${parsed.terrain}.`,
           `Scene: ${parsed.summary}`,
           parsed.styleNotes,
-          IMAGE_TEXT_SPARING_CLAUSE,
+          IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
           'This site is open natural terrain: the reference image only marks placement — its soft darker patches show where the encounter\'s creatures gather and its single neon triangle marks the party\'s approach — so shape the ground itself from the scene description above.',
           entranceClause,
           usabilityBans,
-          `Avoid: ${avoid}`,
+          avoid === '' ? null : `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ')
       : [
           `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
           parsed.styleNotes,
-          IMAGE_TEXT_SPARING_CLAUSE,
+          IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
           'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
           entranceClause,
           'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
           usabilityBans,
-          `Avoid: ${avoid}`,
+          avoid === '' ? null : `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, RUN_IMAGE_CANDIDATES, {
       model: settings.imageModel,

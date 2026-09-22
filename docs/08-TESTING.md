@@ -8182,38 +8182,39 @@ the `appearance` shortcut stays uncapped, and the non-image length budgets (`run
 encounter-pool 600, `wikilinks.surroundingParagraphs` 1200) were deliberately NOT touched — they are different
 seams with their own markers.
 
-### The image text-render guard no longer forbids text wholesale (docs/17 row 224, docs/11 §D5)
+### The image text rule is POSITIVE and the shared avoid list is DELETED (docs/17 row 319, docs/11 §D5)
 
-The owner reported that the guard he had asked for had become a BAN — a model he
-instructed to make a legend refused to draw one. The bare Avoid terms `text`,
-`letters`, `numbers`, `words`, `label` are DROPPED (an image model reads them as
-"no text at all"), and the owner's positive clause `IMAGE_TEXT_SPARING_CLAUSE`
-("Unless requested otherwise, use text sparingly.") rides the COMPOSED prompt of
-both `buildImagePrompt` branches and of the classic-stylize battlemap template.
-`long paragraphs of text` and `illegible or garbled or misspelled lettering` were
-ADDED, so the original incident (the model captioning the whole plot) stays
-guarded. The vision dungeon path's plaque clause and the classic battlemap's
-owner-ratified usability hard-bans are deliberately NOT softened — both are
-load-bearing in their own paths (below).
+The original incident stands — an image model "tends to render lots of text,
+explaining the whole plot in the image" — but every avoid list captured
+something a later request needed (a letter, a sign, a map's own labels). Owner
+directive, verbatim: *"I do not want a text avoid list. I do not want anything
+that the model needs to strictly avoid. I want the model to be told to only use
+text where it is needed and then it is ok. Any avoid list will capture things
+that will be important at some time, i just realized that."* So
+`IMAGE_TEXT_NEGATIVE` and `MOB_PORTRAIT_TEXT_NEGATIVE` are DELETED, the default
+`negative` is `''`, and the default assembled prompt carries NO `Avoid:` line.
+ONE positive clause — `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` — rides the composed
+prompt of both `buildImagePrompt` branches and of both classic-stylize
+battlemap modes. The `negative` option stays the explicit-override seam. Two
+CALLER-OWNED rules are a declared boundary and stay untouched: the battlemap's
+`usabilityBans` string and `buildLabeledMapPrompt`'s room-plaque clause.
 
 | Pin | What it holds | What reds it |
 |---|---|---|
-| `rides the composed prompt in BOTH builder branches, verbatim` (`tests/llm/imageTextGuard.test.ts`; the clause also rides the classic-stylize capture in the same file) | the owner's clause is present, with its exact words, in the `appearance` shortcut AND the name/summary/description grounding, and is NOT in the Avoid list; the classic battlemap prompt carries it too | removing the clause from either branch, or from the classic template, or moving it into `IMAGE_TEXT_NEGATIVE` |
-| `forbids no text wholesale: no bare text/letters/numbers/words/label item` (same file) | a STRUCTURAL assertion over the Avoid list's comma-separated items — no bare `text`/`letters`/`numbers`/`words`/`label` item survives, with a non-vacuity floor on the item count. `toContain` over the whole string is NOT enough (`long paragraphs of text` contains the substring "text"), which is why the split is the assertion | restoring any bare item (the pin that would have stopped the reported defect) |
-| `still names the proven failure modes` (same file) | the list still names the original incident's shapes — `long paragraphs of text`, `captions`, `explanatory text`, `plot summary`, `stat block`, `character sheet`, `watermark`, `signature`, `illegible or garbled or misspelled lettering` | deleting the guard instead of narrowing it ("no guard at all") |
-| `lets a requested treasure map / legend / letter coexist with the guard` (same file) | for three requests (treasure map, labelled map with a legend, confession letter) and BOTH branches: the request is present, the clause VERBATIM (`Unless requested otherwise, use text sparingly.`) is present, and no forbidding Avoid item is | dropping the clause's "unless requested otherwise" half — the contradiction case |
-| `puts the text-budget clause before the trailing instruction` (`tests/llm/imagePromptDraft.test.ts`) | the clause sits BETWEEN the grounding and `extraInstruction`, so a request that asks for text follows the "unless requested otherwise" it is the exception to | moving the clause after the instruction |
-| `unifies the mob portrait name as an alias` + `keeps an explicit negative as the override (the option stays the seam)` (both `imageTextGuard.test.ts` and `imagePromptDraft.test.ts`) | `MOB_PORTRAIT_TEXT_NEGATIVE` is identical by identity to `IMAGE_TEXT_NEGATIVE`; a caller's own `negative` wins and an explicit `''` opts out | a second list for portraits; closing the override seam |
-| the vision carve-out (`imageTextGuard.test.ts`, `keeps the room plaques while the blanket list stays ABSENT`) | the vision map still carries `no written text anywhere except the 2 letter plaques` and neither the blanket list nor `Avoid:` | adding the shared list or the sparing clause to the vision path |
+| `rides the composed prompt in BOTH builder branches, verbatim` (`tests/llm/imageTextGuard.test.ts`) | the owner's clause is present, with its exact words, in the `appearance` shortcut AND the name/summary/description grounding, and never in `negative`; both classic-stylize captures carry it too | removing the clause from either branch or either battlemap mode |
+| `emits NO Avoid line by default in either branch` (same file) | `negative` is `''` and the COMPOSED string contains no `Avoid:` at all — asserted on the composed string, because an empty field could still assemble a bare `Avoid: ` | re-introducing any shared default negative |
+| `lets a requested treasure map / legend / letter coexist with the positive clause` (same file) | for three requests and BOTH branches: the request and the clause are present, `negative` is `''`, and no `Avoid:` line exists | a re-born avoid list |
+| `keeps an explicit negative as the override (the option stays the seam)` (same file + `imagePromptDraft.test.ts`) | a caller's own `negative` still reaches the assembled `Avoid:` line; an explicit `''` emits none | closing the override seam |
+| `the deleted shared avoid list cannot come back into src/` (same file) | a source scan reports ZERO `src/` hits for both deleted names, with a non-vacuity assertion on the live clause constant so an empty result means ABSENCE | restoring either deleted name anywhere under `src/` |
+| `puts the positive text clause before the trailing instruction` (`tests/llm/imagePromptDraft.test.ts`) | the clause sits BETWEEN the grounding and `extraInstruction` | moving the clause after the instruction |
+| the vision carve-out (`imageTextGuard.test.ts`, `keeps the room plaques while no shared clause reaches the vision path`) | the vision map still carries `no written text anywhere except the 2 letter plaques` and neither `Avoid:` nor the positive clause | adding the shared clause or any `Avoid:` line to the vision path |
 
-**Moved prompt pins, named rather than blanket-re-baselined:** the four
-`toEqual` prompt literals in `tests/llm/imageRun.test.ts`, the exact-prompt
-literals in `tests/llm/imagePromptDraft.test.ts`, and the six `Avoid:`-prefix
-substrings (`tests/db/mob-portrait-cache.test.ts` ×2,
-`tests/features/portrait-queues.test.ts` ×4) — all moved ONLY by the
-clause line or the list's new first item, and each re-derived from the composed
-prompt. The cap pins now take the FIRST line after `Description: ` (the clause
-rides its own line), so the 10,000-character assertion is unchanged in meaning.
+**Moved prompt pins, named rather than blanket-re-baselined:** the prompt
+literals in `tests/llm/imageRun.test.ts` and `tests/llm/imagePromptDraft.test.ts`
+lost the `Avoid:` line and gained the positive clause; the `Avoid:`-prefix
+substrings in `tests/db/mob-portrait-cache.test.ts` ×2 and
+`tests/features/portrait-queues.test.ts` ×4 became `not.toContain('Avoid:')`
+assertions. Each was re-derived from the composed prompt.
 
 **UNCHANGED and named:** the 10,000-character cap, the five-caller
 `buildImagePrompt` registry, the `negative` override seam, the vision plaque
@@ -8224,7 +8225,7 @@ PDF/layout dump moved (no PDF-rendering suite or baseline was touched).
 
 Row 224's verification found the gap: the classic-stylize template has TWO mode
 contracts (architectural vs natural, docs/11 D17) and the only capture drove the
-ARCHITECTURAL arm, so `IMAGE_TEXT_SPARING_CLAUSE` could be removed from the
+ARCHITECTURAL arm, so the positive text clause could be removed from the
 `natural ? [...]` arm alone and the focused guard/draft suite stayed green
 (34 passed; injected `runEngine.ts` hash
 `dde93a76a52195e210f8d1b18ac8086fff1759f5`). On a fresh run `natural` is derived
@@ -8235,9 +8236,9 @@ persisted `locationKind`), so the capture is now ONE named helper
 
 | Pin | What it holds | What reds it |
 |---|---|---|
-| `classic stylize (natural site) carries the sparing clause and its own prose contract, and never the architectural clauses` (`tests/llm/imageTextGuard.test.ts`) | the prompt the engine actually hands `encounterRunAdapters.generateImages` for a brief with `environment: 'outdoor'` carries `IMAGE_TEXT_SPARING_CLAUSE` VERBATIM; carries the natural `Theme:`/`Site:`/`Scene:` prose lead and the placement-only clause (the soft patches where creatures gather, the single approach triangle, the softened visible-approach-path entrance clause); and does NOT carry the architectural materials line, keep-walls clause or architectural entrance wording | removing the clause from the natural arm alone (arm hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`), pasting the architectural materials/keep-structure line into it, or breaking the `environment: 'outdoor'` derivation |
+| `classic stylize (natural site) carries the positive clause and its own prose contract, and never the architectural clauses` (`tests/llm/imageTextGuard.test.ts`) | the prompt the engine actually hands `encounterRunAdapters.generateImages` for a brief with `environment: 'outdoor'` carries `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` VERBATIM and emits no `Avoid:` line; carries the natural `Theme:`/`Site:`/`Scene:` prose lead and the placement-only clause (the soft patches where creatures gather, the single approach triangle, the softened visible-approach-path entrance clause); and does NOT carry the architectural materials line, keep-walls clause or architectural entrance wording | removing the clause from the natural arm alone (arm hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`), pasting the architectural materials/keep-structure line into it, or breaking the `environment: 'outdoor'` derivation |
 | same pin, hard-ban half | the usability hard-bans survive in the natural arm — `no map legend`, `no text labels`, the pale-box/plaque clause and the continuous-terrain sentence — the owner's 2026-09-17 decision ("Battlemaps do not need text, so that restriction can stay.") | removing or softening any hard-ban in the natural arm |
-| `classic stylize (architectural) falls back to the guard when the brief wrote no negative` (same file; the renamed original) | the architectural capture is unchanged and now also asserts the materials + keep-structure contract is present and the placement-only clause absent | removing the clause from the architectural arm, or leaking the natural clause into it |
+| `classic stylize (architectural) emits NO Avoid line when the brief wrote no negative` (same file; the renamed original) | the architectural capture is unchanged, emits no `Avoid:` line (the brief wrote `negative: ''`, and there is no fallback), and asserts the materials + keep-structure contract is present and the placement-only clause absent | removing the clause from the architectural arm, leaking the natural clause into it, or restoring a shared fallback negative |
 
 ### The Idea Board's conversation clears ROW FIRST, and its content survives (docs/17 row 227, docs/21 §The chat's controls, docs/18 §2.3)
 

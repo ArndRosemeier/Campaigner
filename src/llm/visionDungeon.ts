@@ -69,13 +69,15 @@ export function labelsForRoomCount(count: number): string[] {
  * organic — because the descriptions already carry shape language. There is
  * deliberately no global shape clause to argue with the rooms.
  *
- * TEXT-RENDER CARVE-OUT (docs/11 D5, generalized): this builder is the one
- * documented exception to the shared `IMAGE_TEXT_NEGATIVE` default — the
- * map NEEDS its carved letter plaques, so a blanket no-letters Avoid list
- * would fight the locate contract. The guard here is the tailored clause in
- * the Requirements line instead ("no written text anywhere except the N
- * letter plaques"). The lab bench inherits the carve-out through this same
- * builder — never a forked copy.
+ * TEXT-RENDER RULE (docs/11 D5, docs/17 row 319): there is no shared image
+ * avoid list any more, so this builder is not an "exception" to one. It
+ * carries its OWN caller-owned rule: the map NEEDS its carved letter plaques,
+ * so its guard is the tailored clause in the Requirements line ("no written
+ * text anywhere except the N letter plaques") — LOAD-BEARING for the locate
+ * contract. The shared contract's positive `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` is
+ * deliberately NOT added here either (a "text where needed" permission would
+ * fight the plaque contract). The lab bench inherits this rule through this
+ * same builder — never a forked copy.
  *
  * Pure — prompt-capture tests pin its contents.
  */

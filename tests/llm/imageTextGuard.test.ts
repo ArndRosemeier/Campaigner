@@ -26,7 +26,7 @@ import {
 import { enqueueCampaignCover, useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
-import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE, IMAGE_TEXT_SPARING_CLAUSE, MOB_PORTRAIT_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { buildLabeledMapPrompt } from '@/llm/visionDungeon';
 import { sha256Hex } from '@/lib/hash';
@@ -34,15 +34,18 @@ import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 
 /**
- * Image text-render guard default-on (owner report: the image model "tends
- * to render lots of text, explaining the whole plot in the image").
+ * The image text rule is POSITIVE (docs/17 row 319). The shared `Avoid:` list
+ * (`IMAGE_TEXT_NEGATIVE` and its mob-portrait alias `MOB_PORTRAIT_TEXT_NEGATIVE`
+ * — named here only as history; the constants are DELETED) is gone: the
+ * default `negative` is `''`, so the default assembled prompt carries NO
+ * `Avoid:` line at all, and ONE positive clause rides the composed prompt of
+ * both `buildImagePrompt` branches and both classic-stylize battlemap modes.
+ * The vision dungeon path's plaque rule and the classic battlemap's
+ * owner-ratified usability hard-bans are CALLER-OWNED rules (declared
+ * boundary) and stay untouched.
  *
- * The proven `Avoid:`-list mechanism is the default `negative` of the
- * shared Illustrator contract (`buildImagePrompt`) — every caller family is
- * captured here, plus a fail-closed registry so no FUTURE caller slips
- * through unguarded. The vision dungeon path is the ONE documented
- * carve-out: it needs its room plaques, so it carries its own tailored
- * clause instead of the blanket list.
+ * A fail-closed registry keeps every caller known, and a source scan proves
+ * the two deleted names never come back into `src/`.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -103,67 +106,57 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('shared text-render guard', () => {
-  it('still names the proven failure modes (the original incident cannot return unguarded)', () => {
-    for (const item of [
-      'long paragraphs of text',
-      'captions',
-      'explanatory text',
-      'plot summary',
-      'stat block',
-      'character sheet',
-      'diagram',
-      'speech bubbles',
-      'watermark',
-      'signature',
-      'illegible or garbled or misspelled lettering',
-    ]) {
-      expect(IMAGE_TEXT_NEGATIVE).toContain(item);
-    }
-  });
-
+describe('the text rule is positive (docs/17 row 319)', () => {
   /**
-   * PIN 2 (docs/17 row 224) — the pin that would have stopped the reported
-   * defect. The list is asserted STRUCTURALLY (split on commas), because
-   * `toContain` over the whole string is not enough: `long paragraphs of
-   * text` contains the substring "text" while forbidding nothing wholesale.
-   */
-  it('forbids no text wholesale: no bare text/letters/numbers/words/label item', () => {
-    const items = IMAGE_TEXT_NEGATIVE.split(',').map((item) => item.trim());
-    expect(items.length).toBeGreaterThan(5); // non-vacuity
-    for (const bare of ['text', 'letters', 'numbers', 'words', 'label']) {
-      expect(items, `a blanket no-text item came back: ${bare}`).not.toContain(bare);
-    }
-  });
-
-  /**
-   * PIN 1 (docs/17 row 224) — the owner's own wording rides the COMPOSED
-   * prompt of both builder branches, verbatim, and never the Avoid list.
+   * PIN 1 (docs/17 row 319) — the owner's own wording rides the COMPOSED
+   * prompt of both builder branches, verbatim, and never an `Avoid:` line.
    */
   it('rides the composed prompt in BOTH builder branches, verbatim', () => {
     const grounded = buildImagePrompt(
       { name: 'The Lighthouse', kind: 'location', summary: 'A storm-lashed beacon.', body: 'Black cliffs.', data: {} },
       { systemLabel: 'D&D 5e' },
     );
-    expect(grounded.prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
-    expect(grounded.prompt).toContain('Unless requested otherwise, use text sparingly.');
-    expect(grounded.negative).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(grounded.prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(grounded.prompt).toContain('Text is welcome where the subject itself needs it');
+    expect(grounded.negative).not.toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     const shortcut = buildImagePrompt(
       { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
       { systemLabel: 'D&D 5e' },
     );
-    expect(shortcut.prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
-    expect(shortcut.prompt).toContain('Unless requested otherwise, use text sparingly.');
-    expect(shortcut.negative).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(shortcut.prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(shortcut.prompt).toContain('Text is welcome where the subject itself needs it');
+    expect(shortcut.negative).not.toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
   });
 
   /**
-   * PIN 3 (docs/17 row 224) — a request that ASKS for text coexists with the
-   * guard: the clause is the mechanism ("unless requested otherwise"), and
-   * nothing in the Avoid list overrides the request. Both branches are
+   * PIN 2 (docs/17 row 319) — the DEFAULT path forbids nothing: the draft's
+   * `negative` is `''` and the assembled prompt has NO `Avoid:` line at all.
+   * Asserted on the COMPOSED string, not just the field, because an empty
+   * field could still be assembled into a bare `Avoid: ` line.
+   */
+  it('emits NO Avoid line by default in either branch', () => {
+    const grounded = buildImagePrompt(
+      { name: 'The Lighthouse', kind: 'location', summary: 'A storm-lashed beacon.', body: 'Black cliffs.', data: {} },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(grounded.negative).toBe('');
+    expect(assembleImagePrompt(grounded)).not.toContain('Avoid:');
+    const shortcut = buildImagePrompt(
+      { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(shortcut.prompt).toBe(`D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}`);
+    expect(shortcut.negative).toBe('');
+    expect(assembleImagePrompt(shortcut)).not.toContain('Avoid:');
+  });
+
+  /**
+   * PIN 3 (docs/17 row 319) — a request that ASKS for text needs no escape
+   * hatch any more: nothing forbids text, so the request and the positive
+   * clause share the prompt without contradiction. Both branches are
    * exercised, because the request rides `extraInstruction` on either.
    */
-  it('lets a requested treasure map / legend / letter coexist with the guard', () => {
+  it('lets a requested treasure map / legend / letter coexist with the positive clause', () => {
     const requests = [
       'Draw this as a treasure map.',
       'A labelled map with a legend down one side.',
@@ -177,42 +170,12 @@ describe('shared text-render guard', () => {
         );
         const final = assembleImagePrompt(draft);
         expect(final).toContain(request);
-        expect(final).toContain(IMAGE_TEXT_SPARING_CLAUSE);
-        // The ESCAPE HATCH is the mechanism, so assert its exact words — a
-        // clause without "unless requested otherwise" would contradict the
-        // request it shares the prompt with.
-        expect(final).toContain('Unless requested otherwise, use text sparingly.');
-        const items = draft.negative.split(',').map((item) => item.trim());
-        for (const bare of ['text', 'letters', 'numbers', 'words', 'label']) {
-          expect(items, `the requested text is forbidden by: ${bare}`).not.toContain(bare);
-        }
+        expect(final).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+        // No avoid list exists, so nothing can override the request.
+        expect(draft.negative).toBe('');
+        expect(final).not.toContain('Avoid:');
       }
     }
-  });
-
-  it('unifies the mob portrait name as an alias (identical-or-stronger holds by identity)', () => {
-    expect(MOB_PORTRAIT_TEXT_NEGATIVE).toBe(IMAGE_TEXT_NEGATIVE);
-  });
-
-  it('guards the grounded branch by default and reaches the assembled Avoid line', () => {
-    const draft = buildImagePrompt(
-      { name: 'The Lighthouse', kind: 'location', summary: 'A storm-lashed beacon.', body: 'Black cliffs.', data: {} },
-      { systemLabel: 'D&D 5e' },
-    );
-    expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
-    const final = assembleImagePrompt(draft);
-    expect(final).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(final).toContain('long paragraphs of text');
-  });
-
-  it('guards the appearance-shortcut branch by default too', () => {
-    const draft = buildImagePrompt(
-      { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
-      { systemLabel: 'D&D 5e' },
-    );
-    expect(draft.prompt).toBe(`D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_SPARING_CLAUSE}`);
-    expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
-    expect(assembleImagePrompt(draft)).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
   });
 
   it('keeps an explicit negative as the override (the option stays the seam)', () => {
@@ -221,6 +184,8 @@ describe('shared text-render guard', () => {
       { systemLabel: 'D&D 5e', negative: 'custom avoid' },
     );
     expect(draft.negative).toBe('custom avoid');
+    // The override seam must NOT die with the shared list.
+    expect(assembleImagePrompt(draft)).toContain('Avoid: custom avoid');
   });
 });
 
@@ -327,7 +292,7 @@ async function captureClassicStylizePrompt(brief: {
 }
 
 describe('guarded caller families (prompt capture)', () => {
-  it('covers carry the Avoid list in the final assembled prompt', async () => {
+  it('covers carry NO avoid list — they ride the positive clause (docs/17 row 319)', async () => {
     const campaign = await createCampaign({ name: 'Ember', description: 'A city of ash and bells.', system: 'dnd5e' });
     enqueueCampaignCover(campaign.id, 'Ember');
     await waitFor(async () => {
@@ -336,11 +301,11 @@ describe('guarded caller families (prompt capture)', () => {
     });
     expect(chatMock).not.toHaveBeenCalled();
     const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
-    expect(finalPrompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(finalPrompt).toContain('speech bubbles');
+    expect(finalPrompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(finalPrompt).not.toContain('Avoid:');
   });
 
-  it('entity images carry the Avoid list in the final assembled prompt', async () => {
+  it('entity images carry NO avoid list — they ride the positive clause (docs/17 row 319)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const moduleId = newId();
     await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Kael', summary: 'Ember’s gate warden.' });
@@ -351,11 +316,11 @@ describe('guarded caller families (prompt capture)', () => {
     });
     expect(chatMock).not.toHaveBeenCalled();
     const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
-    expect(finalPrompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(finalPrompt).toContain('plot summary');
+    expect(finalPrompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(finalPrompt).not.toContain('Avoid:');
   });
 
-  it('mob portraits carry the Avoid list (canonical path, unified with the general guard)', async () => {
+  it('mob portraits carry NO avoid list — the deleted alias is not passed any more (docs/17 row 319)', async () => {
     const campaign = await createCampaign({ name: 'Mob portraits', system: 'dnd5e' });
     const text = 'Goblin Boss, humanoid, agile commander. HP 21, AC 17.';
     const book = await createRulebook({ title: 'Bestiary', system: 'dnd5e', filename: 'bestiary.pdf' });
@@ -412,11 +377,11 @@ describe('guarded caller families (prompt capture)', () => {
     });
     expect(chatMock).not.toHaveBeenCalled();
     const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
-    expect(finalPrompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(finalPrompt).toContain('speech bubbles');
+    expect(finalPrompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(finalPrompt).not.toContain('Avoid:');
   });
 
-  it('classic stylize (architectural) falls back to the guard when the brief wrote no negative', async () => {
+  it('classic stylize (architectural) emits NO Avoid line when the brief wrote no negative', async () => {
     const prompt = await captureClassicStylizePrompt({
       environment: 'dungeon',
       theme: 'ash-choked temple',
@@ -424,13 +389,14 @@ describe('guarded caller families (prompt capture)', () => {
       summary: 'Cultists guard a ruined gate.',
       styleNotes: 'inked fantasy map, volcanic stone',
     });
-    expect(prompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(prompt).toContain('speech bubbles');
-    // The owner's text budget (docs/17 row 224) rides the classic battlemap
-    // template too. Its own "no map legend / no text labels" hard-ban is the
-    // separate owner-ratified VTT rule (docs/11 D17), asserted as still
-    // present so the boundary is pinned rather than implied.
-    expect(prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    // The brief wrote `negative: ''`; there is no shared fallback any more, so
+    // the `Avoid:` line is omitted entirely (docs/17 row 319).
+    expect(prompt).not.toContain('Avoid:');
+    // The owner's positive text rule rides the classic battlemap template too.
+    // Its own "no map legend / no text labels" hard-ban is the separate
+    // owner-ratified VTT rule (docs/11 D17), asserted as still present so the
+    // declared boundary is pinned rather than implied.
+    expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     expect(prompt).toContain('no map legend, no scale bar');
     expect(prompt).toContain('no text labels');
     // The architectural contract proper: the materials line and the
@@ -442,15 +408,15 @@ describe('guarded caller families (prompt capture)', () => {
 
   /**
    * docs/17 row 225 — the NATURAL-site arm of the classic-stylize template is
-   * DRIVEN, not assumed. Verifying row 224, removing
-   * `IMAGE_TEXT_SPARING_CLAUSE` from the `natural ? [...]` arm alone
-   * (`runEngine.ts` hash `dde93a76a52195e210f8d1b18ac8086fff1759f5`) left every
-   * focused guard/draft test GREEN, because the architectural capture above was
+   * DRIVEN, not assumed. Verifying row 224, removing the positive clause from
+   * the `natural ? [...]` arm alone (`runEngine.ts` hash
+   * `dde93a76a52195e210f8d1b18ac8086fff1759f5`) left every focused
+   * guard/draft test GREEN, because the architectural capture above was
    * the only one that reached the template. This pin flips the SAME harness to
    * `environment: 'outdoor'` — the one mode signal a fresh run derives from —
    * and asserts the composed prompt the engine actually hands the image model.
    */
-  it('classic stylize (natural site) carries the sparing clause and its own prose contract, and never the architectural clauses', async () => {
+  it('classic stylize (natural site) carries the positive clause and its own prose contract, and never the architectural clauses', async () => {
     const prompt = await captureClassicStylizePrompt({
       environment: 'outdoor',
       theme: 'moonlit pinewood',
@@ -458,8 +424,10 @@ describe('guarded caller families (prompt capture)', () => {
       summary: 'Bandits ambush the trade road through the pines.',
       styleNotes: 'inked fantasy map, moonlit greens',
     });
-    // The owner's text budget (docs/17 row 224) rides BOTH battlemap modes.
-    expect(prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    // The owner's positive text rule (docs/17 row 319) rides BOTH battlemap
+    // modes, and no `Avoid:` line is emitted at all.
+    expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(prompt).not.toContain('Avoid:');
     // The natural contract leads with the encounter's OWN prose …
     expect(prompt).toContain('Theme: moonlit pinewood.');
     expect(prompt).toContain('Site: forest clearing.');
@@ -482,13 +450,11 @@ describe('guarded caller families (prompt capture)', () => {
     expect(prompt).toContain('no text labels');
     expect(prompt).toContain('No white or pale boxes, rectangles, plaques, discs, signposts');
     expect(prompt).toContain('continuous natural terrain with no discrete light-colored sub-rectangles');
-    // The shared fallback Avoid line still guards the natural arm too.
-    expect(prompt).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
   });
 });
 
-describe('vision carve-out (binding)', () => {
-  it('keeps the room plaques while the blanket list stays ABSENT', () => {
+describe('vision carve-out (binding, caller-owned rule)', () => {
+  it('keeps the room plaques while no shared clause reaches the vision path', () => {
     const prompt = buildLabeledMapPrompt(
       [
         { label: 'A', name: 'Entry', description: 'Broken doors', isEntry: true },
@@ -497,18 +463,18 @@ describe('vision carve-out (binding)', () => {
       'ash-choked crypt dungeon',
       'A ↔ B',
     );
-    // The tailored negative is present…
+    // The tailored, caller-owned rule is present…
     expect(prompt).toContain('plaque');
     expect(prompt).toContain('no written text anywhere except the 2 letter plaques');
-    // …while the blanket guard is absent (it would fight the plaques), and
-    // the sparing clause is deliberately absent too: this path's plaque
-    // clause is load-bearing for the locate pass (docs/17 row 224).
+    // …while no shared mechanism is added: no `Avoid:` line, and the owner's
+    // positive clause is deliberately absent too — this path's plaque
+    // clause is load-bearing for the locate pass (docs/17 rows 224/319).
     expect(prompt).not.toContain('Avoid:');
-    expect(prompt).not.toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(prompt).not.toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    // The deleted shared list's items cannot leak back in either.
     for (const blanket of ['speech bubbles', 'watermark', 'signature', 'plot summary', 'explanatory text']) {
       expect(prompt, `blanket item leaked into the vision path: ${blanket}`).not.toContain(blanket);
     }
-    expect(prompt).not.toContain(IMAGE_TEXT_NEGATIVE);
   });
 });
 
@@ -535,9 +501,9 @@ describe('image-prompt caller registry (fail-closed)', () => {
 
   it('every buildImagePrompt call site is a known guarded caller', () => {
     // Fail-closed: a new image-prompt call site outside this list fails the
-    // test. Guard it (ride the contract default or pass an explicit
-    // negative), or document the carve-out in code + docs/11 + docs/18 —
-    // then extend this list.
+    // test. Every caller now rides the contract's positive clause; a caller
+    // with a tailored need may still pass its own `negative` (the override
+    // seam). Extend this list deliberately when a new producer appears.
     expect(srcFilesContaining('buildImagePrompt(')).toEqual(
       [
         'features/campaign/mob-portrait-cache-queue.ts',
@@ -548,6 +514,17 @@ describe('image-prompt caller registry (fail-closed)', () => {
         'llm/runEngine.ts',
       ].sort(),
     );
+  });
+
+  it('the deleted shared avoid list cannot come back into src/ (docs/17 row 319)', () => {
+    // The constants are DELETED, not merely unwired. A re-introduced name —
+    // however it is wired — reds here, so the next reader cannot restore the
+    // list in a comment-only or a dead-code spelling without being told.
+    expect(srcFilesContaining('IMAGE_TEXT_NEGATIVE')).toEqual([]);
+    expect(srcFilesContaining('MOB_PORTRAIT_TEXT_NEGATIVE')).toEqual([]);
+    // Non-vacuity: the scanner still sees the LIVE constant at its seam, so a
+    // pair of empty results above means ABSENCE, not a broken walk.
+    expect(srcFilesContaining('IMAGE_TEXT_WHEN_NEEDED_CLAUSE')).toContain('llm/imagePromptDraft.ts');
   });
 
   it('every direct image producer is known (no hand-rolled prompt bypasses the guard)', () => {

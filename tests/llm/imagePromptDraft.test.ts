@@ -6,9 +6,7 @@ import {
   assembleImagePrompt,
   buildImagePrompt,
   IMAGE_PROMPT_GROUNDING_MAX_CHARS,
-  IMAGE_TEXT_NEGATIVE,
-  IMAGE_TEXT_SPARING_CLAUSE,
-  MOB_PORTRAIT_TEXT_NEGATIVE,
+  IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
   portraitGroundingForChunk,
   portraitGroundingForStatBlock,
 } from '@/llm/imagePromptDraft';
@@ -32,8 +30,8 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       { systemLabel: 'Pathfinder 2e' },
     );
     expect(draft).toEqual({
-      prompt: `Pathfinder 2e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_SPARING_CLAUSE}`,
-      negative: IMAGE_TEXT_NEGATIVE,
+      prompt: `Pathfinder 2e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}`,
+      negative: '',
       styleNotes: '',
     });
   });
@@ -44,22 +42,21 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       { systemLabel: 'D&D 5e', extraInstruction: 'Make the lighting moody' },
     );
     expect(draft.prompt).toBe(
-      `D&D 5e=>Tall and gaunt.\n${IMAGE_TEXT_SPARING_CLAUSE}\nMake the lighting moody`,
+      `D&D 5e=>Tall and gaunt.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\nMake the lighting moody`,
     );
   });
 
   /**
-   * The owner's text-budget clause (docs/17 row 224) sits BETWEEN the
+   * The owner's positive text rule (docs/17 row 319) sits BETWEEN the
    * grounding and any trailing instruction, so an instruction that ASKS for
-   * text ("a map with a legend") is the "unless requested otherwise" the
-   * clause defers to.
+   * text ("a map with a legend") follows the permission that precedes it.
    */
-  it('puts the text-budget clause before the trailing instruction', () => {
+  it('puts the positive text clause before the trailing instruction', () => {
     const draft = buildImagePrompt(
       { name: 'Chart', kind: 'item', summary: 'A sea chart.', body: 'Ink and vellum.', data: {} },
       { systemLabel: 'D&D 5e', extraInstruction: 'Include a legend naming the islands.' },
     );
-    expect(draft.prompt).toContain(`Ink and vellum.\n${IMAGE_TEXT_SPARING_CLAUSE}\nInclude a legend naming the islands.`);
+    expect(draft.prompt).toContain(`Ink and vellum.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\nInclude a legend naming the islands.`);
   });
 
   it('grounds on name/kind/summary/body (markdown stripped) when there is no appearance', () => {
@@ -78,9 +75,9 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
         'A D&D 5e illustration of The Lighthouse (location).',
         'Summary: A storm-lashed beacon on a black cliff.',
         'Description: The Lighthouse\nBlack cliffs, gulls and a storm.',
-        IMAGE_TEXT_SPARING_CLAUSE,
+        IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
       ].join('\n'),
-      negative: IMAGE_TEXT_NEGATIVE,
+      negative: '',
       styleNotes: '',
     });
   });
@@ -121,7 +118,7 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       [
         'A D&D 5e illustration of Goblin Boss (npc).',
         'Description: Goblin Boss, humanoid, agile commander. HP 21, AC 17.',
-        IMAGE_TEXT_SPARING_CLAUSE,
+        IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
       ].join('\n'),
     );
   });
@@ -141,10 +138,10 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       { systemLabel: 'D&D 5e' },
     );
     // The clause rides its own line AFTER the Description line (docs/17 row
-    // 224), so the capped grounding is the FIRST line of the split tail.
+    // 319), so the capped grounding is the FIRST line of the split tail.
     const description = (draft.prompt.split('Description: ')[1] ?? '').split('\n')[0] ?? '';
     expect(description).toHaveLength(IMAGE_PROMPT_GROUNDING_MAX_CHARS);
-    expect(draft.prompt).toContain(IMAGE_TEXT_SPARING_CLAUSE);
+    expect(draft.prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
   });
 
   it('keeps a grounding shorter than the cap COMPLETE — nothing is trimmed at 800 any more', () => {
@@ -277,7 +274,7 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
     expect(first.length).toBe(IMAGE_PROMPT_GROUNDING_MAX_CHARS);
   });
 
-  it('carries the mob text-render negative into the draft and the Avoid line', () => {
+  it('carries NO avoid list into a portrait draft by default (the list is deleted)', () => {
     const draft = buildImagePrompt(
       {
         name: 'Ancient Dragon',
@@ -286,17 +283,18 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
         body: portraitGroundingForChunk({ text: RAW_TEXT, statBlock: STAT_FIXTURE }),
         data: null,
       },
-      { systemLabel: 'D&D 5e', negative: MOB_PORTRAIT_TEXT_NEGATIVE },
+      { systemLabel: 'D&D 5e' },
     );
-    expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
+    expect(draft.negative).toBe('');
     const final = assembleImagePrompt(draft);
-    expect(final).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
-    expect(final).toContain('long paragraphs of text');
+    expect(final).not.toContain('Avoid:');
+    // The positive rule rides instead, and the stat-exempt grounding is intact.
+    expect(final).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     expect(final).toContain('shrugs off mortal frailty');
     expect(final).not.toContain('256');
   });
 
-  it('keeps the appearance shortcut winning while carrying the negative', () => {
+  it('keeps the appearance shortcut winning while carrying the positive clause', () => {
     const draft = buildImagePrompt(
       {
         name: 'Grix',
@@ -305,24 +303,26 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
         body: 'unused',
         data: { appearance: 'Small, soot-stained, goggles.' },
       },
-      { systemLabel: 'D&D 5e', negative: MOB_PORTRAIT_TEXT_NEGATIVE },
+      { systemLabel: 'D&D 5e' },
     );
-    expect(draft.prompt).toBe(`D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_SPARING_CLAUSE}`);
-    expect(draft.negative).toBe(MOB_PORTRAIT_TEXT_NEGATIVE);
+    expect(draft.prompt).toBe(`D&D 5e=>Small, soot-stained, goggles.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}`);
+    expect(draft.negative).toBe('');
+    expect(assembleImagePrompt(draft)).not.toContain('Avoid:');
   });
 
-  it('defaults the negative to the shared text-render guard (default-on, both branches)', () => {
+  it('defaults the negative to \'\' — no Avoid line in either branch (docs/17 row 319)', () => {
     const grounded = buildImagePrompt(
       { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
       { systemLabel: 'D&D 5e' },
     );
-    expect(grounded.negative).toBe(IMAGE_TEXT_NEGATIVE);
+    expect(grounded.negative).toBe('');
+    expect(assembleImagePrompt(grounded)).not.toContain('Avoid:');
     const shortcut = buildImagePrompt(
       { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Tall and gaunt.' } },
       { systemLabel: 'D&D 5e' },
     );
-    expect(shortcut.negative).toBe(IMAGE_TEXT_NEGATIVE);
-    expect(assembleImagePrompt(shortcut)).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
+    expect(shortcut.negative).toBe('');
+    expect(assembleImagePrompt(shortcut)).not.toContain('Avoid:');
   });
 
   it('keeps the negative option as the explicit-override seam (explicit \'\' opts out)', () => {
@@ -331,6 +331,9 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
       { systemLabel: 'D&D 5e', negative: 'custom avoid' },
     );
     expect(custom.negative).toBe('custom avoid');
+    // The override must NOT die with the shared list: it still reaches the
+    // assembled `Avoid:` line.
+    expect(assembleImagePrompt(custom)).toContain('Avoid: custom avoid');
     const optedOut = buildImagePrompt(
       { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
       { systemLabel: 'D&D 5e', negative: '' },
