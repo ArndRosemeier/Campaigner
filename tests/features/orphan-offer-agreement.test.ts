@@ -49,7 +49,10 @@ import { clearDatabase } from '../db/helpers';
  * (docs/18 §4 names the limitation), so the panel's agreement is pinned on
  * its EFFECTIVE OFFER: the read-time derivation composed with the refusals a
  * sweep returned (`orphanOfferView`) — after any sweep the panel offers
- * exactly what the deleter deletes.
+ * exactly what the deleter deletes. Since docs/17 row 323 the group IS that
+ * offer: a kept row is held IN USE and is not reported at all, so the pin can
+ * assert the strong property BY CONSTRUCTION — the group's names equal the
+ * sweep's `deleted` names, and the IN USE bucket's names equal its `kept`.
  */
 
 /** A module with one premise line (prose is where mentions live). */
@@ -154,17 +157,24 @@ function offeredView(
   return orphanOfferView(rows, new Map(outcome.kept.map((row) => [row.id, row.reason])));
 }
 
-/** Names the offer would delete, alphabetical. */
+/** Names the group lists — and the group IS the offer (docs/17 row 323). */
 function offeredNames(view: OrphanOfferView): string[] {
-  return view.group
-    .filter((entry) => entry.inUseReason === null)
-    .map((entry) => entry.row.artifact.name)
-    .sort();
+  return view.group.map((row) => row.artifact.name).sort();
 }
 
-/** The reason the group shows for one row (undefined = the row is not shown). */
-function inUseReasonFor(view: OrphanOfferView, name: string): string | null | undefined {
-  return view.group.find((entry) => entry.row.artifact.name === name)?.inUseReason;
+/** Names held IN USE — never reported, never offered. */
+function keptInUseNames(view: OrphanOfferView): string[] {
+  return view.keptInUse.map((row) => row.artifact.name).sort();
+}
+
+/** The group's row for one name (undefined = the row is not reported). */
+function groupRow(view: OrphanOfferView, name: string): ModuleOrphanRow | undefined {
+  return view.group.find((row) => row.artifact.name === name);
+}
+
+/** The guard reason an IN USE row carries for a DERIVABLE guard. */
+function keptGuardReason(view: OrphanOfferView, name: string): string | null | undefined {
+  return view.keptInUse.find((row) => row.artifact.name === name)?.refusal?.reason;
 }
 
 beforeEach(clearDatabase);
@@ -199,15 +209,20 @@ describe("the owner's exact shape, end to end", () => {
     });
 
     // The panel: two rows, both IN USE, nothing deletable — the destructive
-    // control cannot appear, before any sweep has run.
+    // control cannot appear, and neither row is reported at all (docs/17
+    // row 323), before any sweep has run.
     const rows = await panelRows(module);
     expect(rows.map((row) => row.artifact.name)).toEqual(['Bog Lumberjack', 'Risen Lumberjack']);
     const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
     expect(offeredNames(view)).toEqual([]);
-    expect(inUseReasonFor(view, 'Risen Lumberjack')).toBe(
+    expect(groupRow(view, 'Risen Lumberjack')).toBeUndefined();
+    expect(groupRow(view, 'Bog Lumberjack')).toBeUndefined();
+    expect(keptInUseNames(view)).toEqual(['Bog Lumberjack', 'Risen Lumberjack']);
+    // The refusal the panel carries for a derivable guard is the sweep's own.
+    expect(keptGuardReason(view, 'Risen Lumberjack')).toBe(
       'roster entry "Risen Lumberjack" of the encounter "Bog Ambush"',
     );
-    expect(inUseReasonFor(view, 'Bog Lumberjack')).toBe(
+    expect(keptGuardReason(view, 'Bog Lumberjack')).toBe(
       'roster entry "Bog Lumberjack" of the encounter "Bog Ambush"',
     );
 
@@ -216,11 +231,11 @@ describe("the owner's exact shape, end to end", () => {
     expect(outcome).toEqual({
       deleted: [],
       kept: [
-        { id: bog.id, name: 'Bog Lumberjack', reason: inUseReasonFor(view, 'Bog Lumberjack') },
+        { id: bog.id, name: 'Bog Lumberjack', reason: keptGuardReason(view, 'Bog Lumberjack') },
         {
           id: risen.id,
           name: 'Risen Lumberjack',
-          reason: inUseReasonFor(view, 'Risen Lumberjack'),
+          reason: keptGuardReason(view, 'Risen Lumberjack'),
         },
       ],
     });
@@ -345,16 +360,21 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
 
     // Derivable at read time: the encounter roster (both flavors). The
-    // ambiguity shadow is hidden entirely (the duplicate must be resolved).
-    expect(inUseReasonFor(view, 'Gate Guard')).toBe(
+    // ambiguity shadow is hidden entirely (the duplicate must be resolved),
+    // and both roster-cited rows are held OUT of the group (not reported).
+    expect(keptGuardReason(view, 'Gate Guard')).toBe(
       'roster entry "Gate Guard" of the encounter "Ambush"',
     );
-    expect(inUseReasonFor(view, 'Goblin')).toBe(
+    expect(keptGuardReason(view, 'Goblin')).toBe(
       'roster entry "Goblin" of the encounter "Ambush"',
     );
+    expect(groupRow(view, 'Gate Guard')).toBeUndefined();
+    expect(groupRow(view, 'Goblin')).toBeUndefined();
+    expect(keptInUseNames(view)).toEqual(['Gate Guard', 'Goblin']);
     // The name twin is NOT in use: the citation above names a library creature,
-    // not this row, and no name-matching survives (ledger row 106).
-    expect(inUseReasonFor(view, 'Cave Fisher')).toBeNull();
+    // not this row, and no name-matching survives (ledger row 106) — so it is
+    // reported in the group like any other orphan.
+    expect(groupRow(view, 'Cave Fisher')).toBeDefined();
     expect(view.hidden.map((row) => row.artifact.name)).toEqual(['Doppel', 'Doppel']);
 
     // NOT derivable from these props (docs/18 §4): the cross-module mention
@@ -375,24 +395,29 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     const outcome = await sweepOrphanedArtifacts(module.id);
     const view = offeredView(rows, outcome);
 
-    // Per candidate: offered ⇔ deleted, and every kept row's reason is the
-    // reason the panel renders for it — one predicate, no drift.
+    // Per candidate: reported ⇔ deleted — ONE predicate, no drift — and every
+    // row the guards keep is held OUT of the group, so it is deleted by
+    // NEITHER the panel's offer nor the sweep (docs/17 row 323).
     expect(offeredNames(view)).toEqual([...outcome.deleted.map((row) => row.name)].sort());
     expect(offeredNames(view)).toEqual(['Cave Fisher', 'The Long Winter']);
-    expect(inUseReasonFor(view, 'Echo')).toBe(
-      'mentioned in campaign prose — "Tide Gate" premise ×1',
-    );
-    expect(inUseReasonFor(view, 'Tokened Wraith')).toBe(
-      'a portrait token on the battle of "Tide Gate"',
-    );
-    expect(inUseReasonFor(view, 'Seeded Wraith')).toBe(
-      'a frozen seed fighter on the battle of "Tide Gate"',
-    );
-    for (const entry of view.group) {
-      if (entry.inUseReason === null) continue;
-      const kept = outcome.kept.find((row) => row.id === entry.row.artifact.id);
-      expect(kept?.reason).toBe(entry.inUseReason);
+    expect(keptInUseNames(view)).toEqual([...outcome.kept.map((row) => row.name)].sort());
+    expect(keptInUseNames(view)).toEqual([
+      'Echo',
+      'Gate Guard',
+      'Goblin',
+      'Seeded Wraith',
+      'Tokened Wraith',
+    ]);
+    for (const row of view.keptInUse) {
+      expect(groupRow(view, row.artifact.name)).toBeUndefined();
+      expect(outcome.kept.some((kept) => kept.id === row.artifact.id)).toBe(true);
     }
+    for (const row of view.group) {
+      expect(outcome.deleted.some((deleted) => deleted.id === row.artifact.id)).toBe(true);
+    }
+    // The partition of the tagged rows is total: every tagged row is reported
+    // or held IN USE or ambiguity-hidden, never dropped (docs/17 row 323).
+    expect(view.group.length + view.keptInUse.length + view.hidden.length).toBe(rows.length);
 
     // The shadowed pair is outside the group AND outside the sweep's report
     // (the offered predicate, unchanged) — and untouched on disk.

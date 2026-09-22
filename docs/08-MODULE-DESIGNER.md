@@ -1148,16 +1148,18 @@ still module-owned and adoptable). Rows carry the group even though they are
 not wiki-link tokens of the module — the panel's token lists can never show
 them; that is the point.
 
-**The offer is truthful (docs/17 row 92).** A row a guard keeps is still
-LISTED — but as **in use**, with the sweep's own reason text
-(`in use — roster entry "Risen Lumberjack" of the encounter "Bog Ambush"`),
-no "no mentions" tag and NO trash button; Adopt stays (the row is still
-module-owned). The group's count includes those in-use rows; the destructive
-control and the confirm dialog count and list ONLY the rows a sweep will
-actually delete — so `Delete N orphans` can never be a guaranteed no-op, and
-when every candidate is in use the control is absent (the rows say why). The
-confirm dialog states that the sweep re-checks every reference and names
-whatever it still finds in use.
+**The offer is truthful (docs/17 rows 92 and 323).** A row a guard keeps —
+or one a sweep already refused — is **not reported at all**: the view
+(`orphanOfferView`) holds it IN USE, out of the group, so it is neither
+listed nor counted. The group and its count are therefore exactly the rows a
+sweep will delete (the heading "Orphaned (unmentioned)" keeps its wording;
+its number is the deletable set), and every LISTED row carries the
+"no mentions" tag and the trash button. Adopt stays on the listed rows (they
+are still module-owned and adoptable). The destructive control and the
+confirm dialog list those same rows — so `Delete N orphans` can never be a
+guaranteed no-op, and when every candidate is in use the group and the
+control are absent. The confirm dialog states that the sweep re-checks every
+reference and names whatever it still finds in use.
 
 - **Derivation** (read time, pure): `entity-orphans.ts`
   (`deriveModuleOrphans` + the memoized `useModuleOrphans` hook over the
@@ -1178,12 +1180,11 @@ whatever it still finds in use.
   creatures a live encounter's roster cites) refused BEFORE any sweep. The
   other two (the campaign-wide mention gate, which needs the campaign's
   OTHER modules' prose; battle tokens/seed fighters) need rows the panel's
-  props do not carry, so the panel's offer is
+  props do not carry, so the panel's view is
   composed with the refusals a sweep RETURNED: `orphanOfferView` holds them
-  for the mounted module and renders those rows in use with the sweep's
-  reason, excluded from the count and the offer — a refusal never leaves the
-  same rows offered again (docs/18 §4 names this as the standing
-  limitation).
+  for the mounted module as IN USE — not reported, not counted, not offered
+  (docs/17 row 323) — so a refusal never leaves the same rows offered again
+  (docs/18 §4 names this as the standing limitation).
 - **Delete-all**: destructive toolbar button "Delete N orphans" (hidden at
   N=0, where N counts ONLY the rows a sweep will delete) → an `AlertDialog`
   (count in the title, the same rows in a scroll list, destructive confirm)
@@ -1208,9 +1209,9 @@ whatever it still finds in use.
   same guard set; a refusal names its reason ("mentioned in campaign
   prose — …", "same-named entity exists — resolve the duplicate first", a
   battle token / seed fighter / roster citation / outline node) as the
-  toast instead of deleting, and the row then renders as in use with that
-  reason (the panel records the refusal — it is never offered again in this
-  view).
+  toast instead of deleting, and the row is then dropped from the group
+  entirely (docs/17 row 323: no in-use line, no count — the panel records
+  the refusal, and it is never offered again in this view).
 - **Never candidates**: promoted rows (`moduleId: null`), pc rows, global
   library rows.
 

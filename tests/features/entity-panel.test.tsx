@@ -1637,10 +1637,11 @@ describe('EntityPanel — bounded reader rail', () => {
  * one tx; guards keep with reasons). The disambiguated term ("Orphaned
  * (unmentioned)") distinguishes the tree's module-less Orphaned group.
  *
- * THE OFFER IS TRUTHFUL (docs/17 row 92): the destructive control counts and
- * lists only what the deleter will delete, a guard-refused row is listed as
- * in use with the sweep's own reason and has no trash, and a refusal a sweep
- * returned is never offered again in this view.
+ * THE OFFER IS TRUTHFUL (docs/17 row 92) AND UNMENTIONED-AND-UNUSED ONLY
+ * (docs/17 row 323): the group lists exactly the deletable rows, so a row a
+ * guard keeps (or a sweep already refused) is NOT reported at all — no row,
+ * no reason line, no count — and every listed row carries the trash. A
+ * refusal a sweep returned is never offered again in this view.
  */
 describe('EntityPanel — orphaned entities', () => {
   beforeEach(clearDatabase);
@@ -1749,6 +1750,12 @@ describe('EntityPanel — orphaned entities', () => {
     // The mentioned campaign-owned row is not an orphan.
     expect(within(group).queryByText('Mira')).not.toBeInTheDocument();
     expect(screen.getByTestId('orphan-delete-all')).toHaveTextContent('Delete 2 orphans');
+    // Every listed row is deletable, so every row shows the trash and NO
+    // in-use report survives (docs/17 row 323: the field, the `in use — …`
+    // line, its testid and `data-in-use` are deleted with it).
+    expect(within(group).getAllByTestId('orphan-delete')).toHaveLength(2);
+    expect(within(group).queryAllByTestId('orphan-in-use-reason')).toEqual([]);
+    expect(rows.every((row) => !row.hasAttribute('data-in-use'))).toBe(true);
   });
 
   it('hides the group and the button when nothing is orphaned', async () => {
@@ -1927,7 +1934,7 @@ describe('EntityPanel — orphaned entities', () => {
     expect(toastSuccessMock).toHaveBeenCalledWith('Deleted orphaned entity "The Long Winter"');
   });
 
-  it('per-row trash refuses a guarded orphan with the reason and keeps the row', async () => {
+  it('per-row trash refuses a guarded orphan with the reason and keeps the entity', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await quietModule(campaign.id);
@@ -1961,9 +1968,13 @@ describe('EntityPanel — orphaned entities', () => {
       );
     });
     expect(await getArtifact(wraith.id)).toBeDefined();
+    // The refusal is recorded, so the row is not reported again (row 323).
+    await waitFor(() => {
+      expect(screen.queryByTestId('orphan-row')).not.toBeInTheDocument();
+    });
   });
 
-  it("shows creatures a live encounter cites as in use — no destructive control (the owner's report)", async () => {
+  it("does NOT report creatures a live encounter cites (the owner's report)", async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     // The prose stages the fight, so the encounter survives a sweep and its
     // roster citations keep guarding the two creatures.
@@ -2015,28 +2026,14 @@ describe('EntityPanel — orphaned entities', () => {
 
     render(orphanPanel(module, campaign, [mira, risen, bog, encounter]));
 
-    // The group lists both rows as IN USE with the sweep's own reason, and
-    // there is no destructive control at all: nothing here can be deleted.
-    const group = screen.getByTestId('orphaned-group');
-    expect(group).toHaveTextContent('Orphaned (unmentioned) · 2');
+    // A kept row is not reported at all (docs/17 row 323): no group, no
+    // heading count, no destructive control, no row, no `in use — …` line.
+    expect(screen.queryByTestId('orphaned-group')).not.toBeInTheDocument();
     expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
-    expect(within(group).queryByTestId('orphan-delete')).not.toBeInTheDocument();
-    const rows = within(group).getAllByTestId('orphan-row');
-    expect(rows.map((row) => row.getAttribute('data-name'))).toEqual([
-      'Bog Lumberjack',
-      'Risen Lumberjack',
-    ]);
-    expect(rows.every((row) => row.getAttribute('data-in-use') === 'true')).toBe(true);
-    const reasons = within(group)
-      .getAllByTestId('orphan-in-use-reason')
-      .map((node) => node.textContent);
-    expect(reasons).toEqual([
-      'in use — roster entry "Bog Lumberjack" of the encounter "Bog Ambush"',
-      'in use — roster entry "Risen Lumberjack" of the encounter "Bog Ambush"',
-    ]);
-    // Both rows are still adoptable (the row is module-owned) — the removal
-    // of the offer must not remove the row's other affordances.
-    expect(within(group).getAllByTestId('entity-adopt')).toHaveLength(2);
+    expect(screen.queryByTestId('orphan-row')).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('orphan-in-use-reason')).toEqual([]);
+    expect(screen.queryByText('Risen Lumberjack')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bog Lumberjack')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   });
 
@@ -2107,21 +2104,19 @@ describe('EntityPanel — orphaned entities', () => {
     });
     expect(await actDrained(() => getArtifact(winter.id))).toBeUndefined();
 
-    // The live pool re-fires without the deleted row — the refused one stays.
+    // The live pool re-fires without the deleted row — the refused one stays
+    // in the database, and it is NOT reported any more (docs/17 row 323): no
+    // group, no heading, no count, no row, no reason line.
     const remaining = await actDrained(() => listArtifactsByCampaign(campaign.id));
     first.rerender(orphanPanel(module, campaign, remaining));
 
-    const group = screen.getByTestId('orphaned-group');
-    expect(group).toHaveTextContent('Orphaned (unmentioned) · 1');
-    expect(within(group).getByTestId('orphan-row')).toHaveAttribute('data-in-use', 'true');
-    expect(within(group).getByTestId('orphan-in-use-reason')).toHaveTextContent(
-      'in use — a portrait token on the battle of "Tide Gate"',
-    );
-    // No trash on the row, no destructive control: the offer is empty, and a
-    // following sweep deletes nothing — the count matched the deleter (the
-    // sweep still NAMES the row it refused, which is what closed the loop).
-    expect(within(group).queryByTestId('orphan-delete')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orphaned-group')).not.toBeInTheDocument();
     expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orphan-row')).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('orphan-in-use-reason')).toEqual([]);
+    // The offer is empty and a following sweep deletes nothing — the count
+    // matched the deleter (the sweep still NAMES the row it refused, which is
+    // what closed the loop).
     const outcome = await actDrained(() => sweepOrphanedArtifacts(module.id));
     expect(outcome.deleted).toEqual([]);
     expect(outcome.kept.map((row) => row.name)).toEqual(['Lonely Wraith']);

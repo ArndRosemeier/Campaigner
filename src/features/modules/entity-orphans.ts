@@ -36,38 +36,42 @@ import {
  * offer ("same-named entity exists — resolve the duplicate first"; enforced
  * again inside the sweep).
  *
- * The rows a guard refuses are carried WITH the sweep's own reason text and
- * are never offered for deletion: the panel renders them in the orphan group
- * as in use (docs/08 §M4-C). Two guards are derivable from the panel's props
- * — the ambiguity shadow and the encounter roster. The rest (the campaign-wide
- * mention gate, which needs the campaign's OTHER modules' prose; battle
- * tokens/seed fighters) are NOT: their refusals
+ * A row a guard refuses — or a sweep has already refused — is IN USE, and an
+ * in-use row is NOT reported at all (docs/17 row 323): the group is exactly
+ * the set a sweep deletes, so a kept row is neither listed nor counted. The
+ * refusal itself is not dropped: the row's own verdict carries it for the
+ * derivable guards, and the panel's view state records every sweep refusal,
+ * so a refusal never leaves the same row offered again. Two guards are
+ * derivable from the panel's props — the ambiguity shadow and the encounter
+ * roster. The rest (the campaign-wide mention gate, which needs the campaign's
+ * OTHER modules' prose; battle tokens/seed fighters) are NOT: their refusals
  * arrive with a sweep's outcome and are held in the panel's view state
- * (`orphanOfferView`), so a refusal never leaves the same rows offered again.
+ * (`orphanOfferView`).
  */
 
 /** One module-owned unmentioned entity row + the guard verdict it carries. */
 export type ModuleOrphanRow = OrphanGuardVerdict;
 
-/** One group row: the tagged row and, when a guard keeps it, the reason. */
-export interface OrphanGroupRow {
-  row: ModuleOrphanRow;
-  /** The sweep's own reason text when the row is in use; `null` = deletable. */
-  inUseReason: string | null;
-}
-
 /** The panel's read model: what the group shows, what a sweep would delete. */
 export interface OrphanOfferView {
   /**
-   * The group's rows, alphabetical: every tagged row that is not
-   * ambiguity-shadowed, in use (reason set) or deletable (`null`).
+   * The group's rows, alphabetical: only rows with NO guard refusal and NO
+   * recorded sweep refusal — the DELETABLE set, exactly what a sweep deletes.
+   * This list IS the offer; no other row is shown or counted (docs/17 row 323).
    */
-  group: OrphanGroupRow[];
+  group: ModuleOrphanRow[];
   /**
    * Ambiguity-shadowed rows — outside the group and outside the offer
    * (unchanged, 08 §M4-C: the duplicate must be resolved first).
    */
   hidden: ModuleOrphanRow[];
+  /**
+   * Rows a guard (or a recorded sweep refusal) keeps IN USE — never shown,
+   * never counted, never offered. Carried so the partition of `rows` is
+   * complete and the fact that the row was refused is not silently dropped;
+   * the sweep's own accounting is untouched.
+   */
+  keptInUse: ModuleOrphanRow[];
 }
 
 /** No recorded sweep refusals (a module the panel has never swept). */
@@ -99,6 +103,18 @@ export function panelOrphanGuardInput(
 }
 
 /**
+ * The ONE orphan ordering — by artifact name, id as the tiebreak. Both the
+ * derivation and the view's buckets sort through it, so a row cannot order
+ * one way in the tag and another in the group.
+ */
+function compareOrphanRows(a: ModuleOrphanRow, b: ModuleOrphanRow): number {
+  return (
+    a.artifact.name.localeCompare(b.artifact.name) ||
+    a.artifact.id.localeCompare(b.artifact.id)
+  );
+}
+
+/**
  * Derives the module's orphan rows: owned orphan-kind candidates with ZERO
  * resolving wiki-link mentions in THIS module's prose, each carrying the
  * guard verdict the panel can derive, alphabetically.
@@ -116,43 +132,41 @@ export function deriveModuleOrphans(
   const evaluation = evaluateOrphanGuards(candidates, panelOrphanGuardInput(module, artifacts));
   return evaluation.verdicts
     .filter((verdict) => !evaluation.moduleMentionedIds.has(verdict.artifact.id))
-    .sort(
-      (a, b) =>
-        a.artifact.name.localeCompare(b.artifact.name) ||
-        a.artifact.id.localeCompare(b.artifact.id),
-    );
+    .sort(compareOrphanRows);
 }
 
 /**
  * The panel's offer, composed from the derivation and the refusals a sweep
- * returned in this panel's session:
- * - a row the derivation refuses (roster citation, ambiguity) is IN USE;
- * - a row a sweep refused is IN USE with that sweep's reason — the guards the
- *   props cannot judge (cross-module mentions, battle tokens/seeds, outline
- *   nodes) therefore cannot survive as a stale offer;
- * - only what is left is deletable — a following sweep deletes exactly those.
+ * returned in this panel's session. The partition of `rows` is total:
+ * - `group` — rows with NO guard refusal and NO recorded sweep refusal: the
+ *   deletable set, and the ONLY thing the panel shows or offers (docs/17
+ *   row 323);
+ * - `keptInUse` — rows a guard or a recorded refusal keeps IN USE, held out
+ *   of the group so a refusal never leaves the same row offered again;
+ * - `hidden` — ambiguity-shadowed rows (unchanged, 08 §M4-C).
  * Pure: the panel memoizes it over its props + its recorded refusals.
  */
 export function orphanOfferView(
   rows: readonly ModuleOrphanRow[],
   sweepRefusals: ReadonlyMap<Id, string>,
 ): OrphanOfferView {
-  const group: OrphanGroupRow[] = [];
+  const group: ModuleOrphanRow[] = [];
   const hidden: ModuleOrphanRow[] = [];
+  const keptInUse: ModuleOrphanRow[] = [];
   for (const row of rows) {
     if (row.refusal?.guard === 'ambiguity') {
       hidden.push(row);
       continue;
     }
-    const reason = row.refusal?.reason ?? sweepRefusals.get(row.artifact.id);
-    group.push({ row, inUseReason: reason ?? null });
+    if (row.refusal !== null || sweepRefusals.has(row.artifact.id)) {
+      keptInUse.push(row);
+      continue;
+    }
+    group.push(row);
   }
-  group.sort(
-    (a, b) =>
-      a.row.artifact.name.localeCompare(b.row.artifact.name) ||
-      a.row.artifact.id.localeCompare(b.row.artifact.id),
-  );
-  return { group, hidden };
+  group.sort(compareOrphanRows);
+  keptInUse.sort(compareOrphanRows);
+  return { group, hidden, keptInUse };
 }
 
 /**

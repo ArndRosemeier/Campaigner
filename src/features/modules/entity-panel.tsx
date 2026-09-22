@@ -233,8 +233,9 @@ export function EntityPanel({
    * (08 §M4-C, docs/17 row 92): a refusal must never leave the same rows
    * offered again, and two of the guards (cross-module mentions, battle
    * tokens/seeds) need data these props do not
-   * carry — so the deleter's own decision is recorded here and the row is
-   * rendered in use with the sweep's reason instead of being offered again.
+   * carry — so the deleter's own decision is recorded here and the refused row
+   * is dropped from the group (and therefore from the offer) instead of being
+   * shown again (docs/17 row 323).
    *
    * Scope: the mounted module. Deliberately NOT cleared when `artifacts`
    * changes: a sweep that deletes rows re-fires the pool's live query, and
@@ -248,15 +249,13 @@ export function EntityPanel({
   }>({ moduleId: module.id, reasons: NO_SWEEP_REFUSALS });
   const recordedRefusals =
     sweepRefusals.moduleId === module.id ? sweepRefusals.reasons : NO_SWEEP_REFUSALS;
-  /** What the group shows and what the next sweep would delete. */
+  /**
+   * What the group shows and what the next sweep would delete — ONE set
+   * (docs/17 row 323): `group` holds only deletable rows, so it IS the offer.
+   */
   const orphanView = useMemo(
     () => orphanOfferView(orphanRows, recordedRefusals),
     [orphanRows, recordedRefusals],
-  );
-  /** The rows the destructive control may offer — exactly what goes. */
-  const orphans = useMemo(
-    () => orphanView.group.filter((entry) => entry.inUseReason === null),
-    [orphanView],
   );
   /** The delete-all confirm dialog (the sweep re-counts at confirm). */
   const [orphanSweepOpen, setOrphanSweepOpen] = useState(false);
@@ -1025,7 +1024,7 @@ export function EntityPanel({
                 {normalizing ? 'Normalizing…' : 'Normalize names'}
               </Button>
             )}
-            {orphans.length > 0 && (
+            {orphanView.group.length > 0 && (
               <Button
                 variant="destructive"
                 size="xs"
@@ -1036,7 +1035,7 @@ export function EntityPanel({
                 }}
               >
                 <Trash2Icon aria-hidden data-icon="inline-start" />
-                {sweeping ? 'Deleting…' : `Delete ${String(orphans.length)} orphan${orphans.length === 1 ? '' : 's'}`}
+                {sweeping ? 'Deleting…' : `Delete ${String(orphanView.group.length)} orphan${orphanView.group.length === 1 ? '' : 's'}`}
               </Button>
             )}
             <Button
@@ -1148,22 +1147,22 @@ export function EntityPanel({
                  * rows this module's prose never mentions — the
                  * disambiguated term for the tree's module-less "Orphaned"
                  * group (00-OVERVIEW). A row a guard keeps (an encounter
-                 * roster, a battle, another module's prose, …) stays listed
-                 * and says WHY, with no trash: the offer may only ever count
-                 * what the deleter will actually delete. */}
+                 * roster, a battle, another module's prose, …) is NOT
+                 * reported at all (docs/17 row 323), so every listed row is
+                 * deletable and carries the trash: the group lists exactly
+                 * what the deleter will delete. */}
                 <section data-testid="orphaned-group" aria-label="Orphaned entities">
                   <p className="px-1 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
                     Orphaned (unmentioned) · {String(orphanView.group.length)}
                   </p>
                   <ul>
-                    {orphanView.group.map((entry) => (
+                    {orphanView.group.map((row) => (
                       <OrphanRow
-                        key={entry.row.artifact.id}
-                        orphan={entry.row}
-                        inUseReason={entry.inUseReason}
+                        key={row.artifact.id}
+                        orphan={row}
                         onOpenCard={onOpenCard}
                         onDelete={() => {
-                          void deleteOrphan(entry.row);
+                          void deleteOrphan(row);
                         }}
                       />
                     ))}
@@ -1282,8 +1281,8 @@ export function EntityPanel({
         <AlertDialogContent data-testid="orphan-sweep-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle data-testid="orphan-sweep-title">
-              Delete {String(orphans.length)} orphaned{' '}
-              {orphans.length === 1 ? 'entity' : 'entities'}?
+              Delete {String(orphanView.group.length)} orphaned{' '}
+              {orphanView.group.length === 1 ? 'entity' : 'entities'}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               These module-owned entities have zero wiki-link mentions in this
@@ -1299,10 +1298,10 @@ export function EntityPanel({
             className="max-h-48 space-y-1 overflow-y-auto overscroll-contain text-xs"
             data-testid="orphan-sweep-list"
           >
-            {orphans.map((entry) => (
-              <li key={entry.row.artifact.id} className="rounded bg-muted px-2 py-1">
-                {entry.row.artifact.name}
-                <span className="text-muted-foreground"> · {entry.row.artifact.kind}</span>
+            {orphanView.group.map((row) => (
+              <li key={row.artifact.id} className="rounded bg-muted px-2 py-1">
+                {row.artifact.name}
+                <span className="text-muted-foreground"> · {row.artifact.kind}</span>
               </li>
             ))}
           </ul>
@@ -1311,7 +1310,7 @@ export function EntityPanel({
             <AlertDialogAction
               variant="destructive"
               size="sm"
-              disabled={sweeping || orphans.length === 0}
+              disabled={sweeping || orphanView.group.length === 0}
               data-testid="orphan-sweep-confirm"
               onClick={() => {
                 void runOrphanSweep();
@@ -1632,18 +1631,16 @@ function EntityRow({
  * Adopt — the row is still module-owned and adoptable. Clicking the name
  * opens the entity card like every resolved row.
  *
- * An IN-USE row (`inUseReason`) is kept by a guard: it states the sweep's own
- * reason instead of "no mentions" and has NO trash button — a control that
- * could only ever refuse is not an offer (docs/17 row 92).
+ * Every row here is DELETABLE (docs/17 row 323): a row a guard keeps is not
+ * reported at all, so the trash is unconditional. A control that could only
+ * ever refuse is not an offer (docs/17 row 92).
  */
 function OrphanRow({
   orphan,
-  inUseReason,
   onOpenCard,
   onDelete,
 }: {
   orphan: ModuleOrphanRow;
-  inUseReason: string | null;
   onOpenCard: (artifact: AnyArtifact) => void;
   onDelete: () => void;
 }): JSX.Element {
@@ -1655,7 +1652,6 @@ function OrphanRow({
         data-testid="orphan-row"
         data-name={artifact.name}
         data-kind={artifact.kind}
-        data-in-use={inUseReason === null ? undefined : 'true'}
         className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
         onClick={() => {
           onOpenCard(artifact);
@@ -1668,32 +1664,20 @@ function OrphanRow({
         >
           {artifact.kind}
         </Badge>
-        {inUseReason === null ? (
-          <span className="shrink-0 text-xs text-muted-foreground">no mentions</span>
-        ) : (
-          <span
-            className="shrink-0 max-w-[14rem] truncate text-xs text-muted-foreground"
-            title={`In use — ${inUseReason}`}
-            data-testid="orphan-in-use-reason"
-          >
-            in use — {inUseReason}
-          </span>
-        )}
+        <span className="shrink-0 text-xs text-muted-foreground">no mentions</span>
       </button>
-      {inUseReason === null && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="shrink-0 text-muted-foreground/40 hover:text-destructive"
-          aria-label={`Delete orphaned entity ${artifact.name}`}
-          title="Delete this orphaned entity (guards keep it with a reason)"
-          data-testid="orphan-delete"
-          data-name={artifact.name}
-          onClick={onDelete}
-        >
-          <Trash2Icon aria-hidden className="size-4" />
-        </Button>
-      )}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 text-muted-foreground/40 hover:text-destructive"
+        aria-label={`Delete orphaned entity ${artifact.name}`}
+        title="Delete this orphaned entity (the sweep re-checks the guards)"
+        data-testid="orphan-delete"
+        data-name={artifact.name}
+        onClick={onDelete}
+      >
+        <Trash2Icon aria-hidden className="size-4" />
+      </Button>
       {artifact.moduleId !== null && (
         <Button
           variant="ghost"

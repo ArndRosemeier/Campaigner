@@ -187,7 +187,9 @@ describe('deriveModuleOrphans — the module-scope tag', () => {
  * The owner's report (docs/17 row 92): the panel offered two creatures for
  * deletion, the sweep refused both because a LIVE ENCOUNTER's roster cites
  * them, and the offer came straight back. The roster guard is derivable from
- * the panel's own props, so the derivation refuses them BEFORE any sweep.
+ * the panel's own props, so the derivation refuses them BEFORE any sweep —
+ * and docs/17 row 323 makes that refusal mean NOT REPORTED: the group holds
+ * only deletable rows, so a kept row is neither listed nor counted.
  */
 describe('deriveModuleOrphans — the roster guard (never offered)', () => {
   it("keeps both of the owner's lumberjacks with the encounter's own reason, unswept", () => {
@@ -221,7 +223,8 @@ describe('deriveModuleOrphans — the roster guard (never offered)', () => {
     const rows = deriveModuleOrphans(module, [risen, bog, encounter]);
 
     // Both rows are tagged orphans and both are in use — the panel never
-    // offers them, and the reason text is the sweep's own.
+    // offers them, the reason text is the sweep's own verdict, and the group
+    // (below) reports neither.
     expect(rows.map((row) => row.artifact.name)).toEqual(['Bog Lumberjack', 'Risen Lumberjack']);
     expect(rows.map((row) => row.refusal?.guard)).toEqual([
       'encounter-roster',
@@ -233,12 +236,13 @@ describe('deriveModuleOrphans — the roster guard (never offered)', () => {
     ]);
 
     const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
-    expect(view.group.map((entry) => entry.inUseReason)).toEqual([
-      'roster entry "Bog Lumberjack" of the encounter "Bog Ambush"',
-      'roster entry "Risen Lumberjack" of the encounter "Bog Ambush"',
+    // A kept row is NOT reported at all (docs/17 row 323): it is neither in
+    // the group nor counted, and there is no offer to make before any sweep.
+    expect(view.group).toEqual([]);
+    expect(view.keptInUse.map((row) => row.artifact.name)).toEqual([
+      'Bog Lumberjack',
+      'Risen Lumberjack',
     ]);
-    // Nothing deletable: there is no offer to make, before any sweep has run.
-    expect(view.group.filter((entry) => entry.inUseReason === null)).toEqual([]);
   });
 
   it('a roster citation by an encounter that is itself deletable does NOT keep the row', () => {
@@ -265,21 +269,21 @@ describe('deriveModuleOrphans — the roster guard (never offered)', () => {
 
     expect(rows.map((row) => row.artifact.name)).toEqual(['Doomed Fight', 'Gate Guard']);
     expect(rows.map((row) => row.refusal)).toEqual([null, null]);
-    expect(
-      orphanOfferView(rows, NO_SWEEP_REFUSALS).group.filter(
-        (entry) => entry.inUseReason === null,
-      ),
-    ).toHaveLength(2);
+    // Both are deletable, so both are in the group (which IS the offer).
+    const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
+    expect(view.group.map((row) => row.artifact.name)).toEqual(['Doomed Fight', 'Gate Guard']);
+    expect(view.keptInUse).toEqual([]);
   });
 });
 
 /**
  * The panel's offer: the derivation plus the refusals a sweep returned. The
  * guards the props cannot judge (cross-module mentions, battle tokens/seeds,
- * outline nodes) land here, so a refusal never leaves the same rows offered.
+ * outline nodes) land here, so a refusal never leaves the same rows offered —
+ * and a kept row is not reported at all (docs/17 row 323).
  */
 describe('orphanOfferView — the offer after a sweep', () => {
-  it('a recorded sweep refusal moves the row out of the offer, with the sweep reason', () => {
+  it('a recorded sweep refusal moves the row out of the group, keeping the record', () => {
     const campaignId = newModuleCampaign();
     const module = moduleWithProse(campaignId, 'Ember Crypt', 'A quiet shore.');
     const wraith = createArtifact({
@@ -298,13 +302,10 @@ describe('orphanOfferView — the offer after a sweep', () => {
       new Map([[wraith.id, 'a portrait token on the battle of "Tide Gate"']]),
     );
 
-    expect(view.group.map((entry) => [entry.row.artifact.name, entry.inUseReason])).toEqual([
-      ['Free', null],
-      ['Lonely Wraith', 'a portrait token on the battle of "Tide Gate"'],
-    ]);
-    // The offer is the deletable row alone.
-    expect(view.group.filter((entry) => entry.inUseReason === null).map((e) => e.row.artifact.name))
-      .toEqual(['Free']);
+    // The deletable row alone is the group (= the offer); the refused row is
+    // held out of it as IN USE and is not reported (docs/17 row 323).
+    expect(view.group.map((row) => row.artifact.name)).toEqual(['Free']);
+    expect(view.keptInUse.map((row) => row.artifact.name)).toEqual(['Lonely Wraith']);
   });
 
   it('ambiguity-shadowed rows stay outside the group AND outside the offer', () => {
@@ -319,6 +320,7 @@ describe('orphanOfferView — the offer after a sweep', () => {
     const view = orphanOfferView(rows, NO_SWEEP_REFUSALS);
 
     expect(view.group).toEqual([]);
+    expect(view.keptInUse).toEqual([]);
     expect(view.hidden.map((row) => row.refusal?.guard)).toEqual(['ambiguity', 'ambiguity']);
   });
 });
