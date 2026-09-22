@@ -9,7 +9,7 @@ import {
   setCreatureCover,
   tokenCreature,
 } from '@/db/creatureRepo';
-import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
+import { encounterBattlemap, seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
 import {
   ensureBattleForEncounter,
   getBattle,
@@ -888,6 +888,62 @@ describe('map resolution', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
     expect((await getBattleByEncounter(encounter.id))?.id).toBe(battle.id);
     expect((await listBattlesByModule(moduleId)).map((row) => row.id)).toEqual([battle.id]);
+  });
+
+  /**
+   * THE one-derivation pin (docs/17 row 328): the seed's board map and grid
+   * are EXACTLY what the shared `encounterBattlemap` helper returns, so the
+   * seed, the surface's heal and its explicit map action cannot disagree. The
+   * second half is the mapless arm: the grid still rides the derivation (a
+   * `| null` return would have forced the seed to derive the layout a second
+   * time, which is the drift this seam exists to prevent).
+   */
+  it('stamps EXACTLY the shared encounterBattlemap derivation (map AND grid, even with no map)', async () => {
+    const mapImage = await createImage({
+      campaignId,
+      blob: new Blob([new Uint8Array([3])], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 100,
+      height: 80,
+      source: 'uploaded',
+      role: 'map',
+    });
+    const room = newId();
+    const layout = packRooms({
+      theme: 'Derivation arena',
+      aspect: '16:9',
+      entryRoomId: room,
+      rosterCounts: [1],
+      rooms: [
+        { id: room, name: 'Arena', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [], key: '', keyTreasure: '' },
+      ],
+    });
+    const encounter = await addEncounter({
+      mapImageId: mapImage.id,
+      layout,
+      monsters: [{ name: 'Cultist', count: 1, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } }],
+    });
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    const derived = await encounterBattlemap(encounter);
+    expect(derived.mapImageId).toBe(mapImage.id);
+    expect(derived.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
+
+    const seeded = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(seeded.battle.board.mapImageId).toBe(derived.mapImageId);
+    expect(seeded.battle.board.mapLayout).toEqual(derived.mapLayout);
+
+    // The mapless arm keeps the LAYOUT (the board's cell/aspect math reads it).
+    const mapless = await addEncounter({
+      layout,
+      monsters: [{ name: 'Cultist', count: 1, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } }],
+    });
+    if (mapless.kind !== 'encounter') throw new Error('not an encounter');
+    const maplessDerived = await encounterBattlemap(mapless);
+    expect(maplessDerived.mapImageId).toBeNull();
+    expect(maplessDerived.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
+    const seededMapless = await seedBattleFromEncounter(campaignId, newId(), mapless.id);
+    expect(seededMapless.battle.board.mapImageId).toBeNull();
+    expect(seededMapless.battle.board.mapLayout).toEqual(maplessDerived.mapLayout);
   });
 
   it('ignores a linked event’s map-role cover — only locations lend battlemaps', async () => {

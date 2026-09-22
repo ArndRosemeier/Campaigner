@@ -1403,12 +1403,30 @@ with Regenerate guidance) any image that is any encounter's current
 Board convergence: after the finalize swaps the map, every battle with
 `encounterArtifactId` on the target and `board.everLive === false`
 converges onto the fresh `mapImageId` + `mapLayout` (repo-level
-`convergeBoardsToRegeneratedMap` through the `patchBattle` path — tokens,
+`convergeBoardsToRegeneratedMap` through the ONE board-map write — tokens,
 veils and everything else ride along untouched). A battle that already went
 live stays FROZEN on the board the table actually played — Open battle never
-reseeds (docs/18 gotcha) — and the finalize toasts loudly so the GM re-runs
-the battle to pick up the new map. Seeding always reads the CURRENT map, so
-a seed after a replace picks up the new board copy.
+reseeds (docs/18 gotcha) — and the finalize toasts loudly, naming the action
+that now EXISTS. Seeding always reads the CURRENT map through the ONE
+derivation (`db/battleSeed.encounterBattlemap`, docs/17 row 328), so a seed
+after a replace picks up the new board copy.
+
+Adopting the encounter's map onto a battle (docs/17 row 328, the owner-
+approved pair; auto-converging a LIVE board stays REJECTED — it would move
+the ground under tokens mid-play):
+
+- **HEAL ON OPEN:** a board with NO map at all (`board.mapImageId === null`)
+  adopts the encounter's current map + layout once, visibly (a one-line note),
+  the first time the battle surface opens it. It cannot clobber anything —
+  there is nothing there — and it covers a board that went live BEFORE its map
+  existed (docs/17 row 325, the owner's repro). A board that already HAS a map
+  is never touched; `everLive` is not the heal's business.
+- **EXPLICIT ACTION:** the surface offers "Use the encounter's current map"
+  exactly when the encounter's current map differs from the board's (a
+  mapless encounter offers nothing — there is no map to adopt), behind a
+  confirm that says the map AND grid move while tokens stay. It writes map +
+  layout and leaves tokens/veils untouched. This is also what makes the
+  regeneration toast's advice true.
 
 ## LLM/image client changes
 

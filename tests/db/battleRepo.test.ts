@@ -10,25 +10,30 @@ import {
   publishToLibrary,
 } from '@/db/artifactRepo';
 import {
+  applyBattleBoardMap,
+  convergeBoardsToRegeneratedMap,
   deleteBattleIfEmpty,
   ensureBattleForEncounter,
   getBattle,
   getBattleByEncounter,
   getBattleForEncounter,
+  healBattleBoardMap,
   listBattlesByModule,
   normalizeBattleOnOpen,
   patchBattle,
   resetBattleToStage,
   saveBattleBoard,
 } from '@/db/battleRepo';
+import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { createCampaign } from '@/db/campaignRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc, isBattleEmpty } from '@/db/fighterStats';
 import { db } from '@/db/db';
 import { captureStageSnapshot, combatHpForToken, fighterTokens, tokenFromFighter } from '@/domain/battle/board';
-import type { Artifact, Battle, BattleToken, FighterStats, FighterStatsLookup, StatBlock } from '@/domain';
+import type { Artifact, Battle, BattleToken, EncounterLayout, FighterStats, FighterStatsLookup, Id, StatBlock } from '@/domain';
 import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
+import { adoptionArenaLayout, createMapImage } from '../helpers/battle-map-fixtures';
 
 /**
  * Battle persistence (10-MILESTONE-6 M6-E; re-keyed by encounter, docs/17 row
@@ -586,5 +591,139 @@ describe('deleteBattleIfEmpty', () => {
     const resolved = stats(monster.id);
     expect(resolved?.maxHp).toBe(21);
     expect(resolved?.initiativeBonus).toBe(2);
+  });
+});
+
+/**
+ * A battle adopting the encounter's CURRENT map (docs/17 row 328). The heal
+ * covers the owner's repro (a board that went live before its map existed,
+ * docs/17 row 325); the explicit apply is the GM's own action on a live board.
+ * Both go through the ONE board-map write and neither auto-converges anything.
+ */
+describe('board-map adoption (docs/17 row 328)', () => {
+  async function addEncounterWithMap(
+    mapImageId: Id | null,
+    encounterLayout: EncounterLayout | null,
+  ): Promise<Artifact & { kind: 'encounter' }> {
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Adoption ambush',
+      data: {
+        difficulty: 'medium',
+        levelHint: '', partyLevel: 3,
+        monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId,
+        layout: encounterLayout,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape:
+          encounterLayout === null || encounterLayout.rooms.length <= 1 ? 'single' : 'complex',
+        budgetAdvisory: '',
+      },
+    });
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    return encounter;
+  }
+
+  it('HEALS a mapless board ONCE: adopts the map + layout, tokens and veils untouched', async () => {
+    const map = await createMapImage(campaignId, 1);
+    const encounterLayout = adoptionArenaLayout('4:3');
+    const encounter = await addEncounterWithMap(null, encounterLayout);
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(battle.board.mapImageId).toBeNull();
+    // The owner's repro (docs/17 row 325): the board went LIVE before its map
+    // existed, so the regeneration convergence deliberately skips it.
+    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+    const before = await getBattle(battle.id);
+    if (before === undefined) throw new Error('battle missing');
+
+    const healed = await healBattleBoardMap(battle.id, {
+      mapImageId: map,
+      mapLayout: { cols: encounterLayout.gridW, rows: encounterLayout.gridH },
+    });
+    expect(healed).toBe(true);
+    const after = await getBattle(battle.id);
+    expect(after?.board.mapImageId).toBe(map);
+    expect(after?.board.mapLayout).toEqual({
+      cols: encounterLayout.gridW,
+      rows: encounterLayout.gridH,
+    });
+    expect(after?.board.tokens).toEqual(before.board.tokens);
+    expect(after?.board.veils).toEqual(before.board.veils);
+    // The freeze flag is not the heal's business: this is not a re-seed.
+    expect(after?.board.everLive).toBe(true);
+
+    // ONCE: a second call applies nothing — the `null` layout is the
+    // discriminator that would show a second write.
+    const again = await healBattleBoardMap(battle.id, { mapImageId: map, mapLayout: null });
+    expect(again).toBe(false);
+    expect((await getBattle(battle.id))?.board.mapLayout).toEqual({
+      cols: encounterLayout.gridW,
+      rows: encounterLayout.gridH,
+    });
+  });
+
+  it('leaves a board that ALREADY has a map BYTE-IDENTICAL — the heal never touches it', async () => {
+    const own = await createMapImage(campaignId, 2);
+    const other = await createMapImage(campaignId, 3);
+    const encounter = await addEncounterWithMap(own, adoptionArenaLayout('4:3'));
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(battle.board.mapImageId).toBe(own);
+    const before = await getBattle(battle.id);
+
+    const healed = await healBattleBoardMap(battle.id, {
+      mapImageId: other,
+      mapLayout: { cols: 9, rows: 9 },
+    });
+    expect(healed).toBe(false);
+    const after = await getBattle(battle.id);
+    expect(after).toEqual(before);
+    expect(after?.board.mapImageId).toBe(own);
+  });
+
+  it('APPLIES on demand: the explicit action moves map + layout and leaves tokens/veils alone', async () => {
+    const mapA = await createMapImage(campaignId, 4);
+    const mapB = await createMapImage(campaignId, 5);
+    const encounter = await addEncounterWithMap(mapA, adoptionArenaLayout('4:3'));
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+    const before = await getBattle(battle.id);
+    if (before === undefined) throw new Error('battle missing');
+
+    const applied = await applyBattleBoardMap(battle.id, {
+      mapImageId: mapB,
+      mapLayout: { cols: 28, rows: 16 },
+    });
+    expect(applied.board.mapImageId).toBe(mapB);
+    expect(applied.board.mapLayout).toEqual({ cols: 28, rows: 16 });
+    expect(applied.board.tokens).toEqual(before.board.tokens);
+    expect(applied.board.veils).toEqual(before.board.veils);
+    expect(applied.board.everLive).toBe(true);
+
+    // A missing row is loud, never a silent no-op.
+    await expect(
+      applyBattleBoardMap(newId(), { mapImageId: mapB, mapLayout: null }),
+    ).rejects.toThrow('Battle');
+  });
+
+  it('still SKIPS a live board on regeneration — live boards are never auto-converged', async () => {
+    const mapA = await createMapImage(campaignId, 6);
+    const mapB = await createMapImage(campaignId, 7);
+    const encounter = await addEncounterWithMap(mapA, adoptionArenaLayout('4:3'));
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+
+    const result = await convergeBoardsToRegeneratedMap(encounter.id, {
+      mapImageId: mapB,
+      mapLayout: { cols: 28, rows: 16 },
+    });
+    expect(result).toEqual({ converged: 0, liveSkipped: 1 });
+    // The rejected option (docs/17 row 328): the ground never moves under
+    // tokens mid-play. Only the surface's explicit action may switch it.
+    expect((await getBattle(battle.id))?.board.mapImageId).toBe(mapA);
   });
 });

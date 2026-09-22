@@ -535,10 +535,16 @@ describe('regenerate finalize slot-replace (runEngine)', () => {
     // …while the live board stays frozen on the original map.
     expect((await getBattle(live.id))?.board.mapImageId).toBe(oldMap.id);
 
-    // Loud: every regenerate with a frozen live board toasts the re-run guidance.
+    // Loud, and it NAMES A REAL ACTION (docs/17 row 328): every regenerate with
+    // a frozen live board points at the battle surface's own "Use the
+    // encounter's current map" control. The pre-328 sentence told the GM to
+    // "re-run battle", an action that does not exist (Open never reseeds).
     const guidance = toastErrorMock.mock.calls.filter((call) =>
-      call[0].includes('re-run battle to pick up the new map'),
+      call[0].includes('Use the encounter’s current map'),
     );
     expect(guidance).toHaveLength(2);
+    expect(
+      toastErrorMock.mock.calls.some((call) => call[0].includes('re-run battle')),
+    ).toBe(false);
   });
 });

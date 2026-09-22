@@ -6795,9 +6795,14 @@ export class RunEngine {
       });
       if (liveSkipped > 0) {
         // Loud (AGENTS rule 2): the new map is saved, but the live table
-        // still plays the old board — the GM must act to pick it up.
+        // still plays the old board — the GM must act to pick it up. The
+        // advice NAMES THE ACTION THAT EXISTS (docs/17 row 328): the battle
+        // surface's own "Use the encounter's current map" control, which
+        // moves map + layout while tokens/veils stay. The old sentence told
+        // the GM to "re-run battle", which does not exist — Open never
+        // reseeds, so re-opening shows the same frozen board (row 254/325).
         toastError(
-          `The battlemap was replaced, but ${liveSkipped === 1 ? 'a live battle is' : `${String(liveSkipped)} live battles are`} still frozen on the old board — re-run battle to pick up the new map.`,
+          `The battlemap was replaced, but ${liveSkipped === 1 ? 'a live battle is' : `${String(liveSkipped)} live battles are`} still frozen on the old board — open the battle and choose “Use the encounter’s current map” to switch it.`,
         );
       }
     } else {

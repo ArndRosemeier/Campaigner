@@ -8,7 +8,7 @@ import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
-import { toastError, toastSuccess } from '@/lib/toast';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import { db } from '@/db/db';
 import {
   ensureBattleForEncounter,
@@ -33,6 +33,7 @@ import { battleGridStyle } from '@/domain/battle/gridSnap';
 import { isBoardGestureActive } from '@/domain/battle/gestureGate';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { adoptionArenaLayout, createMapImage } from '../helpers/battle-map-fixtures';
 import { BATTLE_VIEW_PERSIST_DEBOUNCE_MS } from '@/features/play/battle/use-battle-view';
 
 // Wrap (not replace) saveBattleBoard so veil-drag tests can count commits —
@@ -4456,5 +4457,147 @@ describe('persisted battle view (row 262b)', () => {
     await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     expect(screen.getByTestId('battle-surface').getAttribute('data-wake-lock')).toBe('unsupported');
+  });
+});
+
+/**
+ * Battle map ADOPTION (docs/17 row 328), the owner-approved pair: on open a
+ * board with NO map adopts the encounter's current map + layout ONCE and
+ * visibly (the heal — the owner's repro, docs/17 row 325, where the board went
+ * live before its map existed); a board that already HAS a map is never touched
+ * by the heal and instead offers "Use the encounter's current map" when the two
+ * differ, behind a confirm. The regeneration path still SKIPS live boards (the
+ * db-level pin lives in `tests/db/map-slot.test.ts`).
+ */
+describe('battle map adoption (docs/17 row 328)', () => {
+  /** A seeded board forced LIVE (the owner's repro shape): the convergence
+   *  deliberately skips it, so only the heal / the explicit action can move it. */
+  async function seedAdoptionBattle(
+    mapImageId: string | null,
+    layout: EncounterLayout | null,
+  ): Promise<{ moduleId: string; encounterId: string; tokenIds: string[] }> {
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Adoption ambush',
+      data: {
+        difficulty: 'medium',
+        levelHint: '', partyLevel: 3,
+        monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId,
+        layout,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: layout === null || layout.rooms.length <= 1 ? 'single' : 'complex',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Adoption Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    const seeded = await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    await patchBattle(seeded.battle.id, {
+      board: { ...seeded.battle.board, live: true, everLive: true },
+    });
+    return {
+      moduleId: module.id,
+      encounterId: encounter.id,
+      tokenIds: seeded.battle.board.tokens.map((token) => token.id),
+    };
+  }
+
+  /** The regeneration finalize's effect on the encounter row alone. */
+  async function setEncounterMap(
+    encounterId: string,
+    mapImageId: string,
+    layout: EncounterLayout,
+  ): Promise<void> {
+    const current = await getAnyArtifact(encounterId);
+    if (current?.kind !== 'encounter') throw new Error('encounter missing');
+    await updateArtifact(encounterId, { data: { ...current.data, mapImageId, layout } });
+  }
+
+  it('HEALS a board with NO map onto the encounter’s map + layout, once, with a visible note', async () => {
+    const { moduleId, encounterId, tokenIds } = await seedAdoptionBattle(null, adoptionArenaLayout('4:3'));
+    const freshMap = await createMapImage(campaignId, 11);
+    const freshLayout = adoptionArenaLayout('16:9');
+    await setEncounterMap(encounterId, freshMap, freshLayout);
+    vi.mocked(toastInfo).mockClear();
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates(30);
+
+    const healed = await currentBattle(moduleId);
+    expect(healed.board.mapImageId).toBe(freshMap);
+    // The grid matches the encountered layout, not the pre-heal one.
+    expect(healed.board.mapLayout).toEqual({ cols: freshLayout.gridW, rows: freshLayout.gridH });
+    // Tokens ride along untouched.
+    expect(healed.board.tokens.map((token) => token.id)).toEqual(tokenIds);
+    // The one-line note, exactly once.
+    const notes = vi.mocked(toastInfo).mock.calls.filter((call) =>
+      call[0].includes('had no map'),
+    );
+    expect(notes).toHaveLength(1);
+  });
+
+  it('NEVER touches a board that already has a map — it offers the explicit action instead', async () => {
+    const boardMap = await createMapImage(campaignId, 12);
+    const boardLayout = adoptionArenaLayout('4:3');
+    const { moduleId, encounterId, tokenIds } = await seedAdoptionBattle(boardMap, boardLayout);
+    const encounterMap = await createMapImage(campaignId, 13);
+    await setEncounterMap(encounterId, encounterMap, adoptionArenaLayout('16:9'));
+    vi.mocked(toastInfo).mockClear();
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates(30);
+
+    const after = await currentBattle(moduleId);
+    // The heal did not fire: the board keeps its OWN frozen map and grid…
+    expect(after.board.mapImageId).toBe(boardMap);
+    expect(after.board.mapLayout).toEqual({ cols: boardLayout.gridW, rows: boardLayout.gridH });
+    expect(after.board.tokens.map((token) => token.id)).toEqual(tokenIds);
+    expect(
+      vi.mocked(toastInfo).mock.calls.filter((call) => call[0].includes('had no map')),
+    ).toHaveLength(0);
+    // …and the difference is offered as the GM's own action instead.
+    expect(screen.getByTestId('use-encounter-map')).toBeInTheDocument();
+  });
+
+  it('offers NO action when the board already plays the encounter’s current map', async () => {
+    const map = await createMapImage(campaignId, 14);
+    const { moduleId } = await seedAdoptionBattle(map, adoptionArenaLayout('4:3'));
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates(20);
+    expect(screen.queryByTestId('use-encounter-map')).toBeNull();
+  });
+
+  it('the explicit action moves map AND layout behind a confirm, leaving tokens and veils in place', async () => {
+    const boardMap = await createMapImage(campaignId, 15);
+    const { moduleId, encounterId, tokenIds } = await seedAdoptionBattle(boardMap, adoptionArenaLayout('4:3'));
+    const freshMap = await createMapImage(campaignId, 16);
+    const freshLayout = adoptionArenaLayout('16:9');
+    await setEncounterMap(encounterId, freshMap, freshLayout);
+
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates(30);
+    const before = await currentBattle(moduleId);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('use-encounter-map'));
+    // The confirm says the map AND the grid move while the pieces stay.
+    expect(screen.getByTestId('use-encounter-map-copy').textContent).toContain('grid move');
+    await user.click(screen.getByTestId('use-encounter-map-confirm'));
+    await flushAsyncUpdates(30);
+
+    const after = await currentBattle(moduleId);
+    expect(after.board.mapImageId).toBe(freshMap);
+    expect(after.board.mapLayout).toEqual({ cols: freshLayout.gridW, rows: freshLayout.gridH });
+    // Tokens and veils are byte-identical: only the ground moved.
+    expect(after.board.tokens).toEqual(before.board.tokens);
+    expect(after.board.veils).toEqual(before.board.veils);
+    expect(after.board.tokens.map((token) => token.id)).toEqual(tokenIds);
   });
 });

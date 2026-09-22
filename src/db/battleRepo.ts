@@ -288,19 +288,81 @@ export async function deleteBattlesByModule(moduleId: Id): Promise<void> {
 }
 
 /**
+ * A battlemap + grid to stamp onto a board. The DERIVATION is
+ * `db/battleSeed.encounterBattlemap` (the ONE seam every caller reads); this
+ * is the write-side shape the three board-map writers below take.
+ */
+export interface BattlemapSlot {
+  mapImageId: Id;
+  mapLayout: BattleBoard['mapLayout'];
+}
+
+/**
+ * THE one board-map patch body (docs/17 row 328): map + layout stamped onto a
+ * board, tokens/veils/effects/stage and every other field riding along
+ * untouched. The convergence path, the heal and the explicit apply all go
+ * through it, so they cannot drift into three near-copies.
+ */
+function withBattlemap(board: BattleBoard, map: BattlemapSlot): BattleBoard {
+  return { ...board, mapImageId: map.mapImageId, mapLayout: map.mapLayout };
+}
+
+/** THE one board-map row write: the patch above through the parse-normalized
+ * `patchBattle` path (never a raw table write, never from the surface). */
+async function writeBoardMap(battle: Battle, map: BattlemapSlot): Promise<Battle> {
+  return patchBattle(battle.id, { board: withBattlemap(battle.board, map) });
+}
+
+/**
+ * (a) HEAL a board that has NO map (docs/17 row 328): adopt the encounter's
+ * current map + grid. Safe by construction — the guard and the write share ONE
+ * readwrite transaction, so a board that already carries a map is returned
+ * UNTOUCHED (never written; byte-identical) and a second call after the first
+ * is a no-op. `true` means THIS call applied the map, which is what the
+ * surface's one-time note keys on.
+ *
+ * This is the arm that covers a board which went live before its map existed
+ * (the owner's repro, docs/17 row 325): there is nothing to freeze, so giving
+ * it the map it should always have had clobbers nothing.
+ */
+export async function healBattleBoardMap(battleId: Id, map: BattlemapSlot): Promise<boolean> {
+  return db.transaction('rw', [db.battles, db.artifacts], async () => {
+    const current = await db.battles.get(battleId);
+    if (current === undefined) throw new NotFoundError('Battle', battleId);
+    const battle = parseBattleRow(current);
+    if (battle.board.mapImageId !== null) return false;
+    await writeBoardMap(battle, map);
+    return true;
+  });
+}
+
+/**
+ * (b) EXPLICIT APPLY (docs/17 row 328): the GM's own "Use the encounter's
+ * current map" action writes map + layout on demand and leaves tokens/veils
+ * alone. The surface owns the arm-and-confirm copy; this entry point owns the
+ * write, so the surface never patches a board itself.
+ */
+export async function applyBattleBoardMap(battleId: Id, map: BattlemapSlot): Promise<Battle> {
+  const battle = await getBattle(battleId);
+  if (battle === undefined) throw new NotFoundError('Battle', battleId);
+  return writeBoardMap(battle, map);
+}
+
+/**
  * Single-map-slot convergence (owner decision, docs/11): after an encounter
  * regenerate-finalize swaps the battlemap, every battle seeded from that
  * encounter but never opened (`board.everLive === false`) converges onto the
  * fresh map — `board.mapImageId` + `board.mapLayout` move, tokens/veils and
  * everything else stay. A battle that already went live stays FROZEN on the
  * board the table actually played (Open battle never reseeds — docs/18
- * gotcha); the caller toasts loudly so the GM re-runs the battle to pick up
- * the new map. Rides the `patchBattle` path (parse-normalized, one tx per
- * battle) — never the surface.
+ * gotcha); the caller toasts loudly and names the REAL way out, the battle
+ * surface's own "Use the encounter's current map" action (docs/17 row 328).
+ * Rides `writeBoardMap` (parse-normalized, one tx per battle) — never the
+ * surface.
  */
 export async function convergeBoardsToRegeneratedMap(
   encounterArtifactId: Id,
-  map: { mapImageId: Id; mapLayout: BattleBoard['mapLayout'] },
+  map: BattlemapSlot,
 ): Promise<{ converged: number; liveSkipped: number }> {
   const rows = await db.battles
     .where('encounterArtifactId')
@@ -315,9 +377,7 @@ export async function convergeBoardsToRegeneratedMap(
       continue;
     }
     if (battle.board.mapImageId === map.mapImageId) continue;
-    await patchBattle(battle.id, {
-      board: { ...battle.board, mapImageId: map.mapImageId, mapLayout: map.mapLayout },
-    });
+    await writeBoardMap(battle, map);
     converged += 1;
   }
   return { converged, liveSkipped };

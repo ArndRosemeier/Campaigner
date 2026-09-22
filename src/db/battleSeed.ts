@@ -1,4 +1,4 @@
-import type { AnyArtifact, Artifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
+import type { AnyArtifact, Artifact, Battle, BattleBoard, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
 import {
   GRID_SIZE_DEFAULT,
   newId,
@@ -103,8 +103,11 @@ async function resolveMapImageId(
     }
     // Loud (AGENTS rule 2): the encounter names a battlemap whose blob is
     // gone — the seed does NOT freeze the dangling id onto the board.
+    // Context-neutral wording (docs/17 row 328): this derivation now runs on
+    // the battle surface too (the heal and the explicit map action read it),
+    // where "seeding" would be a lie.
     toastError(
-      `The battlemap for encounter “${encounter.name}” is missing — seeding without it. ` +
+      `The battlemap for encounter “${encounter.name}” is missing — the encounter’s map cannot be used. ` +
         'Regenerate the encounter map to restore it.',
     );
   }
@@ -118,6 +121,39 @@ async function resolveMapImageId(
     }
   }
   return null;
+}
+
+/**
+ * THE one derivation of an encounter's CURRENT battlemap (docs/17 row 328):
+ * the map id `resolveMapImageId` resolves (its missing-blob arm toasts loudly
+ * and falls through to a linked location's map-role cover), plus the grid the
+ * encounter's layout stamps.
+ *
+ * ONE seam, THREE callers, so they cannot disagree: `seedBattleFromEncounter`
+ * stamps exactly this pair onto a fresh board; the battle surface's HEAL
+ * adopts it onto a board that has NO map at all; and the surface's explicit
+ * "Use the encounter's current map" action applies it on demand. `mapLayout`
+ * rides along EVEN when `mapImageId` is null — a mapless encounter that still
+ * carries a layout keeps its grid geometry (`BattleSurface`'s cell/aspect
+ * math reads it) — which is why the pair is returned as ONE object rather
+ * than a nullable slot; a `| null` return would force the seed to derive the
+ * layout a second time.
+ */
+export interface EncounterBattlemap {
+  /** The encounter's current battlemap, or null for a mapless board. */
+  mapImageId: Id | null;
+  /** The grid the encounter's layout stamps, null when it has no layout. */
+  mapLayout: BattleBoard['mapLayout'];
+}
+
+export async function encounterBattlemap(
+  encounter: AnyArtifact & { kind: 'encounter' },
+): Promise<EncounterBattlemap> {
+  const layout = encounter.data.layout;
+  return {
+    mapImageId: await resolveMapImageId(encounter),
+    mapLayout: layout === null ? null : { cols: layout.gridW, rows: layout.gridH },
+  };
 }
 
 export interface SeedReport {
@@ -344,7 +380,11 @@ export async function seedBattleFromEncounter(
   // first module never loses its monster silently.
   await promoteRosterUses(moduleId, encounter.data.monsters);
 
-  const mapImageId = await resolveMapImageId(encounter);
+  // ONE derivation, shared with the battle surface's heal and its explicit
+  // map action (docs/17 row 328): `encounterBattlemap` answers the encounter's
+  // current map AND the grid its layout stamps, so the seed and the two
+  // surface paths cannot disagree about either.
+  const battlemap = await encounterBattlemap(encounter);
   const layout = encounter.data.layout;
   // The encounter's shape (docs/11 D11): parsed rows always carry it
   // ('single' default; normalizeEncounterShapeData derives complex for
@@ -476,8 +516,8 @@ export async function seedBattleFromEncounter(
   }
   const board = ensurePcTokens(
     {
-      mapImageId,
-      mapLayout: layout === null ? null : { cols: layout.gridW, rows: layout.gridH },
+      mapImageId: battlemap.mapImageId,
+      mapLayout: battlemap.mapLayout,
       live: false,
       // A fresh seed has not spent its first-entry reveal yet — entering the
       // table reveals every token exactly once (encounter-resume arc).

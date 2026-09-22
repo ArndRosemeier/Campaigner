@@ -80,10 +80,13 @@ import {
 } from '@/domain/battle/gestureMachine';
 import { artifactRepo } from '@/db';
 import {
+  applyBattleBoardMap,
+  healBattleBoardMap,
   resetBattleToStage,
   saveBattleBoard,
   saveBattleStage,
 } from '@/db/battleRepo';
+import { encounterBattlemap } from '@/db/battleSeed';
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact, getArtifact } from '@/db/artifactRepo';
 import { creaturePortraitImageIn, tokenCreature } from '@/db/creatureRepo';
@@ -262,6 +265,9 @@ export function BattleSurface(): JSX.Element {
   // reload or an iOS tab discard cannot flip the table back to GM view.
   const [stageArmed, setStageArmed] = useState(false);
   const [reseedArmed, setReseedArmed] = useState(false);
+  // The explicit "Use the encounter's current map" confirm (docs/17 row 328):
+  // an AlertDialog, not a hover-only affordance (this app is used on a tablet).
+  const [mapAdoptOpen, setMapAdoptOpen] = useState(false);
   // Mid-fight spawn picker (spawn-picker arc): ONE Spawn button opens the
   // dialog — the per-roster-entry buttons are gone, the roster readout stays.
   const [spawnPickerOpen, setSpawnPickerOpen] = useState(false);
@@ -365,6 +371,34 @@ export function BattleSurface(): JSX.Element {
     async () => (encounterArtifactId === null ? null : getArtifact(encounterArtifactId)),
     [encounterArtifactId],
     'loading' as const,
+  );
+
+  // THE encounter's CURRENT battlemap (docs/17 row 328), through the SAME
+  // derivation the seed stamps from (`db/battleSeed.encounterBattlemap`):
+  // map id + the grid its layout stamps. Two surface arms read it — the heal
+  // below (a board with NO map adopts it) and the explicit action (a live
+  // board picks it up on demand) — and neither may disagree with what a fresh
+  // seed would carry, which is exactly why the pair is derived once, here.
+  const encounterMap = useLiveQuery(
+    async () => {
+      if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) {
+        return null;
+      }
+      if (encounterArtifact.kind !== 'encounter') return null;
+      return encounterBattlemap(encounterArtifact);
+    },
+    [encounterArtifact],
+    'loading' as const,
+  );
+  // The write-side slot BOTH surface arms take, or null when the encounter
+  // resolves NO map at all: there is nothing to adopt then (clearing a board's
+  // map is not offered — a mapless encounter is simply the heal's no-op arm).
+  const encounterMapSlot = useMemo(
+    () =>
+      encounterMap !== 'loading' && encounterMap !== null && encounterMap.mapImageId !== null
+        ? { mapImageId: encounterMap.mapImageId, mapLayout: encounterMap.mapLayout }
+        : null,
+    [encounterMap],
   );
 
   // THE ROUTE'S OWN encounter, resolved WITHOUT the battle row: a deep link to
@@ -485,6 +519,33 @@ export function BattleSurface(): JSX.Element {
       },
     );
   }, [battle]);
+
+  // (a) HEAL ON OPEN (docs/17 row 328): a board that has NO map adopts the
+  // encounter's CURRENT map + layout, once and visibly. A board that already
+  // has a map is NEVER touched by this — the "only when none" guard lives in
+  // `healBattleBoardMap`'s own readwrite transaction (so a concurrent writer
+  // cannot slip a map in between the check and the write), and the ref below
+  // is the second belt against a re-fire while the write is in flight. The
+  // write's own `true` answer is what raises the note, so a no-op open is
+  // silent. `everLive` is deliberately untouched: this is not a re-seed.
+  const healAttemptedRef = useRef<Id | null>(null);
+  useEffect(() => {
+    if (battle === undefined || encounterMapSlot === null) return;
+    if (battle.board.mapImageId !== null) return;
+    if (healAttemptedRef.current === battle.id) return;
+    healAttemptedRef.current = battle.id;
+    void healBattleBoardMap(battle.id, encounterMapSlot)
+      .then((healed) => {
+        if (healed) {
+          toastInfo('This battle had no map — now using the encounter’s battlemap');
+        }
+      })
+      .catch((error: unknown) => {
+        // A failed heal must be retryable on this mount, not swallowed.
+        healAttemptedRef.current = null;
+        toastError('Could not give this battle the encounter’s battlemap', error);
+      });
+  }, [battle, encounterMapSlot]);
 
   const commit = useCallback(
     (mutate: (board: Battle['board']) => Battle['board']) => {
@@ -1658,6 +1719,22 @@ export function BattleSurface(): JSX.Element {
     setSelectedVeilId(null);
   }
 
+  /** (b) EXPLICIT MAP ADOPTION (docs/17 row 328): the GM asks THIS live board
+   * to pick up the encounter's current map + grid. Tokens and veils stay
+   * exactly where they are — the confirm above says so, and this handler only
+   * moves the map through the repo's ONE board-map write. */
+  async function adoptEncounterMap(): Promise<void> {
+    if (battle === undefined || encounterMapSlot === null) return;
+    try {
+      await applyBattleBoardMap(battle.id, encounterMapSlot);
+      toastSuccess(
+        'This battle now shows the encounter’s current battlemap — tokens and veils stayed in place',
+      );
+    } catch (error) {
+      toastError('Could not switch this battle to the encounter’s battlemap', error);
+    }
+  }
+
   // Room keys + dungeon path (owner-ratified; docs/11 D11/D13): derived,
   // never stamped — the seeding encounter's CURRENT layout is the live
   // source of truth, so re-seeding or editing keys is reflected without
@@ -1825,6 +1902,12 @@ export function BattleSurface(): JSX.Element {
 
   const board = battle.board;
   const turnTokenId = activeInitiativeTokenId(board);
+  // (b) The explicit map action is offered ONLY when the encounter resolves a
+  // map that DIFFERS from this board's (docs/17 row 328). Equal maps mean
+  // nothing to switch to; a mapless encounter has no map to adopt (that arm is
+  // the heal's alone, and clearing a board's map is not offered).
+  const canAdoptEncounterMap =
+    encounterMapSlot !== null && board.mapImageId !== encounterMapSlot.mapImageId;
   // Provenance narrowing: 'loading' and no-provenance (null) render nothing;
   // a set id whose artifact is gone stays loud.
   const provenanceEncounter =
@@ -2011,6 +2094,52 @@ export function BattleSurface(): JSX.Element {
             </Button>
           )
         ) : null}
+        {/* (b) "Use the encounter's current map" (docs/17 row 328): always a
+            visible toolbar control — never hover-only, this app is used on a
+            tablet — offered exactly when the encounter's current map differs
+            from this board's, behind a confirm that names what moves. It is
+            the action the regeneration toast now points at. */}
+        {canAdoptEncounterMap && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={playerSafe}
+              data-testid="use-encounter-map"
+              onClick={() => {
+                setMapAdoptOpen(true);
+              }}
+            >
+              <ImageIcon aria-hidden data-icon="inline-start" />
+              Use the encounter’s current map
+            </Button>
+            <AlertDialog open={mapAdoptOpen} onOpenChange={setMapAdoptOpen}>
+              <AlertDialogContent data-testid="use-encounter-map-dialog">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Use the encounter’s current map?</AlertDialogTitle>
+                  <AlertDialogDescription data-testid="use-encounter-map-copy">
+                    The battlemap AND its grid move to the encounter’s current map. Tokens and
+                    veils stay exactly where they are.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="use-encounter-map-cancel">
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    data-testid="use-encounter-map-confirm"
+                    onClick={() => {
+                      setMapAdoptOpen(false);
+                      void adoptEncounterMap();
+                    }}
+                  >
+                    Switch map
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
+        )}
         <span className="mx-1 h-5 w-px bg-white/10" />
         <Button
           size="sm"
