@@ -179,16 +179,20 @@ export interface CampaignTreeProps {
  * sections with counts and `+` buttons, rows with summary tooltip and
  * Rename/Duplicate/Delete context menu.
  *
- * MULTI-SELECT (owner request, 2026-09-22; docs/17 row 322): every
- * CAMPAIGN-LEVEL row carries a checkbox and a small action bar above the tree
+ * MULTI-SELECT (owner request, 2026-09-22; docs/17 rows 322/327): every row of
+ * THIS campaign carries a checkbox — the campaign-level kind sections AND a
+ * module's own group, because a module-owned NPC or location is exactly what
+ * gets reused in another campaign — and a small action bar above the tree
  * offers Export selected (json|zip, selection-only), Remove selected (the ONE
- * shared confirm, live census) and Import… (into THIS campaign). Module-owned
- * and library rows carry no checkbox — a module-owned row is out of reach of
- * the selection removal and a library row is not this campaign's — so the
- * surface never offers an action that could only fail. The Party IS
- * selectable (players must be exportable between campaigns) and the bar says
- * in as many words that it can never be removed; pressing Remove then shows
- * the seam's own refusal with the confirm disabled.
+ * shared confirm, live census) and Import… (into THIS campaign). Library rows
+ * carry no checkbox (a library row is not this campaign's asset) and neither
+ * does the Orphaned group (a dangling module reference is not module ownership
+ * in the reuse sense; docs/17 row 327). Removal stays campaign-level: the seam
+ * REFUSES a module-owned row by name (deleting one belongs to the module's own
+ * guarded surface), the Party IS selectable (players must be exportable
+ * between campaigns) but can never be removed, and the bar says BOTH in as many
+ * words; pressing Remove then shows the seam's own refusal with the confirm
+ * disabled.
  */
 export function CampaignTree({
   campaignId,
@@ -208,7 +212,7 @@ export function CampaignTree({
   const [publishTarget, setPublishTarget] = useState<Artifact | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<GlobalArtifact | null>(null);
   const [closedGroups, setClosedGroups] = useState<ReadonlySet<string>>(new Set());
-  /** The multi-select set (campaign-level rows only — see the doc above). */
+  /** The multi-select set (every row of THIS campaign — see the doc above). */
   const [selection, setSelection] = useState<ReadonlySet<Id>>(new Set());
   const [removeSelectionOpen, setRemoveSelectionOpen] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -317,13 +321,13 @@ export function CampaignTree({
   // THE multi-select set, resolved against the LIVE campaign rows: a row that
   // was deleted (here or in another tab) drops out of the selection by itself,
   // so the count, the export and the removal can never name a row that is not
-  // there. Only campaign-level rows are selectable (the checkboxes are
-  // rendered there and nowhere else), and the Party is among them on purpose.
+  // there. EVERY row of this campaign is selectable (docs/17 row 327 — the
+  // checkboxes are rendered on the campaign-level kind sections and on a
+  // module's own group alike), and the Party is among them on purpose. The
+  // removal side still REFUSES a module-owned row by name
+  // (`deleteArtifactSelection`), which the bar states while one is selected.
   const selectedArtifacts = useMemo(
-    () =>
-      artifacts.filter(
-        (artifact) => artifact.moduleId === null && selection.has(artifact.id),
-      ),
+    () => artifacts.filter((artifact) => selection.has(artifact.id)),
     [artifacts, selection],
   );
   const selectedIds = useMemo(
@@ -333,6 +337,28 @@ export function CampaignTree({
   const partySelected = selectedArtifacts.some((artifact) =>
     BULK_REMOVE_EXCLUDED_KINDS.includes(artifact.kind),
   );
+  // Module-owned rows are exportable (that is how a good NPC crosses campaigns)
+  // but NEVER bulk-removable: the seam refuses them by name, so the bar says so
+  // while one is selected (docs/17 row 327). The check mirrors the seam's own
+  // rule (`moduleId !== null`), so the notice and the refusal cannot disagree.
+  const moduleSelected = selectedArtifacts.some((artifact) => artifact.moduleId !== null);
+
+  function beginRename(artifact: Artifact): void {
+    setRenameTarget(artifact);
+    setRenameValue(artifact.name);
+  }
+
+  function beginDuplicate(artifact: Artifact): void {
+    void handleDuplicate(artifact);
+  }
+
+  function beginDelete(artifact: Artifact): void {
+    setDeleteTarget(artifact);
+  }
+
+  function beginPublish(artifact: Artifact): void {
+    setPublishTarget(artifact);
+  }
 
   function toggleSelection(id: Id, checked: boolean): void {
     setSelection((previous) => {
@@ -490,9 +516,10 @@ export function CampaignTree({
         {/*
           The multi-select action bar (owner request, 2026-09-22; docs/17 row
           322). Import… is always offered — it is how a file lands in THIS
-          campaign; the two selection actions need a selection. The Party is
-          called out in as many words while it is selected: it is exportable
-          but never bulk-removable, and the confirm refuses it by name.
+          campaign; the two selection actions need a selection. The Party and
+          module-owned rows are each called out in as many words while selected
+          (docs/17 row 327): both are exportable but never bulk-removable here,
+          and the confirm refuses each by name.
         */}
         <div
           className="mt-1.5 flex flex-wrap items-center gap-1"
@@ -505,6 +532,15 @@ export function CampaignTree({
             >
               The Party is exportable, but never removable in bulk — take Party rows out of
               the selection to use Remove selected.
+            </p>
+          )}
+          {moduleSelected && (
+            <p
+              className="w-full text-xs text-amber-600 dark:text-amber-400"
+              data-testid="module-not-removable"
+            >
+              Module-owned rows are exportable, but never removable in bulk here — delete or
+              release them from their own module first.
             </p>
           )}
           <span className="text-xs text-muted-foreground" data-testid="tree-selection-count">
@@ -651,41 +687,20 @@ export function CampaignTree({
           >
             <ul className="mt-0.5">
               {group.rows.map((artifact) => (
-                <li key={artifact.id}>
-                  <TreeRow
-                    artifact={artifact}
-                    artifacts={wikiPool}
-                    onOpenArtifact={openWikiArtifact}
-                    selected={artifact.id === selectedArtifactId}
-                    onSelect={() => {
-                      onSelectArtifact(artifact.id);
-                    }}
-                    onRename={() => {
-                      setRenameTarget(artifact);
-                      setRenameValue(artifact.name);
-                    }}
-                    onDuplicate={() => void handleDuplicate(artifact)}
-                    onDelete={() => {
-                      setDeleteTarget(artifact);
-                    }}
-                    onExport={() => {
-                      void exportSingleArtifact(artifact);
-                    }}
-                    onExportPdfGm={() => {
-                      void exportArtifactPdfFile(artifact, 'gm');
-                    }}
-                    onExportPdfPlayer={() => {
-                      void exportArtifactPdfFile(artifact, 'player');
-                    }}
-                    onPublish={
-                      globalArtifactKindSchema.safeParse(artifact.kind).success
-                        ? () => {
-                            setPublishTarget(artifact);
-                          }
-                        : undefined
-                    }
-                  />
-                </li>
+                <ArtifactTreeRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  artifacts={wikiPool}
+                  selected={artifact.id === selectedArtifactId}
+                  onSelectArtifact={onSelectArtifact}
+                  onOpenArtifact={openWikiArtifact}
+                  onRename={beginRename}
+                  onDuplicate={beginDuplicate}
+                  onDelete={beginDelete}
+                  onPublish={beginPublish}
+                  selection={selection}
+                  onToggleSelection={toggleSelection}
+                />
               ))}
             </ul>
           </TreeGroup>
@@ -793,46 +808,20 @@ export function CampaignTree({
                 ) : (
                   <ul className="mt-0.5">
                     {items.map((artifact) => (
-                      <li key={artifact.id}>
-                        <TreeRow
-                          artifact={artifact}
-                          artifacts={wikiPool}
-                          onOpenArtifact={openWikiArtifact}
-                          selected={artifact.id === selectedArtifactId}
-                          onSelect={() => {
-                            onSelectArtifact(artifact.id);
-                          }}
-                          onRename={() => {
-                            setRenameTarget(artifact);
-                            setRenameValue(artifact.name);
-                          }}
-                          onDuplicate={() => void handleDuplicate(artifact)}
-                          onDelete={() => {
-                            setDeleteTarget(artifact);
-                          }}
-                          onExport={() => {
-                            void exportSingleArtifact(artifact);
-                          }}
-                          onExportPdfGm={() => {
-                            void exportArtifactPdfFile(artifact, 'gm');
-                          }}
-                          onExportPdfPlayer={() => {
-                            void exportArtifactPdfFile(artifact, 'player');
-                          }}
-                          onPublish={
-                            globalArtifactKindSchema.safeParse(artifact.kind).success
-                              ? () => {
-                                  setPublishTarget(artifact);
-                                }
-                              : undefined
-                          }
-                          selectable
-                          checked={selection.has(artifact.id)}
-                          onCheckedChange={(next) => {
-                            toggleSelection(artifact.id, next);
-                          }}
-                        />
-                      </li>
+                      <ArtifactTreeRow
+                        key={artifact.id}
+                        artifact={artifact}
+                        artifacts={wikiPool}
+                        selected={artifact.id === selectedArtifactId}
+                        onSelectArtifact={onSelectArtifact}
+                        onOpenArtifact={openWikiArtifact}
+                        onRename={beginRename}
+                        onDuplicate={beginDuplicate}
+                        onDelete={beginDelete}
+                        onPublish={beginPublish}
+                        selection={selection}
+                        onToggleSelection={toggleSelection}
+                      />
                     ))}
                   </ul>
                 )}
@@ -987,6 +976,91 @@ export function CampaignTree({
   );
 }
 
+interface ArtifactTreeRowProps {
+  artifact: Artifact;
+  /** Wiki-chip pool for the summary tooltip (docs/17 row 217). */
+  artifacts: readonly AnyArtifact[];
+  selected: boolean;
+  onSelectArtifact: (artifactId: Id) => void;
+  onOpenArtifact: (artifact: AnyArtifact) => void;
+  onRename: (artifact: Artifact) => void;
+  onDuplicate: (artifact: Artifact) => void;
+  onDelete: (artifact: Artifact) => void;
+  onPublish: (artifact: Artifact) => void;
+  /** THE multi-select set — every row of THIS campaign is selectable (row 327). */
+  selection: ReadonlySet<Id>;
+  onToggleSelection: (id: Id, checked: boolean) => void;
+}
+
+/**
+ * THE one way a SELECTABLE campaign row is rendered (AGENTS rule 4, docs/17 row
+ * 327): the campaign-level kind sections and a module's own group both mount
+ * THIS, so the checkbox, its accessible name ("Select <name>"), the
+ * stop-propagation that keeps a tick from navigating the editor, the
+ * context-menu actions and the publish arm cannot drift between the two
+ * surfaces. The Library group and the Orphaned group render `TreeRow` directly
+ * instead: a library row is not this campaign's asset, and a dangling module
+ * reference is not module ownership in the reuse sense, so neither gets a
+ * checkbox.
+ */
+function ArtifactTreeRow({
+  artifact,
+  artifacts,
+  selected,
+  onSelectArtifact,
+  onOpenArtifact,
+  onRename,
+  onDuplicate,
+  onDelete,
+  onPublish,
+  selection,
+  onToggleSelection,
+}: ArtifactTreeRowProps): JSX.Element {
+  return (
+    <li>
+      <TreeRow
+        artifact={artifact}
+        artifacts={artifacts}
+        onOpenArtifact={onOpenArtifact}
+        selected={selected}
+        onSelect={() => {
+          onSelectArtifact(artifact.id);
+        }}
+        onRename={() => {
+          onRename(artifact);
+        }}
+        onDuplicate={() => {
+          onDuplicate(artifact);
+        }}
+        onDelete={() => {
+          onDelete(artifact);
+        }}
+        onExport={() => {
+          void exportSingleArtifact(artifact);
+        }}
+        onExportPdfGm={() => {
+          void exportArtifactPdfFile(artifact, 'gm');
+        }}
+        onExportPdfPlayer={() => {
+          void exportArtifactPdfFile(artifact, 'player');
+        }}
+        onPublish={
+          globalArtifactKindSchema.safeParse(artifact.kind).success
+            ? () => {
+                onPublish(artifact);
+              }
+            : undefined
+        }
+        selectable
+        checked={selection.has(artifact.id)}
+        onCheckedChange={(next) => {
+          onToggleSelection(artifact.id, next);
+        }}
+      />
+    </li>
+  );
+}
+
 interface TreeRowProps {
   artifact: AnyArtifact;
   selected: boolean;
@@ -1009,7 +1083,7 @@ interface TreeRowProps {
   onReanchor?: (() => void) | undefined;
   /** Orphan rows render an explicit "orphaned" badge (never silent). */
   orphaned?: boolean | undefined;
-  /** Campaign-level rows only: the multi-select checkbox (docs/17 row 322). */
+  /** Every row of THIS campaign (module-owned included, docs/17 row 327); the Library and Orphaned groups never pass it. */
   selectable?: boolean | undefined;
   checked?: boolean | undefined;
   onCheckedChange?: ((checked: boolean) => void) | undefined;

@@ -6,9 +6,12 @@ import { fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCampaignExport } from '@/lib/exportImport';
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { createModule } from '@/db/moduleRepo';
+import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
+import { createModule as buildModule } from '@/domain';
 import * as toast from '@/lib/toast';
 import { openSaveTarget } from '@/lib/filePicker';
 import { clearDatabase } from '../db/helpers';
@@ -17,13 +20,16 @@ import { renderWorkspace } from '../helpers/workspace';
 
 /**
  * The workspace's artifact SELECTION surface (owner request, 2026-09-22;
- * docs/17 row 322): campaign-level rows carry checkboxes, a small action bar
- * exports the selection (selection-only — the source campaign's tables do NOT
- * ride along), removes it through the ONE shared confirm (the live census the
- * per-region rung uses) and imports a file INTO this campaign. The Party is
- * selectable (it must be exportable between campaigns) but never bulk-removable:
- * the bar says so and the confirm shows the seam's own refusal with the action
- * disabled.
+ * docs/17 rows 322/327): EVERY row of this campaign carries a checkbox —
+ * campaign-level rows AND module-owned ones, because a module-owned NPC or
+ * location is exactly what gets reused in another campaign — and a small action
+ * bar exports the selection (selection-only — the source campaign's tables do
+ * NOT ride along), removes it through the ONE shared confirm (the live census
+ * the per-region rung uses) and imports a file INTO this campaign. The Party is
+ * selectable (it must be exportable between campaigns) but never bulk-removable;
+ * module-owned rows are exportable but the seam REFUSES them by name for
+ * removal (deleting one belongs to the module's guarded surface); the bar says
+ * both, and the Library group keeps no checkbox at all.
  */
 
 vi.mock('@/lib/filePicker', () => ({
@@ -74,6 +80,43 @@ describe('workspace artifact selection', () => {
     const other = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Hobgoblin' });
     const pc = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Serren' });
     return { campaignId: campaign.id, npc: npc.id, other: other.id, pc: pc.id };
+  }
+
+  /** A campaign with ONE module-owned NPC (docs/17 row 327). */
+  async function seedModuleOwned(): Promise<{ campaignId: string; moduleNpc: string }> {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const moduleRow = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const moduleNpc = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: moduleRow.id,
+      kind: 'npc',
+      name: 'Vault Warden',
+    });
+    return { campaignId: campaign.id, moduleNpc: moduleNpc.id };
+  }
+
+  /** Records the blob the ONE export picker writes (the produced file). */
+  function captureExports(): Blob[] {
+    const written: Blob[] = [];
+    savePicker.mockImplementation(() =>
+      Promise.resolve({
+        cancelled: false,
+        write: (blob: Blob) => {
+          written.push(blob);
+          return Promise.resolve();
+        },
+      }),
+    );
+    return written;
   }
 
   it('exports EXACTLY the selected rows, without the source campaign tables', async () => {
@@ -208,5 +251,127 @@ describe('workspace artifact selection', () => {
     // two, and the source's rows are untouched.
     expect(await actDrained(() => db.campaigns.count())).toBe(2);
     expect(await actDrained(() => db.artifacts.where('campaignId').equals(source.id).count())).toBe(2);
+  });
+
+  it('ticks a module-owned NPC, counts it, and carries it in the exported selection', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleNpc } = await seedModuleOwned();
+    const written = captureExports();
+
+    renderWorkspace(campaignId);
+    // The module group is rendered once `useModules` resolves; before that the
+    // row sits in the Orphaned group (no checkbox), so wait for the checkbox
+    // itself — it exists only on the module-owned row (docs/17 row 327).
+    const moduleCheckbox = await screen.findByLabelText('Select Vault Warden');
+    // The checkbox exists on a module-owned row (docs/17 row 327) — that is the
+    // whole correction: a good NPC must be reusable elsewhere.
+    await user.click(moduleCheckbox);
+    expect(screen.getByTestId('tree-selection-count')).toHaveTextContent('1 selected');
+    // The bar states the module-owned removal rule in as many words.
+    expect(screen.getByTestId('module-not-removable')).toBeInTheDocument();
+    // The Party notice has nothing to say here.
+    expect(screen.queryByTestId('party-not-removable')).toBeNull();
+
+    await user.click(screen.getByTestId('export-selection-json'));
+    await waitFor(() => {
+      expect(written).toHaveLength(1);
+    });
+    const blob = written[0];
+    if (blob === undefined) throw new Error('no export blob written');
+    const exported = JSON.parse(await blob.text()) as {
+      artifacts: { id: string; moduleId: string | null }[];
+      modules?: unknown;
+    };
+    // The PRODUCED export object carries the module-owned row as-is (the import
+    // is the half that lands it at campaign level).
+    expect(exported.artifacts.map((artifact) => artifact.id)).toEqual([moduleNpc]);
+    expect(exported.artifacts[0]?.moduleId).not.toBeNull();
+    // Still a selection-only file: the source's tables are absent.
+    expect(exported.modules).toBeUndefined();
+    expect(toastSuccessMock).toHaveBeenCalledWith('Exported 1 artifact(s)');
+  });
+
+  it('Remove selected refuses a module-owned selection by name, deleting nothing', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleNpc } = await seedModuleOwned();
+    renderWorkspace(campaignId);
+    await screen.findByLabelText('Select Vault Warden');
+
+    await user.click(screen.getByLabelText('Select Vault Warden'));
+    expect(screen.getByTestId('module-not-removable')).toBeInTheDocument();
+    await user.click(screen.getByTestId('remove-selection'));
+
+    const confirm = await screen.findByTestId('remove-selection-confirm');
+    const counts = within(confirm).getByTestId('remove-selection-counts');
+    await waitFor(() => {
+      // The SEAM's own sentence, not a second wording.
+      expect(counts).toHaveTextContent(
+        /module-owned artifacts are out of reach from the workspace/,
+      );
+    });
+    expect(counts).toHaveTextContent(/"Vault Warden"/);
+    expect(within(confirm).getByTestId('remove-selection-confirm-action')).toBeDisabled();
+    // Nothing was deleted.
+    expect(await actDrained(() => db.artifacts.get(moduleNpc))).toBeDefined();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('imports a module-owned selection into ANOTHER campaign at campaign level (reuse, end to end)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleNpc } = await seedModuleOwned();
+    const written = captureExports();
+
+    renderWorkspace(campaignId);
+    await screen.findByLabelText('Select Vault Warden');
+    await user.click(screen.getByLabelText('Select Vault Warden'));
+    await user.click(screen.getByTestId('export-selection-json'));
+    await waitFor(() => {
+      expect(written).toHaveLength(1);
+    });
+    const blob = written[0];
+    if (blob === undefined) throw new Error('no export blob written');
+    const file = await blob.text();
+
+    // Land the SAME bundle in a second campaign through the workspace's own
+    // Import… — the reuse path the owner described.
+    cleanup();
+    const target = await createCampaign({ name: 'Haven', system: 'dnd5e' });
+    renderWorkspace(target.id);
+    await screen.findByTestId('workspace-import');
+    uploadInto(screen.getByTestId('workspace-import-input'), file);
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Imported 1 artifact(s) into this campaign');
+    });
+    const imported = await actDrained(() =>
+      db.artifacts.where('campaignId').equals(target.id).toArray(),
+    );
+    expect(imported).toHaveLength(1);
+    expect(imported[0]?.name).toBe('Vault Warden');
+    expect(imported[0]?.campaignId).toBe(target.id);
+    // The mode's own contract: a target import lands at CAMPAIGN level.
+    expect(imported[0]?.moduleId).toBeNull();
+    expect(imported[0]?.id).not.toBe(moduleNpc);
+    // The source row is untouched and still module-owned.
+    expect((await actDrained(() => db.artifacts.get(moduleNpc)))?.moduleId).not.toBeNull();
+  });
+
+  it('keeps the Library group unselectable (only this campaign’s own rows are selectable)', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Goblin' });
+    const published = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Lib Warden' });
+    await publishToLibrary(published.id);
+    await updateSettings({
+      artifactScopes: {
+        workspace: { global: true, campaign: true, module: true },
+        moduleView: { global: true, campaign: true, module: true },
+      },
+    });
+
+    renderWorkspace(campaign.id);
+    await screen.findByText('Lib Warden');
+    // The campaign's own row is selectable; the library row is NOT.
+    expect(screen.getByLabelText('Select Goblin')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Select Lib Warden')).toBeNull();
   });
 });

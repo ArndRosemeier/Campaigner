@@ -1311,4 +1311,42 @@ describe('selection export and target-campaign import', () => {
     expect(await listCampaigns()).toHaveLength(1);
     expect(await db.artifacts.where('campaignId').equals(campaignId).count()).toBe(4);
   });
+
+  it('carries a MODULE-OWNED row through a selection export into a target campaign at campaign level', async () => {
+    const { campaignId, moduleId } = await seedSource();
+    // The row the owner described: a good NPC that belongs to a module and must
+    // be reusable in another campaign (docs/17 row 327).
+    const moduleNpc = await createArtifact({
+      campaignId,
+      moduleId,
+      kind: 'npc',
+      name: 'Warden',
+    });
+    const target = await createCampaign({ name: 'Target', system: 'dnd5e' });
+
+    const exported = await buildCampaignExport(campaignId, [moduleNpc.id], {
+      images: true,
+      selectionOnly: true,
+    });
+    // The file carries the row AS-IS and has no modules table to re-anchor to.
+    expect(exported.artifacts).toHaveLength(1);
+    expect(exported.artifacts[0]?.moduleId).toBe(moduleId);
+    expect(exported.modules).toBeUndefined();
+
+    const result = await importExport(
+      JSON.parse(JSON.stringify(exported)) as unknown,
+      {},
+      { targetCampaignId: target.id },
+    );
+    expect(result.campaignId).toBe(target.id);
+    const imported = await db.artifacts.where('campaignId').equals(target.id).toArray();
+    expect(imported).toHaveLength(1);
+    expect(imported[0]?.name).toBe('Warden');
+    expect(imported[0]?.campaignId).toBe(target.id);
+    // The mode's own contract: a module-owned row lands at CAMPAIGN level, so
+    // the owner can move it into a module of the target campaign.
+    expect(imported[0]?.moduleId).toBeNull();
+    // The source row is untouched.
+    expect((await db.artifacts.get(moduleNpc.id))?.moduleId).toBe(moduleId);
+  });
 });
