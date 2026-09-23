@@ -1383,6 +1383,37 @@ promotes the artifact to campaign level (loud toast) before the seed rows
 freeze identity, so the first module never loses its monster silently and
 both modules share the one row.
 
+### Spawn picker — illustrate mobs with no image (owner-directed, 2026-09-23, docs/17 row 333)
+
+The in-battle spawn picker (`features/play/battle/SpawnPicker.tsx`) carries ONE
+checkbox, **"Illustrate spawned mobs that have no image"**, default **OFF**
+(unticked, a spawn is byte-identical to what it always was; the tick is an
+opt-in for the dialog session because it spends image-model calls). After a
+**successful** spawn — and only then — each creature the pick created is
+offered to the EXISTING portrait machinery, one job per spawned instance:
+
+- the creature's lane, identity and prompt grounds come from
+  `rosterParticipantRoute` (the ONE routing rule the portrait batch, its regen
+  and the module gap detector read), so the enqueued key is the key the spawned
+  token carries;
+- the "does it already have art?" question is
+  `db/creatureRepo.creatureCoverImageId` — the ONE read the batch and the
+  queue's own skip branch ask, which consults the campaign's presentation row
+  **and** the authored npc's own cover. The narrower `creaturePortraitArt`
+  (presentation row only) is deliberately NOT used here: it calls a cast or
+  hand-authored npc that already carries its own art "missing" (the D6 defect),
+  and the pin that matters is that an illustrated mob is never touched;
+- the job rides `enqueueSingleMobPortrait` — same queue, same identity-keyed
+  dedupe, same skip-if-imaged worker branch, same loud per-creature failure
+  path as the battle card's own portrait action. No second mechanism, no queue,
+  no settings field.
+
+A creature in the batch's *invented* lane (an uncited roster mob) is grounded on
+its roster `notes` through the same single-mob seam (`SingleMobPortraitTarget`
+gained the optional `grounding` field the batch's `MobPortraitJob` already
+carries); an empty description still fails loudly in `buildImagePrompt` rather
+than illustrating a bare name.
+
 ### D16 — single-map-slot replace (owner decision, 2026-09-08)
 
 The gallery holds EXACTLY one map per encounter — regenerate REPLACES, never

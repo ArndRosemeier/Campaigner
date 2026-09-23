@@ -32,11 +32,8 @@ import {
   libraryCreatureKey,
   monsterEntrySchema,
   newId,
-  ruleChunkSchema,
-  stampNewEntity,
-  statBlockSchema,
 } from '@/domain';
-import type { AnyArtifact, Id, Campaign, PromptStyle, MonsterEntry, StatBlock } from '@/domain';
+import type { AnyArtifact, Id, Campaign, PromptStyle, MonsterEntry } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { clearDatabase } from '../db/helpers';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -59,15 +56,17 @@ import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { builtinPromptStyle, modulePromptStyleOf } from '@/llm/promptStyles';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { flushAsyncUpdates, actDrained } from '../helpers/flush';
+import {
+  addSpawnPickerChunk,
+  spawnPickerStatBlock,
+} from '../helpers/spawn-picker-fixtures';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { PromptStylesSection } from '@/features/settings/prompt-styles-section';
 import { listBattlesByModule, saveBattleBoard } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { putChunks } from '@/db/chunkRepo';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { fallbackSpawnPoint } from '@/domain/battle/board';
-import { sha256Hex } from '@/lib/hash';
 import { SpawnPicker } from '@/features/play/battle/SpawnPicker';
 import {
   buildMobPickEntry,
@@ -1168,30 +1167,6 @@ describe('spawn-picker.test.tsx', () => {
    * name/level sort — every pick spawning through the shared expansion path.
    */
 
-  function statBlock(level: string, hp: number): StatBlock {
-    return statBlockSchema.parse({
-      system: 'dnd5e',
-      level,
-      size: 'Medium',
-      creatureType: 'humanoid',
-      ac: 12,
-      acNote: '',
-      hp,
-      hpFormula: '',
-      speed: '30 ft.',
-      abilities: { str: 10, dex: 14, con: 12, int: 10, wis: 10, cha: 10 },
-      saves: '',
-      skills: '',
-      senses: '',
-      languages: '',
-      traits: [],
-      actions: [],
-      reactions: [],
-      legendary: [],
-      extras: {},
-    });
-  }
-
   let campaignId = '';
   let moduleId = '';
   let battleId = '';
@@ -1201,31 +1176,6 @@ describe('spawn-picker.test.tsx', () => {
   let goblinChunkId: Id = '';
   let roster: MonsterEntry[] = [];
 
-  async function addChunk(bookId: Id, name: string, level: string, hp: number): Promise<Id> {
-    const text = `${name}, a test creature of level ${level}.`;
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId,
-        pageStart: 1,
-        pageEnd: 1,
-        chunkType: 'statblock',
-        headingPath: [name],
-        text,
-        statBlock: statBlock(level, hp),
-        contentHash: await sha256Hex(text),
-      }),
-    ]);
-    const { db } = await import('@/db/db');
-    const chunk = await db.chunks
-      .where('bookId')
-      .equals(bookId)
-      .and((row) => row.headingPath[0] === name)
-      .first();
-    if (chunk === undefined) throw new Error(`chunk ${name} missing`);
-    return chunk.id;
-  }
-
   async function addNpc(name: string, level: string | null, hp: number): Promise<string> {
     const npc = await createArtifact({
       campaignId,
@@ -1234,7 +1184,7 @@ describe('spawn-picker.test.tsx', () => {
       data: {
         appearance: '',
         personality: '',
-        statBlock: level === null ? null : statBlock(level, hp),
+        statBlock: level === null ? null : spawnPickerStatBlock(level, hp),
       },
     });
     return npc.id;
@@ -1263,9 +1213,9 @@ describe('spawn-picker.test.tsx', () => {
       filename: 'core.pdf',
     });
     await updateRulebook(book.id, { status: 'ready', pageCount: 320 });
-    goblinChunkId = await addChunk(book.id, 'Goblin Boss', '1', 21);
-    await addChunk(book.id, 'Ancient Wyrm', '12', 200);
-    await addChunk(book.id, 'Oddling', 'high', 10);
+    goblinChunkId = await addSpawnPickerChunk(book.id, 'Goblin Boss', '1', 21);
+    await addSpawnPickerChunk(book.id, 'Ancient Wyrm', '12', 200);
+    await addSpawnPickerChunk(book.id, 'Oddling', 'high', 10);
 
     trollId = await addNpc('Troll', '2', 84);
     vexraId = await addNpc('Vexra', '3', 30);

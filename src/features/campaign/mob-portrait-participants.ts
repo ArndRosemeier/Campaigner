@@ -65,6 +65,22 @@ export async function portraitArtOf(campaignId: Id, creatureKey: string): Promis
 }
 
 /**
+ * The portrait identity of an AUTHORED NPC that owns no creature kind — its
+ * portrait is the artifact's OWN cover, so the row's id is the dedupe key
+ * (three sites carried this template literal: the batch's authored lane, the
+ * creation-dialog extra and the spawn picker's illustrate fill — AGENTS rule 4
+ * puts it here, beside the routing rule that decides when it applies).
+ *
+ * NOT a creature identity: it names no library row and no content. The single
+ * "does this creature have art?" seam consults the artifact's cover FIRST for
+ * any key, which is exactly why every consumer passes the artifact alongside
+ * it — the key only has to be unique per row.
+ */
+export function authoredPortraitKey(artifactId: Id): string {
+  return `artifact:${artifactId}`;
+}
+
+/**
  * Which lane one roster participant rides, and the identity it resolves to.
  *
  * - `creature`: the row cites a LIBRARY CREATURE. `creatureKey` is the

@@ -680,6 +680,7 @@ test) · ❌ gap.
 | A refill writes a cast row's prose and cannot touch its citation or author a stat block onto it | `runEngine-refill.test` | ✅ |
 | Dexie v19 → v20: portrait slots re-keyed to the creature identity, citations rewritten onto the library, marked rows retired, the presentation table created, the report persisted — and the repair seam is idempotent (a second run reports zeros) | `migration.test` | ✅ |
 | Seeded battles: ONE frozen seed row per IDENTITY (not per instance), `creatureKey` carrying it, a synthetic `artifactId` naming no artifact | `spawn-picker.test`, `battle-token-portrait.test` | ✅ |
+| The spawn picker's "illustrate mobs that have no image" checkbox: OFF by default (unticked enqueues zero portrait jobs), ticked enqueues exactly the spawned creature through the single-mob seam with the pick group's own identity and grounds, and a creature that already has art — presentation row OR an npc's own cover — is NEVER enqueued (docs/17 row 333) | `spawn-picker-illustrate.test` | ✅ |
 
 ### The module-side cast — the generator ASKS for a creature (docs/17 row 107, docs/11 §The module-side cast)
 

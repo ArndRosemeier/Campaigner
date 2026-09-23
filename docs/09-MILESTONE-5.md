@@ -265,6 +265,18 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    initiative on the latecomer is auto-rolled into the order
    (useInitiativeReconcile). Spawn appends — live/everLive, the stage
    snapshot and existing pieces are untouched.*
+   Amended 2026-09-23 (spawn-picker arc, docs/17 row 333): *the roster list
+   behind the Spawn button became the **spawn picker** dialog — this
+   encounter's roster, the campaign's NPCs and the ready rulebooks' core mobs
+   behind one search field and one name/level sort, every pick spawning through
+   the same shared expansion path — and the dialog gains ONE checkbox,
+   **"Illustrate spawned mobs that have no image"** (default OFF). Ticked, each
+   creature a successful spawn created is offered to the EXISTING single-mob
+   portrait seam (`enqueueSingleMobPortrait`) through the ONE routing/identity
+   rule (`rosterParticipantRoute`), and only when it has no art at all — the
+   campaign's presentation row OR the authored npc's own cover
+   (`creatureCoverImageId`, docs/11 D6). An illustrated mob is never
+   re-enqueued; unticked spawns enqueue nothing.*
 2. Seed map: the encounter's `mapImageId`, else the linked location's cover
    image if it is map-role, else no map (viewport board — source behavior).
    Amended 2026-09-08 (single-map-slot arc, docs/11 D16): *precedence is

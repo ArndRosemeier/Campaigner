@@ -13,11 +13,13 @@ import { spawnRosterInstance } from '@/db/battleSeed';
 import {
   buildMobPickEntry,
   compareSpawnNames,
+  illustrateSpawnedCreature,
   parseLevelOrLast,
   spawnPickedEntry,
 } from '@/features/play/battle/spawn-picker-logic';
 import { toastError } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -84,6 +86,12 @@ export function SpawnPicker({
 }: SpawnPickerProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [sortMode, setSortMode] = useState<SpawnSortMode>('name');
+  /**
+   * "Illustrate spawned mobs that have no image" (docs/17 row 333), default
+   * OFF: it spends image-model calls, so it is an explicit opt-in for this
+   * dialog session — unticked spawns exactly as they always did.
+   */
+  const [illustrateMissing, setIllustrateMissing] = useState(false);
   const mobListRef = useRef<HTMLDivElement | null>(null);
 
   // The roster entries' levels need async stat resolution (same resolver the
@@ -170,10 +178,36 @@ export function SpawnPicker({
     overscan: 12,
   });
 
+  /** The npc artifact an entry points at, from the snapshot this dialog already
+   * holds — the grounding `rosterParticipantRoute` needs for an `npc-ref`. */
+  function linkedArtifactFor(entry: MonsterEntry): AnyArtifact | undefined {
+    const source = entry.source;
+    return source.type === 'npc-ref'
+      ? artifacts.find((artifact) => artifact.id === source.artifactId)
+      : undefined;
+  }
+
+  /**
+   * The ticked checkbox's fill, run AFTER a successful spawn (docs/17 row 333):
+   * ONE creature per spawn, through the existing single-mob portrait seam. A
+   * failure here never reads as a spawn failure — the token is already on the
+   * board — so it toasts on its own loud path (AGENTS rule 2).
+   */
+  async function illustrateAfterSpawnIfAsked(entry: MonsterEntry): Promise<void> {
+    if (!illustrateMissing) return;
+    try {
+      await illustrateSpawnedCreature({ campaignId, entry, linked: linkedArtifactFor(entry) });
+    } catch (error) {
+      toastError(`Could not illustrate “${entry.name}”`, error);
+    }
+  }
+
   async function spawnRosterPick(index: number): Promise<void> {
     try {
       const result = await spawnRosterInstance(battleId, index);
       announceStatless(result.statless);
+      const entry = roster[index];
+      if (entry !== undefined) await illustrateAfterSpawnIfAsked(entry);
     } catch (error) {
       toastError('Could not spawn from the roster', error);
     }
@@ -181,31 +215,29 @@ export function SpawnPicker({
 
   async function spawnNpcPick(pick: NpcPick): Promise<void> {
     try {
-      const result = await spawnPickedEntry(
-        battleId,
-        monsterEntrySchema.parse({
-          name: pick.name,
-          count: 1,
-          notes: '',
-          treasure: '',
-          source: { type: 'npc-ref', artifactId: pick.artifactId },
-        }),
-      );
+      const entry = monsterEntrySchema.parse({
+        name: pick.name,
+        count: 1,
+        notes: '',
+        treasure: '',
+        source: { type: 'npc-ref', artifactId: pick.artifactId },
+      });
+      const result = await spawnPickedEntry(battleId, entry);
       announceStatless(result.statless);
+      await illustrateAfterSpawnIfAsked(entry);
     } catch (error) {
       toastError(`Could not spawn “${pick.name}”`, error);
     }
   }
 
-  async function spawnMobPick(entry: RosterEntry): Promise<void> {
+  async function spawnMobPick(row: RosterEntry): Promise<void> {
     try {
-      const result = await spawnPickedEntry(
-        battleId,
-        await buildMobPickEntry(entry.chunkId, entry.name),
-      );
+      const entry = await buildMobPickEntry(row.chunkId, row.name);
+      const result = await spawnPickedEntry(battleId, entry);
       announceStatless(result.statless);
+      await illustrateAfterSpawnIfAsked(entry);
     } catch (error) {
-      toastError(`Could not spawn “${entry.name}”`, error);
+      toastError(`Could not spawn “${row.name}”`, error);
     }
   }
 
@@ -244,6 +276,17 @@ export function SpawnPicker({
             Sort: {sortMode === 'name' ? 'Name' : 'Level'}
           </Button>
         </div>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+          <Checkbox
+            checked={illustrateMissing}
+            data-testid="spawn-picker-illustrate"
+            aria-label="Illustrate spawned mobs that have no image"
+            onCheckedChange={(checked) => {
+              setIllustrateMissing(checked);
+            }}
+          />
+          Illustrate spawned mobs that have no image
+        </label>
         <div className="flex max-h-[50vh] min-h-0 flex-col gap-3 overflow-y-auto pr-1">
           <section aria-label="This encounter" data-testid="spawn-picker-group-roster">
             <p className="mb-1 text-xs font-medium text-zinc-400">

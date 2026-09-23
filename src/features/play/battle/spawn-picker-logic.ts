@@ -1,4 +1,4 @@
-import type { Id, MonsterEntry, StagingGround } from '@/domain';
+import type { AnyArtifact, Id, MonsterEntry, StagingGround } from '@/domain';
 import { monsterEntrySchema } from '@/domain';
 import {
   fallbackSpawnPoint,
@@ -7,8 +7,14 @@ import {
 } from '@/domain/battle/board';
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
+import { creatureCoverImageId } from '@/db/creatureRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
 import { creatureCopyRefusal } from '@/domain/libraryCopy';
+import {
+  enqueueSingleMobPortrait,
+  type SingleMobPortraitTarget,
+} from '@/features/campaign/mob-portrait-queue';
+import { authoredPortraitKey, rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { NotFoundError } from '@/lib/errors';
 
@@ -158,4 +164,88 @@ export async function spawnPickedEntry(battleId: Id, entry: MonsterEntry): Promi
     },
   });
   return { statless: expansion.statless };
+}
+
+/**
+ * The picker's "illustrate mobs with no image" fill — ONE creature a pick just
+ * created (docs/17 row 333). Called AFTER the spawn succeeded, once per spawned
+ * instance, only while the checkbox is ticked.
+ *
+ * THE SEAMS IT REUSES, and why none of them is re-derived here:
+ * - the creature's lane and its identity come from `rosterParticipantRoute` —
+ *   the ONE routing/identity rule the portrait batch, its regen, the module gap
+ *   detector and the board all read (docs/17 rows 96/165), so the key enqueued
+ *   under is the key the spawned token carries;
+ * - the "does it have one" question is `creatureCoverImageId`, the ONE read the
+ *   portrait batch and the queue's own skip branch ask (docs/17 row 165). The
+ *   narrower `creaturePortraitArt` reads ONLY the campaign's presentation row,
+ *   which is exactly the read the batch's own comment records as a defect
+ *   (docs/11 D6): a CAST or hand-authored npc carries its portrait on its OWN
+ *   cover, so the narrow read calls an already-illustrated mob "missing" and
+ *   would enqueue work over the owner's art. "Already-illustrated is never
+ *   touched" is the pin that matters, so this asks the wider read;
+ * - the enqueue is the EXISTING single-creature entry point
+ *   (`enqueueSingleMobPortrait`): same queue, same identity-keyed dedupe, same
+ *   skip-if-imaged worker branch, same loud per-creature failure path as the
+ *   battle card. No second mechanism, no settings field, no queue.
+ *
+ * `linked` is the artifact an `npc-ref` points at, as the caller already holds
+ * it (the picker's artifact snapshot); `undefined` for every other shape. A
+ * dangling link is LOUD — the spawn itself already failed in that case, so
+ * silently skipping the illustration would hide a real gap (AGENTS rule 1).
+ */
+export async function illustrateSpawnedCreature(options: {
+  campaignId: Id;
+  /** The entry the pick just spawned (its `count` is irrelevant: one instance). */
+  entry: MonsterEntry;
+  linked: AnyArtifact | undefined;
+}): Promise<void> {
+  const route = rosterParticipantRoute(options.entry, options.linked);
+  if (route.lane === 'missing-ref') {
+    throw new Error(
+      `Could not illustrate “${options.entry.name}”: the npc it points at no longer exists`,
+    );
+  }
+  const creatureKey =
+    route.lane === 'authored' ? authoredPortraitKey(route.artifactId) : route.creatureKey;
+  // The authored npc whose OWN cover may already be the creature's art — read
+  // for both lanes that have one; an invented mob has no artifact at all.
+  const npcArtifactId =
+    route.lane === 'creature' || route.lane === 'authored' ? route.artifactId : null;
+  // The ONE "is this creature illustrated?" read, asked with the artifact that
+  // may own the cover (above): `'none'` is the only state that enqueues.
+  const existing = await creatureCoverImageId({
+    campaignId: options.campaignId,
+    creatureKey,
+    npcArtifactId,
+  });
+  if (existing !== null) return;
+  const target: SingleMobPortraitTarget =
+    route.lane === 'creature'
+      ? {
+          campaignId: options.campaignId,
+          creatureKey,
+          name: route.name,
+          ...(route.chunkId === undefined ? {} : { chunkId: route.chunkId }),
+          ...(route.statBlock === undefined ? {} : { statBlock: route.statBlock }),
+          ...(route.artifactId === null ? {} : { artifactId: route.artifactId }),
+        }
+      : route.lane === 'authored'
+        ? {
+            campaignId: options.campaignId,
+            creatureKey,
+            name: route.name,
+            artifactId: route.artifactId,
+          }
+        : {
+            campaignId: options.campaignId,
+            creatureKey,
+            name: route.name,
+            // An invented mob has no artifact and no library row — the roster
+            // row's own notes ARE its description (the batch's invented lane
+            // passes the very same field), and `buildImagePrompt` still refuses
+            // an empty one loudly rather than illustrating a bare name.
+            ...(options.entry.notes.trim() === '' ? {} : { grounding: options.entry.notes }),
+          };
+  enqueueSingleMobPortrait(target);
 }

@@ -21,6 +21,7 @@ import {
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
 import {
+  authoredPortraitKey,
   portraitArtIn,
   rosterParticipantRoute,
   type KindArt,
@@ -542,7 +543,7 @@ async function enumerateBatchKinds(
       add({
         lane: 'authored',
         name: route.name,
-        creatureKey: `artifact:${route.artifactId}`,
+        creatureKey: authoredPortraitKey(route.artifactId),
         artifactId: route.artifactId,
         imaged: artifact.coverImageId !== null || artifact.imageIds.length > 0,
       });
@@ -826,7 +827,7 @@ export function enqueueArtifactPortrait(artifact: AnyArtifact, campaignId: Id): 
       campaignId,
       // The artifact itself is the identity the job dedupes and reports on; it
       // has no creature identity, which is exactly why it belongs here.
-      creatureKey: `artifact:${artifact.id}`,
+      creatureKey: authoredPortraitKey(artifact.id),
       artifactId: artifact.id,
       name: artifact.name,
     },
@@ -851,6 +852,15 @@ export interface SingleMobPortraitTarget {
   statBlock?: StatBlock | undefined;
   /** The authored NPC this creature is illustrated on, when one exists. */
   artifactId?: Id | undefined;
+  /**
+   * The UNCITED creature's own description — the roster `notes`, exactly as
+   * `MobPortraitJob.grounding` carries it for the batch's invented lane. The
+   * single-mob entry point serves an invented mob through the SAME seam (the
+   * spawn picker's illustrate fill), so it needs the SAME grounding the batch
+   * lane passes; without it a notes-only creature would reach
+   * `buildImagePrompt` with nothing and fail (`job.grounding ?? ''`).
+   */
+  grounding?: string | undefined;
   /** The citing name (roster entry or token label) for the
    * canonical-vs-flavor citation check the worker performs. */
   name: string;
@@ -878,6 +888,7 @@ export function enqueueSingleMobPortrait(target: SingleMobPortraitTarget): void 
       ...(target.chunkId === undefined ? {} : { chunkId: target.chunkId }),
       ...(target.statBlock === undefined ? {} : { statBlock: target.statBlock }),
       ...(target.artifactId === undefined ? {} : { artifactId: target.artifactId }),
+      ...(target.grounding === undefined ? {} : { grounding: target.grounding }),
     },
   ]);
 }
