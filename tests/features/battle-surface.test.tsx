@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -35,6 +35,7 @@ import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { adoptionArenaLayout, createMapImage } from '../helpers/battle-map-fixtures';
 import { BATTLE_VIEW_PERSIST_DEBOUNCE_MS } from '@/features/play/battle/use-battle-view';
+import { useBattleState } from '@/features/play/battle/use-battle';
 
 // Wrap (not replace) saveBattleBoard so veil-drag tests can count commits —
 // zero writes while a drag is live, exactly one on release. Every other test
@@ -723,6 +724,146 @@ describe('veil coverage hides mobs only', () => {
       .find((el) => el.getAttribute('data-token-label') === 'Serren');
     if (serrenEl === undefined) throw new Error('serren element missing');
     expect(veilEl.compareDocumentPosition(serrenEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+/**
+ * The producer probe (row 331, pin 1): mounts the REAL hook `useBattleState`
+ * and reports the covered set it computes for an explicit 800×450 content
+ * frame. It is not a re-implementation of the predicate — the hook IS the
+ * producer whose kind filter carries the owner's guarantee.
+ */
+function CoverageSetProbe({ campaign, encounter }: { campaign: string; encounter: string }) {
+  const { coveredTokenIds } = useBattleState(campaign, encounter, 800, 450);
+  return <div data-testid="covered-token-probe">{[...coveredTokenIds].sort().join(',')}</div>;
+}
+
+/**
+ * The owner's guarantee (docs/17 row 331, verbatim): *"please assert that
+ * players on the battlemaps are not covered by veils or fog. They should always
+ * be visible."* The BEHAVIOUR already existed — these are the missing PINS.
+ *
+ * The producer is `features/play/battle/use-battle.coveredTokenIds`, the ONE
+ * set `BattleSurface.displayedTokens` filters by, and the KIND filter there
+ * ("veils hide MOB tokens only, never PCs or other tokens") is the load-bearing
+ * line: `domain/battle/veil.portraitCoveredByVeils` is deliberately KIND-BLIND
+ * (it answers only "does this shape overlap that rect"). So one pin drives the
+ * producer directly, one pins the user-visible player-safe/GM split, and one
+ * pins the DOM order that puts a surviving token above a veil. Each reds by
+ * name under its own arm; the existing `veil coverage hides mobs only` pin
+ * above covers ONE veil kind and PC-vs-mob only.
+ */
+describe('players are never coverage-hidden (row 331)', () => {
+  /**
+   * ONE board that BOTH veil kinds cover: a PC, an NPC, a statless token and a
+   * stamp, all parked on the troll's cell so the owner's "veils or fog" and his
+   * "always visible" are asked together. The NPC is the ONLY token a veil may
+   * ever hide. The statless token carries a DANGLING artifact id (the repo's
+   * engine-test meaning of "statless" — a token absent from the stats lookup,
+   * e.g. an artifact deleted mid-flight), which is exactly the class the kind
+   * filter must keep out.
+   */
+  async function seedCoverageBoard(): Promise<{
+    moduleId: string;
+    encounterId: string;
+    npcTokenId: string;
+  }> {
+    const { moduleId, encounterId } = await seedStandardBattle();
+    const battle = await currentBattle(moduleId);
+    const pc = battle.board.tokens.find((token) => token.label === 'Serren');
+    const npc = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (pc === undefined || npc === undefined) throw new Error('seeded tokens missing');
+    const at = { x: npc.x, y: npc.y };
+    const statless = { ...pc, id: newId(), artifactId: newId(), label: 'Statless soul' };
+    const stamp = {
+      ...pc,
+      id: newId(),
+      artifactId: null,
+      label: 'Brazier stamp',
+      shape: 'circle' as const,
+      color: '#ff0000',
+    };
+    await act(async () => {
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        tokens: [
+          ...battle.board.tokens.map((token) =>
+            token.label === 'Serren' || token.label === 'Troll'
+              ? { ...token, x: at.x, y: at.y }
+              : token,
+          ),
+          statless,
+          stamp,
+        ],
+        veils: [
+          { id: newId(), kind: 'veil', x: at.x, y: at.y, widthCells: 2, heightCells: 2 },
+          { id: newId(), kind: 'fog', x: at.x, y: at.y, widthCells: 2, heightCells: 2 },
+        ],
+      });
+      await flushAsyncUpdates();
+    });
+    return { moduleId, encounterId, npcTokenId: npc.id };
+  }
+
+  it('the REAL producer covers the NPC under a veil AND a fog — and nothing else on that cell', async () => {
+    // The owner's exact rule, asked of the producer itself: with a veil and a
+    // fog over a PC, an NPC, a statless token and a stamp, the covered set holds
+    // the NPC and NONE of the others. No PC/stamp/statless exemption is
+    // re-implemented here — the hook under test computes the set.
+    const { encounterId, npcTokenId } = await seedCoverageBoard();
+    render(<CoverageSetProbe campaign={campaignId} encounter={encounterId} />);
+    // Wait for the covered set to become non-empty (the row's liveQuery + the
+    // artifacts' both resolve), then assert the WHOLE set, not membership.
+    await waitFor(() => {
+      expect(screen.getByTestId('covered-token-probe').textContent).not.toBe('');
+    });
+    const covered = screen
+      .getByTestId('covered-token-probe')
+      .textContent.split(',')
+      .filter(Boolean);
+    expect(covered).toEqual([npcTokenId]);
+  });
+
+  it('player view KEEPS the PC, statless token and stamp while REMOVING the covered NPC; GM view shows every token', async () => {
+    // The user-visible form of the rule, and it must fail if EITHER half moves:
+    // the player-safe removal, and the GM seeing their own veils' contents.
+    const { moduleId } = await seedCoverageBoard();
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+    const labels = (): (string | null)[] =>
+      screen.getAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+    expect(labels()).toEqual(
+      expect.arrayContaining(['Troll', 'Serren', 'Statless soul', 'Brazier stamp']),
+    );
+    await userEvent.setup().click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(labels()).not.toContain('Troll');
+    expect(labels()).toEqual(
+      expect.arrayContaining(['Serren', 'Statless soul', 'Brazier stamp']),
+    );
+  });
+
+  it('keeps EVERY veil (both kinds) BEFORE every token in document order — an ORDER pin, never pixels', async () => {
+    // Structural only: jsdom lays out no stacking context, so this proves DOM
+    // order inside the one positioned content frame (which is what the surface
+    // relies on — no z-index), NEVER that a token is painted above a veil. The
+    // same honest limit docs/08 draws for the reader-scroll memory.
+    const { moduleId } = await seedCoverageBoard();
+    await renderSurface(campaignId, moduleId);
+    await flushAsyncUpdates();
+    await userEvent.setup().click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    const veils = screen.getAllByTestId('battle-veil');
+    const tokens = screen.getAllByTestId('battle-token');
+    // Both kinds are on the board (the layer rule is asked of fog AND veil)...
+    expect(veils.map((el) => el.getAttribute('data-veil-kind')).sort()).toEqual(['fog', 'veil']);
+    // ...and the survivors of coverage are still there to be painted above.
+    expect(tokens.length).toBeGreaterThanOrEqual(3);
+    for (const veil of veils) {
+      for (const token of tokens) {
+        expect(veil.compareDocumentPosition(token) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    }
   });
 });
 

@@ -436,6 +436,36 @@ therefore gets the new cover kind by re-seeding the board from its encounter
 the old covers; nothing re-reads the kind at read time, and no schema field,
 Dexie version or setting changed.***
 
+Amended 2026-09-24 (docs/17 row 331 — the owner's guarantee, verbatim:
+*"please assert that players on the battlemaps are not covered by veils or fog.
+They should always be visible."*): *the GUARANTEE above already held; what this
+amendment adds is the ASSERTION of it, because nothing pinned the producer.
+Coverage is asked through `domain/battle/veil.portraitCoveredByVeils`, which is
+deliberately KIND-BLIND — it answers only "does this portrait overlap that
+rect" — so "veils or fog" is ONE rule over both `kind`s, and the load-bearing
+line is the KIND filter at the producer,
+`features/play/battle/use-battle.coveredTokenIds`: a token enters the covered
+set only when it has an artifact and its resolved fighter kind is `'npc'`. A PC
+(kind `'pc'`), a statless token (absent from the stats lookup) and a stamp (a
+non-portrait shape) are therefore never coverage-hidden, under either veil
+kind. `BattleSurface.displayedTokens` removes a covered token from the DOM in
+PLAYER view ONLY — the GM sees everything under their own veils — and veils
+still mount BEFORE tokens inside the same content frame, so every survivor
+paints above a veil. **The pinned guarantee: a PC is never coverage-hidden, by
+`kind: 'veil'` or `kind: 'fog'`.** Three pins in
+`tests/features/battle-surface.test.tsx`
+(`players are never coverage-hidden (row 331)`) hold it: the REAL producer's
+covered set, with a veil AND a fog over a PC, an NPC, a statless token and a
+stamp on one cell, holds the NPC and nothing else; player view keeps the PC,
+the statless token and the stamp while removing the covered NPC, and GM view
+shows every token; and every veil of both kinds precedes every token in
+document order. Each was revert-proven by an arm that reds by name. The layer
+pin proves ORDER, never pixels — jsdom computes no stacking context, the same
+honest limit docs/08 draws for the reader-scroll memory. **Declared boundary,
+unchanged and NOT coverage:** `token.visible === false` is a DELIBERATE hide
+and is removed from the DOM in BOTH views (`BattleSurface.tsx:141`,
+`initiative-sidebar.tsx:36`); the owner's rule does not touch it.*
+
 Amended 2026-09-07 by 01a0b5e (room-keys/treasure arc, owner-ratified; D9 in
 11-ENCOUNTER-GENERATOR): *GM view additionally renders room-key markers — one
 tappable badge per keyed layout room at its staging point, derived from the
