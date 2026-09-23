@@ -410,6 +410,12 @@ used:
    write a fresh one, never edit in place, and VERIFY the unshare with `ls -li` (the worktree copy
    and the main tree copy must have DIFFERENT inodes). The same applies to
    `node_modules/.tmp/*.tsbuildinfo` and anything else a tool writes inside the clone.
+   **AND THE UNSHARE IS A CREATION STEP, NOT SOMETHING TO NOTICE LATER (measured 2026-09-23, row
+   331): after `cp -al node_modules <worktree>/node_modules`, `rm -f` the worktree copy of
+   `node_modules/.tmp/*.tsbuildinfo` as well as the pnpm state file, BEFORE the first gate run — the
+   hardlinked typecheck cache is otherwise written through into the main tree. The writer in that
+   slice caught it (content carried no worktree paths, so nothing broke) and unshared the copies; the
+   step belongs at creation because the first gate is exactly when it bites.**
    **A FALSE TYPE FAILURE IS DIAGNOSED FROM THE LOG, NOT FROM THE CHANGE:** when the gate says
    `TYPECHECK FAILED` and no type error names the changed files, READ
    `<gate-logdir>/typecheck.log` BEFORE touching anything — in this incident it said
