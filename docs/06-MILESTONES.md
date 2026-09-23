@@ -27,6 +27,11 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
 - Campaign picker screen; three-pane workspace; campaign tree; full artifact
   editor per `05-UI.md` (all four kinds, autosave + revisions, links,
   stat-block card + form).
+- **Amended 2026-09-24 (docs/17 row 334, owner-directed):** the tree's Party
+  (`pc`) region header also carries the **Add party…** wizard — two questions
+  per character (name, initiative bonus) with each **Add character** writing one
+  player (HP 20, no stat block; only `initiativeOverride` set) and **Done**
+  ending the loop. See docs/05 §Left pane — Campaign tree.
 - ✅ Manually: create campaign → create/edit/rename/duplicate/delete artifacts
   of every kind; revisions restorable; reload persists everything.
 

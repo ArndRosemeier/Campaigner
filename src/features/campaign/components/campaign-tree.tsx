@@ -40,6 +40,7 @@ import { exportSingleArtifact } from '@/features/campaign/components/export-sing
 import { exportCampaignBundle } from '@/features/campaign/components/export-campaign-bundle';
 import { useCampaignImport } from '@/features/campaign/import-flow';
 import { RemoveArtifactsDialog } from '@/features/campaign/components/remove-artifacts-dialog';
+import { PartyWizard } from '@/features/campaign/components/party-wizard';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
@@ -776,6 +777,14 @@ export function CampaignTree({
                 >
                   <PlusIcon aria-hidden />
                 </Button>
+                {/*
+                  THE party wizard (docs/17 row 334): the Party region's own
+                  visible control — an iPad has no hover, so it is rendered
+                  always and never behind a context menu. It sits beside this
+                  region's per-kind `+` and owns its own dialog; the other kind
+                  regions are unaffected.
+                */}
+                {kind === 'pc' && <PartyWizard campaignId={campaignId} />}
                 {/* Per-region "remove all" (05-UI §Left pane — Campaign tree):
                     the middle rung of the destructive ladder. Presence rules:
                     a kind with campaign-level rows of its own offers it (the

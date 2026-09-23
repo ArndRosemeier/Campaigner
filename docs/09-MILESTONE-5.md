@@ -85,6 +85,15 @@ export const pcDataSchema = z.object({
 
 - `kind: 'pc'` joins `ArtifactKind`; tree gains a **Party** group at the top
   of the campaign tree; quick-find and Play's context grid index PCs.
+- **The party wizard (owner-directed, docs/17 row 334):** the Party region's
+  header carries an always-visible **Add party…** control that onboards a whole
+  party in seconds — two questions per character (name, initiative bonus), one
+  write per **Add character**, and **Done** to stop. A player created there is
+  the SAME blank PC as the tree's `+`: **20 HP and NO stat block** (the owner's
+  row-308 rule, from the ONE `domain/create.blankArtifactData('pc')` seam), with
+  only `initiativeOverride` set from the typed bonus — so a wizard-made player
+  enters every battle on that same rule (docs/17 row 308). A blank name and a
+  non-whole-number bonus REFUSE loudly and create nothing.
 - Artifact editor form: name, player name, HP stepper, initiative override,
   notes, stat-block editor (reuse the existing stat-block rendering;
   manual entry is acceptable — full statblock required only before a battle).
