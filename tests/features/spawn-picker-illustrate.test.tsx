@@ -19,11 +19,12 @@ import {
   type MonsterEntry,
 } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
+import type * as mobPortraitQueueModule from '@/features/campaign/mob-portrait-queue';
 import { SpawnPicker } from '@/features/play/battle/SpawnPicker';
 import { authoredPortraitKey } from '@/features/campaign/mob-portrait-participants';
 import { toastError } from '@/lib/toast';
-import { actDrained } from '../helpers/flush';
 import { addSpawnPickerChunk, spawnPickerStatBlock } from '../helpers/spawn-picker-fixtures';
+import { currentBattle } from '../helpers/battle-surface-route';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -46,7 +47,7 @@ import { clearDatabase } from '../db/helpers';
 // other test exercises, and this file only counts enqueues and reads the target
 // the picker hands it.
 vi.mock('@/features/campaign/mob-portrait-queue', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/campaign/mob-portrait-queue')>();
+  const actual = await importOriginal<typeof mobPortraitQueueModule>();
   return { ...actual, enqueueSingleMobPortrait: vi.fn(actual.enqueueSingleMobPortrait) };
 });
 
@@ -170,19 +171,11 @@ beforeEach(async () => {
   battleId = battle.id;
 });
 
-afterEach(async () => {
+afterEach(() => {
   cleanup();
   delete (HTMLElement.prototype as unknown as { offsetWidth?: unknown }).offsetWidth;
   delete (HTMLElement.prototype as unknown as { offsetHeight?: unknown }).offsetHeight;
 });
-
-async function currentBattle() {
-  return actDrained(async () => {
-    const [row] = await listBattlesByModule(moduleId);
-    if (row === undefined) throw new Error('battle row missing');
-    return row;
-  });
-}
 
 async function renderPicker(): Promise<void> {
   const artifacts = await listArtifactsByCampaign(campaignId);
@@ -216,7 +209,7 @@ describe('spawn picker illustrate fill (docs/17 row 333, part 1)', () => {
     expect(screen.getByTestId('spawn-picker-illustrate')).toHaveAttribute('aria-checked', 'false');
     await userEvent.setup().click(screen.getByTestId('spawn-pick-roster-0'));
     await waitFor(async () => {
-      const battle = await currentBattle();
+      const battle = await currentBattle(moduleId);
       expect(battle.board.tokens.some((token) => token.label === 'Troll 2')).toBe(true);
     });
     expect(enqueueMock).not.toHaveBeenCalled();
@@ -265,7 +258,7 @@ describe('spawn picker illustrate fill (docs/17 row 333, part 1)', () => {
     await tick();
     await userEvent.setup().click(screen.getByTestId(`spawn-pick-mob-${wyrmChunkId}`));
     await waitFor(async () => {
-      const battle = await currentBattle();
+      const battle = await currentBattle(moduleId);
       expect(battle.board.tokens.some((token) => token.label === 'Ancient Wyrm 1')).toBe(true);
     });
     expect(enqueueMock).not.toHaveBeenCalled();
@@ -277,7 +270,7 @@ describe('spawn picker illustrate fill (docs/17 row 333, part 1)', () => {
     expect(await creaturePortraitArt(campaignId, authoredPortraitKey(vexraId))).toBe('none');
     await userEvent.setup().click(screen.getByTestId(`spawn-pick-npc-${vexraId}`));
     await waitFor(async () => {
-      const battle = await currentBattle();
+      const battle = await currentBattle(moduleId);
       expect(battle.board.tokens.some((token) => token.label === 'Vexra 1')).toBe(true);
     });
     expect(enqueueMock).not.toHaveBeenCalled();

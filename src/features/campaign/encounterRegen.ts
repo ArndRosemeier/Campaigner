@@ -116,8 +116,12 @@ async function loadRegenContext(artifactId: Id): Promise<RegenContext & { comple
  * withdrawal predicate under it either: reporting a cancelled run as a
  * failure is this path's own contract (a caller is waiting for an answer),
  * while a queue job's withdrawal is moot work (docs/17 row 117).
+ *
+ * EXPORTED since docs/17 row 333 (part 2): the spawn picker's author-and-spawn
+ * path awaits the NPC Smith run through THIS boundary, with a label naming the
+ * mob it is authoring — one run-waiter for the app, never a second.
  */
-async function awaitCompletedRun(runId: Id, label: string): Promise<void> {
+export async function awaitCompletedRun(runId: Id, label: string): Promise<void> {
   const run = await waitForRunStatus(runId);
   if (run.status !== 'completed') {
     throw new Error(

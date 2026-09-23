@@ -7,8 +7,11 @@ import { sha256Hex } from '@/lib/hash';
  * The shared SPAWN PICKER fixtures (docs/17 row 333): the plain dnd5e stat
  * block and the ready-book stat-block chunk that the picker's pins seed their
  * roster, NPCs and core mobs with. The test-tree duplication tripwire
- * (`no-duplicate-implementations`) redded the second spelling the illustrate
- * fill's own test file would have been — ONE copy lives here instead.
+ * (`no-duplicate-implementations`) redded the second spellings the illustrate
+ * fill's and the author-and-spawn pins' own files would have been — ONE copy
+ * lives here instead. (The module's battle row comes from the EXISTING
+ * `tests/helpers/battle-surface-route.currentBattle`; a second reader here was
+ * the tripwire's other finding.)
  */
 
 /** A minimal but complete dnd5e block at `level` with `hp` hit points. */

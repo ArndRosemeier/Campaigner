@@ -1,20 +1,26 @@
-import type { AnyArtifact, Id, MonsterEntry, StagingGround } from '@/domain';
+import type { AnyArtifact, Id, MonsterEntry, StagingGround, StatBlock } from '@/domain';
 import { monsterEntrySchema } from '@/domain';
 import {
   fallbackSpawnPoint,
   matchesSlotLabel,
   spawnPointInStagingGround,
 } from '@/domain/battle/board';
+import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
+import { getCampaign } from '@/db/campaignRepo';
 import { creatureCoverImageId } from '@/db/creatureRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import { findPersonaBySlug } from '@/db/personaRepo';
 import { creatureCopyRefusal } from '@/domain/libraryCopy';
+import { awaitCompletedRun } from '@/features/campaign/encounterRegen';
 import {
   enqueueSingleMobPortrait,
   type SingleMobPortraitTarget,
 } from '@/features/campaign/mob-portrait-queue';
 import { authoredPortraitKey, rosterParticipantRoute } from '@/features/campaign/mob-portrait-participants';
+import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
+import { runEngine } from '@/llm/runEngine';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { NotFoundError } from '@/lib/errors';
 
@@ -248,4 +254,131 @@ export async function illustrateSpawnedCreature(options: {
             ...(options.entry.notes.trim() === '' ? {} : { grounding: options.entry.notes }),
           };
   enqueueSingleMobPortrait(target);
+}
+
+/** The three inputs of the "Author a new mob" form (docs/17 row 333, part 2):
+ * a name, a STRUCTURED level, and a free-text description. */
+export interface AuthorMobInput {
+  campaignId: Id;
+  battleId: Id;
+  /** The mob's name — the artifact's own name (the run's draft name becomes an
+   * alias, never a rename). Required and non-empty. */
+  name: string;
+  /**
+   * The mob's level (1..20) — a STRUCTURED FORM VALUE, bound to the run's
+   * `entityLevelHint`. It is the AUTHORITY for the block's level and WINS over
+   * any `level N` sentence in `description` (docs/17 row 197's contract, and
+   * the row-289 incident: a free-text level read was the bug). Never re-derived
+   * here or anywhere downstream.
+   */
+  level: number;
+  /** The run's brief — FLAVOUR ONLY. It is never read for the level. */
+  description: string;
+  /** Part 1's checkbox: illustrate the freshly authored npc too (it has no
+   * image by construction). */
+  illustrate: boolean;
+}
+
+export interface AuthorMobResult {
+  artifactId: Id;
+  /** The name the artifact carries — the surface names it in its toast. */
+  name: string;
+  /** The level the form fixed; the surface names THIS number (never a read). */
+  level: number;
+  /** The block the run authored and this function verified is present. */
+  statBlock: StatBlock;
+  spawn: SpawnReport;
+}
+
+/**
+ * "Author a new mob" (docs/17 row 333, part 2; owner, verbatim: *"i would like
+ * to have a possibility to spawn a freshly authored mob (with stat block
+ * always), using npc smith."*). ONE pass, four steps:
+ *
+ * 1. CREATE the npc row the SAME way the campaign tree's "+ npc" does — the ONE
+ *    creation seam, `db/artifactRepo.createArtifact({campaignId, kind: 'npc',
+ *    name})` (exactly what `campaign-tree.handleCreate` calls). No blank row is
+ *    hand-rolled and no second creation path exists. The row is created FIRST
+ *    so the user's typed NAME is what the artifact carries (a create-run would
+ *    let the draft rename it); the run then fills THAT row.
+ * 2. RUN the built-in NPC Smith at the STRUCTURED level:
+ *    `runEngine.startRun({…, brief: description, pinnedChunkIds: [],
+ *    entityLevelHint: level})`. `entityLevelHint` is the level AUTHORITY — the
+ *    engine's own contract (docs/17 row 197) has it win over a `level N`
+ *    sentence in the brief; the description is never parsed. Completion is
+ *    awaited through the EXISTING boundary
+ *    (`features/campaign/encounterRegen.awaitCompletedRun` — exported for this
+ *    caller rather than re-written), so a failed/cancelled run throws with the
+ *    run's own message.
+ * 3. VERIFY the block. "With stat block always" is a RULE, not an aspiration:
+ *    a run that produced no `data.statBlock` FAILS LOUDLY and spawns NOTHING
+ *    (AGENTS rule 1 — no placeholder numbers, no statless mob on the board).
+ * 4. SPAWN it through the SAME `spawnPickedEntry` path as every other pick, so
+ *    it lands in the staging ground and joins the board/initiative exactly like
+ *    any other mob — and, when part 1's checkbox is ticked, illustrate it
+ *    through the same single-mob portrait seam.
+ */
+export async function authorAndSpawnMob(input: AuthorMobInput): Promise<AuthorMobResult> {
+  const name = input.name.trim();
+  if (name === '') {
+    throw new Error('Name the mob before authoring it');
+  }
+  // Validate the STRUCTURED field at this boundary (AGENTS rule 3): the form's
+  // min/max is a convenience, never the contract.
+  if (!Number.isInteger(input.level) || input.level < 1 || input.level > 20) {
+    throw new Error(
+      `The mob's level must be a whole number from 1 to 20 (got "${String(input.level)}")`,
+    );
+  }
+  const campaign = await getCampaign(input.campaignId);
+  if (campaign === undefined) throw new NotFoundError('Campaign', input.campaignId);
+  // The built-in Smith, through the kind→slug seam the entity workflow owns —
+  // a missing persona is LOUD, never a silent fallback to another writer.
+  const persona = await findPersonaBySlug(STUB_PERSONA_SLUGS.npc);
+  if (persona === undefined) {
+    throw new Error(
+      `The ${STUB_PERSONA_SLUGS.npc} persona is missing — restore the built-in personas and retry`,
+    );
+  }
+  const artifact = await createArtifact({
+    campaignId: input.campaignId,
+    kind: 'npc',
+    name,
+  });
+  const runId = await runEngine.startRun({
+    campaign,
+    persona,
+    // Fully automatic: the pick has no checkpoint UI, and a paused run would
+    // never reach the block check (the owner asked for one press).
+    autonomy: 'auto',
+    brief: input.description,
+    pinnedChunkIds: [],
+    targetArtifactId: artifact.id,
+    entityLevelHint: input.level,
+  });
+  await awaitCompletedRun(runId, `Author “${name}”`);
+  const filled = await getAnyArtifact(artifact.id);
+  if (filled?.kind !== 'npc') {
+    throw new Error(`The authored mob “${name}” disappeared before it could be spawned`);
+  }
+  const statBlock = filled.data.statBlock;
+  if (statBlock === null) {
+    throw new Error(
+      `The NPC Smith returned no stat block for “${name}”, so nothing was spawned (a mob ` +
+        `without stats must never reach the board). The unfinished npc row is still in the ` +
+        `campaign tree — author it again, or edit and delete it there.`,
+    );
+  }
+  const entry = monsterEntrySchema.parse({
+    name: filled.name,
+    count: 1,
+    notes: '',
+    treasure: '',
+    source: { type: 'npc-ref', artifactId: filled.id },
+  });
+  const spawn = await spawnPickedEntry(input.battleId, entry);
+  if (input.illustrate) {
+    await illustrateSpawnedCreature({ campaignId: input.campaignId, entry, linked: filled });
+  }
+  return { artifactId: filled.id, name: filled.name, level: input.level, statBlock, spawn };
 }

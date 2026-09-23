@@ -681,6 +681,7 @@ test) · ❌ gap.
 | Dexie v19 → v20: portrait slots re-keyed to the creature identity, citations rewritten onto the library, marked rows retired, the presentation table created, the report persisted — and the repair seam is idempotent (a second run reports zeros) | `migration.test` | ✅ |
 | Seeded battles: ONE frozen seed row per IDENTITY (not per instance), `creatureKey` carrying it, a synthetic `artifactId` naming no artifact | `spawn-picker.test`, `battle-token-portrait.test` | ✅ |
 | The spawn picker's "illustrate mobs that have no image" checkbox: OFF by default (unticked enqueues zero portrait jobs), ticked enqueues exactly the spawned creature through the single-mob seam with the pick group's own identity and grounds, and a creature that already has art — presentation row OR an npc's own cover — is NEVER enqueued (docs/17 row 333) | `spawn-picker-illustrate.test` | ✅ |
+| "Author a new mob": the STRUCTURED form level rides the run as `entityLevelHint` (and the surface names it) while the description goes verbatim as the brief — a `level 2` sentence in the description never becomes the block's level; a failed run or a null `data.statBlock` spawns NOTHING and toasts loudly; a successful author spawns exactly ONE mob through the standard pick path with its block on the npc row; a level outside 1..20 is refused before any run starts (docs/17 row 333) | `spawn-picker-author-mob.test` | ✅ |
 
 ### The module-side cast — the generator ASKS for a creature (docs/17 row 107, docs/11 §The module-side cast)
 

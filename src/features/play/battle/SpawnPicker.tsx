@@ -4,23 +4,26 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 import type { AnyArtifact, Id, MonsterEntry, NpcArtifact } from '@/domain';
-import { monsterEntrySchema } from '@/domain';
+import { monsterEntrySchema, newId } from '@/domain';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { listChunksByBooks } from '@/db/chunkRepo';
 import { listReadyRulebooks } from '@/db/rulebookRepo';
 import { buildBestiaryRows, filterRosterRows, type RosterEntry } from '@/features/bestiary/roster';
 import { spawnRosterInstance } from '@/db/battleSeed';
 import {
+  authorAndSpawnMob,
   buildMobPickEntry,
   compareSpawnNames,
   illustrateSpawnedCreature,
   parseLevelOrLast,
   spawnPickedEntry,
 } from '@/features/play/battle/spawn-picker-logic';
-import { toastError } from '@/lib/toast';
+import { toastError, toastSuccess } from '@/lib/toast';
+import { useProgressStore } from '@/lib/progress';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -92,6 +95,16 @@ export function SpawnPicker({
    * dialog session — unticked spawns exactly as they always did.
    */
   const [illustrateMissing, setIllustrateMissing] = useState(false);
+  /**
+   * "Author a new mob" (docs/17 row 333, part 2): a name, a STRUCTURED level
+   * and a free-text description. The level is the block's authority — it is
+   * passed as the run's `entityLevelHint` and is never read out of the
+   * description.
+   */
+  const [authorName, setAuthorName] = useState('');
+  const [authorLevel, setAuthorLevel] = useState('');
+  const [authorDescription, setAuthorDescription] = useState('');
+  const [authoring, setAuthoring] = useState(false);
   const mobListRef = useRef<HTMLDivElement | null>(null);
 
   // The roster entries' levels need async stat resolution (same resolver the
@@ -238,6 +251,49 @@ export function SpawnPicker({
       await illustrateAfterSpawnIfAsked(entry);
     } catch (error) {
       toastError(`Could not spawn “${row.name}”`, error);
+    }
+  }
+
+  /**
+   * "Author & spawn" (docs/17 row 333, part 2): ONE press creates the npc
+   * through the campaign tree's own seam, runs the NPC Smith at the STRUCTURED
+   * level, and spawns the result — or, on a failed run or a blockless result,
+   * spawns NOTHING and says so loudly (the logic throws; this is the surface).
+   *
+   * The run is observable on the EXISTING app-wide progress dock (`lib/progress`
+   * — the same surface the encounter runs use), and BOTH the in-flight detail
+   * and the success toast name the level that was used, so a wrong number is
+   * visible rather than implicit.
+   */
+  async function authorMob(): Promise<void> {
+    const name = authorName.trim();
+    const level = Number(authorLevel);
+    const progressId = `author-mob-${newId()}`;
+    useProgressStore
+      .getState()
+      .start(progressId, 'Authoring a new mob', `Level ${authorLevel.trim()} — “${name}”: writing…`);
+    setAuthoring(true);
+    try {
+      const result = await authorAndSpawnMob({
+        campaignId,
+        battleId,
+        name,
+        level,
+        description: authorDescription,
+        illustrate: illustrateMissing,
+      });
+      announceStatless(result.spawn.statless);
+      toastSuccess(
+        `Spawned “${result.name}” at level ${String(result.level)} with its stat block`,
+      );
+      setAuthorName('');
+      setAuthorLevel('');
+      setAuthorDescription('');
+    } catch (error) {
+      toastError(`Could not author and spawn “${name}”`, error);
+    } finally {
+      setAuthoring(false);
+      useProgressStore.getState().finish(progressId);
     }
   }
 
@@ -417,6 +473,69 @@ export function SpawnPicker({
                 )}
               </>
             )}
+          </section>
+          <section
+            aria-label="Author a new mob"
+            data-testid="spawn-picker-author"
+            className="border-t border-white/10 pt-3"
+          >
+            <p className="mb-1 text-xs font-medium text-zinc-400">Author a new mob (NPC Smith)</p>
+            <div className="flex flex-col gap-2">
+              <Input
+                className="h-8 text-sm"
+                placeholder="Mob name"
+                aria-label="New mob name"
+                value={authorName}
+                data-testid="author-mob-name"
+                onChange={(event) => {
+                  setAuthorName(event.target.value);
+                }}
+              />
+              <div className="flex items-center gap-2">
+                <Input
+                  className="h-8 w-20 shrink-0 text-sm"
+                  type="number"
+                  min={1}
+                  max={20}
+                  placeholder="Level"
+                  aria-label="New mob level (1–20)"
+                  value={authorLevel}
+                  data-testid="author-mob-level"
+                  onChange={(event) => {
+                    setAuthorLevel(event.target.value);
+                  }}
+                />
+                <span className="text-xs text-zinc-500">
+                  Level 1–20 — the stat block is built at exactly this level
+                </span>
+              </div>
+              <Textarea
+                className="text-sm"
+                rows={2}
+                placeholder="What is this mob? Flavour only — it never sets the level."
+                aria-label="New mob description"
+                value={authorDescription}
+                data-testid="author-mob-description"
+                onChange={(event) => {
+                  setAuthorDescription(event.target.value);
+                }}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={authoring || authorName.trim() === '' || authorLevel.trim() === ''}
+                data-testid="author-mob-submit"
+                onClick={() => {
+                  void authorMob();
+                }}
+              >
+                {authoring ? 'Authoring…' : 'Author & spawn'}
+              </Button>
+              <p className="text-xs text-zinc-500">
+                The Smith writes the mob and its stat block; it reaches the board only when the
+                block is there.
+              </p>
+            </div>
           </section>
         </div>
       </DialogContent>

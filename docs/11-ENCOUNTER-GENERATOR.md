@@ -1414,6 +1414,44 @@ gained the optional `grounding` field the batch's `MobPortraitJob` already
 carries); an empty description still fails loudly in `buildImagePrompt` rather
 than illustrating a bare name.
 
+### Author a new mob — spawn a freshly NPC-Smith-authored mob, ALWAYS with a stat block (owner-directed, 2026-09-23, docs/17 row 333)
+
+The same dialog carries an **"Author a new mob (NPC Smith)"** section with
+exactly three inputs: a **name** (required), a **level** (a STRUCTURED number,
+1–20, required) and a **description** (free text, flavour only). One press runs
+the whole pass (`spawn-picker-logic.authorAndSpawnMob`):
+
+1. **Create** the npc row the way the campaign tree's `+ npc` does — the ONE
+   creation seam, `db/artifactRepo.createArtifact({campaignId, kind: 'npc',
+   name})` (what `campaign-tree.handleCreate` calls). The row is created FIRST
+   so the user's typed name is the artifact's name; no blank row is hand-rolled
+   and there is no second creation path.
+2. **Run** the built-in `npc-smith` persona against THAT row
+   (`targetArtifactId`) with `brief: <the description>`, `pinnedChunkIds: []`
+   and **`entityLevelHint: <the structured level>`**. The hint is the level's
+   AUTHORITY: its documented contract makes it win over any `level N` sentence
+   in the brief, which is exactly the row-289 incident's fix — the description
+   is never parsed for a level, here or anywhere downstream. Completion is
+   awaited through the EXISTING boundary
+   (`features/campaign/encounterRegen.awaitCompletedRun`, exported for this
+   caller rather than re-written).
+3. **Verify the block.** "With stat block always" is a rule: a run that failed
+   or was cancelled throws the boundary's own sentence, and a completed run
+   whose row still carries `data.statBlock === null` throws a named error.
+   Either way **nothing is spawned** and the surface toasts loudly; a statless
+   authored mob never reaches the board.
+4. **Spawn** it through the SAME `spawnPickedEntry` path as every other pick
+   (staging ground, on-board label numbering, initiative), and — when the
+   illustrate checkbox is ticked — illustrate it through the same single-mob
+   portrait seam.
+
+The surface **names the level it used** — the app-wide progress dock's detail
+names it while the run is in flight (`lib/progress`, the existing surface, no
+new spinner) and the success toast names it — so a wrong number is visible and
+correctable in one step. The unfinished npc row of a failed authoring stays in
+the campaign tree (exactly like a `+ npc` press that was never filled) and the
+error says so.
+
 ### D16 — single-map-slot replace (owner decision, 2026-09-08)
 
 The gallery holds EXACTLY one map per encounter — regenerate REPLACES, never
