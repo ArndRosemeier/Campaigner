@@ -1500,3 +1500,137 @@ have collided.
   `Schools` filter, and a school-less spell is listed as such.
 - Every PF2e spell pin stays green and a PF2e campaign's prompts/definitions
   are byte-identical.
+
+## 17. Itemization — the item compendium and loot: verified state, three corrections, and the proposed arc (docs/17 row 345, 2026-09-24)
+
+**STATUS: RESEARCH RECORD — no code landed, and nothing is briefed to a writer yet.** Asked
+which sense of "itemization" he meant (the word appears nowhere in `docs/` or `src/`), the
+owner chose **both halves as ONE arc**: items as game content, and loot/treasure itemization
+for encounters. Everything below was read at `ae04220`; file:line evidence is cited rather
+than paraphrased, and the two research passes ran READ-ONLY (no LLM run, no suite).
+
+### 17.1 Items ARE already ingested — the board note was half-right
+
+- **Two DEDICATED item adapters exist and are registered** (`src/ingest/packs/registry.ts:17-25`):
+  `dnd5e-equipment.ts` and `pf2e-equipment.ts`. Pack item entries are stored as
+  `chunkType: 'item'` through the ONE builder `packImport.ts:543-561`.
+- **What is genuinely dropped** is narrower than the board note claims: a dnd5e document whose
+  `type` is not one of weapon/equipment/consumable/tool/loot (`dnd5e-equipment.ts:66-68`,
+  filter `:126`), and a pf2e document whose `type` is not one of
+  weapon/armor/shield/equipment/consumable/treasure/ammo/backpack/kit
+  (`pf2e-equipment.ts:74-76`, filter `:138`). Those skips are COUNTED, and a schema or price
+  failure goes to `failures` rather than vanishing (`dnd5e-equipment.ts:133-139`).
+- **What the note actually observed is the CREATURE adapters' `items[]` walk**:
+  `dnd5e-foundry.ts:858-881` tries spell, then feat, then weapon; `pf2e-foundry.ts:405-434`
+  tries spell, then melee, then action. Carried equipment embedded in a creature document is
+  therefore never stored as an item chunk, and `armorPieceSchema`
+  (`dnd5e-foundry.ts:329`) exists only to feed `deriveAcFromGear` (`:419-425`) for AC.
+- **Consequence for the record:** "creature-embedded carried equipment never becomes an item"
+  is TRUE; "pack ITEM entries are still dropped" is FALSE as stated.
+
+### 17.2 The stored item shape
+
+`src/domain/itemData.ts:28-66` — system; category (the document's own `type`, verbatim and an
+OPEN string, not an enum); level (int or null, **pf2e only** — dnd5e items always carry
+`level: null`, `:33`); priceDisplay; priceCp (canonical per-unit copper, nullable, via
+`normalizePf2ePrice` `:111` / `normalizeDnd5ePrice` `:141`); rarity (verbatim string, default
+empty); traits (string array); rulesEdition ('2014' or '2024' or null); publication (pf2e only).
+It rides the rule chunk as a NULLISH payload (`rulebook.ts:91`, `:117`) — no migration, no
+Dexie index change.
+
+**ABSENT from the shape:** attunement, weight, damage dice, an AC value, charges, and any
+magical-property list. The source documents carry more than the adapters read.
+
+### 17.3 Surfaces
+
+**Existing.** The Rules search browser's type filter "Items" and its badge
+(`search-browser.tsx:27`, `:248`), which expands to the RAW chunk text with pin-to-assistant;
+the import lane's counts (`pack-lanes.ts:42-43`); the encounter **item pool** injected into
+prompts (`runEngine.ts:3255-3264`, `:3769`, `:5293`, built by `encounterItems.ts:90-100` under
+the 120-line cap of docs/17 row 14); and free-text treasure rendered GM-only.
+
+**Absent.** No items ROUTE (`routes.ts:40` lists spells only — there is no `features/items/`),
+no item detail card (the spells lane's `features/spells/spell-card.tsx` has no item twin), **no
+character inventory at all** (`pcDataSchema`, `artifact.ts:219-230`), and no item-to-PC, mob or
+encounter link.
+
+### 17.4 Loot today is PROSE, and that was a DECISION
+
+Every treasure field is `z.string()`: the encounter's `treasure` (`artifact.ts:642`), a roster
+entry's `treasure` (`artifact.ts:375`), a room's `keyTreasure`
+(`encounterMap/schema.ts:272`), and a battle token's frozen `treasure` (`battle.ts:159`,
+seeded `battleSeed.ts:258,316`; a NEW spawn gets an empty string —
+`spawn-picker-logic.ts:137,382`).
+
+- **Generation.** `treasureGuidanceFor` / `roomKeyGuidanceFor` (`treasureGuidance.ts:47`) ride
+  the Smith DRAFT prompt (`runEngine.ts:3804-3807`) and the Cartographer BRIEF prompt
+  (`:5306-5307`). dnd5e gets Campaigner's own approximation (a 5×CR pocket, a 50gp×level
+  hoard); pf2e quotes retrieved GM Core excerpts or gives NO numbers, which is a licensing
+  shape rather than a modelling one. One bounded third search supplies the budget context
+  (`runEngine.ts:3221-3226`).
+- **The contract is prose everywhere** (`llm/schemas.ts:281,322,373,397`). No zod-validated
+  loot list with quantities or values exists, and the docs say so deliberately: `docs/12`
+  §13.6 "no structured item output field", `docs/11` "never structured loot output".
+- **ONE display seam.** `rosterTreasureFor` (`domain/encounterResolve.ts:467`) feeds the module
+  PDF's per-mob line (`modulePdf.ts:1261`), the encounter `Treasure` line (`:1278`) and the
+  `treasureLedger` (`:1531-1551`, mounted GM-only `:2202-2206`, printed `:2552-2572`).
+- **NO link to the compendium.** `itemChunkByName` is minted and persisted
+  (`runEngine.ts:3264,3320,3436,3529`) and has **no reader anywhere in `src/`** — so a treasure
+  line naming an item is free text that nothing resolves.
+- **NO mechanics.** No coin or currency tracking, no value sums, no encumbrance, and no
+  awarding or consuming path. A token's treasure is read-only (`BattleSurface.tsx:3486`).
+
+### 17.5 Export
+
+**Neither PDF lane imports `itemData`** (`modulePdf.ts`, `pdfExport.ts`). Items reach paper
+only as free text inside the treasure ledger. Price, rarity and traits are never printed.
+
+### 17.6 Three CORRECTIONS to our own record
+
+1. **The AWAITING-OWNER question `claimB-pack` rests on a wrong premise.** It asserts that pack
+   ITEM entries other than feat/weapon "are still DROPPED at ingest", citing the two CREATURE
+   adapters. Dedicated item adapters ingest equipment packs into `chunkType: 'item'`, so the
+   question as written is refuted; only the narrower creature-embedded case is true. The
+   question must be re-put on the corrected premise before the owner answers it.
+2. **`docs/17` rows 181, 189 and 191 are SPELL rows, not item rows** (181 is the structured
+   `spellData` payload; 189 and 191 are the pf2e creature's own embedded `spell` items and the
+   focus auto-heighten). They touch item code only through the same `items[]` walk. The item
+   lane's binding ledger row is **14**.
+3. **A room's `keyTreasure` is never printed in either PDF** — the editor and the battle
+   surface render it, and `modulePdf` has no reference to it. That is a real omission
+   independent of this arc, and it is small.
+
+### 17.7 The gaps, ranked (unified from both passes)
+
+1. Structured loot lists (name, quantity, value, compendium id, carrier) — ARC; can be ADDITIVE beside the prose strings.
+2. An item library page and an item detail card — ARC for the page, SMALL for the card.
+3. Loot linked to the compendium, and item stat blocks printed — MEDIUM SLICE, after 1.
+4. Character inventory plus an award/consume path — ARC, after 1.
+5. Coin and currency tracking (party treasury, PC purses) — ARC, after 1-3.
+6. Print the room `keyTreasure` in the module PDF — SMALL SLICE.
+7. Citation enforcement of pool item names — MEDIUM SLICE, after 1.
+8. Combat-relevant item stats (damage, AC, charges, weight, attunement) — ARC; needs adapter work too.
+9. Encumbrance — ARC, lowest value; no weight data exists anywhere.
+
+### 17.8 The proposed arc, additive-first
+
+- **Phase 1 (the dispatcher's recommendation).** The **item library page and detail card**,
+  mirroring the seams the SPELLS lane already has on the same chunk shape
+  (`features/spells/SpellsPage`, `spell-card.tsx`, the `routes.ts:40` route table). Additive, no
+  schema change, no recorded non-goal reversed — and it makes the `itemData` we already store
+  visible for the first time.
+- **Phase 2.** Structured loot: an OPTIONAL zod loot list beside the existing prose strings,
+  carrying a compendium chunk id, rendered UNDER the prose. **This REVERSES a recorded
+  non-goal** (`docs/12` §13.6 and `docs/11` above), so it needs the owner's explicit word; the
+  prose fields stay either way.
+- **Phase 3.** Inventory, awarding and coin tracking, which depend on Phase 2.
+
+**Rejected as a first move:** starting with Phase 2 or 3. Both reverse a recorded non-goal and
+touch five schemas plus six render surfaces BEFORE the compendium is even browsable — maximum
+risk for zero visible payoff.
+
+### 17.9 Evidence quality
+
+Every citation above was read in the working tree at `ae04220`. No LLM run was executed and the
+suite was not run (the research was read-only by instruction), so the item pool's real effect on
+generated treasure PROSE is INFERRED from the prompt wiring rather than observed.
