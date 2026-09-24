@@ -28,7 +28,7 @@ import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
-import { buildLabeledMapPrompt } from '@/llm/visionDungeon';
+import { BATTLEMAP_EMPTY_TERRAIN_CLAUSE, buildLabeledMapPrompt } from '@/llm/visionDungeon';
 import { sha256Hex } from '@/lib/hash';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
@@ -399,6 +399,10 @@ describe('guarded caller families (prompt capture)', () => {
     expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     expect(prompt).toContain('no map legend, no scale bar');
     expect(prompt).toContain('no text labels');
+    // The POSITIVE emptiness frame (docs/17 row 337) rides BOTH classic modes
+    // beside the existing bans: the map is empty terrain and the creatures
+    // are tokens added later. A negative alone was never a guarantee.
+    expect(prompt).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
     // The architectural contract proper: the materials line and the
     // keep-structure clause are what make the layout ground truth.
     expect(prompt).toContain('Environment materials: desaturated stone, wood, dirt.');
@@ -428,6 +432,10 @@ describe('guarded caller families (prompt capture)', () => {
     // modes, and no `Avoid:` line is emitted at all.
     expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     expect(prompt).not.toContain('Avoid:');
+    // The positive emptiness frame (docs/17 row 337) rides the natural mode
+    // too — ONE clause, both modes, and the vision builder imports the same
+    // constant.
+    expect(prompt).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
     // The natural contract leads with the encounter's OWN prose …
     expect(prompt).toContain('Theme: moonlit pinewood.');
     expect(prompt).toContain('Site: forest clearing.');
@@ -466,6 +474,9 @@ describe('vision carve-out (binding, caller-owned rule)', () => {
     // The tailored, caller-owned rule is present…
     expect(prompt).toContain('plaque');
     expect(prompt).toContain('no written text anywhere except the 2 letter plaques');
+    // …and so is the POSITIVE emptiness frame (docs/17 row 337), the SAME
+    // constant the classic modes import.
+    expect(prompt).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
     // …while no shared mechanism is added: no `Avoid:` line, and the owner's
     // positive clause is deliberately absent too — this path's plaque
     // clause is load-bearing for the locate pass (docs/17 rows 224/319).

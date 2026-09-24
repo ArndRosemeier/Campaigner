@@ -95,6 +95,8 @@ const FULL_MARKS = {
     { label: 'C', x: 400, y: 600 },
     { label: 'D', x: 700, y: 600 },
   ],
+  // The required emptiness answer (docs/17 row 337): empty terrain.
+  figures: [],
 };
 
 /**

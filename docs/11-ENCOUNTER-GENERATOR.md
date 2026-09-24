@@ -1694,12 +1694,18 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   the entrance clause naming its letter explicitly — "Room C is the
   dungeon entrance … draw it AS a visual entrance (stairs descending, a
   cave mouth, a gate, or a portal to suit the concept), plaque included" —
-  zero flagged rooms render no clause, two throw loud), `buildVisionLocateInstruction` /
-  `buildVisionRelocateInstruction` (0–1000 grid, omit-never-invent),
+  zero flagged rooms render no clause, two throw loud), the positive
+  `BATTLEMAP_EMPTY_TERRAIN_CLAUSE` (row 337 — see the section below; the same
+  constant rides both classic stylize modes), `buildVisionLocateInstruction` /
+  `buildVisionRelocateInstruction` (0–1000 grid, omit-never-invent, PLUS the
+  required `figures` emptiness question),
   `visionLabelMarkSchema` / `visionLocateReplySchema` /
-  `parseVisionLocateReply` (JSON extraction + zod boundary), `locateDungeonLabels`
+  `parseVisionLocateReply` (JSON extraction + zod boundary; `figures` is a
+  REQUIRED array of non-empty strings, no default), `locateDungeonLabels`
   (initial pass + count check + focused re-ask per miss, first-mark-wins
-  dedupe, still-missing ⇒ `VisionLocateError` naming the letters). The lab
+  dedupe, still-missing ⇒ `VisionLocateError` naming the letters, and a
+  non-empty `figures` ⇒ `BattlemapFiguresError` before any re-ask — the map
+  step fails loud and finalizes NOTHING). The lab
   aliases the shared contract (`dungeonVisionReplySchema`,
   `parseDungeonVisionReply`) — lab imports FROM the shared module, never
   the reverse.
@@ -1744,14 +1750,18 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   point; anything needing polygons (`renderSchematic`,
   `veilsFromRooms`, `stagingBlockRect`) throws loud on geometry-less
   rooms. The layout preview marks observed plaques instead of rects.
-- Tests: `tests/llm/encounterVisionMap.test.ts` (18: helpers, entry-as-
+- Tests: `tests/llm/encounterVisionMap.test.ts` (22: helpers, entry-as-
   entrance prompt clause (entry letter named, non-entry rooms clean, no
   clause without a designation, two entrances throw), happy path,
   non-zero entryRoomIndex control (prompt + spawn + entry-first path +
   ingress at that room's plaque), miss⇒re-ask⇒found, still-missing loud
   fail with nothing persisted, missing-ENTRY loud fail with nothing
   persisted, override-beats-setting, singles-ignore,
-  repopulate-untouched, observed-point seeding), `tests/llm/encounterVisionSteering.test.ts` (5: classic
+  repopulate-untouched, observed-point seeding, and the row-337 emptiness
+  pins: the positive clause in the labeled prompt, the figures question +
+  rule in both vision instructions, the required-`figures` boundary throw,
+  the figures list failing `locateDungeonLabels` before any re-ask, and the
+  vision-map run failing loud with no artifact/image), `tests/llm/encounterVisionSteering.test.ts` (5: classic
   default, steered regen both ways + never-persisted default, setting
   default, singles ignore), the queue-uses-setting case in
   `tests/features/encounter-map-queue.test.ts`, the steering control in
@@ -2806,6 +2816,52 @@ owner-ratified principle is **WHO HOLDS GROUND TRUTH**:
   `environment` ('dungeon' | 'outdoor') — one added line tells it to set the
   field honestly from the site's own nature (outdoor in the open,
   dungeon only inside an enclosed built complex).
+
+### The battlemap is EMPTY TERRAIN — positively framed in the prompts, ENFORCED in the vision read (owner-directed, docs/17 row 337)
+
+Owner ask, verbatim: *"Battle maps illustration need to make sure that no
+mobs/players are depicted in the background image"*. Both map prompts ALREADY
+banned it — the classic `usabilityBans` carries *"no characters, no monsters,
+no tokens, no miniatures"* and `buildLabeledMapPrompt` its own *"no monsters,
+no creatures, no people"* clause — and he still saw mobs and players baked
+into the map. That is this project's own recorded lesson (docs/17 row 319):
+**a negative instruction is not a guarantee.** So this rule is stated
+POSITIVELY in the prompts AND enforced where the app already looks at the
+image.
+
+- **The positive frame (ONE constant, every map prompt).**
+  `visionDungeon.BATTLEMAP_EMPTY_TERRAIN_CLAUSE` — *"This map is EMPTY TERRAIN
+  seen from above — ground, walls, floors and features only; the creatures are
+  added on top of it later as tokens, so nothing alive, no figure, no person
+  and no creature appears in the picture."* — rides `buildLabeledMapPrompt`
+  and BOTH classic stylize modes (`runEngine.runEncounterStylize` imports the
+  same constant, so the classic and vision paths cannot drift). The existing
+  bans are untouched (declared boundary, docs/17 rows 319/328), and the owner's
+  positive text clause still rides both classic modes.
+- **The enforcement (the ONE free read — no new vision call).** The
+  complex/dungeon `vision-map` step already sends the generated map to a
+  vision model to locate the room plaques. That SAME read now also answers
+  whether anything alive is depicted. `visionLocateReplySchema` carries
+  `figures` as a REQUIRED array of non-empty strings with **NO default** — an
+  omitted field is a malformed reply that fails at the boundary (AGENTS
+  rule 3), never a silent "empty terrain". `buildVisionLocateInstruction` (and
+  the focused re-ask, which must ask for the answer its contract requires)
+  states the rule and asks for the list, with `figures: []` named as the
+  expected answer. A non-empty answer THROWS `BattlemapFiguresError` from
+  `locateDungeonLabels` BEFORE any re-ask, naming the figures and the rule
+  (*"…depicts 2 figures (a goblin, a wolf) — a battlemap is empty terrain and
+  its creatures are tokens placed on it, so this map is not used."*). The
+  `vision-map` step's existing failure path then prunes the unattached
+  candidate, so the run FAILS and FINALIZES NOTHING: no map on the artifact,
+  no run success. NO auto-strip, NO silent accept, NO retry loop — the
+  existing regenerate affordance is the repair. The plaque locate/verify
+  behaviour and its schema fields (`marks`, `note`) are unchanged.
+- **THE NAMED GAP — the classic path has NO vision read.** For a classic
+  battlemap (both modes) the rule stays PROMPT-LEVEL ONLY. Enforcing it there
+  would cost one vision call per generated map, and that price is the OWNER's
+  decision, deliberately NOT taken in this slice. So a vision map is framed
+  AS empty terrain and VERIFIED empty; a classic map is framed but not
+  verified.
 
 ### Mode derivation and the owner override
 

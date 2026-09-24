@@ -38,14 +38,14 @@ describe('normToPercent', () => {
 describe('parseDungeonVisionReply', () => {
   it('parses a bare contract reply', () => {
     const parsed = parseDungeonVisionReply(
-      '{"marks": [{"label": "A", "x": 123, "y": 456, "note": "on the floor"}]}',
+      '{"marks": [{"label": "A", "x": 123, "y": 456, "note": "on the floor"}], "figures": []}',
     );
     expect(parsed.marks).toEqual([{ label: 'A', x: 123, y: 456, note: 'on the floor' }]);
   });
 
   it('tolerates prose and fence wrappers around the JSON', () => {
     const parsed = parseDungeonVisionReply(
-      'Here are the plaques I see:\n```json\n{"marks": [{"label": "B", "x": 10, "y": 20}]}\n```\nThat is all.',
+      'Here are the plaques I see:\n```json\n{"marks": [{"label": "B", "x": 10, "y": 20}], "figures": []}\n```\nThat is all.',
     );
     expect(parsed.marks).toEqual([{ label: 'B', x: 10, y: 20, note: undefined }]);
   });
@@ -54,10 +54,13 @@ describe('parseDungeonVisionReply', () => {
     expect(() => parseDungeonVisionReply('A is at the top left, roughly')).toThrow();
   });
 
-  it('fails loud on contract violations (bad label, out-of-range point)', () => {
-    expect(() => parseDungeonVisionReply('{"marks": [{"label": "Z", "x": 1, "y": 2}]}')).toThrow();
-    expect(() => parseDungeonVisionReply('{"marks": [{"label": "A", "x": 5000, "y": 2}]}')).toThrow();
-    expect(() => parseDungeonVisionReply('{"marks": "A"}')).toThrow();
+  it('fails loud on contract violations (bad label, out-of-range point, missing figures)', () => {
+    expect(() => parseDungeonVisionReply('{"marks": [{"label": "Z", "x": 1, "y": 2}], "figures": []}')).toThrow();
+    expect(() => parseDungeonVisionReply('{"marks": [{"label": "A", "x": 5000, "y": 2}], "figures": []}')).toThrow();
+    expect(() => parseDungeonVisionReply('{"marks": "A", "figures": []}')).toThrow();
+    // `figures` is REQUIRED (docs/17 row 337) — a shared reply omitting it is
+    // malformed, so the emptiness answer can never be silently absent.
+    expect(() => parseDungeonVisionReply('{"marks": [{"label": "A", "x": 1, "y": 2}]}')).toThrow();
   });
 });
 
@@ -100,7 +103,7 @@ function fakeClients(overrides: Partial<LabeledDungeonClients> = {}): LabeledDun
       }),
     visionPass: () =>
       Promise.resolve({
-        text: '{"marks": [{"label": "A", "x": 100, "y": 200}]}',
+        text: '{"marks": [{"label": "A", "x": 100, "y": 200}], "figures": []}',
         modelUsed: 'test-chat-model',
       }),
     blobToDataUrl: () => Promise.resolve('data:image/webp;base64,AAA'),
@@ -140,7 +143,7 @@ describe('runLabeledDungeonExperiment', () => {
         visionPass: () => {
           calls += 1;
           if (calls === 1) return Promise.reject(new Error('the model has no vision input'));
-          return Promise.resolve({ text: '{"marks": []}', modelUsed: 'test-chat-model' });
+          return Promise.resolve({ text: '{"marks": [], "figures": []}', modelUsed: 'test-chat-model' });
         },
       }),
     );

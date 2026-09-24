@@ -26,6 +26,8 @@ import { sha256Hex } from '@/lib/hash';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
 import {
+  BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
+  BattlemapFiguresError,
   buildLabeledMapPrompt,
   buildVisionLocateInstruction,
   buildVisionRelocateInstruction,
@@ -117,8 +119,11 @@ const SINGLE_BRIEF = {
   entryRoomIndex: 0,
 };
 
-function locateReply(marks: readonly { label: string; x: number; y: number }[]): string {
-  return JSON.stringify({ marks });
+function locateReply(
+  marks: readonly { label: string; x: number; y: number }[],
+  figures: readonly string[] = [],
+): string {
+  return JSON.stringify({ marks, figures });
 }
 
 const FULL_MARKS = [
@@ -247,10 +252,77 @@ describe('vision dungeon label helpers (docs/11 vision path)', () => {
     expect(prompt).toContain('Rooms connect: A ↔ B.');
     expect(prompt).toContain('engraved or carved');
     expect(prompt).toContain('no monsters');
+    // The POSITIVE emptiness frame (docs/17 row 337) rides the same prompt
+    // beside the ban: the ban names what not to draw, this names what the
+    // image IS.
+    expect(prompt).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
     // The binding clarification: NO regular/irregular distinction or toggle
     // in the vision path — shape follows each room's description.
     expect(prompt).not.toMatch(/regular|irregular/i);
     expect(prompt).toContain("follow its description");
+  });
+
+  it('states the emptiness rule in BOTH vision instructions and asks for the figures list', () => {
+    const locate = buildVisionLocateInstruction(['A', 'B']);
+    // The same read answers two questions: the instruction asks for the
+    // figures list BY NAME and states the rule it is checking, with the
+    // reply example carrying the key.
+    expect(locate).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
+    expect(locate).toContain('"figures"');
+    expect(locate).toContain('"figures": []');
+    expect(locate).toContain('an empty list is the expected answer');
+    expect(locate).toContain('A through B');
+    // The focused re-ask repeats the emptiness question, because `figures` is
+    // a REQUIRED field of the same contract — an unasked required answer
+    // would be a demand the model never received.
+    const relocate = buildVisionRelocateInstruction(['B'], [{ label: 'A', x: 1, y: 2 }]);
+    expect(relocate).toContain('"figures"');
+    expect(relocate).toContain('"figures": []');
+    expect(relocate).toContain('empty terrain');
+    expect(relocate).toContain('You missed these room plaques: B.');
+  });
+
+  it('REQUIRES the figures answer: a reply that omits it fails at the boundary', () => {
+    // No `.default([])`: an omitted field is a MALFORMED reply, never a
+    // silent "empty terrain" — a default would make the check vanish exactly
+    // when the model got sloppy (AGENTS rule 1).
+    expect(() => parseVisionLocateReply('{"marks": []}')).toThrow();
+    expect(visionLocateReplySchema.safeParse({ marks: [] }).success).toBe(false);
+    // Each figure must be a non-empty description.
+    expect(() =>
+      parseVisionLocateReply('{"marks": [], "figures": [""]}'),
+    ).toThrow();
+    // The honest empty answer parses.
+    expect(parseVisionLocateReply('{"marks": [], "figures": []}')).toEqual({
+      marks: [],
+      figures: [],
+    });
+  });
+
+  it('fails a map that DEPICTS figures, naming them and the rule, before any re-ask', async () => {
+    let instructions = 0;
+    const locate = () =>
+      locateDungeonLabels(
+        {
+          visionPass: (_imageDataUrl, _instruction) => {
+            instructions += 1;
+            // A missing plaque too (D is never seen): the figures answer must
+            // fail BEFORE the focused re-ask, so no second read happens.
+            return Promise.resolve({ text: locateReply(FULL_MARKS.slice(0, 3), ['a goblin', 'a wolf']) });
+          },
+        },
+        { imageDataUrl: 'data:map', labels: ['A', 'B', 'C', 'D'] },
+      );
+    const error = await locate().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(BattlemapFiguresError);
+    if (!(error instanceof BattlemapFiguresError)) throw new Error('expected BattlemapFiguresError');
+    expect(error.figures).toEqual(['a goblin', 'a wolf']);
+    expect(error.message).toContain('depicts 2 figures (a goblin, a wolf)');
+    expect(error.message).toContain(
+      'a battlemap is empty terrain and its creatures are tokens placed on it, so this map is not used',
+    );
+    // ONE pass, no retry loop.
+    expect(instructions).toBe(1);
   });
 
   it('renders the designated entry chamber as the visual entrance, naming its letter', () => {
@@ -499,6 +571,36 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
     // throw — no invented coordinate, no orphaned image.
     expect(await listImagesByCampaign(campaign.id)).toEqual([]);
     expect(vi.mocked(encounterRunAdapters.generateImages)).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the map step loud with nothing persisted when the map depicts figures', async () => {
+    const { campaign, cartographer } = await setup('classic');
+    // Every plaque is located, but the picture has baked-in creatures: the
+    // emptiness answer alone fails the step (docs/17 row 337), naming what
+    // was seen and the rule — never a silent accept, never a strip.
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: locateReply(FULL_MARKS, ['a goblin', 'a wolf']), modelUsed: 'test-model', fallback: null });
+    const runInput = {
+      ...input(campaign, cartographer),
+      autonomy: 'auto' as const,
+      dungeonMapPath: 'vision' as const,
+    };
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+      expect(run?.errorMessage).toContain('depicts 2 figures (a goblin, a wolf)');
+      expect(run?.errorMessage).toContain('a battlemap is empty terrain and its creatures are tokens placed on it');
+    });
+    const failed = await getRun(runId);
+    // FINALIZES NOTHING: no artifact, no map image, no run success.
+    expect(failed?.resultArtifactId).toBeNull();
+    expect(await listImagesByCampaign(campaign.id)).toEqual([]);
+    // ONE map generation and ONE vision read — the figure check pre-empts the
+    // focused re-ask, and there is no retry loop.
+    expect(vi.mocked(encounterRunAdapters.generateImages)).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   it('designates a non-zero entry room: the entrance names its letter, spawn + path + ingress follow', async () => {

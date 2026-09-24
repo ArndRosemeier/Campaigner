@@ -203,6 +203,7 @@ import type {
   SceneSubstitution,
 } from '@/llm/schemas';
 import {
+  BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
   buildLabeledMapPrompt,
   labelsForRoomCount,
   locateDungeonLabels,
@@ -6267,6 +6268,13 @@ export class RunEngine {
     // and is OMITTED entirely when it is empty — there is no fallback to any
     // shared list. The owner's positive text rule (docs/17 row 319) rides the
     // COMPOSED prompt in both modes.
+    //
+    // THE EMPTINESS RULE (docs/17 row 337) rides both modes as ONE shared
+    // POSITIVE clause (`BATTLEMAP_EMPTY_TERRAIN_CLAUSE`) beside the existing
+    // no-characters ban: a negative alone never guaranteed an empty map. On
+    // THIS classic path the rule is prompt-level only — there is no vision
+    // read here, so enforcing it would cost one vision call per generated
+    // map; that priced gap is the owner's decision and is NOT closed here.
     const avoid = parsed.negative;
     const usabilityBans =
       'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.';
@@ -6284,6 +6292,7 @@ export class RunEngine {
           IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
           'This site is open natural terrain: the reference image only marks placement — its soft darker patches show where the encounter\'s creatures gather and its single neon triangle marks the party\'s approach — so shape the ground itself from the scene description above.',
           entranceClause,
+          BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
           usabilityBans,
           avoid === '' ? null : `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ')
@@ -6294,6 +6303,7 @@ export class RunEngine {
           'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
           entranceClause,
           'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
+          BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
           usabilityBans,
           avoid === '' ? null : `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ');

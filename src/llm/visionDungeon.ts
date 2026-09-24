@@ -13,6 +13,11 @@ import { absentable } from '@/llm/schemas';
  * schema/parse, the locate→verify orchestration with injected vision
  * passes). The run engine wires the production transports (image pipeline +
  * chat model); the lab wires its bench transports.
+ *
+ * The map-emptiness rule (docs/11, docs/17 row 337) lives HERE as well: the
+ * reply contract carries a REQUIRED `figures` answer and `locateDungeonLabels`
+ * fails a map that depicts any figure, so the one existing vision read is also
+ * the guarantee that no baked-in creature ships.
  */
 
 /** One labeled room for the shared map prompt: marker letter + name + visual hook. */
@@ -44,6 +49,20 @@ export function labelForRoomIndex(index: number): string {
   }
   return String.fromCharCode(65 + index);
 }
+
+/**
+ * THE BATTLEMAP-EMPTINESS RULE, positively framed (docs/11, docs/17 row 337):
+ * a generated battlemap is EMPTY TERRAIN — its creatures are tokens placed on
+ * it afterwards, so nothing alive belongs in the picture. ONE constant, shared
+ * by the vision builder below and by BOTH classic stylize modes
+ * (`runEngine.runEncounterStylize` imports it), so the classic and vision
+ * prompts cannot drift about the same rule.
+ *
+ * POSITIVE, and the existing bans are kept (docs/17 rows 319/328): a negative
+ * instruction alone is not a guarantee, so this states what the image IS.
+ */
+export const BATTLEMAP_EMPTY_TERRAIN_CLAUSE =
+  'This map is EMPTY TERRAIN seen from above — ground, walls, floors and features only; the creatures are added on top of it later as tokens, so nothing alive, no figure, no person and no creature appears in the picture.';
 
 /** The marker letters for a run's room count, in plan order. */
 export function labelsForRoomCount(count: number): string[] {
@@ -79,6 +98,11 @@ export function labelsForRoomCount(count: number): string[] {
  * fight the plaque contract). The lab bench inherits this rule through this
  * same builder — never a forked copy.
  *
+ * The POSITIVE emptiness clause (`BATTLEMAP_EMPTY_TERRAIN_CLAUSE`, docs/17
+ * row 337) rides every labeled map prompt beside the existing no-monsters
+ * ban, and the SAME constant rides both classic stylize modes — one wording,
+ * no copy.
+ *
  * Pure — prompt-capture tests pin its contents.
  */
 export function buildLabeledMapPrompt(
@@ -110,6 +134,7 @@ export function buildLabeledMapPrompt(
       ? []
       : [`Room ${entry.label} is the dungeon entrance — the party's way in: draw it AS a visual entrance (stairs descending, a cave mouth, a gate, or a portal to suit the ${concept}), plaque included.`]),
     ...(connectivity === undefined || connectivity.trim() === '' ? [] : [`Rooms connect: ${connectivity}.`]),
+    BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
     `Requirements: let each room's shape follow its description and the dungeon concept — worked, built rooms read architectural with walls and corners, natural spaces read organic; there is no single global shape rule. INSIDE each room, on the floor, a LARGE clearly-legible capital letter plaque (${first} through ${last}, one per room), engraved or carved into the floor, marking that room; top-down battlemap style with a subtle grid; no monsters, no creatures, no people, and no written text anywhere except the ${String(rooms.length)} letter plaques.`,
   ].join('\n');
 }
@@ -118,18 +143,27 @@ export function buildLabeledMapPrompt(
  * The instruction sent with a map image on a vision pass: report every
  * plaque letter actually SEEN as a 0–1000 point (origin top-left). A letter
  * that is not visible is OMITTED — never invented (AGENTS rule 1).
+ *
+ * The SAME read also answers the emptiness question (docs/17 row 337): this
+ * image IS the battlemap and must be empty terrain, so the reply names every
+ * figure it depicts in `figures`, and `figures: []` is the expected answer.
+ * One read, two answers, NO second vision call.
  */
 export function buildVisionLocateInstruction(labels: readonly string[]): string {
   if (labels.length === 0) throw new Error('Cannot build a vision instruction with no labels');
   const first = labels[0] ?? '';
   const last = labels[labels.length - 1] ?? '';
-  return `This is a top-down battlemap of one interconnected dungeon whose rooms are marked inside with large capital letter plaques ${first} through ${last}. For EVERY plaque letter you can actually see, report its label and its position as a point in a 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). Reply with JSON only: {"marks": [{"label": "${first}", "x": 123, "y": 456}]}. If a letter is not visible, OMIT it — never invent coordinates for a letter you cannot see. An optional short "note" per mark may describe the plaque.`;
+  return `This is a top-down battlemap of one interconnected dungeon whose rooms are marked inside with large capital letter plaques ${first} through ${last}. For EVERY plaque letter you can actually see, report its label and its position as a point in a 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). If a letter is not visible, OMIT it — never invent coordinates for a letter you cannot see. An optional short "note" per mark may describe the plaque. Separately, this image IS the battlemap and must stay empty. ${BATTLEMAP_EMPTY_TERRAIN_CLAUSE} Report every creature, person, monster, animal, token or miniature the picture actually depicts as "figures", naming each one ("a goblin", "a knight"); answer "figures": [] when the map is empty terrain — an empty list is the expected answer. Reply with JSON only: {"marks": [{"label": "${first}", "x": 123, "y": 456}], "figures": []}.`;
 }
 
 /**
  * The focused re-ask instruction for the verify step's misses: ONLY the
  * missing plaques, with the already-found points as context (orientation,
  * not answers to change).
+ *
+ * It repeats the emptiness question because `figures` is a REQUIRED field of
+ * the same reply contract (docs/17 row 337): a re-ask that did not ask would
+ * demand an answer it never requested.
  */
 export function buildVisionRelocateInstruction(
   missing: readonly string[],
@@ -139,7 +173,7 @@ export function buildVisionRelocateInstruction(
   const context = found.length === 0
     ? 'No plaques were located on the first pass.'
     : `Already located (context only — do not change these): ${found.map((mark) => `${mark.label} at (${String(mark.x)}, ${String(mark.y)})`).join(', ')}.`;
-  return `This is the SAME battlemap as before. You missed these room plaques: ${missing.join(', ')}. Look again carefully — report ONLY the missing letters, each as a point in the same 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). Reply with JSON only: {"marks": [{"label": "${missing[0] ?? ''}", "x": 123, "y": 456}]}. ${context} If a missing letter is truly not visible, OMIT it — never invent coordinates for a letter you cannot see.`;
+  return `This is the SAME battlemap as before. You missed these room plaques: ${missing.join(', ')}. Look again carefully — report ONLY the missing letters, each as a point in the same 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). ${context} If a missing letter is truly not visible, OMIT it — never invent coordinates for a letter you cannot see. Answer the emptiness question again for this map: report every creature, person, monster, animal, token or miniature you can see as "figures", naming each one; answer "figures": [] when the picture is empty terrain (the expected answer — the creatures are tokens added later, so nothing alive belongs in the picture). Reply with JSON only: {"marks": [{"label": "${missing[0] ?? ''}", "x": 123, "y": 456}], "figures": []}.`;
 }
 
 /** One validated vision mark: a letter plus its 0–1000 grid point. */
@@ -155,6 +189,15 @@ export type VisionLabelMark = z.infer<typeof visionLabelMarkSchema>;
 /** The vision reply contract — validated at the boundary (AGENTS rule 3). */
 export const visionLocateReplySchema = z.object({
   marks: z.array(visionLabelMarkSchema),
+  /**
+   * THE EMPTINESS ANSWER (docs/17 row 337), REQUIRED with NO default: every
+   * figure the picture depicts, each a non-empty description, or `[]` for
+   * empty terrain. A reply that omits the field is MALFORMED and throws at
+   * the boundary — a `.default([])` would make the check vanish exactly when
+   * the model got sloppy, which is the failure this field exists to catch
+   * (AGENTS rule 1).
+   */
+  figures: z.array(z.string().min(1)),
 });
 
 export type VisionLocateReply = z.infer<typeof visionLocateReplySchema>;
@@ -185,6 +228,34 @@ export class VisionLocateError extends Error {
   }
 }
 
+/**
+ * A generated battlemap that DEPICTS figures: the map step fails LOUD naming
+ * what the vision read saw and the rule it broke, and NOTHING is finalized
+ * (the unattached candidate is pruned before the throw, so no map reaches the
+ * artifact and no run ends successfully). ONE pass, no retry loop — the
+ * owner's existing regenerate affordance is the repair.
+ */
+export class BattlemapFiguresError extends Error {
+  readonly figures: readonly string[];
+
+  constructor(figures: readonly string[]) {
+    super(
+      `The generated battlemap depicts ${String(figures.length)} figure${figures.length === 1 ? '' : 's'} (${figures.join(', ')}) — a battlemap is empty terrain and its creatures are tokens placed on it, so this map is not used.`,
+    );
+    this.name = 'BattlemapFiguresError';
+    this.figures = figures;
+  }
+}
+
+/**
+ * The map-emptiness assertion (docs/11, docs/17 row 337): a reply that names
+ * ANY depicted figure throws `BattlemapFiguresError`, so a map with baked-in
+ * creatures never finalizes. An empty answer changes nothing.
+ */
+function assertEmptyBattlemap(figures: readonly string[]): void {
+  if (figures.length > 0) throw new BattlemapFiguresError(figures);
+}
+
 /** The injected vision transport one locate needs (mocked in tests). */
 export interface VisionLocateClients {
   /** One structured vision pass over a map data URL; resolves RAW reply text. */
@@ -198,6 +269,11 @@ export interface VisionLocateClients {
  * missing afterwards ⇒ throws `VisionLocateError` — the map step fails
  * loud, NOTHING is persisted or invented. De-duplicate repeat sightings:
  * the first validated mark per letter wins.
+ *
+ * The SAME read enforces the emptiness rule (docs/17 row 337): the FIRST
+ * non-empty `figures` answer throws `BattlemapFiguresError` before any
+ * re-ask, naming what the map depicts — so a run never spends its one map on
+ * a picture with baked-in creatures and NEVER finalizes it.
  */
 export async function locateDungeonLabels(
   clients: VisionLocateClients,
@@ -208,6 +284,7 @@ export async function locateDungeonLabels(
   const first = parseVisionLocateReply(
     (await clients.visionPass(args.imageDataUrl, buildVisionLocateInstruction(args.labels))).text,
   );
+  assertEmptyBattlemap(first.figures);
   for (const mark of first.marks) {
     if (args.labels.includes(mark.label) && !seen.has(mark.label)) seen.set(mark.label, mark);
   }
@@ -221,6 +298,7 @@ export async function locateDungeonLabels(
       )
     ).text,
   );
+  assertEmptyBattlemap(second.figures);
   for (const mark of second.marks) {
     if (missing.includes(mark.label) && !seen.has(mark.label)) seen.set(mark.label, mark);
   }

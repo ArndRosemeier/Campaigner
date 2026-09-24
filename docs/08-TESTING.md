@@ -8986,3 +8986,27 @@ helper (`tests/helpers/sourceCode`): the memory is defined once with the reader 
 `^#part-(\d+)$` grammar lives in exactly ONE `src/` file (`canvasScope.ts`) with both surfaces calling the
 exported resolver — a re-spelled inline copy reds BY FILE. A THIRD arm the same file keeps honest: the resolver's
 caller inventory is declared, so a new caller is a deliberate edit, not a silent one.
+
+### The battlemap is EMPTY TERRAIN — enforced through the ONE existing vision read (docs/17 row 337, docs/11 §The battlemap is EMPTY TERRAIN)
+
+Both map prompts already banned characters/monsters/tokens (the classic
+`usabilityBans` and `buildLabeledMapPrompt`'s no-monsters clause) and the owner
+still saw figures baked into the map — the row-319 lesson that a NEGATIVE
+instruction is not a guarantee. So the rule is now framed POSITIVELY in every
+map prompt and ENFORCED in the `vision-map` step's existing vision read, with
+no new call and no retry loop. The families:
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `builds the labeled-map prompt from rooms + concept…` / `keeps the room plaques while no shared clause reaches the vision path` (`tests/llm/encounterVisionMap.test.ts`, `tests/llm/imageTextGuard.test.ts`) | `BATTLEMAP_EMPTY_TERRAIN_CLAUSE` rides the labeled-map prompt BESIDE the no-monsters ban, while the plaque rule and the absence of the shared positive text clause are unchanged | dropping the clause from `buildLabeledMapPrompt` |
+| `classic stylize (architectural) …` / `classic stylize (natural site) …` (`tests/llm/imageTextGuard.test.ts`) | the SAME constant rides BOTH classic stylize modes' composed prompts, with the existing bans and the owner's positive text clause untouched | dropping the clause from either `runEngine.runEncounterStylize` branch |
+| `states the emptiness rule in BOTH vision instructions and asks for the figures list` (`tests/llm/encounterVisionMap.test.ts`) | `buildVisionLocateInstruction` states the rule, asks for the figures list BY NAME and shows `"figures": []` in its reply example; the focused re-ask repeats the question (a required answer must be asked for) | dropping the figure question from the locate instruction |
+| `REQUIRES the figures answer: a reply that omits it fails at the boundary` (same file) | `visionLocateReplySchema` needs `figures` — omission, or an empty-string figure, THROWS; `{"marks": [], "figures": []}` parses. NO default exists | giving `figures` a `.default([])` |
+| `fails a map that DEPICTS figures, naming them and the rule, before any re-ask` (same file) | `locateDungeonLabels` throws `BattlemapFiguresError` carrying `['a goblin', 'a wolf']` with the naming sentence, after exactly ONE vision pass (a missing plaque never triggers the re-ask) | ignoring a non-empty figures list |
+| `fails the map step loud with nothing persisted when the map depicts figures` (`tests/llm/encounterVisionMap.test.ts`) | driven through the REAL engine: the run ends `failed` with the figures and the rule in `errorMessage`, `resultArtifactId` is null, NO image row survives, and there is exactly ONE map generation + ONE vision read | accepting/finalizing a map that depicts figures |
+
+The lab bench (`tests/lab/labeled-dungeon.test.ts`) shares the contract, so its
+reply fixtures carry `figures: []` and its parse pins add the missing-figures
+violation. NO new Dexie version, settings field, vision call or pipeline was
+added; the classic path's gap (no vision read, so the rule is prompt-level
+only there) is named in docs/11 and docs/17 row 337 as a priced decision.
