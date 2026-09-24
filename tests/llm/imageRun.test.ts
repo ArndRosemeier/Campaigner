@@ -9,7 +9,11 @@ import { createImage, getImage, listImagesByIds } from '@/db/imageRepo';
 import { getRun } from '@/db/runRepo';
 import { saveSettings, updateSettings } from '@/db/settingsRepo';
 import { createPersona, defaultSettings, type Id, type Persona } from '@/domain';
-import { IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
+import { withAdditionalInstruction } from '@/llm/additionalInstruction';
+import {
+  IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE,
+  IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
+} from '@/llm/imagePromptDraft';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 import { generatedImagesFor } from '../helpers/imageRunFixtures';
@@ -784,5 +788,121 @@ describe('image persona validation', () => {
     // plus the positive text rule, and NO `Avoid:` line (docs/17 row 319) —
     // asking for ONE candidate.
     expect(generateImagesMock).toHaveBeenCalledWith(draft.prompt, 1, expect.anything());
+  });
+});
+
+/**
+ * THE DIRECT INSTRUCTION REACHES THE IMAGE PROMPT (docs/17 row 346). The
+ * owner's directive, verbatim: *"The illustrator needs to prioritize direct
+ * instructions over context"*. The measured defect this pins: on a FRESH run
+ * the typed text lives in the brief's ONE `Additional instruction:` paragraph
+ * while the image step passed only the run's raw `extraInstruction` (`''`
+ * there), so the instruction was DROPPED IN SILENCE. The differential below
+ * asserts both directions: the paragraph's instruction reaches the composed
+ * prompt, and a brief without one composes neither the instruction nor the
+ * precedence clause.
+ */
+describe('the illustrator reads the direct instruction (docs/17 row 346)', () => {
+  /** A fresh manual image run over a NEW artifact, paused at prompt-draft;
+   * returns the composed prompt the step recorded. */
+  async function freshPrompt(suffix: string, brief: string): Promise<string> {
+    const campaign = await createCampaign({ name: `Instruction ${suffix}`, system: 'dnd5e' });
+    const persona = createPersona({
+      slug: `illustrator-instruction-${suffix}`,
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: `The Lighthouse ${suffix}`,
+      summary: 'A storm-lashed beacon on a black cliff.',
+      body: 'Windswept rocks, gulls, one tower of black stone.',
+    });
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const runId = await runEngine.startRun({
+      ...input(campaign.id, persona, target.id),
+      brief,
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    const step = (await getRun(runId))?.steps[0];
+    const parsed = (step?.output as { parsed?: { prompt?: string } } | null | undefined)?.parsed;
+    expect(parsed?.prompt).toBeTypeOf('string');
+    return parsed?.prompt ?? '';
+  }
+
+  const INSTRUCTION = 'Make the tower a ruin and the sky green';
+
+  it('DIFFERENTIAL: the brief’s paragraph reaches the composed prompt — and its absence leaves the prompt untouched', async () => {
+    const withInstruction = await freshPrompt(
+      'with',
+      withAdditionalInstruction('A storm-lashed beacon on a black cliff.', INSTRUCTION),
+    );
+    expect(withInstruction).toContain(INSTRUCTION);
+    // …and it WINS: the precedence rule rides immediately before it, LAST.
+    expect(
+      withInstruction.endsWith(
+        `${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\n${IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE}\n${INSTRUCTION}`,
+      ),
+    ).toBe(true);
+
+    const withoutInstruction = await freshPrompt('without', '');
+    expect(withoutInstruction).not.toContain(INSTRUCTION);
+    expect(withoutInstruction).not.toContain(IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE);
+    expect(withoutInstruction.endsWith(IMAGE_TEXT_WHEN_NEEDED_CLAUSE)).toBe(true);
+  });
+
+  it('sends the instruction AND the precedence rule to the image API end to end', async () => {
+    // The owner-visible end of the chain: what `generateImages` receives is
+    // the composed draft folded through `assembleImagePrompt` — so the rule
+    // and the words it governs really do reach the image model, not merely
+    // the step record.
+    mockImageApiHonoringCount();
+    const campaign = await createCampaign({ name: 'Instruction api', system: 'dnd5e' });
+    const persona = createPersona({
+      slug: 'illustrator-instruction-api',
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'The Lighthouse api',
+      summary: 'A storm-lashed beacon on a black cliff.',
+      body: 'Windswept rocks, gulls, one tower of black stone.',
+    });
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const runId = await runEngine.startRun({
+      ...input(campaign.id, persona, target.id),
+      autonomy: 'auto' as const,
+      brief: withAdditionalInstruction('A storm-lashed beacon on a black cliff.', INSTRUCTION),
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    const apiPrompt = generateImagesMock.mock.calls.at(-1)?.[0] ?? '';
+    expect(apiPrompt).toContain(INSTRUCTION);
+    expect(apiPrompt).toContain(IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE);
+    expect(
+      apiPrompt.endsWith(
+        `${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\n${IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE}\n${INSTRUCTION}`,
+      ),
+    ).toBe(true);
   });
 });

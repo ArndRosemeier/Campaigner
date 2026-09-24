@@ -771,7 +771,27 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   avoid list will capture things that will be important at some time, i just
   realized that."* The `negative` option survives as the explicit-override
   seam (a caller passing its own list still gets an `Avoid:` line; an explicit
-  `''` emits none). **DECLARED BOUNDARY — two CALLER-OWNED rules that are NOT
+  `''` emits none). **The direct instruction OUTRANKS the context (owner
+  directive, docs/17 row 346, verbatim: *"The illustrator needs to prioritize
+  direct instructions over context"*):** when an instruction IS set,
+  `buildImagePrompt` ends its prompt with ONE exported precedence clause,
+  `IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE` — "The instruction that follows
+  is the direct instruction for this image and it takes precedence over the
+  context above: where the two differ, follow the instruction." — followed by
+  the instruction itself, in BOTH branches. The clause and the instruction are
+  emitted together by the ONE helper `directInstructionLines` or not at all, so
+  an instruction-less draft carries no dangling rule and the four callers with
+  no user instruction (entity images, both mob portrait queues, covers) compose
+  the bytes they always composed. WITHOUT the clause the grounding (up to the
+  10,000-character cap) reads as one more description and a one-line
+  instruction drowns in it; with it the instruction is the LAST thing the
+  image model reads and it is told it wins. The instruction REACHES the image
+  step through the ONE composer `directInstructionFor(input.brief,
+  extraInstruction)`, exactly as the statblock and finalize steps read it —
+  before this, the fresh path passed only the run's raw `extraInstruction`
+  (`''` on a fresh run) and the brief's `Additional instruction:` paragraph was
+  DROPPED IN SILENCE, which AGENTS rules 1-2 forbid.
+  **DECLARED BOUNDARY — two CALLER-OWNED rules that are NOT
   the shared text budget and are both untouched:** (1) the classic battlemap's
   `usabilityBans` string ("No title banner, no compass rose, no map legend, no
   scale bar, no grid lines, no text labels, … no white or pale boxes …") — the

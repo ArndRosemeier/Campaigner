@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { statBlockSchema } from '@/domain';
@@ -5,6 +7,7 @@ import { markdownToDisplayText } from '@/lib/markdown';
 import {
   assembleImagePrompt,
   buildImagePrompt,
+  IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE,
   IMAGE_PROMPT_GROUNDING_MAX_CHARS,
   IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
   portraitGroundingForChunk,
@@ -42,7 +45,12 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       { systemLabel: 'D&D 5e', extraInstruction: 'Make the lighting moody' },
     );
     expect(draft.prompt).toBe(
-      `D&D 5e=>Tall and gaunt.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\nMake the lighting moody`,
+      [
+        'D&D 5e=>Tall and gaunt.',
+        IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
+        IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE,
+        'Make the lighting moody',
+      ].join('\n'),
     );
   });
 
@@ -50,13 +58,17 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
    * The owner's positive text rule (docs/17 row 319) sits BETWEEN the
    * grounding and any trailing instruction, so an instruction that ASKS for
    * text ("a map with a legend") follows the permission that precedes it.
+   * The precedence rule and the instruction follow it as ONE block — the
+   * placement the owner's directive fixes (docs/17 row 346).
    */
   it('puts the positive text clause before the trailing instruction', () => {
     const draft = buildImagePrompt(
       { name: 'Chart', kind: 'item', summary: 'A sea chart.', body: 'Ink and vellum.', data: {} },
       { systemLabel: 'D&D 5e', extraInstruction: 'Include a legend naming the islands.' },
     );
-    expect(draft.prompt).toContain(`Ink and vellum.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\nInclude a legend naming the islands.`);
+    expect(draft.prompt).toContain(
+      `Ink and vellum.\n${IMAGE_TEXT_WHEN_NEEDED_CLAUSE}\n${IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE}\nInclude a legend naming the islands.`,
+    );
   });
 
   it('grounds on name/kind/summary/body (markdown stripped) when there is no appearance', () => {
@@ -172,6 +184,107 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
     // The deterministic drafts carry no style/negative guidance — nothing is
     // folded in.
     expect(assembleImagePrompt({ prompt: 'P', negative: '', styleNotes: '' })).toBe('P');
+  });
+});
+
+/**
+ * THE DIRECT INSTRUCTION OUTRANKS THE CONTEXT (docs/17 row 346). The owner's
+ * directive, verbatim: *"The illustrator needs to prioritize direct
+ * instructions over context"*. Two properties are pinned here: the precedence
+ * clause rides the instruction in BOTH branches, and it is ABSENT — with the
+ * instruction — when there is nothing to govern.
+ */
+describe('the direct-instruction precedence rule (docs/17 row 346)', () => {
+  const APPEARANCE_TARGET = {
+    name: 'Grix',
+    kind: 'npc',
+    summary: '',
+    body: '',
+    data: { appearance: 'Tall and gaunt.' },
+  };
+  const GROUNDED_TARGET = {
+    name: 'The Lighthouse',
+    kind: 'location',
+    summary: 'A storm-lashed beacon on a black cliff.',
+    body: 'Black cliffs, gulls and one tower of black stone.',
+    data: {},
+  };
+
+  it('rides the APPEARANCE branch with the instruction, immediately before it', () => {
+    const draft = buildImagePrompt(APPEARANCE_TARGET, {
+      systemLabel: 'D&D 5e',
+      extraInstruction: 'Make the tower a ruin',
+    });
+    expect(draft.prompt).toContain(
+      `${IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE}\nMake the tower a ruin`,
+    );
+    // LAST means last: nothing follows the instruction.
+    expect(draft.prompt.endsWith('Make the tower a ruin')).toBe(true);
+  });
+
+  it('rides the GROUNDED branch with the instruction, immediately before it', () => {
+    const draft = buildImagePrompt(GROUNDED_TARGET, {
+      systemLabel: 'D&D 5e',
+      extraInstruction: 'Make the tower a ruin',
+    });
+    expect(draft.prompt).toContain(
+      `${IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE}\nMake the tower a ruin`,
+    );
+    expect(draft.prompt.endsWith('Make the tower a ruin')).toBe(true);
+  });
+
+  it('emits NOTHING when no instruction is set — the clause never dangles (both branches)', () => {
+    // A precedence clause with nothing to precede is a bug, so the ABSENCE
+    // pin covers both branches and both spellings of "no instruction".
+    for (const target of [APPEARANCE_TARGET, GROUNDED_TARGET]) {
+      for (const extraInstruction of [undefined, '']) {
+        const draft = buildImagePrompt(target, { systemLabel: 'D&D 5e', extraInstruction });
+        expect(draft.prompt).not.toContain(IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE);
+        expect(draft.prompt.endsWith(IMAGE_TEXT_WHEN_NEEDED_CLAUSE)).toBe(true);
+      }
+    }
+  });
+
+  it('KEEPS the text clause BEFORE the precedence block (docs/17 row 319 placement)', () => {
+    const draft = buildImagePrompt(GROUNDED_TARGET, {
+      systemLabel: 'D&D 5e',
+      extraInstruction: 'Include a legend naming the islands.',
+    });
+    const textAt = draft.prompt.indexOf(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    const precedenceAt = draft.prompt.indexOf(IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE);
+    expect(textAt).toBeGreaterThan(-1);
+    expect(precedenceAt).toBeGreaterThan(textAt);
+    expect(draft.prompt.indexOf('Include a legend naming the islands.')).toBeGreaterThan(precedenceAt);
+  });
+
+  it('keeps the precedence block LAST behind a multi-thousand-character grounding', () => {
+    // A 10,000-character cap (docs/17 row 223) can drown a one-line
+    // instruction — the rule and the words it governs must stay at the END,
+    // so a future reordering that buries them cannot pass.
+    const body = 'Ancient masonry, gulls and salt. '.repeat(400);
+    expect(body.length).toBeGreaterThan(5_000);
+    const draft = buildImagePrompt(
+      { name: 'Long', kind: 'note', summary: '', body, data: null },
+      { systemLabel: 'D&D 5e', extraInstruction: 'Make the sky green' },
+    );
+    const tail = [
+      IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
+      IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE,
+      'Make the sky green',
+    ].join('\n');
+    expect(draft.prompt.endsWith(tail)).toBe(true);
+    // The long grounding really is in the prompt — non-vacuity of the pin.
+    expect(draft.prompt).toContain('Description: Ancient masonry');
+  });
+
+  it('spells the precedence rule ONCE in the source (a second literal reds here)', () => {
+    // The clause rides both branches through ONE helper, so a second copy of
+    // its text — a re-typed literal at a call site — is the drift this reds
+    // on. The distinctive fragment is asserted against the SOURCE, not the
+    // built prompt.
+    const source = readFileSync('src/llm/imagePromptDraft.ts', 'utf8');
+    const occurrences = source.split('takes precedence over the context above').length - 1;
+    expect(occurrences).toBe(1);
   });
 });
 

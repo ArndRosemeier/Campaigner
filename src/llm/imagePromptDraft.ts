@@ -111,6 +111,46 @@ export const IMAGE_TEXT_WHEN_NEEDED_CLAUSE =
   "Text is welcome where the subject itself needs it — writing on a letter, a sign, a book or a map's own labels — and wherever the request asks for it; use it only where it is needed, and keep it short, correctly spelled and clearly readable.";
 
 /**
+ * The direct-instruction precedence rule (docs/17 row 346) — the OWNER's
+ * intent, verbatim: *"The illustrator needs to prioritize direct instructions
+ * over context"*.
+ *
+ * WHY A PRECEDENCE CLAUSE AND NOT JUST THE INSTRUCTION LINE. The grounding a
+ * draft carries can run to `IMAGE_PROMPT_GROUNDING_MAX_CHARS` (10,000
+ * characters since docs/17 row 223), while a direct instruction is usually one
+ * line: appended bare, it reads as one more sentence of context and a model
+ * weighing the whole prompt drowns it. This ONE clause states in plain positive
+ * language that the line following it is the direct instruction for THIS image
+ * and that where it differs from the context above, the INSTRUCTION WINS.
+ *
+ * IT RIDES THE INSTRUCTION ITSELF, THROUGH ONE SEAM: `directInstructionLines`
+ * below emits this clause and the instruction TOGETHER, or NEITHER — a
+ * precedence clause with nothing to precede would be a dangling rule about a
+ * line that does not exist. That is also why the clause is emitted by both
+ * `buildImagePrompt` branches through that ONE helper rather than typed at each
+ * call site; the string lives here only, so no second spelling can drift.
+ *
+ * The four OTHER `buildImagePrompt` call sites (the entity image queue, both
+ * mob portrait queues, the cover queue) pass no instruction, so they emit no
+ * precedence line at all — unchanged bytes.
+ */
+export const IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE =
+  'The instruction that follows is the direct instruction for this image and it takes precedence over the context above: where the two differ, follow the instruction.';
+
+/**
+ * The trailing direct-instruction lines of a composed prompt: the precedence
+ * clause (above) then the instruction, or NOTHING when no instruction is set —
+ * the ONE place the clause and the instruction are tied together (docs/17 row
+ * 346). Pure and total: an `undefined` or empty instruction yields `[]`, so a
+ * caller with nothing to say composes the prompt it always composed, byte for
+ * byte.
+ */
+function directInstructionLines(instruction: string | undefined): string[] {
+  if (instruction === undefined || instruction === '') return [];
+  return [IMAGE_DIRECT_INSTRUCTION_PRECEDENCE_CLAUSE, instruction];
+}
+
+/**
  * The chunk input the mob portrait grounding reads: raw text plus the
  * parsed stat block (`RuleChunk` satisfies this structurally).
  */
@@ -198,7 +238,11 @@ export function portraitGroundingForStatBlock(statBlock: StatBlock): string {
  * Builds the image prompt for one artifact — a pure function, same input →
  * same prompt. Both branches carry the owner's `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`
  * (docs/17 row 319) between the grounding and any `extraInstruction`, so a
- * request that asks for text follows the permission that precedes it.
+ * request that asks for text follows the permission that precedes it. When an
+ * instruction IS set, the precedence clause above rides it as ONE trailing
+ * block (docs/17 row 346) — so the prompt ENDS with the rule and the words it
+ * governs, and a 10,000-character grounding cannot bury them; with no
+ * instruction both the clause and the line are absent.
  * When the artifact data carries a non-empty `appearance`, the
  * shortcut prompt `"${systemLabel}=>${appearance}"` is used verbatim (the
  * clause and the extra instruction, when set, ride on following lines).
@@ -226,12 +270,10 @@ export function buildImagePrompt(
       // so a request that asks for text ("…a map with a legend") follows the
       // permission it is an instance of.
       IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
-      opts.extraInstruction === undefined || opts.extraInstruction === ''
-        ? null
-        : opts.extraInstruction,
-    ]
-      .filter((part) => part !== null)
-      .join('\n');
+      // The precedence clause and the instruction ride as ONE block, LAST —
+      // after the context and after the text rule (docs/17 rows 319, 346).
+      ...directInstructionLines(opts.extraInstruction),
+    ].join('\n');
     return { prompt, negative: opts.negative ?? '', styleNotes: '' };
   }
 
@@ -260,11 +302,10 @@ export function buildImagePrompt(
     description === '' ? null : `Description: ${description.slice(0, IMAGE_PROMPT_GROUNDING_MAX_CHARS)}`,
     // The owner's positive text rule rides BEFORE any trailing instruction,
     // so a request that asks for text ("…a map with a legend") follows the
-    // permission it is an instance of.
+    // permission it is an instance of. The precedence clause and the
+    // instruction then ride as ONE block, LAST (docs/17 rows 319, 346).
     IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
-    opts.extraInstruction === undefined || opts.extraInstruction === ''
-      ? null
-      : opts.extraInstruction,
+    ...directInstructionLines(opts.extraInstruction),
   ]
     .filter((part) => part !== null)
     .join('\n');

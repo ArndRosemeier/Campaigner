@@ -6994,9 +6994,21 @@ export class RunEngine {
     // The prompt contract (appearance shortcut, body/summary/name grounding)
     // is shared with the entity image and mob portrait queues — see
     // buildImagePrompt. Deterministic: no chat call, no repair retry.
+    //
+    // THE OWNER'S DIRECT INSTRUCTION REACHES THIS STEP THROUGH THE ONE COMPOSER
+    // (docs/17 row 346): his typed text lives in the brief's ONE
+    // `Additional instruction:` paragraph on a fresh run (`extraInstruction` is
+    // `''` there) and in the retry text on a resumed one, and
+    // `directInstructionFor` reads BOTH — exactly as `runStatblock` and
+    // `runFinalize` do. Passing the raw `extraInstruction` here DROPPED the
+    // brief's paragraph in silence: the owner asked and the image ignored it.
+    const directInstruction = directInstructionFor(input.brief, extraInstruction);
     const draft = buildImagePrompt(
       { name: target.name, kind: target.kind, summary: target.summary, body: target.body, data: target.data },
-      { systemLabel: GAME_SYSTEM_LABELS[input.campaign.system], extraInstruction },
+      {
+        systemLabel: GAME_SYSTEM_LABELS[input.campaign.system],
+        extraInstruction: directInstruction,
+      },
     );
     const step = this.finishStep(steps[stepIndex], { parsed: draft });
     const pausesHere = pauses(input.autonomy, true);
