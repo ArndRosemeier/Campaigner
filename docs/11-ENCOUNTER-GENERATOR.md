@@ -1414,6 +1414,31 @@ gained the optional `grounding` field the batch's `MobPortraitJob` already
 carries); an empty description still fails loudly in `buildImagePrompt` rather
 than illustrating a bare name.
 
+**TWO PLACEMENTS, ONE FLAG (docs/17 row 336, defect B).** The tick is rendered by
+ONE local `IllustrateToggle` bound to the ONE `illustrateMissing` state, in the
+dialog HEADER (the original placement) **and inside the author section** — where
+the owner looked for it (*"Also, I do not see a checkbox to illustrate it."*).
+Both instances show the same value at all times and both feed the same single
+illustrate path (`illustrateAfterSpawnIfAsked` for picks, `authorAndSpawnMob`'s
+`illustrate` for the authored flow); there is no second flag and no second
+illustration path.
+
+**THE DIALOG FITS A SHORT VIEWPORT, AND THE BODY IS ITS ONLY SCROLLER (docs/17
+row 336, defect C).** Owner, verbatim: *"the spawn buttons for non authored mobs
+are overlapping on my ipad"*. The dialog content is a flex column bounded by the
+viewport (`max-h-[85dvh]`, `overflow-hidden`) and the groups div is
+`min-h-0 flex-1 overflow-y-auto`, so the header, the search field and BOTH
+illustrate ticks stay outside the scroller and reachable on a short viewport
+instead of scrolling away above it. Every pick row is collision-proof: the row
+is `flex flex-wrap items-center justify-between gap-2`, the label is
+`min-w-0 flex-1 truncate` and the action is `shrink-0`, so a long name truncates
+inside its own track and the Spawn button keeps its size (wrapping to its own
+line rather than squeezing). The virtualized **Core mobs** rows take the same
+label/action classes but NOT `flex-wrap`: their height is the virtualizer's
+fixed row size, so a wrapped row would overlap the next one — the very defect
+being fixed. jsdom computes no layout, so the pins assert this STRUCTURE and
+the pixels owe a real-device check (docs/08 §Battle-surface test families).
+
 ### Author a new mob — spawn a freshly NPC-Smith-authored mob, ALWAYS with a stat block (owner-directed, 2026-09-23, docs/17 row 333)
 
 The same dialog carries an **"Author a new mob (NPC Smith)"** section with
