@@ -1424,10 +1424,11 @@ illustrate path (`illustrateAfterSpawnIfAsked` for picks, `authorAndSpawnMob`'s
 illustration path.
 
 **THE DIALOG FITS A SHORT VIEWPORT, AND THE BODY IS ITS ONLY SCROLLER (docs/17
-row 336, defect C).** Owner, verbatim: *"the spawn buttons for non authored mobs
+row 336, defect C; the cap and the Core-mobs list were reshaped again by rows 339
+and 340 below).** Owner, verbatim: *"the spawn buttons for non authored mobs
 are overlapping on my ipad"*. The dialog content is a flex column bounded by the
-viewport (`max-h-[85vh]` with the `dvh` value behind `@supports` — row 339 below
-— and `overflow-hidden`) and the groups div is
+SMALL visible viewport (`max-h-[85vh]` as the fallback, with `svh` behind
+`@supports` — rows 339/340 below — and `overflow-hidden`) and the groups div is
 `min-h-0 flex-1 overflow-y-auto`, so the header, the search field and BOTH
 illustrate ticks stay outside the scroller and reachable on a short viewport
 instead of scrolling away above it. Every pick row is collision-proof: the row
@@ -1455,16 +1456,44 @@ button overflows the 44px box and genuinely overlaps its neighbours. `estimateSi
 is therefore only a documented FLOOR (`MOB_ROW_ESTIMATE_PX`) and the virtualizer
 MEASURES each row (`measureElement` + `data-index`, with `minHeight` instead of
 `height: item.size`, which made the measurement self-fulfilling: the element was
-44px by decree and could never report its real height). The dialog's cap is `vh`
-FIRST with the `dvh` value behind `@supports` (`max-h-[85vh]
-supports-[height:100dvh]:max-h-[85dvh]`), because a `dvh`-only declaration is
-dropped WHOLE by a browser that does not know the unit (iOS/iPadOS < 16.4) and
-would leave the dialog unbounded; the shared `components/ui/dialog.tsx` base cap
-carries the same fallback (every existing caller already declared its own `vh`
-cap). jsdom computes no layout, so the pins assert the STRUCTURE — the row PITCH
-follows a stubbed row rect, the inline-style shape, the classes and both cap
-declarations — and the visual result OWES a real-device check (docs/08
-§Battle-surface test families).
+44px by decree and could never report its real height). The shared
+`components/ui/dialog.tsx` base cap carries the same `vh` fallback (every
+existing caller already declared its own `vh` cap). jsdom computes no layout, so
+the pins assert the STRUCTURE — the row PITCH follows a stubbed row rect, the
+inline-style shape, the classes and both cap declarations — and the visual result
+OWES a real-device check (docs/08 §Battle-surface test families).
+
+**ONE SCROLLER IN THE DIALOG — THE BODY — AND A CAP AGAINST THE SMALL VISIBLE
+VIEWPORT (docs/17 row 340).** Owner, verbatim: *"Spawn dialog now does not scroll
+anymore on my ipad"* — a regression he hit right after rows 336 and 339 reshaped
+this dialog, and he was BLOCKED on it. TWO mechanisms were INDISTINGUISHABLE from
+the code and jsdom can settle neither, so both are cured: (1) `85vh` is the LARGE
+viewport on an iPad (Safari's bars are excluded from `vh`), so a dialog centred
+with `-translate-y-1/2` on a document that never scrolls can have its bottom —
+and part of its scroll area — below the fold, unreachable by touch; (2) the body
+scrolled AND the Core-mobs list scrolled inside it (`max-h-56 overflow-auto`
+while `getScrollElement` pointed at THAT list), so touch momentum had a second
+scroll box to be swallowed by, and row 339's dynamic measurement resized the inner
+content mid-drag. The fix is ONE scroll container — the dialog body — with the
+Core-mobs list no longer scrolling inside it, the virtualization kept
+(`getScrollElement` is the BODY, the row measurement and the
+`whitespace-nowrap`/`truncate`/`shrink-0` invariants unchanged), and the cap
+declared in `svh` (`max-h-[85vh]` fallback, `supports-[height:100svh]:max-h-[min(85svh,85dvh)]`) —
+`svh` is the height with the browser bars SHOWING, so it is the unit that cannot
+exceed what the user can actually see, while the `min(…,dvh)` term still follows
+a dynamic shrink the way row 339's `dvh` override did. The SHARED
+`components/ui/dialog.tsx` base cap got the same treatment (it went `vh`-first in
+row 339). **One detail is load-bearing and is therefore part of the change:** the
+virtualizer's `item.start` is CONTENT-relative, so with the roster and NPC groups
+ABOVE the track a missing `scrollMargin` shifts the visible window by their
+height (the top of the list renders blank); the track's own offset inside the body
+is measured after layout and the rows are positioned at `item.start −
+scrollMargin`. **THE HONEST LIMIT: jsdom computes no layout and cannot scroll by
+touch or momentum, so NO test can prove the dialog scrolls on his iPad — the pins
+assert the structure (which element is the scroller, which element the virtualizer
+observes, the coordinate space its window is computed in, and the cap's units) and
+the REAL-DEVICE CHECK IS OWED** (docs/08 §Battle-surface test families, docs/17
+row 340).
 
 ### Author a new mob — spawn a freshly NPC-Smith-authored mob, ALWAYS with a stat block (owner-directed, 2026-09-23, docs/17 row 333)
 

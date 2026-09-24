@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -357,14 +357,20 @@ describe('spawn picker layout + the illustrate control in the author section (do
     const dialog = screen.getByTestId('spawn-picker');
     const body = screen.getByTestId('spawn-picker-body');
 
-    // The dialog is a flex column bounded by the viewport and NOT itself a
-    // scroller — so a short iPad viewport cannot push the header off screen.
-    expect(dialog.className).toContain('max-h-[85dvh]');
+    // The dialog is a flex column bounded by the SMALL visible viewport and NOT
+    // itself a scroller — so a short iPad viewport cannot push the header off
+    // screen (the cap's units are pinned separately, docs/17 row 340).
+    expect(dialog.className).toContain('max-h-[85vh]');
+    expect(dialog.className).toContain('supports-[height:100svh]:max-h-[min(85svh,85dvh)]');
     expect(dialog.className).toContain('flex-col');
     expect(dialog.className).toContain('overflow-hidden');
 
-    // THE BODY IS THE ONLY SCROLLER inside the dialog.
-    const scrollers = [...dialog.querySelectorAll('.overflow-y-auto')];
+    // THE BODY IS THE ONLY SCROLLER inside the dialog — including any
+    // `overflow-auto`/`overflow-scroll` box, which is how the Core-mobs list
+    // used to scroll INSIDE the body (docs/17 row 340).
+    const scrollers = [...dialog.querySelectorAll('*')].filter((element) =>
+      /(^|\s)overflow(-[xy])?-(auto|scroll)(\s|$)/.test(element.className),
+    );
     expect(scrollers).toEqual([body]);
     expect(body.className).toContain('min-h-0');
     expect(body.className).toContain('flex-1');
@@ -502,14 +508,131 @@ describe('spawn picker Core-mobs rows are MEASURED, not sized by the estimate (d
     }
   });
 
-  it('caps the dialog in `vh`, with the `dvh` value behind @supports', async () => {
+  it('caps the dialog against the SMALL visible viewport — `svh` behind @supports, on a `vh` fallback', async () => {
     await renderPicker();
     const dialog = screen.getByTestId('spawn-picker');
-    // An older iPad (iOS < 16.4) drops a `dvh` declaration WHOLE, which would
-    // leave this dialog unbounded — so the `vh` cap must exist WITHOUT it.
+    // An older iPad (iOS < 16.4) drops a `svh`/`dvh` declaration WHOLE, which
+    // would leave this dialog unbounded — so the `vh` cap must exist WITHOUT it.
     expect(dialog.className).toContain('max-h-[85vh]');
-    expect(dialog.className).toContain('supports-[height:100dvh]:max-h-[85dvh]');
+    // `85vh` is the LARGE viewport on an iPad (the owner's *"Spawn dialog now
+    // does not scroll anymore on my ipad"*, docs/17 row 340): `svh` is the
+    // viewport with the browser bars showing, so the cap can never push the
+    // centred dialog's bottom below the fold, and `min(svh, dvh)` still follows
+    // a dynamic shrink (the keyboard) when `dvh` reports it.
+    expect(dialog.className).toContain('supports-[height:100svh]:max-h-[min(85svh,85dvh)]');
     expect(dialog.className).toContain('flex-col');
     expect(dialog.className).toContain('overflow-hidden');
+  });
+});
+
+/**
+ * ONE SCROLL CONTAINER IN THE SPAWN DIALOG — the BODY — and a cap against the
+ * SMALL visible viewport (docs/17 row 340). Owner, verbatim: *"Spawn dialog now
+ * does not scroll anymore on my ipad"* — the regression he hit right after rows
+ * 336 and 339 reshaped this dialog.
+ *
+ * TWO CANDIDATE MECHANISMS, and the fix has to be right for BOTH because jsdom
+ * can settle NEITHER: (1) `85vh` is the LARGE viewport on an iPad, so a centred
+ * dialog's bottom — and part of its scroll area — can sit below the fold,
+ * unreachable by touch; (2) the dialog body scrolled AND the Core-mobs list
+ * scrolled inside it, while the row measurement changed the inner content size
+ * mid-drag, a classic way for touch momentum to be swallowed. So there is ONE
+ * scroller (the body), the Core-mobs list no longer scrolls, the virtualizer's
+ * scroll element is the body (windowed in the body's CONTENT coordinates: the
+ * track's own offset is the `scrollMargin`, because the roster and NPC groups sit
+ * above it), and the cap is `svh` with a `vh` fallback and a `dvh` term.
+ *
+ * WHAT NO PIN HERE CAN PROVE, STATED RATHER THAN IMPLIED: jsdom computes no
+ * layout and cannot scroll by touch or momentum, so NOTHING in this file — or
+ * anywhere in this suite — can establish that the dialog scrolls on the owner's
+ * iPad. These pins assert the STRUCTURE the fix turns on (which element is the
+ * scroller, which element the virtualizer observes, the coordinate space its
+ * window is computed in, and the cap's units); the REAL-DEVICE CHECK IS OWED
+ * (docs/08 §Battle-surface test families, docs/11 §Spawn picker, docs/17 row
+ * 340).
+ */
+describe('spawn picker scrolls through ONE container, the dialog body (docs/17 row 340)', () => {
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown })
+      .getBoundingClientRect;
+  });
+
+  /**
+   * The row-339 `renderPicker` waits for BOTH fixture mobs to render, which a
+   * real `scrollMargin` correctly prevents while the list is still below the
+   * fold — so this pin waits for the TRACK and drives the scroll itself.
+   */
+  async function renderToTrack(): Promise<void> {
+    const artifacts = await listArtifactsByCampaign(campaignId);
+    render(
+      <SpawnPicker
+        open
+        onOpenChange={() => undefined}
+        battleId={battleId}
+        campaignId={campaignId}
+        roster={roster}
+        encounterName="Bridge ambush"
+        artifacts={artifacts}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('spawn-picker-mob-track')).toBeInTheDocument();
+    });
+  }
+
+  it('observes the BODY for scroll, and leaves the Core-mobs list without a scroller of its own', async () => {
+    const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener');
+    try {
+      await renderPicker();
+      const body = screen.getByTestId('spawn-picker-body');
+      const list = screen.getByTestId('spawn-picker-mob-list');
+      // The virtualizer attaches its scroll listener to `getScrollElement()` —
+      // so the element that RECEIVES the observation IS the scroll element.
+      const scrollTargets = addSpy.mock.calls
+        .map((call, index) => ({ type: call[0], self: addSpy.mock.instances[index] }))
+        .filter((entry) => entry.type === 'scroll')
+        .map((entry) => entry.self);
+      expect(scrollTargets).toContain(body);
+      expect(scrollTargets).not.toContain(list);
+      // The body is the ONE scroller; the list carries no scroll box and no
+      // height cap of its own (the `max-h-56 overflow-auto` of rows 336/339).
+      expect(body.className).toContain('overflow-y-auto');
+      expect(list.className).not.toMatch(/overflow|max-h-/);
+    } finally {
+      addSpy.mockRestore();
+    }
+  });
+
+  it('windows the list in the BODY’s coordinates — the track’s own offset is the scrollMargin', async () => {
+    const TRACK_TOP = 1000;
+    const ROW_HEIGHT = 60;
+    // The track sits BELOW the roster and NPC groups and jsdom lays out none of
+    // that, so the offset is stubbed here; the row rects answer 60px (the row-339
+    // measurement arm) and every other element keeps jsdom's zero box.
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLElement) {
+        const testId = this.dataset.testid;
+        const top = testId === 'spawn-picker-mob-track' ? TRACK_TOP : 0;
+        const height = testId === 'spawn-picker-mob-row' ? ROW_HEIGHT : 0;
+        return new DOMRect(0, top, 0, height);
+      },
+    });
+    await renderToTrack();
+    const body = screen.getByTestId('spawn-picker-body');
+    // The finger drags the Core-mobs list up to the top of the body.
+    body.scrollTop = TRACK_TOP;
+    fireEvent.scroll(body);
+    await waitFor(() => {
+      const rows = screen.getAllByTestId('spawn-picker-mob-row');
+      // The FIRST row is the first VISIBLE row, sitting at the TRACK's own
+      // origin. Without the `scrollMargin` the window is shifted down by the
+      // groups above the track and this index is far higher; without the
+      // subtraction in the transform the row would sit `TRACK_TOP` px down.
+      expect(rows[0]?.dataset.index).toBe('0');
+      expect(rows[0]?.style.transform).toBe('translateY(0px)');
+      expect(rows[1]?.style.transform).toBe(`translateY(${String(ROW_HEIGHT)}px)`);
+    });
   });
 });

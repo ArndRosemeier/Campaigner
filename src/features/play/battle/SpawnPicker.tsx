@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -174,7 +174,18 @@ export function SpawnPicker({
   const [authorLevel, setAuthorLevel] = useState('');
   const [authorDescription, setAuthorDescription] = useState('');
   const [authoring, setAuthoring] = useState(false);
-  const mobListRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * The dialog BODY is the ONE scroll container and therefore the virtualizer's
+   * scroll element (docs/17 row 340) — the Core-mobs list no longer scrolls
+   * inside it. `mobTrackRef` is the list's `position: relative` track (the
+   * virtualizer's coordinate origin), and `mobScrollMargin` is that track's own
+   * offset inside the body's content: it sits BELOW the roster and NPC groups,
+   * and the virtualizer needs that offset to window the list in the BODY's
+   * coordinates (see the measurement effect after the virtualizer).
+   */
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const mobTrackRef = useRef<HTMLDivElement | null>(null);
+  const [mobScrollMargin, setMobScrollMargin] = useState(0);
 
   // The roster entries' levels need async stat resolution (same resolver the
   // Stat blocks panel uses); NPC/mob levels read straight off their blocks.
@@ -253,9 +264,27 @@ export function SpawnPicker({
     [mobRows],
   );
 
+  /**
+   * THE BODY IS THE VIRTUALIZER'S SCROLL ELEMENT (docs/17 row 340). Before this
+   * row the Core-mobs list carried its OWN `max-h-56 overflow-auto` scroller and
+   * the virtualizer observed THAT element, so the dialog had two nested scrollers
+   * and the finger's momentum could be swallowed by the inner one. ONE scroller
+   * remains — the body — and the virtualizer windows the list against it; the
+   * list's own track keeps the measurement (row 339) and the invariants.
+   *
+   * `scrollMargin` is the track's offset inside the BODY's content, and it is
+   * load-bearing rather than cosmetic: the virtualizer computes its visible range
+   * as `[scrollOffset, scrollOffset + viewportHeight]` and compares it against
+   * `item.start`, which is CONTENT-relative. With the roster and NPC groups above
+   * the track the origin is not 0, so a missing margin shifts the window by those
+   * groups' height and the top of the list can render blank. The rows therefore
+   * position themselves at `item.start - scrollMargin` (the track's own
+   * coordinates), exactly as the library's own direct-DOM path does.
+   */
   const mobVirtualizer = useVirtualizer({
     count: visibleMobEntries.length,
-    getScrollElement: () => mobListRef.current,
+    getScrollElement: () => bodyRef.current,
+    scrollMargin: mobScrollMargin,
     estimateSize: () => MOB_ROW_ESTIMATE_PX,
     overscan: 12,
     /**
@@ -272,6 +301,37 @@ export function SpawnPicker({
     measureElement: (element: Element): number =>
       Math.max(MOB_ROW_ESTIMATE_PX, element.getBoundingClientRect().height),
   });
+
+  /**
+   * Measure the Core-mobs track's offset inside the body after layout, and ONLY
+   * when the content ABOVE the track can have changed (a new query, more or fewer
+   * roster/NPC rows, a rulebook finishing its load, the list appearing at all) —
+   * never on scroll, where the offset cannot change and a forced layout read per
+   * frame is exactly the jank this dialog is being cured of.
+   *
+   * jsdom computes no layout: both rects are the all-zero default and `scrollTop`
+   * is 0, so the margin stays 0 and the row-339 pins keep seeing the pitch they
+   * already pin (the pins that DO exercise the offset stub the track's rect — see
+   * `spawn-picker-illustrate.test`). On a real device this is the offset the
+   * virtualizer needs, and NO TEST can verify the rendering it produces: jsdom
+   * cannot scroll by touch (docs/17 row 340).
+   */
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    const track = mobTrackRef.current;
+    if (body === null || track === null) return;
+    const margin =
+      track.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+    setMobScrollMargin((current) => (current === margin ? current : margin));
+  }, [
+    open,
+    query,
+    visibleRoster.length,
+    visibleNpcs.length,
+    mobErrors.length,
+    library,
+    visibleMobEntries.length,
+  ]);
 
   /** The npc artifact an entry points at, from the snapshot this dialog already
    * holds — the grounding `rosterParticipantRoute` needs for an `npc-ref`. */
@@ -383,7 +443,7 @@ export function SpawnPicker({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="spawn-picker"
-        className="flex max-h-[85vh] flex-col overflow-hidden supports-[height:100dvh]:max-h-[85dvh] sm:max-w-lg"
+        className="flex max-h-[85vh] flex-col overflow-hidden supports-[height:100svh]:max-h-[min(85svh,85dvh)] sm:max-w-lg"
       >
         <DialogHeader>
           <DialogTitle>Spawn into battle</DialogTitle>
@@ -422,13 +482,19 @@ export function SpawnPicker({
           checked={illustrateMissing}
           onChange={setIllustrateMissing}
         />
-        {/* THE BODY IS THE ONLY SCROLLER (docs/17 row 336, defect C): the
-            dialog is a flex column bounded by the viewport (`max-h-[85vh]` with
-            the `dvh` value behind `@supports` — docs/17 row 339 — and
-            `overflow-hidden` on the content), so the header, the search field
-            and the illustrate ticks stay reachable on a short iPad viewport
-            while these groups scroll inside `min-h-0 flex-1`. */}
+        {/* THE BODY IS THE *ONLY* SCROLLER, AND THE VIRTUALIZER WINDOWS THE
+            CORE-MOBS LIST AGAINST IT (docs/17 rows 336 and 340): the dialog is a
+            flex column capped against the SMALL visible viewport (`svh` behind
+            `@supports`, with the `vh` fallback — docs/17 row 340 — and
+            `overflow-hidden` on the content), so the header, the search field and
+            the illustrate ticks stay reachable on a short iPad viewport while
+            these groups scroll inside `min-h-0 flex-1`. The Core-mobs list no
+            longer carries a scroller of its own: a second, nested scroll box was
+            one of the two candidate mechanisms behind *"Spawn dialog now does not
+            scroll anymore on my ipad"*, and the virtualizer observes THIS
+            element (`getScrollElement`). */}
         <div
+          ref={bodyRef}
           data-testid="spawn-picker-body"
           className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
         >
@@ -511,6 +577,9 @@ export function SpawnPicker({
                     {error.message}
                   </p>
                 ))}
+                {/* NO SCROLLER HERE (docs/17 row 340): the body above is the ONE
+                    scroll container, and this list is a plain block inside it —
+                    the virtualizer still windows it, against the BODY. */}
                 {visibleMobEntries.length === 0 ? (
                   <p className="text-xs text-zinc-500">
                     {needle === ''
@@ -518,8 +587,10 @@ export function SpawnPicker({
                       : 'No creatures match.'}
                   </p>
                 ) : (
-                  <div ref={mobListRef} className="max-h-56 overflow-auto" data-testid="spawn-picker-mob-list">
+                  <div data-testid="spawn-picker-mob-list">
                     <div
+                      ref={mobTrackRef}
+                      data-testid="spawn-picker-mob-track"
                       style={{ height: `${String(mobVirtualizer.getTotalSize())}px`, position: 'relative' }}
                     >
                       {mobVirtualizer.getVirtualItems().map((item) => {
@@ -542,7 +613,12 @@ export function SpawnPicker({
                                  could never report the 48.4–88px its own action
                                  button needs once `--ui-scale` > 1. */
                               minHeight: MOB_ROW_ESTIMATE_PX,
-                              transform: `translateY(${String(item.start)}px)`,
+                              /* The track's OWN coordinates: `item.start` is
+                                 content-relative (it includes the row-340
+                                 `scrollMargin`), so the offset comes back out
+                                 here — exactly what the library's own direct-DOM
+                                 path writes. */
+                              transform: `translateY(${String(item.start - mobScrollMargin)}px)`,
                             }}
                             className="flex items-center justify-between gap-2 py-1"
                           >
