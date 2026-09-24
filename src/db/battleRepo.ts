@@ -197,35 +197,77 @@ export async function getBattle(id: Id): Promise<Battle | undefined> {
 }
 
 /**
- * THE row read-modify-write seam (docs/17 row 336). `update` receives the
- * battle row as it is INSIDE this transaction and returns the fields to merge
- * over it, so a decision made from a render snapshot (how many "Goblin" labels
- * are on the board, where the next free spot is) can never overwrite a row
- * another writer already moved past it. That is the whole fix for the owner's
- * "spawned mob appears, then is gone at the next redraw": the surface's commit
- * and the initiative reconcile both derived the board they wrote from the
- * component's render snapshot, and the later of the two clobbered the spawn.
+ * A row write's two possible outcomes inside the seam's transaction: the
+ * fields to merge over the CURRENT row, or the row's DELETION. The delete is
+ * the scrub's empty-battle rule (docs/17 row 336 fix-forward): it must be
+ * decided from the SAME board the caller's mutation produced, in the SAME
+ * transaction, because the saved row is not the board the caller judged — a
+ * second read judges the NORMALIZED row, and normalize-on-write re-ensures a
+ * token for every campaign PC, which would keep an emptied board alive
+ * forever.
+ */
+const DELETE_BATTLE = 'delete-battle' as const;
+
+/** The outcome one row write answers inside `writeBattleRow`. */
+type BattleRowOutcome = BattleWrite | typeof DELETE_BATTLE;
+
+/**
+ * THE row read-modify-write transaction (docs/17 row 336). `update` receives
+ * the battle row as it is INSIDE this transaction and answers the fields to
+ * merge over it — or `DELETE_BATTLE`, which removes the row here, atomically
+ * with the decision — so a decision made from a render snapshot (how many
+ * "Goblin" labels are on the board, where the next free spot is) can never
+ * overwrite a row another writer already moved past it. That is the whole fix
+ * for the owner's "spawned mob appears, then is gone at the next redraw": the
+ * surface's commit and the initiative reconcile both derived the board they
+ * wrote from the component's render snapshot, and the later of the two
+ * clobbered the spawn.
  *
  * It is the SAME transaction shape `patchBattle` always had (battles +
  * artifacts, because normalize-on-write re-reads the campaign's pc/npc rows);
- * `patchBattle` and `mutateBattleBoard` are the two typed façades over it, and
- * there is no third board-write mechanism.
+ * `updateBattle`, `patchBattle` and `mutateBattleBoard` are the typed façades
+ * over it, and there is no second board-write mechanism.
  */
-export async function updateBattle(
+async function writeBattleRow(
   id: Id,
-  update: (current: Battle) => BattleWrite,
-): Promise<Battle> {
+  update: (current: Battle) => BattleRowOutcome,
+): Promise<Battle | undefined> {
   return db.transaction('rw', [db.battles, db.artifacts], async () => {
     const current = await db.battles.get(id);
     if (current === undefined) throw new NotFoundError('Battle', id);
     const battle = parseBattleRow(current);
+    const outcome = update(battle);
+    if (outcome === DELETE_BATTLE) {
+      await db.battles.delete(id);
+      return undefined;
+    }
     return saveBattle({
       ...battle,
-      ...update(battle),
+      ...outcome,
       campaignId: current.campaignId,
       moduleId: current.moduleId,
     });
   });
+}
+
+/**
+ * `writeBattleRow` answers `undefined` only for a DELETION, which a merge-only
+ * write never requests; a violation of that invariant is loud rather than a
+ * silent `undefined` reaching a caller that expects a row.
+ */
+function savedBattle(saved: Battle | undefined, id: Id): Battle {
+  if (saved === undefined) {
+    throw new Error(`Battle ${id} was deleted by a write that only merges fields`);
+  }
+  return saved;
+}
+
+/** Merge-only row write (identity, seed roster, view, provenance). */
+export async function updateBattle(
+  id: Id,
+  update: (current: Battle) => BattleWrite,
+): Promise<Battle> {
+  return savedBattle(await writeBattleRow(id, update), id);
 }
 
 /**
@@ -242,18 +284,28 @@ export async function patchBattle(id: Id, patch: BattlePatch): Promise<Battle> {
  * Every board write in the app goes through here (a combined board + sibling
  * write uses `updateBattle` directly), so a stale render can never overwrite a
  * newer board — the caller passes the CHANGE, never the board it saw.
+ *
+ * `mutate` may answer `null` to DELETE the battle in the same transaction: the
+ * board it produced has nothing left to run (the scrub's empty-battle rule,
+ * docs/17 row 336 fix-forward), and the deletion is decided from THAT board —
+ * not from a second read of the saved row, which normalize-on-write may have
+ * re-populated with a PC token. The call then resolves `undefined` and every
+ * other outcome resolves the saved row.
  */
 export async function mutateBattleBoard(
   id: Id,
-  mutate: (board: BattleBoard) => BattleBoard,
-): Promise<Battle> {
-  return updateBattle(id, (current) => ({ board: mutate(current.board) }));
+  mutate: (board: BattleBoard, battle: Battle) => BattleBoard | null,
+): Promise<Battle | undefined> {
+  return writeBattleRow(id, (current) => {
+    const board = mutate(current.board, current);
+    return board === null ? DELETE_BATTLE : { board };
+  });
 }
 
 /** Replaces the stage snapshot (⚑ Set stage) — the stage rides the CURRENT
  * board, so a token spawned since the render is kept (docs/17 row 336). */
 export async function saveBattleStage(id: Id, stage: BattleBoard['stage']): Promise<Battle> {
-  return mutateBattleBoard(id, (board) => ({ ...board, stage }));
+  return savedBattle(await mutateBattleBoard(id, (board) => ({ ...board, stage })), id);
 }
 
 /**
@@ -293,13 +345,16 @@ export async function resetBattleToStage(id: Id): Promise<Battle> {
   // layout replaces the tokens, but every other field of the live board — and a
   // token spawned since this read — rides along, so the reset cannot resurrect
   // a board the table has moved on from more than it means to.
-  return mutateBattleBoard(id, (board) => {
-    const stage = board.stage;
-    if (stage === null) {
-      throw new Error('No stage snapshot saved — set the stage before resetting');
-    }
-    return applyStageReset(board, stage, stats, pcFightersOf(artifacts));
-  });
+  return savedBattle(
+    await mutateBattleBoard(id, (board) => {
+      const stage = board.stage;
+      if (stage === null) {
+        throw new Error('No stage snapshot saved — set the stage before resetting');
+      }
+      return applyStageReset(board, stage, stats, pcFightersOf(artifacts));
+    }),
+    id,
+  );
 }
 
 export async function deleteBattle(id: Id): Promise<void> {
@@ -307,9 +362,15 @@ export async function deleteBattle(id: Id): Promise<void> {
 }
 
 /**
- * Source rule: deleting the last non-PC token with no map deletes the battle.
- * Called after scrubbing; a battle with no fighter tokens, no map and no
- * provenance has nothing left to run.
+ * Source rule: deleting the last non-PC token with no map deletes the battle —
+ * a battle with no fighter tokens, no map and no provenance has nothing left
+ * to run.
+ *
+ * The id-only form, judging the row AS SAVED. The artifact scrub does NOT use
+ * it: the scrub's own deletion is decided inside its transaction, on the board
+ * the scrub produced, because the saved row has been through
+ * normalize-on-write, which re-ensures a PC token and would answer "not empty"
+ * for a board that just lost its last mob (docs/17 row 336 fix-forward).
  */
 export async function deleteBattleIfEmpty(id: Id): Promise<void> {
   const battle = await getBattle(id);
@@ -334,14 +395,25 @@ export async function deleteBattleIfEmpty(id: Id): Promise<void> {
  * against the CURRENT board inside the write, docs/17 row 336: a board that
  * gained a token since the walk is scrubbed as it is now, never replaced by
  * the walk's snapshot).
+ *
+ * THE EMPTY RULE IS DECIDED ON THE SCRUBBED BOARD, IN THE SAME TRANSACTION
+ * (docs/17 row 336 fix-forward). `isBattleEmpty` judges the board this scrub
+ * PRODUCED — the board the removal CENSUS judges, so prediction and execution
+ * cannot disagree — and `mutateBattleBoard` deletes the row right there. A
+ * second read of the saved row would judge the NORMALIZED board instead:
+ * normalize-on-write re-ensures a token for every campaign PC
+ * (`ensurePcTokens`), so a board whose last mob was just scrubbed would read
+ * as non-empty and survive forever while the census promised a deletion.
  */
 export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): Promise<void> {
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
   for (const row of battles) {
     const battle = parseBattleRow(row);
     if (scrubArtifactFromBoard(battle.board, artifactId) === battle.board) continue;
-    await mutateBattleBoard(battle.id, (board) => scrubArtifactFromBoard(board, artifactId));
-    await deleteBattleIfEmpty(battle.id);
+    await mutateBattleBoard(battle.id, (board, current) => {
+      const next = scrubArtifactFromBoard(board, artifactId);
+      return isBattleEmpty({ ...current, board: next }) ? null : next;
+    });
   }
 }
 
@@ -375,7 +447,10 @@ function withBattlemap(board: BattleBoard, map: BattlemapSlot): BattleBoard {
  * on the CURRENT board, so a tile spawned or moved since the caller's read
  * rides along (docs/17 row 336). */
 async function writeBoardMap(battleId: Id, map: BattlemapSlot): Promise<Battle> {
-  return mutateBattleBoard(battleId, (board) => withBattlemap(board, map));
+  return savedBattle(
+    await mutateBattleBoard(battleId, (board) => withBattlemap(board, map)),
+    battleId,
+  );
 }
 
 /**

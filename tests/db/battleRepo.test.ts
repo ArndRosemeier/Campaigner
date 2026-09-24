@@ -339,10 +339,12 @@ describe('normalize-on-write', () => {
       treasure: '',
       conditions: [],
     };
-    const saved = await mutateBattleBoard(battle.id, () => ({
-      ...battle.board,
-      tokens: [token, { ...token, id: newId(), currentHp: 99, label: 'Goblin 2' }],
-    }));
+    const saved = await savedBoard(
+      mutateBattleBoard(battle.id, () => ({
+        ...battle.board,
+        tokens: [token, { ...token, id: newId(), currentHp: 99, label: 'Goblin 2' }],
+      })),
+    );
     expect(saved.board.tokens[0]?.currentHp).toBe(7);
     expect(saved.board.tokens[1]?.currentHp).toBe(7);
   });
@@ -504,6 +506,33 @@ describe('scrub on artifact delete', () => {
     expect(after?.board.stage?.tokens.map((token) => token.artifactId)).toEqual([pcId]);
   });
 
+  it('DELETES a board the scrub empties out — the ROW IS GONE, judged on the scrubbed board (docs/17 row 336 fix-forward)', async () => {
+    // A campaign PC exists, but this board carries ONLY the doomed npc's token
+    // and has no map and no provenance — exactly the stored row the removal
+    // census judges (`isBattleEmpty` over the board minus the doomed tokens).
+    await addPc('Serren');
+    const npcId = await addNpc('Goblin');
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Goblin', maxHp: 7 }, 0, true, null);
+    await db.battles.put({
+      ...battle,
+      encounterArtifactId: null,
+      board: { ...battle.board, tokens: [token] },
+    });
+    expect(await db.battles.get(battle.id)).toBeDefined();
+
+    await deleteArtifact(npcId);
+
+    // THE GUARANTEE IS THE ROW'S ABSENCE, not two counts agreeing: the executed
+    // pass measures the table, so a board kept alive by the PC token that
+    // normalize-on-write re-ensures reads as `battlesDeleted: 0` while the
+    // census (predicted from the scrubbed board) says 1. Naming the surviving
+    // tokens makes that diagnosis readable rather than a bare count.
+    const survivor = await db.battles.get(battle.id);
+    expect(survivor?.board.tokens.map((entry) => entry.label) ?? 'row is gone').toBe('row is gone');
+    expect(await db.battles.get(battle.id)).toBeUndefined();
+  });
+
   it('deletes a board that empties to nothing and has no provenance', async () => {
     const npcId = await addNpc('Goblin');
     const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
@@ -544,10 +573,12 @@ describe('the board-mutation seam (docs/17 row 336)', () => {
     await mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [foreign] }));
     // The stale caller's own mutation, handed to the seam as a CHANGE rather
     // than as the board it saw: it must land on the row as it is now.
-    const saved = await mutateBattleBoard(battle.id, (board) => ({
-      ...board,
-      tokens: [...board.tokens, mine],
-    }));
+    const saved = await savedBoard(
+      mutateBattleBoard(battle.id, (board) => ({
+        ...board,
+        tokens: [...board.tokens, mine],
+      })),
+    );
     expect(saved.board.tokens.map((token) => token.id)).toEqual([foreign.id, mine.id]);
     // The snapshot really was stale — a snapshot-derived write would have saved
     // this empty board over the foreign token (the owner's vanishing mob).
@@ -588,14 +619,26 @@ describe('the board-mutation seam (docs/17 row 336)', () => {
     // Someone else removes it (a scrub, a delete on another surface).
     await mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [] }));
     // The stale render's own toggle commits: it must not put the token back.
-    const saved = await mutateBattleBoard(battle.id, (board) => ({
-      ...board,
-      sceneryMovementLocked: !board.sceneryMovementLocked,
-    }));
+    const saved = await savedBoard(
+      mutateBattleBoard(battle.id, (board) => ({
+        ...board,
+        sceneryMovementLocked: !board.sceneryMovementLocked,
+      })),
+    );
     expect(saved.board.tokens).toEqual([]);
     expect(saved.board.sceneryMovementLocked).not.toBe(stale.sceneryMovementLocked);
   });
 });
+
+/** The saved row of a board mutation, with the row's absence made LOUD here:
+ * the seam can delete a battle (the scrub's empty-battle rule), and a fixture
+ * write that unexpectedly deleted one must fail as an assertion, not as a
+ * `undefined` deref. */
+async function savedBoard(write: Promise<Battle | undefined>): Promise<Battle> {
+  const saved = await write;
+  if (saved === undefined) throw new Error('the battle row was deleted by a fixture write');
+  return saved;
+}
 
 /** A geometric stamp (no artifact): survives normalize-on-write untouched. */
 function geometricToken(label: string): BattleToken {
@@ -623,11 +666,13 @@ describe('stage reset', () => {
     const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Troll', maxHp: 84 }, 0, true, null);
-    const opened = await mutateBattleBoard(battle.id, () => ({
-      ...battle.board,
-      live: true,
-      tokens: [token],
-    }));
+    const opened = await savedBoard(
+      mutateBattleBoard(battle.id, () => ({
+        ...battle.board,
+        live: true,
+        tokens: [token],
+      })),
+    );
     const stage = captureStageSnapshot(opened.board);
     await updateBattle(battle.id, () => ({ board: { ...opened.board, stage } }));
     // Drift: the troll drops to 0 and initiative rolls.

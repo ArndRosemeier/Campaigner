@@ -75,6 +75,23 @@ describe('one battle-board writer (SOURCE SCAN, docs/17 row 336)', () => {
     ]);
   });
 
+  it('keeps battle-row DELETION in the seam too — the empty-battle rule is decided in-transaction', () => {
+    // `writeBattleRow` is the ONE transaction that both saves and deletes a
+    // battle row (docs/17 row 336 fix-forward): the scrub's empty rule must be
+    // decided on the board the scrub PRODUCED, in the same transaction, so no
+    // other file may delete a battle row and no second decision site may
+    // appear beside it.
+    expect(filesContaining(SRC_FILES, 'writeBattleRow(')).toEqual(['src/db/battleRepo.ts']);
+    expect(filesContaining(SRC_FILES, 'DELETE_BATTLE')).toEqual(['src/db/battleRepo.ts']);
+    expect(filesContaining(SRC_FILES, 'battles.delete(')).toEqual(['src/db/battleRepo.ts']);
+    // The scrub asks the seam to delete the emptied battle (a `null` board
+    // outcome) instead of reading the row back — a second read judges the
+    // NORMALIZED row, whose re-ensured PC token keeps the board alive.
+    const repo = readFileSync('src/db/battleRepo.ts', 'utf8');
+    expect(repo).toContain('isBattleEmpty({ ...current, board: next }) ? null : next');
+    expect(repo).not.toContain('await deleteBattleIfEmpty(battle.id)');
+  });
+
   it('keeps the surface off the raw row patcher — its board writes go through `commit`', () => {
     // `patchBattle` can no longer carry a board (the TYPE forbids it, pinned by
     // the `@ts-expect-error` arm in tests/db/battleRepo.test.ts); the surface
