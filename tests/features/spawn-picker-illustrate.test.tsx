@@ -357,11 +357,11 @@ describe('spawn picker layout + the illustrate control in the author section (do
     const dialog = screen.getByTestId('spawn-picker');
     const body = screen.getByTestId('spawn-picker-body');
 
-    // The dialog is a flex column bounded by the SMALL visible viewport and NOT
-    // itself a scroller — so a short iPad viewport cannot push the header off
-    // screen (the cap's units are pinned separately, docs/17 row 340).
-    expect(dialog.className).toContain('max-h-[85vh]');
-    expect(dialog.className).toContain('supports-[height:100svh]:max-h-[min(85svh,85dvh)]');
+    // The dialog is a flex column with a DEFINITE height (not only a cap), and
+    // NOT itself a scroller — so a short iPad viewport cannot push the header off
+    // screen (the height's units are pinned separately, docs/17 rows 340 and 343).
+    expect(dialog.className).toContain('h-[85vh]');
+    expect(dialog.className).toContain('supports-[height:100svh]:h-[min(85svh,85dvh)]');
     expect(dialog.className).toContain('flex-col');
     expect(dialog.className).toContain('overflow-hidden');
 
@@ -508,48 +508,82 @@ describe('spawn picker Core-mobs rows are MEASURED, not sized by the estimate (d
     }
   });
 
-  it('caps the dialog against the SMALL visible viewport — `svh` behind @supports, on a `vh` fallback', async () => {
+  it('gives the dialog a DEFINITE height whose PLAIN fallback is the CONSERVATIVE value, refined by `svh` behind @supports (docs/17 row 343)', async () => {
     await renderPicker();
     const dialog = screen.getByTestId('spawn-picker');
-    // An older iPad (iOS < 16.4) drops a `svh`/`dvh` declaration WHOLE, which
-    // would leave this dialog unbounded — so the `vh` cap must exist WITHOUT it.
-    expect(dialog.className).toContain('max-h-[85vh]');
-    // `85vh` is the LARGE viewport on an iPad (the owner's *"Spawn dialog now
-    // does not scroll anymore on my ipad"*, docs/17 row 340): `svh` is the
-    // viewport with the browser bars showing, so the cap can never push the
-    // centred dialog's bottom below the fold, and `min(svh, dvh)` still follows
-    // a dynamic shrink (the keyboard) when `dvh` reports it.
-    expect(dialog.className).toContain('supports-[height:100svh]:max-h-[min(85svh,85dvh)]');
+    // A DEFINITE height, not only a `max-h` cap: `flex-1 min-h-0` on the body
+    // needs a definite parent height to resolve against, and a container bounded
+    // only by `max-height` can leave the body at its content height where
+    // `overflow-hidden` clips the excess — no scrollbar and no scroll, which
+    // matches the owner's *"Still can't scroll an I also see no scroll bar"*.
+    // That is the WORKING DIAGNOSIS (docs/17 row 343): its evidence is the in-repo
+    // CONTROL `HelpDialog`, which ships this same body under a definite `h-[80vh]`,
+    // and the device check that would confirm or falsify it is OWED. A
+    // `fit-content` height is NOT a substitute: it is an intrinsic, indefinite
+    // size, so it does not bound the flex child either — the value has to be a
+    // LENGTH, and it lives in `DIALOG_VIEWPORT_BOX`.
+    expect(dialog.className).toContain('h-[85vh]');
+    // The row-340 shape must not come back: a `max-h` VIEWPORT CAP is not a
+    // definite height, and under the working diagnosis above that is the shape
+    // WebKit clips (the `DIALOG_VIEWPORT_BOX` doc carries the diagnosis, the
+    // `HelpDialog` control and the owed tablet check). The plain `85vh` survives
+    // an old iPad that drops `@supports` because it leaves 15% of the large
+    // viewport as headroom against Safari's ~9% of bars.
+    expect(dialog.className).not.toContain('max-h-[85vh]');
+    // The shared base's BELT stays and must be the CONSERVATIVE one: a browser
+    // that drops `@supports` gets it too, and `calc(100vh-2rem)` (row 340's plain
+    // value) is the LARGE viewport again.
+    expect(dialog.className).toContain('max-h-[calc(85vh-2rem)]');
+    expect(dialog.className).not.toContain('max-h-[calc(100vh-2rem)]');
+    // The REFINEMENT is the better value where the units are known: `svh` is the
+    // viewport with the bars SHOWING, so it cannot exceed what he can see, and
+    // `min(svh, dvh)` still follows a dynamic shrink (the keyboard).
+    expect(dialog.className).toContain('supports-[height:100svh]:h-[min(85svh,85dvh)]');
     expect(dialog.className).toContain('flex-col');
     expect(dialog.className).toContain('overflow-hidden');
   });
 });
 
 /**
- * ONE SCROLL CONTAINER IN THE SPAWN DIALOG — the BODY — and a cap against the
- * SMALL visible viewport (docs/17 row 340). Owner, verbatim: *"Spawn dialog now
- * does not scroll anymore on my ipad"* — the regression he hit right after rows
- * 336 and 339 reshaped this dialog.
+ * ONE SCROLL CONTAINER IN THE SPAWN DIALOG — the BODY — and a DEFINITE height
+ * whose PLAIN fallback is the safe value (docs/17 rows 340 and 343).
+ * Owner, verbatim: *"Spawn dialog now does not scroll anymore on my ipad"* — the
+ * regression he hit right after rows 336 and 339 reshaped this dialog — and then,
+ * after row 340, *"Still can't scroll an I also see no scroll bar"*.
  *
- * TWO CANDIDATE MECHANISMS, and the fix has to be right for BOTH because jsdom
- * can settle NEITHER: (1) `85vh` is the LARGE viewport on an iPad, so a centred
- * dialog's bottom — and part of its scroll area — can sit below the fold,
- * unreachable by touch; (2) the dialog body scrolled AND the Core-mobs list
- * scrolled inside it, while the row measurement changed the inner content size
- * mid-drag, a classic way for touch momentum to be swallowed. So there is ONE
- * scroller (the body), the Core-mobs list no longer scrolls, the virtualizer's
- * scroll element is the body (windowed in the body's CONTENT coordinates: the
- * track's own offset is the `scrollMargin`, because the roster and NPC groups sit
- * above it), and the cap is `svh` with a `vh` fallback and a `dvh` term.
+ * THREE CANDIDATE MECHANISMS, and the fix has to be right for ALL of them because
+ * jsdom can settle NONE. Two are ruled out by the evidence and one is the WORKING
+ * DIAGNOSIS, whose evidence is an IN-REPO CONTROL and whose device check is OWED:
+ * (1) `85vh` as the large viewport cannot explain it (`85vh` fits an iPad in both
+ * orientations: Safari's bars are ~90px and 15% of 1024 is ~150px); (2) the dialog
+ * body scrolled AND the Core-mobs list scrolled inside it, while the row
+ * measurement changed the inner content size mid-drag, a classic way for touch
+ * momentum to be swallowed; (3) a `flex-1 min-h-0` child inside an ancestor whose
+ * height is `auto` plus a `max-height` does not reliably get a bounded height on
+ * WebKit, so it grows to its content height and the ancestor's `overflow-hidden`
+ * clips it — no scrollbar AND no scroll, the two symptoms together, with many
+ * screens of content. THE CONTROL is `HelpDialog`, which ships this same body
+ * under a DEFINITE `h-[80vh]`: the height TYPE is the only difference from the
+ * failing picker, which is the strongest evidence the repo can offer by itself,
+ * and it is still an inference rather than a measurement on the device. So there
+ * is ONE scroller (the body), the Core-mobs list no longer scrolls, the
+ * virtualizer's scroll element is the body (windowed in the body's CONTENT
+ * coordinates: the track's own offset is the `scrollMargin`, because the roster
+ * and NPC groups sit above it), and the dialog carries the shared DEFINITE height
+ * `DIALOG_VIEWPORT_BOX` (`85vh`, with the `svh`-bounded `min(85svh,85dvh)` as the
+ * `@supports` REFINEMENT) with the shared `DIALOG_SCROLL_BODY` as its body. The
+ * plain value must fit with the bars showing, because an iOS that does not know
+ * `svh`/`dvh` keeps ONLY the plain one and `vh` there is the large viewport.
  *
  * WHAT NO PIN HERE CAN PROVE, STATED RATHER THAN IMPLIED: jsdom computes no
  * layout and cannot scroll by touch or momentum, so NOTHING in this file — or
  * anywhere in this suite — can establish that the dialog scrolls on the owner's
- * iPad. These pins assert the STRUCTURE the fix turns on (which element is the
- * scroller, which element the virtualizer observes, the coordinate space its
- * window is computed in, and the cap's units); the REAL-DEVICE CHECK IS OWED
- * (docs/08 §Battle-surface test families, docs/11 §Spawn picker, docs/17 row
- * 340).
+ * iPad, and NOTHING here measures the inferred mechanism above. These pins assert
+ * the STRUCTURE the fix turns on (which element is the scroller, which element the
+ * virtualizer observes, the coordinate space its window is computed in, and the
+ * height's units); the REAL-DEVICE CHECK IS OWED and is the only thing that can
+ * confirm the diagnosis (docs/08 §Battle-surface test families, docs/11 §Spawn
+ * picker, docs/17 rows 340 and 343).
  */
 describe('spawn picker scrolls through ONE container, the dialog body (docs/17 row 340)', () => {
   afterEach(() => {

@@ -5,7 +5,14 @@ import { ArrowLeftIcon, SquareArrowOutUpRightIcon, XIcon } from 'lucide-react';
 
 import { artifactPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DIALOG_SCROLL_BODY,
+  DIALOG_VIEWPORT_BOX,
+} from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import type { AnyArtifact, Id } from '@/domain';
 import { NpcCard, EncounterCard, Portrait } from '@/features/play/artifact-cards';
@@ -79,7 +86,15 @@ export function PeekModal({
       }}
     >
       <DialogContent
-        className="flex max-h-[85vh] flex-col gap-2 overflow-hidden sm:max-w-lg"
+        /* The peeked body below is `min-h-0 flex-1 overflow-y-auto`, so this is one
+           of the dialogs whose BODY is the scroller: it carries the shared
+           definite-height box (`DIALOG_VIEWPORT_BOX`) instead of a `max-h`-only
+           ancestor, which — under the working diagnosis in that constant's doc,
+           INFERRED and not measured on the device — WebKit does not reliably
+           bound, so the inner scroller can grow to its content height and be
+           clipped by `overflow-hidden`, with no scrollbar and no scroll (docs/17
+           row 343; the iPad check is OWED). */
+        className={`flex flex-col gap-2 overflow-hidden sm:max-w-lg ${DIALOG_VIEWPORT_BOX}`}
         data-testid="peek-modal"
       >
         <div className="flex items-center gap-2 pb-1">
@@ -100,7 +115,7 @@ export function PeekModal({
           </DialogTitle>
         </div>
         <Separator />
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
+        <div className={cn('overscroll-contain py-1', DIALOG_SCROLL_BODY)}>
           {current === undefined ? (
             <p className="text-sm text-muted-foreground">
               This artifact no longer exists (it may have been deleted).

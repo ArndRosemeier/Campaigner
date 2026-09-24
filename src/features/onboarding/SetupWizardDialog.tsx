@@ -11,6 +11,8 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DIALOG_SCROLL_BODY,
+  DIALOG_VIEWPORT_BOX,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { toastError } from '@/lib/toast';
@@ -141,7 +143,18 @@ export function SetupWizardDialog(): JSX.Element | null {
       }}
     >
       <DialogContent
-        className="flex max-h-[85vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
+        /* The step list below is `min-h-0 flex-1 overflow-y-auto`, so this is one
+           of the dialogs whose BODY is the scroller: it carries the shared
+           definite-height box (`DIALOG_VIEWPORT_BOX`) instead of a `max-h`-only
+           ancestor, which — under the working diagnosis in that constant's doc,
+           INFERRED and not measured on the device — WebKit does not reliably
+           bound, so the inner scroller can grow to its content height and be
+           clipped by `overflow-hidden`, with no scrollbar and no scroll (docs/17
+           row 343; the iPad check is OWED). */
+        className={cn(
+          'flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl',
+          DIALOG_VIEWPORT_BOX,
+        )}
         data-testid="setup-wizard"
       >
         <DialogHeader className="border-b p-4">
@@ -153,7 +166,7 @@ export function SetupWizardDialog(): JSX.Element | null {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div className={cn('p-3', DIALOG_SCROLL_BODY)}>
           <ul className="flex flex-col gap-1.5">
             {progress.steps.map((step) => {
               const content = wizardStep(step.id);

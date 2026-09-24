@@ -1424,12 +1424,12 @@ illustrate path (`illustrateAfterSpawnIfAsked` for picks, `authorAndSpawnMob`'s
 illustration path.
 
 **THE DIALOG FITS A SHORT VIEWPORT, AND THE BODY IS ITS ONLY SCROLLER (docs/17
-row 336, defect C; the cap and the Core-mobs list were reshaped again by rows 339
-and 340 below).** Owner, verbatim: *"the spawn buttons for non authored mobs
-are overlapping on my ipad"*. The dialog content is a flex column bounded by the
-SMALL visible viewport (`max-h-[85vh]` as the fallback, with `svh` behind
-`@supports` — rows 339/340 below — and `overflow-hidden`) and the groups div is
-`min-h-0 flex-1 overflow-y-auto`, so the header, the search field and BOTH
+row 336, defect C; the cap and the Core-mobs list were reshaped again by rows 339,
+340 and 343 below).** Owner, verbatim: *"the spawn buttons for non authored mobs
+are overlapping on my ipad"*. The dialog content is a flex column with a definite
+height — the shared `DIALOG_VIEWPORT_BOX` (`h-[85vh]`, `min(85svh,85dvh)` behind
+`@supports`; rows 340/343 below) with the shared `DIALOG_SCROLL_BODY` and
+`overflow-hidden` — and the groups div is `min-h-0 flex-1 overflow-y-auto`, so the header, the search field and BOTH
 illustrate ticks stay outside the scroller and reachable on a short viewport
 instead of scrolling away above it. Every pick row is collision-proof: the row
 is `flex flex-wrap items-center justify-between gap-2`, the label is
@@ -1479,6 +1479,8 @@ Core-mobs list no longer scrolling inside it, the virtualization kept
 (`getScrollElement` is the BODY, the row measurement and the
 `whitespace-nowrap`/`truncate`/`shrink-0` invariants unchanged), and the cap
 declared in `svh` (`max-h-[85vh]` fallback, `supports-[height:100svh]:max-h-[min(85svh,85dvh)]`) —
+**SUPERSEDED by the row-343 paragraph below, which replaced the `max-h`-only
+ancestor with the DEFINITE `DIALOG_VIEWPORT_BOX` height** —
 `svh` is the height with the browser bars SHOWING, so it is the unit that cannot
 exceed what the user can actually see, while the `min(…,dvh)` term still follows
 a dynamic shrink the way row 339's `dvh` override did. The SHARED
@@ -1494,6 +1496,45 @@ assert the structure (which element is the scroller, which element the virtualiz
 observes, the coordinate space its window is computed in, and the cap's units) and
 the REAL-DEVICE CHECK IS OWED** (docs/08 §Battle-surface test families, docs/17
 row 340).
+
+**THE SCROLLER'S ANCESTOR CARRIES A DEFINITE HEIGHT — THE SHARED
+`DIALOG_VIEWPORT_BOX` + `DIALOG_SCROLL_BODY` SEAM (docs/17 row 343).** Owner,
+verbatim, after row 340 landed: *"Still can't scroll an I also see no scroll bar"*.
+The two symptoms together say the BODY NEVER OVERFLOWS, and the owner confirmed
+many screens of core mobs, so the content certainly exceeds any cap. `vh` does not
+explain it — `85vh` fits an iPad in both orientations (Safari's bars are ~90px; 15%
+of 1024 is ~150px) — and before row 336 the dialog itself was the scroller (a
+definite box) and it did scroll. **THE WORKING DIAGNOSIS, WITH AN IN-REPO CONTROL
+AS ITS EVIDENCE AND THE TABLET CHECK STILL OWED:** WebKit does not reliably bound a
+`flex-1 min-h-0 overflow-y-auto` child under an ancestor whose height is `auto`
+plus a `max-height`, so the child grows to its full content height and the
+ancestor's `overflow-hidden` clips it — many screens of mobs, all unreachable, no
+scrollbar. Desktop Chrome resolves the same CSS correctly, which is why no jsdom
+pin and no static check can see it. THE CONTROL is `HelpDialog`: it ships this
+exact structure — the same body inside a flex-column `DialogContent` with
+`overflow-hidden` — under a DEFINITE `h-[80vh]`, and the height TYPE is the only
+difference. That is the strongest evidence available in the repo, and it remains
+an inference rather than a measurement on his device. **THE FIX is one seam, not
+three patches:** `components/ui/dialog.tsx` exports `DIALOG_VIEWPORT_BOX`
+(`h-[85vh]` plus `supports-[height:100svh]:h-[min(85svh,85dvh)]`) and
+`DIALOG_SCROLL_BODY` (`min-h-0 flex-1 overflow-y-auto`), and the three dialogs
+whose body is the scroller use both — this picker, `SetupWizardDialog` and
+`peek-modal`. The shared base cap keeps its `max-h` BELT (plain `calc(85vh-2rem)`)
+and deliberately gets NO definite height: that would make all ~40 dialogs
+full-height. `HelpDialog` is the declared exception, left unfolded because folding
+it would move its rendered box from `80vh` to `85vh`. **THE PLAIN VALUE SURVIVES AN
+OLD iPAD:** an iOS that knows neither `svh` nor `dvh` keeps ONLY the plain
+declaration, and `85vh` leaves 15% of the large viewport as headroom against
+Safari's ~9% of bars. **`h-fit` was considered and is NOT shipped:** `fit-content`
+is an intrinsic, indefinite size, so it bounds the flex child no better — it is
+recorded as a FUTURE OPTION once the device confirms the mechanism. **THE COST IS
+RECORDED RATHER THAN LEFT TO BE DISCOVERED: the box is `85vh`-tall even when the
+list is short.** **THE HONEST LIMIT, again: jsdom computes no layout and cannot
+scroll by touch, so NO test here proves the dialog scrolls or measures the
+diagnosis — the pins assert the structure (a definite `h-…` class present and
+USED, ONE scroller, the virtualizer observing it, and the broken shape refused)
+and the REAL-DEVICE CHECK IS OWED** (docs/08 §Battle-surface test families,
+docs/17 row 343).
 
 ### Author a new mob — spawn a freshly NPC-Smith-authored mob, ALWAYS with a stat block (owner-directed, 2026-09-23, docs/17 row 333)
 

@@ -72,7 +72,7 @@ describe('progress dock offset', () => {
 });
 
 describe('dialog viewport clamp', () => {
-  it('constrains dialog content to the SMALL visible viewport, on a `vh` fallback the `svh`/`dvh` value may override', () => {
+  it('caps dialog content against the LARGE viewport conservatively, refined to the SMALL visible viewport behind @supports', () => {
     render(
       <Dialog open>
         <DialogContent>
@@ -82,16 +82,24 @@ describe('dialog viewport clamp', () => {
     );
 
     const content = screen.getByRole('dialog');
-    // docs/17 rows 339 and 340: an older iPad (iOS < 16.4) drops a `svh`/`dvh`
-    // declaration WHOLE, so the cap must exist in `vh` first — otherwise the
-    // dialog is unbounded and `overflow-y-auto` has no height to scroll inside.
-    // The `@supports` value is the SMALL viewport (`svh`, the height with the
-    // browser bars showing) so a centred dialog's bottom cannot land below the
-    // fold on an iPad, with `min(svh, dvh)` still following a dynamic shrink.
-    // jsdom applies no CSS, so this pins the STRUCTURE (both declarations
-    // present); the rendered result owes a real-device check (docs/08 §jsdom
-    // notes, docs/17 row 340).
-    expect(content.className).toContain('max-h-[calc(100vh-2rem)]');
+    // docs/17 rows 339, 340 and 343: an older iPad (iOS < 16.4) drops a
+    // `svh`/`dvh` declaration WHOLE, so the cap must exist in `vh` first —
+    // otherwise the dialog is unbounded and `overflow-y-auto` has no height to
+    // scroll inside. But on iOS `vh` is the LARGE viewport (the browser bars are
+    // excluded from it), so the PLAIN value must be the conservative one: `85vh`
+    // minus the 2rem gutter leaves 15% of the large viewport as headroom, more
+    // than Safari's bars take at any percentage they show, while row 340's plain
+    // `calc(100vh-2rem)` could exceed what the user can see — and this app's
+    // document never scrolls, so a `position: fixed` dialog cannot be panned back
+    // into reach (the owner's *"Still can't scroll an I also see no scroll bar"*).
+    // The `@supports` value is the REFINEMENT and the better one where the units
+    // are known: `svh` is the height with the browser bars showing, so a centred
+    // dialog's bottom cannot land below the fold, with `min(svh, dvh)` still
+    // following a dynamic shrink. jsdom applies no CSS, so this pins the
+    // STRUCTURE (both declarations present); the rendered result owes a
+    // real-device check (docs/08 §jsdom notes, docs/17 row 343).
+    expect(content.className).toContain('max-h-[calc(85vh-2rem)]');
+    expect(content.className).not.toContain('max-h-[calc(100vh-2rem)]');
     expect(content.className).toContain(
       'supports-[height:100svh]:max-h-[min(calc(100svh_-_2rem),calc(100dvh_-_2rem))]',
     );

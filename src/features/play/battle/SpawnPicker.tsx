@@ -30,7 +30,10 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DIALOG_SCROLL_BODY,
+  DIALOG_VIEWPORT_BOX,
 } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
 /**
  * Mid-fight spawn picker (spawn-picker arc): ONE "Spawn" button on the battle
@@ -443,7 +446,46 @@ export function SpawnPicker({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="spawn-picker"
-        className="flex max-h-[85vh] flex-col overflow-hidden supports-[height:100svh]:max-h-[min(85svh,85dvh)] sm:max-w-lg"
+        /* A DEFINITE HEIGHT, NOT ONLY A MAXIMUM — the two class strings live in
+           `components/ui/dialog.tsx` (`DIALOG_VIEWPORT_BOX` + `DIALOG_SCROLL_BODY`)
+           because this is a SHAPE three dialogs carried privately, not a
+           per-dialog preference (docs/17 row 343). WHY:
+           (1) THE WORKING DIAGNOSIS, with an in-repo CONTROL and the iPad check
+               still OWED. `HelpDialog` ships this exact structure — a
+               `min-h-0 flex-1 overflow-y-auto` body inside a flex-column
+               `DialogContent` with `overflow-hidden` — and it carries a DEFINITE
+               `h-[80vh]`; this dialog was the same pattern except the height was
+               a `max-h` cap, and that is the only difference. Supporting it: the
+               owner reports no scrolling AND no scrollbar with many screens of
+               core mobs (so the body never overflows, though its content
+               certainly exceeds any cap); `vh` cannot explain that (`85vh` fits
+               an iPad in both orientations); and before row 336 the dialog itself
+               was the scroller — a definite box — and it scrolled. The inference
+               is that a `flex-1 min-h-0` child under an ancestor whose height is
+               `auto` plus a `max-height` does not reliably get a bounded height
+               on WebKit: it grows to its content height and the ancestor's
+               `overflow-hidden` clips it, so the scroller never overflows and
+               nothing responds to a drag. Desktop Chrome resolves the same CSS
+               correctly, which is why every jsdom pin and every static check
+               looks right. NO device measurement exists yet: the working
+               diagnosis is confirmed by the control OR falsified by that check.
+           (2) THE PLAIN VALUE SURVIVES AN OLD iPAD. iOS/iPadOS < 16.4 knows
+               neither `svh` nor `dvh` and drops the `@supports` declaration
+               WHOLE, keeping only the plain value — and on iOS `vh` is the LARGE
+               viewport (bars excluded), so the plain value must fit with the bars
+               showing: `85vh` leaves 15% of the large viewport as headroom against
+               Safari's ~9% of bars on an iPad. The `svh`-bounded
+               `min(85svh,85dvh)` is the REFINEMENT where the units are known.
+           `h-fit` was considered for the empty space a fixed box leaves under a
+           short list and REJECTED — `fit-content` is an intrinsic, indefinite
+           size, so it bounds the flex child no better (the constant's doc carries
+           the spec citation); it is recorded as a FUTURE OPTION once the device
+           confirms the mechanism. Tailwind emission was verified with a scratch
+           `@tailwindcss/node` compile (`.gate-logs/row343/probe-css.mjs`): the
+           plain `height: 85vh` emits first and `@supports (height:100svh) {
+           height: min(85svh, 85dvh) }` AFTER it, so a supported browser gets the
+           bars-aware value. */
+        className={`flex flex-col overflow-hidden sm:max-w-lg ${DIALOG_VIEWPORT_BOX}`}
       >
         <DialogHeader>
           <DialogTitle>Spawn into battle</DialogTitle>
@@ -483,20 +525,26 @@ export function SpawnPicker({
           onChange={setIllustrateMissing}
         />
         {/* THE BODY IS THE *ONLY* SCROLLER, AND THE VIRTUALIZER WINDOWS THE
-            CORE-MOBS LIST AGAINST IT (docs/17 rows 336 and 340): the dialog is a
-            flex column capped against the SMALL visible viewport (`svh` behind
-            `@supports`, with the `vh` fallback — docs/17 row 340 — and
-            `overflow-hidden` on the content), so the header, the search field and
-            the illustrate ticks stay reachable on a short iPad viewport while
-            these groups scroll inside `min-h-0 flex-1`. The Core-mobs list no
-            longer carries a scroller of its own: a second, nested scroll box was
-            one of the two candidate mechanisms behind *"Spawn dialog now does not
-            scroll anymore on my ipad"*, and the virtualizer observes THIS
-            element (`getScrollElement`). */}
+            CORE-MOBS LIST AGAINST IT (docs/17 rows 336, 340 and 343). It carries
+            the shared `DIALOG_SCROLL_BODY` classes plus its own layout (`flex
+            flex-col gap-3 pr-1`) so a fourth dialog cannot re-spell the scroller.
+            The dialog above it carries the shared DEFINITE height
+            (`DIALOG_VIEWPORT_BOX`, `85vh` plainly and the `svh`-bounded value
+            behind `@supports`) together with `overflow-hidden`, so the header, the
+            search field and the illustrate ticks stay reachable on a short iPad
+            viewport while these groups scroll inside the bounded body. The
+            definite parent height is load-bearing rather than cosmetic (docs/17
+            row 343): it is what `flex-1` resolves against, so this element is a
+            real scroll container instead of a content-sized box whose excess the
+            parent clips. The Core-mobs list no longer carries a scroller of its
+            own: a second, nested scroll box was one of the two candidate
+            mechanisms behind *"Spawn dialog now does not scroll anymore on my
+            ipad"*, and the virtualizer observes THIS element
+            (`getScrollElement`). */}
         <div
           ref={bodyRef}
           data-testid="spawn-picker-body"
-          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
+          className={cn('flex flex-col gap-3 pr-1', DIALOG_SCROLL_BODY)}
         >
           <section aria-label="This encounter" data-testid="spawn-picker-group-roster">
             <p className="mb-1 text-xs font-medium text-zinc-400">
