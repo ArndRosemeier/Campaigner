@@ -58,6 +58,10 @@ describe('one battle-board writer (SOURCE SCAN, docs/17 row 336)', () => {
     expect(filesContaining(SRC_FILES, 'updateBattle(')).toEqual([
       'src/db/battleRepo.ts',
       'src/db/battleSeed.ts',
+      // The statless-mob repair writes the healed seed rows and the tokens'
+      // HP through the SAME row-level façade, never around it (docs/17 row
+      // 349) — a fourth caller, declared rather than discovered by a red pin.
+      'src/db/mobStatRepair.ts',
       'src/features/play/battle/spawn-picker-logic.ts',
     ]);
     // Every battle ROW write funnels through `saveBattle` /

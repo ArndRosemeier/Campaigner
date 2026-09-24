@@ -40,6 +40,7 @@ import { CODE, filesWith } from '../helpers/sourceCode';
 const SEAM = 'src/domain/battle/board.ts';
 const SEED = 'src/db/battleSeed.ts';
 const PICKER = 'src/features/play/battle/spawn-picker-logic.ts';
+const MOB_REPAIR = 'src/db/mobStatRepair.ts';
 
 /**
  * The grammar both copies spelled: an OPTIONAL single-space numeric suffix,
@@ -86,17 +87,21 @@ describe('ONE slot-label grammar, not two (SOURCE SCAN, docs/17 row 295)', () =>
     expect(CODE[SEAM]?.includes('escapeRegExp(')).toBe(true);
   });
 
-  it('both callers ask the seam, and neither builds a pattern of its own', () => {
-    // The definition plus exactly the two callers — a THIRD caller reds by name
-    // (`filesWith` is sorted, so the order is the seam file's own path order).
-    expect(filesWith('matchesSlotLabel(')).toEqual([SEED, SEAM, PICKER]);
+  it('all three callers ask the seam, and none builds a pattern of its own', () => {
+    // The definition plus exactly the three callers — a FOURTH caller reds by
+    // name (`filesWith` is sorted, so the order is the seam file's own path
+    // order). The third is the statless-mob repair, which matches a frozen
+    // token's label to the roster entry it belongs to (docs/17 row 349).
+    expect(filesWith('matchesSlotLabel(')).toEqual([SEED, MOB_REPAIR, SEAM, PICKER]);
     expect(CODE[SEAM]?.match(/matchesSlotLabel\(/g)?.length, 'defined once').toBe(1);
     expect(CODE[SEED]?.match(/matchesSlotLabel\(/g)?.length, 'seeding asks once').toBe(1);
     expect(CODE[PICKER]?.match(/matchesSlotLabel\(/g)?.length, 'the picker asks once').toBe(1);
-    // The pre-fold shape is GONE from both callers: no caller-side RegExp
+    expect(CODE[MOB_REPAIR]?.match(/matchesSlotLabel\(/g)?.length, 'the repair asks once').toBe(1);
+    // The pre-fold shape is GONE from every caller: no caller-side RegExp
     // construction, so a "second copy" cannot be born beside the seam.
     expect(CODE[SEED]?.includes('new RegExp(')).toBe(false);
     expect(CODE[PICKER]?.includes('new RegExp(')).toBe(false);
+    expect(CODE[MOB_REPAIR]?.includes('new RegExp(')).toBe(false);
   });
 });
 
