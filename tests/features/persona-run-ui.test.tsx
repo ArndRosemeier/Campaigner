@@ -23,6 +23,7 @@ import {
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { generatedImagesFor } from '../helpers/imageRunFixtures';
+import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 import { FAILURE_KIND_GUIDANCE } from '@/domain';
 import { Toaster } from 'sonner';
@@ -494,6 +495,9 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
+    // The classic stylize step's figure check (docs/17 row 341) answers by
+    // default; the queued reply below is the brief.
+    answerClassicBattlemapFigureChecks(chatMock);
     chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Ash Gate',
         // Minimum-content contract: summary/body carry substance (an empty
@@ -625,6 +629,9 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
+    // The classic stylize step's figure check (docs/17 row 341) answers by
+    // default; the queued reply below is the brief.
+    answerClassicBattlemapFigureChecks(chatMock);
     chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Ash Gate',
         // Minimum-content contract: summary/body carry substance.

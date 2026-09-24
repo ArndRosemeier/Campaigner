@@ -32,6 +32,7 @@ import { chat } from '@/llm/openrouter';
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
 import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 import { generatedImagesFor } from '../helpers/imageRunFixtures';
+import { answerClassicBattlemapFigureChecks, chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 
 /**
@@ -331,6 +332,9 @@ beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
   chatMock.mockReset();
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call
+  // on the shared vision contract; answer it unless a test mocks its own.
+  answerClassicBattlemapFigureChecks(chatMock);
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
   drawFillGradeMock.mockReset();
@@ -625,7 +629,7 @@ describe('complex Regenerate everything (reset + full pipeline)', () => {
     const beforeMap = target.data.mapImageId;
     const beforeRoomIds = target.data.layout?.rooms.map((room) => room.id) ?? [];
 
-    chatMock.mockResolvedValue({ text: JSON.stringify(REPOPULATE_BRIEF), modelUsed: 'test-model', fallback: null });
+    chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(REPOPULATE_BRIEF)));
     await regenerateEncounterEverything(target.id, { redesignProse: false });
 
     const after = await getArtifact(target.id);
@@ -832,7 +836,7 @@ describe('singles keep today\u2019s behavior under the new buttons', () => {
     };
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(smithDraft({ name: 'Renamed Gate' })), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValue({ text: JSON.stringify(singleBrief), modelUsed: 'test-model', fallback: null });
+      .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(singleBrief)));
 
     await regenerateEncounterEverything(target.id, { redesignProse: true });
 
@@ -955,11 +959,7 @@ describe('repopulate states and preserves its level and difficulty (docs/17 row 
     const { db } = await import('@/db');
     const smith = await db.personas.where('slug').equals('encounter-smith').first();
     if (smith === undefined) throw new Error('smith missing');
-    chatMock.mockResolvedValue({
-      text: JSON.stringify(smithDraft({ difficulty: 'deadly' })),
-      modelUsed: 'test-model',
-      fallback: null,
-    });
+    chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(smithDraft({ difficulty: 'deadly' }))));
 
     const runId = await runEngine.startRun({
       campaign,

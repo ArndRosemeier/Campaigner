@@ -14,10 +14,11 @@ import { absentable } from '@/llm/schemas';
  * passes). The run engine wires the production transports (image pipeline +
  * chat model); the lab wires its bench transports.
  *
- * The map-emptiness rule (docs/11, docs/17 row 337) lives HERE as well: the
- * reply contract carries a REQUIRED `figures` answer and `locateDungeonLabels`
- * fails a map that depicts any figure, so the one existing vision read is also
- * the guarantee that no baked-in creature ships.
+ * The map-emptiness rule (docs/11, docs/17 rows 337/341) lives HERE as well:
+ * the reply contract carries a REQUIRED `figures` answer, `locateDungeonLabels`
+ * fails a map that depicts any figure, and `assertBattlemapHasNoFigures` runs
+ * the SAME contract and assertion on the classic stylize path — so BOTH map
+ * paths refuse a picture with baked-in creatures by name.
  */
 
 /** One labeled room for the shared map prompt: marker letter + name + visual hook. */
@@ -176,6 +177,19 @@ export function buildVisionRelocateInstruction(
   return `This is the SAME battlemap as before. You missed these room plaques: ${missing.join(', ')}. Look again carefully — report ONLY the missing letters, each as a point in the same 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). ${context} If a missing letter is truly not visible, OMIT it — never invent coordinates for a letter you cannot see. Answer the emptiness question again for this map: report every creature, person, monster, animal, token or miniature you can see as "figures", naming each one; answer "figures": [] when the picture is empty terrain (the expected answer — the creatures are tokens added later, so nothing alive belongs in the picture). Reply with JSON only: {"marks": [{"label": "${missing[0] ?? ''}", "x": 123, "y": 456}], "figures": []}.`;
 }
 
+/**
+ * The instruction for the CLASSIC path's figure-only vision read (docs/11,
+ * docs/17 row 341): a classic stylize map carries NO letter plaques and there
+ * is no locate contract on that path, so the SAME reply contract is asked with
+ * an explicit `"marks": []` — the read answers the ONE emptiness question and
+ * the ONE parser still accepts the answer. The rule is stated positively (the
+ * same `BATTLEMAP_EMPTY_TERRAIN_CLAUSE` the prompt carries) and `figures: []`
+ * is named as the expected answer.
+ */
+export function buildVisionFiguresInstruction(): string {
+  return `This is a top-down battlemap. It carries no letter plaques and no labels. Separately, this image IS the battlemap and must stay empty. ${BATTLEMAP_EMPTY_TERRAIN_CLAUSE} Report every creature, person, monster, animal, token or miniature the picture actually depicts as "figures", naming each one ("a goblin", "a knight"); answer "figures": [] when the map is empty terrain — an empty list is the expected answer. Reply with JSON only: {"marks": [], "figures": []}.`;
+}
+
 /** One validated vision mark: a letter plus its 0–1000 grid point. */
 export const visionLabelMarkSchema = z.object({
   label: z.string().regex(/^[A-N]$/, 'label must be one capital letter A–N'),
@@ -305,6 +319,30 @@ export async function locateDungeonLabels(
   const stillMissing = args.labels.filter((label) => !seen.has(label));
   if (stillMissing.length > 0) throw new VisionLocateError(stillMissing);
   return marksInLabelOrder(args.labels, seen);
+}
+
+/**
+ * THE CLASSIC PATH'S FIGURE CHECK (docs/11, docs/17 row 341): ONE structured
+ * vision pass over a generated classic battlemap, parsed through the SAME
+ * `visionLocateReplySchema` and asserted by the SAME `assertEmptyBattlemap`
+ * the vision path's locate read uses — ONE contract, ONE parser, ONE
+ * assertion, NO second reply schema. The classic map has no plaques, so the
+ * instruction asks for `"marks": []`; a non-empty `figures` answer throws
+ * `BattlemapFiguresError` naming what the read saw.
+ *
+ * A vision call that cannot run PROPAGATES — the transport/model error names
+ * the reason and the map step fails loud. There is deliberately NO
+ * catch-and-continue: a silently skipped check is the placeholder fallback
+ * AGENTS rule 1 forbids, and the owner asked for verification EVERYWHERE.
+ */
+export async function assertBattlemapHasNoFigures(
+  clients: VisionLocateClients,
+  args: { imageDataUrl: string },
+): Promise<void> {
+  const reply = parseVisionLocateReply(
+    (await clients.visionPass(args.imageDataUrl, buildVisionFiguresInstruction())).text,
+  );
+  assertEmptyBattlemap(reply.figures);
 }
 
 /**

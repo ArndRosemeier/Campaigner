@@ -204,10 +204,12 @@ import type {
 } from '@/llm/schemas';
 import {
   BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
+  assertBattlemapHasNoFigures,
   buildLabeledMapPrompt,
   labelsForRoomCount,
   locateDungeonLabels,
   visionLocateReplySchema,
+  type VisionLocateClients,
 } from '@/llm/visionDungeon';
 import { normalizeImageAspect } from '@/lib/imageAspect';
 import { surroundingParagraphs } from '@/lib/wikilinks';
@@ -6103,13 +6105,10 @@ export class RunEngine {
     try {
       const imageDataUrl = await encounterRunAdapters.blobToDataUrl(intake.blob);
       const chatModel = resolveChatModel(settings);
-      marks = await locateDungeonLabels(
-        {
-          visionPass: (imageDataUrlForPass, instruction) =>
-            this.visionLocatePass(imageDataUrlForPass, instruction, chatModel),
-        },
-        { imageDataUrl, labels },
-      );
+      marks = await locateDungeonLabels(this.visionLocateClients(chatModel), {
+        imageDataUrl,
+        labels,
+      });
     } catch (error) {
       await deleteUnreferencedImages(input.campaign.id, [stored.id]);
       throw error;
@@ -6169,6 +6168,20 @@ export class RunEngine {
         cappedToOne: generated.cappedToOne,
         notice: imageStepNotice(generated),
       }),
+    };
+  }
+
+  /**
+   * THE ONE vision client both map paths compose (docs/17 row 341): the
+   * `vision-map` step's plaque locate read and the classic stylize step's
+   * figure check ride the SAME injected transport (`visionLocatePass`) and the
+   * SAME resolved chat model — one provider, one model resolution, never a
+   * second vision mechanism. A caller that needs the read calls THIS.
+   */
+  private visionLocateClients(chatModel: string): VisionLocateClients {
+    return {
+      visionPass: (imageDataUrl, instruction) =>
+        this.visionLocatePass(imageDataUrl, instruction, chatModel),
     };
   }
 
@@ -6269,12 +6282,17 @@ export class RunEngine {
     // shared list. The owner's positive text rule (docs/17 row 319) rides the
     // COMPOSED prompt in both modes.
     //
-    // THE EMPTINESS RULE (docs/17 row 337) rides both modes as ONE shared
+    // THE EMPTINESS RULE (docs/17 rows 337/341) rides both modes as ONE shared
     // POSITIVE clause (`BATTLEMAP_EMPTY_TERRAIN_CLAUSE`) beside the existing
     // no-characters ban: a negative alone never guaranteed an empty map. On
-    // THIS classic path the rule is prompt-level only — there is no vision
-    // read here, so enforcing it would cost one vision call per generated
-    // map; that priced gap is the owner's decision and is NOT closed here.
+    // THIS classic path the clause is backed by a VERIFICATION too: the loop
+    // below runs `assertBattlemapHasNoFigures` on EVERY generated image BEFORE
+    // any intake or store, so a map that depicts a figure fails the step loud
+    // and nothing is persisted. That check costs ONE vision call per generated
+    // map — the price the owner approved (docs/17 row 341, verbatim: "yes
+    // everywhere. You see, mobs are placed ON TOP of the map, makes no sense
+    // that the picture has them") — and it rides the SAME provider/model the
+    // vision-map step's locate read uses.
     const avoid = parsed.negative;
     const usabilityBans =
       'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.';
@@ -6316,10 +6334,17 @@ export class RunEngine {
     // geometry — no room-disc detection, no staging rebuild, no pixel
     // read-back (the two AGENTS-rule-1 violations — the silent packed-center
     // fallback and the swallowed detection errors — die with their host).
-    // Every candidate verifies and finalizes against the same layout.
+    // Every candidate verifies and finalizes against the same layout — and
+    // the figure check (docs/17 row 341) runs FIRST, on the RAW generated
+    // blob, so a picture with baked-in creatures is refused BEFORE any intake
+    // or store: no map row, no intake, no finalize (the vision path's
+    // store-then-prune is unnecessary here because nothing is stored yet).
     const imageIds: Id[] = [];
     const aspectActions: ('none' | 'letterboxed')[] = [];
+    const chatModel = resolveChatModel(settings);
     for (const blob of generated.images) {
+      const imageDataUrl = await encounterRunAdapters.blobToDataUrl(blob);
+      await assertBattlemapHasNoFigures(this.visionLocateClients(chatModel), { imageDataUrl });
       const normalized = await encounterRunAdapters.normalizeImageAspect(blob, layout.gridW, layout.gridH);
       const intake = await encounterRunAdapters.intakeImage(normalized.blob, { role: 'map' });
       const stored = await createImage({

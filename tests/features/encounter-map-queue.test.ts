@@ -16,6 +16,7 @@ import { chat } from '@/llm/openrouter';
 import { encounterRunAdapters, runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
 import { toastError } from '@/lib/toast';
+import { chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 
 vi.mock('@/llm/openrouter', () => ({
   chat: vi.fn(),
@@ -131,7 +132,10 @@ beforeEach(async () => {
   await clearDatabase();
   useEncounterMapQueue.getState().reset();
   useProgressStore.getState().reset();
-  chatMock.mockReset().mockResolvedValue({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call
+  // on the shared vision contract: the default reply stays the brief AND
+  // answers the figure check with the honest empty answer.
+  chatMock.mockReset().mockImplementation(chatAnsweringClassicFigures(JSON.stringify(BRIEF)));
   // Grade 70: COMPLEX_BRIEF ships 16 creature-levels against a 19.5 cap
   // with every room inside its band — first-attempt green, deterministically.
   drawFillGradeMock.mockReset();
@@ -410,8 +414,9 @@ describe('module encounter map queue', () => {
     expect(hallAfter.data.layout?.gridH).toBe(18);
     // Retry-proof property: the pinned grade held — exactly one brief call
     // per job, no repair turn ever consumed a mock (a repair would eat the
-    // hall's BRIEF for the dungeon's second attempt and cascade).
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    // hall's BRIEF for the dungeon's second attempt and cascade). Each classic
+    // job ALSO spends its own figure check (docs/17 row 341): 2 jobs × 2.
+    expect(chatMock).toHaveBeenCalledTimes(4);
   }, 30000);
 
   it('maps a complex job through the vision path when the setting says vision (no per-run steering in the queue)', async () => {
@@ -487,8 +492,9 @@ describe('module encounter map queue', () => {
     });
     // Brief-valid content all the way down: attempt AND the repair turn both
     // draw from this default, so the retry can never exhaust into a shape
-    // error — it settles green with the loud advisory instead.
-    chatMock.mockResolvedValue({ text: JSON.stringify(OVER_BRIEF), modelUsed: 'test-model', fallback: null });
+    // error — it settles green with the loud advisory instead. The figure
+    // check (docs/17 row 341) is answered by the same wrapper.
+    chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(OVER_BRIEF)));
     useEncounterMapQueue.getState().enqueue([
       { campaignId: campaign.id, moduleId: pit.moduleId, artifactId: pit.id, name: pit.name },
     ]);
@@ -498,8 +504,9 @@ describe('module encounter map queue', () => {
       expect(useEncounterMapQueue.getState().failed).toEqual([]);
     }, { timeout: 15000 });
     // Attempt 1 hit the over-budget issue; the single designed repair turn
-    // re-ran the brief and the bounded loop shipped loud instead of failing.
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    // re-ran the brief, and the classic stylize step spent its ONE figure check
+    // (docs/17 row 341); the bounded loop shipped loud instead of failing.
+    expect(chatMock).toHaveBeenCalledTimes(3);
     const after = await getArtifact(pit.id);
     if (after?.kind !== 'encounter') throw new Error('encounter rows disappeared');
     expect(after.data.layout).not.toBeNull();

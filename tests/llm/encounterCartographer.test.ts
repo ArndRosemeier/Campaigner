@@ -18,6 +18,7 @@ import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity,
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase, expectCopiedRosterEntry } from '../db/helpers';
 import { generatedImagesFor } from '../helpers/imageRunFixtures';
+import { answerClassicBattlemapFigureChecks, chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -242,6 +243,9 @@ beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
   chatMock.mockReset();
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call
+  // on the shared vision contract; answer it unless a test queues its own.
+  answerClassicBattlemapFigureChecks(chatMock);
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
   drawFillGradeMock.mockReset();
@@ -993,8 +997,10 @@ describe('Encounter Cartographer run', () => {
     });
 
     // The regenerate made exactly one new image call (stylize re-ran; brief
-    // and layout are untouched — the LLM was not called again).
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    // and layout are untouched — no new brief/layout LLM call). The chat calls
+    // are the ONE brief reply and the TWO figure checks (docs/17 row 341: one
+    // vision read per generated classic map — the first batch and the fresh one).
+    expect(chatMock).toHaveBeenCalledTimes(3);
     const after = await getRun(runId);
     expect(after?.steps.find((step) => step.name === 'layout')).toBeTruthy();
     expect(JSON.stringify(after?.steps.find((step) => step.name === 'layout'))).toBe(layoutBefore);
@@ -1134,8 +1140,10 @@ describe('Encounter Cartographer run', () => {
 
     const completedRun = await getRun(runId);
     expect(completedRun?.resultArtifactId).not.toBeNull();
-    // Brief was NOT re-drafted — chat was called only once!
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    // Brief was NOT re-drafted: the only two chat calls are the original brief
+    // and the resumed stylize step's ONE figure check (docs/17 row 341) — the
+    // failed first attempt never reached the check (the image call threw).
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   describe('stylize prompt contract (marker path deleted, docs/11 D7)', () => {
@@ -1469,7 +1477,7 @@ describe('Encounter Cartographer run', () => {
       const { campaign, cartographer } = await setup();
       // The model never fixes the overrun: the bounded retry is spent, the
       // room ships with its target lowered (2 → 1) and the advisory.
-      chatMock.mockResolvedValue({ text: JSON.stringify(overBrief('10')), modelUsed: 'test-model', fallback: null });
+      chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(overBrief('10'))));
       const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const, encounterPartyLevel: 2 };
       const runId = await runEngine.startRun(runInput);
       await waitForRun(async () => {

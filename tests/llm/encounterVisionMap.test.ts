@@ -44,6 +44,7 @@ import {
 import { repopulateEncounter } from '@/features/campaign/encounterRegen';
 import { clearDatabase } from '../db/helpers';
 import { seedComplexEncounterTarget } from '../helpers/visionComplexTarget';
+import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -194,6 +195,9 @@ beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
   chatMock.mockReset();
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call
+  // on the shared vision contract; answer it unless a test queues its own.
+  answerClassicBattlemapFigureChecks(chatMock);
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
   drawFillGradeMock.mockReset();

@@ -18,6 +18,7 @@ import {
 import { settingsSchema } from '@/domain/settings';
 import { clearDatabase } from '../db/helpers';
 import { seedComplexEncounterTarget } from '../helpers/visionComplexTarget';
+import { chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import { useProgressStore } from '@/lib/progress';
 import { chat } from '@/llm/openrouter';
 import { encounterRunAdapters } from '@/llm/runEngine';
@@ -279,7 +280,7 @@ describe('Regenerate everything steering (docs/11 vision path, complex only)', (
   it('a classic override beats a vision setting', async () => {
     const { campaign } = await setup('vision');
     const target = await seedComplexEncounterTarget(campaign.id, complexLayoutFixture());
-    chatMock.mockResolvedValue({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
+    chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(COMPLEX_BRIEF)));
     await regenerateEncounterEverything(target.id, { redesignProse: false, dungeonMapPath: 'classic' });
     const after = await getArtifact(target.id);
     if (after?.kind !== 'encounter') throw new Error('encounter missing');
@@ -312,7 +313,7 @@ describe('Regenerate everything steering (docs/11 vision path, complex only)', (
     const target = await seedSingleTarget(campaign.id);
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(SMITH_DRAFT), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValue({ text: JSON.stringify(SINGLE_MAP_BRIEF), modelUsed: 'test-model', fallback: null });
+      .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(SINGLE_MAP_BRIEF)));
     await regenerateEncounterEverything(target.id, { redesignProse: false, dungeonMapPath: 'vision' });
     const after = await getArtifact(target.id);
     if (after?.kind !== 'encounter') throw new Error('encounter missing');

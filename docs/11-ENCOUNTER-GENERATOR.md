@@ -1761,7 +1761,13 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   (initial pass + count check + focused re-ask per miss, first-mark-wins
   dedupe, still-missing ⇒ `VisionLocateError` naming the letters, and a
   non-empty `figures` ⇒ `BattlemapFiguresError` before any re-ask — the map
-  step fails loud and finalizes NOTHING). The lab
+  step fails loud and finalizes NOTHING),
+  `buildVisionFiguresInstruction` + `assertBattlemapHasNoFigures` (docs/17 row
+  341: the CLASSIC path's figure check — ONE more caller of the SAME contract,
+  parser and assertion, asking `"marks": []` because a classic map carries no
+  letter plaques; a non-empty `figures` throws the SAME
+  `BattlemapFiguresError`, and a vision call that cannot run propagates loud).
+  The lab
   aliases the shared contract (`dungeonVisionReplySchema`,
   `parseDungeonVisionReply`) — lab imports FROM the shared module, never
   the reverse.
@@ -2873,7 +2879,7 @@ owner-ratified principle is **WHO HOLDS GROUND TRUTH**:
   field honestly from the site's own nature (outdoor in the open,
   dungeon only inside an enclosed built complex).
 
-### The battlemap is EMPTY TERRAIN — positively framed in the prompts, ENFORCED in the vision read (owner-directed, docs/17 row 337)
+### The battlemap is EMPTY TERRAIN — positively framed in every map prompt, ENFORCED on BOTH map paths (owner-directed, docs/17 rows 337 and 341)
 
 Owner ask, verbatim: *"Battle maps illustration need to make sure that no
 mobs/players are depicted in the background image"*. Both map prompts ALREADY
@@ -2894,7 +2900,7 @@ image.
   same constant, so the classic and vision paths cannot drift). The existing
   bans are untouched (declared boundary, docs/17 rows 319/328), and the owner's
   positive text clause still rides both classic modes.
-- **The enforcement (the ONE free read — no new vision call).** The
+- **The enforcement (the VISION path — the ONE free read, no new vision call).** The
   complex/dungeon `vision-map` step already sends the generated map to a
   vision model to locate the room plaques. That SAME read now also answers
   whether anything alive is depicted. `visionLocateReplySchema` carries
@@ -2912,12 +2918,32 @@ image.
   no run success. NO auto-strip, NO silent accept, NO retry loop — the
   existing regenerate affordance is the repair. The plaque locate/verify
   behaviour and its schema fields (`marks`, `note`) are unchanged.
-- **THE NAMED GAP — the classic path has NO vision read.** For a classic
-  battlemap (both modes) the rule stays PROMPT-LEVEL ONLY. Enforcing it there
-  would cost one vision call per generated map, and that price is the OWNER's
-  decision, deliberately NOT taken in this slice. So a vision map is framed
-  AS empty terrain and VERIFIED empty; a classic map is framed but not
-  verified.
+- **The enforcement (the CLASSIC path — ONE vision call per generated map, the
+  price the owner approved).** The classic stylize step has no read of its own,
+  so `runEngine.runEncounterStylize` now calls ONE new entry point,
+  `visionDungeon.assertBattlemapHasNoFigures(clients, { imageDataUrl })`, on
+  EVERY generated classic map and BEFORE anything is stored. It asks the SAME
+  `visionLocateReplySchema` through the SAME `visionPass` transport and the
+  SAME resolved chat model as the vision path's locate read — the ONE client
+  factory `runEngine.visionLocateClients(chatModel)` composes both callers, so
+  there is no second vision mechanism and no second settings field. The
+  instruction (`buildVisionFiguresInstruction`) names `"marks": []` because a
+  classic map carries no letter plaques, so the ONE contract still parses; the
+  SAME `assertEmptyBattlemap` throws `BattlemapFiguresError` on a non-empty
+  `figures`. Verifying before storage is deliberately simpler than the vision
+  path's store-then-prune: the check runs on the RAW generated blob, ahead of
+  `normalizeImageAspect`, `intakeImage` and `createImage`, so a refused map
+  leaves NO image row and NOTHING to prune, and the run FAILS naming what the
+  read saw. A vision call that cannot run PROPAGATES — a missing or
+  vision-incapable model fails the step with the transport's own reason
+  (`visionLocatePass` already owns that sentence), never a silent skip (AGENTS
+  rule 1). The owner's decision, verbatim: *"yes everywhere. You see, mobs are
+  placed ON TOP of the map, makes no sense that the picture has them"*.
+- **THE HONEST LIMIT (BOTH paths, part of the deliverable).** This check is a
+  MODEL judgement about the image, not a pixel proof: a small or stylized
+  figure can be missed. The guarantee is *"verified by a vision read, and
+  refused by name when seen"* — NEVER "impossible to depict", and never a claim
+  that a shipped map is provably figure-free.
 
 ### Mode derivation and the owner override
 

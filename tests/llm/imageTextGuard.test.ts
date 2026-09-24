@@ -32,6 +32,7 @@ import { BATTLEMAP_EMPTY_TERRAIN_CLAUSE, buildLabeledMapPrompt } from '@/llm/vis
 import { sha256Hex } from '@/lib/hash';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
 
 /**
  * The image text rule is POSITIVE (docs/17 row 319). The shared `Avoid:` list
@@ -81,6 +82,9 @@ beforeEach(async () => {
   await seedBuiltInPersonas();
   await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
   chatMock.mockReset();
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call
+  // on the shared vision contract; answer it unless a test queues its own.
+  answerClassicBattlemapFigureChecks(chatMock);
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
   searchRulesMock.mockReset();

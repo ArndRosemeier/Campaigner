@@ -34,6 +34,7 @@ import {
   type Persona,
 } from '@/domain';
 import { clearDatabase } from './helpers';
+import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
 
 vi.mock('@/llm/openrouter', () => ({
   chat: vi.fn(),
@@ -82,6 +83,11 @@ beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
   chatMock.mockReset();
+  // The classic stylize step's figure check (docs/17 row 341) is a chat call;
+  // answer it by default (this file is a NODE project — no FileReader — so the
+  // data-URL transport is mocked too).
+  answerClassicBattlemapFigureChecks(chatMock);
+  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,bWFw');
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
   toastErrorMock.mockClear();

@@ -67,6 +67,7 @@ import {
 } from '@/features/covers/cover-image-queue';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
+import { answerClassicBattlemapFigureChecks, chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import '@/features/campaign/post-run-extras';
 import {
   createArtifact,
@@ -1017,11 +1018,7 @@ describe('post-run-extras.test.ts', () => {
         }),
       );
       chatMock
-        .mockResolvedValue({
-          text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
+        .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(ENCOUNTER_DRAFT)))
         .mockResolvedValueOnce({
           text: JSON.stringify(ENCOUNTER_DRAFT),
           modelUsed: 'test-model',
@@ -1077,6 +1074,7 @@ describe('post-run-extras.test.ts', () => {
 
     it('a campaign-level encounter auto-enqueues a campaign-level (moduleId null) job', async () => {
       const { campaign, smith } = await seedEncounterPersonas();
+      answerClassicBattlemapFigureChecks(chatMock);
       chatMock
         .mockResolvedValueOnce({
           text: JSON.stringify(ENCOUNTER_DRAFT),
@@ -1208,11 +1206,7 @@ describe('post-run-extras.test.ts', () => {
 
     it('a Cartographer run never auto-enqueues (it maps its own encounter in-run)', async () => {
       const { campaign, cartographer } = await seedEncounterPersonas();
-      chatMock.mockResolvedValue({
-        text: JSON.stringify(CARTOGRAPHER_BRIEF),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
+      chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(CARTOGRAPHER_BRIEF)));
 
       const runId = await runEngine.startRun({
         campaign,
@@ -1249,6 +1243,7 @@ describe('post-run-extras.test.ts', () => {
           autoGenerateBattlemaps: true,
         }),
       );
+      answerClassicBattlemapFigureChecks(chatMock);
       chatMock
         .mockResolvedValueOnce({
           text: JSON.stringify(ENCOUNTER_DRAFT),
@@ -1377,11 +1372,7 @@ describe('post-run-extras.test.ts', () => {
       // Same proven reply sequence as the automatic-battlemap tests above: the
       // Smith draft, then the Cartographer's 4-room fresh stocking.
       chatMock
-        .mockResolvedValue({
-          text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
+        .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(ENCOUNTER_DRAFT)))
         .mockResolvedValueOnce({
           text: JSON.stringify(ENCOUNTER_DRAFT),
           modelUsed: 'test-model',

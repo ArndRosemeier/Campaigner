@@ -9001,14 +9001,19 @@ helper (`tests/helpers/sourceCode`): the memory is defined once with the reader 
 exported resolver — a re-spelled inline copy reds BY FILE. A THIRD arm the same file keeps honest: the resolver's
 caller inventory is declared, so a new caller is a deliberate edit, not a silent one.
 
-### The battlemap is EMPTY TERRAIN — enforced through the ONE existing vision read (docs/17 row 337, docs/11 §The battlemap is EMPTY TERRAIN)
+### The battlemap is EMPTY TERRAIN — enforced on BOTH map paths (docs/17 rows 337 and 341, docs/11 §The battlemap is EMPTY TERRAIN)
 
 Both map prompts already banned characters/monsters/tokens (the classic
 `usabilityBans` and `buildLabeledMapPrompt`'s no-monsters clause) and the owner
 still saw figures baked into the map — the row-319 lesson that a NEGATIVE
 instruction is not a guarantee. So the rule is now framed POSITIVELY in every
-map prompt and ENFORCED in the `vision-map` step's existing vision read, with
-no new call and no retry loop. The families:
+map prompt and ENFORCED: in the `vision-map` step's existing vision read (no
+new call), and — after the owner's *"yes everywhere"* decision — on the CLASSIC
+stylize path too, at the cost of ONE vision call per generated classic map.
+**HONEST LIMIT, on BOTH paths: this is a MODEL judgement about the image, not a
+pixel proof — a small or stylized figure can be missed, so the guarantee is
+"verified by a vision read and refused by name when seen", never "impossible to
+depict".** The families:
 
 | Pin | What it holds | What reds it |
 |---|---|---|
@@ -9018,9 +9023,16 @@ no new call and no retry loop. The families:
 | `REQUIRES the figures answer: a reply that omits it fails at the boundary` (same file) | `visionLocateReplySchema` needs `figures` — omission, or an empty-string figure, THROWS; `{"marks": [], "figures": []}` parses. NO default exists | giving `figures` a `.default([])` |
 | `fails a map that DEPICTS figures, naming them and the rule, before any re-ask` (same file) | `locateDungeonLabels` throws `BattlemapFiguresError` carrying `['a goblin', 'a wolf']` with the naming sentence, after exactly ONE vision pass (a missing plaque never triggers the re-ask) | ignoring a non-empty figures list |
 | `fails the map step loud with nothing persisted when the map depicts figures` (`tests/llm/encounterVisionMap.test.ts`) | driven through the REAL engine: the run ends `failed` with the figures and the rule in `errorMessage`, `resultArtifactId` is null, NO image row survives, and there is exactly ONE map generation + ONE vision read | accepting/finalizing a map that depicts figures |
+| `asks the ONE emptiness question and names "marks": [] for a plaqueless classic map` / `throws BattlemapFiguresError by name when the read sees figures…` (`tests/llm/encounterClassicMapFigures.test.ts`) | the classic instruction rides the SAME positive clause, asks for `figures` BY NAME and names `"marks": []`; `assertBattlemapHasNoFigures` throws `BattlemapFiguresError` on a non-empty answer with the naming sentence, and passes an honest `[]` | putting the figure question on a second reply schema, or an instruction that never asks it |
+| `keeps ONE reply contract — no second reply schema beside the shared one` / `composes the vision client in ONE place, called by BOTH map paths` (same file) | `visionDungeon` exports exactly ONE `*ReplySchema` with ONE `figures` field, and `runEngine` composes `this.visionLocatePass(` exactly once while calling `assertBattlemapHasNoFigures(` and `locateDungeonLabels(` once each | a second reply schema/parser for the classic path, or a second inline vision-client wiring |
+| `fails a CLASSIC map that depicts figures BEFORE any intake or store, naming them` (same file) | driven through the REAL engine: the run ends `failed` with the figures and the rule in `errorMessage`, `resultArtifactId` is null, NO image row survives, `normalizeImageAspect`/`intakeImage` were NEVER called (the check runs on the RAW blob before any store), exactly ONE map generation + ONE vision read | skipping the check in the classic stylize loop, or moving it after intake/store |
+| `proceeds exactly as before when the read answers "figures": []…` (same file) | the classic pipeline reaches `completed` through `brief→layout→schematic→stylize→pick→finalize` with one stored map, and the figure read carried the SAME model (`resolveChatModel(settings)`) and the SAME `vision-dungeon-locate` strict contract the vision path sends | blocking the store on a clean answer, or swapping the classic read onto a second provider/contract |
+| `refuses the classic map LOUD when the vision call cannot run — never a silent skip` (same file) | a failing `chat` on the classic figure read fails the run with the transport's own reason and persists nothing | a catch-and-continue around the classic check |
 
 The lab bench (`tests/lab/labeled-dungeon.test.ts`) shares the contract, so its
 reply fixtures carry `figures: []` and its parse pins add the missing-figures
-violation. NO new Dexie version, settings field, vision call or pipeline was
-added; the classic path's gap (no vision read, so the rule is prompt-level
-only there) is named in docs/11 and docs/17 row 337 as a priced decision.
+violation. NO new Dexie version, settings field or pipeline was added; the
+classic path's ONE added vision call per generated map is the price the owner
+approved (docs/17 row 341), and every test that drives a classic encounter run
+answers that read through the ONE shared helper
+`tests/helpers/battlemapFigureChat.ts` (never a per-file copy).
