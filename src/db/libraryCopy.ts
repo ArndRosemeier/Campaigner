@@ -3,10 +3,13 @@ import { spellIndexLookup } from '@/db/spellRepo';
 import {
   copyCreatureStats,
   copyStatBlockWithSpells,
+  creatureCopyRefusal,
+  type CreatureCopy,
   type CreatureCopyResult,
 } from '@/domain/libraryCopy';
 import type { CreatureRef } from '@/domain/creature';
 import type { StatBlock } from '@/domain/statblock';
+import { monsterEntrySchema, type Id, type MonsterEntry } from '@/domain';
 
 /**
  * The LIVE half of the ONE copy-on-write operation (docs/17 row 255a): the
@@ -56,3 +59,50 @@ export function copyCreatureStatsFromDb(
 export function copyStatBlockSpellsFromDb(statBlock: StatBlock): Promise<StatBlock> {
   return copyStatBlockWithSpells(statBlock, { spellIndex: spellIndexLookup() });
 }
+
+/**
+ * THE ONE entry SHAPE a copied library creature takes on a roster (docs/17 row
+ * 349, folding `features/play/battle/spawn-picker-logic.buildMobPickEntry`'s
+ * body down here).
+ *
+ * It exists because the clean-cut ROSTER REPAIR (`db/mobStatRepair`) must
+ * produce the very entry the SPAWN PATH produces — a repaired row that minted
+ * its own shape would be the second shape this project keeps paying for. The
+ * shape is three fields off ONE `CreatureCopy`: the inline `statBlock`, the
+ * STAMPED `sourceLine` and the opaque `originToken`. Nothing is composed here —
+ * all three come off the copy seam (`copyCreatureStats`), which is why a repair
+ * and a spawn cannot disagree about them.
+ *
+ * `name` is the roster row's OWN name (the library's spelling is display-only),
+ * and `count`/`notes`/`treasure` are the freshly-created row's values — a
+ * REPAIR of an EXISTING row takes only the three fields, so the row's own
+ * count, notes, treasure and name are never rewritten (requirement 5 of the
+ * row-349 slice).
+ */
+export function copiedMobEntryFrom(name: string, copy: CreatureCopy): MonsterEntry {
+  return monsterEntrySchema.parse({
+    name,
+    count: 1,
+    notes: '',
+    treasure: '',
+    source: { type: 'inline', statBlock: copy.statBlock },
+    sourceLine: copy.sourceLine,
+    originToken: copy.originToken,
+  });
+}
+
+/**
+ * THE builder for a core-mob pick: copy `chunkId`'s creature onto a fresh
+ * single-instance roster entry. `features/play/battle/spawn-picker-logic
+ * .buildMobPickEntry` delegates here, and the repair spends the SAME shape.
+ *
+ * A vanished chunk is a LOUD refusal (`creatureCopyRefusal`), never a
+ * uuid-only pointer: there is nothing to copy, and minting a reference is
+ * exactly what the owner's copy-only rule forbids.
+ */
+export async function buildCopiedMobEntry(chunkId: Id, entryName: string): Promise<MonsterEntry> {
+  const result = await copyCreatureStatsFromDb({ chunkId }, entryName);
+  if (result.status === 'unresolved') throw creatureCopyRefusal(entryName, result.reason);
+  return copiedMobEntryFrom(entryName, result.copy);
+}
+

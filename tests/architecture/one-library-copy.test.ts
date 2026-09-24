@@ -48,9 +48,12 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
     // The declared callers, post clean cut (docs/17 row 278): the CAST path
     // (`db/creatureRepo.castCreatureAsNpc`, which owns `creatureLookups` and
     // therefore calls the PURE seam directly — importing the live wrapper from
-    // the module the wrapper imports would be a cycle) and the three ROSTER
-    // write paths, each through the live wrapper. The migration's backfill was
-    // deleted with the older-shape layer.
+    // the module the wrapper imports would be a cycle) and the ROSTER write
+    // paths, each through the live wrapper. The migration's backfill was
+    // deleted with the older-shape layer. Since docs/17 row 349 the battle
+    // spawn path reaches the wrapper through the SHARED builder
+    // (`buildCopiedMobEntry`), so the wrapper's callers are the editor, the run
+    // engine and the clean-cut ROSTER REPAIR.
     expect(filesWith('copyCreatureStats(')).toEqual([
       'src/db/creatureRepo.ts',
       'src/db/libraryCopy.ts',
@@ -58,9 +61,47 @@ describe('one library-copy operation (SOURCE SCAN, docs/17 row 255a)', () => {
     ]);
     expect(filesWith('copyCreatureStatsFromDb(')).toEqual([
       'src/db/libraryCopy.ts',
+      'src/db/mobStatRepair.ts',
       'src/features/campaign/components/monster-source.tsx',
-      'src/features/play/battle/spawn-picker-logic.ts',
       'src/llm/runEngine.ts',
+    ]);
+  });
+
+  it('builds a copied mob entry in ONE place, for the spawn path AND the repair', () => {
+    // THE ENTRY SHAPE of a copied library creature (docs/17 row 349): the
+    // inline block, the STAMPED line and the opaque token onto a roster entry.
+    // It lives in the copy seam's db half and NOWHERE else; the spawn picker
+    // (`buildMobPickEntry`) delegates to it rather than re-spelling it, so a
+    // repaired row and a spawned one cannot become two shapes.
+    expect(filesWith('copiedMobEntryFrom(')).toEqual([
+      'src/db/libraryCopy.ts',
+      'src/db/mobStatRepair.ts',
+    ]);
+    expect(filesWith('buildCopiedMobEntry(')).toEqual([
+      'src/db/libraryCopy.ts',
+      'src/features/play/battle/spawn-picker-logic.ts',
+    ]);
+    // …and the builder DELEGATES: the picker's own body no longer resolves a
+    // copy or parses an entry. The repair does NOT use the throwing builder — it
+    // branches on the copy seam's own `unresolved` answer so one bad row cannot
+    // abort the pass — but it spends the SAME shape (`copiedMobEntryFrom`, pinned
+    // above), which is what makes the two entries identical.
+    expect(CODE['src/features/play/battle/spawn-picker-logic.ts']).not.toContain(
+      'copyCreatureStatsFromDb(',
+    );
+    expect(CODE['src/features/play/battle/spawn-picker-logic.ts']).not.toContain(
+      'originToken: result.copy.originToken',
+    );
+  });
+
+  it('runs the clean-cut roster repair from ONE trigger', () => {
+    // The repair itself (docs/17 row 349) is defined once and reached from ONE
+    // place: the battle surface's heal-on-open effect, the same trigger the
+    // battlemap heal uses (docs/17 row 328). A second caller would be a second
+    // trigger for one mechanism.
+    expect(filesWith('repairStatlessMobsForBattle(')).toEqual([
+      'src/db/mobStatRepair.ts',
+      'src/features/play/battle/BattleSurface.tsx',
     ]);
   });
 

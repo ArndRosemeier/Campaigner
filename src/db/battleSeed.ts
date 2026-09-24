@@ -626,24 +626,40 @@ export async function spawnRosterInstance(
   // second row (under the retired mob-artifact model the synthetic id WAS that
   // stable key; now the identity is). Rows without an identity fall back to the
   // id, which is stable for them (npc-ref/pc rows mirror an artifact).
+  //
+  // A DROPPED ROW'S TOKENS FOLLOW THE ROW THAT WAS KEPT (docs/17 row 349). The
+  // synthetic `id` is a FRESH handle per expansion, so dropping the duplicate
+  // and appending its tokens unchanged left every spawned instance pointing at
+  // a row that is not in `seedFighters` — `buildFighterStatsLookup` answered
+  // `undefined` for it and the spawned mob read as STATLESS ("No combat stats —
+  // excluded from initiative", no initiative roll, no damage) even though its
+  // numbers were sitting on the board. The remap is what makes a second spawn
+  // of an already-frozen creature resolve like the first.
+  //
   // The merge and the token append read the row INSIDE the write's transaction
   // (docs/17 row 336): a board write that landed while the expansion ran is
   // appended to, never clobbered.
   await updateBattle(battle.id, (current) => {
     const merged = [...current.seedFighters];
+    const replaced = new Map<Id, Id>();
     for (const seed of expansion.seedFighters) {
-      const duplicate = merged.some((existingSeed) =>
+      const duplicate = merged.find((existingSeed) =>
         seed.creatureKey !== undefined
           ? existingSeed.creatureKey === seed.creatureKey
           : existingSeed.id === seed.id,
       );
-      if (!duplicate) merged.push(seed);
+      if (duplicate === undefined) merged.push(seed);
+      else if (duplicate.id !== seed.id) replaced.set(seed.id, duplicate.id);
     }
+    const tokens = expansion.tokens.map((token) => {
+      const kept = token.artifactId === null ? undefined : replaced.get(token.artifactId);
+      return kept === undefined ? token : { ...token, artifactId: kept };
+    });
     return {
       seedFighters: merged,
       board: {
         ...current.board,
-        tokens: [...current.board.tokens, ...expansion.tokens],
+        tokens: [...current.board.tokens, ...tokens],
       },
     };
   });

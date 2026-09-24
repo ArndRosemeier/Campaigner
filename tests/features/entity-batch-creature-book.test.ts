@@ -421,12 +421,15 @@ describe('the lookup and the cast are ONE seam (AGENTS §Centralization)', () =>
     expect(files).toContain('features/modules/entity-batch.ts');
 
     // `db/creatureRepo` OWNS the pool, `llm/creatorRoster` turns it into the
-    // prompt vocabulary (docs/17 row 114) and `entity-batch` RESOLVES a slot
-    // against it. A fourth caller is either a consumer that must state its
-    // reason here, or the second copy of "which creature does this name mean?"
-    // — the exact defect this pin exists to catch.
+    // prompt vocabulary (docs/17 row 114), `entity-batch` RESOLVES a slot
+    // against it, and `db/mobStatRepair` (docs/17 row 349) resolves a NAME-ONLY
+    // roster row against it. Every reader is a CONSUMER of the ONE matcher
+    // (`domain/libraryCreature.libraryCitationForSlot`) — a reader that filtered
+    // the pool itself would be the second copy of "which creature does this name
+    // mean?" this pin exists to catch.
     expect(callers('listLibraryCreatures')).toEqual([
       'db/creatureRepo.ts',
+      'db/mobStatRepair.ts',
       'features/modules/entity-batch.ts',
       'llm/creatorRoster.ts',
     ]);

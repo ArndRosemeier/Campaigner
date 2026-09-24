@@ -87,6 +87,7 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import { encounterBattlemap } from '@/db/battleSeed';
+import { repairStatlessMobsForBattle } from '@/db/mobStatRepair';
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact, getArtifact } from '@/db/artifactRepo';
 import { creaturePortraitImageIn, tokenCreature } from '@/db/creatureRepo';
@@ -550,6 +551,43 @@ export function BattleSurface(): JSX.Element {
         toastError('Could not give this battle the encounter’s battlemap', error);
       });
   }, [battle, encounterMapSlot]);
+
+  // (b) HEAL THE CLEAN CUT'S STATLESS ROWS ON OPEN (docs/17 row 349). The purge
+  // rewrote roster rows that cited a library creature into NAME-ONLY entries
+  // (`db/cleanCut`), so their tokens seeded with no HP, no initiative and no
+  // frozen seed row — the owner's *"they don't have combat attributes"*. The
+  // repair copies the library creature's block back ONTO the row and gives the
+  // already-frozen tokens the seed row + HP a fresh spawn would have made; it is
+  // idempotent and writes NOTHING when there is nothing to heal, and its report
+  // is the LOUD surface for a name that does not resolve (the row then keeps its
+  // honest "No combat stats" badge — there is nothing to copy with the pack
+  // gone). ONE trigger, the same heal-on-open pattern as the map above: the
+  // moment the owner opens the battle he reported. The ref is the second belt
+  // against a re-fire while the pass is in flight.
+  const statsHealAttemptedRef = useRef<Id | null>(null);
+  useEffect(() => {
+    if (battle === undefined) return;
+    if (statsHealAttemptedRef.current === battle.id) return;
+    statsHealAttemptedRef.current = battle.id;
+    void repairStatlessMobsForBattle(battle.id)
+      .then((report) => {
+        const restored = [...report.healed, ...report.tokensHealed].join(', ');
+        if (restored !== '') {
+          toastInfo(`Restored the combat stats the library clean-up dropped for ${restored}`);
+        }
+        for (const miss of report.unresolved) {
+          toastError(
+            `Could not restore combat stats for “${miss.name}” — ${miss.reason}. ` +
+              'It stays without stats until the book it comes from is installed again.',
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        // A failed repair must be retryable on this mount, not swallowed.
+        statsHealAttemptedRef.current = null;
+        toastError('Could not restore this battle’s missing combat stats', error);
+      });
+  }, [battle]);
 
   /**
    * THE surface's board write (docs/17 row 336). It hands the CHANGE to

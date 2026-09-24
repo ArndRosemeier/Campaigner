@@ -124,6 +124,37 @@ export function libraryCreaturePool(
 }
 
 /**
+ * THE refusal that means "no creature of this NAME answers in the library" —
+ * either the library holds none, or it holds several and the caller named no
+ * book to disambiguate them (docs/17 row 349).
+ *
+ * It is a NAMED class for the same reason its level-filtered sibling below is:
+ * the answer to it can be DESIGNED rather than exceptional. The module batch
+ * lets it propagate (a cast it cannot make fails the batch loudly), but the
+ * clean-cut ROSTER REPAIR (`db/mobStatRepair`) must record it as the honest
+ * "this row stays statless" arm and carry on with the other rows — and it may
+ * not do that by catching everything, which would swallow a real failure (a
+ * broken pool read) as if it were an unresolvable name (AGENTS rule 1). A
+ * caller catches exactly THIS class and nothing else.
+ *
+ * The MESSAGE is unchanged by the class: every pre-349 pin matches on the
+ * sentence, not the type.
+ */
+export class NoLibraryCreatureError extends Error {
+  /** The caller that asked (a module entity, or a roster row being repaired). */
+  readonly entityName: string;
+  /** The creature name the caller asked for. */
+  readonly wanted: string;
+
+  constructor(entityName: string, wanted: string, message: string) {
+    super(message);
+    this.name = 'NoLibraryCreatureError';
+    this.entityName = entityName;
+    this.wanted = wanted;
+  }
+}
+
+/**
  * THE refusal that means "the library holds nothing this entity can be cast
  * from AT ITS RECORDED LEVEL" (docs/17 row 302).
  *
@@ -194,6 +225,13 @@ export class NoLevelAppropriateCreatureError extends Error {
  * exactly one candidate, or a level nothing answers. `nearest` is the caller's
  * suggestion list (a MESSAGE, never a resolution) and is omitted where no
  * suggestion is wanted.
+ *
+ * THE TWO UNRESOLVED ARMS ARE A NAMED CLASS (`NoLibraryCreatureError`, docs/17
+ * row 349), not a bare `Error` a caller has to read the sentence of: the
+ * clean-cut roster repair must record "this row stays statless" and carry on
+ * with the other rows, and catching exactly this class is what keeps that from
+ * becoming a catch-all that swallows a real failure (a broken pool read) as if
+ * it were an unresolvable name. The MESSAGE is byte-unchanged by the class.
  */
 export async function libraryCitationForSlot(
   entityName: string,
@@ -282,7 +320,9 @@ export async function libraryCitationForSlot(
         ? ''
         : ` — the nearest creatures this library holds: ${await describe(nearest)}`;
     const system = options.system;
-    throw new Error(
+    throw new NoLibraryCreatureError(
+      entityName,
+      wanted,
       `bestiary cast: ${named}, but this workspace's library holds no creature of that name` +
         `${system === undefined ? '' : ` for ${GAME_SYSTEM_LABELS[system]}`} — ` +
         'import the book it comes from, or name a creature the library has (never a guess)' +
@@ -309,7 +349,9 @@ export async function libraryCitationForSlot(
       // the sentence names THAT set (and its level); with no level `atLevel` IS
       // `sameName`, and these bytes are the pre-302 refusal exactly.
       const atLevelClause = level === undefined ? '' : ` at level ${String(level)}`;
-      throw new Error(
+      throw new NoLibraryCreatureError(
+        entityName,
+        wanted,
         `bestiary cast: ${named}, but this workspace's library holds ${String(atLevel.length)} creatures ` +
           `of that name${atLevelClause} (${await describe(atLevel)}) — name the book in the entity's bestiary slot ` +
           '("book": the book\'s title) so the cast is unambiguous',

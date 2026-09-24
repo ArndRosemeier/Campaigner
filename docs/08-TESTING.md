@@ -9050,3 +9050,37 @@ classic path's ONE added vision call per generated map is the price the owner
 approved (docs/17 row 341), and every test that drives a classic encounter run
 answers that read through the ONE shared helper
 `tests/helpers/battlemapFigureChat.ts` (never a per-file copy).
+
+### The clean-cut roster repair heals by COPY, and never invents a block (docs/17 row 349)
+
+The owner's report — *"Spawned mobs say they don't have combat attributes although they
+do have them. So initiative and damaging does not work. These were standard core mobs"* —
+is the library-isolation purge rewriting a roster row that CITED a creature into a
+name-only `{ type: 'none' }` entry, so the numbers were gone even though the library still
+holds them. The repair (`db/mobStatRepair.repairStatlessMobsForBattle`) copies them back
+onto the row and gives the already-frozen tokens the seed row + HP a fresh spawn would
+have made. Every pin lives in `tests/db/mobStatRepair.test.ts` and the routing in
+`tests/architecture/one-library-copy.test.ts`; NO new Dexie version, settings field or
+migration exists for it, and the ONE trigger is the battle surface's heal-on-open effect.
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `heals a name-only row into EXACTLY the entry the spawn path builds` | the DIFFERENTIAL: the repaired entry deep-equals `buildMobPickEntry(chunkId, name)`'s output for the same library creature — the repair and the spawn path spend ONE entry shape (`db/libraryCopy.copiedMobEntryFrom`) | the repair minting its own shape, or resolving the wrong creature (arm A: the name resolution removed ⇒ `expected [] to deeply equal [ 'Goblin Boss' ]`) |
+| `writes the copy’s stamped origin line and opaque token onto the healed row` | the copy's three fields against the LIBRARY's OWN facts (`hp 21`, `sourceLine 'Bestiary p.12'`, `originToken libraryCreatureKey(chunkId)`) — an INDEPENDENT assertion, because the shared builder makes the differential above blind to a field the builder itself drops | dropping `sourceLine`/`originToken` in the shared builder (arm C: `expected undefined to be 'Bestiary p.12'`) |
+| `never rewrites the row’s own name, count, notes or treasure` | only the copy's three fields are transplanted onto the existing row | replacing the whole entry from the builder (a repaired row would lose its notes/treasure/count) |
+| `leaves an already-statful roster entry BYTE-IDENTICAL while healing the name-only one` | an AUTHORED inline block (hp 30, its own notes/treasure) beside a name-only row: the pass heals only the name-only one and the statful entry's stored JSON is unchanged | healing every arm instead of only `none` (arm B: `expected [ 'Goblin Boss', 'Hobgoblin' ] to deeply equal [ 'Hobgoblin' ]`) |
+| `keeps an unresolvable name name-only and NAMES it in the report` | with the pack absent the row STAYS `{ type: 'none' }` and the report carries `{ name, reason }` with the seam's own "holds no creature of that name" sentence — never an invented block, never a silent skip | inventing a block, or dropping the row from the report |
+| `is idempotent: a second pass changes nothing` | the second pass returns `{ healed: [], unresolved: [], tokensHealed: [] }` and BOTH the artifact row and the battle row are byte-identical — the pass writes nothing when there is nothing to heal | a pass that rewrites rows/boards it did not change |
+| `gives the frozen statless tokens a seed row, initiative and damage` | THE OWNER'S JOURNEY: the two seeded tokens gain ONE shared frozen seed row (hp 21, bonus +2, `creatureKey chunk:<id>`, the frozen block), each token's `artifactId` points at it, `combatHpForToken` is non-null (the badge predicate `BattleSurface` reads), `rollTokenInitiative` freezes +2, and positions/conditions are the frozen ones | healing the row but not the frozen board, or moving tokens/conditions while doing it |
+| `lets HP change on a healed token (damage works on the board)` | the NPC damage arm (token-owned HP through `battleRepo.mutateBattleBoard`) lands: `combatHpForToken` reads `{ maxHp: 21, currentHp: 16, ownedBy: 'token' }` | a healed token whose HP write is refused/absorbed |
+| `makes a spawn from the healed roster statful too` | a spawn AFTER the heal is statless-free, and its token resolves through the seed row — the bug this pin found: `db/battleSeed.spawnRosterInstance` dropped a deduped seed row but kept its dangling id on the token | removing the token remap in `spawnRosterInstance` (arm D: `expected undefined to be 21`) |
+
+`tests/architecture/one-library-copy.test.ts` adds the exactly-one routing: the copied-mob
+entry SHAPE (`copiedMobEntryFrom(`) appears in the copy seam and the repair only, the
+`copyCreatureStatsFromDb(` holder list is declared (the repair is one of its four callers),
+`buildMobPickEntry(` delegates and no longer resolves a copy itself, and
+`repairStatlessMobsForBattle(` is DEFINED once and called from ONE trigger
+(`BattleSurface.tsx`). `tests/features/entity-batch-creature-book.test.ts`'s
+`listLibraryCreatures` reader inventory names the repair as a CONSUMER of the ONE matcher,
+not a second one.
+

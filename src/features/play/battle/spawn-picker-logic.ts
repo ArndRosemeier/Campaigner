@@ -10,9 +10,8 @@ import { getBattle, updateBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
 import { getCampaign } from '@/db/campaignRepo';
 import { creatureCoverImageId } from '@/db/creatureRepo';
-import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
+import { buildCopiedMobEntry } from '@/db/libraryCopy';
 import { findPersonaBySlug } from '@/db/personaRepo';
-import { creatureCopyRefusal } from '@/domain/libraryCopy';
 import { awaitCompletedRun } from '@/features/campaign/encounterRegen';
 import {
   enqueueSingleMobPortrait,
@@ -122,23 +121,18 @@ export function nextFreeSpawnPoint(
  * born, so the spawned token's numbers do not depend on the pack staying
  * installed.
  *
+ * IT IS A DELEGATE (docs/17 row 349): the entry SHAPE lives once, in
+ * `db/libraryCopy.buildCopiedMobEntry`, so the clean-cut roster repair
+ * (`db/mobStatRepair`) and this spawn path cannot produce two different shapes
+ * for one copied creature. The doc line above is the contract both obey.
+ *
  * A vanished chunk is a LOUD refusal (`creatureCopyRefusal`), never a
  * uuid-only pointer: there is nothing to copy, and minting a reference is
  * exactly what the owner's rule forbids. Exported for tests (SpawnPicker.tsx's
  * click handler is UI-only).
  */
 export async function buildMobPickEntry(chunkId: Id, entryName: string): Promise<MonsterEntry> {
-  const result = await copyCreatureStatsFromDb({ chunkId }, entryName);
-  if (result.status === 'unresolved') throw creatureCopyRefusal(entryName, result.reason);
-  return monsterEntrySchema.parse({
-    name: entryName,
-    count: 1,
-    notes: '',
-    treasure: '',
-    source: { type: 'inline', statBlock: result.copy.statBlock },
-    sourceLine: result.copy.sourceLine,
-    originToken: result.copy.originToken,
-  });
+  return buildCopiedMobEntry(chunkId, entryName);
 }
 
 /**

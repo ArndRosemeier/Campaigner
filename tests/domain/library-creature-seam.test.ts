@@ -7,6 +7,7 @@ import {
   libraryCitationForSlot,
   libraryCreaturePool,
   NoLevelAppropriateCreatureError,
+  NoLibraryCreatureError,
 } from '@/domain/libraryCreature';
 import { libraryCreatureLevelSort } from '@/llm/encounterRoster';
 
@@ -160,6 +161,21 @@ describe('the library name-match seam, called with NO database (docs/17 row 248)
     await expect(
       libraryCitationForSlot('Aunt Agatha', { creature: 'Beholder' }, POOL, LOOKUPS),
     ).rejects.toThrow(/holds no creature of that name/);
+    // ...and the refusal is the NAMED class, not a bare Error (docs/17 row
+    // 349): the clean-cut roster repair catches EXACTLY this class, so a real
+    // failure (a broken pool read) still propagates instead of being recorded
+    // as an unresolvable name. The MESSAGE above is unchanged by the class.
+    const failure: unknown = await libraryCitationForSlot(
+      'Aunt Agatha',
+      { creature: 'Beholder' },
+      POOL,
+      LOOKUPS,
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(NoLibraryCreatureError);
+    expect((failure as NoLibraryCreatureError).wanted).toBe('Beholder');
   });
 
   it('narrows an AMBIGUOUS name by the slot book, and refuses without one', async () => {
