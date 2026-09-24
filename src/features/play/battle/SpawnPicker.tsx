@@ -46,11 +46,57 @@ import {
 
 export type SpawnSortMode = 'name' | 'level';
 
+/**
+ * A pick row's classes (docs/17 row 336, defect C). On a SHORT viewport the row
+ * used to squeeze its action into the label, so the Spawn buttons collided with
+ * the names: the label truncates inside its own track (`min-w-0`), the action
+ * never shrinks (`shrink-0`), and a long name wraps the action onto its own
+ * line instead of squeezing it. Groups that render IN FLOW use this class; the
+ * virtualized Core-mobs list keeps a fixed row HEIGHT (the virtualizer's own
+ * contract), so its rows take the same truncation/shrink rules without `wrap`
+ * — wrapping there would push content past the row's absolute height.
+ */
+const PICK_ROW_CLASS = 'flex flex-wrap items-center justify-between gap-2';
+const PICK_LABEL_CLASS = 'min-w-0 flex-1 truncate text-xs';
+const PICK_ACTION_CLASS = 'shrink-0';
+
 /** A statless spawn is a loud toast (AGENTS rule 1) — never dummy numbers. */
 function announceStatless(statless: readonly string[]): void {
   if (statless.length > 0) {
     toastError(`No combat stats for: ${statless.join('; ')} — they will not roll initiative`);
   }
+}
+
+/**
+ * "Illustrate spawned mobs that have no image" — ONE flag, TWO placements
+ * (docs/17 row 336, defect B; owner: *"Also, I do not see a checkbox to
+ * illustrate it."*). The owner authored a mob and looked for the tick in the
+ * AUTHOR section, so the choice is offered there as well as in the dialog
+ * header; both instances are this ONE component bound to the same
+ * `illustrateMissing` state, and there is only ever the one illustrate path
+ * (`authorAndSpawnMob`'s `illustrate` / `illustrateAfterSpawnIfAsked`), so the
+ * two placements cannot disagree and cannot double-illustrate.
+ */
+function IllustrateToggle({
+  testId,
+  checked,
+  onChange,
+}: {
+  testId: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}): JSX.Element {
+  return (
+    <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+      <Checkbox
+        checked={checked}
+        data-testid={testId}
+        aria-label="Illustrate spawned mobs that have no image"
+        onCheckedChange={onChange}
+      />
+      Illustrate spawned mobs that have no image
+    </label>
+  );
 }
 
 export interface SpawnPickerProps {
@@ -299,7 +345,10 @@ export function SpawnPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="spawn-picker" className="sm:max-w-lg">
+      <DialogContent
+        data-testid="spawn-picker"
+        className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-lg"
+      >
         <DialogHeader>
           <DialogTitle>Spawn into battle</DialogTitle>
           <DialogDescription>
@@ -332,18 +381,20 @@ export function SpawnPicker({
             Sort: {sortMode === 'name' ? 'Name' : 'Level'}
           </Button>
         </div>
-        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-          <Checkbox
-            checked={illustrateMissing}
-            data-testid="spawn-picker-illustrate"
-            aria-label="Illustrate spawned mobs that have no image"
-            onCheckedChange={(checked) => {
-              setIllustrateMissing(checked);
-            }}
-          />
-          Illustrate spawned mobs that have no image
-        </label>
-        <div className="flex max-h-[50vh] min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+        <IllustrateToggle
+          testId="spawn-picker-illustrate"
+          checked={illustrateMissing}
+          onChange={setIllustrateMissing}
+        />
+        {/* THE BODY IS THE ONLY SCROLLER (docs/17 row 336, defect C): the
+            dialog is a flex column bounded by the viewport (`max-h-[85dvh]`,
+            `overflow-hidden` on the content), so the header, the search field
+            and the illustrate ticks stay reachable on a short iPad viewport
+            while these groups scroll inside `min-h-0 flex-1`. */}
+        <div
+          data-testid="spawn-picker-body"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1"
+        >
           <section aria-label="This encounter" data-testid="spawn-picker-group-roster">
             <p className="mb-1 text-xs font-medium text-zinc-400">
               This encounter — “{encounterName}”
@@ -355,8 +406,8 @@ export function SpawnPicker({
             ) : (
               <ul className="space-y-1">
                 {visibleRoster.map((pick) => (
-                  <li key={pick.index} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate text-xs">
+                  <li key={pick.index} className={PICK_ROW_CLASS}>
+                    <span className={PICK_LABEL_CLASS}>
                       {pick.name} ×{String(pick.count)}
                       {pick.level !== null && pick.level !== '' && (
                         <span className="ml-1 text-zinc-500">Lv {pick.level}</span>
@@ -365,6 +416,7 @@ export function SpawnPicker({
                     <Button
                       size="sm"
                       variant="outline"
+                      className={PICK_ACTION_CLASS}
                       data-testid={`spawn-pick-roster-${String(pick.index)}`}
                       onClick={() => {
                         void spawnRosterPick(pick.index);
@@ -386,8 +438,8 @@ export function SpawnPicker({
             ) : (
               <ul className="space-y-1">
                 {visibleNpcs.map((pick) => (
-                  <li key={pick.artifactId} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate text-xs">
+                  <li key={pick.artifactId} className={PICK_ROW_CLASS}>
+                    <span className={PICK_LABEL_CLASS}>
                       {pick.name}
                       {pick.level !== null && pick.level !== '' ? (
                         <span className="ml-1 text-zinc-500">Lv {pick.level}</span>
@@ -398,6 +450,7 @@ export function SpawnPicker({
                     <Button
                       size="sm"
                       variant="outline"
+                      className={PICK_ACTION_CLASS}
                       data-testid={`spawn-pick-npc-${pick.artifactId}`}
                       onClick={() => {
                         void spawnNpcPick(pick);
@@ -449,7 +502,7 @@ export function SpawnPicker({
                             }}
                             className="flex items-center justify-between gap-2 py-1"
                           >
-                            <span className="min-w-0 truncate text-xs">
+                            <span className={PICK_LABEL_CLASS}>
                               {entry.name}
                               {entry.level !== '' && (
                                 <span className="ml-1 text-zinc-500">Lv {entry.level}</span>
@@ -458,6 +511,7 @@ export function SpawnPicker({
                             <Button
                               size="sm"
                               variant="outline"
+                              className={PICK_ACTION_CLASS}
                               data-testid={`spawn-pick-mob-${entry.chunkId}`}
                               onClick={() => {
                                 void spawnMobPick(entry);
@@ -480,6 +534,15 @@ export function SpawnPicker({
             className="border-t border-white/10 pt-3"
           >
             <p className="mb-1 text-xs font-medium text-zinc-400">Author a new mob (NPC Smith)</p>
+            {/* Defect B: the SAME choice as the header's, where the owner
+                looked for it. One state, one illustrate path. */}
+            <div className="mb-2">
+              <IllustrateToggle
+                testId="spawn-picker-author-illustrate"
+                checked={illustrateMissing}
+                onChange={setIllustrateMissing}
+              />
+            </div>
             <div className="flex flex-col gap-2">
               <Input
                 className="h-8 text-sm"

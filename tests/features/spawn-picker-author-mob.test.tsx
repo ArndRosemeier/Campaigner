@@ -268,6 +268,37 @@ describe('spawn picker author-and-spawn (docs/17 row 333, part 2)', () => {
     });
   });
 
+  it('illustrates the freshly authored mob when the AUTHOR section’s own tick is used — one flag, one path (docs/17 row 336, defect B)', async () => {
+    await renderPicker();
+    const user = userEvent.setup();
+    // The owner looked for the tick here: the author section carries its own
+    // instance of the SAME control, bound to the same flag.
+    await user.click(screen.getByTestId('spawn-picker-author-illustrate'));
+    expect(screen.getByTestId('spawn-picker-illustrate')).toHaveAttribute('aria-checked', 'true');
+    await fillAndSubmit('Painted Mob', '5', 'A mob that needs a face.');
+    await waitFor(() => {
+      expect(enqueueMock).toHaveBeenCalledTimes(1);
+    });
+    const npcId = lastStartRun?.targetArtifactId as Id;
+    expect(enqueueMock).toHaveBeenCalledWith({
+      campaignId,
+      creatureKey: authoredPortraitKey(npcId),
+      name: 'Painted Mob',
+      artifactId: npcId,
+    });
+  });
+
+  it('authoring with the tick OFF spawns WITHOUT illustrating (the author tick is not a second default)', async () => {
+    await renderPicker();
+    await fillAndSubmit('Plain Mob', '4', 'No face needed.');
+    await waitFor(() => {
+      expect(vi.mocked(toastSuccess)).toHaveBeenCalled();
+    });
+    const battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.some((token) => token.label.startsWith('Plain Mob'))).toBe(true);
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('a level outside 1..20 is REFUSED before any run starts', async () => {
     await expect(
       authorAndSpawnMob({

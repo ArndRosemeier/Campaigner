@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -293,5 +293,122 @@ describe('spawn picker illustrate fill (docs/17 row 333, part 1)', () => {
       name: 'Wisp',
       artifactId: wispId,
     });
+  });
+});
+
+/**
+ * DEFECT B and DEFECT C of docs/17 row 336.
+ *
+ * B: the owner authored a mob and reported *"Also, I do not see a checkbox to
+ * illustrate it."* — the ONE illustrate control lived in the dialog HEADER
+ * only. It is now offered in the AUTHOR section too, as the SAME control bound
+ * to the SAME `illustrateMissing` flag and the same illustrate path.
+ *
+ * C: *"the spawn buttons for non authored mobs are overlapping on my ipad"*.
+ * The dialog now fits a short viewport with the BODY as the only scroller (the
+ * header and both ticks stay outside it), and every pick row is built so the
+ * label truncates in its own track and the action never shrinks.
+ *
+ * WHAT THESE PINS CANNOT PROVE, STATED RATHER THAN IMPLIED: jsdom computes no
+ * layout, so no pin here — or anywhere in this suite — can observe the owner's
+ * actual overlap or the pixels of a dialog on a 768×1024 iPad. These pins
+ * assert the STRUCTURE the fix turned on (which element scrolls, which classes
+ * carry the truncation/shrink contract); the visual result owes a real-device
+ * check, recorded in docs/08 §Battle-surface test families and in docs/17 row
+ * 336.
+ */
+describe('spawn picker layout + the illustrate control in the author section (docs/17 row 336, defects B and C)', () => {
+  it('offers the SAME illustrate choice in the author section, bound to the ONE flag (defect B)', async () => {
+    await renderPicker();
+    const authorSection = screen.getByTestId('spawn-picker-author');
+    const authorTick = within(authorSection).getByTestId('spawn-picker-author-illustrate');
+    const headerTick = screen.getByTestId('spawn-picker-illustrate');
+    expect(authorTick).toHaveAttribute('aria-checked', 'false');
+    expect(headerTick).toHaveAttribute('aria-checked', 'false');
+
+    // One state: ticking EITHER placement shows on BOTH.
+    const user = userEvent.setup();
+    await user.click(authorTick);
+    expect(authorTick).toHaveAttribute('aria-checked', 'true');
+    expect(headerTick).toHaveAttribute('aria-checked', 'true');
+    await user.click(headerTick);
+    expect(headerTick).toHaveAttribute('aria-checked', 'false');
+    expect(authorTick).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('illustrates through the ONE path when the AUTHOR tick is the one used (defect B)', async () => {
+    await renderPicker();
+    await userEvent.setup().click(screen.getByTestId('spawn-picker-author-illustrate'));
+    await userEvent.setup().click(screen.getByTestId('spawn-pick-roster-0'));
+    await waitFor(() => {
+      expect(enqueueMock).toHaveBeenCalledTimes(1);
+    });
+    // The same target the header tick produces: one flag, one path.
+    expect(enqueueMock).toHaveBeenCalledWith({
+      campaignId,
+      creatureKey: authoredPortraitKey(trollId),
+      name: 'Troll',
+      artifactId: trollId,
+    });
+  });
+
+  it('keeps the header and both illustrate ticks OUTSIDE the only scroller, in a viewport-bounded dialog (defect C)', async () => {
+    await renderPicker();
+    const dialog = screen.getByTestId('spawn-picker');
+    const body = screen.getByTestId('spawn-picker-body');
+
+    // The dialog is a flex column bounded by the viewport and NOT itself a
+    // scroller — so a short iPad viewport cannot push the header off screen.
+    expect(dialog.className).toContain('max-h-[85dvh]');
+    expect(dialog.className).toContain('flex-col');
+    expect(dialog.className).toContain('overflow-hidden');
+
+    // THE BODY IS THE ONLY SCROLLER inside the dialog.
+    const scrollers = [...dialog.querySelectorAll('.overflow-y-auto')];
+    expect(scrollers).toEqual([body]);
+    expect(body.className).toContain('min-h-0');
+    expect(body.className).toContain('flex-1');
+
+    // The header's controls stay reachable: neither the search field nor the
+    // header's illustrate tick is inside the scrolling body.
+    expect(within(body).queryByTestId('spawn-picker-illustrate')).toBeNull();
+    expect(within(body).queryByTestId('spawn-picker-search')).toBeNull();
+    expect(within(body).queryByTestId('spawn-picker-sort')).toBeNull();
+  });
+
+  it('makes every pick row collision-proof — label truncates, action never shrinks (defect C)', async () => {
+    await renderPicker();
+    const body = screen.getByTestId('spawn-picker-body');
+    const actions = [
+      screen.getByTestId('spawn-pick-roster-0'),
+      ...[...body.querySelectorAll('[data-testid^="spawn-pick-npc-"]')],
+      ...[...body.querySelectorAll('[data-testid^="spawn-pick-mob-"]')],
+    ];
+    // Every group is represented, or this pin would be vacuous.
+    expect(actions.length).toBeGreaterThanOrEqual(4);
+    for (const action of actions) {
+      expect(action.className).toContain('shrink-0');
+    }
+    // Every row pairs its action with a label that truncates inside the row.
+    const rows = [
+      ...body.querySelectorAll('li'),
+      ...body.querySelectorAll('[data-testid="spawn-picker-mob-row"]'),
+    ];
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+    for (const row of rows) {
+      const label = row.querySelector('span');
+      expect(label?.className).toContain('min-w-0');
+      expect(label?.className).toContain('truncate');
+      expect(row.querySelector('button')).not.toBeNull();
+    }
+    // IN-FLOW rows may wrap the action onto its own line; the VIRTUALIZED mob
+    // rows must not (their height is the virtualizer's, so wrapping would
+    // overlap the next row — the very defect being fixed).
+    for (const row of body.querySelectorAll('li')) {
+      expect(row.className).toContain('flex-wrap');
+    }
+    for (const row of body.querySelectorAll('[data-testid="spawn-picker-mob-row"]')) {
+      expect(row.className).not.toContain('flex-wrap');
+    }
   });
 });
