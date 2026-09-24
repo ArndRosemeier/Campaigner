@@ -51,14 +51,37 @@ export type SpawnSortMode = 'name' | 'level';
  * used to squeeze its action into the label, so the Spawn buttons collided with
  * the names: the label truncates inside its own track (`min-w-0`), the action
  * never shrinks (`shrink-0`), and a long name wraps the action onto its own
- * line instead of squeezing it. Groups that render IN FLOW use this class; the
- * virtualized Core-mobs list keeps a fixed row HEIGHT (the virtualizer's own
- * contract), so its rows take the same truncation/shrink rules without `wrap`
- * — wrapping there would push content past the row's absolute height.
+ * line instead of squeezing it.
+ *
+ * `whitespace-nowrap` is the explicit half of that contract (docs/17 row 339):
+ * `truncate` already implies `white-space: nowrap`, but the vertical invariant
+ * is what the virtualized list below depends on — ONE line per label, so every
+ * Core-mobs row is the height of its action button and nothing else. Groups that
+ * render IN FLOW use `PICK_ROW_CLASS`; the virtualized Core-mobs rows take these
+ * same label/action classes WITHOUT `flex-wrap` and are MEASURED (row 339).
  */
 const PICK_ROW_CLASS = 'flex flex-wrap items-center justify-between gap-2';
-const PICK_LABEL_CLASS = 'min-w-0 flex-1 truncate text-xs';
+const PICK_LABEL_CLASS = 'min-w-0 flex-1 truncate whitespace-nowrap text-xs';
 const PICK_ACTION_CLASS = 'shrink-0';
+
+/**
+ * The Core-mobs row's INITIAL height in px — the floor the virtualizer starts
+ * from, never the height its rows are given (docs/17 row 339).
+ *
+ * WHY A HARD px HEIGHT WAS THE DEFECT: this row's content is REM-based (the
+ * `sm` action button carries `pointer-coarse:min-h-11` = 2.75rem, and
+ * `app/theme/uiScale` multiplies the root font-size by `--ui-scale`, 0.9–2), so
+ * its real height is 44px only at `uiScale` 1 on a fine pointer. The list was
+ * the one surface whose item size was a hard `44` px literal, and the row forced
+ * itself to that estimate: on the owner's iPad the pointer is COARSE (button
+ * 2.75rem = 44px at scale 1, so the row's 4px vertical padding is exactly eaten
+ * and adjacent buttons touch) and at scale 1.1–2 the button is 48.4–88px inside
+ * a 44px box, which is the reported overlap. A fixed px height therefore cannot
+ * be "proven to exceed the content" — the app's own font scale moves the content
+ * — so the virtualizer MEASURES instead and this constant is only the
+ * pre-measurement guess and the row's `minHeight` floor.
+ */
+const MOB_ROW_ESTIMATE_PX = 44;
 
 /** A statless spawn is a loud toast (AGENTS rule 1) — never dummy numbers. */
 function announceStatless(statless: readonly string[]): void {
@@ -233,8 +256,21 @@ export function SpawnPicker({
   const mobVirtualizer = useVirtualizer({
     count: visibleMobEntries.length,
     getScrollElement: () => mobListRef.current,
-    estimateSize: () => 44,
+    estimateSize: () => MOB_ROW_ESTIMATE_PX,
     overscan: 12,
+    /**
+     * MEASURE the row, never assume it (docs/17 row 339). The row is absolutely
+     * positioned and takes its height from its own content, so the real height is
+     * whatever the action button needs at THIS root font size; `getBoundingClientRect`
+     * is read rather than the library's default `offsetHeight` because it is also
+     * the arm jsdom can drive (the pins stub the row's rect and require the row
+     * PITCH to follow it). `Math.max` keeps `MOB_ROW_ESTIMATE_PX` as the floor in
+     * both worlds: a browser whose rect is smaller than the estimate (fine
+     * pointer) and jsdom, which computes no layout at all and answers 0 — so no
+     * row can collapse to zero height in a layout-less environment.
+     */
+    measureElement: (element: Element): number =>
+      Math.max(MOB_ROW_ESTIMATE_PX, element.getBoundingClientRect().height),
   });
 
   /** The npc artifact an entry points at, from the snapshot this dialog already
@@ -347,7 +383,7 @@ export function SpawnPicker({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="spawn-picker"
-        className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-lg"
+        className="flex max-h-[85vh] flex-col overflow-hidden supports-[height:100dvh]:max-h-[85dvh] sm:max-w-lg"
       >
         <DialogHeader>
           <DialogTitle>Spawn into battle</DialogTitle>
@@ -387,7 +423,8 @@ export function SpawnPicker({
           onChange={setIllustrateMissing}
         />
         {/* THE BODY IS THE ONLY SCROLLER (docs/17 row 336, defect C): the
-            dialog is a flex column bounded by the viewport (`max-h-[85dvh]`,
+            dialog is a flex column bounded by the viewport (`max-h-[85vh]` with
+            the `dvh` value behind `@supports` — docs/17 row 339 — and
             `overflow-hidden` on the content), so the header, the search field
             and the illustrate ticks stay reachable on a short iPad viewport
             while these groups scroll inside `min-h-0 flex-1`. */}
@@ -491,13 +528,20 @@ export function SpawnPicker({
                         return (
                           <div
                             key={entry.chunkId}
+                            ref={mobVirtualizer.measureElement}
+                            data-index={item.index}
                             data-testid="spawn-picker-mob-row"
                             style={{
                               position: 'absolute',
                               top: 0,
                               left: 0,
                               width: '100%',
-                              height: `${String(item.size)}px`,
+                              /* The estimate is a FLOOR, never the height (docs/17
+                                 row 339). `height: item.size` made the measurement
+                                 self-fulfilling: the row was 44px by decree, so it
+                                 could never report the 48.4–88px its own action
+                                 button needs once `--ui-scale` > 1. */
+                              minHeight: MOB_ROW_ESTIMATE_PX,
                               transform: `translateY(${String(item.start)}px)`,
                             }}
                             className="flex items-center justify-between gap-2 py-1"

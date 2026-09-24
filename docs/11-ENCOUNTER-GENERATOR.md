@@ -1426,18 +1426,45 @@ illustration path.
 **THE DIALOG FITS A SHORT VIEWPORT, AND THE BODY IS ITS ONLY SCROLLER (docs/17
 row 336, defect C).** Owner, verbatim: *"the spawn buttons for non authored mobs
 are overlapping on my ipad"*. The dialog content is a flex column bounded by the
-viewport (`max-h-[85dvh]`, `overflow-hidden`) and the groups div is
+viewport (`max-h-[85vh]` with the `dvh` value behind `@supports` — row 339 below
+— and `overflow-hidden`) and the groups div is
 `min-h-0 flex-1 overflow-y-auto`, so the header, the search field and BOTH
 illustrate ticks stay outside the scroller and reachable on a short viewport
 instead of scrolling away above it. Every pick row is collision-proof: the row
 is `flex flex-wrap items-center justify-between gap-2`, the label is
-`min-w-0 flex-1 truncate` and the action is `shrink-0`, so a long name truncates
-inside its own track and the Spawn button keeps its size (wrapping to its own
-line rather than squeezing). The virtualized **Core mobs** rows take the same
-label/action classes but NOT `flex-wrap`: their height is the virtualizer's
-fixed row size, so a wrapped row would overlap the next one — the very defect
-being fixed. jsdom computes no layout, so the pins assert this STRUCTURE and
-the pixels owe a real-device check (docs/08 §Battle-surface test families).
+`min-w-0 flex-1 truncate whitespace-nowrap` and the action is `shrink-0`, so a
+long name truncates inside its own track and the Spawn button keeps its size
+(wrapping to its own line rather than squeezing). The virtualized **Core mobs**
+rows take the same label/action classes but NOT `flex-wrap`, and their height is
+MEASURED rather than fixed (row 339 below). jsdom computes no layout, so the pins
+assert this STRUCTURE and the pixels owe a real-device check (docs/08
+§Battle-surface test families).
+
+**THE CORE-MOBS ROWS ARE MEASURED, AND THE DIALOG'S CAP HAS A `vh` FALLBACK
+(docs/17 row 339).** Owner, verbatim: *"Core mobs also have overlapping spawn
+buttons."* The row-336 fix above deliberately excluded this list ("a fixed row
+height would overlap — the defect itself"); his second report is the reality
+check. **The mechanism MEASURED from the code is the VERTICAL one, and it is the
+app's own rem scale:** this row's content is REM-based (the `sm` action button
+carries `pointer-coarse:min-h-11` = 2.75rem, and `app/theme/uiScale` multiplies
+the root font-size by `--ui-scale`, 0.9–2) while the list forced every row to the
+virtualizer's hard 44px ESTIMATE — so on a COARSE pointer (the iPad) at scale 1
+the button alone exactly eats the row's 4px vertical padding (adjacent buttons
+touch, which is what "overlapping" looks like), and at scale > 1 a 48.4–88px
+button overflows the 44px box and genuinely overlaps its neighbours. `estimateSize`
+is therefore only a documented FLOOR (`MOB_ROW_ESTIMATE_PX`) and the virtualizer
+MEASURES each row (`measureElement` + `data-index`, with `minHeight` instead of
+`height: item.size`, which made the measurement self-fulfilling: the element was
+44px by decree and could never report its real height). The dialog's cap is `vh`
+FIRST with the `dvh` value behind `@supports` (`max-h-[85vh]
+supports-[height:100dvh]:max-h-[85dvh]`), because a `dvh`-only declaration is
+dropped WHOLE by a browser that does not know the unit (iOS/iPadOS < 16.4) and
+would leave the dialog unbounded; the shared `components/ui/dialog.tsx` base cap
+carries the same fallback (every existing caller already declared its own `vh`
+cap). jsdom computes no layout, so the pins assert the STRUCTURE — the row PITCH
+follows a stubbed row rect, the inline-style shape, the classes and both cap
+declarations — and the visual result OWES a real-device check (docs/08
+§Battle-surface test families).
 
 ### Author a new mob — spawn a freshly NPC-Smith-authored mob, ALWAYS with a stat block (owner-directed, 2026-09-23, docs/17 row 333)
 

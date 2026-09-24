@@ -72,7 +72,7 @@ describe('progress dock offset', () => {
 });
 
 describe('dialog viewport clamp', () => {
-  it('constrains dialog content to the dynamic viewport height with scroll', () => {
+  it('constrains dialog content to the viewport height with scroll, on a `vh` fallback the `dvh` value may override', () => {
     render(
       <Dialog open>
         <DialogContent>
@@ -82,7 +82,13 @@ describe('dialog viewport clamp', () => {
     );
 
     const content = screen.getByRole('dialog');
-    expect(content.className).toContain('max-h-[calc(100dvh-2rem)]');
+    // docs/17 row 339: an older iPad (iOS < 16.4) drops a `dvh` declaration
+    // WHOLE, so the cap must exist in `vh` first — otherwise the dialog is
+    // unbounded and `overflow-y-auto` has no height to scroll inside. jsdom
+    // applies no CSS, so this pins the STRUCTURE (both declarations present);
+    // the rendered result owes a real-device check (docs/08 §jsdom notes).
+    expect(content.className).toContain('max-h-[calc(100vh-2rem)]');
+    expect(content.className).toContain('supports-[height:100dvh]:max-h-[calc(100dvh-2rem)]');
     expect(content.className).toContain('overflow-y-auto');
   });
 });

@@ -412,3 +412,104 @@ describe('spawn picker layout + the illustrate control in the author section (do
     }
   });
 });
+
+/**
+ * THE VIRTUALIZED CORE-MOBS ROWS (docs/17 row 339). Owner, verbatim: *"Core
+ * mobs also have overlapping spawn buttons."*
+ *
+ * WHY THE VERTICAL DEFECT IS THIS GROUP'S ALONE. The two in-flow groups lay
+ * their rows out in a `space-y-1` list: a row that grows pushes the next one
+ * down. The Core-mobs list is VIRTUALIZED — its rows are absolutely positioned at
+ * `translateY(item.start)` and, until this row, forced to `height: item.size`,
+ * where `item.size` was the 44px ESTIMATE. The row's content is REM-based (the
+ * `sm` action button carries `pointer-coarse:min-h-11` = 2.75rem, and
+ * `app/theme/uiScale` multiplies the root font-size by `--ui-scale`, 0.9–2), so
+ * it is 44px tall only at scale 1 on a fine pointer. On the owner's iPad the
+ * pointer is COARSE — at scale 1 the button alone exactly eats the row's 4px
+ * vertical padding, so adjacent buttons touch, and at scale > 1 a 48.4–88px
+ * button overflows the 44px box and overlaps the neighbouring rows. The estimate
+ * is now the row's FLOOR and the virtualizer MEASURES, so `item.start` is a real
+ * height.
+ *
+ * HOW A TEST WITH NO LAYOUT SEES IT. jsdom computes no boxes, but the
+ * VIRTUALIZER reads the row's own rect — so these pins stub the mob rows' rect at
+ * 60px and require the row PITCH and the track height to follow the MEASUREMENT,
+ * never the estimate, plus the inline-style shape that keeps the measurement from
+ * being self-fulfilling. What no pin here can see is the real overlap or the
+ * pixels of a 768x1024 iPad: those owe a real-device check (docs/08
+ * §Battle-surface test families, docs/17 row 339).
+ */
+describe('spawn picker Core-mobs rows are MEASURED, not sized by the estimate (docs/17 row 339)', () => {
+  /**
+   * The mob rows answer `height`; every other element keeps jsdom's zero box, so
+   * nothing outside the list learns a fiction.
+   */
+  function stubMobRowRect(height: number): void {
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLElement) {
+        return new DOMRect(0, 0, 0, this.dataset.testid === 'spawn-picker-mob-row' ? height : 0);
+      },
+    });
+  }
+
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown })
+      .getBoundingClientRect;
+  });
+
+  it('spaces the rows by the MEASURED height, never by the 44px estimate', async () => {
+    stubMobRowRect(60);
+    await renderPicker();
+    const rows = screen.getAllByTestId('spawn-picker-mob-row');
+    // The fixture's two core mobs must both be mounted, or the pitch pin below
+    // would be vacuous.
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    // A 44px pitch IS the defect's shape, so wait for the MEASURED one.
+    await waitFor(() => {
+      expect(rows[1]?.style.transform).toBe('translateY(60px)');
+    });
+    for (const [index, row] of rows.entries()) {
+      expect(row.style.transform, `row ${String(index)}`).toBe(
+        `translateY(${String(index * 60)}px)`,
+      );
+    }
+    // The scroll track is the summed measured height, not count × 44.
+    expect(rows[0]?.parentElement?.style.height).toBe(`${String(rows.length * 60)}px`);
+  });
+
+  it('gives each row a FLOOR, never a fixed height, so the measurement cannot be self-fulfilling', async () => {
+    await renderPicker();
+    const [row] = screen.getAllByTestId('spawn-picker-mob-row');
+    // `height: item.size` made the row 44px by DECREE: the element could then
+    // never report the 48.4–88px its own action button needs at --ui-scale > 1,
+    // so the measurement would confirm the estimate forever.
+    expect(row?.style.height).toBe('');
+    expect(row?.style.minHeight).toBe('44px');
+  });
+
+  it('keeps every Core-mobs label on ONE truncating line beside a shrink-0 action', async () => {
+    await renderPicker();
+    const rows = screen.getAllByTestId('spawn-picker-mob-row');
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      const label = row.querySelector('span');
+      expect(label?.className).toContain('whitespace-nowrap');
+      expect(label?.className).toContain('truncate');
+      expect(label?.className).toContain('min-w-0');
+      expect(row.querySelector('button')?.className).toContain('shrink-0');
+    }
+  });
+
+  it('caps the dialog in `vh`, with the `dvh` value behind @supports', async () => {
+    await renderPicker();
+    const dialog = screen.getByTestId('spawn-picker');
+    // An older iPad (iOS < 16.4) drops a `dvh` declaration WHOLE, which would
+    // leave this dialog unbounded — so the `vh` cap must exist WITHOUT it.
+    expect(dialog.className).toContain('max-h-[85vh]');
+    expect(dialog.className).toContain('supports-[height:100dvh]:max-h-[85dvh]');
+    expect(dialog.className).toContain('flex-col');
+    expect(dialog.className).toContain('overflow-hidden');
+  });
+});
