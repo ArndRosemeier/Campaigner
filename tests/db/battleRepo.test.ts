@@ -25,6 +25,7 @@ import {
   mutateBattleBoard,
   updateBattle,
 } from '@/db/battleRepo';
+import type { BattlePatch } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { createCampaign } from '@/db/campaignRepo';
@@ -568,6 +569,15 @@ describe('the board-mutation seam (docs/17 row 336)', () => {
     expect(after?.board.tokens.map((token) => token.id).sort()).toEqual(
       [first.id, second.id].sort(),
     );
+  });
+
+  it('refuses a whole-board patch at the TYPE level — a snapshot board cannot even be expressed (docs/17 row 336)', () => {
+    // The compile tier is the enforcement (GATE_TESTS=0): if `board` is ever
+    // put back into `BattlePatch`, the directive below becomes unused and
+    // `tsc -b` fails. A comment cannot make that guarantee; this can.
+    // @ts-expect-error a board in a plain patch is a snapshot-derived replace
+    const patch: BattlePatch = { board: null };
+    expect(patch).toBeDefined();
   });
 
   it('derives a mutation from the CURRENT board — a combined update cannot resurrect a removed token', async () => {
