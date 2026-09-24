@@ -3713,9 +3713,19 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
     };
     const user = userEvent.setup();
     await user.click(screen.getByTestId('player-safe-toggle'));
-    await flushAsyncUpdates(30);
-    expect(interleaved).toBe(true);
-    expect(spawnedId).not.toBeNull();
+    // DETERMINISTIC, not a flush budget (docs/17 row 344). This pin asserts that
+    // the reconcile's prune commit interleaves a real spawn, and `interleaved`
+    // flips INSIDE that commit's wrapper. A fixed `flushAsyncUpdates(30)` counts
+    // event-loop turns, so a BUSY box can reach the assertion before the commit
+    // has run — this pin went red once under the two-chunk gate while the whole
+    // file passed 122/122 in isolation. Waiting for the condition keeps the pin's
+    // meaning (a prune that never commits still FAILS, on the timeout) without
+    // depending on how fast the shared machine is.
+    await waitFor(() => {
+      expect(interleaved).toBe(true);
+      expect(spawnedId).not.toBeNull();
+    });
+    await flushAsyncUpdates();
     const after = await currentBattle(moduleId);
     expect(after.board.tokens.map((token) => token.id)).toContain(spawnedId);
   });
