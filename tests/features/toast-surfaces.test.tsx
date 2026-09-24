@@ -62,7 +62,7 @@ import {
 } from '../helpers/spawn-picker-fixtures';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { PromptStylesSection } from '@/features/settings/prompt-styles-section';
-import { listBattlesByModule, saveBattleBoard } from '@/db/battleRepo';
+import { listBattlesByModule, mutateBattleBoard } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
@@ -1459,12 +1459,12 @@ describe('spawn-picker.test.tsx', () => {
       const victim = battle.board.tokens[0];
       if (victim === undefined) throw new Error('no tokens on the board');
       await act(async () => {
-        await saveBattleBoard(battle.id, {
+        await mutateBattleBoard(battle.id, () => ({
           ...battle.board,
           tokens: battle.board.tokens.map((token) =>
             token.id === victim.id ? { ...token, x: base.x, y: base.y } : token,
           ),
-        });
+        }));
       });
       await flushAsyncUpdates();
       await renderPicker();

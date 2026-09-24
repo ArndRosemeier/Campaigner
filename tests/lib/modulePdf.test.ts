@@ -17,7 +17,7 @@ import {
 } from '@/domain';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { patchBattle, ensureBattleForEncounter } from '@/db/battleRepo';
+import { ensureBattleForEncounter, updateBattle } from '@/db/battleRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createImage } from '@/db/imageRepo';
 import {
@@ -841,10 +841,10 @@ describe('the encounter map plate (owner: maps belong in the PDF, at the right p
       seeded.module.id,
       seeded.encounterId,
     );
-    await patchBattle(battle.id, {
+    await updateBattle(battle.id, () => ({
       encounterArtifactId: seeded.encounterId,
       board: { ...battle.board, mapImageId: boardMap },
-    });
+    }));
 
     const { definition } = buildModulePdfDocument({
       module: seeded.module,

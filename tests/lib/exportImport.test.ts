@@ -16,7 +16,7 @@ import {
   listModulesByCampaign,
   patchModule,
 } from '@/db/moduleRepo';
-import { ensureBattleForEncounter, patchBattle } from '@/db/battleRepo';
+import { ensureBattleForEncounter, updateBattle } from '@/db/battleRepo';
 import { insertCreatureImageRow } from '@/db/creatureImages';
 import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import {
@@ -538,7 +538,7 @@ describe('export v2', () => {
       data: encounterDataWith([]) as never,
     });
     const battle = await ensureBattleForEncounter(campaign.id, module.id, encounter.id);
-    await patchBattle(battle.id, {
+    await updateBattle(battle.id, () => ({
       encounterArtifactId: encounter.id,
       board: {
         ...battle.board,
@@ -561,7 +561,7 @@ describe('export v2', () => {
           },
         ],
       },
-    });
+    }));
     const run = await createRun({
       campaignId: campaign.id,
       personaId: newId(),
@@ -677,7 +677,7 @@ describe('export v2', () => {
       treasure: '',
       conditions: [],
     };
-    await patchBattle(battle.id, {
+    await updateBattle(battle.id, () => ({
       board: {
         ...battle.board,
         tokens: [{ ...token, id: newId(), creatureKey: contentCreatureKey(DECOMPOSED, null) }],
@@ -696,7 +696,7 @@ describe('export v2', () => {
           creatureKey: contentCreatureKey(DECOMPOSED, null),
         },
       ],
-    });
+    }));
 
     // The export carries the FOLDED bytes; rewrite them to what a
     // pre-migration app wrote, which is exactly the file this pin imports.

@@ -15,17 +15,18 @@ import {
   getBattle,
   listBattlesByModule,
   patchBattle,
-  saveBattleBoard,
+  mutateBattleBoard,
+  updateBattle,
   saveBattleStage,
   saveBattleView,
 } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
 import type * as toastModule from '@/lib/toast';
 import type { Battle, EncounterLayout, StatBlock } from '@/domain';
-import { seedBattleFromEncounter } from '@/db/battleSeed';
+import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
-import { createModule, newId, packRooms, statBlockSchema } from '@/domain';
+import { createModule, monsterEntrySchema, newId, packRooms, statBlockSchema } from '@/domain';
 import { artifactPath } from '@/app/routes';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { currentBattle, renderSurface } from '../helpers/battle-surface-route';
@@ -35,14 +36,39 @@ import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { adoptionArenaLayout, createMapImage } from '../helpers/battle-map-fixtures';
 import { BATTLE_VIEW_PERSIST_DEBOUNCE_MS } from '@/features/play/battle/use-battle-view';
+import { spawnPickedEntry } from '@/features/play/battle/spawn-picker-logic';
 import { useBattleState } from '@/features/play/battle/use-battle';
 
-// Wrap (not replace) saveBattleBoard so veil-drag tests can count commits —
-// zero writes while a drag is live, exactly one on release. Every other test
-// keeps the real behavior.
+/**
+ * The interleave instrument for the lost-update pin (docs/17 row 336): a board
+ * write that lands WHILE the surface's own commit is in flight — the owner's
+ * *"it appears in the scene, but is gone at the next redraw"*. The wrapper
+ * below calls it with the 1-based commit number, then delegates to the real
+ * seam, so a test can arrange "the spawn landed first, then the surface's
+ * snapshot-derived write" deterministically instead of hoping for a race.
+ */
+const boardWrites = vi.hoisted(() => ({
+  interleave: null as ((call: number) => Promise<void>) | null,
+  calls: 0,
+}));
+
+// Wrap (not replace) mutateBattleBoard so veil-drag tests can count commits —
+// zero writes while a drag is live, exactly one on release — and so the
+// lost-update pin can interleave a real spawn into a surface commit. Every
+// other test keeps the real behavior.
 vi.mock('@/db/battleRepo', async (importOriginal) => {
   const actual = await importOriginal<typeof battleRepoModule>();
-  return { ...actual, saveBattleBoard: vi.fn(actual.saveBattleBoard) };
+  return {
+    ...actual,
+    mutateBattleBoard: vi.fn(
+      async (id: string, mutate: (board: Battle['board']) => Battle['board']) => {
+        boardWrites.calls += 1;
+        const interleave = boardWrites.interleave;
+        if (interleave !== null) await interleave(boardWrites.calls);
+        return actual.mutateBattleBoard(id, mutate);
+      },
+    ),
+  };
 });
 
 // Observe loud user feedback (removal toasts) without rendering a Toaster:
@@ -213,6 +239,8 @@ class ResizeObserverStub {
 
 beforeEach(async () => {
   await clearDatabase();
+  boardWrites.interleave = null;
+  boardWrites.calls = 0;
   contentRect = {
     x: 0,
     y: CONTENT_TOP,
@@ -646,7 +674,7 @@ describe('player-safe DOM contract', () => {
     const battle = await currentBattle(moduleId);
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll token missing');
-    await saveBattleBoard(battle.id, {
+    await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       veils: [
         {
@@ -658,7 +686,7 @@ describe('player-safe DOM contract', () => {
           heightCells: 2,
         },
       ],
-    });
+    }));
     await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     // M5-D amendment: the GM sees their own map — the fogged troll STAYS in
@@ -671,11 +699,11 @@ describe('player-safe DOM contract', () => {
     // fires liveQuery updates — wrap it in act (component is mounted).
     const fresh = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(fresh.id, {
+      await mutateBattleBoard(fresh.id, () => ({
         ...fresh.board,
         veils: [],
         tokens: fresh.board.tokens.map((token) => ({ ...token, visible: false })),
-      });
+      }));
       await flushAsyncUpdates();
     });
     expect(screen.queryByTestId('battle-token')).toBeNull();
@@ -692,7 +720,7 @@ describe('veil coverage hides mobs only', () => {
     const serren = battle.board.tokens.find((token) => token.label === 'Serren');
     if (troll === undefined || serren === undefined) throw new Error('tokens missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: battle.board.tokens.map((token) =>
           token.label === 'Serren' ? { ...token, x: troll.x, y: troll.y } : token,
@@ -700,7 +728,7 @@ describe('veil coverage hides mobs only', () => {
         veils: [
           { id: newId(), kind: 'veil', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 },
         ],
-      });
+      }));
       await flushAsyncUpdates();
     });
     await renderSurface(campaignId, moduleId);
@@ -784,7 +812,7 @@ describe('players are never coverage-hidden (row 331)', () => {
       color: '#ff0000',
     };
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: [
           ...battle.board.tokens.map((token) =>
@@ -799,7 +827,7 @@ describe('players are never coverage-hidden (row 331)', () => {
           { id: newId(), kind: 'veil', x: at.x, y: at.y, widthCells: 2, heightCells: 2 },
           { id: newId(), kind: 'fog', x: at.x, y: at.y, widthCells: 2, heightCells: 2 },
         ],
-      });
+      }));
       await flushAsyncUpdates();
     });
     return { moduleId, encounterId, npcTokenId: npc.id };
@@ -876,10 +904,10 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: newId(), kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     // Base tint pinned as a class: black at 10% alpha, and NO opacity-* class
@@ -914,13 +942,13 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [
           { id: newId(), kind: 'fog', x: 0.25, y: 0.25, widthCells: 2, heightCells: 2 },
           { id: newId(), kind: 'veil', x: 0.7, y: 0.7, widthCells: 2, heightCells: 2 },
         ],
-      });
+      }));
       await flushAsyncUpdates();
     });
     const elFor = (kind: 'fog' | 'veil'): HTMLElement => {
@@ -970,10 +998,10 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: newId(), kind: 'fog', x: 0.3, y: 0.3, widthCells: 3, heightCells: 3 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     const fog = screen.getByTestId('battle-veil');
@@ -1058,7 +1086,7 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, { ...seeded.board, veils: [] });
+      await mutateBattleBoard(seeded.id, () => ({ ...seeded.board, veils: [] }));
       await flushAsyncUpdates();
     });
     // No testid existed before ledger 65, so a test could not click either
@@ -1093,7 +1121,7 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, { ...seeded.board, veils: [] });
+      await mutateBattleBoard(seeded.id, () => ({ ...seeded.board, veils: [] }));
       await flushAsyncUpdates();
     });
     const elFor = (kind: 'fog' | 'veil'): HTMLElement => {
@@ -1145,10 +1173,10 @@ describe('veil presentation', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: newId(), kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     // GM view, unlocked board: all four edge handles render.
@@ -1165,7 +1193,7 @@ describe('veil presentation', () => {
     // deleted): the east handle drags one cell outward with a live preview,
     // zero writes mid-gesture, and exactly one commit on release carrying
     // the final geometry (opposite edge pinned).
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const beforeWidth = veilEl.style.width;
     const handle = screen.getByTestId('veil-handle-e');
@@ -1180,11 +1208,11 @@ describe('veil presentation', () => {
     // The LOCAL veil previews the grown size with zero writes mid-gesture.
     expect(Number.parseFloat(veilEl.style.width)).toBeCloseTo(27, 9);
     expect(veilEl.style.width).not.toBe(beforeWidth);
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     // Release: exactly one commit; height untouched, gate balanced.
     fireEvent.pointerUp(handle, { pointerId: 13 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
     const after = (await currentBattle(moduleId)).board.veils[0];
     if (after === undefined) throw new Error('veil vanished');
@@ -1218,13 +1246,13 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
     const markerY = (mobsRect.y + mobsRect.h / 2) / encounter.data.layout.gridH;
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [
           ...seeded.board.veils,
           { id: newId(), kind: 'veil', x: markerX, y: markerY, widthCells: 2, heightCells: 2 },
         ],
-      });
+      }));
       await flushAsyncUpdates();
     });
     return { moduleId, markerX, markerY };
@@ -1270,12 +1298,12 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
     const parked = seeded.board.veils[seeded.board.veils.length - 1];
     if (parked === undefined) throw new Error('parked veil missing');
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: seeded.board.veils.map((veil) =>
           veil.id === parked.id ? { ...veil, kind: 'fog' as const } : veil,
         ),
-      });
+      }));
       await flushAsyncUpdates();
     });
     await renderSurface(campaignId, moduleId);
@@ -1303,12 +1331,12 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
     if (parkedId === undefined) throw new Error('parked veil missing');
     const battle = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         veils: battle.board.veils.map((veil) =>
           veil.id === parkedId ? { ...veil, x: markerX + 0.4, y: markerY } : veil,
         ),
-      });
+      }));
       await flushAsyncUpdates();
     });
     const veil = parkedVeil();
@@ -1520,13 +1548,13 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
       throw new Error('gesture stolen');
     };
     try {
-      vi.mocked(saveBattleBoard).mockClear();
+      vi.mocked(mutateBattleBoard).mockClear();
       fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
       fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
       fireEvent.pointerUp(tokenEl, { pointerId: 1 });
       await flushAsyncUpdates();
       // No live drag ever started: zero commits, token unmoved…
-      expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+      expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
       const after = await currentBattle(moduleId);
       expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
       // …and the gesture gate stayed balanced (no open gesture leaks out).
@@ -1551,7 +1579,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
       .find((element) => element.getAttribute('data-token-label') === 'Serren');
     if (tokenEl === undefined) throw new Error('serren element missing');
     const board = screen.getByTestId('battle-board');
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     // Finger 1 drags the token (its down stops propagation, so the board
     // never sees it — exactly like the real gesture).
     fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
@@ -1570,7 +1598,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     fireEvent.pointerUp(board, { pointerId: 2, clientX: 60, clientY: 550 });
     fireEvent.pointerUp(board, { pointerId: 3, clientX: 120, clientY: 550 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     const after = await currentBattle(moduleId);
     expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
   });
@@ -1589,14 +1617,14 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
       .find((element) => element.getAttribute('data-token-label') === 'Serren');
     if (tokenEl === undefined) throw new Error('serren element missing');
     const board = screen.getByTestId('battle-board');
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     await flushAsyncUpdates();
     // The stream dies off-piece (no drop point, no tap): abandon, never commit.
     fireEvent.pointerCancel(board, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
@@ -1611,13 +1639,13 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -1630,7 +1658,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     // gate balances without throwing.
     fireEvent.pointerCancel(veilEl, { pointerId: 9 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
@@ -1645,13 +1673,13 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ffe600', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const effectEl = screen.getByTestId('battle-effect');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -1663,7 +1691,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     // the gate balances without throwing.
     fireEvent.pointerCancel(effectEl, { pointerId: 7 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.effects.find((entry) => entry.id === effectId)?.x).toBe(0.3);
@@ -1681,13 +1709,13 @@ describe('veil live drag', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -1704,13 +1732,13 @@ describe('veil live drag', () => {
     expect(veilEl.className).toContain('ring-2');
     expect(veilEl.className).not.toMatch(/opacity-\d/);
     // Zero persistence while the drag is live — the battle row is untouched.
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     const during = await currentBattle(moduleId);
     expect(during.board.veils.find((veil) => veil.id === veilId)?.x).toBe(0.3);
     // Release: exactly one commit, snapped like a token drop.
     fireEvent.pointerUp(veilEl, { pointerId: 5 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     const after = await currentBattle(moduleId);
     const dropped = after.board.veils.find((veil) => veil.id === veilId);
     if (dropped === undefined) throw new Error('veil vanished');
@@ -1732,13 +1760,13 @@ describe('veil live drag', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -1747,7 +1775,7 @@ describe('veil live drag', () => {
     fireEvent.pointerUp(veilEl, { pointerId: 5 });
     await flushAsyncUpdates();
     // A 3px nudge is a tap (veil selection), never a teleport or a commit.
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     const after = await currentBattle(moduleId);
     const veil = after.board.veils.find((entry) => entry.id === veilId);
     expect(veil?.x).toBe(0.3);
@@ -1766,13 +1794,13 @@ describe('live-drag frame throttle (batch H)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -1784,16 +1812,16 @@ describe('live-drag frame throttle (batch H)', () => {
     fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.48), clientY: cy(0.55) });
     fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.55), clientY: cy(0.62) });
     expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.3, 9);
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     // One frame lands the FINAL burst position (intermediates never render).
     await flushDragFrames();
     expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.55, 9);
     expect(Number.parseFloat(veilEl.style.top) / 100).toBeCloseTo(0.62, 9);
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     // Release commits the coalesced drop exactly once, snapped like a token.
     fireEvent.pointerUp(veilEl, { pointerId: 5 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     const after = await currentBattle(moduleId);
     const dropped = after.board.veils.find((veil) => veil.id === veilId);
     if (dropped === undefined) throw new Error('veil vanished');
@@ -1810,13 +1838,13 @@ describe('live-drag frame throttle (batch H)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const board = screen.getByTestId('battle-board');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
@@ -1830,7 +1858,7 @@ describe('live-drag frame throttle (batch H)', () => {
     await flushAsyncUpdates();
     await flushDragFrames();
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
@@ -1966,10 +1994,10 @@ describe('token HP edge strip', () => {
   it('keeps the downed overlay and grayscale exactly as-is at 0 HP', async () => {
     const { moduleId } = await seedStandardBattle();
     const battle = await currentBattle(moduleId);
-    await saveBattleBoard(battle.id, {
+    await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
-    });
+    }));
     await renderSurface(campaignId, moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
@@ -2393,7 +2421,7 @@ describe('pan from the map', () => {
     });
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, { ...seeded.board, mapImageId: image.id });
+      await mutateBattleBoard(seeded.id, () => ({ ...seeded.board, mapImageId: image.id }));
       await flushAsyncUpdates();
     });
     await renderSurface(campaignId, moduleId);
@@ -2418,7 +2446,7 @@ describe('pan from the map', () => {
     await flushAsyncUpdates();
     expect(screen.getByTestId('selection-card')).toBeInTheDocument();
 
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     // Drag on the map image (120, -40 client px): the board transform follows.
     const map = screen.getByTestId('battle-map');
     fireEvent.pointerDown(map, { pointerId: 11, clientX: 400, clientY: 300 });
@@ -2431,7 +2459,7 @@ describe('pan from the map', () => {
     // Well past the 8px screen-space threshold: a pan, not a tap-deselect —
     // the selection survives — and ZERO Dexie writes (no token/veil commit).
     expect(screen.getByTestId('selection-card')).toBeInTheDocument();
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
 
     // A sub-threshold press+release on the map is a TAP: it deselects.
     fireEvent.pointerDown(map, { pointerId: 12, clientX: 300, clientY: 300 });
@@ -2456,7 +2484,7 @@ describe('pan from the map', () => {
     const moved = after.board.tokens.find((token) => token.label === 'Serren');
     if (moved === undefined) throw new Error('serren vanished');
     expect(moved.x).not.toBe(serren.x);
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     expect(panWrapper().style.transform).toContain('translate(120px');
     expect(panWrapper().style.transform).toContain('-40px');
   });
@@ -2522,7 +2550,7 @@ describe('content-frame pointer conversion', () => {
     // content-frame fraction (snapPoint is the identity without a grid).
     const seeded = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(seeded.id, { ...seeded.board, gridSize: null });
+      await mutateBattleBoard(seeded.id, () => ({ ...seeded.board, gridSize: null }));
       await flushAsyncUpdates();
     });
     const user = userEvent.setup();
@@ -2769,10 +2797,10 @@ describe('HP ownership split writes', () => {
     const battle = await currentBattle(moduleId);
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll missing');
-    await saveBattleBoard(battle.id, {
+    await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
-    });
+    }));
     await renderSurface(campaignId, moduleId);
     await flushAsyncUpdates();
     await waitFor(() => {
@@ -2854,10 +2882,10 @@ describe('initiative', () => {
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         veils: [{ id: newId(), kind: 'fog', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     battle = await currentBattle(moduleId);
@@ -2897,7 +2925,7 @@ describe('initiative', () => {
 
     // Lift the fog → still 3, badge gone.
     await act(async () => {
-      await saveBattleBoard(battle.id, { ...battle.board, veils: [] });
+      await mutateBattleBoard(battle.id, () => ({ ...battle.board, veils: [] }));
       await flushAsyncUpdates();
     });
     battle = await currentBattle(moduleId);
@@ -3006,12 +3034,12 @@ describe('Hidden group (token-lifecycle arc)', () => {
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: battle.board.tokens.map((token) =>
           token.id === troll.id ? { ...token, visible: false } : token,
         ),
-      });
+      }));
       await flushAsyncUpdates();
     });
     battle = await currentBattle(moduleId);
@@ -3051,12 +3079,12 @@ describe('Hidden group (token-lifecycle arc)', () => {
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: battle.board.tokens.map((token) =>
           token.id === troll.id ? { ...token, visible: false } : token,
         ),
-      });
+      }));
       await flushAsyncUpdates();
     });
     await waitFor(() => {
@@ -3095,13 +3123,13 @@ describe('resume reveal (everLive — encounter-resume arc)', () => {
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll token missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: battle.board.tokens.map((token) =>
           token.id === troll.id ? { ...token, visible: false } : token,
         ),
         live: false,
-      });
+      }));
       await flushAsyncUpdates();
     });
     cleanup();
@@ -3280,13 +3308,13 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ffe600', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const effectEl = screen.getByTestId('battle-effect');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -3297,11 +3325,11 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     expect(Number.parseFloat(effectEl.style.left) / 100).toBeCloseTo(0.55, 9);
     expect(Number.parseFloat(effectEl.style.top) / 100).toBeCloseTo(0.62, 9);
     expect(effectEl.className).toContain('z-20');
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     // Release: exactly one commit, snapped like a token/veil drop.
     fireEvent.pointerUp(effectEl, { pointerId: 7 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     const after = await currentBattle(moduleId);
     const dropped = after.board.effects.find((entry) => entry.id === effectId);
     if (dropped === undefined) throw new Error('effect vanished');
@@ -3323,10 +3351,10 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'disc', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     // GM view, unlocked board: all four edge handles render (veil parity).
@@ -3350,13 +3378,13 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const effectEl = screen.getByTestId('battle-effect');
     const handle = screen.getByTestId('effect-handle-e');
     const beforeWidth = effectEl.style.width;
@@ -3372,11 +3400,11 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     // The LOCAL marker previews the grown size with zero writes mid-gesture.
     expect(effectEl.style.width).not.toBe(beforeWidth);
     expect(effectEl.style.left).toBe(beforeLeft);
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     // Release: exactly one commit carrying the final size; center untouched.
     fireEvent.pointerUp(handle, { pointerId: 11 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(mutateBattleBoard).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     const resized = after.board.effects.find((entry) => entry.id === effectId);
@@ -3395,13 +3423,13 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'disc', x: 0.3, y: 0.3, sizeCells: 1, color: '#ffe600', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const storedWidth = screen.getByTestId('battle-effect').style.width;
     const handle = screen.getByTestId('effect-handle-e');
     const rimX = 0.3 * BOARD_W + 36;
@@ -3412,7 +3440,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     expect(isBoardGestureActive()).toBe(true);
     fireEvent.pointerCancel(handle, { pointerId: 12 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.effects.find((entry) => entry.id === effectId)?.sizeCells).toBe(1);
@@ -3429,23 +3457,23 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         sceneryMovementLocked: true,
         effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     // Locked: no handles to grab — the veil gating, identically.
     expect(screen.queryByTestId('effect-handle-e')).toBeNull();
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const user = userEvent.setup();
     await user.click(screen.getByTestId('player-safe-toggle'));
     await flushAsyncUpdates();
     // Player view: still no handles (board material renders, affordances do not).
     expect(screen.getByTestId('battle-effect')).toBeInTheDocument();
     expect(screen.queryByTestId('effect-handle-e')).toBeNull();
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
   });
 
   it('resizes and deletes the selected effect from the rail (GM view only)', async () => {
@@ -3457,10 +3485,10 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         effects: [{ id: effectId, shape: 'disc', x: 0.7, y: 0.4, sizeCells: 1, color: '#000000', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     const user = userEvent.setup();
@@ -3490,14 +3518,14 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     const seeded = await currentBattle(moduleId);
     const effectId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         sceneryMovementLocked: true,
         effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const effectEl = screen.getByTestId('battle-effect');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -3505,7 +3533,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     fireEvent.pointerMove(effectEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
     fireEvent.pointerUp(effectEl, { pointerId: 9 });
     await flushAsyncUpdates();
-    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(mutateBattleBoard).not.toHaveBeenCalled();
     const after = await currentBattle(moduleId);
     expect(after.board.effects.find((entry) => entry.id === effectId)?.x).toBe(0.3);
   });
@@ -3525,7 +3553,7 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     // Drift: remove the effect entirely.
     const drifted = await currentBattle(moduleId);
     await act(async () => {
-      await saveBattleBoard(drifted.id, { ...drifted.board, effects: [] });
+      await mutateBattleBoard(drifted.id, () => ({ ...drifted.board, effects: [] }));
       await flushAsyncUpdates();
     });
     expect(screen.queryByTestId('battle-effect')).toBeNull();
@@ -3597,6 +3625,101 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
     expect(rolled?.initiativeRoll).not.toBeNull();
   });
 
+  /**
+   * THE OWNER'S SYMPTOM (docs/17 row 336; owner, verbatim: *"when spawning an
+   * authored mob it appears in the scene, but is gone at the next redraw"*).
+   *
+   * The lost update was structural: the surface's board write carried a board
+   * derived from the RENDER SNAPSHOT and the repo replaced the row's board
+   * wholesale, so a spawn that landed between the render and the commit was
+   * erased by the commit. The interleave below arranges exactly that order
+   * deterministically (the REAL spawn path writes its token, THEN the
+   * surface's in-flight commit lands) instead of hoping for a race. The write
+   * must apply to the row as it is, not to the board the closure saw.
+   */
+  it('keeps a spawn that lands while the initiative toggle commits — the owner’s vanishing mob (docs/17 row 336)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const row = await db.battles.where('moduleId').equals(moduleId).first();
+    if (row === undefined) throw new Error('battle missing');
+    // LIVE, so the mount writes nothing: the first board write is the toggle.
+    await updateBattle(row.id, () => ({ board: { ...row.board, live: true, everLive: true } }));
+    await renderSurface(campaignId, moduleId);
+    // Armed only now: the toggle's own commit is the write the spawn lands in.
+    let interleaved = false;
+    boardWrites.interleave = async () => {
+      if (interleaved) return;
+      interleaved = true;
+      // The picker's own roster path (`spawnRosterInstance`).
+      await spawnRosterInstance(row.id, 0);
+    };
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('toggle-initiative'));
+    await flushAsyncUpdates(30);
+    expect(interleaved).toBe(true);
+    const after = await currentBattle(moduleId);
+    expect(after.board.tokens.map((token) => token.label)).toContain('Troll 2');
+    // And its roll survived WITH it — the toggle resolved the member set from
+    // the board it wrote, so the spawn is in the order, not left behind.
+    const spawned = after.board.tokens.find((token) => token.label === 'Troll 2');
+    expect(after.board.initiativeOrder).toContain(spawned?.id);
+  });
+
+  it('keeps a spawn that lands while the reconcile’s prune commits — the spawn the reconcile erased (docs/17 row 336)', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    const row = await db.battles.where('moduleId').equals(moduleId).first();
+    if (row === undefined) throw new Error('battle missing');
+    // Initiative ON with every token already in the order (so the mount
+    // reconcile has nothing to do and makes no write).
+    const seeded = {
+      ...row.board,
+      live: true,
+      everLive: true,
+      initiativeEnabled: true,
+      tokens: row.board.tokens.map((token) => ({ ...token, initiativeRoll: 10 })),
+      initiativeOrder: row.board.tokens.map((token) => token.id),
+    };
+    await updateBattle(row.id, () => ({ board: seeded }));
+    await renderSurface(campaignId, moduleId);
+    const troll = seeded.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    await act(async () => {
+      await mutateBattleBoard(row.id, () => ({
+        ...seeded,
+        veils: [{ id: newId(), kind: 'fog', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 }],
+      }));
+      await flushAsyncUpdates();
+    });
+    // Player-safe prunes the fogged troll: the reconcile's own commit — the
+    // write that lands after the spawn in the owner's run. The authored path's
+    // tail is an npc-ref entry through `spawnPickedEntry` (the SAME entry shape
+    // `authorAndSpawnMob` ends in; its LLM half is pinned by
+    // spawn-picker-author-mob.test.tsx).
+    let spawnedId: string | null = null;
+    let interleaved = false;
+    boardWrites.interleave = async () => {
+      if (interleaved) return;
+      interleaved = true;
+      await spawnPickedEntry(
+        row.id,
+        monsterEntrySchema.parse({
+          name: 'Authored Horror',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'npc-ref', artifactId: npcId },
+        }),
+      );
+      spawnedId = (await getBattle(row.id))?.board.tokens.at(-1)?.id ?? null;
+    };
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates(30);
+    expect(interleaved).toBe(true);
+    expect(spawnedId).not.toBeNull();
+    const after = await currentBattle(moduleId);
+    expect(after.board.tokens.map((token) => token.id)).toContain(spawnedId);
+  });
+
   it('hides the spawn panel and its Spawn button in player view', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(campaignId, moduleId);
@@ -3628,10 +3751,10 @@ describe('stage snapshot', () => {
     expect(battle.board.stage).not.toBeNull();
     // Drift the troll down, then reset through the toolbar.
     await act(async () => {
-      await saveBattleBoard(battle.id, {
+      await mutateBattleBoard(battle.id, () => ({
         ...battle.board,
         tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 1 } : token)),
-      });
+      }));
       await flushAsyncUpdates();
     });
     await user.click(screen.getByTestId('reset-stage'));
@@ -3645,11 +3768,11 @@ describe('entrance overlay (doc 11)', () => {
     const { moduleId } = await seedStandardBattle();
     const battle = await currentBattle(moduleId);
     // Entrance at cell (1,1) of a 12×12 grid, west side — inward is east.
-    await saveBattleBoard(battle.id, {
+    await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       mapLayout: { cols: 12, rows: 12 },
       entrance: { x: 0.125, y: 0.125, side: 'west' },
-    });
+    }));
     await renderSurface(campaignId, moduleId);
 
     const entrance = screen.getByTestId('battle-entrance');
@@ -4244,10 +4367,10 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     const battle = await currentBattle(moduleId);
@@ -4257,7 +4380,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
       .getAllByTestId('battle-token')
       .find((element) => element.getAttribute('data-token-label') === 'Serren');
     if (tokenEl === undefined) throw new Error('serren element missing');
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     // Drag the token, but release ON the veil node: one board owner means
     // one finish — the veil never consumes the token's release (the old
     // cross-consuming double finish committed twice / threw).
@@ -4265,7 +4388,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     fireEvent.pointerUp(screen.getByTestId('battle-veil'), { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mutateBattleBoard)).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).not.toBe(pcToken.x);
@@ -4282,10 +4405,10 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
     const battle = await currentBattle(moduleId);
@@ -4298,7 +4421,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     // Finger 1 drags the token well past the threshold…
     fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
@@ -4312,7 +4435,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     fireEvent.pointerUp(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     fireEvent.pointerUp(veilEl, { pointerId: 2, clientX: cx(0.1), clientY: cy(0.15) });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mutateBattleBoard)).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     const moved = after.board.tokens.find((token) => token.label === 'Serren');
@@ -4331,14 +4454,14 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     const seeded = await currentBattle(moduleId);
     const veilId = newId();
     await act(async () => {
-      await saveBattleBoard(seeded.id, {
+      await mutateBattleBoard(seeded.id, () => ({
         ...seeded.board,
         sceneryMovementLocked: true,
         veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
-      });
+      }));
       await flushAsyncUpdates();
     });
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     const veilEl = screen.getByTestId('battle-veil');
     const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
     const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
@@ -4350,7 +4473,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     fireEvent.pointerMove(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
     fireEvent.pointerUp(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const locked = await currentBattle(moduleId);
     expect(locked.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
@@ -4360,12 +4483,12 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('toggle-scenery-lock'));
     await flushAsyncUpdates();
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     fireEvent.pointerDown(screen.getByTestId('battle-veil'), { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
     fireEvent.pointerMove(screen.getByTestId('battle-veil'), { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
     fireEvent.pointerUp(screen.getByTestId('battle-veil'), { pointerId: 9 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mutateBattleBoard)).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
     expect(after.board.veils.find((entry) => entry.id === veilId)?.x).not.toBe(0.3);
@@ -4385,7 +4508,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
       .find((element) => element.getAttribute('data-token-label') === 'Serren');
     if (tokenEl === undefined) throw new Error('serren element missing');
     const board = screen.getByTestId('battle-board');
-    vi.mocked(saveBattleBoard).mockClear();
+    vi.mocked(mutateBattleBoard).mockClear();
     fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     await flushAsyncUpdates();
@@ -4393,7 +4516,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     // had no lostpointercapture path and stranded the gesture).
     fireEvent.lostPointerCapture(board, { pointerId: 1 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(vi.mocked(mutateBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const stranded = await currentBattle(moduleId);
     expect(stranded.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
@@ -4402,7 +4525,7 @@ describe('one-gesture-machine (unified board gesture layer)', () => {
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
     fireEvent.pointerUp(tokenEl, { pointerId: 1 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mutateBattleBoard)).toHaveBeenCalledTimes(1);
     expect(isBoardGestureActive()).toBe(false);
   });
 
@@ -4640,9 +4763,9 @@ describe('battle map adoption (docs/17 row 328)', () => {
       createModule({ campaignId, title: 'Adoption Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
     );
     const seeded = await seedBattleFromEncounter(campaignId, module.id, encounter.id);
-    await patchBattle(seeded.battle.id, {
+    await updateBattle(seeded.battle.id, () => ({
       board: { ...seeded.battle.board, live: true, everLive: true },
-    });
+    }));
     return {
       moduleId: module.id,
       encounterId: encounter.id,

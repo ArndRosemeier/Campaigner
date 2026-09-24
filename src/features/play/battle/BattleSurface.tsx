@@ -82,8 +82,8 @@ import { artifactRepo } from '@/db';
 import {
   applyBattleBoardMap,
   healBattleBoardMap,
+  mutateBattleBoard,
   resetBattleToStage,
-  saveBattleBoard,
   saveBattleStage,
 } from '@/db/battleRepo';
 import { encounterBattlemap } from '@/db/battleSeed';
@@ -509,15 +509,19 @@ export function BattleSurface(): JSX.Element {
   useEffect(() => {
     if (battle === undefined || openedLiveRef.current || battle.board.live) return;
     openedLiveRef.current = true;
-    const firstEntry = !battle.board.everLive;
-    const tokens = firstEntry
-      ? battle.board.tokens.map((token) => ({ ...token, visible: true }))
-      : battle.board.tokens;
-    void saveBattleBoard(battle.id, { ...battle.board, live: true, everLive: true, tokens }).catch(
-      (error: unknown) => {
-        toastError('Could not show the battle', error);
-      },
-    );
+    // The first-entry reveal is decided from the board read INSIDE the write
+    // (docs/17 row 336): two mounts racing to open the same board reveal ONCE,
+    // and the reveal never replaces tokens a spawn landed in the meantime.
+    void mutateBattleBoard(battle.id, (board) => ({
+      ...board,
+      live: true,
+      everLive: true,
+      tokens: board.everLive
+        ? board.tokens
+        : board.tokens.map((token) => ({ ...token, visible: true })),
+    })).catch((error: unknown) => {
+      toastError('Could not show the battle', error);
+    });
   }, [battle]);
 
   // (a) HEAL ON OPEN (docs/17 row 328): a board that has NO map adopts the
@@ -547,10 +551,19 @@ export function BattleSurface(): JSX.Element {
       });
   }, [battle, encounterMapSlot]);
 
+  /**
+   * THE surface's board write (docs/17 row 336). It hands the CHANGE to
+   * `mutateBattleBoard`, which reads the battle row inside its own transaction
+   * and applies the mutation to THAT board — never to `battle.board`, the
+   * render snapshot this closure holds. That is what makes the spawn survive:
+   * the initiative reconcile (and every gesture/veil/effect commit) re-runs
+   * with a snapshot taken before a spawn landed, and a snapshot-derived write
+   * would put the old token list back.
+   */
   const commit = useCallback(
     (mutate: (board: Battle['board']) => Battle['board']) => {
       if (battle === undefined) return Promise.resolve();
-      return saveBattleBoard(battle.id, mutate(battle.board))
+      return mutateBattleBoard(battle.id, mutate)
         .then(() => undefined)
         .catch((error: unknown) => {
           toastError('Could not save the battle', error);
@@ -1477,15 +1490,23 @@ export function BattleSurface(): JSX.Element {
     // roll covers visible fighters PLUS veiled NPCs (they hold order with a
     // veiled marker). Player-safe reconcile/prune stays on the visible-only
     // computation — no leak.
-    const memberIds = gmFighterTokenIds(battle.board, statsLookup, coveredTokenIds);
-    let tokens = battle.board.tokens;
-    for (const id of memberIds) {
-      const token = tokens.find((entry) => entry.id === id);
-      if (token === undefined) continue;
-      tokens = tokens.map((entry) => (entry.id === id ? rollTokenInitiative(entry, statsLookup) : entry));
-    }
-    const order = sortInitiativeOrder(memberIds, tokens);
-    void commit((board) => ({ ...board, initiativeEnabled: true, initiativeOrder: order, activeIndex: 0, tokens }));
+    // The member set is resolved from the board the WRITE reads (docs/17 row
+    // 336), never the render snapshot: a token spawned between the render and
+    // this commit is rolled with the rest instead of being dropped from the
+    // token list the way a snapshot-derived write dropped it.
+    void commit((board) => {
+      const memberIds = gmFighterTokenIds(board, statsLookup, coveredTokenIds);
+      let tokens = board.tokens;
+      for (const id of memberIds) {
+        const token = tokens.find((entry) => entry.id === id);
+        if (token === undefined) continue;
+        tokens = tokens.map((entry) =>
+          entry.id === id ? rollTokenInitiative(entry, statsLookup) : entry,
+        );
+      }
+      const order = sortInitiativeOrder(memberIds, tokens);
+      return { ...board, initiativeEnabled: true, initiativeOrder: order, activeIndex: 0, tokens };
+    });
   }
 
   function addVeil(kind: BattleVeil['kind']): void {
@@ -1689,9 +1710,11 @@ export function BattleSurface(): JSX.Element {
 
   async function liftBattle(): Promise<void> {
     if (battle !== undefined) {
-      await saveBattleBoard(battle.id, { ...battle.board, live: false }).catch((error: unknown) => {
-        toastError('Could not lift the battle', error);
-      });
+      await mutateBattleBoard(battle.id, (board) => ({ ...board, live: false })).catch(
+        (error: unknown) => {
+          toastError('Could not lift the battle', error);
+        },
+      );
     }
     // Deterministic exit: always the module reader, never history-dependent
     // (deep links to the battle must not strand the user in an arbitrary tab).
@@ -2762,29 +2785,52 @@ function useInitiativeReconcile(
     if (battle?.board.initiativeEnabled !== true) return;
     if (isInitiativeDragging() || isBoardGestureActive()) return;
     const board = battle.board;
-    const pruned = playerSafe
-      ? pruneInitiativeToVisibleFighters(board, stats, coveredTokenIds)
-      : pruneInitiativeToGmFighters(board, stats, coveredTokenIds);
+    const prune = playerSafe ? pruneInitiativeToVisibleFighters : pruneInitiativeToGmFighters;
+    const pruned = prune(board, stats, coveredTokenIds);
     const memberIds = playerSafe
       ? visibleFighterTokenIds(pruned, stats, coveredTokenIds)
       : gmFighterTokenIds(pruned, stats, coveredTokenIds);
     const inOrder = new Set(pruned.initiativeOrder);
     const newcomers = memberIds.filter((id) => !inOrder.has(id));
     if (newcomers.length === 0) {
-      if (pruned !== board) void commit(() => pruned);
+      // The DECISION is the snapshot's (did the prune change anything?); the
+      // WRITE re-runs the same prune against the board the seam reads (docs/17
+      // row 336), so a token spawned since the render survives the pass.
+      if (pruned !== board) void commit((current) => prune(current, stats, coveredTokenIds));
       return;
     }
-    let tokens = pruned.tokens;
-    for (const id of newcomers) {
-      const token = tokens.find((entry) => entry.id === id);
-      if (token === undefined) continue;
-      tokens = tokens.map((entry) => (entry.id === id ? rollTokenInitiative(entry, stats) : entry));
-    }
-    const order = sortInitiativeOrder([...pruned.initiativeOrder, ...newcomers], tokens);
-    void commit((current) => ({ ...current, tokens, initiativeOrder: order }));
+    void commit((current) => rollNewcomersIntoOrder(current, newcomers, stats));
     // `battle.board` identity changes on every commit; the reconcile is
     // idempotent (prune + newcomers), and the epoch re-runs it after drags.
   }, [battle, coveredTokenIds, stats, commit, playerSafe]);
+}
+
+/**
+ * The reconcile's WRITE half (docs/17 row 336). The newcomer ids are a
+ * DECISION of the render; the board this returns is built from the board the
+ * board-mutation seam read, so a token that landed since that render keeps its
+ * place and only the newcomers (still present on the current board and still
+ * missing from its order) are rolled in. Returns the same board when there is
+ * nothing left to do, so a reconcile that lost the race writes nothing new.
+ */
+function rollNewcomersIntoOrder(
+  board: Battle['board'],
+  newcomers: readonly BattleTokenId[],
+  stats: FighterStatsLookup,
+): Battle['board'] {
+  const inOrder = new Set(board.initiativeOrder);
+  const missing = newcomers.filter(
+    (id) => !inOrder.has(id) && board.tokens.some((token) => token.id === id),
+  );
+  if (missing.length === 0) return board;
+  let tokens = board.tokens;
+  for (const id of missing) {
+    tokens = tokens.map((entry) =>
+      entry.id === id ? rollTokenInitiative(entry, stats) : entry,
+    );
+  }
+  const order = sortInitiativeOrder([...board.initiativeOrder, ...missing], tokens);
+  return { ...board, tokens, initiativeOrder: order };
 }
 
 /** The battlemap layer: object-fit cover so the normalized grid matches.

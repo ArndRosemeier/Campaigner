@@ -26,7 +26,7 @@ import {
   ensureBattleForEncounter,
   getBattle,
   getBattleByEncounter,
-  patchBattle,
+  updateBattle,
 } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
@@ -544,21 +544,24 @@ export async function seedBattleFromEncounter(
   // normalized save (the stats lookup drives HP clamping). When a board already
   // existed for this encounter, the row records the destructive re-seed — who
   // (the acting seed), when, and what replaced the board (encounter-resume
-  // arc). Provenance and board land in ONE patchBattle (it merges + normalizes
-  // once) — the previous two-phase patch-then-board-save normalized the row
-  // twice and briefly persisted a half-seeded board.
+  // arc). Provenance and board land in ONE `updateBattle` (it merges +
+  // normalizes once) — the previous two-phase patch-then-board-save normalized
+  // the row twice and briefly persisted a half-seeded board. The board here is
+  // a FRESH one by definition (a destructive re-seed), so the callback
+  // deliberately ignores the current row: this is a replace, and it is the only
+  // place that replaces a board wholesale.
   const existing = await getBattleByEncounter(encounterId);
   const battle = await ensureBattleForEncounter(campaignId, moduleId, encounterId);
   const reseed =
     existing === undefined
       ? null
       : { at: Date.now(), encounterArtifactId: encounterId, encounterName: encounter.name };
-  const saved = await patchBattle(battle.id, {
+  const saved = await updateBattle(battle.id, () => ({
     encounterArtifactId: encounterId,
     seedFighters,
     reseed,
     board,
-  });
+  }));
   return { battle: saved, statless };
 }
 
@@ -623,21 +626,26 @@ export async function spawnRosterInstance(
   // second row (under the retired mob-artifact model the synthetic id WAS that
   // stable key; now the identity is). Rows without an identity fall back to the
   // id, which is stable for them (npc-ref/pc rows mirror an artifact).
-  const merged = [...battle.seedFighters];
-  for (const seed of expansion.seedFighters) {
-    const duplicate = merged.some((existingSeed) =>
-      seed.creatureKey !== undefined
-        ? existingSeed.creatureKey === seed.creatureKey
-        : existingSeed.id === seed.id,
-    );
-    if (!duplicate) merged.push(seed);
-  }
-  await patchBattle(battle.id, {
-    seedFighters: merged,
-    board: {
-      ...battle.board,
-      tokens: [...battle.board.tokens, ...expansion.tokens],
-    },
+  // The merge and the token append read the row INSIDE the write's transaction
+  // (docs/17 row 336): a board write that landed while the expansion ran is
+  // appended to, never clobbered.
+  await updateBattle(battle.id, (current) => {
+    const merged = [...current.seedFighters];
+    for (const seed of expansion.seedFighters) {
+      const duplicate = merged.some((existingSeed) =>
+        seed.creatureKey !== undefined
+          ? existingSeed.creatureKey === seed.creatureKey
+          : existingSeed.id === seed.id,
+      );
+      if (!duplicate) merged.push(seed);
+    }
+    return {
+      seedFighters: merged,
+      board: {
+        ...current.board,
+        tokens: [...current.board.tokens, ...expansion.tokens],
+      },
+    };
   });
   return { statless: expansion.statless };
 }

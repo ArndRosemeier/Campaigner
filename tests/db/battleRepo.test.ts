@@ -22,7 +22,8 @@ import {
   normalizeBattleOnOpen,
   patchBattle,
   resetBattleToStage,
-  saveBattleBoard,
+  mutateBattleBoard,
+  updateBattle,
 } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
@@ -337,10 +338,10 @@ describe('normalize-on-write', () => {
       treasure: '',
       conditions: [],
     };
-    const saved = await saveBattleBoard(battle.id, {
+    const saved = await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       tokens: [token, { ...token, id: newId(), currentHp: 99, label: 'Goblin 2' }],
-    });
+    }));
     expect(saved.board.tokens[0]?.currentHp).toBe(7);
     expect(saved.board.tokens[1]?.currentHp).toBe(7);
   });
@@ -404,7 +405,7 @@ describe('the OPEN-path trigger of the PC-token seam (docs/17 row 308)', () => {
     const battle = await ensureBattleForEncounter(campaignId, moduleId, encounter.id);
     // The board is on the table (the surface's mount write); only THEN do the
     // players appear — the case a plain open used to miss entirely.
-    await saveBattleBoard(battle.id, { ...battle.board, live: true, everLive: true });
+    await mutateBattleBoard(battle.id, () => ({ ...battle.board, live: true, everLive: true }));
     const statfulId = await addPc('Serren');
     const statlessId = await addStatelessPc('Statless');
 
@@ -458,7 +459,7 @@ describe('scrub on artifact delete', () => {
       treasure: '',
       conditions: [],
     };
-    await saveBattleBoard(battle.id, { ...battle.board, tokens: [...battle.board.tokens, npcToken] });
+    await mutateBattleBoard(battle.id, () => ({ ...battle.board, tokens: [...battle.board.tokens, npcToken] }));
     await deleteArtifact(npcId);
     const after = await getBattle(battle.id);
     expect(after?.board.tokens.map((token) => token.artifactId)).toEqual([pcId]);
@@ -491,7 +492,7 @@ describe('scrub on artifact delete', () => {
       ...battle.board,
       tokens: [...battle.board.tokens, npcToken],
     };
-    await saveBattleBoard(battle.id, { ...opened, stage: captureStageSnapshot(opened) });
+    await mutateBattleBoard(battle.id, () => ({ ...opened, stage: captureStageSnapshot(opened) }));
 
     await deleteArtifact(npcId);
 
@@ -510,7 +511,7 @@ describe('scrub on artifact delete', () => {
     // encounter's board and is never auto-deleted (docs/18 §5).
     await patchBattle(battle.id, { encounterArtifactId: null });
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Goblin', maxHp: 7 }, 0, true, null);
-    await saveBattleBoard(battle.id, { ...battle.board, tokens: [token] });
+    await mutateBattleBoard(battle.id, () => ({ ...battle.board, tokens: [token] }));
     const before = await getBattle(battle.id);
     expect(before !== undefined && !isBattleEmpty(before)).toBe(true);
     await deleteArtifact(npcId);
@@ -519,27 +520,114 @@ describe('scrub on artifact delete', () => {
 
 });
 
+/**
+ * THE BOARD-MUTATION SEAM (docs/17 row 336; owner, verbatim: *"when spawning an
+ * authored mob it appears in the scene, but is gone at the next redraw"*).
+ *
+ * The lost update was structural: `BattleSurface.commit` wrote a board derived
+ * from the component's RENDER SNAPSHOT and the repo replaced the row's board
+ * wholesale, so any write that landed after that render — the initiative
+ * reconcile the spawn itself re-triggers, because the fresh npc artifact
+ * changes `stats` — put the OLD token list back. These pins are the repo half:
+ * the seam the surface now writes through must apply the caller's mutation to
+ * the row read INSIDE its own transaction.
+ */
+describe('the board-mutation seam (docs/17 row 336)', () => {
+  it('applies the mutation to the board read in-transaction — a token written after the caller’s snapshot survives', async () => {
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    // The caller's render snapshot: an EMPTY board.
+    const snapshot = battle.board;
+    const foreign = geometricToken('Goblin 1');
+    const mine = geometricToken('Goblin 2');
+    // A foreign writer lands a token AFTER the caller took its snapshot.
+    await mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [foreign] }));
+    // The stale caller's own mutation, handed to the seam as a CHANGE rather
+    // than as the board it saw: it must land on the row as it is now.
+    const saved = await mutateBattleBoard(battle.id, (board) => ({
+      ...board,
+      tokens: [...board.tokens, mine],
+    }));
+    expect(saved.board.tokens.map((token) => token.id)).toEqual([foreign.id, mine.id]);
+    // The snapshot really was stale — a snapshot-derived write would have saved
+    // this empty board over the foreign token (the owner's vanishing mob).
+    expect(snapshot.tokens).toEqual([]);
+  });
+
+  it('serializes two mutations issued together — the read and the write are ONE transaction, so neither is lost', async () => {
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    const first = geometricToken('First');
+    const second = geometricToken('Second');
+    // Both calls take their read before either writes. A seam that read the row
+    // OUTSIDE the transaction (the pre-336 shape) would have both callers see
+    // the same board and the later write would erase the earlier token.
+    await Promise.all([
+      mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [...board.tokens, first] })),
+      mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [...board.tokens, second] })),
+    ]);
+    const after = await getBattle(battle.id);
+    expect(after?.board.tokens.map((token) => token.id).sort()).toEqual(
+      [first.id, second.id].sort(),
+    );
+  });
+
+  it('derives a mutation from the CURRENT board — a combined update cannot resurrect a removed token', async () => {
+    const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
+    const doomed = geometricToken('Doomed');
+    await mutateBattleBoard(battle.id, () => ({ ...battle.board, tokens: [doomed] }));
+    const stale = (await getBattle(battle.id))?.board ?? battle.board;
+    // Someone else removes it (a scrub, a delete on another surface).
+    await mutateBattleBoard(battle.id, (board) => ({ ...board, tokens: [] }));
+    // The stale render's own toggle commits: it must not put the token back.
+    const saved = await mutateBattleBoard(battle.id, (board) => ({
+      ...board,
+      sceneryMovementLocked: !board.sceneryMovementLocked,
+    }));
+    expect(saved.board.tokens).toEqual([]);
+    expect(saved.board.sceneryMovementLocked).not.toBe(stale.sceneryMovementLocked);
+  });
+});
+
+/** A geometric stamp (no artifact): survives normalize-on-write untouched. */
+function geometricToken(label: string): BattleToken {
+  return {
+    id: newId(),
+    artifactId: null,
+    label,
+    x: 0.5,
+    y: 0.5,
+    visible: true,
+    scale: 1,
+    shape: 'circle',
+    color: '#3366ff',
+    currentHp: 10,
+    initiativeRoll: null,
+    initiativeBonus: null,
+    treasure: '',
+    conditions: [],
+  };
+}
+
 describe('stage reset', () => {
   it('restores the saved layout against current stats and PC roster', async () => {
     const npcId = await addNpc('Troll', { hp: 84 });
     const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
     const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Troll', maxHp: 84 }, 0, true, null);
-    const opened = await saveBattleBoard(battle.id, {
+    const opened = await mutateBattleBoard(battle.id, () => ({
       ...battle.board,
       live: true,
       tokens: [token],
-    });
+    }));
     const stage = captureStageSnapshot(opened.board);
-    await patchBattle(battle.id, { board: { ...opened.board, stage } });
+    await updateBattle(battle.id, () => ({ board: { ...opened.board, stage } }));
     // Drift: the troll drops to 0 and initiative rolls.
-    await saveBattleBoard(battle.id, {
+    await mutateBattleBoard(battle.id, () => ({
       ...opened.board,
       stage,
       tokens: [{ ...token, currentHp: 0, initiativeRoll: 19, initiativeBonus: 2 }],
       initiativeEnabled: true,
       initiativeOrder: [token.id],
-    });
+    }));
     const reset = await resetBattleToStage(battle.id);
     expect(reset.board.tokens[0]?.currentHp).toBe(84);
     expect(reset.board.tokens[0]?.initiativeRoll).toBeNull();
@@ -637,7 +725,7 @@ describe('board-map adoption (docs/17 row 328)', () => {
     expect(battle.board.mapImageId).toBeNull();
     // The owner's repro (docs/17 row 325): the board went LIVE before its map
     // existed, so the regeneration convergence deliberately skips it.
-    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+    await updateBattle(battle.id, () => ({ board: { ...battle.board, live: true, everLive: true } }));
     const before = await getBattle(battle.id);
     if (before === undefined) throw new Error('battle missing');
 
@@ -690,7 +778,7 @@ describe('board-map adoption (docs/17 row 328)', () => {
     const mapB = await createMapImage(campaignId, 5);
     const encounter = await addEncounterWithMap(mapA, adoptionArenaLayout('4:3'));
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+    await updateBattle(battle.id, () => ({ board: { ...battle.board, live: true, everLive: true } }));
     const before = await getBattle(battle.id);
     if (before === undefined) throw new Error('battle missing');
 
@@ -715,7 +803,7 @@ describe('board-map adoption (docs/17 row 328)', () => {
     const mapB = await createMapImage(campaignId, 7);
     const encounter = await addEncounterWithMap(mapA, adoptionArenaLayout('4:3'));
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    await patchBattle(battle.id, { board: { ...battle.board, live: true, everLive: true } });
+    await updateBattle(battle.id, () => ({ board: { ...battle.board, live: true, everLive: true } }));
 
     const result = await convergeBoardsToRegeneratedMap(encounter.id, {
       mapImageId: mapB,

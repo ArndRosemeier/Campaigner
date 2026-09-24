@@ -43,8 +43,22 @@ export function parseBattleRow(row: Battle): Battle {
   return battleSchema.parse(row);
 }
 
-/** Mutable battle fields; identity (`campaignId`/`moduleId`) is immutable. */
-export type BattlePatch = Partial<Omit<Battle, 'id' | 'campaignId' | 'moduleId'>>;
+/**
+ * Mutable battle fields; identity (`campaignId`/`moduleId`) is immutable and
+ * the BOARD is deliberately NOT patchable through `patchBattle` (docs/17 row
+ * 336): a board carried in a plain patch is a board derived from whatever the
+ * caller last RENDERED, and replacing the row's board with it silently drops
+ * every token another writer landed in between — the lost update that made a
+ * spawned mob vanish on the next redraw. Board writes ride
+ * `mutateBattleBoard` (or the row-level `updateBattle` callback when sibling
+ * fields move with the board), so the mutation is always applied to the row
+ * read inside the transaction.
+ */
+export type BattlePatch = Partial<Omit<Battle, 'id' | 'campaignId' | 'moduleId' | 'board'>>;
+
+/** Fields a read-modify-write mutation may set — the board included, because
+ * `updateBattle`'s callback receives the CURRENT row (docs/17 row 336). */
+export type BattleWrite = Partial<Omit<Battle, 'id' | 'campaignId' | 'moduleId'>>;
 
 /** Full-row save: parse-normalizes and applies normalize-on-write. */
 export async function saveBattle(battle: Battle): Promise<Battle> {
@@ -182,27 +196,64 @@ export async function getBattle(id: Id): Promise<Battle | undefined> {
   return row === undefined ? undefined : parseBattleRow(row);
 }
 
-/** Race-safe read-modify-write with normalize-on-write (module pattern). */
-export async function patchBattle(id: Id, patch: BattlePatch): Promise<Battle> {
-  // The transaction spans battles AND artifacts: normalize-on-write re-reads
-  // the campaign's pc/npc artifacts inside the same transaction (Dexie joins
-  // ambient queries to the innermost transaction).
+/**
+ * THE row read-modify-write seam (docs/17 row 336). `update` receives the
+ * battle row as it is INSIDE this transaction and returns the fields to merge
+ * over it, so a decision made from a render snapshot (how many "Goblin" labels
+ * are on the board, where the next free spot is) can never overwrite a row
+ * another writer already moved past it. That is the whole fix for the owner's
+ * "spawned mob appears, then is gone at the next redraw": the surface's commit
+ * and the initiative reconcile both derived the board they wrote from the
+ * component's render snapshot, and the later of the two clobbered the spawn.
+ *
+ * It is the SAME transaction shape `patchBattle` always had (battles +
+ * artifacts, because normalize-on-write re-reads the campaign's pc/npc rows);
+ * `patchBattle` and `mutateBattleBoard` are the two typed façades over it, and
+ * there is no third board-write mechanism.
+ */
+export async function updateBattle(
+  id: Id,
+  update: (current: Battle) => BattleWrite,
+): Promise<Battle> {
   return db.transaction('rw', [db.battles, db.artifacts], async () => {
     const current = await db.battles.get(id);
     if (current === undefined) throw new NotFoundError('Battle', id);
-    // Identity fields are immutable; the board is merged wholesale by the caller.
-    return saveBattle({ ...parseBattleRow(current), ...patch, campaignId: current.campaignId, moduleId: current.moduleId });
+    const battle = parseBattleRow(current);
+    return saveBattle({
+      ...battle,
+      ...update(battle),
+      campaignId: current.campaignId,
+      moduleId: current.moduleId,
+    });
   });
 }
 
-/** Replaces the board wholesale (the UI's single-commit drag path). */
-export async function saveBattleBoard(id: Id, board: BattleBoard): Promise<Battle> {
-  return patchBattle(id, { board });
+/**
+ * Non-board patch (identity, seed roster, view, provenance). The board is not
+ * part of `BattlePatch` on purpose — see the type's comment.
+ */
+export async function patchBattle(id: Id, patch: BattlePatch): Promise<Battle> {
+  return updateBattle(id, () => patch);
 }
 
-/** Replaces the stage snapshot (⚑ Set stage). */
+/**
+ * THE board-mutation seam (docs/17 row 336): reads the battle row INSIDE its
+ * own transaction, applies `mutate` to the CURRENT board and saves the result.
+ * Every board write in the app goes through here (a combined board + sibling
+ * write uses `updateBattle` directly), so a stale render can never overwrite a
+ * newer board — the caller passes the CHANGE, never the board it saw.
+ */
+export async function mutateBattleBoard(
+  id: Id,
+  mutate: (board: BattleBoard) => BattleBoard,
+): Promise<Battle> {
+  return updateBattle(id, (current) => ({ board: mutate(current.board) }));
+}
+
+/** Replaces the stage snapshot (⚑ Set stage) — the stage rides the CURRENT
+ * board, so a token spawned since the render is kept (docs/17 row 336). */
 export async function saveBattleStage(id: Id, stage: BattleBoard['stage']): Promise<Battle> {
-  return patchBattle(id, { board: { ...(await requireBoard(id)), stage } });
+  return mutateBattleBoard(id, (board) => ({ ...board, stage }));
 }
 
 /**
@@ -238,8 +289,17 @@ export async function resetBattleToStage(id: Id): Promise<Battle> {
     listGlobalArtifacts(),
   ]);
   const stats = buildFighterStatsLookup(battle, [...artifacts, ...globals]);
-  const board = applyStageReset(battle.board, battle.board.stage, stats, pcFightersOf(artifacts));
-  return saveBattleBoard(id, board);
+  // The reset is applied to the CURRENT board (docs/17 row 336): the opening
+  // layout replaces the tokens, but every other field of the live board — and a
+  // token spawned since this read — rides along, so the reset cannot resurrect
+  // a board the table has moved on from more than it means to.
+  return mutateBattleBoard(id, (board) => {
+    const stage = board.stage;
+    if (stage === null) {
+      throw new Error('No stage snapshot saved — set the stage before resetting');
+    }
+    return applyStageReset(board, stage, stats, pcFightersOf(artifacts));
+  });
 }
 
 export async function deleteBattle(id: Id): Promise<void> {
@@ -269,15 +329,18 @@ export async function deleteBattleIfEmpty(id: Id): Promise<void> {
  * saved stage snapshot, so a delete can never leave a stage token dangling for
  * `resetBattleToStage` to put back. This function only owns the row walk and
  * the empty-battle rule — the same `=== board` identity test the seam returns
- * for "nothing changed", so a battle with no matching token is left untouched.
+ * for "nothing changed", so a battle with no matching token is left untouched
+ * (the reference diff is asked of the row walk's own read and then re-asked
+ * against the CURRENT board inside the write, docs/17 row 336: a board that
+ * gained a token since the walk is scrubbed as it is now, never replaced by
+ * the walk's snapshot).
  */
 export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): Promise<void> {
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
   for (const row of battles) {
     const battle = parseBattleRow(row);
-    const board = scrubArtifactFromBoard(battle.board, artifactId);
-    if (board === battle.board) continue;
-    await db.battles.put({ ...battle, board });
+    if (scrubArtifactFromBoard(battle.board, artifactId) === battle.board) continue;
+    await mutateBattleBoard(battle.id, (board) => scrubArtifactFromBoard(board, artifactId));
     await deleteBattleIfEmpty(battle.id);
   }
 }
@@ -307,10 +370,12 @@ function withBattlemap(board: BattleBoard, map: BattlemapSlot): BattleBoard {
   return { ...board, mapImageId: map.mapImageId, mapLayout: map.mapLayout };
 }
 
-/** THE one board-map row write: the patch above through the parse-normalized
- * `patchBattle` path (never a raw table write, never from the surface). */
-async function writeBoardMap(battle: Battle, map: BattlemapSlot): Promise<Battle> {
-  return patchBattle(battle.id, { board: withBattlemap(battle.board, map) });
+/** THE one board-map row write: the patch above through the read-modify-write
+ * board seam (never a raw table write, never from the surface). The map lands
+ * on the CURRENT board, so a tile spawned or moved since the caller's read
+ * rides along (docs/17 row 336). */
+async function writeBoardMap(battleId: Id, map: BattlemapSlot): Promise<Battle> {
+  return mutateBattleBoard(battleId, (board) => withBattlemap(board, map));
 }
 
 /**
@@ -331,7 +396,7 @@ export async function healBattleBoardMap(battleId: Id, map: BattlemapSlot): Prom
     if (current === undefined) throw new NotFoundError('Battle', battleId);
     const battle = parseBattleRow(current);
     if (battle.board.mapImageId !== null) return false;
-    await writeBoardMap(battle, map);
+    await writeBoardMap(battleId, map);
     return true;
   });
 }
@@ -343,9 +408,7 @@ export async function healBattleBoardMap(battleId: Id, map: BattlemapSlot): Prom
  * write, so the surface never patches a board itself.
  */
 export async function applyBattleBoardMap(battleId: Id, map: BattlemapSlot): Promise<Battle> {
-  const battle = await getBattle(battleId);
-  if (battle === undefined) throw new NotFoundError('Battle', battleId);
-  return writeBoardMap(battle, map);
+  return writeBoardMap(battleId, map);
 }
 
 /**
@@ -377,7 +440,7 @@ export async function convergeBoardsToRegeneratedMap(
       continue;
     }
     if (battle.board.mapImageId === map.mapImageId) continue;
-    await writeBoardMap(battle, map);
+    await writeBoardMap(battle.id, map);
     converged += 1;
   }
   return { converged, liveSkipped };
@@ -435,12 +498,6 @@ export async function normalizeBattleOnOpen(id: Id): Promise<Battle | undefined>
     await db.battles.put(battle);
     return battle;
   });
-}
-
-async function requireBoard(id: Id): Promise<BattleBoard> {
-  const battle = await getBattle(id);
-  if (battle === undefined) throw new NotFoundError('Battle', id);
-  return battle.board;
 }
 
 /** Exposed for UI effects that need the same lookup the repo normalizes with. */

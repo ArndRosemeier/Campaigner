@@ -13,7 +13,7 @@ import {
   convergeBoardsToRegeneratedMap,
   ensureBattleForEncounter,
   getBattle,
-  patchBattle,
+  updateBattle,
 } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
@@ -191,7 +191,7 @@ describe('single-map-slot refcount (imageRepo)', () => {
   it('pins frozen battle boards even when the encounter moved on', async () => {
     const frozen = await mapImage();
     const battle = await ensureBattleForEncounter(campaignId, newId(), newId());
-    await patchBattle(battle.id, { board: { ...battle.board, mapImageId: frozen.id } });
+    await updateBattle(battle.id, () => ({ board: { ...battle.board, mapImageId: frozen.id } }));
     expect((await referencedImageIds(campaignId)).has(frozen.id)).toBe(true);
     expect(await deleteImageIfUnreferenced(frozen.id)).toBe(false);
     expect(await getImage(frozen.id)).toBeDefined();
@@ -284,24 +284,24 @@ describe('board convergence (battleRepo)', () => {
     const freshMap = await mapImage();
 
     const pending = await ensureBattleForEncounter(campaignId, newId(), newId());
-    await patchBattle(pending.id, {
+    await updateBattle(pending.id, () => ({
       encounterArtifactId: encounter.id,
       board: { ...pending.board, mapImageId: oldMap.id, mapLayout: { cols: 24, rows: 18 } },
-    });
+    }));
     const before = await getBattle(pending.id);
     if (before === undefined) throw new Error('battle missing');
 
     const live = await ensureBattleForEncounter(campaignId, newId(), newId());
-    await patchBattle(live.id, {
+    await updateBattle(live.id, () => ({
       encounterArtifactId: encounter.id,
       board: { ...live.board, everLive: true, mapImageId: oldMap.id },
-    });
+    }));
 
     const foreign = await ensureBattleForEncounter(campaignId, newId(), newId());
-    await patchBattle(foreign.id, {
+    await updateBattle(foreign.id, () => ({
       encounterArtifactId: other.id,
       board: { ...foreign.board, mapImageId: oldMap.id },
-    });
+    }));
 
     const result = await convergeBoardsToRegeneratedMap(encounter.id, {
       mapImageId: freshMap.id,
@@ -476,15 +476,15 @@ describe('regenerate finalize slot-replace (runEngine)', () => {
 
     // One battle seeded but never opened, one that already went live.
     const pending = await ensureBattleForEncounter(campaign.id, newId(), newId());
-    await patchBattle(pending.id, {
+    await updateBattle(pending.id, () => ({
       encounterArtifactId: target.id,
       board: { ...pending.board, mapImageId: oldMap.id },
-    });
+    }));
     const live = await ensureBattleForEncounter(campaign.id, newId(), newId());
-    await patchBattle(live.id, {
+    await updateBattle(live.id, () => ({
       encounterArtifactId: target.id,
       board: { ...live.board, everLive: true, mapImageId: oldMap.id },
-    });
+    }));
 
     async function regenerateOnce(): Promise<{ mapId: Id; layout: EncounterLayout }> {
       chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });

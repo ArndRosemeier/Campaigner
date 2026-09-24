@@ -71,7 +71,7 @@ import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { getBattleByEncounter, saveBattleBoard } from '@/db/battleRepo';
+import { getBattleByEncounter, mutateBattleBoard } from '@/db/battleRepo';
 import { db } from '@/db/db';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { expectBlockedReason } from '../helpers/blocked-reason';
@@ -442,7 +442,7 @@ describe('editor-run-battle.test.tsx', () => {
       // discard the stage — resume must keep it verbatim.
       const running = await getBattleByEncounter(owned.id);
       if (running === undefined) throw new Error('running battle missing');
-      await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
+      await mutateBattleBoard(running.id, () => ({ ...running.board, activeIndex: 2 }));
       renderEditor(owned, campaignId, [encounter, owned]);
 
       await waitFor(() =>
@@ -468,7 +468,7 @@ describe('editor-run-battle.test.tsx', () => {
       await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
       const running = await getBattleByEncounter(encounter.id);
       if (running === undefined) throw new Error('running battle missing');
-      await saveBattleBoard(running.id, { ...running.board, activeIndex: 1 });
+      await mutateBattleBoard(running.id, () => ({ ...running.board, activeIndex: 1 }));
       renderEditor(encounter, campaignId, [encounter]);
 
       await user.click(screen.getByTestId('run-battle-picker'));
@@ -506,7 +506,7 @@ describe('editor-run-battle.test.tsx', () => {
       await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
       const running = await getBattleByEncounter(encounter.id);
       if (running === undefined) throw new Error('running battle missing');
-      await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
+      await mutateBattleBoard(running.id, () => ({ ...running.board, activeIndex: 2 }));
 
       // Open the SECOND encounter's own card and press ITS button.
       renderEditor(owned, campaignId, [encounter, owned]);
@@ -573,7 +573,7 @@ describe('editor-run-battle.test.tsx', () => {
       await seedBattleFromEncounter(campaignId, tide.id, other.id);
       const running = await getBattleByEncounter(other.id);
       if (running === undefined) throw new Error('running battle missing');
-      await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
+      await mutateBattleBoard(running.id, () => ({ ...running.board, activeIndex: 2 }));
       renderEditor(encounter, campaignId, [encounter, other]);
 
       await user.click(screen.getByTestId('run-battle-picker'));

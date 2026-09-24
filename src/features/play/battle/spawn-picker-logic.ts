@@ -6,7 +6,7 @@ import {
   spawnPointInStagingGround,
 } from '@/domain/battle/board';
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
-import { getBattle, patchBattle } from '@/db/battleRepo';
+import { getBattle, updateBattle } from '@/db/battleRepo';
 import { expandRosterEntries, type SpawnReport } from '@/db/battleSeed';
 import { getCampaign } from '@/db/campaignRepo';
 import { creatureCoverImageId } from '@/db/creatureRepo';
@@ -158,16 +158,22 @@ export async function spawnPickedEntry(battleId: Id, entry: MonsterEntry): Promi
     numberFrom: countLabelSlots(battle.board.tokens, parsed.name) + 1,
     forceNumbering: true,
   });
-  const merged = [...battle.seedFighters];
-  for (const seed of expansion.seedFighters) {
-    if (!merged.some((existing) => existing.id === seed.id)) merged.push(seed);
-  }
-  await patchBattle(battle.id, {
-    seedFighters: merged,
-    board: {
-      ...battle.board,
-      tokens: [...battle.board.tokens, ...expansion.tokens],
-    },
+  // The seed-row merge rides INSIDE the board write's transaction and both are
+  // computed from the row read there (docs/17 row 336): a board update that
+  // landed while the entry was being built is appended to, never clobbered —
+  // the owner's "spawned mob appears, then is gone at the next redraw".
+  await updateBattle(battle.id, (current) => {
+    const seedRows = [...current.seedFighters];
+    for (const seed of expansion.seedFighters) {
+      if (!seedRows.some((existing) => existing.id === seed.id)) seedRows.push(seed);
+    }
+    return {
+      seedFighters: seedRows,
+      board: {
+        ...current.board,
+        tokens: [...current.board.tokens, ...expansion.tokens],
+      },
+    };
   });
   return { statless: expansion.statless };
 }
