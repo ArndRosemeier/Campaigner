@@ -110,7 +110,6 @@ LANDED | row=341 | sha=a018460 | verify=DISPATCHER ARM RED BY NAME — removing 
 
 LANDED | row=339 | sha=9c5440c | verify=GATE GREEN — 379 files / 4852 tests, lint 0, 622s. THE CORE-MOBS ROWS ARE MEASURED: the estimate is a FLOOR and the virtualizer measures each row: the overlap was a px/rem mismatch (a hard 44px row against a `min-h-11` button scaled by `--ui-scale` 0.9–2, flush at 1, so the iPad saw it, desktop Chrome did not); `dvh` was NOT the cause but hardened. THE RED IS KEPT: it broke iPad dialog scrolling → row 340. Arm: dropping `data-index` → the pitch pin RED.
 LANDED | row=337 | sha=35649eb | verify=GATE GREEN — union gate over 336ff+337: 379 files / 4848 tests, 7/7 chunks, lint 0, peak 2631MB, 626s. A BATTLEMAP DEPICTS NO FIGURES: one clause rides both prompts; the vision read must answer a REQUIRED `figures` list — a non-empty answer THROWS before any re-ask and finalizes nothing. GAP: the CLASSIC path has no vision read (one vision call per map to enforce — the owner’s call). Dispatcher arm: dropping the clause from ONE classic branch → RED.
-LANDED | row=336 | sha=1ed9250 | verify=GATE GREEN (fix-forward) — the same UNION gate (row 337). THREE SPAWN DEFECTS: the lost update (one `writeBattleRow` save-or-delete transaction), the author-section illustrate checkbox, the viewport fix. THE RED IS KEPT: the first gate failed — an emptied battle stopped deleting itself — `saveBattle`’s normalize-on-write re-ensured PC tokens, so the second read judged the normalized row. New pin: the ROW is gone, survivor named. OWED: Core-mobs overlap.
 
 
 
