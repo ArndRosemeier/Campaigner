@@ -9084,3 +9084,60 @@ entry SHAPE (`copiedMobEntryFrom(`) appears in the copy seam and the repair only
 `listLibraryCreatures` reader inventory names the repair as a CONSUMER of the ONE matcher,
 not a second one.
 
+
+## The adversarial pass is ONE seam, its critique is ADVISORY, and its editor is the EXISTING core (docs/17 row 356, docs/18 §2.2/§2.3)
+
+`tests/llm/adversarialPass.test.ts` (16 tests, node project — the transport is
+mocked at the protocol boundary, the schema/the pass/the core run for real). The
+slice DEFINES the pass and wires it to nothing, so the pins below are the whole
+verification: no generation, chat, UI or status behaviour is touched
+(flag-off byte-identity for slice 356 is slice 1's own pin and stays green).
+
+| Pin | What it asserts | What it would refuse |
+|---|---|---|
+| `declares the four kinds and rejects a fifth` | `ADVERSARIAL_ISSUE_KINDS` is EXACTLY `inconsistency`, `motivation`, `fun`, `originality`; each parses; `pacing` and `fairness` are REJECTED by the schema | a fifth criterion, an unknown kind let through, or a silently widened enum |
+| `an empty issues list is a valid critique, and a finding needs its words` | `{ issues: [] }` is a valid reply; a finding with an empty `message` fails the boundary | a reply that must invent a finding, or an issue with nothing to act on |
+| `a finding is ADVISORY: the pass resolves and returns the edit` | a critique with findings does NOT throw and the report carries the findings + the edit | a critique that fails or blocks on its own opinion (the class `features/modules/module-problems` excludes as a GATE) |
+| `an empty critique is a normal, QUIET outcome — the editor is never called` | an empty critique resolves, `edit` is `null`, and `chat` was called ONCE (the critique only) | calling the editor "just in case"; a failure on an empty critique |
+| `a malformed critique reply fails LOUDLY (zod at the boundary)` | `no json at all` and a fifth-kind finding both throw | a catch-and-continue that reads a malformed reply as "nothing found" (AGENTS rules 1/3) |
+| `empty target text fails loudly before any call` | a whitespace-only target throws before the snapshot and before any model call | a pass that critiques nothing |
+| `rewrites the PREMISE through the core, with the findings as the instruction` | the editor prompt is the core's premise branch (`COMPLETE new markdown of the premise`, `NO H1`, `Full premise text to rewrite:`), and the findings reach it as a structured list (`[major] inconsistency: … (at: …)`) | a premise that cannot be transformed, or an instruction that loses the locator |
+| `rewrites a PART through the SAME core, naming the part` | the same core, the part branch and `part 2` | a second editor prompt for the part |
+| `a FAILED editor fails loudly and leaves the target text unchanged` | a zod-invalid editor reply throws and the module row's premise/part markdown and status are byte-identical afterwards | a half-edit, or a placeholder persisted over a failed edit |
+| `an empty whole-document replacement fails loudly` | a whitespace replacement for a whole target throws | an empty rewrite landing as a deletion |
+| `a replacement carrying our own escape debris is refused by the EXISTING scan` | the core's existing hygiene scan rejects a replacement naming the debris | a second hygiene scan, or a silent repair |
+| `records the pre-change parts document through the ONE snapshot seam, first` | reading the durable stack INSIDE each model call: one version row exists at the critique AND at the editor, and its `docText` is the assembled pre-pass parts document | a snapshot taken after the rewrite (nothing to undo), or a second snapshot seam |
+| `refineModuleText still throws ModuleBusyError while the shared core resolves` | a `generating` module: the CANVAS caller still refuses with `ModuleBusyError` and calls no model, while `transformModuleText` (the pass's core) resolves | a core that grows the canvas surface rule back and refuses exactly when the in-generation pass needs it |
+| `the core does not claim the canvas registry; the canvas caller does` | `isModuleGenerationClaimed` is `false` during the core's call, `true` during `refineModuleText`'s, and `false` again after | a core that takes the canvas slot, or a canvas caller that stops taking it |
+| `the whole-document core targets the PREMISE, which the canvas scope union does not name` | `transformModuleText({ target: 'premise' })` composes the premise prompt | a premise target silently treated as a part |
+| `no src file calls runAdversarialPass or imports the module` | a `src/**` source scan: `runAdversarialPass(` appears in exactly its own file and nothing imports `@/llm/adversarialPass` | accidental wiring in this slice (the trigger is slice 357, the chat trigger slice 358) |
+
+The canvas pins prove the OTHER half of the guard split without being edited:
+`tests/llm/canvasRefine.test.ts` (19) still covers the same-module busy refusal,
+the pre-aborted controller, the registry serialization and the
+selection/part prompts, and `tests/architecture/global-chat-model-recording.test.ts`
+declares the new global-model site (the pass's critique call) in its exact
+population — the pass's EDITOR call is recorded by the shared core and is not a
+second site.
+
+**ARMS** (`.gate-logs/row356/arms-summary.txt`, on the frozen tree; every arm
+type-clean, hash printed before and after, restored byte-identically and proven
+with `cmp`): baseline 16/16 GREEN; (A) a fifth kind added → RED by name
+`declares the four kinds and rejects a fifth` (+ the malformed-reply pin, whose
+fixture is that kind), 2/16 red; (B) the findings made to throw → RED 7, first by
+name `a finding is ADVISORY: the pass resolves and returns the edit`; (C) the
+snapshot moved after the critique → RED 1 by name
+`records the pre-change parts document through the ONE snapshot seam, first`
+(received `[0, 1]` against `[1, 1]`); (D) the canvas `status === 'generating'`
+guard deleted → RED 1 by name
+`refineModuleText still throws ModuleBusyError while the shared core resolves`.
+Four distinct injected hashes, four distinct pin sets, no VOID arm. Arm D is the
+dropped canvas guard rather than a literal "guard re-merged into the core"
+because the core carries no module id — the re-merge is not expressible without
+widening the core's input, which is itself the structural evidence for the split.
+
+**What a test cannot prove:** no pin here observes a live provider, so "the
+critique finds the four classes of problem" is the INTENT, not a measurement —
+what is pinned is that the criteria ARE the owner's four, that findings are
+advisory, and that the editor is the ONE validated core. The quality of a
+critique's judgement is slice 357's measured question, not this file's.

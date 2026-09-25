@@ -45,6 +45,20 @@ import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
  *   is no queue.
  * - stop/cancel supported through `signal` (user aborts are not errors).
  *
+ * THE GUARD AND THE CORE ARE SEPARATE (docs/17 row 356). The model call, the
+ * zod boundary and the debris scan above are the SHARED text-transform CORE —
+ * `transformModuleText` — and the busy/registry/abort rules are the CANVAS
+ * SURFACE GUARD `refineModuleText` wraps around it. The second caller of the
+ * core is the adversarial critique-and-edit pass
+ * (`llm/adversarialPass.runAdversarialPass`), which runs INSIDE module
+ * generation (docs/17 row 353): the busy rule is a SURFACE rule keeping a
+ * user-initiated canvas edit from colliding with a running generation, while an
+ * in-generation review IS the generation — so the core must not depend on the
+ * canvas busy state, and the canvas callers keep their guard. The core also
+ * names the PREMISE as a target (`TextTransformTarget`): the premise is a
+ * module document (`features/modules/module-problems` renders it as `premise`)
+ * but it is not a part, and the pass rewrites it too.
+ *
  * Streaming: the transport always streams; the reply is a strict JSON
  * object, so raw deltas are not markdown. `ReplacementStreamExtractor`
  * incrementally extracts the `replacement` string value so the SUGGESTION
@@ -56,7 +70,42 @@ import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 
 export const canvasRefineReplySchema = z.object({ replacement: z.string() });
 
+/** The canvas SURFACE's scopes: a selection refine or a picked whole part. */
 export type CanvasRefineScope = 'selection' | 'part';
+
+/**
+ * The SHARED text-transform CORE's target kind (docs/17 rows 353/356): the
+ * canvas scopes plus the module PREMISE. The premise is a module document in
+ * its own right (the reader renders it in the Intro block,
+ * `features/modules/module-problems.PREMISE_WHERE`) but it is NOT a part, and
+ * the adversarial pass transforms it too.
+ */
+export type TextTransformTarget = CanvasRefineScope | 'premise';
+
+/**
+ * The CORE's explicit input — text in, one validated replacement out. It
+ * carries NO module id and NO busy state: refusing a `generating` module and
+ * the `canvasBusy` registry are the canvas caller's guard (below), while the
+ * adversarial pass runs INSIDE generation and calls this core directly.
+ */
+export interface TextTransformInput {
+  target: TextTransformTarget;
+  /** What to do with the text (non-empty). */
+  instruction: string;
+  /** The text to transform: `selection` = the EXACT selected span,
+   * `part`/`premise` = that document's COMPLETE current text (fully
+   * rewritten). The grounding is explicit input — never cursor-derived. */
+  text: string;
+  /** target `selection`: the block paragraph containing the selection's start
+   * (context only — the model must not emit it). Unused by the
+   * whole-document targets, which rewrite `text` as the complete document. */
+  enclosingBlock: string;
+  /** The turn's abort signal (canvas: the `canvasBusy` composed signal; the
+   * pass: the owning run's controller). A user abort is not an error. */
+  signal?: AbortSignal | undefined;
+  /** Cumulative extracted replacement text so far (overlay streaming). */
+  onDelta?: ((textSoFar: string) => void) | undefined;
+}
 
 export interface CanvasRefineInput {
   moduleId: Id;
@@ -178,14 +227,76 @@ const WIKI_TOKEN_RULES =
   '- Wiki-links are [[Name]] tokens (names, never IDs). Keep every token\'s EXACT canonical spelling when the instruction does not rename the entity; never inflect inside the token — write [[Halmund]]\'s tower, not [[Halmunds]] Haus; write [[Name|display]] when the surface text must differ from the canonical name; use [[Name|display]] for roles/titles ([[Halmund|the guard Halmund]]). When the instruction renames or introduces entities, update every affected token inside the replacement consistently. The same rules apply in any language.';
 
 /**
- * Runs one canvas refine: returns the validated, debris-scanned replacement
- * AND the model that served the call (`modelUsed`) — the provenance the
- * accepted proposal is persisted with (docs/17 row 93), never a settings
- * lookup, so an escalated turn is attributed to the model that answered.
- * Throws loudly on busy (`ModuleBusyError`), contract failures (JSON/zod),
- * debris, and empty part replacements. User aborts throw `AbortError` —
- * callers distinguish them via `signal.aborted`, not via the error type
+ * The SHARED text-transform CORE (docs/17 rows 353/356): explicit text in, one
+ * zod-validated replacement out, debris-scanned — the model call, the settings
+ * model/gates, the boundary and the hygiene scan. It deliberately owns NO
+ * canvas busy state: the `canvasBusy` registry and the module's `generating`
+ * status are the canvas SURFACE guard in `refineModuleText` below, while the
+ * adversarial pass (`llm/adversarialPass`) calls THIS function from inside
+ * generation. Returns the replacement AND the model that served the call
+ * (`modelUsed`) — the provenance an accepted change is persisted with
+ * (docs/17 row 93), never a settings lookup, so an escalated turn is
+ * attributed to the model that answered.
+ *
+ * Throws loudly on contract failures (JSON/zod), debris and empty
+ * whole-document replacements. User aborts surface as `AbortError` — callers
+ * distinguish them via `signal.aborted`, not via the error type
  * (18-ARCHITECTURE: the signal is the source of truth).
+ */
+export async function transformModuleText(
+  input: TextTransformInput,
+): Promise<{ replacement: string; modelUsed: string }> {
+  const instruction = input.instruction.trim();
+  if (instruction === '') {
+    throw new Error('text transform needs an instruction');
+  }
+  if (input.target === 'selection' && input.text === '') {
+    throw new Error('text transform needs a selected span for a selection target');
+  }
+  const settings = await getSettings();
+  // The transform runs on the GLOBAL first-try model and is not the run
+  // engine's funnel, so the model in play is recorded here (docs/17 row 198).
+  recordGlobalChatModelInUse(settings.defaultChatModel);
+  const messages = textTransformMessages(input, instruction);
+  const extractor = new ReplacementStreamExtractor();
+  const { text: raw, modelUsed } = await chat(messages, {
+    model: settings.defaultChatModel,
+    // Surgical rewrites: lower than the forge's creative 0.8 so the
+    // replacement stays close to the text it replaces.
+    temperature: 0.4,
+    reasoningEffort: settings.defaultReasoningEffort,
+    responseFormat: schemaResponseFormat('canvas-refine', canvasRefineReplySchema),
+    signal: input.signal,
+    onToken: (delta) => {
+      const soFar = extractor.push(delta);
+      if (soFar !== '') input.onDelta?.(soFar);
+    },
+  });
+
+  // Boundary validation: fail loud, never partial-apply (AGENTS 3).
+  const reply = canvasRefineReplySchema.parse(parseJsonReply(raw));
+  if (input.target !== 'selection' && reply.replacement.trim() === '') {
+    throw new Error(
+      `the model returned an empty replacement for the whole ${input.target}`,
+    );
+  }
+  const { issues } = generatedTextScanForFields([
+    { field: 'replacement', text: reply.replacement },
+  ]);
+  if (issues.length > 0) {
+    throw new Error(`the text transform rejected its reply — ${issues.join('; ')}`);
+  }
+  return { replacement: reply.replacement, modelUsed };
+}
+
+/**
+ * Runs one canvas refine — the CANVAS SURFACE GUARD around the shared core.
+ * Returns the validated, debris-scanned replacement and the model that served
+ * it. Throws loudly on busy (`ModuleBusyError`), contract failures, debris and
+ * empty part replacements; user aborts throw `AbortError`. The guard is what
+ * the canvas surface owns and the core must NOT grow: refusing a module whose
+ * forge is running (its row status) and refusing while a canvas refine OR a
+ * canvas chat turn holds the SHARED `canvasBusy` registry.
  */
 export async function refineModuleText(
   input: CanvasRefineInput,
@@ -215,13 +326,6 @@ export async function refineModuleText(
   // already handles.
   const handle = registerCanvasAbort(input.moduleId, input.turn);
   try {
-    const instruction = input.instruction.trim();
-    if (instruction === '') {
-      throw new Error('canvas refine needs an instruction');
-    }
-    if (input.scope === 'selection' && input.text === '') {
-      throw new Error('canvas selection refine needs a selected span');
-    }
     const module = await getModule(input.moduleId);
     if (module === undefined) {
       throw new Error('Module no longer exists');
@@ -229,50 +333,26 @@ export async function refineModuleText(
     if (module.status === 'generating') {
       throw new ModuleBusyError(input.moduleId);
     }
-    const settings = await getSettings();
-    // Canvas refine runs on the GLOBAL first-try model and is not the run
-    // engine's funnel, so the model in play is recorded here (docs/17 row 198).
-    recordGlobalChatModelInUse(settings.defaultChatModel);
-    const messages = canvasRefineMessages(input, instruction);
-    const extractor = new ReplacementStreamExtractor();
-    const { text: raw, modelUsed } = await chat(messages, {
-      model: settings.defaultChatModel,
-      // Surgical rewrites: lower than the forge's creative 0.8 so the
-      // replacement stays close to the span it replaces.
-      temperature: 0.4,
-      reasoningEffort: settings.defaultReasoningEffort,
-      responseFormat: schemaResponseFormat('canvas-refine', canvasRefineReplySchema),
+    return await transformModuleText({
+      target: input.scope,
+      instruction: input.instruction,
+      text: input.text,
+      enclosingBlock: input.enclosingBlock,
       signal: handle.signal,
-      onToken: (delta) => {
-        const soFar = extractor.push(delta);
-        if (soFar !== '') input.onDelta?.(soFar);
-      },
+      onDelta: input.onDelta,
     });
-
-    // Boundary validation: fail loud, never partial-apply (AGENTS 3).
-    const reply = canvasRefineReplySchema.parse(parseJsonReply(raw));
-    if (input.scope === 'part' && reply.replacement.trim() === '') {
-      throw new Error('the model returned an empty replacement for the whole part');
-    }
-    const { issues } = generatedTextScanForFields([
-      { field: 'replacement', text: reply.replacement },
-    ]);
-    if (issues.length > 0) {
-      throw new Error(`canvas refine rejected its reply — ${issues.join('; ')}`);
-    }
-    return { replacement: reply.replacement, modelUsed };
   } finally {
     handle.releaseHandle();
     releaseModuleGeneration(input.moduleId);
   }
 }
 
-function canvasRefineMessages(input: CanvasRefineInput, instruction: string): ChatMessage[] {
+function textTransformMessages(input: TextTransformInput, instruction: string): ChatMessage[] {
   const system =
     'You are the Canvas co-editor for tabletop RPG modules — an expert rewriter of ' +
     'GM-facing markdown prose. You return ONLY the requested JSON object, never commentary.';
   const rules =
-    input.scope === 'selection'
+    input.target === 'selection'
       ? [
           `Rewrite ONLY the selected span of the module's document, following the instruction.`,
           '- "replacement" replaces EXACTLY the selected text — same boundaries, no surrounding words, no added quotes, no explanations.',
@@ -282,20 +362,28 @@ function canvasRefineMessages(input: CanvasRefineInput, instruction: string): Ch
           'Reply with ONLY a JSON object: { "replacement": string }',
         ]
       : [
-          `Rewrite the whole module part below, following the instruction.`,
-          '- "replacement" is the COMPLETE new markdown of the part — the same kind of GM-facing document: no commentary, NO H1 (the reader adds the part title), ##/### subheadings allowed, read-aloud text in blockquotes.',
+          input.target === 'premise'
+            ? `Rewrite the whole module PREMISE below, following the instruction.`
+            : `Rewrite the whole module part below, following the instruction.`,
+          input.target === 'premise'
+            ? '- "replacement" is the COMPLETE new markdown of the premise — the module\'s GM-facing overview the reader shows in the Intro block: no commentary, NO H1 (the reader supplies the title), ##/### subheadings allowed.'
+            : '- "replacement" is the COMPLETE new markdown of the part — the same kind of GM-facing document: no commentary, NO H1 (the reader adds the part title), ##/### subheadings allowed, read-aloud text in blockquotes.',
           '- Preserve entity canonical spellings from the original text unless the instruction renames them; keep the prose usable at the table.',
           WIKI_TOKEN_RULES,
           '- Match the generation language of the original text.',
           'Reply with ONLY a JSON object: { "replacement": string }',
         ];
   const context =
-    input.scope === 'selection'
+    input.target === 'selection'
       ? [
           `Enclosing block (context only — never part of the replacement):\n${input.enclosingBlock}`,
           `Selected text — the span "replacement" replaces exactly:\n${input.text}`,
         ]
-      : [`Full part text to rewrite:\n${input.text}`];
+      : [
+          input.target === 'premise'
+            ? `Full premise text to rewrite:\n${input.text}`
+            : `Full part text to rewrite:\n${input.text}`,
+        ];
   return [
     { role: 'system', content: system },
     {

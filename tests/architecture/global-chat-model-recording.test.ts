@@ -64,6 +64,11 @@ const DECISIONS: Record<string, SiteDecision> = {
     decision: 'record',
     reason: 'canvas refine is one global-model chat call outside the run funnel',
   },
+  'src/llm/adversarialPass.ts': {
+    decision: 'record',
+    reason:
+      'the adversarial critique-and-edit pass (docs/17 row 356) makes one global-model critique call outside the run funnel; its editor call goes through the transform core in canvasRefine, which records it there. The editor is the SAME site, not a second one',
+  },
   'src/llm/canvasChat.ts': {
     decision: 'record',
     reason:
@@ -128,6 +133,7 @@ const RESOLUTION_POPULATION: Record<string, { resolveChatModel: number; defaultC
   'src/features/settings/settings-section.tsx': { resolveChatModel: 0, defaultChatModel: 3 },
   'src/llm/canvasChat.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/canvasRefine.ts': { resolveChatModel: 0, defaultChatModel: 2 },
+  'src/llm/adversarialPass.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/ideaBoard.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/modelFallback.ts': { resolveChatModel: 1, defaultChatModel: 2 },
   'src/llm/moduleGen.ts': { resolveChatModel: 0, defaultChatModel: 15 },
@@ -137,6 +143,7 @@ const RESOLUTION_POPULATION: Record<string, { resolveChatModel: number; defaultC
 
 /** The ONE in-use recording seam's call population (its definition counts). */
 const IN_USE_RECORDERS: Record<string, number> = {
+  'src/llm/adversarialPass.ts': 1,
   'src/llm/canvasChat.ts': 1,
   'src/llm/canvasRefine.ts': 1,
   'src/llm/ideaBoard.ts': 1,

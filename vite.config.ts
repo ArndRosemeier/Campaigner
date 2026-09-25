@@ -22,8 +22,8 @@ import { configDefaults, defineConfig } from 'vitest/config';
 // lib/globalErrors touch window; features/module-post-generation's
 // real-chain Dexie timing only settles under jsdom.
 const nodeTestGlobs = [
-  // llm (23 of 31 — see jsdom stragglers above)
-  'tests/llm/{ideaBoard,ideaBoard-recording,campaignGrounding,canvasChat,creatorRoster,draftSchemas,encounter-items,encounter-roster,encounterRun,encounterVision,image-caps,image-timeout,imageGen-fallback,imagePromptDraft}.test.ts',
+  // llm (24 of 32 — see jsdom stragglers above)
+  'tests/llm/{adversarialPass,ideaBoard,ideaBoard-recording,campaignGrounding,canvasChat,creatorRoster,draftSchemas,encounter-items,encounter-roster,encounterRun,encounterVision,image-caps,image-timeout,imageGen-fallback,imagePromptDraft}.test.ts',
   'tests/llm/{jsonReply,language,modelFallback,openrouter,openrouterErrors,openrouter-stream,persona-extras,retry-hardening,schemaTolerances,treasureGuidance}.test.ts',
   // db (all 17 — m2kinds/battleSeed are .tsx but pure-Dexie, no rendering)
   'tests/db/**/*.test.ts',
