@@ -764,6 +764,81 @@ describe('the module difficulty control (docs/17 row 190)', () => {
   }, 30_000);
 });
 
+describe('the adversarial-generation checkbox (docs/17 row 354, slice 1: the flag only)', () => {
+  it('renders off by default and untouched creation passes the flag as false', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    const checkbox = within(dialog).getByTestId('new-module-adversarial-generation');
+    expect(checkbox).not.toBeChecked();
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'A quiet, ordinary module.');
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+
+    // Untouched: the creation input (the generation input this dialog builds)
+    // carries the flag OFF, and the real `createModule` records exactly that.
+    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    expect(input).toMatchObject({ adversarialGeneration: false });
+    if (input === undefined) throw new Error('creation input missing');
+    expect(createModule(input).adversarialGeneration).toBe(false);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('toggling it latches the draft and the value reaches the created module', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    const checkbox = within(dialog).getByTestId('new-module-adversarial-generation');
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'A critiqued module.');
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+
+    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    expect(input).toMatchObject({ adversarialGeneration: true });
+    if (input === undefined) throw new Error('creation input missing');
+    // The value reaches the module ROW through the real creation seam.
+    expect(createModule(input).adversarialGeneration).toBe(true);
+    // And the draft the retry would resume from holds the same choice.
+    await flushAsyncUpdates();
+    const settings = await actDrained(() => readSettings());
+    expect(settings.newModuleDraft?.adversarialGeneration).toBe(true);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('remembers the choice across a close/reopen, and Reset clears it back to off', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    let dialog = await openDialog(campaign);
+
+    await user.click(within(dialog).getByTestId('new-module-adversarial-generation'));
+    dialog = await reopenDialog(user);
+    expect(within(dialog).getByTestId('new-module-adversarial-generation')).toBeChecked();
+    expect((await actDrained(() => readSettings())).newModuleDraft?.adversarialGeneration).toBe(
+      true,
+    );
+
+    // Reset to defaults is the prefill's escape hatch: it goes back to off and
+    // the stored draft follows (a marked edit, like every other reset).
+    await user.click(within(dialog).getByRole('button', { name: 'Reset to defaults' }));
+    dialog = await reopenDialog(user);
+    expect(within(dialog).getByTestId('new-module-adversarial-generation')).not.toBeChecked();
+    expect((await actDrained(() => readSettings())).newModuleDraft?.adversarialGeneration).toBe(
+      false,
+    );
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
 describe('draft lifecycle across the campaign delete paths', () => {
   it('is KEPT by both wipes and CLEARED by deleteCampaign', async () => {
     const campaign = await seedCampaign();
@@ -904,6 +979,7 @@ describe('draft schema', () => {
       sizeDial: 'standard',
       includePriorModules: false,
       autoApproveSpine: false,
+      adversarialGeneration: false,
       autoGenerateKinds: [],
       autoImageKinds: [],
       autoGenerateBattlemaps: true,
@@ -931,6 +1007,10 @@ describe('draft schema', () => {
       encounterFloorGuardrail: { enabled: true, perLevel: 1 },
     };
     expect(newModuleDraftSchema.parse(legacy).title).toBe(defaultModuleTitle());
+    // A draft written BEFORE the adversarial-generation checkbox carries no
+    // `adversarialGeneration` key either: the field is additive, so that whole
+    // stored draft still parses and reads as off (nothing is thrown away).
+    expect(newModuleDraftSchema.parse(legacy).adversarialGeneration).toBe(false);
     // A draft that carries a title keeps it.
     expect(newModuleDraftSchema.parse({ ...legacy, title: 'The Sunken Bell' }).title).toBe(
       'The Sunken Bell',

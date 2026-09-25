@@ -127,6 +127,7 @@ function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
     a.sizeDial === b.sizeDial &&
     a.includePriorModules === b.includePriorModules &&
     a.autoApproveSpine === b.autoApproveSpine &&
+    a.adversarialGeneration === b.adversarialGeneration &&
     sameKinds(a.autoGenerateKinds, b.autoGenerateKinds) &&
     sameKinds(a.autoImageKinds, b.autoImageKinds) &&
     a.autoGenerateBattlemaps === b.autoGenerateBattlemaps &&
@@ -196,6 +197,7 @@ function NewModuleDialogContent({
   const [sizeDial, setSizeDial] = useState<ModuleSizeDial>('standard');
   const [includePriorModules, setIncludePriorModules] = useState(false);
   const [autoApproveSpine, setAutoApproveSpine] = useState(false);
+  const [adversarialGeneration, setAdversarialGeneration] = useState(false);
   const [autoGenerateKinds, setAutoGenerateKinds] = useState<EntityKind[]>([]);
   const [autoImageKinds, setAutoImageKinds] = useState<EntityKind[]>([]);
   // Master switch for this module's automatic battlemaps (owner request:
@@ -342,6 +344,7 @@ function NewModuleDialogContent({
       setSizeDial(draft.sizeDial);
       setIncludePriorModules(draft.includePriorModules);
       setAutoApproveSpine(draft.autoApproveSpine);
+      setAdversarialGeneration(draft.adversarialGeneration);
       setAutoGenerateKinds([...draft.autoGenerateKinds]);
       setAutoImageKinds([...draft.autoImageKinds]);
       setAutoGenerateBattlemaps(draft.autoGenerateBattlemaps);
@@ -439,6 +442,7 @@ function NewModuleDialogContent({
       sizeDial,
       includePriorModules,
       autoApproveSpine,
+      adversarialGeneration,
       autoGenerateKinds: [...autoGenerateKinds],
       autoImageKinds: [...autoImageKinds],
       autoGenerateBattlemaps,
@@ -474,6 +478,7 @@ function NewModuleDialogContent({
     sizeDial,
     includePriorModules,
     autoApproveSpine,
+    adversarialGeneration,
     autoGenerateKinds,
     autoImageKinds,
     autoGenerateBattlemaps,
@@ -587,6 +592,7 @@ function NewModuleDialogContent({
         sizeDial,
         includePriorModules,
         autoApproveSpine,
+        adversarialGeneration,
         autoGenerateKinds,
         autoImageKinds,
         autoGenerateBattlemaps,
@@ -803,6 +809,25 @@ function NewModuleDialogContent({
                 Skip the spine checkpoint: the generated premise and part plan are approved as-is
                 and the parts are written immediately. The plan cannot be reshaped beforehand —
                 parts stay individually editable and rewritable afterwards.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="module-adversarial-generation"
+              data-testid="new-module-adversarial-generation"
+              checked={adversarialGeneration}
+              onCheckedChange={(checked) => {
+                markEdited();
+                setAdversarialGeneration(checked);
+              }}
+            />
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="module-adversarial-generation">Adversarial generation</Label>
+              <p className="text-xs text-muted-foreground">
+                A critique reviews each step’s result — the premise first, then every part as it is
+                written — and an editor improves it. Off by default.
               </p>
             </div>
           </div>

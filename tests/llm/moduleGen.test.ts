@@ -11,7 +11,7 @@ import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart } from '@/domain';
+import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
 import { searchRules } from '@/search';
@@ -2063,6 +2063,99 @@ describe('createModuleAndRun (non-blocking creation)', () => {
       expect((await getModule(moduleId))?.status).toBe('draft');
     });
     expect(chatMock).toHaveBeenCalledTimes(1);
+  }, 20000);
+});
+
+/**
+ * Adversarial generation — SLICE 1 IS THE FLAG AND ITS DATA PATH ONLY
+ * (docs/17 rows 352–354): the choice rides the module ROW through
+ * `createModuleAndRun` → `createModule`, exactly like `includePriorModules` /
+ * `autoApproveSpine`. No pass, no critique, no editor and no model call exists
+ * yet, so the load-bearing pin is that the flag changes NOTHING the generator
+ * receives: the spine prompt bytes are identical with the flag off, unset and
+ * even on.
+ */
+describe('adversarialGeneration — the creation data path (docs/17 row 354, slice 1)', () => {
+  /** The creation input the two modules below share; ONLY the flag differs. */
+  function creationInput(
+    campaignId: Id,
+    extra: { adversarialGeneration?: boolean } = {},
+  ): NewModule & { tone: string } {
+    return {
+      campaignId,
+      title: 'The Drowned Bell',
+      concept: 'A harbor bell that rings by itself beneath the water.',
+      levelMin: 1,
+      levelMax: 3,
+      tone: 'eerie',
+      sizeDial: 'standard',
+      ...extra,
+    };
+  }
+
+  it('createModuleAndRun records the flag on the created row, BOTH values', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // The spine call hangs until cancelled: creation is what is measured here.
+    chatMock.mockImplementation((_messages, options) => chatUntilAborted(options.signal));
+
+    const onId = await createModuleAndRun(
+      campaign,
+      creationInput(campaign.id, { adversarialGeneration: true }),
+    );
+    const offId = await createModuleAndRun(
+      campaign,
+      creationInput(campaign.id, { adversarialGeneration: false }),
+    );
+
+    expect((await getModule(onId))?.adversarialGeneration).toBe(true);
+    expect((await getModule(offId))?.adversarialGeneration).toBe(false);
+
+    // Cleanup: abort the in-flight spines; the runs rewind their rows to draft.
+    cancelModuleGen(onId);
+    cancelModuleGen(offId);
+    await waitFor(async () => {
+      expect((await getModule(onId))?.status).toBe('draft');
+      expect((await getModule(offId))?.status).toBe('draft');
+    });
+  }, 20000);
+
+  it('the generation input is BYTE-IDENTICAL with the flag unset and with it ON — nothing reads it yet', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // Two module rows with identical fields in the same campaign; one was
+    // created with no flag at all (the pre-slice row shape, defaulted to false
+    // by the schema), the other with the flag explicitly ON.
+    const untouched = await saveModule(createModule(creationInput(campaign.id)));
+    const flagged = await saveModule(
+      createModule(creationInput(campaign.id, { adversarialGeneration: true })),
+    );
+    expect(untouched.adversarialGeneration).toBe(false);
+    expect(flagged.adversarialGeneration).toBe(true);
+
+    const spineReply = (): ChatResult => ({
+      text: JSON.stringify(VALID_SPINE),
+      modelUsed: TEST_MODEL,
+      fallback: null,
+    });
+    const normalization = (): ChatResult => ({
+      text: JSON.stringify(SELF_NORMALIZATION),
+      modelUsed: TEST_MODEL,
+      fallback: null,
+    });
+
+    // The spine pass is one spine call + one self-normalization call.
+    chatMock.mockResolvedValueOnce(spineReply()).mockResolvedValueOnce(normalization());
+    await runSpine(untouched.id, campaign);
+    const promptUnset = userPromptOf(0);
+
+    chatMock.mockResolvedValueOnce(spineReply()).mockResolvedValueOnce(normalization());
+    await runSpine(flagged.id, campaign);
+    const promptFlagged = userPromptOf(2);
+
+    // BYTE-IDENTICAL: the exact prompt bytes the model receives do not move.
+    // (The row half of the guarantee — omitted vs explicit-false serialize to
+    // the same bytes — is pinned in tests/domain/module.test.ts.)
+    expect(promptUnset.length).toBeGreaterThan(0);
+    expect(promptFlagged).toBe(promptUnset);
   }, 20000);
 });
 

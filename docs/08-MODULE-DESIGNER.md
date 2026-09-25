@@ -1014,7 +1014,12 @@ steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), and the
 opt-in **"Continue from previous modules"** checkbox (disabled with a hint
 until some other module of the campaign has text; the flag persists on the
 module row, so later spine retries / part rewrites keep the continuity
-context). Creates the Module row and navigates to the reader **immediately** —
+context), and the opt-in **"Adversarial generation"** checkbox beside it
+(docs/17 row 354: inside generation, a critique reviews each step's result —
+the premise first, then every part as it is written — and an editor improves
+it; OFF by default, and the choice is remembered in the draft and recorded on
+the module row through `createModuleAndRun` → `createModule`, exactly like the
+continuity flag). Creates the Module row and navigates to the reader **immediately** —
 pass 0 runs there, where the reader is its live progress surface: streaming
 card, Stop button, and a progress dock that reports what the stream is doing
 (char counts while the answer streams, "the model is thinking (Ns)" — with an

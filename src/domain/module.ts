@@ -1002,6 +1002,13 @@ export const moduleSchema = z
     /** Opt-in unattended generation: the pass-0 spine is approved as-is and
      * pass 1 starts immediately — the spine checkpoint never stops the flow. */
     autoApproveSpine: z.boolean().default(false),
+    /** Opt-in ADVERSARIAL GENERATION (docs/17 rows 352–354): inside generation,
+     * a critique reviews the premise and each part and an editor improves it.
+     * Off is today's generation, byte-for-byte. This slice carries ONLY the
+     * flag and its creation data path — no pass reads it yet (slices 2–4 add
+     * the pass, the automatic trigger and the chat trigger). Defaulted so every
+     * row written before the field (no key) still parses. */
+    adversarialGeneration: z.boolean().default(false),
     /**
      * The module's OWN encounter floor, recorded at creation (see
      * `encounterFloorGuardrailSchema`). Additive optional: `null` — every row
@@ -1184,6 +1191,9 @@ export interface NewModule {
   autoGenerateMobImages?: boolean;
   /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
   autoApproveSpine?: boolean;
+  /** Opt-in ADVERSARIAL GENERATION (docs/17 row 354): the critique-and-edit
+   * quality pass over the premise and each part. Omitted = false. */
+  adversarialGeneration?: boolean;
   /**
    * The encounter floor this module enforces (see
    * `encounterFloorGuardrailSchema`). Omitted or undefined = not recorded =
@@ -1260,6 +1270,7 @@ export function createModule(input: NewModule): Module {
     autoGenerateBattlemaps: automationIntent.autoGenerateBattlemaps,
     autoGenerateMobImages: automationIntent.autoGenerateMobImages,
     autoApproveSpine: input.autoApproveSpine ?? false,
+    adversarialGeneration: input.adversarialGeneration ?? false,
     encounterFloorGuardrail: input.encounterFloorGuardrail ?? null,
     encounterBudgetPolicy: input.encounterBudgetPolicy ?? null,
     difficulty: input.difficulty ?? null,

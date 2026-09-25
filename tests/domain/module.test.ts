@@ -150,6 +150,44 @@ describe('moduleSchema.autoGenerateMobImages', () => {
   });
 });
 
+describe('moduleSchema.adversarialGeneration (docs/17 row 354, slice 1: the flag only)', () => {
+  const base = {
+    campaignId: '00000000-0000-4000-8000-0000000000c1',
+    title: 'Test Module',
+    concept: '',
+    levelMin: 1,
+    levelMax: 3,
+    sizeDial: 'standard' as const,
+  };
+
+  it('defaults to false (off by default) and persists BOTH explicit values verbatim', () => {
+    expect(createModule(base).adversarialGeneration).toBe(false);
+    expect(createModule({ ...base, adversarialGeneration: false }).adversarialGeneration).toBe(
+      false,
+    );
+    expect(createModule({ ...base, adversarialGeneration: true }).adversarialGeneration).toBe(true);
+  });
+
+  it('moduleSchema.parse fills the default for rows written before the field', () => {
+    // A module row persisted before this slice carries NO `adversarialGeneration`
+    // key: `.default(false)` keeps it parsing as today's off-by-default module.
+    const module = createModule(base);
+    const parsed = moduleSchema.parse({ ...module, adversarialGeneration: undefined });
+    expect(parsed.adversarialGeneration).toBe(false);
+  });
+
+  it('an untouched (omitted) row and an explicit `false` row are byte-identical', () => {
+    // The flag-off guarantee at the ROW boundary: the additive key defaults to
+    // false, so the omitted row and the explicit-false row serialize to the same
+    // bytes — no other field shifts. (The generation-input half of the guarantee
+    // lives in the moduleGen pins, where the model prompt bytes are compared.)
+    const module = createModule(base);
+    const omitted = moduleSchema.parse({ ...module, adversarialGeneration: undefined });
+    const explicitFalse = moduleSchema.parse({ ...module, adversarialGeneration: false });
+    expect(JSON.stringify(omitted)).toBe(JSON.stringify(explicitFalse));
+  });
+});
+
 describe('entityKindFor', () => {
   const records: ModuleEntityKind[] = [
     { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [] },

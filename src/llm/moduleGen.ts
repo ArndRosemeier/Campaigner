@@ -3073,6 +3073,14 @@ export async function createModuleAndRun(
     /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
     autoApproveSpine?: boolean;
     /**
+     * Opt-in ADVERSARIAL GENERATION (docs/17 row 354): the critique-and-edit
+     * quality pass over the premise and each part. Forwarded verbatim to
+     * `createModule` (the spread below), so the created module row records the
+     * choice. This slice is the DATA PATH ONLY — nothing in generation reads
+     * the flag yet (slices 2–4 add the pass and its triggers).
+     */
+    adversarialGeneration?: boolean;
+    /**
      * The module prompt style to write in (docs/17 row 86): a built-in id or a
      * user style id. Omitted = the app default from Settings. An id that does
      * not resolve, or a style whose template does not validate, throws BEFORE

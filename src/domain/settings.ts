@@ -331,6 +331,14 @@ export const newModuleDraftSchema = z
     sizeDial: moduleSizeDialSchema,
     includePriorModules: z.boolean(),
     autoApproveSpine: z.boolean(),
+    /**
+     * Opt-in adversarial generation (docs/17 row 354), remembered like the
+     * flags above. `.default(false)` makes the field ADDITIVE: a draft written
+     * before the checkbox existed carries no key, still parses (the whole
+     * stored draft is not thrown away over a field that was never chosen), and
+     * means "off" — a genuine preference default, never a masked failure.
+     */
+    adversarialGeneration: z.boolean().default(false),
     autoGenerateKinds: z.array(z.enum(ENTITY_KINDS)),
     autoImageKinds: z.array(z.enum(ENTITY_KINDS)),
     autoGenerateBattlemaps: z.boolean(),
@@ -394,6 +402,7 @@ export function defaultNewModuleDraft(campaignId: string): NewModuleDraft {
     sizeDial: 'standard',
     includePriorModules: false,
     autoApproveSpine: false,
+    adversarialGeneration: false,
     autoGenerateKinds: [],
     autoImageKinds: [],
     // The master battlemap switch is ON by default; mob portraits stay opt-in
