@@ -119,7 +119,7 @@ export const moduleSpineSchema = z.object({
    * `.default(null)` — parse-on-read, NO Dexie version, exactly like
    * `writerModel` beside it.
    *
-   * Stamped by the two premise writers, and by no one else:
+   * Stamped by the premise writers, and by no one else:
    *   - the spine pass records `'model'` with the premise it just wrote;
    *   - `moduleGen.approveSpineAndRun` — the "Generate parts" click, whose
    *     draft the checkpoint let the owner edit — records `'human'` ONLY when
@@ -130,6 +130,10 @@ export const moduleSpineSchema = z.object({
    *   - `moduleGen.applyNormalizationVerdict` records `'model'` after it
    *     rewrites the premise's link targets, because the document it wrote is
    *     no longer the one the owner typed.
+    *   - the ADVERSARIAL premise review records `'model'` when it applies the
+    *     pass's replacement (docs/17 row 358) — a model wrote those words, and
+    *     the version stack can now put the owner's earlier premise back
+    *     (docs/17 row 357).
    *
    * `null` = NOT RECORDED (every module written before the field) and reads
    * as HUMAN-AUTHORED (the conservative default, `textOriginSchema`). No
