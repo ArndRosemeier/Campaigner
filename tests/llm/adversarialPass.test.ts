@@ -1,8 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -30,6 +27,7 @@ import {
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { clearDatabase } from '../db/helpers';
+import { CODE, filesWith } from '../helpers/sourceCode';
 
 /**
  * The ADVERSARIAL critique-and-edit pass (docs/17 rows 352/353/356): EXACTLY
@@ -424,22 +422,24 @@ describe('the GUARD SPLIT — the canvas caller refuses a generating module, the
   });
 });
 
-describe('this slice defines the pass and wires it NOWHERE', () => {
-  it('no src file calls runAdversarialPass or imports the module', () => {
-    const root = join(process.cwd(), 'src');
-    const files: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) files.push(full);
-      }
-    };
-    walk(root);
-    expect(files.length).toBeGreaterThan(300);
-    const definers = files.filter((file) => readFileSync(file, 'utf8').includes('runAdversarialPass('));
-    expect(definers).toEqual([join(root, 'llm/adversarialPass.ts')]);
-    const importers = files.filter((file) => readFileSync(file, 'utf8').includes('@/llm/adversarialPass'));
-    expect(importers).toEqual([]);
+describe('the pass has exactly ONE importer and TWO guarded trigger sites (docs/17 row 358)', () => {
+  it('moduleGen imports it, calls it twice behind the row flag, and no one else calls it', () => {
+    // The comment-stripped, whitespace-collapsed `src/` tree from the ONE
+    // source-scan helper (docs/17 rows 212/284): a docstring is allowed to NAME
+    // the pass, and only CODE is counted.
+    expect(Object.keys(CODE).length).toBeGreaterThan(300);
+    // The DEFINITION lives in exactly one file (the module that owns it).
+    expect(filesWith('export async function runAdversarialPass(')).toEqual([
+      'src/llm/adversarialPass.ts',
+    ]);
+    // The IMPORT is a single edge: module generation wires the pass in.
+    expect(filesWith('@/llm/adversarialPass')).toEqual(['src/llm/moduleGen.ts']);
+    // The TRIGGERS are exactly two — the premise in pass 0 and each part in
+    // pass 1 — and the flag guard that gates them is read three times in the
+    // file (its own definition plus the two trigger sites). A third trigger, or
+    // one that skipped the guard, moves a count and reds here.
+    const moduleGen = CODE['src/llm/moduleGen.ts'] ?? '';
+    expect(moduleGen.match(/runAdversarialPass\(/g)).toHaveLength(2);
+    expect(moduleGen.match(/adversarialReviewEnabled\(/g)).toHaveLength(3);
   });
 });

@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
@@ -11,7 +14,7 @@ import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
+import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, splitPartsDocument, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
 import { searchRules } from '@/search';
@@ -2345,5 +2348,536 @@ describe('recently used global chat model at the module-generation entry points 
     await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', ['Halmund']);
 
     expect((await getSettings()).recentChatModels).toEqual(['global/classify-one']);
+  }, 20000);
+});
+
+
+/**
+ * Adversarial generation — THE TRIGGER (docs/17 row 358).
+ *
+ * Row 354 landed the flag and row 356 the pass; THIS is the wire. With the
+ * module row's `adversarialGeneration` ON, the premise is reviewed right after
+ * the spine produced it and each part as it is written, every edit lands
+ * through the EXISTING write seams, and a failed critique/editor is contained
+ * (that part's text unchanged and marked failed, the run continues).
+ *
+ * THE LOAD-BEARING PIN IS THE FLAG-OFF GOLDEN:
+ * `tests/fixtures/adversarialGeneration/flag-off-transcript.json` was captured
+ * from the tree BEFORE the trigger landed (the 89e5d71 method: the REAL
+ * `runSpine` + `runParts` against mocked chat replies) and holds every chat
+ * call's full messages, its option set, model, temperature and response format,
+ * plus the final parts document and the per-part rows. A flag-off run at this
+ * commit must reproduce it character for character — that is what makes wiring
+ * a model-calling pass into generation safe.
+ */
+describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
+  const GOLDEN_FILE = join(
+    process.cwd(),
+    'tests',
+    'fixtures',
+    'adversarialGeneration',
+    'flag-off-transcript.json',
+  );
+
+  /** The generated part prose the scripted replies carry (exact bytes). */
+  const PART_ONE = partWithNames('PART-ONE', ['Ember Trial']);
+  const PART_TWO = partWithNames('PART-TWO', ['Flood Trial']);
+
+  type ReviewKey = 'premise' | 'part0' | 'part1';
+
+  interface GoldenCall {
+    messages: { role: string; content: unknown }[];
+    optionKeys: string[];
+    model: unknown;
+    temperature: unknown;
+    reasoningEffort: unknown;
+    responseFormat: unknown;
+  }
+
+  interface GoldenScenario {
+    calls: GoldenCall[];
+    premise: string;
+    document: string;
+    parts: {
+      planIndex: number;
+      markdown: string;
+      status: string;
+      edited: boolean;
+      origin: unknown;
+      writerModel: string;
+    }[];
+  }
+
+  function golden(): GoldenScenario {
+    return JSON.parse(readFileSync(GOLDEN_FILE, 'utf8')) as GoldenScenario;
+  }
+
+  /** The module row, loud when it is gone (the run under test just wrote it). */
+  async function requireRow(moduleId: Id): Promise<Module> {
+    const row = await getModule(moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    return row;
+  }
+
+  function promptOf(messages: Parameters<typeof chat>[0]): string {
+    const user = messages.find((message) => message.role === 'user')?.content;
+    return user === undefined ? '' : messageText(user);
+  }
+
+  function transcript(): GoldenCall[] {
+    return chatMock.mock.calls.map(([messages, options]) => {
+      const opts = options as unknown as Record<string, unknown>;
+      return {
+        messages: messages.map((message) => ({ role: message.role, content: message.content })),
+        optionKeys: Object.keys(opts).sort(),
+        model: opts.model,
+        temperature: opts.temperature,
+        reasoningEffort: opts.reasoningEffort,
+        responseFormat: opts.responseFormat ?? null,
+      };
+    });
+  }
+
+  /** The pass's critique call: its user message OPENS with the target line. */
+  function isCritique(prompt: string): boolean {
+    return prompt.startsWith('Module ') && prompt.includes(' under review:');
+  }
+
+  /** The editor call: the transform core's part/premise branch, driven by the
+   *  pass (the canvas never calls it in these tests). */
+  function isEditor(prompt: string): boolean {
+    return prompt.includes('An adversarial critique reviewed this module');
+  }
+
+  /** Which target a critique/editor call is about, by the review's own text. */
+  function reviewKey(prompt: string): ReviewKey {
+    if (prompt.includes('PART-ONE')) return 'part0';
+    if (prompt.includes('PART-TWO')) return 'part1';
+    return 'premise';
+  }
+
+  function spineReply(): ChatResult {
+    return { text: JSON.stringify(VALID_SPINE), modelUsed: TEST_MODEL, fallback: null };
+  }
+
+  function selfNormalization(): ChatResult {
+    return { text: JSON.stringify(SELF_NORMALIZATION), modelUsed: TEST_MODEL, fallback: null };
+  }
+
+  /** Answers every NON-adversarial call (the generation sequence itself). */
+  function generationReply(prompt: string): ChatResult {
+    if (prompt.includes('Module concept:')) return spineReply();
+    if (prompt.includes('For each entity name below')) {
+      const names = ['Ember Trial', 'Flood Trial'].filter((name) => prompt.includes(name));
+      return names.length > 0 ? encounterReply(...names) : selfNormalization();
+    }
+    if (prompt.includes('Write part 1:')) return PART_ONE;
+    if (prompt.includes('Write part 2:')) return PART_TWO;
+    throw new Error(`unscripted generation prompt: ${prompt.slice(0, 120)}`);
+  }
+
+  /** Installs the dispatcher: generation replies plus a script for the pass. */
+  function installChat(script: (prompt: string) => ChatResult): void {
+    chatMock.mockImplementation((messages) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt) || isEditor(prompt)) return Promise.resolve(script(prompt));
+      return Promise.resolve(generationReply(prompt));
+    });
+  }
+
+  function finding(): ChatResult {
+    return {
+      text: JSON.stringify({
+        issues: [
+          { kind: 'fun', severity: 'major', message: 'The arrival drags.', where: 'the opening' },
+        ],
+      }),
+      modelUsed: 'critic/model',
+      fallback: null,
+    };
+  }
+
+  function cleanCritique(): ChatResult {
+    return { text: JSON.stringify({ issues: [] }), modelUsed: 'critic/model', fallback: null };
+  }
+
+  /** A boundary failure: not JSON at all (the pass throws, AGENTS rule 3). */
+  function malformed(): ChatResult {
+    return { text: 'not json at all', modelUsed: 'critic/model', fallback: null };
+  }
+
+  function edited(markdown: string): ChatResult {
+    return {
+      text: JSON.stringify({ replacement: markdown }),
+      modelUsed: 'editor/model',
+      fallback: null,
+    };
+  }
+
+  /** The ONE scenario the golden pins: pass 0 then a two-part pass 1, flag OFF. */
+  async function runFlagOffSequence(): Promise<GoldenScenario> {
+    const { campaign, moduleId } = await seedModule();
+    installChat(() => {
+      throw new Error('a FLAG-OFF run issued an adversarial call');
+    });
+    await runSpine(moduleId, campaign);
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    const row = await requireRow(moduleId);
+    const { document } = assembleModulePartsDocument({
+      partPlan: row.spine?.partPlan ?? [],
+      parts: row.parts,
+    });
+    return {
+      calls: transcript(),
+      premise: row.spine?.premise ?? '',
+      document,
+      parts: row.parts
+        .slice()
+        .sort((a, b) => a.planIndex - b.planIndex)
+        .map((part) => ({
+          planIndex: part.planIndex,
+          markdown: part.markdown,
+          status: part.status,
+          edited: part.edited,
+          origin: part.origin,
+          writerModel: part.writerModel,
+        })),
+    };
+  }
+
+  /** A module whose row carries the flag ON (the creation data path is row
+   *  354's pin; here the row is the input we need). */
+  async function seedFlaggedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const saved = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Bell',
+        concept: 'A harbor bell that rings by itself beneath the water.',
+        levelMin: 1,
+        levelMax: 3,
+        tone: 'eerie',
+        sizeDial: 'standard',
+        adversarialGeneration: true,
+      }),
+    );
+    return { campaign, moduleId: saved.id };
+  }
+
+  it('flag OFF is BYTE-IDENTICAL to the pre-trigger tree: same calls, prompts, document and rows', async () => {
+    const expected = golden();
+    const captured = await runFlagOffSequence();
+    expect(captured.calls).toHaveLength(expected.calls.length);
+    expect(captured.calls).toEqual(expected.calls);
+    expect(captured.premise).toBe(expected.premise);
+    expect(captured.document).toBe(expected.document);
+    expect(captured.parts).toEqual(expected.parts);
+    // The pin's MEANING, stated on its own so a failure says which half broke:
+    // with the flag off, NO critique and NO editor call exists at all.
+    const prompts = captured.calls.map((call) => {
+      const user = call.messages.find((message) => message.role === 'user');
+      return typeof user?.content === 'string' ? user.content : '';
+    });
+    expect(prompts.some((prompt) => isCritique(prompt))).toBe(false);
+    expect(prompts.some((prompt) => isEditor(prompt))).toBe(false);
+  }, 20000);
+
+  it('reviews every part ONCE, in order, and calls the editor only when the critique found something', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const phases: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        phases.push(`critique:${reviewKey(prompt)}`);
+        return finding();
+      }
+      phases.push(`edit:${reviewKey(prompt)}`);
+      return edited(`${reviewKey(prompt).toUpperCase()} REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
+    });
+
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    // The pass's own call count, asserted explicitly: one critique per part,
+    // plus one editor per part because every critique DID find something.
+    expect(phases).toEqual([
+      'critique:part0',
+      'edit:part0',
+      'critique:part1',
+      'edit:part1',
+    ]);
+    // The premise was NOT reviewed by a parts pass whose spine was seeded, not
+    // generated: the premise trigger lives in pass 0 (pinned below).
+    expect(phases.some((phase) => phase.endsWith(':premise'))).toBe(false);
+    // part0, critique0, edit0, part1, critique1, edit1 — and NO normalization
+    // call: both edits removed the parts' only wiki-links, so the
+    // normalization pass has no names to classify (`normalizeModuleEntityNames`
+    // returns before its model call on an empty name set).
+    expect(chatMock.mock.calls).toHaveLength(6);
+  }, 20000);
+
+  it('does NOT call the editor when a critique finds nothing, and still reviews every part', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const phases: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        phases.push(`critique:${reviewKey(prompt)}`);
+        return reviewKey(prompt) === 'part0' ? cleanCritique() : finding();
+      }
+      phases.push(`edit:${reviewKey(prompt)}`);
+      return edited(`PART-ONE REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
+    });
+
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    expect(phases).toEqual(['critique:part0', 'critique:part1', 'edit:part1']);
+    // part0, critique0, part1, critique1, edit1, normalization.
+    expect(chatMock.mock.calls).toHaveLength(6);
+  }, 20000);
+
+  it('reviews the PREMISE first — inside pass 0, before the first part is written', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    const PREMISE_EDIT = `THE BELL AND THE DROWNED — ${'a reviewed premise. '.repeat(8)}`;
+    const phases: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        phases.push(`critique:${reviewKey(prompt)}`);
+        return reviewKey(prompt) === 'premise' ? finding() : cleanCritique();
+      }
+      phases.push(`edit:${reviewKey(prompt)}`);
+      return edited(PREMISE_EDIT);
+    });
+
+    const drafted = await runSpine(moduleId, campaign);
+
+    // Pass 0 is DONE: the premise was critiqued AND edited before it returned,
+    // and no part prompt has gone out yet.
+    expect(phases).toEqual(['critique:premise', 'edit:premise']);
+    expect(drafted.status).toBe('draft');
+    expect(drafted.spine?.premise).toBe(PREMISE_EDIT);
+    expect(drafted.spine?.writerModel).toBe('editor/model');
+    expect(drafted.spine?.origin).toBe('model');
+    expect(
+      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write part 1:')),
+    ).toBe(false);
+
+    await runParts(moduleId, campaign, { planIndexes: [0] });
+
+    // THE ORDER PIN: the premise critique's call index precedes the first part
+    // prompt's, and the premise edit precedes it too.
+    const indexes = chatMock.mock.calls.map(([messages]) => promptOf(messages));
+    const premiseCritiqueAt = indexes.findIndex(
+      (prompt) => isCritique(prompt) && reviewKey(prompt) === 'premise',
+    );
+    const premiseEditAt = indexes.findIndex(
+      (prompt) => isEditor(prompt) && reviewKey(prompt) === 'premise',
+    );
+    const firstPartAt = indexes.findIndex((prompt) => prompt.includes('Write part 1:'));
+    expect(premiseCritiqueAt).toBeGreaterThanOrEqual(0);
+    expect(premiseEditAt).toBeGreaterThan(premiseCritiqueAt);
+    expect(firstPartAt).toBeGreaterThan(premiseEditAt);
+  }, 20000);
+
+  it('an accepted edit lands as the part text with the parts-document scaffolding INTACT', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const REPLACEMENT = `PART-ONE REWRITTEN: ${'the drowned bell tolls beneath the quay. '.repeat(4)}`;
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        return reviewKey(prompt) === 'part0' ? finding() : cleanCritique();
+      }
+      return edited(REPLACEMENT);
+    });
+
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    const row = await requireRow(moduleId);
+    const editedPart = row.parts.find((part) => part.planIndex === 0);
+    // The seam's own shape: the ONE part-text save path stamps ready + edited
+    // and names the model that WROTE the replacement.
+    expect(editedPart?.markdown).toBe(REPLACEMENT);
+    expect(editedPart?.status).toBe('ready');
+    expect(editedPart?.edited).toBe(true);
+    expect(editedPart?.origin).toBe('model');
+    expect(editedPart?.writerModel).toBe('editor/model');
+
+    // RE-ASSEMBLE and RE-SPLIT: the derived document still carries the label
+    // lines and the `==========` separators, and the edited markdown IS the
+    // section's text (never a hand-assembled second document format).
+    const { document, parts: sections } = assembleModulePartsDocument({
+      partPlan: row.spine?.partPlan ?? [],
+      parts: row.parts,
+    });
+    expect(document).toContain('[Part 1 of 3 — The Sunken Quarter]\n');
+    expect(document).toContain(
+      `\n\n==========\n\n[Part 2 of 3 — The Drowned Cathedral]\n`,
+    );
+    const split = splitPartsDocument(document, row.spine?.partPlan ?? []);
+    expect(split.map((section) => section.text)).toEqual(
+      sections.map((section) => section.text),
+    );
+    const first = split[0];
+    expect(first?.text).toBe(REPLACEMENT);
+    expect(document.slice(first?.textFrom ?? 0, first?.textTo ?? 0)).toBe(REPLACEMENT);
+  }, 20000);
+
+  it('a FAILED critique leaves the part text UNCHANGED, marks it failed, and the run CONTINUES', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const editorCalls: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) {
+        return reviewKey(prompt) === 'part0' ? malformed() : cleanCritique();
+      }
+      editorCalls.push(reviewKey(prompt));
+      return edited('SHOULD NEVER LAND');
+    });
+
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    const row = await requireRow(moduleId);
+    const first = row.parts.find((part) => part.planIndex === 0);
+    const second = row.parts.find((part) => part.planIndex === 1);
+    // CONTENT IS NOT COST: the text the module writer produced is byte-unchanged.
+    expect(first?.markdown).toBe(PART_ONE.text);
+    expect(first?.status).toBe('failed');
+    expect(first?.errorMessage).toContain('The adversarial review failed');
+    // The run CONTINUED: part 2 was written, and no editor ran for the failed
+    // critique (a critique failure can never reach the editor).
+    expect(second?.markdown).toBe(PART_TWO.text);
+    expect(
+      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write part 2:')),
+    ).toBe(true);
+    expect(editorCalls).toEqual([]);
+  }, 20000);
+
+  it('a FAILED editor leaves the part text UNCHANGED, marks it failed, and the run CONTINUES', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    const editorCalls: string[] = [];
+    installChat((prompt) => {
+      if (isCritique(prompt)) return finding();
+      editorCalls.push(reviewKey(prompt));
+      return malformed();
+    });
+
+    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    const row = await requireRow(moduleId);
+    const first = row.parts.find((part) => part.planIndex === 0);
+    const second = row.parts.find((part) => part.planIndex === 1);
+    // The editor WAS attempted for both parts (the critiques found issues) and
+    // failed — and the text is STILL byte-unchanged on both.
+    expect(editorCalls).toEqual(['part0', 'part1']);
+    expect(first?.markdown).toBe(PART_ONE.text);
+    expect(second?.markdown).toBe(PART_TWO.text);
+    expect(first?.status).toBe('failed');
+    expect(second?.status).toBe('failed');
+    expect(first?.errorMessage).toContain('The adversarial review failed');
+    expect(second?.errorMessage).toContain('The adversarial review failed');
+  }, 20000);
+
+  it('a FAILED premise review is contained: the premise is UNCHANGED and the spine still lands', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    installChat((prompt) => (isCritique(prompt) ? malformed() : edited('SHOULD NEVER LAND')));
+
+    const finished = await runSpine(moduleId, campaign);
+
+    // The spine pass completed at its normal checkpoint; the premise on the row
+    // is the model's own text, untouched.
+    expect(finished.status).toBe('draft');
+    expect(finished.spine?.premise).toBe(VALID_SPINE.premise);
+    expect((await getModule(moduleId))?.spine?.premise).toBe(VALID_SPINE.premise);
+    // Visible (AGENTS rule 2): the failure has no per-part slot to land in, so
+    // it is named with a toast.
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Adversarial review of the premise failed',
+      expect.anything(),
+    );
+  }, 20000);
+
+  it('the generation Stop reaches the pass: the review call is aborted, never left running', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    let reviewSignal: AbortSignal | undefined;
+    chatMock.mockImplementation((messages, options) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt)) {
+        reviewSignal = options.signal;
+        return chatUntilAborted(options.signal);
+      }
+      return Promise.resolve(generationReply(prompt));
+    });
+
+    const pending = guard(runParts(moduleId, campaign, { planIndexes: [0] }));
+    await waitFor(() => {
+      expect(reviewSignal).toBeDefined();
+    });
+    // The signal the pass received IS the run's own controller: un-aborted
+    // while the call is in flight…
+    expect(reviewSignal?.aborted).toBe(false);
+    cancelModuleGen(moduleId);
+    // …and aborted by the user's Stop, which is what makes chatUntilAborted
+    // reject (the run settles instead of hanging on a live model call).
+    expect(reviewSignal?.aborted).toBe(true);
+    const finished = await pending;
+    expect(finished.status).toBe('ready');
+    expect(
+      chatMock.mock.calls.some(([messages]) => isEditor(promptOf(messages))),
+    ).toBe(false);
+    expect(
+      (await getModule(moduleId))?.parts.find((part) => part.planIndex === 0)?.markdown,
+    ).toBe(PART_ONE.text);
+  }, 20000);
+
+  it('the dock detail names the sub-phases of the part under review', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    await seedSpine(moduleId);
+    useProgressStore.getState().reset();
+    let critique: ReturnType<typeof deferredChat> | undefined;
+    chatMock.mockImplementation((messages) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt)) {
+        critique = deferredChat();
+        return critique.promise;
+      }
+      return Promise.resolve(generationReply(prompt));
+    });
+
+    const pending = guard(runParts(moduleId, campaign, { planIndexes: [0] }));
+    await waitFor(() => {
+      const detail = useProgressStore.getState().jobs[0]?.detail ?? '';
+      expect(detail).toContain('Reviewing part 1 of 1: The Sunken Quarter');
+      expect(detail).toContain('critique');
+      expect(detail).toContain('edit');
+    });
+    critique?.resolve(JSON.stringify({ issues: [] }));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+  it('the dock detail names the sub-phases of the premise review', async () => {
+    const { campaign, moduleId } = await seedFlaggedModule();
+    useProgressStore.getState().reset();
+    let critique: ReturnType<typeof deferredChat> | undefined;
+    chatMock.mockImplementation((messages) => {
+      const prompt = promptOf(messages);
+      if (isCritique(prompt)) {
+        critique = deferredChat();
+        return critique.promise;
+      }
+      return Promise.resolve(generationReply(prompt));
+    });
+
+    const pending = guard(runSpine(moduleId, campaign));
+    await waitFor(() => {
+      const detail = useProgressStore.getState().jobs[0]?.detail ?? '';
+      expect(detail).toContain('Reviewing the premise');
+      expect(detail).toContain('critique');
+      expect(detail).toContain('edit');
+    });
+    critique?.resolve(JSON.stringify({ issues: [] }));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
   }, 20000);
 });

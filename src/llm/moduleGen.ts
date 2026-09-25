@@ -45,7 +45,7 @@ import {
   spineContractValues,
 } from '@/llm/promptStyles';
 import { Emitter } from '@/llm/emitter';
-import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
+import { getModule, listModulesByCampaign, patchModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
 // The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
 // WHICH creatures may a module entity be cast from? The answer is the window
 // `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
@@ -84,6 +84,13 @@ import {
 // unattended paths have no UI to do it); the orchestrator never imports this
 // module, so the direction stays acyclic.
 import { runModulePostGeneration } from '@/features/modules/post-generation';
+// THE one part-text save path (18-ARCHITECTURE §2.3): the adversarial edit is
+// an AI rewrite applied INSIDE generation (docs/17 row 358), so it rides the
+// same seam the canvas rewrite's Apply does — never a second part writer.
+import { saveModulePartText } from '@/features/modules/partText';
+// The ONE critique-and-edit pass (docs/17 row 356). It returns a REPORT and
+// never writes; the trigger below is the caller that persists an edit.
+import { runAdversarialPass, type AdversarialPassReport } from '@/llm/adversarialPass';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
@@ -581,6 +588,19 @@ async function runSpinePass(
             'the module needs named encounters (kind "encounter" in entities). Retry the spine draft.',
         );
       }
+    }
+    // ADVERSARIAL PREMISE REVIEW (docs/17 row 358): with the module's flag ON,
+    // the premise is reviewed FIRST — right after the spine produced it (the
+    // floor gate above may have replaced it, so this is the text that will
+    // actually drive the parts) and BEFORE any part is written from it. The
+    // review is contained: a failed critique/editor leaves the premise
+    // byte-unchanged and the spine still lands at its checkpoint.
+    if (adversarialReviewEnabled(saved)) {
+      saved = await reviewPremiseInGeneration({
+        module: saved,
+        signal: controller.signal,
+        jobId,
+      });
     }
     return saved;
   } catch (error) {
@@ -1489,8 +1509,9 @@ async function runPartsPassUnlocked(
         jobId,
         `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
       );
+      let written: string | null = null;
       try {
-        await generatePart(
+        written = await generatePart(
           moduleId,
           target,
           planIndex,
@@ -1522,6 +1543,24 @@ async function runPartsPassUnlocked(
         if (isCancel(error, controller.signal)) throw error;
         // The failed part is persisted with its error by generatePart; the
         // chain continues with the next part (08 §M4-B).
+      }
+      // ADVERSARIAL PART REVIEW (docs/17 row 358): with the module's flag ON,
+      // each part is reviewed as soon as it is written — while its text is
+      // fresh, and before the next part reads it as continuity context. The
+      // review is contained (a failed critique/editor marks THIS part failed
+      // with its text preserved and the chain continues), and it never runs for
+      // a part that did not generate text.
+      if (written !== null && adversarialReviewEnabled(target)) {
+        await reviewPartInGeneration({
+          moduleId,
+          planIndex,
+          title,
+          ordinal: index + 1,
+          total,
+          text: written,
+          signal: controller.signal,
+          jobId,
+        });
       }
       index += 1;
       progress.update(jobId, { progress: index / total });
@@ -2622,6 +2661,223 @@ export function normalizePartMarkdown(raw: string): string {
     );
   }
   return text;
+}
+
+// --- Adversarial generation (docs/17 row 358) --------------------------------
+
+/**
+ * Is the automatic adversarial review ON for this module? THE ONE read of the
+ * module row's flag (`adversarialGeneration`, docs/17 row 354 — off by
+ * default), so the TWO trigger sites (the premise in pass 0, each part in pass
+ * 1) cannot drift: the slice's source pin counts this guard's call sites and
+ * `runAdversarialPass(` call sites, so a third trigger (or an unguarded one)
+ * cannot be born silently.
+ *
+ * The flag lives on the ROW and nowhere else — never a persona, never a run
+ * input and never a setting. Module generation is deliberately not built on
+ * personas/runEngine, and the quality choice must survive a resume, a
+ * single-part rewrite and a hole fill (all of which ride the same passes).
+ */
+function adversarialReviewEnabled(module: Module): boolean {
+  return module.adversarialGeneration;
+}
+
+/**
+ * The dock detail for a review that is about to run. It NAMES BOTH SUB-PHASES
+ * (docs/17 rows 352/358: the dock's bar advances per part, so a flag-on run
+ * must not read as a stall) and it names them TOGETHER on purpose: the pass is
+ * ONE seam with two internal model calls and no per-call hook, so a caller
+ * cannot observe the critique→editor transition. A line that said only
+ * "critique…" would be a lie for as long as the editor runs, and inventing a
+ * phase the caller cannot see is worse than naming both.
+ */
+function adversarialReviewDetail(where: string): string {
+  return `Reviewing ${where} — adversarial critique, then an edit if it finds anything…`;
+}
+
+/**
+ * Marks ONE part failed after its adversarial review failed, KEEPING its text
+ * (docs/17 row 358; the owner's hard constraint: a critique/editor failure must
+ * never cost content). The existing failed-part shape is what the parts chain
+ * already understands — `generatePart`'s failure arm writes `status: 'failed'`
+ * + `errorMessage`, the reader shows the failure card with Retry, the chain
+ * continues, and `generateMissingParts`/the floor repair can pick the part up.
+ * The ONE difference here is that `markdown` is NOT cleared: the prose the
+ * module writer produced is good, only its review failed, and throwing it away
+ * to report a failed critic is exactly the content loss this slice forbids.
+ *
+ * KNOWN CONSEQUENCE, named for the next reader: a failed predecessor feeds no
+ * continuity to the next part (`partCall` reads only a `'ready'` predecessor),
+ * which is the same rule a generation failure follows. A review failure on part
+ * i therefore costs part i+1 its continuity context until the owner retries
+ * part i — the failure card names it, so the state is visible and recoverable.
+ *
+ * The write is the module-row patch the generator's own slot writes use; the
+ * row is re-read first, and the pass holds the generation lease, so no
+ * competing writer can be overwritten here.
+ */
+async function failPartReview(moduleId: Id, planIndex: number, message: string): Promise<void> {
+  const current = await requireModule(moduleId);
+  const parts = current.parts.map((part): ModulePart =>
+    part.planIndex === planIndex ? { ...part, status: 'failed', errorMessage: message } : part,
+  );
+  await patchModule(moduleId, { parts });
+}
+
+/**
+ * Runs the adversarial pass over the PREMISE (docs/17 rows 353/358), right
+ * after the spine pass produced it and BEFORE any part is written from it: the
+ * premise drives every part, so it is reviewed first. Returns the module row
+ * after the write (or the input row when nothing was applied).
+ *
+ * THE EDIT is a SPINE-SUBFIELD write and rides the ONE atomic subfield seam
+ * (`db/moduleRepo.patchModuleSpine`, docs/17 row 357): it re-reads the row
+ * inside its transaction and merges `premise` + the EDITOR's own provenance and
+ * `'model'` authorship, leaving every other spine field and every part
+ * byte-identical. It is deliberately NOT `saveSpine` — that stays the
+ * WHOLE-spine replacement (the checkpoint's contract) and would overwrite the
+ * fields this caller did not read. The promote scan follows, because a rewritten
+ * premise may link another module's entities (the same duty `normalizeAndSave`
+ * and `approveSpineAndRun` already carry).
+ *
+ * THE FAILURE CONTAINMENT is the deliberate difference from the parts: the
+ * spine has no per-part error slot, and a module must not lose a usable spine
+ * because a critic or an editor call failed. The premise is left BYTE-UNCHANGED
+ * on every failure path (a write that throws rolls back, so a half-applied
+ * premise cannot exist), the failure is toasted, and the spine pass continues
+ * to its normal `draft` checkpoint exactly as it would have without the review.
+ * A STOP is not a failure: it propagates through the signal to the caller's own
+ * cancel path.
+ */
+async function reviewPremiseInGeneration(input: {
+  module: Module;
+  signal: AbortSignal;
+  jobId: string;
+}): Promise<Module> {
+  const spine = input.module.spine;
+  if (spine === null) return input.module;
+  const progress = useProgressStore.getState();
+  progress.update(input.jobId, { detail: adversarialReviewDetail('the premise') });
+  let report: AdversarialPassReport;
+  try {
+    report = await runAdversarialPass({
+      moduleId: input.module.id,
+      target: { kind: 'premise' },
+      text: spine.premise,
+      signal: input.signal,
+    });
+  } catch (error) {
+    if (isCancel(error, input.signal)) throw error;
+    toastError(
+      'Adversarial review of the premise failed',
+      new Error(`${errorMessage(error)} The premise was left unchanged.`),
+    );
+    return input.module;
+  }
+  if (report.edit === null) {
+    progress.update(input.jobId, {
+      detail: 'Reviewing the premise — the adversarial critique found nothing to fix.',
+    });
+    return input.module;
+  }
+  progress.update(input.jobId, { detail: 'Applying the adversarial edit to the premise…' });
+  try {
+    const saved = await patchModuleSpine(input.module.id, {
+      premise: report.edit.replacement,
+      // PROVENANCE (docs/17 row 93): the model that WROTE the text now on the
+      // row is the editor, never a settings lookup — and the authorship is the
+      // model's, so the normalization pass may rewrite its link targets
+      // directly (docs/17 row 113).
+      writerModel: report.edit.modelUsed,
+      origin: 'model',
+    });
+    await promoteSecondModuleUses(input.module.id, [report.edit.replacement]);
+    return saved;
+  } catch (error) {
+    if (isCancel(error, input.signal)) throw error;
+    toastError(
+      'Adversarial edit of the premise failed',
+      new Error(`${errorMessage(error)} The premise was left unchanged.`),
+    );
+    return input.module;
+  }
+}
+
+/**
+ * Runs the adversarial pass over ONE just-written part and applies its edit
+ * through THE one part-text save path (`features/modules/partText`,
+ * `saveModulePartText` → `db/moduleRepo.patchModulePartText`), the same seam
+ * the canvas rewrite's Apply rides: one transaction, the whole replacement
+ * applied or nothing, the row re-read inside the transaction, and the
+ * second-module promote scan after it. The replacement is the COMPLETE new
+ * markdown of that part, so the module's parts-document scaffolding
+ * (`==========` separators + `[Part <n> of <total> — <title>]` labels) is never
+ * touched — it is DERIVED by `domain/modulePartsDocument` from the plan and the
+ * per-part markdown, and there is no second document format to hand-assemble.
+ *
+ * THE FAILURE CONTAINMENT: a failed critique or a failed editor marks THIS part
+ * failed with its text preserved (`failPartReview`) and returns — the module
+ * run CONTINUES. Nothing is thrown but a stop, and no half-applied replacement
+ * can exist: `runAdversarialPass` returns a complete validated replacement or
+ * throws before any write.
+ *
+ * The text reviewed is the markdown `generatePart` just wrote, in the same
+ * generation lease, so it is the part's current text; the next part's
+ * continuity context is read from the row after this write, i.e. the REVIEWED
+ * text.
+ */
+async function reviewPartInGeneration(input: {
+  moduleId: Id;
+  planIndex: number;
+  title: string;
+  ordinal: number;
+  total: number;
+  text: string;
+  signal: AbortSignal;
+  jobId: string;
+}): Promise<void> {
+  const where = `part ${String(input.ordinal)} of ${String(input.total)}: ${input.title}`;
+  const progress = useProgressStore.getState();
+  progress.update(input.jobId, { detail: adversarialReviewDetail(where) });
+  let report: AdversarialPassReport;
+  try {
+    report = await runAdversarialPass({
+      moduleId: input.moduleId,
+      target: { kind: 'part', planIndex: input.planIndex },
+      text: input.text,
+      signal: input.signal,
+    });
+  } catch (error) {
+    if (isCancel(error, input.signal)) throw error;
+    await failPartReview(
+      input.moduleId,
+      input.planIndex,
+      `The adversarial review failed: ${errorMessage(error)} The generated text was left unchanged — retry the part to review it again.`,
+    );
+    return;
+  }
+  if (report.edit === null) {
+    progress.update(input.jobId, {
+      detail: `Reviewing ${where} — the adversarial critique found nothing to fix.`,
+    });
+    return;
+  }
+  progress.update(input.jobId, { detail: `Applying the adversarial edit to ${where}…` });
+  try {
+    await saveModulePartText(
+      input.moduleId,
+      input.planIndex,
+      report.edit.replacement,
+      report.edit.modelUsed,
+    );
+  } catch (error) {
+    if (isCancel(error, input.signal)) throw error;
+    await failPartReview(
+      input.moduleId,
+      input.planIndex,
+      `The adversarial edit could not be applied: ${errorMessage(error)} The generated text was left unchanged.`,
+    );
+  }
 }
 
 // --- Orchestration wrappers used by the UI -----------------------------------

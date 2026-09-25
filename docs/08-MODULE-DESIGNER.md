@@ -912,6 +912,85 @@ confirm dialog when the part was written outside the generator, naming the
 writer the row records ("You wrote this part." / the model's id — docs/17 row
 113).
 
+### Adversarial generation — the automatic trigger (docs/17 row 358)
+
+The module row's **"Adversarial generation"** flag (docs/17 row 354, OFF by
+default) switches ON an in-generation review, built from the ONE
+critique-and-edit pass (docs/17 row 356,
+`llm/adversarialPass.runAdversarialPass`). It is triggered at exactly TWO
+sites, each gated by the same one-line read of the flag
+(`adversarialReviewEnabled`, `llm/moduleGen`), and the slice's source pin
+counts both the call sites and the guard:
+
+- **the PREMISE, first** — at the end of pass 0, right after the spine has been
+  produced (and after the encounter-floor gate, which may have replaced it), so
+  the text every part is written FROM has been reviewed. The premise is
+  reviewed before the first part prompt is ever sent.
+- **each PART, as it is written** — immediately after that part's markdown
+  lands on the row and before the next part reads it as continuity context, so
+  part i+1 continues from the REVIEWED text of part i.
+
+**The edit rides the existing write seams, and it is never a second document
+format.** A part's replacement goes through THE one part-text save path
+(`features/modules/partText.saveModulePartText` →
+`db/moduleRepo.patchModulePartText`, the same seam the canvas rewrite's Apply
+uses): one transaction, the whole replacement applied or nothing,
+`status:'ready'` + `edited:true`, the editor's own `modelUsed` recorded as the
+part's `writerModel`, and the second-module promote scan after it. The
+parts-document scaffolding (`==========` separators and
+`[Part <n> of <total> — <title>]` labels) is DERIVED from the plan and the
+per-part markdown (`domain/modulePartsDocument`), so it is structurally
+untouched — there is nothing to hand-assemble. The premise's replacement is a
+SPINE-SUBFIELD write and rides the ONE atomic subfield seam
+(`db/moduleRepo.patchModuleSpine`, docs/17 row 357) with the editor's
+provenance and `'model'` authorship, followed by the promote scan a rewritten
+premise needs. *(The premise now has a fourth writer-stamper — the spine pass,
+`approveSpineAndRun`, `applyNormalizationVerdict` and this pass; the `origin`
+docstring in `domain/module.ts` still lists three, a drift this slice
+deliberately did not touch to stay file-disjoint from the parallel premise-undo
+landing.)*
+
+**A failure is contained and never costs content.** A failed critique or a
+failed editor marks THAT part `failed` with its `errorMessage` — the existing
+failed-part shape the reader already renders with Retry — but its generated
+`markdown` is KEPT, byte for byte; throwing away good prose to report a failed
+critic is the content loss this trigger forbids. The chain CONTINUES to the
+next part. A failed PREMISE review has no per-part slot: the premise is left
+byte-unchanged, the failure is toasted (`toastError`), and the spine still
+lands at its normal `draft` checkpoint. A user STOP is not a failure: the run's
+abort signal is passed to the pass (`signal`), so a Stop aborts an in-flight
+critique or editor call instead of leaving it running, and it propagates
+through the existing cancel path (no part is marked failed for it).
+
+**The dock names the sub-phases.** The parts bar advances PER PART, so a
+flag-on run would otherwise read as a stall while two extra model calls run:
+the detail line for the reviewed part (and for the premise) names the review —
+it states the adversarial critique and the edit together, because the pass is
+one seam with two internal calls and no per-call hook, and inventing a phase
+the caller cannot observe would be the lie.
+
+**Order and gates are otherwise unchanged.** The floor gate, the post-parts
+normalization and the post-generation sweep keep their order and behaviour; a
+reviewed part is still counted by the floor gate exactly as before (the review
+adds no gate of its own). One consequence is named for the next reader: a
+review-failed part is `status:'failed'`, so it feeds no continuity context to
+the next part — the same rule a generation failure follows — until the owner
+retries it.
+
+**WHAT THE PINS HOLD.** `tests/fixtures/adversarialGeneration/flag-off-transcript.json`
+is a golden captured from the tree BEFORE this trigger landed (the `89e5d71`
+method: the real `runSpine` + `runParts` against mocked replies) holding every
+chat call's full messages, its option set, its model/temperature/response
+format, the final parts document and the per-part rows. A flag-off run must
+reproduce it character for character — the pin that makes wiring a
+model-calling pass into generation safe. The rest of the family asserts the
+premise-before-parts ORDER (call indexes, not counts), one critique per part
+with the editor only when the critique found something (explicit call counts),
+the unchanged text on a failed critique AND on a failed editor, the
+scaffolding re-split/re-assembled around an applied edit, the abort signal
+reaching the pass (the flagged run settles on Stop and no editor is called),
+and the dock detail naming both sub-phases.
+
 ### Editable encounter floor (numeric, Advanced)
 
 The floor is the one prompt requirement the owner can change without editing

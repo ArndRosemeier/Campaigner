@@ -1,0 +1,354 @@
+{
+  "calls": [
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are the Module Architect, an expert adventure designer for tabletop RPGs. You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. Always answer in the exact JSON format requested. Never include commentary outside the JSON. Every entity entry ALSO carries \"intent\": a short note of your OWN intent for a name you invent — what this place, person, faction or fight is FOR, and which reading of the name you meant — where a detail writer could not tell it from the text alone (at most 400 characters, one or two sentences). Write it only where you have something to say beyond the name and its kind, and answer \"intent\": null for every other entity. It is your AUTHORING note, not a summary of the entity, not a substitute for the module text and never a description of what the artifact should contain in place of the story; it steers emphasis, it does not overrule the text. It is never shown to a reader. Every entity entry ALSO carries \"levelHint\": the LEVEL this figure is at in your story, a whole number from 1 to 20, when you fix one in the prose — an ally's, a rival's or a villain's class or character level. AIM IT BY WHAT THE FIGURE IS FOR, and the two cases are different. (1) A figure the party might FIGHT — anyone who takes part in this module's encounters — is a BALANCE question: aim it inside this module's own range of levels 1–3, the levels this module is built for, so the encounter stays survivable. (2) A figure the party does NOT fight — a bystander, an official, a shopkeeper, a child — is a REALISM question: aim it at what the figure IS in the world, by standing, role and age, and this module's range NEITHER CAPS IT NOR PULLS IT DOWN. A non-hostile captain of the guard may be level 12 in a level-1 module and that is CORRECT, because the party never fights him; a fourteen-year-old is NEVER level 10. State it so the figure SURVIVES into the entity the generators build: what you write about a figure is how that figure is generated later, and a level stated only in your prose is otherwise LOST at the entity boundary — the entity generator would pick a level of its own. Answer \"levelHint\": null for every entity whose level your prose does not fix (places, factions, notes, generic opposition), and never guess: the hint must agree with what your own text states. It is a generation hint, never shown to a reader."
+        },
+        {
+          "role": "user",
+          "content": "Campaign: Emberfall (D&D 5e)\n\nModule concept: A harbor bell that rings by itself beneath the water.\n\nParty levels 1–3; tone: eerie\n\nDesign the module spine. Cover the whole level range with parts, in order:\n- Default one part per level; you MAY merge adjacent levels into one part when the story is better served (levels 1–3 → about 3 parts or fewer).\n- Every level in the range must be covered by exactly one part.\n- Each part needs: title, levelBand (e.g. \"1\" or \"2-3\"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up). Write the synopsis as a GM-facing note with scene-level substance: the situation, the actors, the stakes, and at least one concrete scene the part contains.\n- Think like an experienced GM: prioritize meaningful choices, varied pacing, clear stakes, and challenges that are exciting without feeling arbitrary. Let the fiction and pacing decide the structure — never a quota.\n- REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module's range (levels 1–3 → at least 3 distinct encounters across the module), with each part naming at least as many encounters as the levels its band covers. An encounter is a fight — a battle map and a monster roster — so a negotiation, hazard, puzzle, investigation or chase is an event instead and does not count. Place encounters deliberately in the parts where they make narrative and gameplay sense, and reserve climactic encounters for an earned escalation.\n- Conflict first: the situation is contested by someone — a faction, an NPC, a predator, a rival party, or the place itself — and who carries that conflict may shift as the module runs. Not every module has an antagonist; every module has a conflict.\n- Every situation offers at least two VISIBLE approaches that differ in cost or consequence, so nothing resolves on a single route and no part is a passive wait for the plot. Two rolls toward the same outcome are one approach: the difference must be one the players can see before they commit.\n- State in the premise how the situation can resolve, and keep every part equal to what the premise promises — a promised siege arrives, a promised traitor is present and reachable.\n- Give each faction an order of battle — wants, needs, preferred tactics, fears, when it flees — and advance its own plan between parts whether or not the party engages it. Every returnable location gets a line of what has changed since.\n- If an antagonist exists, the party meets their agents, aftereffects or evidence from the first part — never a villain held back for the finale.\n- Every encounter and every location carries one concrete particular that could not be swapped out unchanged (a named river, a debt, a smell, a rule of the place): an opponent the party cannot tell apart from the last one is meaningless combat, and interchangeable scenery is the same failure more slowly.\n- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.\n- Opportunistic threats (a predator, a bandit group, a patrol) belong to the situation: each one advances or reveals a faction’s plan instead of appearing as filler. Exploring is never punished as such — wherever it leads, the interesting thing found there must be worth the risk.\n- Structural conflict governs HOW scenes resolve, never what they feel like — no tone, register or subject matter is restricted here. Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option. Satisfaction is rationed to the finale.\n- When the party defeats, bypasses or changes something, that change persists and is visible when they return: a beaten antagonist stays beaten unless the fiction earned the return, and no NPC finds, captures or sets back the party by fiat.\n- Introduce as many locations, NPCs, factions, notes, events and encounters as the story needs — none of them must be detailed here. Give every scene a distinctive, stable name, declare it with its kind in entities, and wiki-link it in prose ([[Scene Name]]) so it can be resolved into its artifact later.\n- An \"encounter\" is a FIGHT: initiative, a battle map with terrain, and a monster roster with images. Anything that is not a fight — a negotiation, a hazard, a puzzle, an investigation, a ritual, a chase — is an \"event\" instead: it gets an illustration and no battle map, no monsters, no roster. Never declare a non-combat scene as an encounter, and never hide a fight inside an event. A hazard or a puzzle still carries meaningful risk and player agency — only its artifact differs.\n- List every named entity you introduce with its kind: \"npc\" (a person or creature the party meets), \"location\" (a place), \"event\" (a non-combat scene the party plays through; same shape as a location), \"faction\" (an organization or group), \"encounter\" (a fight — a battle map and a monster roster), or \"note\" (anything else — items, rumors, mysteries, plot devices). One entry per named entity, one canonical spelling — a person is listed once, not once per role or title. Reuse existing campaign entities by exact name; never duplicate one to fill the floor.\n- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.\n- Before you answer, the three things that do not bend: (1) every situation has at least two visible approaches that differ in cost or consequence — no single-route conclusions; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible when they return.\n- The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, which faction carries the conflict, where the conflict starts) — never the premise. If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.\n\nReply with ONLY a JSON object: { \"premise\": string, \"themes\": string[], \"partPlan\": [{ \"title\": string, \"levelBand\": string, \"synopsis\": string, \"levelUpTrigger\": string }], \"entities\": [{ \"name\": string, \"kind\": \"npc\" | \"location\" | \"event\" | \"faction\" | \"note\" | \"encounter\" }] } — partPlan length 1..20, one entity entry per named entity with its kind."
+        }
+      ],
+      "optionKeys": [
+        "model",
+        "onActivity",
+        "onReasoning",
+        "onToken",
+        "reasoningEffort",
+        "responseFormat",
+        "signal",
+        "temperature"
+      ],
+      "model": "test/fixture-model",
+      "temperature": 0.8,
+      "reasoningEffort": "default",
+      "responseFormat": {
+        "kind": "schema",
+        "name": "module-spine",
+        "jsonSchema": {
+          "type": "object",
+          "properties": {
+            "premise": {
+              "type": "string"
+            },
+            "themes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "partPlan": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "levelBand": {
+                    "type": "string"
+                  },
+                  "synopsis": {
+                    "type": "string"
+                  },
+                  "levelUpTrigger": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "levelBand",
+                  "synopsis",
+                  "levelUpTrigger"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "npc",
+                      "location",
+                      "event",
+                      "faction",
+                      "note",
+                      "encounter"
+                    ]
+                  },
+                  "absorbed": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "bestiary": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "properties": {
+                      "creature": {
+                        "type": "string"
+                      },
+                      "book": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "creature",
+                      "book"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "intent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "levelHint": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "absorbed",
+                  "bestiary",
+                  "intent",
+                  "levelHint"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "premise",
+            "themes",
+            "partPlan",
+            "entities"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You classify tabletop adventure entities precisely. Always answer in the exact JSON format requested. Never include commentary outside the JSON."
+        },
+        {
+          "role": "user",
+          "content": "Module premise for context:\nA harbor town raised its bell to warn of the drownings; now the bell rings by itself.\n\nFor each entity name below, decide which canonical entity it refers to.\n\nRules:\n- One entry per listed name; the \"name\" field spelled exactly as listed; no extra entries; no invented names.\n- \"canonical\" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant), or an existing artifact's exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.\n- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person (\"Guard Halmund\" / \"Harbormaster Ilse\") maps onto the person's canonical name; similar names for different beings never merge.\n- A name that exactly matches an existing artifact's name maps to itself.\n- \"kind\" describes the canonical entity: \"npc\" = a person or creature the party meets; \"location\" = a place; \"event\" = a non-combat scene the party plays through (a negotiation, hazard, puzzle, investigation, ritual, or chase — same shape as a location: an illustration and no battle map, monsters or roster); \"faction\" = an organization or group; \"encounter\" = a FIGHT, a scene resolved in initiative with a battle map and a monster roster; \"note\" = anything else (items, rumors, mysteries, plot devices). Classify a scene by what the party does in it, not by how dangerous it sounds: if no fight happens, it is an event.\n\nEntities:\n- Warden Bellamy\n- The Drowned Cathedral\n- The Tide Cult\n- The Bells Below\n- The Flooded Nave\n- The Wardens Confession\n\nReply with ONLY a JSON object: { \"entities\": [{ \"name\": string, \"canonical\": string, \"kind\": \"npc\" | \"location\" | \"event\" | \"faction\" | \"note\" | \"encounter\" }] } — one entry per listed entity."
+        }
+      ],
+      "optionKeys": [
+        "model",
+        "reasoningEffort",
+        "responseFormat",
+        "signal",
+        "temperature"
+      ],
+      "model": "test/fixture-model",
+      "temperature": 0.2,
+      "reasoningEffort": "default",
+      "responseFormat": {
+        "kind": "schema",
+        "name": "entity-normalization",
+        "jsonSchema": {
+          "type": "object",
+          "properties": {
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "canonical": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "npc",
+                      "location",
+                      "event",
+                      "faction",
+                      "note",
+                      "encounter"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "canonical",
+                  "kind"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entities"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are the Module Writer, an expert adventure author for tabletop RPGs. You write evocative, immediately usable GM-facing module prose in markdown."
+        },
+        {
+          "role": "user",
+          "content": "Campaign: Emberfall (D&D 5e)\n\nModule premise:\nA harbor town raised its bell to warn of the drownings; now the bell rings by itself.\n\nThemes: duty; decay\n\nAll parts of this module (one-line synopses, so later parts can foreshadow):\n1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.\n2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.\n3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.\n\nWrite part 1: \"The Sunken Quarter\" (levels 1).\n\nPart synopsis: The party arrives with the low tide and finds the first bodies.\n\nPart ends when: The bell is found.\n\nModule entities — wiki-link these ONLY by these exact canonical spellings:\n- Warden Bellamy (npc)\n- The Drowned Cathedral (location)\n- The Tide Cult (faction)\n- The Bells Below (encounter)\n- The Flooded Nave (encounter)\n- The Wardens Confession (encounter)\n\nWriting instructions:\n- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).\n- Write the part as SCENES. Every scene that has anything at stake is written as one labeled block, with these fields in this order:\n- **Scene heading + tag** — name the scene and tag it in the heading, as a wiki-link to the scene's own entity: \"### [[Scene Name]] — ENCOUNTER\". ENCOUNTER means a fight with real stakes (it gets a battle map, a monster roster and images); EVENT means everything else — a negotiation, a chase, a hazard, a mystery, a puzzle, an investigation (illustration only: no map, no monsters). Combat being merely possible does not make a scene an ENCOUNTER: tag it by what the scene is FOR. Link every scene this way — a scene named only in passing prose is not a scene the module can stand on.\n- **Where** — link the existing location entity with the document's wiki-link syntax ([[Place Name]]); never invent a location inline.\n- **First impression** — EXACTLY one or two sentences, present tense, one concrete sense plus one thing that is out of place. No history, no faction names, no explanation of causes, and never the party's actions or feelings. THIS IS THE ONLY TEXT A GM READS ALOUD: everything else on the block is GM-facing.\n- **Who is here and what they want right now** — one clause per NPC present, saying what that NPC wants in this scene. Each NPC speaks about what they want and otherwise deflects or refuses.\n- **The situation** — the conflict already running when the party arrives, and what it does in the next few minutes if nobody intervenes.\n- **What changed** — the one thing different from the previous scene's state, and the cost the party pays to engage with it. If you could honestly write \"the situation is the same, now what do you do\", this is not a scene — rewrite it or delete it.\n- **If the party acts** — 2-4 bullets of the form <a plausible party action> -> <what the opposition does>. Different bullets must lead to genuinely different outcomes: two routes reaching the same place are one bullet.\n- **Secrets** — 0-2 per scene, each written abstract from where it is found so a GM can move it. Nothing the party NEEDS may be available from only one place.\n- **Leads** — each lead names the entity it points at and why it is worth following. A lead that points nowhere is deleted.\n- **Outcome** — graded: success, partial success and failure written separately. Failure must cost something specific AND move the situation forward: a failed attempt is a new situation, never a dead end.\n- The block ORDERS information for the GM. It is not a form to fill in.\n- Scenes differ from each other in length, shape and voice. Any field may be a single short line when the scene is small — do not pad a field to look complete, and never write filler to satisfy a label.\n- Do not give every scene the same symmetric structure, and do not repeat one beat pattern (arrive, talk, fight) across the part or the module.\n- The fields never dictate what happens. If a scene has nothing at stake, rewrite it or delete it — never pour prose into the labels to fill them.\n- No scene may require one specific party action to proceed. If the party does nothing, the relevant faction simply advances its own plan.\n- Address the GM, never the players: write what the world and its people do. Never author what a player character does, says, thinks or feels.\n- Introduce at most one new entity per scene, and use it in the scene that introduces it.\n- End the part with at least two threads pointing into other parts.\n- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.\n- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.\n- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.\n- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.\n- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.\n- Target length for this part: 800–1500 words (soft target).\n- REQUIREMENT — encounter floor for this part (levels 1: 1 level(s)): name at least 1 distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a fight with real stakes, staged where a battle map and a monster roster make sense. A negotiation, hazard, puzzle, investigation or chase is an event, not an encounter, and cannot cover this floor. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.\n- End this part with a cost, a revelation, or a new pressure that carries into the next part — never with every side satisfied. Satisfaction is rationed to the finale.\n- If an antagonist exists, keep their agents, aftereffects or evidence on the page from here on — never hold the villain back for the finale.\n- Show one faction advancing its own plan in this part, whether or not the party engages it; when the party returns to a place they have been, open with what has changed since.\n- Every encounter and every location in this part carries one concrete particular that could not be swapped out unchanged: an opponent the party cannot tell apart from the last one is meaningless combat.\n- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.\n- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.\n- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.\n- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).\n- A scene that is NOT a fight is an event: link it as [[Event Name]] and write its whole block right here in the prose (the block above is what an event gets). An event receives an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.\n- In an encounter scene, state what the fight IS and where it happens: the opposition — what they are, roughly how many, what they carry, what they are doing — and the place, its terrain and the conditions the party will fight in. A count you state is binding on the encounter the app builds from this scene.\n- You assert the FICTION, never the mechanics: no stat lines or stat blocks, no tactics rules and no map (those belong to the linked encounter artifact) — but the creature, the number, the gear, the ground and the weather you name are the truth about this fight, and the encounter generator must stage them.\n- Name an individual only where the fiction needs a person: the boss, the duelist, the negotiator. A rank-and-file fighter never gets a personal name (write \"two drowned lumberjacks\", not \"[[Josef]], a drowned lumberjack\").\n- The pipeline owns the CASTING around your fiction — stat blocks, difficulty tuning, tactics, treasure and the battle map — and it must not contradict what you state. Where you state nothing you constrain nothing: silence is not a constraint, and the pipeline designs the roster, the map and everything else freely.\n- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible."
+        }
+      ],
+      "optionKeys": [
+        "model",
+        "onActivity",
+        "onReasoning",
+        "onToken",
+        "reasoningEffort",
+        "signal",
+        "temperature"
+      ],
+      "model": "test/fixture-model",
+      "temperature": 0.8,
+      "reasoningEffort": "default",
+      "responseFormat": null
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are the Module Writer, an expert adventure author for tabletop RPGs. You write evocative, immediately usable GM-facing module prose in markdown."
+        },
+        {
+          "role": "user",
+          "content": "Campaign: Emberfall (D&D 5e)\n\nModule premise:\nA harbor town raised its bell to warn of the drownings; now the bell rings by itself.\n\nThemes: duty; decay\n\nAll parts of this module (one-line synopses, so later parts can foreshadow):\n1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.\n2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.\n3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.\n\nWrite part 2: \"The Drowned Cathedral\" (levels 2).\n\nPart synopsis: Descent beneath the harbor to the flooded nave.\n\nPart ends when: The warden falls.\n\nFull markdown of the previous part (continue seamlessly from it):\n\nPART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Ember Trial]].\n\nModule entities — wiki-link these ONLY by these exact canonical spellings:\n- Warden Bellamy (npc)\n- The Drowned Cathedral (location)\n- The Tide Cult (faction)\n- The Bells Below (encounter)\n- The Flooded Nave (encounter)\n- The Wardens Confession (encounter)\n\nWriting instructions:\n- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).\n- Write the part as SCENES. Every scene that has anything at stake is written as one labeled block, with these fields in this order:\n- **Scene heading + tag** — name the scene and tag it in the heading, as a wiki-link to the scene's own entity: \"### [[Scene Name]] — ENCOUNTER\". ENCOUNTER means a fight with real stakes (it gets a battle map, a monster roster and images); EVENT means everything else — a negotiation, a chase, a hazard, a mystery, a puzzle, an investigation (illustration only: no map, no monsters). Combat being merely possible does not make a scene an ENCOUNTER: tag it by what the scene is FOR. Link every scene this way — a scene named only in passing prose is not a scene the module can stand on.\n- **Where** — link the existing location entity with the document's wiki-link syntax ([[Place Name]]); never invent a location inline.\n- **First impression** — EXACTLY one or two sentences, present tense, one concrete sense plus one thing that is out of place. No history, no faction names, no explanation of causes, and never the party's actions or feelings. THIS IS THE ONLY TEXT A GM READS ALOUD: everything else on the block is GM-facing.\n- **Who is here and what they want right now** — one clause per NPC present, saying what that NPC wants in this scene. Each NPC speaks about what they want and otherwise deflects or refuses.\n- **The situation** — the conflict already running when the party arrives, and what it does in the next few minutes if nobody intervenes.\n- **What changed** — the one thing different from the previous scene's state, and the cost the party pays to engage with it. If you could honestly write \"the situation is the same, now what do you do\", this is not a scene — rewrite it or delete it.\n- **If the party acts** — 2-4 bullets of the form <a plausible party action> -> <what the opposition does>. Different bullets must lead to genuinely different outcomes: two routes reaching the same place are one bullet.\n- **Secrets** — 0-2 per scene, each written abstract from where it is found so a GM can move it. Nothing the party NEEDS may be available from only one place.\n- **Leads** — each lead names the entity it points at and why it is worth following. A lead that points nowhere is deleted.\n- **Outcome** — graded: success, partial success and failure written separately. Failure must cost something specific AND move the situation forward: a failed attempt is a new situation, never a dead end.\n- The block ORDERS information for the GM. It is not a form to fill in.\n- Scenes differ from each other in length, shape and voice. Any field may be a single short line when the scene is small — do not pad a field to look complete, and never write filler to satisfy a label.\n- Do not give every scene the same symmetric structure, and do not repeat one beat pattern (arrive, talk, fight) across the part or the module.\n- The fields never dictate what happens. If a scene has nothing at stake, rewrite it or delete it — never pour prose into the labels to fill them.\n- No scene may require one specific party action to proceed. If the party does nothing, the relevant faction simply advances its own plan.\n- Address the GM, never the players: write what the world and its people do. Never author what a player character does, says, thinks or feels.\n- Introduce at most one new entity per scene, and use it in the scene that introduces it.\n- End the part with at least two threads pointing into other parts.\n- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.\n- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.\n- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.\n- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.\n- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.\n- Target length for this part: 800–1500 words (soft target).\n- REQUIREMENT — encounter floor for this part (levels 2: 1 level(s)): name at least 1 distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a fight with real stakes, staged where a battle map and a monster roster make sense. A negotiation, hazard, puzzle, investigation or chase is an event, not an encounter, and cannot cover this floor. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.\n- End this part with a cost, a revelation, or a new pressure that carries into the next part — never with every side satisfied. Satisfaction is rationed to the finale.\n- If an antagonist exists, keep their agents, aftereffects or evidence on the page from here on — never hold the villain back for the finale.\n- Show one faction advancing its own plan in this part, whether or not the party engages it; when the party returns to a place they have been, open with what has changed since.\n- Every encounter and every location in this part carries one concrete particular that could not be swapped out unchanged: an opponent the party cannot tell apart from the last one is meaningless combat.\n- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.\n- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.\n- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.\n- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).\n- A scene that is NOT a fight is an event: link it as [[Event Name]] and write its whole block right here in the prose (the block above is what an event gets). An event receives an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.\n- In an encounter scene, state what the fight IS and where it happens: the opposition — what they are, roughly how many, what they carry, what they are doing — and the place, its terrain and the conditions the party will fight in. A count you state is binding on the encounter the app builds from this scene.\n- You assert the FICTION, never the mechanics: no stat lines or stat blocks, no tactics rules and no map (those belong to the linked encounter artifact) — but the creature, the number, the gear, the ground and the weather you name are the truth about this fight, and the encounter generator must stage them.\n- Name an individual only where the fiction needs a person: the boss, the duelist, the negotiator. A rank-and-file fighter never gets a personal name (write \"two drowned lumberjacks\", not \"[[Josef]], a drowned lumberjack\").\n- The pipeline owns the CASTING around your fiction — stat blocks, difficulty tuning, tactics, treasure and the battle map — and it must not contradict what you state. Where you state nothing you constrain nothing: silence is not a constraint, and the pipeline designs the roster, the map and everything else freely.\n- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible."
+        }
+      ],
+      "optionKeys": [
+        "model",
+        "onActivity",
+        "onReasoning",
+        "onToken",
+        "reasoningEffort",
+        "signal",
+        "temperature"
+      ],
+      "model": "test/fixture-model",
+      "temperature": 0.8,
+      "reasoningEffort": "default",
+      "responseFormat": null
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You classify tabletop adventure entities precisely. Always answer in the exact JSON format requested. Never include commentary outside the JSON."
+        },
+        {
+          "role": "user",
+          "content": "Module premise for context:\nA harbor town raised its bell to warn of the drownings; now the bell rings by itself.\n\nFor each entity name below, decide which canonical entity it refers to.\n\nRules:\n- One entry per listed name; the \"name\" field spelled exactly as listed; no extra entries; no invented names.\n- \"canonical\" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant), or an existing artifact's exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.\n- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person (\"Guard Halmund\" / \"Harbormaster Ilse\") maps onto the person's canonical name; similar names for different beings never merge.\n- A name that exactly matches an existing artifact's name maps to itself.\n- \"kind\" describes the canonical entity: \"npc\" = a person or creature the party meets; \"location\" = a place; \"event\" = a non-combat scene the party plays through (a negotiation, hazard, puzzle, investigation, ritual, or chase — same shape as a location: an illustration and no battle map, monsters or roster); \"faction\" = an organization or group; \"encounter\" = a FIGHT, a scene resolved in initiative with a battle map and a monster roster; \"note\" = anything else (items, rumors, mysteries, plot devices). Classify a scene by what the party does in it, not by how dangerous it sounds: if no fight happens, it is an event.\n\nEntities:\n- Ember Trial :: PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Ember Trial]].\n- Flood Trial :: PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Flood Trial]].\n\nReply with ONLY a JSON object: { \"entities\": [{ \"name\": string, \"canonical\": string, \"kind\": \"npc\" | \"location\" | \"event\" | \"faction\" | \"note\" | \"encounter\" }] } — one entry per listed entity."
+        }
+      ],
+      "optionKeys": [
+        "model",
+        "reasoningEffort",
+        "responseFormat",
+        "signal",
+        "temperature"
+      ],
+      "model": "test/fixture-model",
+      "temperature": 0.2,
+      "reasoningEffort": "default",
+      "responseFormat": {
+        "kind": "schema",
+        "name": "entity-normalization",
+        "jsonSchema": {
+          "type": "object",
+          "properties": {
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "canonical": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "npc",
+                      "location",
+                      "event",
+                      "faction",
+                      "note",
+                      "encounter"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "canonical",
+                  "kind"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entities"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "premise": "A harbor town raised its bell to warn of the drownings; now the bell rings by itself.",
+  "document": "[Part 1 of 3 — The Sunken Quarter]\nPART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Ember Trial]].\n\n==========\n\n[Part 2 of 3 — The Drowned Cathedral]\nPART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Flood Trial]].\n\n==========\n\n[Part 3 of 3 — The Bell Tower]\n",
+  "parts": [
+    {
+      "planIndex": 0,
+      "markdown": "PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun. PART-ONE: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Ember Trial]].",
+      "status": "ready",
+      "edited": false,
+      "origin": "model",
+      "writerModel": "test-model"
+    },
+    {
+      "planIndex": 1,
+      "markdown": "PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun. PART-TWO: The tide withdraws and the streets shine wet under a pale sun.  Mentioned here: [[Flood Trial]].",
+      "status": "ready",
+      "edited": false,
+      "origin": "model",
+      "writerModel": "test-model"
+    }
+  ]
+}
