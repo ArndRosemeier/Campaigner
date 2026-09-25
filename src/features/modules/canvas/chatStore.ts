@@ -25,11 +25,20 @@ export interface CanvasChatOutcomePart {
   title: string;
 }
 
-/** One applied/failed edit command rendered as an OUTCOME CARD. */
+/** One applied/failed edit command rendered as an OUTCOME CARD — or, since
+ * docs/17 row 360, one adversarial REVIEW of the module's premise or a part. */
 export interface CanvasChatOutcome {
   id: string;
-  kind: 'applied' | 'failed';
-  /** The original command (the report-to-LLM turn quotes it verbatim). */
+  /**
+   * `applied` / `failed` are the edit command's two outcomes; `clean` is the
+   * adversarial review's QUIET success — the critique found nothing to fix, so
+   * no editor ran and nothing was written (never rendered as a failure, and
+   * never as a change that did not happen).
+   */
+  kind: 'applied' | 'failed' | 'clean';
+  /** The original command (the report-to-LLM turn quotes it verbatim). An
+   * adversarial review synthesises the equivalent whole-target replacement, so
+   * the card's before→after IS the review's own edit. */
   command: CanvasEditCommand;
   /** Which part(s) this outcome targets/applies to (part order; failures
    * anchor on the closest/multi-match part; [] = no part applies). */
@@ -53,6 +62,13 @@ export interface CanvasChatOutcome {
   failureFrom: number | null;
   /** Report-to-LLM has fired for this outcome (button is one-shot). */
   reported: boolean;
+  /**
+   * An adversarial review's critique findings, one rendered line each
+   * (`llm/canvasChat.adversarialFindingLine`). Absent/`[]` for every edit
+   * outcome. The card renders them ABOVE the before→after: the owner asked for
+   * the review to see WHAT the critic found, not merely that the text moved.
+   */
+  findings?: string[] | undefined;
 }
 
 export type CanvasChatMessageStatus = 'streaming' | 'ok' | 'failed' | 'aborted';

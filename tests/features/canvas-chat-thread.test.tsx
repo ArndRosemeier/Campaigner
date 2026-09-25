@@ -379,6 +379,7 @@ describe('canvas chat thread persistence', () => {
             closest: null,
             failureFrom: null,
             reported: false,
+            findings: [],
           },
         ],
         createdAt: 2,

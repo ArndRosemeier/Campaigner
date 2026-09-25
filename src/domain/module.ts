@@ -918,7 +918,11 @@ export const moduleChatCommandSchema = z.object({
 export type ModuleChatCommand = z.infer<typeof moduleChatCommandSchema>;
 
 export const moduleChatOutcomeSchema = z.object({
-  kind: z.enum(['applied', 'failed']),
+  // `clean` is the adversarial review's quiet success (docs/17 row 360): the
+  // critique found nothing to fix, so no editor ran and nothing was written —
+  // stored distinctly so a restored card cannot read as an edit that failed or
+  // as a change that does not exist.
+  kind: z.enum(['applied', 'failed', 'clean']),
   command: moduleChatCommandSchema,
   targetParts: z
     .array(z.object({ planIndex: z.number().int(), title: z.string() }))
@@ -931,6 +935,11 @@ export const moduleChatOutcomeSchema = z.object({
   closest: z.string().nullable().default(null),
   failureFrom: z.number().int().nullable().default(null),
   reported: z.boolean().default(false),
+  // An adversarial review's findings, one rendered line each — the card shows
+  // them above the before→after. Additive `.default([])`: a row written before
+  // the review trigger parses with no findings, which is exactly what every
+  // edit outcome carries.
+  findings: z.array(z.string()).default([]),
 });
 
 export type ModuleChatOutcome = z.infer<typeof moduleChatOutcomeSchema>;

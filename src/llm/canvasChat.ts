@@ -127,29 +127,108 @@ export const canvasChatRequestSchema = z.object({
 export type CanvasChatRequest = z.infer<typeof canvasChatRequestSchema>;
 
 /**
- * The zod boundary for one CHANGE command (`<change operation="…"><name>…</name>
- * <instruction>…</instruction></change>` — the write half, docs/17 row 104).
- * The name is trimmed at the boundary and used VERBATIM by `resolveWikiLink`
- * (exactly like a `<request>` name, so both halves resolve identically); the
- * instruction is trimmed and NEVER empty, because a change with no instruction
- * would be the app silently running a canned engine operation — the class of
- * silent default this protocol forbids. `operation` is OPTIONAL and carries one
- * of the two EXISTING encounter operations; it is never defaulted anywhere:
- * `features/modules/canvas/chatChanges` refuses an encounter change that does
- * not state one, BY NAME, before the seam is called.
+ * WHAT an adversarial `<change>` reviews — the module PREMISE or one PART by
+ * its plan index. Deliberately a LOCAL structural twin of the pass's own
+ * `AdversarialTarget` (`llm/adversarialPass.ts`): this file must not import the
+ * pass at runtime (the source pin counts the pass's importers as the files that
+ * CALL it, and the chat command vocabulary is not a caller), so `chatChanges.ts`
+ * ties the two with a compile-time assignment instead — a member added on one
+ * side and not the other is a type error.
  */
-export const canvasChatChangeSchema = z.object({
-  name: z.string().min(1),
-  instruction: z.string().min(1),
-  operation: z.enum(['repopulate', 'everything']).optional(),
-});
+export const canvasChatAdversarialTargetSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('premise') }),
+  // Non-negative integer plan index; the executor refuses an index the module's
+  // plan does not carry, BY NAME, before the pass is reached.
+  z.object({ kind: z.literal('part'), planIndex: z.number().int().min(0) }),
+]);
+
+export type CanvasChatAdversarialTarget = z.infer<typeof canvasChatAdversarialTargetSchema>;
+
+/**
+ * The zod boundary for one ARTIFACT change (`<change operation="…">
+ * <name>…</name><instruction>…</instruction></change>` — the write half,
+ * docs/17 row 104). The name is trimmed at the boundary and used VERBATIM by
+ * `resolveWikiLink` (exactly like a `<request>` name, so both halves resolve
+ * identically); the instruction is trimmed and NEVER empty, because a change
+ * with no instruction would be the app silently running a canned engine
+ * operation — the class of silent default this protocol forbids. `operation` is
+ * OPTIONAL and carries one of the two EXISTING encounter operations; it is
+ * never defaulted anywhere: `features/modules/canvas/chatChanges` refuses an
+ * encounter change that does not state one, BY NAME, before the seam is called.
+ */
+export const canvasChatArtifactChangeSchema = z
+  .object({
+    name: z.string().min(1),
+    instruction: z.string().min(1),
+    operation: z.enum(['repopulate', 'everything']).optional(),
+  })
+  .strict();
+
+export type CanvasChatArtifactChangeCommand = z.infer<typeof canvasChatArtifactChangeSchema>;
+
+/**
+ * The zod boundary for an ADVERSARIAL change — the owner's own requirement
+ * (docs/17 row 360, verbatim: *"This step can be automated to run once, but it
+ * should also be triggerable in the module chat."*). It rides the SAME
+ * `<change>` tag as the artifact half, distinguished by its `adversarial`
+ * attribute (`adversarial="premise"`, or `adversarial="part" part="2"`), and it
+ * takes NO `<name>`/`<instruction>` body: the pass has its own fixed criteria
+ * and its own target, so a name or an instruction here would be a second,
+ * conflicting vocabulary for the same request.
+ */
+export const canvasChatAdversarialChangeSchema = z
+  .object({ adversarial: canvasChatAdversarialTargetSchema })
+  .strict();
+
+export type CanvasChatAdversarialChangeCommand = z.infer<
+  typeof canvasChatAdversarialChangeSchema
+>;
+
+/**
+ * The ONE change-command vocabulary. A UNION of the two shapes rather than a
+ * tagged object so the ARTIFACT half's parsed value stays byte-identical to what
+ * it has always been (`{ name, instruction, operation? }` — the existing pins,
+ * callers and the `<change-results>` shape all read it unchanged); `.strict()`
+ * on both members is what makes a command that carries BOTH shapes a loud
+ * failure instead of one of them being silently stripped away.
+ */
+export const canvasChatChangeSchema = z.union([
+  canvasChatArtifactChangeSchema,
+  canvasChatAdversarialChangeSchema,
+]);
 
 export type CanvasChatChangeCommand = z.infer<typeof canvasChatChangeSchema>;
 
 /** The two change operations an encounter has (docs/11 D18, docs/17 row 101) —
  * a local alias of the seam's own vocabulary; `chatChanges` ties the two
  * together with `satisfies`, so neither can drift. */
-export type CanvasChatChangeOperation = NonNullable<CanvasChatChangeCommand['operation']>;
+export type CanvasChatChangeOperation = NonNullable<
+  CanvasChatArtifactChangeCommand['operation']
+>;
+
+/** TRUE for the artifact half (the only shape with a name and an instruction). */
+export function isArtifactChange(
+  change: CanvasChatChangeCommand,
+): change is CanvasChatArtifactChangeCommand {
+  return 'name' in change;
+}
+
+/** The name a change names the owner's way: the artifact's written name, or the
+ * adversarial target ("the premise" / "part 2"). ONE formatter for the chat's
+ * block, its toast and its card, so the three cannot disagree about which thing
+ * a change was about. */
+export function canvasChatChangeLabel(change: CanvasChatChangeCommand): string {
+  if (isArtifactChange(change)) return `«${change.name}»`;
+  return change.adversarial.kind === 'premise'
+    ? 'the premise'
+    : `part ${String(change.adversarial.planIndex + 1)}`;
+}
+
+/** The instruction the owner/model asked with, or `null` for an adversarial
+ * request (which carries none — its criteria are the pass's). */
+export function canvasChatChangeInstruction(change: CanvasChatChangeCommand): string | null {
+  return isArtifactChange(change) ? change.instruction : null;
+}
 
 /** Loud cap: more commands than this in one reply fails the whole reply. */
 export const MAX_COMMANDS_PER_REPLY = 40;
@@ -310,37 +389,117 @@ function parseEditAttributes(body: string): EditTagAttributes {
   return attrs;
 }
 
+/** What a `<change>` open tag declared: the artifact half (an optional
+ * encounter operation) or the adversarial half (its review target). */
+type ChangeTagAttributes =
+  | { kind: 'artifact'; operation?: CanvasChatChangeOperation }
+  | { kind: 'adversarial'; target: CanvasChatAdversarialTarget };
+
 /**
- * Parses the tag-body attributes of `<change …>`: only `operation="repopulate"`
- * or `operation="everything"` — the two EXISTING encounter operations, spelled
- * exactly (a third value is a loud parse failure of the whole reply, never a
- * near-miss that silently picks one). The attribute is OPTIONAL here because
- * whether it is REQUIRED depends on the resolved row's kind, which the parser
- * does not know: an encounter change without one is refused BY NAME at
- * resolution time (`chatChanges`), never defaulted.
+ * Parses the tag-body attributes of `<change …>`. Two shapes, ONE tag (so a
+ * chat turn asks for either through the SAME seam):
+ *
+ * - an ARTIFACT change takes only `operation="repopulate"|"everything"` (the two
+ *   EXISTING encounter operations, spelled exactly — a third value is a loud
+ *   parse failure of the whole reply, never a near-miss that silently picks
+ *   one). The attribute is OPTIONAL here because whether it is REQUIRED depends
+ *   on the resolved row's kind, which the parser does not know: an encounter
+ *   change without one is refused BY NAME at resolution time (`chatChanges`),
+ *   never defaulted.
+ * - an ADVERSARIAL change takes `adversarial="premise"`, or `adversarial="part"`
+ *   with the 1-based `part="N"` the module plan shows. Mixing the two shapes
+ *   (`operation` beside `adversarial`) is refused loudly: they are different
+ *   requests and a reply must not smuggle one as the other.
  */
-function parseChangeAttributes(body: string): { operation?: CanvasChatChangeOperation } {
+function parseChangeAttributes(body: string): ChangeTagAttributes {
   const trimmed = body.trim();
   let operation: CanvasChatChangeOperation | undefined;
+  let adversarial: 'premise' | 'part' | undefined;
+  let part: number | undefined;
   for (const attribute of scanTagAttributes(body, 'change')) {
-    if (attribute.name !== 'operation') {
-      throw new CanvasChatParseError(
-        `unknown attribute "${attribute.name}" in <change> tag — the only one it takes is operation="repopulate" or operation="everything"`,
-        trimmed,
-      );
+    if (attribute.name === 'operation') {
+      if (operation !== undefined) {
+        throw new CanvasChatParseError('the <change> tag carries "operation" twice', trimmed);
+      }
+      if (attribute.value !== 'repopulate' && attribute.value !== 'everything') {
+        throw new CanvasChatParseError(
+          `operation must be "repopulate" or "everything", got "${attribute.value}"`,
+          trimmed,
+        );
+      }
+      operation = attribute.value;
+      continue;
     }
-    if (operation !== undefined) {
-      throw new CanvasChatParseError('the <change> tag carries "operation" twice', trimmed);
+    if (attribute.name === 'adversarial') {
+      if (adversarial !== undefined) {
+        throw new CanvasChatParseError('the <change> tag carries "adversarial" twice', trimmed);
+      }
+      if (attribute.value !== 'premise' && attribute.value !== 'part') {
+        throw new CanvasChatParseError(
+          `adversarial must be "premise" or "part", got "${attribute.value}" — write adversarial="premise", or adversarial="part" part="N"`,
+          trimmed,
+        );
+      }
+      adversarial = attribute.value;
+      continue;
     }
-    if (attribute.value !== 'repopulate' && attribute.value !== 'everything') {
-      throw new CanvasChatParseError(
-        `operation must be "repopulate" or "everything", got "${attribute.value}"`,
-        trimmed,
-      );
+    if (attribute.name === 'part') {
+      if (part !== undefined) {
+        throw new CanvasChatParseError('the <change> tag carries "part" twice', trimmed);
+      }
+      // A STRUCTURED value the app itself defines (a 1-based part position, the
+      // way the module plan numbers it), never free text.
+      if (!/^\d+$/.test(attribute.value)) {
+        throw new CanvasChatParseError(
+          `part must be the 1-based part number, got "${attribute.value}"`,
+          trimmed,
+        );
+      }
+      part = Number(attribute.value);
+      continue;
     }
-    operation = attribute.value;
+    throw new CanvasChatParseError(
+      `unknown attribute "${attribute.name}" in <change> tag — an artifact change takes operation="repopulate"|"everything"; the adversarial review takes adversarial="premise", or adversarial="part" part="N"`,
+      trimmed,
+    );
   }
-  return operation === undefined ? {} : { operation };
+  if (adversarial === undefined) {
+    if (part !== undefined) {
+      throw new CanvasChatParseError(
+        'the <change> tag carries "part" without "adversarial" — the adversarial review of a part is written adversarial="part" part="N"',
+        trimmed,
+      );
+    }
+    return operation === undefined ? { kind: 'artifact' } : { kind: 'artifact', operation };
+  }
+  if (operation !== undefined) {
+    throw new CanvasChatParseError(
+      'the <change> tag carries BOTH an "operation" (an artifact change) and "adversarial" (a review request) — they are different requests, so nothing was run: send one or the other',
+      trimmed,
+    );
+  }
+  if (adversarial === 'premise') {
+    if (part !== undefined) {
+      throw new CanvasChatParseError(
+        'adversarial="premise" takes no "part" attribute — the premise is not a part',
+        trimmed,
+      );
+    }
+    return { kind: 'adversarial', target: { kind: 'premise' } };
+  }
+  if (part === undefined) {
+    throw new CanvasChatParseError(
+      'adversarial="part" needs the part it reviews — write part="N" with the 1-based part number the module plan shows',
+      trimmed,
+    );
+  }
+  if (part < 1) {
+    throw new CanvasChatParseError(
+      `part must be 1 or greater — parts are numbered from 1, got "${String(part)}"`,
+      trimmed,
+    );
+  }
+  return { kind: 'adversarial', target: { kind: 'part', planIndex: part - 1 } };
 }
 
 /**
@@ -528,12 +687,19 @@ function parseRequestAt(raw: string, at: number, requests: CanvasChatRequest[]):
 }
 
 /**
- * Parses ONE `<change operation="…"><name>…</name><instruction>…</instruction>
- * </change>` block at `at` (its '<') and returns the cursor after `</change>`,
- * appending the parsed change (the write half, docs/17 row 104). Strict in
- * exactly the way `<edit>` and `<request>` are: the open tag takes at most the
- * one known `operation` attribute, the block carries EXACTLY one `<name>` then
- * EXACTLY one `<instruction>`, neither body may be empty, and an over-cap reply
+ * Parses ONE `<change …>` block at `at` (its '<') and returns the cursor after
+ * `</change>`, appending the parsed change. TWO shapes, ONE tag:
+ *
+ * - the ARTIFACT change (docs/17 row 104): `<change operation="…"><name>…</name>
+ *   <instruction>…</instruction></change>` — the block carries EXACTLY one
+ *   `<name>` then EXACTLY one `<instruction>`, neither body may be empty;
+ * - the ADVERSARIAL review (docs/17 row 360): `<change adversarial="premise">
+ *   </change>` or `<change adversarial="part" part="N"></change>` — NO body at
+ *   all, because the pass owns the criteria and the target (a name or an
+ *   instruction here would be a second, conflicting request).
+ *
+ * Strict in exactly the way `<edit>` and `<request>` are: an unknown attribute,
+ * a missing/extra child, a non-empty adversarial body or an over-cap reply
  * fails the WHOLE reply — so a reply never half-executes.
  */
 function parseChangeAt(raw: string, at: number, changes: CanvasChatChangeCommand[]): number {
@@ -543,13 +709,34 @@ function parseChangeAt(raw: string, at: number, changes: CanvasChatChangeCommand
   }
   if (raw[tagEnd - 1] === '/') {
     throw new CanvasChatParseError(
-      '<change> cannot be self-closing — it carries a name and an instruction: <change operation="repopulate"><name>THE NAME</name><instruction>WHAT TO CHANGE</instruction></change>',
+      '<change> cannot be self-closing — it carries either a name and an instruction, or the adversarial target: <change operation="repopulate"><name>THE NAME</name><instruction>WHAT TO CHANGE</instruction></change> / <change adversarial="premise"></change>',
       raw.slice(at),
     );
   }
   const attributes = parseChangeAttributes(raw.slice(at + '<change'.length, tagEnd));
   const excerpt = raw.slice(at, Math.min(raw.length, at + 400));
   let cursor = tagEnd + 1;
+  if (attributes.kind === 'adversarial') {
+    // NO body: an adversarial request names the pass's target and nothing else.
+    while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
+    if (!raw.startsWith('</change>', cursor)) {
+      throw new CanvasChatParseError(
+        'an adversarial <change> carries NO body — write <change adversarial="premise"></change>, or <change adversarial="part" part="N"></change>',
+        excerpt,
+      );
+    }
+    cursor += '</change>'.length;
+    changes.push(
+      canvasChatChangeSchema.parse({ adversarial: attributes.target }),
+    );
+    if (changes.length > MAX_CHANGES_PER_REPLY) {
+      throw new CanvasChatParseError(
+        `reply carries more than ${String(MAX_CHANGES_PER_REPLY)} change requests — each one is a real generation, so ask for a handful and ask again after they land`,
+        raw.slice(Math.max(0, raw.length - 200)),
+      );
+    }
+    return cursor;
+  }
   while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
   expectLiteral(raw, cursor, '<name>', excerpt, 'change');
   const name = scanUntilClose(raw, cursor + '<name>'.length, 'name');
@@ -584,7 +771,7 @@ function parseChangeAt(raw: string, at: number, changes: CanvasChatChangeCommand
     canvasChatChangeSchema.parse({
       name: trimmedName,
       instruction: trimmedInstruction,
-      ...attributes,
+      ...(attributes.operation === undefined ? {} : { operation: attributes.operation }),
     }),
   );
   if (changes.length > MAX_CHANGES_PER_REPLY) {
@@ -1037,6 +1224,13 @@ export function canvasChatSystemPrompt(): string {
     '- The app reports every change back to you in the follow-up turn as a <change-results> block: CHANGED means it already happened (never ask for it again), NOT APPLIED means it did not happen and the section says why (a refused operation, an ambiguous name, a busy module, a failed run). Correct what you can and continue.',
     '- In your SECOND reply (the one after the change results) do not send another <change>: one change round trip is served per message.',
     '- A change touches the stored ROW; prose is still changed with <edit> commands. If a change makes the document wrong (a renamed encounter, a new roster), fix the document with <edit> in the SAME reply or in your next message.',
+    'You can also ask the app to run its ADVERSARIAL REVIEW over the module PREMISE or ONE PART — the same review the automatic generation step runs: a critic judges the text against exactly four criteria (inconsistency, motivation, fun, originality), reports what it found, and an editor rewrites the text ONLY when the critique found something. Reply with one of:',
+    '<change adversarial="premise"></change>',
+    '<change adversarial="part" part="2"></change>',
+    'Review rules:',
+    '- An adversarial <change> carries NO <name> and NO <instruction> — the pass has its own criteria and its own target, so a body is a parse failure. part="N" is the 1-based part number the parts document labels.',
+    '- Ask for a review when the owner wants a passage CRITIQUED (its problems found and named); write <edit> when you already know what to change. The review\'s findings come back in the <change-results> block, and the edit it produces is applied and undoable from the Versions menu.',
+    '- When the critique finds NOTHING, nothing is written and the results block says NOTHING TO FIX — that is a successful review, not a failure.',
     '- Never write the literal strings <edit>, <request>, <change>, </edit>, </request> or </change> in your prose — they are command blocks only.',
     WIKI_TOKEN_RULES,
     'Match the language of the document. Prose between commands is shown to the user — keep it brief.',
@@ -1969,18 +2163,26 @@ export async function loadChatDetailsPool(campaignId: Id): Promise<AnyArtifact[]
  * a sentence to decide what happened (the verdict vocabulary is data — the
  * `CanvasChatRequestStatus` precedent):
  *
- * - `changed` — the specialist ran and the row was rewritten (the ONLY status
- *   that means the data moved);
+ * - `changed` — the specialist ran and the row was rewritten, or an adversarial
+ *   review's edit was applied (the ONLY status that means the data moved);
+ * - `clean` — an ADVERSARIAL review whose critique found NOTHING to fix: no
+ *   editor ran, nothing was written, and the quiet outcome IS the success
+ *   (docs/17 rows 353/360). It is deliberately NOT `changed`: claiming a change
+ *   that did not happen is the lie this vocabulary exists to prevent;
  * - `refused` / `unsupported` — the seam itself declined by name (a rule, or a
- *   kind no engine serves): nothing was written and no engine was called;
+ *   kind no engine serves): nothing was written and no engine was called. A
+ *   target the module has no text for (a part index the plan does not carry, an
+ *   empty premise) is a `refused` with its own named reason — never a pass run
+ *   on empty text;
  * - `unresolved` / `ambiguous` — the NAME did not resolve to exactly one row
  *   (`resolveChatArtifactName`): the app never guesses which row to rewrite;
  * - `busy` — the module's one-generation slot was held by another generation:
  *   the change did NOT happen and can simply be asked for again;
- * - `failed` — the specialist (or the run) threw: the change did NOT happen.
+ * - `failed` — the specialist (or the run, or the pass) threw: nothing moved.
  */
 export type CanvasChatChangeStatus =
   | 'changed'
+  | 'clean'
   | 'refused'
   | 'unsupported'
   | 'unresolved'
@@ -2001,6 +2203,55 @@ export interface CanvasChatChangeOutcome {
   /** The named result/reason the model and the owner read (never a generic
    * sentence, never a placeholder standing in for a missing one). */
   detail: string;
+  /**
+   * An ADVERSARIAL review's critique findings, ONE rendered line each (kind,
+   * severity, the critic's message and where it applies) — the whole reason the
+   * owner asked for this (docs/17 row 360): an outcome that showed only the edit
+   * would hide WHAT the critic found. `[]` (or absent) for every artifact change
+   * and for a critique that found nothing.
+   */
+  findings?: string[] | undefined;
+  /**
+   * An adversarial PART edit the executor ALREADY applied to the turn's LIVE
+   * document (whole-document offsets): the turn persists it through the
+   * EXISTING split-save and marks the replacement highlight. Undefined for
+   * every other outcome — and for a PREMISE edit, which is not in the document
+   * and is written through the spine-subfield seam instead.
+   */
+  appliedToDocument?: { from: number; to: number } | undefined;
+  /**
+   * An adversarial review's edit, as the reviewed text and the replacement the
+   * ONE editor produced — the evidence behind the card's before→after, so the
+   * card and the toast can show WHAT changed without re-reading any row.
+   * Undefined for every artifact change and for a `clean` review.
+   */
+  edit?: { originalText: string; replacement: string; modelUsed: string } | undefined;
+}
+
+/** The shape ONE critique finding must have to be rendered here — STRUCTURAL
+ * on purpose: this file must not import the pass at runtime or by path (the
+ * source pin counts the pass's importers as the files that CALL it), and the
+ * call site in `features/modules/canvas/chatChanges` passes the pass's own
+ * `AdversarialIssue[]`, so a renamed or added field is a type error there. */
+export interface CanvasChatFindingShape {
+  kind: string;
+  severity: string;
+  message: string;
+  where: string;
+}
+
+/** The ONE rendering of one critique finding: kind, severity, the critic's own
+ * message and where it applies — used by the `<change-results>` block, the
+ * owner's report and the outcome card, so the three can never disagree. */
+export function adversarialFindingLine(finding: CanvasChatFindingShape): string {
+  return `[${finding.severity}] ${finding.kind}: ${finding.message} (at: ${finding.where})`;
+}
+
+/** The `findings` field of an outcome, from the pass's structured issues. */
+export function adversarialFindingLines(
+  issues: readonly CanvasChatFindingShape[],
+): string[] {
+  return issues.map((issue) => adversarialFindingLine(issue));
 }
 
 /**
@@ -2014,14 +2265,22 @@ export interface CanvasChatChangeOutcome {
 export type CanvasChatChangeResult = Omit<CanvasChatChangeOutcome, 'change'>;
 
 /** What one change execution is given: the module scope, the chips' pool (read
- * ONCE for the whole turn, so both halves resolve identically) and the turn's
+ * ONCE for the whole turn, so both halves resolve identically), the turn's
  * abort signal (the caller's own controller, relayed through `canvasBusy` — so
- * "Stop all" reaches a change the same way it reaches the reply). */
+ * "Stop all" reaches a change the same way it reaches the reply), and the LIVE
+ * per-part snapshot the model was shown. */
 export interface CanvasChatChangeContext {
   moduleId: Id;
   campaignId: Id;
   pool: readonly AnyArtifact[];
   signal: AbortSignal;
+  /**
+   * The per-part split of the LIVE document at send time — the SAME snapshot
+   * the model read (docs/17 row 360). An adversarial part review reviews THIS
+   * text, exactly as the module generation trigger reviews the part it just
+   * wrote, so what the owner accepts is what the critic actually judged.
+   */
+  parts: readonly ModulePartsSection[];
 }
 
 export type CanvasChatChangeExecutor = (
@@ -2032,6 +2291,7 @@ export type CanvasChatChangeExecutor = (
 /** The verdict heading of each status in the `<change-results>` block. */
 const CHANGE_VERDICTS: Readonly<Record<CanvasChatChangeStatus, string>> = {
   changed: 'APPLIED',
+  clean: 'NOTHING TO FIX',
   refused: 'NOT APPLIED: REFUSED',
   unsupported: 'NOT APPLIED: NO ENGINE FOR THIS KIND',
   unresolved: 'NOT APPLIED: NO SUCH ARTIFACT',
@@ -2057,8 +2317,12 @@ export const CANVAS_CHAT_CHANGES_INSTRUCTION =
 
 /**
  * Renders the `<change-results>` block from the outcomes, in reply order
- * (PURE). Every section names the artifact, the verdict and the instruction it
- * answered, then the executor's own reason — nothing is summarised away and
+ * (PURE). Every section names the thing the change was about, the verdict and —
+ * for an artifact change — the instruction it answered, then the executor's own
+ * reason. An adversarial review's section ALSO carries its FINDINGS, one line
+ * each: the model must read exactly what the critic found, because a later
+ * `<edit>` that "fixes" something the critique never faulted is a change the
+ * owner did not ask for (docs/17 row 360). Nothing is summarised away and
  * nothing is invented. There is no character cap here on purpose: the parse cap
  * (`MAX_CHANGES_PER_REPLY`) bounds the block at a handful of sections, each one
  * a single named reason (unlike a stored ROW, which can be arbitrarily long).
@@ -2066,8 +2330,17 @@ export const CANVAS_CHAT_CHANGES_INSTRUCTION =
 export function renderChangeResults(outcomes: readonly CanvasChatChangeOutcome[]): string {
   return outcomes
     .map((outcome) => {
-      const asked = outcome.change.instruction.replace(/\s+/g, ' ').trim();
-      return `### Change «${outcome.change.name}» — ${CHANGE_VERDICTS[outcome.status]}\nasked: ${asked}\n${outcome.detail}`;
+      const heading = `### Change ${canvasChatChangeLabel(outcome.change)} — ${CHANGE_VERDICTS[outcome.status]}`;
+      const instruction = canvasChatChangeInstruction(outcome.change);
+      const asked =
+        instruction === null
+          ? ''
+          : `\nasked: ${instruction.replace(/\s+/g, ' ').trim()}`;
+      const findings =
+        outcome.findings === undefined || outcome.findings.length === 0
+          ? ''
+          : `\nfindings:\n${outcome.findings.map((line) => `- ${line}`).join('\n')}`;
+      return `${heading}${asked}${findings}\n${outcome.detail}`;
     })
     .join('\n\n');
 }
@@ -2368,6 +2641,10 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
               campaignId: module.campaignId,
               pool,
               signal: handle.signal,
+              // The SAME per-part snapshot the model read (docs/17 row 360):
+              // an adversarial part review judges exactly the text the owner is
+              // looking at, unsaved edits included.
+              parts,
             });
           } catch (error) {
             // A stop is a stop: it ends the whole turn (the caller marks the
@@ -2380,6 +2657,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
               artifactId: null,
               kind: null,
               detail: errorTextOf(error),
+              findings: [],
             };
           }
           // The command echo is the ENGINE's, so it can never drift from what

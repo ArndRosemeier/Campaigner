@@ -9110,7 +9110,7 @@ verification: no generation, chat, UI or status behaviour is touched
 | `refineModuleText still throws ModuleBusyError while the shared core resolves` | a `generating` module: the CANVAS caller still refuses with `ModuleBusyError` and calls no model, while `transformModuleText` (the pass's core) resolves | a core that grows the canvas surface rule back and refuses exactly when the in-generation pass needs it |
 | `the core does not claim the canvas registry; the canvas caller does` | `isModuleGenerationClaimed` is `false` during the core's call, `true` during `refineModuleText`'s, and `false` again after | a core that takes the canvas slot, or a canvas caller that stops taking it |
 | `the whole-document core targets the PREMISE, which the canvas scope union does not name` | `transformModuleText({ target: 'premise' })` composes the premise prompt | a premise target silently treated as a part |
-| `no src file calls runAdversarialPass or imports the module` | a `src/**` source scan: `runAdversarialPass(` appears in exactly its own file and nothing imports `@/llm/adversarialPass` | accidental wiring in this slice (the trigger is slice 357, the chat trigger slice 358) |
+| `the pass is imported by exactly its CALLERS, and its trigger sites are counted` | a `src/**` source scan: `runAdversarialPass(` is DEFINED once; `@/llm/adversarialPass` is imported by exactly TWO caller files (`llm/moduleGen` — the automatic trigger — and `features/modules/canvas/chatChanges` — the chat trigger of docs/17 row 360); moduleGen holds exactly TWO call sites behind THREE `adversarialReviewEnabled(` reads, and the chat executor exactly ONE call site | a THIRD importer (a second trigger path), a third in-generation call site, an unguarded trigger, or a second chat call site. **AMENDED IN PLACE by docs/17 rows 358 and 360**: slice 356's "wires it NOWHERE" text is superseded, never deleted — the pin now enumerates the sanctioned callers instead of asserting none exists |
 
 The canvas pins prove the OTHER half of the guard split without being edited:
 `tests/llm/canvasRefine.test.ts` (19) still covers the same-module busy refusal,
@@ -9141,3 +9141,62 @@ critique finds the four classes of problem" is the INTENT, not a measurement —
 what is pinned is that the criteria ARE the owner's four, that findings are
 advisory, and that the editor is the ONE validated core. The quality of a
 critique's judgement is slice 357's measured question, not this file's.
+
+## The adversarial pass is triggerable from the module chat, through the ONE `<change>` command (docs/17 row 360, docs/18 §2.2)
+
+`tests/llm/canvasChatChanges.test.ts` (48 tests, jsdom — the chat's whole change
+half already lives there and reuses its seeded module, mocked transport and
+fake-indexeddb; the pass and the core run for REAL, only `chat` is mocked at the
+protocol boundary) + `tests/llm/adversarialPass.test.ts` (the amended
+caller-inventory pin). The owner's requirement is the subject: *"This step can be
+automated to run once, but it should also be triggerable in the module chat."*
+
+| Pin | What it asserts | What it would refuse |
+|---|---|---|
+| `parses the premise form and the numbered-part form` | `<change adversarial="premise"></change>` → `{ adversarial: { kind: 'premise' } }`; `<change adversarial="part" part="2"></change>` → `{ adversarial: { kind: 'part', planIndex: 1 } }` (1-based in, 0-based out) | a second command tag or a second parser for the review |
+| `refuses every malformed adversarial form LOUDLY, and nothing is executed` | ten malformed forms each throw `CanvasChatParseError`: `part` missing, `part` on the premise, an out-of-vocabulary value, `operation` beside `adversarial`, a non-numeric `part`, `part="0"`, a bare `part`, a BODY on the adversarial shape, and an unknown attribute | a near-miss that silently picks a target, or a partially executed reply |
+| `a part review critiques THAT part's live text, and names it in the instruction` | the critique's user turn carries the TARGET part's live text (and NOT the other part's), and the editor instruction names `part 2` plus the finding's own words | a wrong-target review (the pass judging the premise or the wrong part), and an instruction that loses which passage a finding came from |
+| `a premise review critiques the premise and writes it through the spine seam` | the premise is rewritten on the row and every part is byte-identical | a premise review that touches part text, or a part review that writes the spine |
+| `an empty critique is the QUIET clean outcome: NOTHING is written and it says so` | status `clean`, no `edit`, the live document byte-identical, the row unmoved, and the EDITOR never called | a "review" that writes on an empty critique, or one reported as a change that did not happen |
+| `a target with no text is a NAMED refusal, never a pass run` | `adversarial="part" part="8"` on a 2-part module is `refused`, names part 8, and calls NO model | a pass run on empty text, or a silent skip |
+| `the findings are rendered on the outcome AND in the change-results block` | `outcome.findings` is one line per issue, formatted `[severity] kind: message (at: where)`, and the `<change-results>` block carries the same lines under `### Change part 1 — APPLIED` | an outcome that shows only the edit (the thing the owner asked to see is the critique) |
+| `THE FINDINGS ARE VISIBLE: the card carries each finding WITH the edit` | a full turn's outcome card carries the finding line AND the edit's before→after (`before` is exactly what the critic read) | findings that exist on the outcome but never reach the chat's card |
+| `THE ACCEPTED EDIT IS UNDOABLE: it persists through the EXISTING split-save, and the pre-change document is on the version stack` | after a full turn the ROW moved, and a version row carries the pre-change parts document AND `premise: 'The premise.'` | a side-door write with no undo, or an accepted edit the row never sees |
+| `accepting a PREMISE edit is UNDOABLE through the pass's own snapshot` | a version row carries the pre-change `docText` AND the pre-change premise | a premise edit whose undo cannot put the premise back (the row-357 defect) |
+| `THE FINDINGS ARE VISIBLE: an EMPTY critique renders a quiet clean card and applies nothing` | the card kind is `clean`, its reason says the critique found nothing, the premise and parts are unmoved, and the editor was never called | a clean review rendered as a failure, or as an applied change |
+| `a FAILED pass surfaces loudly through the turn and writes NOTHING` | a malformed critique reply makes the turn's outcome `failed`, toasts through `toastError` with `FAILED`, and leaves the premise and parts byte-identical | a catch-and-continue that reads a malformed critique as "nothing found" |
+| `the canvas guard still refuses while the module is generating` | a `generating` module refuses the chat turn (`ModuleBusyError`) exactly as it always did — the chat trigger keeps the chat's guard while the row-358 in-generation trigger deliberately does not | a chat door that bypasses the module's one-generation slot |
+| `one executor file: one pass call, one applier, one spine write, no side-door row write, no second busy registry` | a `src/**` scan of `chatChanges.ts`: exactly ONE `runAdversarialPass(`, one `applyChatCommands(`, one `patchModuleSpine(`, NO `saveModulePartText(`/`patchModule(`, and no `claimModuleGeneration(`/`registerCanvasAbort(`/`refineModuleText(` | a second critique/editor/snapshot seam, a second busy mechanism, a surface guard inside the chat's own turn, or a chat-side row writer |
+| `the chat has exactly ONE outcome-card renderer, and it renders the findings` | `data-testid="canvas-chat-outcome"` lives in exactly ONE file, that file has exactly one findings block, and it has the `data-kind="clean"` card | a second card/overlay/dialog for the review |
+| `the findings survive the chat thread round trip` | `serializeChatThread`/`deserializeChatThread` carry the finding lines, so a restored card still shows what the critic found | findings that vanish on reload, leaving an outcome that shows only the edit |
+
+The thread schema change is additive and tolerant: `moduleChatOutcomeSchema`
+gains `findings` with `.default([])` and `kind` gains `'clean'` — a row written
+before this slice parses with no findings, exactly what every edit outcome
+carries. No Dexie version, no index, no migration.
+
+**The tripwire caught a copy at birth.** The new test file's `schemaNameOf`
+helper was byte-identical to the pass test's, and
+`tests/architecture/no-duplicate-implementations.test.ts` reddened it BY NAME on
+the first run. It was FOLDED onto `tests/helpers/chatSchemaName.ts` (both files
+import the one seam) and the baseline was NOT edited — a writer may only delete
+baseline entries.
+
+**ARMS** (`.gate-logs/row360/arms/summary.txt` + the raw logs beside it, every
+file restored byte-identically with `cmp` and a final sha256 equal to the
+pristine one): baseline 48/48 GREEN; (A) the executor routes the pass to the
+WRONG target → RED by name
+`a part review critiques THAT part's live text, and names it in the instruction`,
+47/48; (B) the findings dropped from the rendered outcome → RED 2, first by name
+`the findings are rendered on the outcome AND in the change-results block`, plus
+`THE FINDINGS ARE VISIBLE: the card carries each finding WITH the edit`, 46/48;
+(C) an accepted review edit stops reaching the EXISTING persistence path → RED by
+name
+`THE ACCEPTED EDIT IS UNDOABLE: it persists through the EXISTING split-save, and the pre-change document is on the version stack`,
+47/48. Three distinct injected hashes, three distinct pin sets, no VOID arm.
+
+**What a test cannot prove:** no pin observes a live provider, so "the model asks
+for a review when the owner wants one" is a PROMPT intent (the system prompt now
+documents the command and its rules), not a measurement. What is pinned is that
+the command parses and routes, that the findings reach the card, that an accepted
+edit is undoable, and that a clean review writes nothing.

@@ -10,6 +10,7 @@ import {
   CanvasChatParseError,
   canvasChatFollowUpTurnContent,
   canvasChatSystemPrompt,
+  isArtifactChange,
   parseCanvasChatReply,
   renderChangeResults,
   sendCanvasChatMessage,
@@ -29,10 +30,25 @@ import {
   type Id,
 } from '@/domain';
 import { createCampaign } from '@/db/campaignRepo';
-import { saveModule } from '@/db/moduleRepo';
+import { getModule, saveModule } from '@/db/moduleRepo';
+import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { executeChatChange, reportChatChangeOutcome } from '@/features/modules/canvas/chatChanges';
+import { stringChatHandle } from '@/features/modules/canvas/chatApply';
+import {
+  PREVIEW_TURN_SURFACE,
+  runCanvasChatTurn,
+} from '@/features/modules/canvas/chatTurn';
+import {
+  canvasChatKey,
+  useCanvasChatStore,
+} from '@/features/modules/canvas/chatStore';
+import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
+import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
+import { splitPartsDocument } from '@/domain/modulePartsDocument';
+import { schemaNameOf } from '../helpers/chatSchemaName';
+import { CODE, filesWith } from '../helpers/sourceCode';
 import type {
   ChangeArtifactRequest,
   ChangeArtifactResult,
@@ -291,15 +307,21 @@ function changeOf(name: string, instruction: string, operation?: 'repopulate' | 
   return `<change${attribute}><name>${name}</name><instruction>${instruction}</instruction></change>`;
 }
 
+
+/** The name of an artifact change (these tests drive the artifact half only). */
+function nameOf(change: CanvasChatChangeCommand): string {
+  return isArtifactChange(change) ? change.name : 'adversarial';
+}
+
 /** A stub executor that records the ORDER and the CONCURRENCY of the calls. */
-function sequencingExecutor(events: string[], behavior?: (change: { name: string }) => void) {
+function sequencingExecutor(events: string[], behavior?: (change: CanvasChatChangeCommand) => void) {
   let inFlight = 0;
   const executor: CanvasChatChangeExecutor = vi.fn(async (change: CanvasChatChangeCommand) => {
     inFlight += 1;
-    events.push(`start:${change.name}:${String(inFlight)}`);
+    events.push(`start:${nameOf(change)}:${String(inFlight)}`);
     behavior?.(change);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    events.push(`end:${change.name}`);
+    events.push(`end:${nameOf(change)}`);
     inFlight -= 1;
     return { status: 'changed' as const, artifactId: world.npcId, kind: 'npc' as const, detail: 'done' };
   });
@@ -592,7 +614,7 @@ describe('sequential, capped, abortable — and honest about the module slot', (
     expect(slots).toEqual([false, false]);
     expect(result.changes?.status).toBe('ok');
     if (result.changes?.status !== 'ok') throw new Error('expected served changes');
-    expect(result.changes.outcomes.map((outcome) => outcome.change.name)).toEqual([
+    expect(result.changes.outcomes.map((outcome) => nameOf(outcome.change))).toEqual([
       'Keeper Ilse',
       'Halmund the Smith',
     ]);
@@ -602,7 +624,7 @@ describe('sequential, capped, abortable — and honest about the module slot', (
 
   it('a specialist FAILURE is a named outcome the model reads, and the NEXT change still runs', async () => {
     const executor = vi.fn<CanvasChatChangeExecutor>((change: CanvasChatChangeCommand) => {
-      if (change.name === 'Keeper Ilse') throw new Error('the run produced no artifact');
+      if (nameOf(change) === 'Keeper Ilse') throw new Error('the run produced no artifact');
       return Promise.resolve({
         status: 'changed',
         artifactId: world.secondNpcId,
@@ -641,6 +663,7 @@ describe('sequential, capped, abortable — and honest about the module slot', (
         campaignId: world.campaignId,
         pool: await poolOf(),
         signal: new AbortController().signal,
+        parts: [],
       },
     );
     expect(busy.status).toBe('busy');
@@ -709,7 +732,7 @@ describe('sequential, capped, abortable — and honest about the module slot', (
     const turn = new AbortController();
     const calls: string[] = [];
     const executor = vi.fn<CanvasChatChangeExecutor>((change: CanvasChatChangeCommand) => {
-      calls.push(change.name);
+      calls.push(nameOf(change));
       turn.abort();
       return Promise.resolve({
         status: 'changed',
@@ -996,3 +1019,481 @@ async function poolOf() {
   const { loadChatDetailsPool } = await import('@/llm/canvasChat');
   return loadChatDetailsPool(world.campaignId);
 }
+
+// --- the adversarial review from the chat (docs/17 row 360) ---------------------
+//
+// The owner's requirement, verbatim: *"This step can be automated to run once,
+// but it should also be triggerable in the module chat."* What is pinned: the
+// command parses (and a malformed one is refused LOUDLY), the executor calls the
+// ONE pass with the RIGHT target, the CRITIQUE FINDINGS render with the edit, an
+// empty critique writes nothing and says so, an accepted edit lands through the
+// existing seams and is undoable from the version stack (premise included), and
+// a failed pass surfaces loudly without touching the module.
+
+const ADVERSARIAL_ISSUE = {
+  kind: 'inconsistency',
+  severity: 'major',
+  message: 'The vault is north of the gate here and south of it later.',
+  where: 'second paragraph',
+};
+
+/** The transport the PASS uses: a critique reply, then an editor reply. */
+function mockPass(issues: unknown, replacement = 'The reviewed text, rewritten.'): void {
+  chatMock.mockReset();
+  chatMock.mockImplementation((_messages, opts) => {
+    if (schemaNameOf(opts) === 'adversarial-critique') {
+      return Promise.resolve({
+        text: JSON.stringify({ issues }),
+        modelUsed: 'critic-model',
+        fallback: null,
+      });
+    }
+    return Promise.resolve({
+      text: JSON.stringify({ replacement }),
+      modelUsed: 'editor-model',
+      fallback: null,
+    });
+  });
+}
+
+function adversarialChangeOf(target: 'premise' | number): CanvasChatChangeCommand {
+  return target === 'premise'
+    ? { adversarial: { kind: 'premise' } }
+    : { adversarial: { kind: 'part', planIndex: target } };
+}
+
+/** The context the TURN hands the executor — including the live per-part
+ * snapshot (the SAME split the engine makes of the editor doc). */
+function adversarialContext() {
+  return {
+    moduleId: world.moduleId,
+    campaignId: world.campaignId,
+    pool: [] as const,
+    signal: new AbortController().signal,
+    parts: splitPartsDocument(PARTS_DOCUMENT, PART_PLAN),
+  };
+}
+
+describe('the adversarial <change> is parsed by the SAME strict extractor (docs/17 row 360)', () => {
+  it('parses the premise form and the numbered-part form', () => {
+    const parsed = parseCanvasChatReply(
+      ['Sure.', '<change adversarial="premise"></change>', '<change adversarial="part" part="2"></change>'].join(
+        '\n',
+      ),
+    );
+    expect(parsed.changes).toEqual([
+      { adversarial: { kind: 'premise' } },
+      { adversarial: { kind: 'part', planIndex: 1 } },
+    ]);
+    expect(parsed.prose).toBe('Sure.');
+  });
+
+  it('refuses every malformed adversarial form LOUDLY, and nothing is executed', () => {
+    const malformed = [
+      // part= is required with adversarial="part"
+      '<change adversarial="part"></change>',
+      // the premise is not a part
+      '<change adversarial="premise" part="2"></change>',
+      // a value outside the two the app defines
+      '<change adversarial="everything"></change>',
+      // the two shapes are different requests
+      '<change adversarial="premise" operation="repopulate"></change>',
+      // free text where a number belongs
+      '<change adversarial="part" part="two"></change>',
+      '<change adversarial="part" part="0"></change>',
+      // "part" without the shape that owns it
+      '<change part="2"><name>x</name><instruction>y</instruction></change>',
+      // a body on a shape that has none
+      '<change adversarial="premise"><name>x</name></change>',
+      // an unknown attribute
+      '<change adversarial="premise" scope="all"></change>',
+    ];
+    for (const raw of malformed) {
+      expect(() => parseCanvasChatReply(raw), raw).toThrow(CanvasChatParseError);
+    }
+  });
+});
+
+describe('the executor calls the ONE pass with the RIGHT target (docs/17 row 360)', () => {
+  it('a part review critiques THAT part\'s live text, and names it in the instruction', async () => {
+    mockPass([ADVERSARIAL_ISSUE]);
+    const handle = stringChatHandle(PARTS_DOCUMENT);
+    const outcome = await executeChatChange(
+      adversarialChangeOf(1),
+      adversarialContext(),
+      handle,
+    );
+    const critiqueUser = textOf(
+      (chatMock.mock.calls.find(([, opts]) => schemaNameOf(opts) === 'adversarial-critique')?.[0] ??
+        [])[1] ?? { content: '' },
+    );
+    // The reviewed text is PART 1's text, never PART 0's.
+    expect(critiqueUser).toContain(PART_1);
+    expect(critiqueUser).not.toContain(PART_0);
+    const editorUser = textOf(
+      (chatMock.mock.calls.find(([, opts]) => schemaNameOf(opts) === 'canvas-refine')?.[0] ?? [])[1] ??
+        { content: '' },
+    );
+    expect(editorUser).toContain('part 2');
+    expect(editorUser).toContain(ADVERSARIAL_ISSUE.message);
+    expect(outcome.status).toBe('changed');
+    expect(handle.read()).toContain('The reviewed text, rewritten.');
+    expect(handle.read()).not.toContain(PART_1);
+  });
+
+  it('a premise review critiques the premise and writes it through the spine seam', async () => {
+    mockPass([ADVERSARIAL_ISSUE], 'A rewritten premise.');
+    const outcome = await executeChatChange(adversarialChangeOf('premise'), adversarialContext());
+    expect(outcome.status).toBe('changed');
+    const row = await getModule(world.moduleId);
+    expect(row?.spine?.premise).toBe('A rewritten premise.');
+    // The parts are untouched: a premise review writes the spine alone.
+    expect(row?.parts.map((part) => part.markdown)).toEqual([PART_0, PART_1]);
+  });
+
+  it('an empty critique is the QUIET clean outcome: NOTHING is written and it says so', async () => {
+    mockPass([]);
+    const handle = stringChatHandle(PARTS_DOCUMENT);
+    const outcome = await executeChatChange(
+      adversarialChangeOf(0),
+      adversarialContext(),
+      handle,
+    );
+    expect(outcome.status).toBe('clean');
+    expect(outcome.edit).toBeUndefined();
+    expect(outcome.detail).toContain('found nothing to fix');
+    // Nothing moved: neither the document nor the module row.
+    expect(handle.read()).toBe(PARTS_DOCUMENT);
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.map((part) => part.markdown)).toEqual([PART_0, PART_1]);
+    // The editor was never called.
+    expect(chatMock.mock.calls.some(([, opts]) => schemaNameOf(opts) === 'canvas-refine')).toBe(
+      false,
+    );
+  });
+
+  it('a target with no text is a NAMED refusal, never a pass run', async () => {
+    mockPass([ADVERSARIAL_ISSUE]);
+    const outcome = await executeChatChange(adversarialChangeOf(7), adversarialContext());
+    expect(outcome.status).toBe('refused');
+    expect(outcome.detail).toContain('no part 8');
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('the findings are rendered on the outcome AND in the change-results block', async () => {
+    mockPass([ADVERSARIAL_ISSUE]);
+    const handle = stringChatHandle(PARTS_DOCUMENT);
+    const result = await executeChatChange(adversarialChangeOf(0), adversarialContext(), handle);
+    expect(result.findings).toEqual([
+      `[major] inconsistency: ${ADVERSARIAL_ISSUE.message} (at: ${ADVERSARIAL_ISSUE.where})`,
+    ]);
+    const block = renderChangeResults([
+      { ...result, change: adversarialChangeOf(0) },
+    ]);
+    expect(block).toContain('### Change part 1 — APPLIED');
+    expect(block).toContain('inconsistency');
+    expect(block).toContain(ADVERSARIAL_ISSUE.message);
+    expect(block).toContain('findings:');
+  });
+
+  it('accepting a PART edit is UNDOABLE: the pre-change document is on the version stack (premise included)', async () => {
+    mockPass([ADVERSARIAL_ISSUE]);
+    const handle = stringChatHandle(PARTS_DOCUMENT);
+    const outcome = await executeChatChange(adversarialChangeOf(1), adversarialContext(), handle);
+    expect(outcome.appliedToDocument).not.toBeNull();
+    // The turn persists through the EXISTING split-save, exactly as it does for
+    // an <edit> batch — no new write seam.
+    const row = await getModule(world.moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    await saveWholeModuleDocument({
+      moduleId: world.moduleId,
+      doc: handle.read(),
+      module: row,
+      origin: 'ai',
+      label: 'Chat: review',
+      version: { source: 'chat', label: 'Chat: review' },
+      writerModel: outcome.edit?.modelUsed ?? '',
+    });
+    const versions = await listModuleVersions(world.moduleId);
+    // The PASS's own snapshot is the first row (it runs BEFORE the critique) and
+    // it carries the pre-change parts document AND the premise (row 357).
+    expect(versions.some((version) => version.docText === PARTS_DOCUMENT)).toBe(true);
+    expect(versions.some((version) => version.premise === 'The premise.')).toBe(true);
+    // And the row really moved.
+    const after = await getModule(world.moduleId);
+    expect(after?.parts[1]?.markdown).toContain('The reviewed text, rewritten.');
+  });
+
+  it('accepting a PREMISE edit is UNDOABLE through the pass\'s own snapshot', async () => {
+    mockPass([ADVERSARIAL_ISSUE], 'A rewritten premise.');
+    await executeChatChange(adversarialChangeOf('premise'), adversarialContext());
+    const versions = await listModuleVersions(world.moduleId);
+    expect(versions[0]?.premise).toBe('The premise.');
+    expect(versions[0]?.docText).toBe(PARTS_DOCUMENT);
+  });
+});
+
+describe('the chat turn renders the critique and persists the edit (docs/17 row 360)', () => {
+  function adversarialTurnChat(reply: string): void {
+    chatMock.mockReset();
+    let replySent = false;
+    chatMock.mockImplementation((_messages, opts) => {
+      const schema = schemaNameOf(opts);
+      if (schema === 'adversarial-critique') {
+        return Promise.resolve({
+          text: JSON.stringify({ issues: [ADVERSARIAL_ISSUE] }),
+          modelUsed: 'critic-model',
+          fallback: null,
+        });
+      }
+      if (schema === 'canvas-refine') {
+        return Promise.resolve({
+          text: JSON.stringify({ replacement: 'The reviewed text, rewritten.' }),
+          modelUsed: 'editor-model',
+          fallback: null,
+        });
+      }
+      if (!replySent) {
+        replySent = true;
+        return Promise.resolve({ text: reply, modelUsed: 'chat-model', fallback: null });
+      }
+      return Promise.resolve({ text: 'Reviewed.', modelUsed: 'chat-model', fallback: null });
+    });
+  }
+
+  it('THE FINDINGS ARE VISIBLE: the card carries each finding WITH the edit', async () => {
+    adversarialTurnChat('Reviewing part 1.\n<change adversarial="part" part="1"></change>');
+    const key = canvasChatKey(world.moduleId);
+    useCanvasChatStore.getState().resetFor(world.moduleId);
+    const handle = stringChatHandle(PARTS_DOCUMENT);
+    await runCanvasChatTurn(
+      {
+        moduleId: world.moduleId,
+        key,
+        hasPlannedParts: true,
+        handle,
+        surface: PREVIEW_TURN_SURFACE,
+        modelSelection: null,
+        turn: new AbortController(),
+      },
+      'review part 1',
+    );
+    await flushChatPersist(key);
+    const assistant = useCanvasChatStore
+      .getState()
+      .module(key)
+      .messages.find((message) => message.role === 'assistant');
+    const card = assistant?.outcomes.find((outcome) => (outcome.findings ?? []).length > 0);
+    expect(card?.kind).toBe('applied');
+    expect(card?.findings?.[0]).toContain('inconsistency');
+    expect(card?.findings?.[0]).toContain(ADVERSARIAL_ISSUE.message);
+    // The edit rides the SAME card: before is what the critic read, after the
+    // replacement.
+    // part="1" is the FIRST part (1-based, as the plan labels it).
+    expect(card?.before).toBe(PART_0);
+    expect(card?.command.replace).toBe('The reviewed text, rewritten.');
+  });
+
+  it('THE ACCEPTED EDIT IS UNDOABLE: it persists through the EXISTING split-save, and the pre-change document is on the version stack', async () => {
+    adversarialTurnChat('Reviewing part 1.\n<change adversarial="part" part="1"></change>');
+    const key = canvasChatKey(world.moduleId);
+    useCanvasChatStore.getState().resetFor(world.moduleId);
+    await runCanvasChatTurn(
+      {
+        moduleId: world.moduleId,
+        key,
+        hasPlannedParts: true,
+        handle: stringChatHandle(PARTS_DOCUMENT),
+        surface: PREVIEW_TURN_SURFACE,
+        modelSelection: null,
+        turn: new AbortController(),
+      },
+      'review part 1',
+    );
+    await flushChatPersist(key);
+    // The row moved — through the turn's ONE split-save, not a side-door write.
+    const row = await getModule(world.moduleId);
+    expect(row?.parts[0]?.markdown).toContain('The reviewed text, rewritten.');
+    // Undoable: the pass's own snapshot (taken BEFORE the critique) carries the
+    // pre-change parts document AND the premise (docs/17 row 357).
+    const versions = await listModuleVersions(world.moduleId);
+    expect(versions.some((version) => version.docText === PARTS_DOCUMENT)).toBe(true);
+    expect(versions.some((version) => version.premise === 'The premise.')).toBe(true);
+  });
+
+  it('THE FINDINGS ARE VISIBLE: an EMPTY critique renders a quiet clean card and applies nothing', async () => {
+    chatMock.mockReset();
+    let replySent = false;
+    chatMock.mockImplementation((_messages, opts) => {
+      if (schemaNameOf(opts) === 'adversarial-critique') {
+        return Promise.resolve({ text: JSON.stringify({ issues: [] }), modelUsed: 'critic', fallback: null });
+      }
+      if (!replySent) {
+        replySent = true;
+        return Promise.resolve({
+          text: 'Reviewing the premise.\n<change adversarial="premise"></change>',
+          modelUsed: 'chat-model',
+          fallback: null,
+        });
+      }
+      return Promise.resolve({ text: 'Nothing to fix.', modelUsed: 'chat-model', fallback: null });
+    });
+    const key = canvasChatKey(world.moduleId);
+    useCanvasChatStore.getState().resetFor(world.moduleId);
+    await runCanvasChatTurn(
+      {
+        moduleId: world.moduleId,
+        key,
+        hasPlannedParts: true,
+        handle: stringChatHandle(PARTS_DOCUMENT),
+        surface: PREVIEW_TURN_SURFACE,
+        modelSelection: null,
+        turn: new AbortController(),
+      },
+      'review the premise',
+    );
+    await flushChatPersist(key);
+    const assistant = useCanvasChatStore
+      .getState()
+      .module(key)
+      .messages.find((message) => message.role === 'assistant');
+    const clean = assistant?.outcomes.find((outcome) => outcome.kind === 'clean');
+    expect(clean).toBeDefined();
+    expect(clean?.reason).toContain('found nothing to fix');
+    expect(clean?.findings ?? []).toEqual([]);
+    const row = await getModule(world.moduleId);
+    expect(row?.spine?.premise).toBe('The premise.');
+    expect(row?.parts.map((part) => part.markdown)).toEqual([PART_0, PART_1]);
+    // The editor was never called for an empty critique.
+    expect(chatMock.mock.calls.some(([, opts]) => schemaNameOf(opts) === 'canvas-refine')).toBe(false);
+  });
+
+  it('a FAILED pass surfaces loudly through the turn and writes NOTHING', async () => {
+    chatMock.mockReset();
+    let replySent = false;
+    chatMock.mockImplementation((_messages, opts) => {
+      if (schemaNameOf(opts) === 'adversarial-critique') {
+        // A malformed critique reply is a BOUNDARY failure (AGENTS 3).
+        return Promise.resolve({ text: 'I think it is fine, actually.', modelUsed: 'critic', fallback: null });
+      }
+      if (!replySent) {
+        replySent = true;
+        return Promise.resolve({
+          text: 'Reviewing the premise.\n<change adversarial="premise"></change>',
+          modelUsed: 'chat-model',
+          fallback: null,
+        });
+      }
+      return Promise.resolve({ text: 'Ok.', modelUsed: 'chat-model', fallback: null });
+    });
+    const key = canvasChatKey(world.moduleId);
+    useCanvasChatStore.getState().resetFor(world.moduleId);
+    const result = await runCanvasChatTurn(
+      {
+        moduleId: world.moduleId,
+        key,
+        hasPlannedParts: true,
+        handle: stringChatHandle(PARTS_DOCUMENT),
+        surface: PREVIEW_TURN_SURFACE,
+        modelSelection: null,
+        turn: new AbortController(),
+      },
+      'review the premise',
+    );
+    void result;
+    await flushChatPersist(key);
+    const row = await getModule(world.moduleId);
+    expect(row?.spine?.premise).toBe('The premise.');
+    expect(row?.parts.map((part) => part.markdown)).toEqual([PART_0, PART_1]);
+    expect(toastErrorMock).toHaveBeenCalled();
+    const copy = toastErrorMock.mock.calls[0]?.[0] ?? '';
+    expect(copy).toContain('FAILED');
+  });
+
+  it('the canvas guard still refuses while the module is generating', async () => {
+    const row = await getModule(world.moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    await saveModule({ ...row, status: 'generating' });
+    chatMock.mockReset();
+    await expect(
+      sendCanvasChatMessage(
+        baseInput({
+          instruction: 'review the premise',
+          executeChange: (change, context) => executeChatChange(change, context),
+        }),
+      ),
+    ).rejects.toThrow(/already generating/i);
+  });
+});
+
+describe('the adversarial trigger adds NO second mechanism (docs/17 row 360)', () => {
+  it('one executor file: one pass call, one applier, one spine write, no side-door row write, no second busy registry', () => {
+    const chatChanges = CODE['src/features/modules/canvas/chatChanges.ts'] ?? '';
+    expect(chatChanges).not.toBe('');
+    // The ONE pass, called once.
+    expect(chatChanges.match(/runAdversarialPass\(/g)).toHaveLength(1);
+    // A part edit rides the chat's ONE applier…
+    expect(chatChanges.match(/applyChatCommands\(/g)).toHaveLength(1);
+    // …a premise edit rides the ONE spine-subfield seam…
+    expect(chatChanges.match(/patchModuleSpine\(/g)).toHaveLength(1);
+    // …and the executor writes NO row of its own.
+    expect(chatChanges).not.toContain('saveModulePartText(');
+    expect(chatChanges).not.toContain('patchModule(');
+    // NO second busy mechanism (the turn owns the module slot handover) and NO
+    // surface guard: the pass reaches the shared transform CORE, not
+    // `refineModuleText` (whose canvas guard would refuse inside its own turn).
+    expect(chatChanges).not.toContain('claimModuleGeneration(');
+    expect(chatChanges).not.toContain('registerCanvasAbort(');
+    expect(chatChanges).not.toContain('refineModuleText(');
+  });
+
+  it('the chat has exactly ONE outcome-card renderer, and it renders the findings', () => {
+    expect(filesWith('data-testid="canvas-chat-outcome"')).toEqual([
+      'src/features/modules/canvas/ChatSidebar.tsx',
+    ]);
+    const sidebar = CODE['src/features/modules/canvas/ChatSidebar.tsx'] ?? '';
+    // ONE findings block, rendered by the ONE card component.
+    expect(sidebar.match(/canvas-chat-outcome-findings/g)).toHaveLength(1);
+    expect(sidebar).toContain('data-kind="clean"');
+  });
+
+  it('the findings survive the chat thread round trip (a restored card shows what the critic found)', async () => {
+    const { serializeChatThread, deserializeChatThread } = await import(
+      '@/features/modules/canvas/chatPersist'
+    );
+    const [serialized] = serializeChatThread([
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        text: 'Reviewed.',
+        raw: null,
+        status: 'ok',
+        error: null,
+        createdAt: 1,
+        outcomes: [
+          {
+            id: 'outcome-1',
+            kind: 'applied',
+            command: { search: 'old', replace: 'new', all: false },
+            targetParts: [{ planIndex: 0, title: 'The Gate Bargain' }],
+            occurrences: 1,
+            from: 1,
+            to: 2,
+            before: 'old',
+            reason: null,
+            closest: null,
+            failureFrom: null,
+            reported: false,
+            findings: ['[major] inconsistency: it drifts (at: paragraph 2)'],
+          },
+        ],
+      },
+    ]);
+    expect(serialized?.outcomes[0]?.findings).toEqual([
+      '[major] inconsistency: it drifts (at: paragraph 2)',
+    ]);
+    expect(deserializeChatThread(serialized === undefined ? [] : [serialized])[0]?.outcomes[0]?.findings).toEqual([
+      '[major] inconsistency: it drifts (at: paragraph 2)',
+    ]);
+  });
+});

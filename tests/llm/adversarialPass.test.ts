@@ -28,6 +28,7 @@ import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { clearDatabase } from '../db/helpers';
 import { CODE, filesWith } from '../helpers/sourceCode';
+import { schemaNameOf } from '../helpers/chatSchemaName';
 
 /**
  * The ADVERSARIAL critique-and-edit pass (docs/17 rows 352/353/356): EXACTLY
@@ -100,12 +101,6 @@ function issue(overrides: Partial<AdversarialIssue> = {}): AdversarialIssue {
     where: 'second paragraph',
     ...overrides,
   };
-}
-
-/** The schema NAME of the call in flight — the pass's two calls differ by it. */
-function schemaNameOf(opts: unknown): string {
-  const format = (opts as { responseFormat?: { name?: string } } | undefined)?.responseFormat;
-  return format?.name ?? '';
 }
 
 /** A critique reply, then an editor reply (the pass's real order). */
@@ -422,8 +417,8 @@ describe('the GUARD SPLIT — the canvas caller refuses a generating module, the
   });
 });
 
-describe('the pass has exactly ONE importer and TWO guarded trigger sites (docs/17 row 358)', () => {
-  it('moduleGen imports it, calls it twice behind the row flag, and no one else calls it', () => {
+describe('the pass is imported by exactly its CALLERS, and its trigger sites are counted (docs/17 rows 358/360)', () => {
+  it('moduleGen imports it, calls it twice behind the row flag, and the chat executor calls it once', () => {
     // The comment-stripped, whitespace-collapsed `src/` tree from the ONE
     // source-scan helper (docs/17 rows 212/284): a docstring is allowed to NAME
     // the pass, and only CODE is counted.
@@ -432,14 +427,25 @@ describe('the pass has exactly ONE importer and TWO guarded trigger sites (docs/
     expect(filesWith('export async function runAdversarialPass(')).toEqual([
       'src/llm/adversarialPass.ts',
     ]);
-    // The IMPORT is a single edge: module generation wires the pass in.
-    expect(filesWith('@/llm/adversarialPass')).toEqual(['src/llm/moduleGen.ts']);
-    // The TRIGGERS are exactly two — the premise in pass 0 and each part in
-    // pass 1 — and the flag guard that gates them is read three times in the
-    // file (its own definition plus the two trigger sites). A third trigger, or
-    // one that skipped the guard, moves a count and reds here.
+    // The IMPORT is two edges, and BOTH are callers (docs/17 row 360 added the
+    // chat executor): module generation wires the automatic trigger in, the
+    // canvas chat's change executor wires the owner-triggered one. A third
+    // importer — a second trigger path — reds here.
+    expect(filesWith('@/llm/adversarialPass')).toEqual([
+      'src/features/modules/canvas/chatChanges.ts',
+      'src/llm/moduleGen.ts',
+    ]);
+    // The TRIGGERS are exactly two in moduleGen — the premise in pass 0 and each
+    // part in pass 1 — and the flag guard that gates them is read three times in
+    // the file (its own definition plus the two trigger sites). A third trigger,
+    // or one that skipped the guard, moves a count and reds here.
     const moduleGen = CODE['src/llm/moduleGen.ts'] ?? '';
     expect(moduleGen.match(/runAdversarialPass\(/g)).toHaveLength(2);
     expect(moduleGen.match(/adversarialReviewEnabled\(/g)).toHaveLength(3);
+    // The CHAT's trigger is the one call site in the change executor: it runs
+    // the SAME pass for the premise or a part, and no other module in `src/`
+    // calls it.
+    const chatChanges = CODE['src/features/modules/canvas/chatChanges.ts'] ?? '';
+    expect(chatChanges.match(/runAdversarialPass\(/g)).toHaveLength(1);
   });
 });

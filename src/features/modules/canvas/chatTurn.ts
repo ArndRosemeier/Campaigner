@@ -1,8 +1,11 @@
 import type { Id } from '@/domain';
 import {
   NO_PARTS_MESSAGE,
+  canvasChatChangeLabel,
   chatProseSoFar,
+  isArtifactChange,
   sendCanvasChatMessage,
+  type CanvasChatChangeOutcome,
   type CanvasEditCommand,
 } from '@/llm/canvasChat';
 import { ModuleBusyError } from '@/llm/moduleGen';
@@ -11,8 +14,14 @@ import {
   newChatId,
   useCanvasChatStore,
   type CanvasChatMessage,
+  type CanvasChatOutcome,
+  type CanvasChatOutcomePart,
 } from '@/features/modules/canvas/chatStore';
-import { applyChatCommands, type ChatDocumentHandle } from '@/features/modules/canvas/chatApply';
+import {
+  applyChatCommands,
+  MAX_CARD_SNIPPET,
+  type ChatDocumentHandle,
+} from '@/features/modules/canvas/chatApply';
 import {
   executeChatChange,
   reportChatChangeOutcome,
@@ -148,6 +157,62 @@ function historyFor(key: string): { role: 'user' | 'assistant'; text: string }[]
 }
 
 /**
+ * ONE adversarial review outcome as the chat's OUTCOME CARD (docs/17 row 360):
+ * the critique's findings on top, the edit's before→after below — the SAME card
+ * the `<edit>` commands render, so the review needs no second surface. A
+ * `clean` review is the quiet success card: no edit, no write, and no claim
+ * that anything changed.
+ */
+function adversarialReviewCard(
+  outcome: CanvasChatChangeOutcome,
+  parts: readonly { planIndex: number; title: string }[],
+): CanvasChatOutcome {
+  const change = outcome.change;
+  const targetParts: CanvasChatOutcomePart[] = (() => {
+    if (isArtifactChange(change) || change.adversarial.kind !== 'part') return [];
+    const planIndex = change.adversarial.planIndex;
+    const section = parts.find((part) => part.planIndex === planIndex);
+    return section === undefined ? [] : [{ planIndex: section.planIndex, title: section.title }];
+  })();
+  const edit = outcome.edit;
+  const command: CanvasEditCommand =
+    edit === undefined
+      ? { search: '', replace: '', all: false }
+      : { search: edit.originalText, replace: edit.replacement, all: false };
+  const base = {
+    id: newChatId('outcome'),
+    command,
+    targetParts,
+    closest: null,
+    failureFrom: null,
+    reported: false,
+    findings: outcome.findings ?? [],
+  };
+  if (outcome.status === 'changed') {
+    return {
+      ...base,
+      kind: 'applied',
+      occurrences: 1,
+      from: outcome.appliedToDocument?.from ?? null,
+      to: outcome.appliedToDocument?.to ?? null,
+      // The card's before→after is the review's own evidence: what the critic
+      // read, and what the editor replaced it with.
+      before: edit === undefined ? null : edit.originalText.slice(0, MAX_CARD_SNIPPET),
+      reason: null,
+    };
+  }
+  return {
+    ...base,
+    kind: outcome.status === 'clean' ? 'clean' : 'failed',
+    occurrences: null,
+    from: null,
+    to: null,
+    before: null,
+    reason: outcome.detail,
+  };
+}
+
+/**
  * Runs one chat turn. Throws BEFORE any message lands for pre-flight
  * guards (empty instruction / no planned parts) — those are the caller's
  * toasts. Everything after the user message lands becomes a message-card
@@ -252,8 +317,10 @@ export async function runCanvasChatTurn(
       // for the resolved row's kind through the ONE changeArtifact seam, and
       // each outcome is announced to the owner the moment it SETTLES — inside
       // the turn, not after it, so a later stop or failure can never hide a
-      // change that already happened.
-      executeChange: executeChatChange,
+      // change that already happened. The turn's OWN document handle rides
+      // along (docs/17 row 360): an adversarial PART review applies its edit to
+      // the document the owner is looking at, through the chat's one applier.
+      executeChange: (change, context) => executeChatChange(change, context, options.handle),
       reportChange: reportChatChangeOutcome,
       onDelta: (raw) => {
         latestRaw = raw;
@@ -273,6 +340,41 @@ export async function runCanvasChatTurn(
       text: result.parse.prose,
       raw: result.raw,
     });
+    /**
+     * Persists the turn's document through THE one split-save: only the parts
+     * whose text changed hit the row; a failed part save is a loud toast
+     * naming the part (`saveWholeModuleDocument` fires it) while the rest
+     * land — the doc keeps every in-doc edit either way. ONE save per settled
+     * batch, whether the bytes came from `<edit>` commands or from an
+     * adversarial part review's applied edit (docs/17 row 360).
+     */
+    const persistDoc = async (writerModel: string): Promise<void> => {
+      const module = await getModule(options.moduleId);
+      if (module === undefined) {
+        throw new Error(
+          `Module no longer exists — the edits are still in ${options.surface.unsavedEditsLocation}, ${options.surface.unsavedEditsRetryHint}`,
+        );
+      }
+      await saveWholeModuleDocument({
+        moduleId: options.moduleId,
+        doc: options.handle.read(),
+        module,
+        origin: 'ai',
+        label: `Chat: ${text.slice(0, 60)}`,
+        // Durable pre-change snapshot (docs/18 §2.3): the whole document as
+        // it stood before this batch — the simple undo for chat edits (the
+        // preview surface's ONLY undo: it has no CM history).
+        version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
+        // PROVENANCE (docs/17 row 93): a chat-written passage belongs to the
+        // CHAT model — the id the turn's own call reported (`modelUsed`),
+        // which is the selected/session model or the escalation tier that
+        // actually served the reply, never a settings lookup. Supplying it is
+        // ALSO the machine-write signature the part write reads to stamp
+        // `origin: 'model'` (row 113) — dropping it here would silently stamp
+        // model text as the user's.
+        writerModel,
+      });
+    };
     /**
      * Applies ONE reply's commands to the surface's document and persists the
      * changed parts through the ONE split-save. Called once per reply of the
@@ -300,38 +402,51 @@ export async function runCanvasChatTurn(
           ...applied.outcomes,
         ],
       });
-      // Persist the batch through the split-save: only the parts whose
-      // text changed hit the row; a failed part save is a loud toast
-      // naming the part (saveWholeModuleDocument fires it) while the rest
-      // land — the doc keeps every in-doc edit either way.
       if (!applied.docChanged) return;
-      const module = await getModule(options.moduleId);
-      if (module === undefined) {
-        throw new Error(
-          `Module no longer exists — the edits are still in ${options.surface.unsavedEditsLocation}, ${options.surface.unsavedEditsRetryHint}`,
-        );
-      }
-      await saveWholeModuleDocument({
-        moduleId: options.moduleId,
-        doc: options.handle.read(),
-        module,
-        origin: 'ai',
-        label: `Chat: ${text.slice(0, 60)}`,
-        // Durable pre-change snapshot (docs/18 §2.3): the whole document as
-        // it stood before this batch — the simple undo for chat edits (the
-        // preview surface's ONLY undo: it has no CM history).
-        version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
-        // PROVENANCE (docs/17 row 93): a chat-written passage belongs to the
-        // CHAT model — the id the turn's own call reported (`modelUsed`),
-        // which is the selected/session model or the escalation tier that
-        // actually served the reply, never a settings lookup. Supplying it is
-        // ALSO the machine-write signature the part write reads to stamp
-        // `origin: 'model'` (row 113) — dropping it here would silently stamp
-        // model text as the user's.
-        writerModel,
-      });
+      await persistDoc(writerModel);
     };
+    // --- the adversarial reviews (docs/17 row 360) ---------------------------
+    // Each review's CRITIQUE rides the assistant message as its OWN outcome
+    // card — the owner asked for the review to SEE what the critic found — and
+    // a part edit the executor already applied to the live document is flagged
+    // here so the ONE split-save persists it and the highlight follows it. The
+    // cards land BEFORE the edit batch below so the batch's outcome spread
+    // keeps them.
+    let adversarialDocApplied = false;
+    if (result.changes !== null) {
+      const reviews: CanvasChatOutcome[] = [];
+      for (const outcome of result.changes.outcomes) {
+        if (isArtifactChange(outcome.change)) continue;
+        const card = adversarialReviewCard(outcome, result.parts);
+        reviews.push(card);
+        if (outcome.appliedToDocument !== undefined) {
+          docChanged = true;
+          adversarialDocApplied = true;
+          lastApplied = outcome.appliedToDocument;
+        }
+      }
+      if (reviews.length > 0) {
+        useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
+          outcomes: [
+            ...(useCanvasChatStore.getState().module(options.key).messages.find(
+              (candidate) => candidate.id === assistantMessage.id,
+            )?.outcomes ?? []),
+            ...reviews,
+          ],
+        });
+      }
+    }
     await applyCommandsFor(assistantMessage, result.parse.commands, result.modelUsed);
+    // A part review landed an edit and this reply carried no <edit> batch, so
+    // nothing has persisted it yet: save it through the SAME split-save with
+    // the EDITOR's own model (the text now in the doc was written by the pass's
+    // editor, and provenance is never invented — row 93).
+    if (adversarialDocApplied && result.parse.commands.length === 0) {
+      const editorModel =
+        result.changes?.outcomes.find((outcome) => outcome.appliedToDocument !== undefined)?.edit
+          ?.modelUsed ?? result.modelUsed;
+      await persistDoc(editorModel);
+    }
     // --- the request round trip (docs/17 row 103) ---------------------------
     // Present ONLY when the reply carried a <request>: the app answered from
     // the stored rows and made exactly ONE further call. Its reply lands as
@@ -390,7 +505,7 @@ export async function runCanvasChatTurn(
         // call. The owner must know nothing ran for it.
         toastError(
           `The chat asked for another artifact change in the same turn: ${result.changes.ignoredChanges
-            .map((change) => `«${change.name}»`)
+            .map((change) => canvasChatChangeLabel(change))
             .join(', ')} — one change round trip is served per message and a change is a real generation, so NOTHING was changed for it. Ask again in your next message if you want it.`,
         );
       }

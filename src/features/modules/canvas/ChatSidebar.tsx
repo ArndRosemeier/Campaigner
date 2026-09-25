@@ -573,6 +573,51 @@ function OutcomeCard({
   const partNames = outcome.targetParts
     .map((part) => `Part ${String(part.planIndex + 1)} — ${part.title}`)
     .join(', ');
+  // The adversarial review's findings (docs/17 row 360): the WHOLE reason the
+  // owner asked for a chat-triggered pass, so they render above the edit on
+  // every kind of card — an outcome that showed only the edit would hide what
+  // the critic found.
+  const findings = outcome.findings ?? [];
+  const findingsBlock =
+    findings.length === 0 ? null : (
+      <div className="flex flex-col gap-1" data-testid="canvas-chat-outcome-findings">
+        <span className="text-xs font-medium text-muted-foreground">
+          The critic found {String(findings.length)} {findings.length === 1 ? 'issue' : 'issues'}:
+        </span>
+        <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+          {findings.map((finding) => (
+            <li key={finding} className="whitespace-pre-wrap">
+              {finding}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  if (outcome.kind === 'clean') {
+    // The quiet success: the critique found NOTHING and nothing was applied.
+    // Deliberately not a failure card and not an "applied" one — claiming a
+    // change that did not happen is the lie this card exists to avoid.
+    return (
+      <div
+        className="flex flex-col gap-1.5 rounded-lg border bg-muted/40 p-2.5"
+        data-testid="canvas-chat-outcome"
+        data-kind="clean"
+      >
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <CircleCheckIcon aria-hidden className="size-3.5 shrink-0" />
+          Nothing to fix — no change was made
+        </div>
+        {partNames !== '' && (
+          <span className="text-xs text-muted-foreground" data-testid="canvas-chat-outcome-part">
+            {partNames}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground" data-testid="canvas-chat-outcome-reason">
+          {outcome.reason}
+        </span>
+      </div>
+    );
+  }
   if (outcome.kind === 'applied') {
     return (
       <div
@@ -591,6 +636,7 @@ function OutcomeCard({
             {partNames}
           </span>
         )}
+        {findingsBlock}
         <div className="grid gap-1 font-mono text-xs">
           <span className="whitespace-pre-wrap rounded bg-destructive/10 px-1.5 py-1 text-destructive line-through decoration-destructive/50">
             {outcome.before ?? outcome.command.search}
@@ -619,6 +665,7 @@ function OutcomeCard({
           {partNames}
         </span>
       )}
+      {findingsBlock}
       {outcome.closest !== null && (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-muted-foreground">Closest text in the document:</span>

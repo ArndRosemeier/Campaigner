@@ -57,6 +57,10 @@ export function serializeChatThread(
         closest: outcome.closest,
         failureFrom: outcome.failureFrom,
         reported: outcome.reported,
+        // The adversarial review's findings survive the round trip (docs/17 row
+        // 360): a restored card that showed the edit but not WHAT the critic
+        // found would hide the reason the feature exists.
+        findings: [...(outcome.findings ?? [])],
       })),
       createdAt: message.createdAt,
     }));
