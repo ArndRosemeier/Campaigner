@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
-import { getModule, saveModule } from '@/db/moduleRepo';
+import { getModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions, snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import {
   assembleModulePartsDocument,
@@ -25,6 +25,7 @@ import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/cha
 import { useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import type * as PartTextModule from '@/features/modules/partText';
+import type * as ModuleRepoModule from '@/db/moduleRepo';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -63,12 +64,30 @@ vi.mock('@/features/modules/partText', async (importOriginal) => {
   };
 });
 
+/**
+ * The spine-subfield write is the ONE place a restore's premise lands
+ * (docs/17 row 357), so the loud-failure arm can make it fail without
+ * touching anything else. `importOriginal` keeps every other repo function
+ * the real one — only this seam is observable.
+ */
+vi.mock('@/db/moduleRepo', async (importOriginal) => {
+  const original = await importOriginal<typeof ModuleRepoModule>();
+  return {
+    ...original,
+    patchModuleSpine: vi.fn(original.patchModuleSpine),
+  };
+});
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { toastError, toastSuccess, toastInfo } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 const toastSuccessMock = vi.mocked(toastSuccess);
 const toastInfoMock = vi.mocked(toastInfo);
+const patchModuleSpineMock = vi.mocked(patchModuleSpine);
+
+const PREMISE = 'A drowned vault premise.';
+const NEW_PREMISE = 'A premise rewritten by the model.';
 
 const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
 const PART_1_TEXT = 'The docks breathe fog.\n\nMist climbs the stairs.';
@@ -485,6 +504,160 @@ describe('restore — byte-identical text, and the restore itself is undoable', 
     expect(screen.queryByTestId('canvas-proposal-apply')).not.toBeInTheDocument();
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+});
+
+describe('the version carries the PREMISE too — the owner\u2019s "Please make undoable" (docs/17 row 357)', () => {
+  /** A row written BEFORE the field existed: the key is ABSENT (constructed
+   * explicitly — the tolerance is proven, not assumed). */
+  async function putPreChangeRow(input: {
+    id: string;
+    createdAt: number;
+    label: string;
+  }): Promise<void> {
+    const { db } = await import('@/db/db');
+    await actDrained(() =>
+      db.moduleVersions.put({
+        id: input.id,
+        createdAt: input.createdAt,
+        updatedAt: input.createdAt,
+        moduleId: world.moduleId,
+        source: 'chat',
+        label: input.label,
+        docText: WHOLE_DOC,
+      } as never),
+    );
+  }
+
+  it("restores BOTH halves: the premise AND the parts are back to their pre-change bytes", async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+
+    // The pre-change state, through the ONE snapshot seam the adversarial
+    // premise pass calls BEFORE its edit.
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Adversarial pass: premise'),
+    );
+    const [target] = await versions();
+    if (target === undefined) throw new Error('snapshot missing');
+    expect(target.premise).toBe(PREMISE);
+    expect(target.docText).toBe(WHOLE_DOC);
+
+    // The AI change lands: a chat batch rewrites a part AND the model rewrites
+    // the premise (the adversarial pass's write).
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    await actDrained(() => patchModuleSpine(world.moduleId, { premise: NEW_PREMISE }));
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(NEW_PREMISE);
+    expect(await rowDocument(world.moduleId)).not.toBe(WHOLE_DOC);
+
+    // Restore the saved version through the SAME menu → proposal → accept path.
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // THE OWNER'S JOURNEY: both halves back. The premise assertion is the one
+    // that fails without the premise half of the undo.
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(PREMISE);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    expect(await partText(world.moduleId, 0)).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(toastSuccessMock).toHaveBeenCalledWith('Version restored');
+
+    // The restore is itself undoable — and its snapshot keeps the NEWER premise.
+    const after = await versions();
+    expect(after[0]?.source).toBe('restore');
+    expect(after[0]?.premise).toBe(NEW_PREMISE);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('a version row from BEFORE the field restores exactly what it always restored — parts back, premise left as it stands', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await putPreChangeRow({ id: '00000000-0000-4000-8000-000000000358', createdAt: 5, label: 'Chat: older than the field' });
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    await actDrained(() => patchModuleSpine(world.moduleId, { premise: NEW_PREMISE }));
+
+    await openVersionsMenu(user);
+    await user.click(
+      screen.getByTestId('canvas-saved-version-00000000-0000-4000-8000-000000000358'),
+    );
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // The parts come back; the premise is untouched (there is no capture to
+    // apply) — byte-for-byte the pre-slice behaviour, never an invented one.
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(NEW_PREMISE);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('fails LOUDLY and writes NO part when the stored premise cannot be put back', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Adversarial pass: premise'),
+    );
+    const [target] = await versions();
+    if (target === undefined) throw new Error('snapshot missing');
+
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+    const postChatDoc = await rowDocument(world.moduleId);
+    expect(postChatDoc).not.toBe(WHOLE_DOC);
+
+    patchModuleSpineMock.mockRejectedValueOnce(new Error('the vault is sealed'));
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${target.id}`));
+    await flushAsyncUpdates();
+    act(() => {
+      screen.getByTestId('canvas-proposal-apply').click();
+    });
+    await flushAsyncUpdates();
+
+    // LOUD, specific, and never a success: the whole restore aborted before a
+    // single part was written, so there is no half-restored document.
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not restore that version — its saved premise could not be put back, so nothing was restored.',
+      expect.anything(),
+    );
+    expect(toastSuccessMock).not.toHaveBeenCalledWith('Version restored');
+    expect(await rowDocument(world.moduleId)).toBe(postChatDoc);
+    expect(await partText(world.moduleId, 0)).not.toBe(PART_0_TEXT);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('distinguishes an entry that carries a premise from one that predates the field', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() => snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'));
+    await putPreChangeRow({ id: '00000000-0000-4000-8000-000000000359', createdAt: 99, label: 'Chat: older than the field' });
+
+    const saved = await versions();
+    const withPremise = saved.find((entry) => entry.premise !== null);
+    const without = saved.find((entry) => entry.premise === null);
+    if (withPremise === undefined || without === undefined) {
+      throw new Error('both a premise-carrying and a predating entry must be listed');
+    }
+
+    await openVersionsMenu(user);
+    const carrying = screen.getByTestId(`canvas-saved-premise-${withPremise.id}`);
+    expect(carrying).toHaveTextContent(`premise: ${PREMISE}`);
+
+    const predating = screen.getByTestId(`canvas-saved-premise-${without.id}`);
+    expect(predating).toHaveTextContent('no premise captured');
+    expect(predating).not.toHaveTextContent('premise:');
     await flushAsyncUpdates();
   }, 30_000);
 });

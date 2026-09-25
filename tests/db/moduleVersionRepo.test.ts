@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule, deleteModule, saveModule } from '@/db/moduleRepo';
+import { createModule, deleteModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
 import {
   clearModuleVersions,
   countModuleVersions,
@@ -18,10 +18,13 @@ import {
   assembleModulePartsDocument,
   createModule as createModuleRow,
   MODULE_VERSION_CAP,
+  MODULE_VERSION_PREMISE_NOTE_CAP,
   modulePartSchema,
   moduleSpineSchema,
+  moduleVersionPremiseNote,
   type Id,
   type Module,
+  type ModuleDocumentVersion,
   type ModuleVersionSource,
 } from '@/domain';
 import { isNotFoundError } from '@/lib/errors';
@@ -142,6 +145,94 @@ describe('snapshotModuleVersion — byte-exact whole-document capture', () => {
       (rejection: unknown) => rejection,
     );
     expect(isNotFoundError(error)).toBe(true);
+  });
+});
+
+describe('the PREMISE rides the SAME row, in its own field (docs/17 row 357)', () => {
+  it('captures the spine premise byte-exact beside the document — never inside docText', async () => {
+    const version = await snapshotModuleVersion(moduleId, 'generation', 'Adversarial pass: premise');
+    expect(version?.premise).toBe('A drowned vault premise.');
+    // The document FORMAT is unchanged: the premise is not folded into it
+    // (that would be a second document format the split seam cannot read).
+    expect(version?.docText).toBe(documentFor(PART_0_TEXT, PART_1_TEXT));
+    expect(version?.docText).not.toContain('A drowned vault premise.');
+  });
+
+  it('captures an EMPTY premise as the empty string — captured-empty is not "not captured"', async () => {
+    await patchModuleSpine(moduleId, { premise: '' });
+    const version = await snapshotModuleVersion(moduleId, 'chat', 'Chat: empty premise');
+    expect(version?.premise).toBe('');
+    expect(version?.premise).not.toBeNull();
+  });
+
+  it('parses a row written BEFORE the field (constructed explicitly) as `premise: null`, keeping its document', async () => {
+    // A pre-change build's row: the KEY IS ABSENT, not null. Constructed by
+    // hand so the tolerance is proven rather than assumed (the cast states
+    // exactly what that older build wrote).
+    const preChangeRow = {
+      id: '00000000-0000-4000-8000-000000000357',
+      createdAt: 1,
+      updatedAt: 1,
+      moduleId,
+      source: 'chat',
+      label: 'Chat: older than the field',
+      docText: documentFor(PART_0_TEXT, PART_1_TEXT),
+    } as unknown as ModuleDocumentVersion;
+    await db.moduleVersions.put(preChangeRow);
+
+    const [version] = await listModuleVersions(moduleId);
+    expect(version?.premise).toBeNull();
+    expect(version?.docText).toBe(documentFor(PART_0_TEXT, PART_1_TEXT));
+    expect(version?.label).toBe('Chat: older than the field');
+  });
+
+  it('prunes oldest-first exactly as before, each surviving row keeping its OWN premise', async () => {
+    const total = MODULE_VERSION_CAP + 3;
+    for (let index = 0; index < total; index += 1) {
+      await patchModuleSpine(moduleId, { premise: `premise #${String(index)}` });
+      await snapshotModuleVersion(moduleId, 'generation', `Generate parts #${String(index)}`);
+    }
+
+    const versions = await listModuleVersions(moduleId);
+    expect(versions).toHaveLength(MODULE_VERSION_CAP);
+    // The cap and the prune are unchanged; the premise rides its own row, so a
+    // mixed-up prune would show up as a mismatched half.
+    for (let offset = 0; offset < MODULE_VERSION_CAP; offset += 1) {
+      expect(versions[offset]?.premise).toBe(`premise #${String(total - 1 - offset)}`);
+    }
+    expect(versions.map((entry) => entry.premise)).not.toContain('premise #0');
+    expect(versions.map((entry) => entry.premise)).not.toContain(
+      `premise #${String(total - MODULE_VERSION_CAP - 1)}`,
+    );
+  });
+});
+
+describe('the menu note is honest about an entry\u2019s premise half (docs/17 row 357)', () => {
+  it('says an entry from BEFORE the field carries none — never an empty box reading as content', () => {
+    expect(moduleVersionPremiseNote(null)).toBe(
+      'no premise captured — saved before versions carried it',
+    );
+    expect(moduleVersionPremiseNote(null)).not.toContain('premise:');
+  });
+
+  it('previews a captured premise and distinguishes a captured EMPTY one', () => {
+    expect(moduleVersionPremiseNote('A drowned vault premise.')).toBe(
+      'premise: A drowned vault premise.',
+    );
+    // The BYTES are kept (no pattern reshapes the owner's or the model's
+    // prose — AGENTS rule 5); the menu's `truncate` span is what renders it on
+    // one line.
+    expect(moduleVersionPremiseNote('line one\n\nline two')).toBe('premise: line one\n\nline two');
+    expect(moduleVersionPremiseNote('')).toBe('premise: (empty)');
+    expect(moduleVersionPremiseNote('')).not.toBe(moduleVersionPremiseNote(null));
+  });
+
+  it('caps the preview without eliding the marker', () => {
+    const long = 'x'.repeat(MODULE_VERSION_PREMISE_NOTE_CAP + 25);
+    const note = moduleVersionPremiseNote(long);
+    expect(note.startsWith('premise: ')).toBe(true);
+    expect(note.endsWith('…')).toBe(true);
+    expect(note).toHaveLength('premise: '.length + MODULE_VERSION_PREMISE_NOTE_CAP + 1);
   });
 });
 

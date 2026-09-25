@@ -60,8 +60,10 @@ import {
   canvasPartLabel,
   CANVAS_PARTS_DELIMITER,
   ModulePartsDocumentError,
+  ModuleVersionPremiseError,
   MODULE_VERSION_CAP,
   MODULE_VERSION_SOURCE_LABELS,
+  moduleVersionPremiseNote,
   savedVersionsNoun,
   splitPartsDocument,
   type AnyArtifact,
@@ -323,6 +325,14 @@ export function CanvasPage(): JSX.Element {
          * name (the parts then keep the id they already carry).
          */
         writerModel: string;
+        /**
+         * THE PREMISE HALF (docs/17 row 357): for a durable RESTORE whose
+         * version carried one, the stored premise the accept must put back
+         * beside the parts. Omitted by every other proposal and by a restore
+         * whose version row predates the field — those leave the premise as it
+         * stands (exactly what they restored before).
+         */
+        premise?: string | undefined;
       }
     >
   >(new Map());
@@ -624,13 +634,22 @@ export function CanvasPage(): JSX.Element {
    * turn whose text this save lands. A manual Save and a restore omit it, and
    * the parts then keep the ids they already carry — a hand edit must not
    * erase which model wrote the text (owner decision).
+   *
+   * THE RESTORE'S PREMISE (docs/17 row 357): `restorePremise` carries the
+   * stored premise a durable restore must put back beside the parts. A failed
+   * premise aborts the whole save LOUDLY with a restore-specific sentence —
+   * never the generic save copy, and never a half restore reported as a
+   * success.
    */
   async function saveDoc(
     origin: 'user' | 'ai',
     label: string,
     successMessage: string | null,
-    version?: { source: ModuleVersionSource; label: string },
-    writerModel?: string,
+    options?: {
+      version?: { source: ModuleVersionSource; label: string } | undefined;
+      writerModel?: string | undefined;
+      restorePremise?: string | undefined;
+    },
   ): Promise<void> {
     const view = activeCanvasView.current;
     if (view === null || saving) return;
@@ -643,8 +662,13 @@ export function CanvasPage(): JSX.Element {
         module: currentModule,
         origin,
         label,
-        ...(version === undefined ? {} : { version }),
-        ...(writerModel === undefined || writerModel === '' ? {} : { writerModel }),
+        ...(options?.version === undefined ? {} : { version: options.version }),
+        ...(options?.writerModel === undefined || options.writerModel === ''
+          ? {}
+          : { writerModel: options.writerModel }),
+        ...(options?.restorePremise === undefined
+          ? {}
+          : { restorePremise: options.restorePremise }),
       });
       setBaselineDoc(doc);
       if (successMessage !== null && result.failedParts.length === 0) {
@@ -654,6 +678,11 @@ export function CanvasPage(): JSX.Element {
       if (error instanceof ModulePartsDocumentError) {
         toastError(
           'Could not save — the parts-document scaffolding no longer parses. Fix the separator / label lines, then Save again.',
+          error,
+        );
+      } else if (error instanceof ModuleVersionPremiseError) {
+        toastError(
+          'Could not restore that version — its saved premise could not be put back, so nothing was restored.',
           error,
         );
       } else {
@@ -887,14 +916,19 @@ export function CanvasPage(): JSX.Element {
       meta?.ledgerLabel ?? 'AI proposal',
       meta?.successMessage ?? (meta?.wholePart === true ? 'Rewrite applied' : 'Proposal applied'),
       {
-        source: meta?.versionSource ?? 'chat',
-        label: meta?.versionLabel ?? meta?.ledgerLabel ?? 'AI proposal',
+        version: {
+          source: meta?.versionSource ?? 'chat',
+          label: meta?.versionLabel ?? meta?.ledgerLabel ?? 'AI proposal',
+        },
+        // PROVENANCE (docs/17 row 93): the refine/rewrite call's own model, so
+        // an accepted proposal is attributed to the model that wrote it — even
+        // when an escalation served the turn. A restore's meta carries `''`
+        // (no model ran), which is what keeps the existing ids.
+        writerModel: meta?.writerModel,
+        // A RESTORE's premise half, when its version carried one (docs/17 row
+        // 357); omitted for every other proposal.
+        restorePremise: meta?.premise,
       },
-      // PROVENANCE (docs/17 row 93): the refine/rewrite call's own model, so
-      // an accepted proposal is attributed to the model that wrote it — even
-      // when an escalation served the turn. A restore's meta carries `''`
-      // (no model ran), which is what keeps the existing ids.
-      meta?.writerModel,
     );
     syncSuggestions();
   }
@@ -944,6 +978,11 @@ export function CanvasPage(): JSX.Element {
       // save, so the parts keep the ids they carry (provenance is never
       // invented and never erased by a restore).
       writerModel: '',
+      // THE OTHER HALF (docs/17 row 357): the stored premise rides the
+      // proposal and the accept puts it back beside the parts. A version row
+      // from BEFORE the field carries `null` — no premise to restore, so it
+      // restores exactly what it always restored.
+      ...(version.premise === null ? {} : { premise: version.premise }),
     });
     proposeSuggestion(view, {
       id,
@@ -1624,6 +1663,18 @@ export function CanvasPage(): JSX.Element {
                         <span className="text-xs text-muted-foreground">
                           {MODULE_VERSION_SOURCE_LABELS[version.source]} ·{' '}
                           {new Date(version.createdAt).toLocaleString()}
+                        </span>
+                        {/*
+                          The premise half, stated honestly (docs/17 row 357):
+                          a captured premise is previewed, and an entry from
+                          before the field existed SAYS it carries none — never
+                          an empty box that reads like content.
+                        */}
+                        <span
+                          className="truncate text-xs text-muted-foreground"
+                          data-testid={`canvas-saved-premise-${version.id}`}
+                        >
+                          {moduleVersionPremiseNote(version.premise)}
                         </span>
                       </span>
                       <span className="ml-auto pl-2 text-xs text-muted-foreground">Restore</span>

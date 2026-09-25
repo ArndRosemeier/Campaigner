@@ -1,7 +1,14 @@
-import type { Id, Module, ModuleVersionSource } from '@/domain';
+import {
+  ModuleVersionPremiseError,
+  type Id,
+  type Module,
+  type ModuleVersionSource,
+} from '@/domain';
 import { splitPartsDocument } from '@/domain/modulePartsDocument';
 import { saveModulePartText } from '@/features/modules/partText';
 import { canvasLedgerKey, useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
+import { patchModuleSpine } from '@/db/moduleRepo';
+import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { toastError } from '@/lib/toast';
 
@@ -30,6 +37,21 @@ import { toastError } from '@/lib/toast';
  * own history covers hand edits, and a hand edit is not an AI change. The
  * snapshot happens BEFORE the first part write, never after, and a snapshot
  * failure aborts the whole save (the editor keeps its text; the caller toasts).
+ *
+ * THE PREMISE HALF OF A RESTORE (docs/17 row 357). A durable version carries
+ * the parts document AND the spine premise (the ONE
+ * `moduleVersionRepo.snapshotModuleVersion` seam captures both). Since the
+ * premise is NOT part of the parts document, re-splitting the stored text
+ * alone would restore the parts while silently leaving a NEWER premise in
+ * place — the defect this slice removes. `restorePremise` therefore names the
+ * stored premise and it is put back HERE, through the ONE spine-subfield seam
+ * (`moduleRepo.patchModuleSpine`), FIRST — after the required pre-restore
+ * snapshot and BEFORE any part write. A premise that cannot be applied throws
+ * `ModuleVersionPremiseError`, so the whole restore aborts with NO part
+ * written: never a half-restored document presented as a success (AGENTS 1/2).
+ * The restored premise gets the SAME second-module-use promote scan a restored
+ * part gets. `undefined` (every non-restore save, and a version row that
+ * predates the field) means the premise is not touched at all.
  */
 
 export interface SaveWholeDocResult {
@@ -64,6 +86,14 @@ export async function saveWholeModuleDocument(input: {
    * already carry — a hand edit never erases provenance.
    */
   writerModel?: string | undefined;
+  /**
+   * THE OTHER HALF OF A DURABLE RESTORE (docs/17 row 357): the stored premise
+   * to put back, BYTE-EXACT, before any part is written. Omitted by every save
+   * that is not a restore and by a restore whose version row PREDATES the
+   * field (`null` in the row) — those restore exactly what they always
+   * restored, leaving the premise as it stands.
+   */
+  restorePremise?: string | undefined;
 }): Promise<SaveWholeDocResult> {
   if (input.origin === 'ai') {
     if (input.version === undefined) {
@@ -72,6 +102,24 @@ export async function saveWholeModuleDocument(input: {
       );
     }
     await snapshotModuleVersion(input.moduleId, input.version.source, input.version.label);
+  }
+  if (input.restorePremise !== undefined) {
+    // Premise FIRST, and loud: its failure must abort the restore before any
+    // part is written, so a failed restore is never a half-restored document
+    // wearing a success toast.
+    try {
+      await patchModuleSpine(input.moduleId, { premise: input.restorePremise });
+    } catch (error) {
+      throw new ModuleVersionPremiseError(
+        `the stored premise could not be put back on the module — ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    // The same LINKS hook a restored part gets (`saveModulePartText`): a
+    // premise that links another module's artifact promotes it to campaign
+    // level, exactly as it would on the way in.
+    await promoteSecondModuleUses(input.moduleId, [input.restorePremise]);
   }
   const sections = splitPartsDocument(input.doc, input.module.spine?.partPlan ?? []);
   const savedPlanIndexes: number[] = [];

@@ -2111,13 +2111,25 @@ implementation in
   like to have a simple one. Before each AI change, simply save the whole
   content in a version. Make an option under versions to clear all previous
   versions."; ledger 63, docs/18 §2.3):
-  - **What a version is**: ONE row per AI change holding the WHOLE module
-    parts document BYTE-EXACT as it stood immediately before that change —
-    the same text `assembleModulePartsDocument` builds and
-    `splitPartsDocument` splits (`==========` separators, `[Part <n> of
-    <total> — <title>]` labels, every planned part, spine premise excluded).
-    Never a second document format: a restore re-splits the stored string
-    against the CURRENT plan through the existing split/save seam.
+  - **What a version is**: ONE row per AI change holding the WHOLE module TEXT
+    BYTE-EXACT as it stood immediately before that change — the parts document
+    (`docText`: the same text `assembleModulePartsDocument` builds and
+    `splitPartsDocument` splits — `==========` separators, `[Part <n> of
+    <total> — <title>]` labels, every planned part) AND the spine PREMISE in
+    its own `premise` field beside it (docs/17 row 357, the owner's *"Please
+    make undoable"*). Never a second document format: the premise is
+    deliberately NOT folded into `docText` (that would be a format the split
+    seam cannot read), so a restore re-splits the stored string against the
+    CURRENT plan through the existing split/save seam and puts the premise
+    back through the ONE spine-subfield seam (`moduleRepo.patchModuleSpine`).
+    `premise` is additive (`.default(null)`, NO index, NO migration): a row
+    written before the field parses as `null` = NOT CAPTURED and restores
+    exactly what it always restored, leaving the premise as it stands — while
+    a captured EMPTY premise is `''`. The menu's per-entry note
+    (`domain/moduleVersion.moduleVersionPremiseNote`) previews a captured
+    premise, reads a captured empty one as `(empty)`, and SAYS when an entry
+    predates the field, so an absent premise is never drawn as an empty box
+    that reads like content.
   - **DURABLE by owner decision**: the rows live in Dexie (`moduleVersions`,
     schema v19 — additive table, no migration; a pre-v19 database simply has
     no undo history and the first AI change starts the stack) and survive
@@ -2150,8 +2162,9 @@ implementation in
     words of the instruction>`, `Refine: …`, `Rewrite: …`, `Rewrite part 2 —
     Under the Docks: make it flood`, `Generate parts`, `Generate 2 missing
     parts`, `Normalize entity names`, `Apply name-normalization rewrites`,
-    `Restore from <time>`. The menu shows the label, the source and a
-    timestamp, newest first; the group header states the semantics ("the whole
+    `Restore from <time>`. The menu shows the label, the source, a
+    timestamp and the premise note (`moduleVersionPremiseNote`, docs/17 row
+    357), newest first; the group header states the semantics ("the whole
     document as it was BEFORE each AI change").
   - **Bounded, never silently** — `MODULE_VERSION_CAP` = 25 versions per
     module; the OLDEST is pruned in the same transaction as the insert, and
@@ -2168,8 +2181,17 @@ implementation in
     the SAME proposal machinery as every other AI change — a block replace
     over the whole document, accept = one undo unit → the split-save — never a
     side-door row write; the restored text is byte-identical to the snapshot
-    (test-pinned). A restore is itself an AI save, so it snapshots the
-    pre-restore document: a wrong restore is recoverable. Restore needs the
+    (test-pinned). **It restores BOTH halves (docs/17 row 357):** the parts
+    through the split-save, and the stored PREMISE FIRST — after the
+    pre-restore snapshot and BEFORE any part write — through the ONE
+    spine-subfield seam (`moduleRepo.patchModuleSpine`). A premise that cannot
+    be applied throws `ModuleVersionPremiseError`, aborts the whole restore
+    with NO part written, and toasts "its saved premise could not be put back,
+    so nothing was restored": a half-restored document is never presented as a
+    success. A version row that predates the field carries `null` and leaves
+    the premise as it stands (byte-for-byte the pre-row-357 behaviour). A
+    restore is itself an AI save, so it snapshots the pre-restore document
+    (both halves): a wrong restore is recoverable. Restore needs the
     mounted editor (the suggestion machinery is CM6 state): in preview the
     click says so LOUDLY instead of silently doing nothing.
   - **Clear all previous versions** — an item in the same Versions menu,

@@ -15,6 +15,7 @@ import {
   getModule,
   listModulesByCampaign,
   patchModule,
+  patchModuleSpine,
   saveModule,
   savePartPlan,
   saveSpine,
@@ -165,6 +166,45 @@ describe('moduleRepo', () => {
 
     const row = await getModule(created.id);
     expect(row?.spine?.partPlan).toEqual(nextPlan);
+  });
+
+  it('patchModuleSpine merges ONE spine subfield and leaves the rest byte-identical', async () => {
+    const created = await createModule(
+      buildModule({ campaignId: newId(), title: 'Subfield', concept: '', levelMin: 1, levelMax: 4, sizeDial: 'standard' }),
+    );
+    const spine: ModuleSpine = {
+      premise: 'A vault that floods at high tide.',
+      themes: ['drowning', 'greed'],
+      writerModel: '',
+      origin: 'model',
+      partPlan: [
+        { title: 'Approach', levelBand: '1', synopsis: 'Reach the sea gate.', levelUpTrigger: 'The tide turns.' },
+        { title: 'Descent', levelBand: '2–4', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
+      ],
+    };
+    await saveSpine(created.id, spine);
+    const before = await getModule(created.id);
+
+    // The version restore's premise write rides this seam (docs/17 row 357):
+    // ONE subfield changes, every other byte of the spine stays.
+    const patched = await patchModuleSpine(created.id, { premise: 'An OLDER premise, restored.' });
+    expect(patched.spine).toEqual({ ...spine, premise: 'An OLDER premise, restored.' });
+    expect(patched.spine?.themes).toEqual(spine.themes);
+    expect(patched.spine?.partPlan).toEqual(spine.partPlan);
+    expect(patched.spine?.writerModel).toBe(spine.writerModel);
+    expect(patched.spine?.origin).toBe(spine.origin);
+    expect(patched.parts).toEqual(before?.parts);
+  });
+
+  it('patchModuleSpine refuses a module that has no spine (loud, never a silent no-op)', async () => {
+    const created = await createModule(
+      buildModule({ campaignId: newId(), title: 'Spineless', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+
+    await expect(patchModuleSpine(created.id, { premise: 'nowhere to land' })).rejects.toThrow(
+      /without a spine/,
+    );
+    expect((await getModule(created.id))?.spine).toBeNull();
   });
 
   it('refuses a part plan on a module that has no spine', async () => {

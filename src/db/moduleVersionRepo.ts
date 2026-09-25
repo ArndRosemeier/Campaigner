@@ -17,13 +17,15 @@ import { NotFoundError } from '@/lib/errors';
  * 63, docs/18 §2.3): the ONE snapshot seam every AI-produced whole-document
  * write funnels through, plus the menu's read and the Clear-all door.
  *
- * What a row IS: the WHOLE module parts document — the SAME text
+ * What a row IS: the WHOLE module text — the SAME parts document
  * `assembleModulePartsDocument` builds and `splitPartsDocument` splits
  * (`==========` separators, `[Part <n> of <total> — <title>]` labels, every
- * planned part in plan order, spine premise excluded), captured BYTE-EXACT as
- * it stood immediately BEFORE the change it precedes. There is no second
- * document format: a restore re-splits the stored text against the CURRENT
- * plan through the existing split/save seam.
+ * planned part in plan order) in `docText`, captured BYTE-EXACT as it stood
+ * immediately BEFORE the change it precedes, PLUS the spine PREMISE in its own
+ * `premise` field beside it (docs/17 row 357). There is no second document
+ * format: a restore re-splits the stored text against the CURRENT plan through
+ * the existing split/save seam and puts the premise back through the ONE
+ * spine-subfield seam (`moduleRepo.patchModuleSpine`).
  *
  * Snapshot BEFORE the write, never after — `saveWholeModuleDocument` takes it
  * inside its own seam for canvas AI saves, and `moduleGen`'s AI passes take
@@ -45,13 +47,19 @@ import { NotFoundError } from '@/lib/errors';
  */
 
 /**
- * Captures the pre-change whole-module parts document onto the durable stack.
- * Returns the row, or `null` for a module with NO planned parts: such a module
- * has no parts document at all (the canvas and the chat both refuse it, and
- * no part text can exist to lose — `discardSpine` keeps parts but clears the
- * plan, which is the structural no-document case, not a failed snapshot).
- * A missing module row throws (nothing can be snapshotted onto a deleted
- * module), and so does a malformed row.
+ * Captures the pre-change whole-module text onto the durable stack: the parts
+ * document in `docText` and the spine PREMISE in `premise` (docs/17 row 357),
+ * each BYTE-EXACT. Returns the row, or `null` for a module with NO planned
+ * parts: such a module has no parts document at all (the canvas and the chat
+ * both refuse it, and no part text can exist to lose — `discardSpine` keeps
+ * parts but clears the plan, which is the structural no-document case, not a
+ * failed snapshot). A missing module row throws (nothing can be snapshotted
+ * onto a deleted module), and so does a malformed row.
+ *
+ * The premise rides the SAME read as the document, so the two halves of one
+ * row always describe the same instant. A module WITH a plan always has a
+ * spine (the plan lives on it) and therefore always captures a premise —
+ * `null` is reserved for rows written before the field existed.
  */
 export async function snapshotModuleVersion(
   moduleId: Id,
@@ -85,6 +93,7 @@ export async function snapshotModuleVersion(
       source,
       label,
       docText: document,
+      premise: module.spine?.premise ?? null,
     });
     await db.moduleVersions.put(version);
     // Prune in the SAME transaction: the retained window is never momentarily
