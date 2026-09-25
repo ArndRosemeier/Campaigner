@@ -44,10 +44,11 @@ import { schemaResponseFormat } from '@/llm/strictSchema';
  * THE SNAPSHOT is taken FIRST, through the ONE durable snapshot seam
  * (`db/moduleVersionRepo.snapshotModuleVersion`) and before the critique — so
  * whenever the caller persists the returned replacement, the pre-change state
- * is already on the stack (docs/18 §2.3). KNOWN BOUNDARY, named because a
- * future reader will hit it: that seam captures the module's PARTS document and
- * the spine PREMISE is excluded by design (`domain/moduleVersion`), so a
- * premise-target pass records the parts state but not the premise itself.
+ * is already on the stack (docs/18 §2.3). That seam captures BOTH halves: the
+ * parts document AND the spine premise, in one read (docs/17 row 357). It used
+ * to exclude the premise — a premise edit was un-undoable — and this paragraph
+ * said so until row 357 closed it; a premise-target pass is now undoable like
+ * any other, so nothing here is a boundary any more.
  *
  * THE GUARD IS NOT HERE. The pass calls the transform CORE, not
  * `refineModuleText`: it runs INSIDE generation (docs/17 row 353), when the
