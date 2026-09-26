@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -22,8 +22,17 @@ import { describe, expect, it } from 'vitest';
  * a function or file name, so neither a rename nor a move can hide a copy; the
  * scan covers `scripts/`, `src/`, `tests/` and `.github/` — every surface where
  * the rule could be re-spelled. A second copy reds here BY FILE NAME.
+ *
+ * A root may be ABSENT, and that is not a failure. `.github/` held exactly one
+ * file — the FTP auto-deploy workflow — until that was removed on 2026-09-26
+ * (the old host is retired and forwards everything), and git drops a directory
+ * with its last file. Unfiltered, `readdirSync('.github')` threw ENOENT and reded
+ * the gate for a change that touched no code at all. The scan covers every
+ * surface that EXISTS: should a workflow return, `.github/` returns with it and
+ * is scanned again, so nothing is weakened — a missing root simply has no files
+ * that could carry a copy.
  */
-const ROOTS = ['scripts', 'src', 'tests', '.github'];
+const ROOTS = ['scripts', 'src', 'tests', '.github'].filter((root) => existsSync(root));
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mjs', '.js', '.sh', '.yml', '.yaml'];
 const SEAM = 'scripts/docsOnly.mjs';
 const GATE = 'scripts/gate.sh';
