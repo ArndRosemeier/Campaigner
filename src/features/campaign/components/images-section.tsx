@@ -5,13 +5,7 @@ import { ImageIcon, MapIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from
 
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
-import {
-  createImage,
-  listImagesByIds,
-  setImageFavourited,
-  setImageRole,
-} from '@/db/imageRepo';
-import { isImageFavourite, sortGalleryImages } from '@/domain';
+import { createImage, listImagesByIds, setImageRole } from '@/db/imageRepo';
 import type { AnyArtifact, Id, StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
 import { BlockedControl } from '@/components/blocked-control';
@@ -102,20 +96,6 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
     }
   }
 
-  /**
-   * Flips one image's favourite flag (owner request, docs/17 row 366) through
-   * the ONE image-row update seam. No success toast: the star's own filled
-   * state is the feedback, and a GM who stars a strip of images would
-   * otherwise collect a toast per click. A failed write is loud (rule 2).
-   */
-  async function toggleFavourite(image: StoredImage): Promise<void> {
-    try {
-      await setImageFavourited(image.id, !isImageFavourite(image));
-    } catch (error) {
-      toastError('Could not change the favourite', error);
-    }
-  }
-
   const isEncounter = artifact.kind === 'encounter';
   const mapImageId = isEncounter && artifact.data.mapImageId !== null ? artifact.data.mapImageId : null;
   const mapUploadRef = useRef<HTMLInputElement | null>(null);
@@ -190,63 +170,31 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
   }
 
   const lightboxImage = images.find((image) => image.id === lightboxId);
-  /** Favourites first, newest above older, non-favourites in today's order. */
-  const galleryImages = sortGalleryImages(images);
 
   return (
     <section className="flex flex-col gap-2" data-testid="images-section">
       <h2 className="text-sm font-medium">Images</h2>
       <div className="flex flex-wrap items-center gap-2">
-        {galleryImages.map((image) => (
-          <div key={image.id} className="relative">
-            <button
-              type="button"
-              className="group relative overflow-hidden rounded-md border"
-              aria-label={`Open image ${image.width}×${image.height}`}
-              onClick={() => {
-                setLightboxId(image.id);
-              }}
-            >
-              <GalleryThumb imageId={image.id} />
-              {artifact.coverImageId === image.id && (
-                <span
-                  aria-label="Cover image"
-                  className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5"
-                >
-                  <StarIcon aria-hidden className="size-3 text-amber-500" />
-                </span>
-              )}
-            </button>
-            {/* The favourite toggle is a SIBLING of the open button, never a
-                button inside a button — and its accessible name states which
-                way the next click goes, so the star is not colour-only. The
-                filled star is the whole success feedback (see
-                toggleFavourite). */}
-            <button
-              type="button"
-              className="absolute left-0.5 top-0.5 rounded-full bg-background/80 p-0.5"
-              aria-label={
-                isImageFavourite(image)
-                  ? `Remove image ${image.width}×${image.height} from favourites`
-                  : `Add image ${image.width}×${image.height} to favourites`
-              }
-              aria-pressed={isImageFavourite(image)}
-              data-testid={`favourite-image-${image.id}`}
-              onClick={() => {
-                void toggleFavourite(image);
-              }}
-            >
-              <StarIcon
-                aria-hidden
-                className={
-                  isImageFavourite(image)
-                    ? 'size-3 text-amber-500'
-                    : 'size-3 text-muted-foreground'
-                }
-                fill={isImageFavourite(image) ? 'currentColor' : 'none'}
-              />
-            </button>
-          </div>
+        {images.map((image) => (
+          <button
+            key={image.id}
+            type="button"
+            className="group relative overflow-hidden rounded-md border"
+            aria-label={`Open image ${image.width}×${image.height}`}
+            onClick={() => {
+              setLightboxId(image.id);
+            }}
+          >
+            <GalleryThumb imageId={image.id} />
+            {artifact.coverImageId === image.id && (
+              <span
+                aria-label="Cover image"
+                className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5"
+              >
+                <StarIcon aria-hidden className="size-3 text-amber-500" />
+              </span>
+            )}
+          </button>
         ))}
         <BlockedControl testId="upload-image" reason={uploadReason}>
           <Button

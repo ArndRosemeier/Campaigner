@@ -34,49 +34,9 @@ export const storedImageSchema = z.object({
   /** M5-C: `map` images are battlemaps — bypass the 1600px re-encode and
    * are the only images map pickers offer. */
   role: z.enum(['artwork', 'map']).default('artwork'),
-  /** The gallery's ONE field for favourites (owner request, docs/17 row 366):
-   * non-null means favourited, and the VALUE — the moment it was favourited —
-   * orders the favourites, newest above older. Deliberately ONE field, never a
-   * boolean beside this timestamp: a second flag could disagree with the order
-   * it carries. ADDITIVE and NULLISH like the rule-chunk payload slots
-   * (docs/18 §2.1): Dexie reads are raw, so a row written before this field
-   * genuinely lacks the key and answers `undefined`, which the ONE reading
-   * below treats as NOT favourited. NO Dexie version, no index, no migration. */
-  favouritedAt: z.number().int().nullish(),
 });
 
 export type StoredImage = z.infer<typeof storedImageSchema>;
-
-/**
- * Is this gallery row a favourite? (docs/17 row 366)
- *
- * THE one reading of the flag, so the sort, the star's state and the toggle
- * cannot drift. `== null` is deliberate and covers BOTH `null` (a parsed row,
- * or an un-favourited one) and `undefined` (a stored row written before the
- * field existed — Dexie reads are raw, so no parse repairs it on the way out)
- * — both mean "not a favourite", never an error.
- */
-export function isImageFavourite(image: StoredImage): boolean {
-  return image.favouritedAt != null;
-}
-
-/**
- * The gallery's display order (owner request, docs/17 row 366): favourites
- * first, the newest favourite above the older ones, and every NON-favourite in
- * exactly the order it arrived in — the artifact's own `imageIds` order, which
- * is what the gallery rendered before this feature. Nothing else is re-sorted.
- *
- * With nothing favourited this returns the input order unchanged, which is the
- * slice's strongest pin: flag-off is byte-identical to the pre-change gallery.
- * `Array.prototype.sort` is STABLE (ES2019), so two favourites stamped in the
- * same millisecond keep the gallery's own relative order.
- */
-export function sortGalleryImages(images: readonly StoredImage[]): StoredImage[] {
-  const favourites = images.filter(isImageFavourite);
-  const rest = images.filter((image) => !isImageFavourite(image));
-  favourites.sort((a, b) => (b.favouritedAt ?? 0) - (a.favouritedAt ?? 0));
-  return [...favourites, ...rest];
-}
 
 /** Rebuilds a displayable Blob from a stored image row. */
 export function imageBlob(image: StoredImage): Blob {
