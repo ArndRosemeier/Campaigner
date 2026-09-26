@@ -1,15 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPersona, createPersonaRun, defaultSettings, type Persona } from '@/domain';
-import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
+import { createPersona, createPersonaRun, defaultSettings } from '@/domain';
 import { derivePostCreateExtras, extrasForPersona, statblockExtraNotice } from '@/llm/personas/extras';
 import { npcDataSchema } from '@/domain/artifact';
-
-function personaBySlug(slug: string): Persona {
-  const persona = BUILT_IN_PERSONAS.find((candidate) => candidate.slug === slug);
-  if (persona === undefined) throw new Error(`missing builtin persona ${slug}`);
-  return persona;
-}
+import { personaBySlug } from '../helpers/builtInPersona';
 
 /**
  * Creation-dialog extras: the derive function is the dialog's single source

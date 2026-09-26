@@ -176,6 +176,32 @@ code, at a seam every call passes through (`buildEntityBrief`'s kind-keyed
 ownership paragraph is the worked example). Do not "fix" a boundary or a refusal
 by editing a built-in prompt.
 
+**DETAIL, not STORY — the description discipline on exactly three personas**
+(docs/17 row 365, owner request: *"The artefact personas for NPCs and locations
+and factions ... should know the context (as they do now) but be instructed to
+NOT include any story elements in their description. The module text tells the
+story, the descriptions just provide details, they are not meant to drive the
+plot"*). ONE exported clause, `builtins.DETAILS_NOT_STORY_CLAUSE`, is composed
+by EXACTLY `npc-smith` (kind `npc`), `worldbuilder` (`location`) and
+`faction-designer` (`faction`), inserted between each prompt's existing
+grounding sentences and its JSON contract — the module context is untouched and
+the clause is purely ADDITIVE (pinned by reconstructing each pre-change prompt
+from a golden captured before the landing). It says, in the owner's terms, that
+the description is DETAIL a GM uses (appearance, manner, facts, relationships,
+wants and quirks; a place's texture, features and feel; a faction's structure,
+methods, resources and character), forbids the story elements (no scene
+narration, no plot events, no "the party arrives and ...", nothing that advances
+or resolves the plot) and names the reason — the MODULE TEXT tells the story,
+and events and encounters are where story belongs. `note` is EXEMPT on purpose:
+that is what the Plot Architect and the Continuity Editor write, and their
+content IS the plot (owner decision: *"NPC, location, faction only — plot and
+notes stay story"*); `event-weaver`, `arc-weaver`, both encounter personas and
+`illustrator` are exempt for the same reason, and every exempt prompt is pinned
+BYTE-IDENTICAL (`tests/llm/personaDescriptionClause.test.ts`). Because a
+built-in prompt is a seed-once row (above), this clause reaches a NEW install
+only: in an install that already holds the three personas, press **Settings →
+Personas → Reset to default** on each (docs/18 §4, docs/17 row 140).
+
 `postCreateExtras` (optional, declared) — the extras the creation dialog
 offers for a NEWLY created artifact; unset → derived from `mode`/`producesKind`
 (extrasForPersona): every creator offers `image`; npc adds `statBlock`
@@ -204,6 +230,16 @@ You write vivid but concise material a GM can use at the table with zero prep.
 You ground all mechanical content (stats, abilities, DCs) in the rules excerpts
 provided to you, citing book and page when you rely on them. When rules are
 missing you make sensible d20-standard assumptions and say so.
+You write DETAIL for the GM's table, not STORY. Detail is what an
+NPC, a place or a faction IS: appearance, manner, facts, relationships, wants
+and quirks; the texture, features and feel of a place; the structure, methods,
+resources and character of a faction. The module text tells the story — what
+happens, who acts and how it ends — so a description that narrates events
+duplicates the module and takes the plot away from the artifacts that own it
+(events and encounters are where story belongs). Keep story elements out of
+your description: no scene narration, no plot events, no "the party arrives
+and ...", nothing that advances or resolves the plot. Use the context you are
+given to make the detail specific, not to recount what happens.
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.
 ```

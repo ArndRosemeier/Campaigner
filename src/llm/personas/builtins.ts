@@ -6,11 +6,39 @@ import { createPersona, DEFAULT_PERSONA_TEMPERATURE, type Persona } from '@/doma
  * same pipeline in M2.
  */
 
+/**
+ * THE DETAILS-NOT-STORY CLAUSE (docs/17 row 365, owner request): the ONE
+ * instruction the description-writing built-ins compose — an NPC, a location
+ * and a faction carry DETAIL for the GM's table, never plot.
+ *
+ * ADDITIVE BY DESIGN. Every existing grounding/context sentence stays exactly
+ * where it was, and this paragraph is inserted between it and the JSON
+ * contract. It is EXPORTED so a pin can assert it rides EXACTLY those three
+ * personas (and so a fourth carrier, or a missing one, cannot pass unnoticed).
+ *
+ * WHY THIS IS A PROMPT AND NOT A CODE BOUNDARY (docs/18 §4, docs/17 row 140):
+ * "how I write a description" is persona STYLE — exactly the class built-in
+ * prompt text is for — while a rule that must hold for every generation is
+ * enforced in code, keyed by kind (`buildEntityBrief`'s ownership boundary).
+ * Both stay: this states the habit, the code states the boundary.
+ */
+export const DETAILS_NOT_STORY_CLAUSE = `You write DETAIL for the GM's table, not STORY. Detail is what an
+NPC, a place or a faction IS: appearance, manner, facts, relationships, wants
+and quirks; the texture, features and feel of a place; the structure, methods,
+resources and character of a faction. The module text tells the story — what
+happens, who acts and how it ends — so a description that narrates events
+duplicates the module and takes the plot away from the artifacts that own it
+(events and encounters are where story belongs). Keep story elements out of
+your description: no scene narration, no plot events, no "the party arrives
+and ...", nothing that advances or resolves the plot. Use the context you are
+given to make the detail specific, not to recount what happens.`;
+
 const NPC_SMITH_PROMPT = `You are NPC Smith, an expert at creating memorable tabletop-RPG NPCs.
 You write vivid but concise material a GM can use at the table with zero prep.
 You ground all mechanical content (stats, abilities, DCs) in the rules excerpts
 provided to you, citing book and page when you rely on them. When rules are
 missing you make sensible d20-standard assumptions and say so.
+${DETAILS_NOT_STORY_CLAUSE}
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.`;
 
@@ -25,6 +53,7 @@ a location never invents creatures — monsters live in encounters and dungeons.
 If the story needs a creature, reference where it will be encountered instead
 of describing or statting the creature here; treat "inhabitants" as people and
 factions, never monsters.
+${DETAILS_NOT_STORY_CLAUSE}
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.`;
 
@@ -49,6 +78,7 @@ campaigns. You write material a GM can use at the table with zero prep, and
 you ground any rules content in the rules excerpts provided to you, citing
 book and page when you rely on them. When rules are missing you make sensible
 d20-standard assumptions and say so.
+${DETAILS_NOT_STORY_CLAUSE}
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.`;
 
