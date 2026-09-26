@@ -71,10 +71,38 @@ export async function createImage(input: NewStoredImage): Promise<StoredImage> {
   return image;
 }
 
+/**
+ * THE one image-row FIELD update (docs/17 row 366, AGENTS rule 4): every
+ * mutable-field write of an image row goes through this single
+ * `db.images.update` call site, so "how an image row is patched" exists once.
+ * Row CREATION (`db.images.put`) and deletion stay their own seams — this is
+ * only the update half, which is what the role write and the favourite write
+ * share instead of each spelling `db.images.update` itself.
+ */
+async function updateImageRow(
+  id: Id,
+  patch: Partial<Pick<StoredImage, 'role' | 'favouritedAt'>>,
+): Promise<void> {
+  await db.images.update(id, patch);
+}
+
 /** Promotes/demotes an image's role (M5-C): setting an artwork image as a
  * battlemap promotes it so map pickers offer it. */
 export async function setImageRole(id: Id, role: 'artwork' | 'map'): Promise<void> {
-  await db.images.update(id, { role });
+  await updateImageRow(id, { role });
+}
+
+/**
+ * (Un)favourites one gallery image (owner request, docs/17 row 366) through
+ * the ONE image-row update seam above. Favouriting stamps NOW into the single
+ * `favouritedAt` field — the value IS the order, so a fresh favourite sorts
+ * above an earlier one — and un-favouriting clears it back to `null`, which
+ * drops the row back into the non-favourites' own (unchanged) gallery order.
+ * This is a SORT, and nothing else: no pick, delete, print or cache path reads
+ * it.
+ */
+export async function setImageFavourited(id: Id, favourited: boolean): Promise<void> {
+  await updateImageRow(id, { favouritedAt: favourited ? Date.now() : null });
 }
 
 /** Re-anchor generated/uploaded images when their artifact crosses scope. */

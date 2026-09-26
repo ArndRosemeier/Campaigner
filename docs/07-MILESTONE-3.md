@@ -163,6 +163,15 @@ pauses only on `needs_review`; that gets this one documented exception).
   Upload button, "Illustrate…" button (opens persona panel pre-set to
   Illustrator with this artifact as target). Click → lightbox dialog with
   Set-as-cover / Delete.
+- **Gallery favourites (docs/17 row 366):** every gallery image carries a star
+  toggle. The star writes ONE nullable `favouritedAt` timestamp on the image row
+  (`imageRepo.setImageFavourited`, through the ONE image-row update seam) —
+  non-null means favourited, and its VALUE is the order: favourites first, the
+  newest favourite above the older ones, then every NON-favourite in exactly the
+  order it has today (the artifact's own `imageIds`). Un-favouriting clears the
+  field and the image drops back into that order. This is a SORT and nothing
+  else — no pick, delete/cleanup, print or cache path reads it, and with nothing
+  favourited the gallery is byte-identical to the pre-change strip.
 - Tree rows and (later) Session Mode cards show cover thumbnails when present.
 
 ### Export
@@ -192,6 +201,11 @@ pauses only on `needs_review`; that gets this one documented exception).
   history shows the entity without the deleted image.
 - Zip export/import round-trips an image; plain JSON export omits binaries and
   the dialog says so. Schema-migration defaults are covered by `pnpm test`.
+- **Favourites are a sort:** favourite two gallery images and the NEWER
+  favourite sits above the earlier one, both above the rest; un-favourite one
+  and it returns to its place among the non-favourites, whose order never
+  changes. With nothing favourited the strip matches the pre-change order
+  exactly, and a row stored before the field exists renders as a non-favourite.
 
 ---
 

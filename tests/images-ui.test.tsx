@@ -8,11 +8,12 @@ import { createAppRouter } from '@/app/router';
 import { artifactPath } from '@/app/routes';
 import { createArtifact, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createImage, getImage } from '@/db/imageRepo';
+import { createImage, getImage, setImageFavourited } from '@/db/imageRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
-import { defaultSettings } from '@/domain';
+import { defaultSettings, isImageFavourite } from '@/domain';
 import { db } from '@/db/db';
+import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { toastSuccess } from '@/lib/toast';
 import { clearDatabase } from './db/helpers';
 import { flushAsyncUpdates } from './helpers/flush';
@@ -37,6 +38,12 @@ beforeEach(() => {
     configurable: true,
   });
   Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+  // The setup-wizard store is MODULE-LEVEL state and outlives a test: the
+  // settings-page test at the end of this file seeds no campaign, so the
+  // AppShell's first-run auto-open latches `open: true` there — and an open
+  // base-ui dialog marks the rest of the shell `aria-hidden`, which would make
+  // every LATER test's page invisible to role queries. Reset it with the DB.
+  useOnboardingStore.getState().closeWizard();
   toastSuccessMock.mockClear();
   return clearDatabase();
 });
@@ -460,3 +467,134 @@ describe('images ui', () => {
     });
     await flushAsyncUpdates();
   });});
+
+/**
+ * Gallery favourites (owner request, docs/17 row 366). The whole feature is a
+ * SORT: favourites first, newest above older, every non-favourite in exactly
+ * today's order. These pins drive the real editor section, so they also hold
+ * the star's accessible state and the ONE image-row update seam.
+ */
+describe('gallery favourites (docs/17 row 366)', () => {
+  /** Three gallery images in an order that is neither ascending nor by size. */
+  async function seedGalleryRows(): Promise<{ path: string; imageIds: string[] }> {
+    await seedBuiltInPersonas();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const campaign = await createCampaign({ name: 'Favourite gallery', system: 'generic-d20' });
+    const imageIds: string[] = [];
+    for (const [index, width] of [64, 128, 96].entries()) {
+      const image = await createImage({
+        campaignId: campaign.id,
+        blob: new Blob([`gallery-${String(index)}`], { type: 'image/webp' }),
+        mimeType: 'image/webp',
+        width,
+        height: 64,
+        source: 'uploaded',
+      });
+      imageIds.push(image.id);
+    }
+    const artifact = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Favourite Keep',
+    });
+    await updateArtifact(artifact.id, { imageIds, coverImageId: imageIds[0] ?? null });
+    return { path: artifactPath(campaign.id, artifact.id), imageIds };
+  }
+
+  /** The gallery's rendered order, read off the open buttons' DOM order. */
+  function galleryOrder(): string[] {
+    return screen
+      .getAllByRole('button', { name: /^Open image / })
+      .map((button) => button.getAttribute('aria-label') ?? '');
+  }
+
+  it("renders today's order while nothing is favourited, with an unpressed star per image", async () => {
+    const { path, imageIds } = await seedGalleryRows();
+    renderAppAt(path);
+
+    await screen.findAllByRole('button', { name: /^Open image / }, { timeout: 5_000 });
+    await waitFor(() => {
+      expect(galleryOrder()).toHaveLength(3);
+    });
+    // FLAG OFF IS BYTE-IDENTICAL: the seeded order, untouched (64, 128, 96 —
+    // deliberately not sorted by anything).
+    expect(galleryOrder()).toEqual([
+      'Open image 64×64',
+      'Open image 128×64',
+      'Open image 96×64',
+    ]);
+    for (const id of imageIds) {
+      expect(screen.getByTestId(`favourite-image-${id}`)).toHaveAttribute('aria-pressed', 'false');
+      const stored = await getImage(id);
+      // A row that was never favourited carries no stamp at all.
+      expect(stored !== undefined && isImageFavourite(stored)).toBe(false);
+    }
+    await flushAsyncUpdates();
+  });
+
+  it('lifts a favourited image above the rest and writes the ONE field through the repo seam', async () => {
+    const user = userEvent.setup();
+    const { path, imageIds } = await seedGalleryRows();
+    const last = imageIds[2] ?? '';
+    renderAppAt(path);
+
+    await screen.findAllByRole('button', { name: /^Open image / }, { timeout: 5_000 });
+    await waitFor(() => {
+      expect(galleryOrder()).toHaveLength(3);
+    });
+    await user.click(screen.getByTestId(`favourite-image-${last}`));
+
+    await waitFor(() => {
+      expect(galleryOrder()[0]).toBe('Open image 96×64');
+    });
+    // The non-favourites kept their OWN order — nothing was re-sorted.
+    expect(galleryOrder().slice(1)).toEqual(['Open image 64×64', 'Open image 128×64']);
+    const star = screen.getByTestId(`favourite-image-${last}`);
+    expect(star).toHaveAttribute('aria-pressed', 'true');
+    expect(star).toHaveAttribute('aria-label', 'Remove image 96×64 from favourites');
+    await waitFor(async () => {
+      expect((await getImage(last))?.favouritedAt).not.toBeNull();
+    });
+
+    // Un-favouriting puts it back where it was.
+    await user.click(screen.getByTestId(`favourite-image-${last}`));
+    await waitFor(() => {
+      expect(galleryOrder()).toEqual([
+        'Open image 64×64',
+        'Open image 128×64',
+        'Open image 96×64',
+      ]);
+    });
+    expect(screen.getByTestId(`favourite-image-${last}`)).toHaveAttribute('aria-pressed', 'false');
+    await waitFor(async () => {
+      expect((await getImage(last))?.favouritedAt).toBeNull();
+    });
+    await flushAsyncUpdates();
+  });
+
+  it('sorts the FRESHER of two favourites above the earlier one', async () => {
+    const { path, imageIds } = await seedGalleryRows();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    try {
+      // The FIRST gallery image is favourited first (the EARLIER one)…
+      await setImageFavourited(imageIds[0] ?? '', true);
+      nowSpy.mockReturnValue(2_000);
+      // …and the second one after it (the FRESHER one).
+      await setImageFavourited(imageIds[1] ?? '', true);
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    renderAppAt(path);
+    await screen.findAllByRole('button', { name: /^Open image / }, { timeout: 5_000 });
+    await waitFor(() => {
+      expect(galleryOrder()).toHaveLength(3);
+    });
+    expect(galleryOrder()).toEqual([
+      'Open image 128×64',
+      'Open image 64×64',
+      'Open image 96×64',
+    ]);
+    await flushAsyncUpdates();
+  });
+});

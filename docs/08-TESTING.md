@@ -9256,3 +9256,55 @@ for a review when the owner wants one" is a PROMPT intent (the system prompt now
 documents the command and its rules), not a measurement. What is pinned is that
 the command parses and routes, that the findings reach the card, that an accepted
 edit is undoable, and that a clean review writes nothing.
+
+### Gallery favourites: ONE nullable timestamp, a stable sort, and a flag-off order that must not move (docs/17 row 366, docs/18 §2.1, docs/07 §M3-A UI)
+
+**What the owner asked for, and the whole scope:** *"Just a sorting mechanism,
+favourites stay on top. Fresh favourites sort above earlier."* So the feature is
+ONE additive nullable field on the image row (`domain/image.favouritedAt`:
+non-null means favourited, the VALUE is the order) plus a sort plus a star per
+gallery image. It is NOT a preference for automatic picks, NOT protection from
+cleanup and NOT a print filter — nothing but the gallery's display order reads
+it, and no pin here would notice if that changed silently, which is why the
+scope is stated in `docs/07` and `docs/18` as well.
+
+**The pins, and what each one holds:**
+
+| Pin | Where |
+|---|---|
+| **FLAG OFF IS BYTE-IDENTICAL** — with nothing favourited, `sortGalleryImages` returns the input order (the artifact's own `imageIds`) and the rendered strip matches today's order, with an unpressed star per image | `tests/db/imageRepo.test.ts` ("with NOTHING favourited the order is exactly today's"), `tests/images-ui.test.tsx` ("renders today's order while nothing is favourited") |
+| A favourited image sorts above a non-favourited one | both files, same two pins |
+| Among favourites a NEWER favourite is above an EARLIER one (**asserted with two, explicitly**) — the pure pin swaps the two stamps and requires the order to swap with them, so the VALUE, not the gallery position, decides | `tests/db/imageRepo.test.ts` ("among favourites a NEWER favourite sorts above an EARLIER one"), `tests/images-ui.test.tsx` ("sorts the FRESHER of two favourites above the earlier one", two real `setImageFavourited` writes under a pinned `Date.now`) |
+| Un-favouriting puts the image back where it was — the non-favourites' order is PRESERVED, never re-sorted | `tests/db/imageRepo.test.ts` ("un-favouriting puts the image back"), `tests/images-ui.test.tsx` (the same pin through the star) |
+| The field is ADDITIVE: a pre-change row carries NO key, still parses, and reads/renders as a non-favourite | `tests/db/imageRepo.test.ts` ("is ADDITIVE"), plus the mounted-row arm in `tests/images-ui.test.tsx` |
+| Exactly ONE writer for image rows: `db.images.update(` is a ONE-file, ONE-site population under `src/`, and both `setImageRole` and `setImageFavourited` call the private `updateImageRow` | `tests/architecture/one-image-row-write.test.ts` (SOURCE SCAN over the shared `tests/helpers/sourceCode` tree) |
+
+**What a test cannot prove:** millisecond ties. `Array.prototype.sort` is stable
+(ES2019), so two favourites stamped in the same millisecond keep the gallery's
+own order — pinned only by that language guarantee, not by an assertion; the
+pure pin's two stamps are distinct on purpose.
+
+**WATCHED RED — three arms, each a byte injection into `src/domain/image.ts`,
+every sha256 printed BEFORE and AFTER, the file restored BYTE-IDENTICALLY
+(`cmp` + the hash returning to the clean one) by a `trap`; runner and raw logs
+under `.gate-logs/row366/arms/`.** Clean hash
+`a616b9c8fdbfba377c7d31945722efa24c4b08bb5c31132fc0054fc8850c943c`. No arm is
+VOID (three distinct injected hashes, three distinct pin sets):
+
+| Arm | Injection | Injected hash | RED BY NAME |
+|---|---|---|---|
+| A | the sort IGNORES the flag (`return [...images]`) | `912c8de603a7dc6dc17203e0740af4142a602fd9cc217a1262c5ee607d903dde` | 5 — "with NOTHING favourited the order is exactly today's…", "among favourites a NEWER favourite…", "un-favouriting puts the image back…", "lifts a favourited image above the rest…", "sorts the FRESHER of two favourites…" |
+| B | favourites compared ASCENDING (`a - b`, oldest first) | `ae335acaca94a74f2d34f942eaa9c5fea0f32e37169ea51e7fe980460a32d861` | 2 — "among favourites a NEWER favourite sorts above an EARLIER one", "sorts the FRESHER of two favourites above the earlier one" |
+| C | the NON-favourites re-sorted (`rest.sort((a, b) => b.width - a.width)`) | `34398956ce6397def7acc5d46253e84304c1643c7b1d69e620b3c0495716d5a2` | 4 — "with NOTHING favourited the order is exactly today's…", "un-favouriting puts the image back…", "renders today's order while nothing is favourited…", "lifts a favourited image above the rest…" |
+
+**A test-file isolation defect this slice had to fix, reported rather than
+absorbed:** `useOnboardingStore` is MODULE-LEVEL state and outlives a test, and
+the settings-page test at the end of `tests/images-ui.test.tsx` seeds no
+campaign, so the AppShell's first-run auto-open latched the setup wizard open
+there. An open base-ui dialog marks the rest of the shell `aria-hidden`, so
+every LATER test in that file renders its page invisible to role queries — the
+three new pins failed with `Unable to find role="button"` while the DOM verifiably
+held the buttons. The file's `beforeEach` now calls
+`useOnboardingStore.getState().closeWizard()` beside `clearDatabase()`. No
+product behaviour changed: the wizard's own `maybeAutoOpenWizard` refuses to
+open once the campaign exists, which every test in this file seeds.
