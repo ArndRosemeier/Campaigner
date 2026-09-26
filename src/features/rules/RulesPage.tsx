@@ -442,7 +442,21 @@ function BookCard({
                     </DropdownMenuItem>
                   </BlockedControl>
                 )}
-                {book.status === 'error' && (
+                {/*
+                  A FAILED IMPORT'S REMEDY IS ITS OWN ORIGIN'S (docs/17 row 369,
+                  docs/18 §5(d), closing the deferral row 277 left). `Retry…`
+                  opens a hidden input that accepts only `application/pdf,.pdf`
+                  and runs `ingestPdf`, which BIRTHS A NEW book — on a PACK
+                  error card it would birth a PDF book and leave the failed pack
+                  row in place. It is therefore offered on a PDF error card ONLY.
+                  A pack error card gets the remedy that actually works: the
+                  SAME destructive confirm the trash icon and the `Delete` item
+                  below open, riding the ONE `deleteRulebook` (one transaction,
+                  chunks by `bookId`, no refcount, no in-use check, no status
+                  gate — so it already reclaims a partial/`error` pack), plus
+                  the re-import path named in words on the card's body.
+                */}
+                {book.status === 'error' && book.origin === 'pdf' && (
                   <BlockedControl
                     testId={`retry-book-${book.id}`}
                     reason={importBlockedReason}
@@ -453,6 +467,22 @@ function BookCard({
                       onClick={() => retryInputRef.current?.click()}
                     >
                       Retry…
+                    </DropdownMenuItem>
+                  </BlockedControl>
+                )}
+                {book.status === 'error' && book.origin === 'pack' && (
+                  <BlockedControl
+                    testId={`remove-book-${book.id}`}
+                    reason={importBlockedReason}
+                  >
+                    <DropdownMenuItem
+                      disabled={importing}
+                      data-testid={`remove-book-${book.id}`}
+                      onClick={() => {
+                        setMenuAction('delete');
+                      }}
+                    >
+                      Remove failed import…
                     </DropdownMenuItem>
                   </BlockedControl>
                 )}
@@ -467,16 +497,22 @@ function BookCard({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <input
-              ref={retryInputRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              className="hidden"
-              onChange={(event) => {
-                void onRetry(book, event.target.files);
-                event.target.value = '';
-              }}
-            />
+            {/* The PDF-only picker is the `Retry…` item's OWN DOM (docs/17 row
+                369): it exists exactly when that item does, so a pack card
+                carries no way to open it at all. */}
+            {book.status === 'error' && book.origin === 'pdf' && (
+              <input
+                ref={retryInputRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                className="hidden"
+                data-testid={`retry-input-${book.id}`}
+                onChange={(event) => {
+                  void onRetry(book, event.target.files);
+                  event.target.value = '';
+                }}
+              />
+            )}
           </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
@@ -512,6 +548,17 @@ function BookCard({
           {book.status === 'error' && (
             <p className="text-destructive" title={book.errorMessage}>
               {book.errorMessage}
+            </p>
+          )}
+          {/* THE PACK'S OWN WAY FORWARD, IN WORDS AND IN THE RIGHT ORDER
+              (docs/17 row 369). Removal comes FIRST because there is NO
+              cross-book dedup of re-imports (docs/12 §9): a pack re-imported
+              before the failed one is removed leaves TWO books. */}
+          {book.status === 'error' && book.origin === 'pack' && (
+            <p data-testid={`pack-error-remedy-${book.id}`}>
+              Remove this failed import first — “Remove failed import…” in this book’s menu, or its
+              trash button — then import the pack again. Importing again before removing would
+              leave two books.
             </p>
           )}
         </CardContent>

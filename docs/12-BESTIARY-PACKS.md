@@ -705,7 +705,12 @@ are pinned against each other: they cannot name different packs.
   stat-block text on an explicit one-click batch.*
 - No changes to the PDF stat-block detector (02-INGESTION stays as is).
 - No cross-book dedup of re-imports (same policy as PDFs; the `contentHash`
-  embedding cache already avoids double embedding cost).
+  embedding cache already avoids double embedding cost). **CONSEQUENCE MADE
+  VISIBLE (docs/17 row 369):** because re-importing does not dedup, the recovery
+  copy for a FAILED pack states the order — REMOVE the failed book first (the
+  Rules page's `Remove failed import…`, riding the existing `deleteRulebook`),
+  THEN import the pack again — since importing again before removing would leave
+  two books.
 - No spellcasting data in v1. **AMENDED 2026-09-16 by the spells-data arc
   (docs/17 row 181):** the PF2e rules-text lane now carries a structured
   `spellData` payload on `chunkType: 'spell'` RuleChunks (§15.4) — rank,

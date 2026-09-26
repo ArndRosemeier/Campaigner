@@ -11,9 +11,9 @@ import { ROUTES } from '@/app/routes';
 import type * as IngestFiles from '@/ingest/ingestFiles';
 import { defaultSettings, newId, ruleChunkSchema, spellDataSchema, type RuleChunk } from '@/domain';
 import { saveSettings } from '@/db/settingsRepo';
-import { createPackBook, createRulebook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
+import { createPackBook, createRulebook, failPackBook, finalizePackBook, getRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { INTERRUPTED_PDF_IMPORT_MESSAGE } from '@/ingest/ingestReconcile';
-import { putChunks } from '@/db/chunkRepo';
+import { countChunksByBook, putChunks } from '@/db/chunkRepo';
 import { clearDatabase } from './db/helpers';
 import { expectBlockedReason, expectBlockedReasonMenuItem } from './helpers/blocked-reason';
 import { flushAsyncUpdates } from './helpers/flush';
@@ -501,4 +501,169 @@ describe('rules screen', () => {
     pendingEmbed.resolve(undefined as never);
     await flushAsyncUpdates();
   }, 40_000);
+});
+
+/**
+ * A FAILED PACK IMPORT IS REMOVABLE, AND ITS CARD NEVER OFFERS THE PDF PICKER
+ * (docs/17 row 369, docs/18 §5(b)/(d) — the deferral row 277 named and left).
+ *
+ * The owner's report: an import of ~2000 spells failed part-way (his iPad
+ * slept) and there was *"NO WAY to recover. Can't even remove all spells and
+ * try again."* The removal ALREADY existed and worked — `deleteRulebook`
+ * deletes the book's chunks by `bookId` in ONE transaction, with no refcount,
+ * no in-use check and no status gate, so it already reclaims a partial/`error`
+ * pack — but it was INVISIBLE on the failed pack (the Spells page lists only
+ * READY books) and the one control the failure copy led to was `Retry…`, a
+ * PDF-ONLY picker that would birth a PDF book and leave the failed pack row in
+ * place. These are the owner-visible half of the fix: the pack card offers the
+ * removal it already had, the copy states the ORDER (remove, then import
+ * again), and the picker is gated on ORIGIN so the PDF lane is untouched.
+ */
+describe('a failed pack import is removable, with its own remedies (docs/17 row 369)', () => {
+  it('offers a PACK error card its Remove and NEVER the PDF picker', async () => {
+    const user = userEvent.setup();
+    const pack = await createPackBook({
+      title: 'half-imported-pack',
+      system: 'dnd5e',
+      filename: 'pack.json',
+    });
+    await failPackBook(pack.id, 'chunk persist failed at batch 3');
+
+    renderAppAt(ROUTES.rules);
+
+    const title = await screen.findByText('half-imported-pack', {}, { timeout: 10000 });
+    const packCard = title.closest('li');
+    if (packCard === null) throw new Error('the pack card must render');
+    await waitFor(() => {
+      expect(within(packCard).getByText('error')).toBeInTheDocument();
+    });
+
+    // THE COPY NAMES BOTH REMEDIES, IN THE RIGHT ORDER (remove, then import):
+    // a pack re-imported before the failed one is removed leaves TWO books —
+    // there is no cross-book dedup of re-imports (docs/12 §9).
+    const remedy = within(packCard).getByTestId(`pack-error-remedy-${pack.id}`);
+    expect(remedy).toHaveTextContent('Remove this failed import first');
+    expect(remedy).toHaveTextContent('import the pack again');
+    const text = remedy.textContent;
+    expect(text.indexOf('Remove this failed import first')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('Remove this failed import first')).toBeLessThan(
+      text.indexOf('import the pack again'),
+    );
+
+    // The REAL remedy is on the card: the SAME confirm the trash icon opens
+    // (both are `setMenuAction('delete')` → `DeleteDialog` → `deleteRulebook`).
+    await user.click(
+      within(packCard).getByRole('button', { name: 'Menu for half-imported-pack' }),
+    );
+    const remove = await screen.findByTestId(`remove-book-${pack.id}`, {}, { timeout: 10000 });
+    expect(remove).toHaveTextContent('Remove failed import…');
+
+    // THE PICKER PATH IS ABSENT, not merely unused: no `Retry…` item for this
+    // book and no file input anywhere in its card.
+    expect(screen.queryByTestId(`retry-book-${pack.id}`)).not.toBeInTheDocument();
+    expect(packCard.querySelectorAll('input[type="file"]')).toHaveLength(0);
+    await user.keyboard('{Escape}');
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('a PDF error card KEEPS its Retry picker — the gate is on ORIGIN, not a removal of the control', async () => {
+    const user = userEvent.setup();
+    const pdf = await createRulebook({
+      title: 'torn-scan',
+      system: 'generic-d20',
+      filename: 'torn.pdf',
+    });
+    await updateRulebook(pdf.id, {
+      status: 'error',
+      errorMessage: INTERRUPTED_PDF_IMPORT_MESSAGE,
+    });
+
+    renderAppAt(ROUTES.rules);
+
+    const title = await screen.findByText('torn-scan', {}, { timeout: 10000 });
+    const card = title.closest('li');
+    if (card === null) throw new Error('the PDF card must render');
+    await user.click(within(card).getByRole('button', { name: 'Menu for torn-scan' }));
+
+    expect(
+      await screen.findByTestId(`retry-book-${pdf.id}`, {}, { timeout: 10000 }),
+    ).toBeInTheDocument();
+    // …and the PACK remedies are not offered to it.
+    expect(screen.queryByTestId(`remove-book-${pdf.id}`)).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`pack-error-remedy-${pdf.id}`)).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await flushAsyncUpdates();
+
+    // The picker itself is really there, accepting PDFs only.
+    const picker = card.querySelector('input[type="file"]');
+    expect(picker).not.toBeNull();
+    expect(picker?.getAttribute('accept')).toBe('application/pdf,.pdf');
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('removes a HALF-IMPORTED pack — the book row AND every one of its 500 chunks, in two batches', async () => {
+    const user = userEvent.setup();
+    const pack = await createPackBook({
+      title: 'half-imported-pack',
+      system: 'dnd5e',
+      filename: 'pack.json',
+    });
+    // The 250×2 shape a mid-persist interruption leaves (docs/17 row 369):
+    // `packImport` persists batches of 250, EACH its own transaction, so an
+    // interrupted run leaves 1..k batches under a book that never finalized.
+    await putChunks(Array.from({ length: 250 }, () => chunk(pack.id)));
+    await putChunks(Array.from({ length: 250 }, () => chunk(pack.id)));
+    await failPackBook(pack.id, 'chunk persist failed at batch 3');
+
+    // A SECOND book, so the removal is proven scoped by `bookId` rather than a
+    // table clear.
+    const keeper = await createPackBook({
+      title: 'keep-me',
+      system: 'dnd5e',
+      filename: 'keep.json',
+    });
+    await finalizePackBook(keeper.id, {
+      sourceId: 'foundry-dnd5e-srd',
+      license: 'CC-BY-4.0',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    await putChunks([chunk(keeper.id)]);
+
+    // THE PARTIAL STATE IS REAL BEFORE THE REMOVAL RUNS — the state the
+    // scoping records that NO test has ever built: 500 chunks under an `error`
+    // book whose `packMeta` was never written (so the counts are lost).
+    expect(await countChunksByBook(pack.id)).toBe(500);
+    const failed = await getRulebook(pack.id);
+    expect(failed?.status).toBe('error');
+    expect(failed?.packMeta).toBeNull();
+
+    renderAppAt(ROUTES.rules);
+    const title = await screen.findByText('half-imported-pack', {}, { timeout: 10000 });
+    const card = title.closest('li');
+    if (card === null) throw new Error('the pack card must render');
+
+    // The card's OWN Remove, through the ONE confirm dialog the trash opens.
+    await user.click(
+      within(card).getByRole('button', { name: 'Menu for half-imported-pack' }),
+    );
+    await user.click(await screen.findByTestId(`remove-book-${pack.id}`, {}, { timeout: 10000 }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('half-imported-pack');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('half-imported-pack')).not.toBeInTheDocument();
+    });
+    await flushAsyncUpdates();
+
+    // The book row AND every one of its chunks are gone…
+    expect(await getRulebook(pack.id)).toBeUndefined();
+    expect(await countChunksByBook(pack.id)).toBe(0);
+    // …and the OTHER book is untouched.
+    expect((await getRulebook(keeper.id))?.status).toBe('ready');
+    expect(await countChunksByBook(keeper.id)).toBe(1);
+    await flushAsyncUpdates();
+  }, 30000);
 });

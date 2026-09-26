@@ -2,11 +2,11 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { putChunks } from '@/db/chunkRepo';
+import { countChunksByBook, putChunks } from '@/db/chunkRepo';
 import { copyCreatureStatsFromDb } from '@/db/libraryCopy';
-import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
+import { createRulebook, deleteRulebook, getRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { loadSpellIndexesFor } from '@/db/spellRepo';
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import {
@@ -16,6 +16,7 @@ import {
   mobSpellChipDetail,
   mobSpellChips,
   newId,
+  npcDataSchema,
   ruleChunkSchema,
   spellAtRank,
   spellDataSchema,
@@ -395,5 +396,55 @@ describe('a stat block’s spells are COPIED, not referenced (docs/17 row 255c)'
     expect(frozen.map((chip) => chip.libraryName)).toEqual(['Fireball', 'Ignition']);
     const bare = mobSpellChips(libraryStatBlock().spells, 7, new Map());
     expect(bare.map((chip) => chip.resolved)).toEqual([false, false]);
+  });
+
+  /**
+   * A REMOVAL NEVER STRANDS A CAMPAIGN (docs/17 rows 255a/270, docs/18 §2.1;
+   * the no-strand rule row 369's removal rides). The pins above clear the
+   * library through `db.chunks.clear()`/`db.rulebooks.clear()`; the removal
+   * this row makes REACHABLE is `deleteRulebook`, so this arm drives THAT seam
+   * — the ONE transaction that deletes a book's chunks by `bookId` — and
+   * asserts a campaign NPC that already OWNS its numbers (a copy, not a
+   * pointer) survives it and still renders: the block is read back off the
+   * artifact row and its chips resolve over an EMPTY index.
+   */
+  it('keeps a copied campaign mob rendering after its library source is deleted through deleteRulebook', async () => {
+    const { chunkId, bookId } = await installLibrary();
+    const result = await copyCreatureStatsFromDb({ chunkId }, 'Nirklex');
+    if (result.status !== 'copied') throw new Error('the fixture creature must be copyable');
+    const campaign = await createCampaign({ name: 'Removal campaign', system: SYSTEM });
+    const npc = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Nirklex',
+      data: npcDataSchema.parse({
+        appearance: '',
+        personality: '',
+        statBlock: result.copy.statBlock,
+      }),
+    });
+
+    // Remove the LIBRARY SOURCE through the ONE book-removal seam the Rules
+    // page's Remove (and its trash) ride.
+    await deleteRulebook(bookId);
+    expect(await getRulebook(bookId)).toBeUndefined();
+    expect(await countChunksByBook(bookId)).toBe(0);
+
+    // The campaign row SURVIVES and answers its own numbers with the library
+    // absent — the strand the owner's rule forbids.
+    const row = await getArtifact(npc.id);
+    if (row?.kind !== 'npc' || row.data.statBlock === null) {
+      throw new Error('the copied npc must survive its library source with its own block');
+    }
+    const chips = mobSpellChips(
+      row.data.statBlock.spells,
+      mobCasterLevel(row.data.statBlock.level),
+      new Map(),
+    );
+    expect(chips.map((chip) => chip.resolved)).toEqual([true, true]);
+    expect(chips.map((chip) => chip.libraryName)).toEqual(['Fireball', 'Ignition']);
+    const fireball = chips[0];
+    if (fireball === undefined) throw new Error('the copy must answer its first spell');
+    expect(mobSpellChipDetail(fireball)).toContain('6d6 fire');
   });
 });

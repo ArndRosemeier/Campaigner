@@ -385,7 +385,8 @@ function NotReadySpells({
     failed.length === 0
       ? ''
       : `${String(failed.length)} ${label} import${failed.length === 1 ? '' : 's'} failed — ` +
-        `the way forward is named on the book's card on the Rules page.`,
+        `remove the failed import on the Rules page, then import the pack again — importing ` +
+        `again before removing would leave two books.`,
   ]
     .filter((line) => line !== '')
     .join(' ');
@@ -412,13 +413,15 @@ function NotReadySpells({
 
 /**
  * What one not-ready book's own line says. The REMEDY is the book's own: a pack
- * book is imported again ("Import bestiary pack"), a PDF book is re-selected
- * through the `Retry…` control its card carries — naming the wrong one would be
- * the same defect this state exists to prevent (docs/17 row 277).
+ * book is REMOVED first and then imported again (in that order — there is no
+ * cross-book dedup of re-imports, docs/12 §9, so re-importing first would leave
+ * two books), a PDF book is re-selected through the `Retry…` control its card
+ * carries — naming the wrong one would be the same defect this state exists to
+ * prevent (docs/17 rows 277 and 369).
  */
 function notReadyLine(book: Rulebook): string {
   if (book.status === 'processing') return 'still importing…';
   return book.origin === 'pack'
-    ? 'the import failed — import this pack again on the Rules page'
+    ? 'the import failed — remove it on the Rules page, then import this pack again'
     : 'the import failed — open its card on the Rules page and choose "Retry…"';
 }

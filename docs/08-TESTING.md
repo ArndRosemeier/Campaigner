@@ -9256,3 +9256,52 @@ for a review when the owner wants one" is a PROMPT intent (the system prompt now
 documents the command and its rules), not a measurement. What is pinned is that
 the command parses and routes, that the findings reach the card, that an accepted
 edit is undoable, and that a clean review writes nothing.
+
+### A failed pack import is removable — the partial-pack reclaim, the origin-gated picker, and the copy that names both remedies (docs/17 row 369, docs/18 §2.1/§5(b)/(d))
+
+The owner's report is a HALF-IMPORTED pack he could not get out of: ~2000
+spells, the import failed part-way (his iPad slept), and *"Can't even remove
+all spells and try again."* The measurement is that the removal already
+existed and worked — `deleteRulebook` deletes the book's chunks by `bookId` in
+ONE transaction with no refcount, no in-use check and no status gate, so it
+already reclaims a partial/`error` pack — and what was broken was
+REACHABILITY and COPY: the spell rows are invisible on the Spells page (it
+lists only READY books), the failure copy named only re-import, and the control
+it led to on a PACK error card was `Retry…`, a PDF-only picker that would
+birth a PDF book and leave the failed pack row in place. Nothing new was built;
+the pack error card got its real remedies and the picker was gated on ORIGIN.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| THE PARTIAL IMPORT IS RECLAIMABLE: a FAILED pack book holding 500 chunks written in TWO 250-chunk batches (the shape a mid-persist interruption leaves — no test had ever built it) loses the book ROW and EVERY one of its chunks through the card's own `Remove failed import…`, while a second book's chunk is untouched | `tests/rules-page.test.tsx` — `removes a HALF-IMPORTED pack — the book row AND every one of its 500 chunks, in two batches` (it also asserts the state BEFORE the removal: 500 chunks, `status: 'error'`, `packMeta: null`) | pinned |
+| The removal is the EXISTING one, not a second destructive path: `db.rulebooks.delete(` and `deleteChunksByBook(` each have exactly ONE home and `deleteRulebook(` is declared in the repo and called from exactly the one shared confirm dialog | `tests/architecture/one-book-removal.test.ts` — `keeps the book row, its chunk cascade and the retained bytes in ONE transaction`; `routes every destructive affordance through the ONE deleteRulebook call site` (source population over `src/**`, via `tests/helpers/sourceCode`) | pinned |
+| A PACK error card offers Remove and NEVER the PDF picker — the `Retry…` item AND the PDF-only hidden input are ABSENT from the card, not merely unused | `tests/rules-page.test.tsx` — `offers a PACK error card its Remove and NEVER the PDF picker` (asserts the remedy copy's ORDER, the `remove-book-…` item, no `retry-book-…`, and zero `input[type="file"]` in the card) | pinned |
+| A PDF error card KEEPS its `Retry…` and its PDF-only picker, and is offered no pack remedy — the gate is on ORIGIN, not a removal of the control | `tests/rules-page.test.tsx` — `a PDF error card KEEPS its Retry picker — the gate is on ORIGIN, not a removal of the control` | pinned |
+| The Spells page's failure copy names BOTH remedies and states the ORDER (remove, then import again) on the batch line AND the per-book line, and never names `Retry…` for a pack | `tests/features/spells-page.test.tsx` — `names BOTH pack remedies on a failed pack, removal first (row 369)`, beside row 277's unchanged `names a FAILED pack import and points at the pack remedy` | pinned |
+| A REMOVAL NEVER STRANDS A CAMPAIGN: a campaign NPC that already OWNS its copied numbers still renders after its library source is deleted through the SAME `deleteRulebook` the Remove rides (the block is read back off the artifact row and resolves over an EMPTY index) | `tests/features/mob-spell-copy.test.ts` — `keeps a copied campaign mob rendering after its library source is deleted through deleteRulebook`, beside the frozen-seed pin that clears the whole library | pinned |
+
+**REVERT-PROVEN, four arms each RED by NAME, every injected hash distinct and
+every file restored byte-identically** (raw logs and `summary.md` in the
+worktree's `.gate-logs/row369/arms/`): (A) the PDF `Retry…` arm's origin gate
+dropped in `RulesPage.tsx` (`ebcbfd436138ec7e…` → `0cae22ae5da0d82e…`) → **RED 1**
+— `offers a PACK error card its Remove and NEVER the PDF picker`; (B) the pack
+card's Remove routed to a HAND-ROLLED complete delete in `RulesPage.tsx`
+(`…` → `8af7adab9bb3737d…`) → **RED 3** — both `one-book-removal` source pins
+plus the partial-pack pin (the hand-rolled route also loses the shared confirm:
+`Unable to find role="alertdialog"`); (C) the Spells per-book line back to
+re-import-only (`8f853dcce8dee407…` → `52cefee2e3ef554c…`) → **RED 1** — the
+copy-order pin; (D) a STATUS GATE planted inside `deleteRulebook` (refusing the
+chunk cascade for an `'error'` book, the refusal the brief proves does NOT
+exist) (`487e721a8b20f6fa…` → `e1c66271fd4808f2…`) → **RED 1** — the partial-pack
+pin, at `expect(await countChunksByBook(pack.id)).toBe(0)`, with the source pins
+GREEN, so that arm isolates the behavioural pin.
+
+**What arm B measures, recorded rather than glossed:** a complete hand-rolled
+delete is BEHAVIOURALLY indistinguishable from the seam for the 500-chunk state;
+the source population pin is what catches a hand-rolled delete that keeps the
+dialog.
+
+**What jsdom cannot prove:** the rendered ORDER of two sentences is asserted on
+`textContent` index, not on pixels, and no pin observes a real iPad tab discard
+mid-persist — the partial state is BUILT explicitly (two `putChunks` batches),
+which is the honest form of a state the device would produce.

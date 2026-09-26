@@ -354,6 +354,41 @@ describe('spells page — a same-system book that is not ready is named (row 277
     expect(screen.queryByTestId('spells-no-material')).not.toBeInTheDocument();
   });
 
+  /**
+   * BOTH REMEDIES, IN THE RIGHT ORDER (docs/17 row 369). The failed pack's
+   * rows are invisible on this page (it lists READY books), and re-importing
+   * the pack BEFORE removing the failed one leaves TWO books — there is no
+   * cross-book dedup of re-imports (docs/12 §9). So the failure copy names the
+   * removal FIRST and the re-import second, on both the batch line and the
+   * per-book line.
+   */
+  it('names BOTH pack remedies on a failed pack, removal first (row 369)', async () => {
+    const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
+    const pack = await createPackBook({
+      title: 'SRD Spells',
+      system: 'dnd5e',
+      filename: 'pack.json',
+    });
+    await failPackBook(pack.id, 'chunk persist failed at batch 3');
+
+    renderSpells(campaign.id);
+
+    const notice = await screen.findByTestId('spells-not-ready');
+    const text = notice.textContent;
+    // The BATCH line names both…
+    expect(text).toContain('remove the failed import on the Rules page, then import the pack again');
+    // …and the BOOK's own line names both…
+    expect(text).toContain('remove it on the Rules page, then import this pack again');
+    // …and in THAT order: the removal sentence precedes the re-import one.
+    expect(text.indexOf('remove the failed import on the Rules page')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('remove the failed import on the Rules page')).toBeLessThan(
+      text.indexOf('then import the pack again'),
+    );
+    // The remedy is a PACK's: no PDF picker is named anywhere on this state.
+    expect(notice).not.toHaveTextContent('Retry');
+    expect(screen.getByTestId('spells-import-remedy')).toHaveAttribute('href', '/rules');
+  });
+
   it('names a FAILED PDF import and points at its own Retry control', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
     const pdf = await createRulebook({
