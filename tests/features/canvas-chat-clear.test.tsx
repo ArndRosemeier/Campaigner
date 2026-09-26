@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
+import { db } from '@/db/db';
 import { getModule, saveModule } from '@/db/moduleRepo';
+import { listModuleVersions } from '@/db/moduleVersionRepo';
 import {
   createModule,
   moduleDocumentText,
@@ -20,6 +22,7 @@ import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
 import {
   canvasChatKey,
+  gmAssistKey,
   useCanvasChatStore,
   type CanvasChatMessage,
 } from '@/features/modules/canvas/chatStore';
@@ -43,6 +46,13 @@ import { actDrained, flushAsyncUpdates } from '../helpers/flush';
  * session state survives. A reply in flight refuses the clear LOUDLY instead
  * of clearing under a running turn. The LLM is mocked — the controller, the
  * persist seam, the ledger store and both highlight paths run for real.
+ *
+ * THE REMOVAL PINS (docs/17 row 367): this control IS the conversation
+ * removal — measured, not assumed — so the family below holds the guarantees
+ * that make it one: the CANCEL path deletes nothing, the module conversation's
+ * removal leaves the GM assist thread byte-identical, the removed thread
+ * survives in NO table, and the module's DURABLE record of the applied edit
+ * outlives the thread that asked for it.
  */
 
 vi.mock('@/lib/toast', () => ({
@@ -441,6 +451,197 @@ describe('canvas chat clear (one module, pristine state)', () => {
     row = await actDrained(() => getModule(world.moduleId));
     expect(row?.chatThread.map((entry) => entry.text)).toEqual(['hold that thought', 'late reply']);
     expect(chatMessages()).toHaveLength(2);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  /**
+   * THE OTHER HALF OF THE DESTRUCTIVE CONFIRM (docs/17 row 367): the dialog is
+   * the ONLY gate in front of a removal that cannot be undone, so the CANCEL
+   * path must delete nothing at all — not the live store, not the saved thread
+   * on the module, not the session ledger, not the highlight. The idea board's
+   * clear has carried this pin since row 227; the canvas chat's has not, which
+   * is why a dialog that cleared on OPEN would have shipped silently here.
+   */
+  it('cancelling the confirm deletes NOTHING — store, row, ledger and highlight survive', async () => {
+    const user = userEvent.setup();
+    await renderCanvasPreview();
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+
+    // BOTH halves are real before the dialog opens: the saved thread is durably
+    // on the row and the preview carries the replacement wash. A cancel that
+    // cleared on open reds every assertion below.
+    let row = await actDrained(async () => {
+      await flushChatPersist(canvasChatKey(world.moduleId));
+      return getModule(world.moduleId);
+    });
+    expect(row?.chatThread.map((entry) => entry.role)).toEqual(['user', 'assistant']);
+    const ledgerBefore = useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)];
+    expect(ledgerBefore?.versions).toHaveLength(1);
+    const partsBefore = row?.parts;
+
+    // Panel header → confirm dialog → CANCEL (the dialog's own way out).
+    await user.click(screen.getByTestId('canvas-chat-clear'));
+    await screen.findByTestId('canvas-chat-clear-dialog');
+    await user.click(screen.getByTestId('canvas-chat-clear-cancel'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('canvas-chat-clear-dialog')).toBeNull();
+    });
+    await flushAsyncUpdates();
+
+    // Every slice the confirm would have taken is still exactly where it was.
+    expect(chatMessages()).toHaveLength(2);
+    expect(
+      within(screen.getByTestId('canvas-chat')).getAllByTestId('canvas-chat-user-message'),
+    ).toHaveLength(1);
+    row = await actDrained(() => getModule(world.moduleId));
+    expect(row?.chatThread.map((entry) => entry.role)).toEqual(['user', 'assistant']);
+    expect(row?.parts).toEqual(partsBefore);
+    expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)]).toEqual(
+      ledgerBefore,
+    );
+    expect(
+      within(screen.getByTestId('canvas-preview')).getByTestId('replacement-highlight'),
+    ).toBeInTheDocument();
+    // A cancel is not an action: no toast claims one, and no error was raised.
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  /**
+   * THE PIN THAT MATTERS MOST (docs/17 row 367): the two chats share ONE store
+   * and ONE column but never a thread, so removing the module conversation must
+   * leave GM assist's BYTE-IDENTICAL. The other direction is already pinned
+   * (`canvas-chat.test.tsx`: a GM clear leaves the module thread and its saved
+   * row half alone); this is the direction nothing asserted until now.
+   */
+  it('a module-chat removal leaves the GM assist thread BYTE-IDENTICAL', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+
+    // BOTH conversations carry a turn: only the module one may be removed.
+    mockChatReply('Noted — rain it is.');
+    await sendChat(user, 'MODULE-MARKER-INSTRUCTION');
+    await user.click(screen.getByTestId('canvas-chat-surface-gm-assist'));
+    await flushAsyncUpdates();
+    mockChatReply('GM answer.');
+    await sendChat(user, 'GM-MARKER-INSTRUCTION');
+    await user.click(screen.getByTestId('canvas-chat-surface-module'));
+    await flushAsyncUpdates();
+
+    // The module thread owns the row; the GM thread never reaches it at all.
+    let row = await actDrained(async () => {
+      await flushChatPersist(canvasChatKey(world.moduleId));
+      return getModule(world.moduleId);
+    });
+    expect(row?.chatThread.map((entry) => entry.text)).toContain('MODULE-MARKER-INSTRUCTION');
+    expect(row?.chatThread.map((entry) => entry.text)).not.toContain('GM-MARKER-INSTRUCTION');
+    expect(useCanvasChatStore.getState().module(gmAssistKey(world.moduleId)).messages).toHaveLength(2);
+    const gmBefore = JSON.stringify(useCanvasChatStore.getState().module(gmAssistKey(world.moduleId)));
+
+    await clearChatThroughUi(user);
+
+    // Removed: the module conversation is gone from the live store AND from the
+    // row (assert ABSENCE on the row, not emptiness of a live store only).
+    expect(chatMessages()).toHaveLength(0);
+    row = await actDrained(() => getModule(world.moduleId));
+    expect(row?.chatThread).toEqual([]);
+
+    // Untouched: the other conversation, byte for byte — the store slice…
+    expect(JSON.stringify(useCanvasChatStore.getState().module(gmAssistKey(world.moduleId)))).toBe(
+      gmBefore,
+    );
+    // …and the panel the user actually sees when switching back to it.
+    await user.click(screen.getByTestId('canvas-chat-surface-gm-assist'));
+    await flushAsyncUpdates();
+    const panel = screen.getByTestId('canvas-chat');
+    expect(within(panel).getByText('GM-MARKER-INSTRUCTION')).toBeInTheDocument();
+    expect(within(panel).queryByText('MODULE-MARKER-INSTRUCTION')).toBeNull();
+    expect(within(panel).getAllByTestId('canvas-chat-user-message')).toHaveLength(1);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  /**
+   * "A REAL DELETE, NOT A VISUAL CLEAR" (docs/17 row 367): a marker unique to
+   * the conversation is gone from EVERY table in the database once the removal
+   * settles — not merely from the live store. The turn carries no `<edit>`, so
+   * no part text and no durable version label can legitimately hold the text:
+   * a residue anywhere below is a defect, not module history.
+   */
+  it('removes the conversation from EVERY table — nothing of the removed thread survives', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+
+    mockChatReply('ANSWER-MARKER-4711');
+    await sendChat(user, 'QUESTION-MARKER-4711');
+
+    // Non-vacuity: both halves are DURABLY on the row before the removal, so
+    // the absence below can only be satisfied by a real clearing write.
+    let row = await actDrained(async () => {
+      await flushChatPersist(canvasChatKey(world.moduleId));
+      return getModule(world.moduleId);
+    });
+    expect(JSON.stringify(row?.chatThread)).toContain('QUESTION-MARKER-4711');
+    expect(JSON.stringify(row?.chatThread)).toContain('ANSWER-MARKER-4711');
+
+    await clearChatThroughUi(user);
+
+    // The conversation's own home reads an EMPTY LIST (absence, not a hidden
+    // copy an outcome card or a stale message could re-render from)…
+    row = await actDrained(() => getModule(world.moduleId));
+    expect(row?.chatThread).toEqual([]);
+    // …and nothing anywhere else in the database holds either half of it.
+    const tables = await actDrained(async () =>
+      Promise.all(db.tables.map(async (table) => JSON.stringify(await table.toArray()))),
+    );
+    const dump = tables.join('\n');
+    expect(dump).not.toContain('QUESTION-MARKER-4711');
+    expect(dump).not.toContain('ANSWER-MARKER-4711');
+    // The app persists nothing chat-shaped outside Dexie either.
+    const localStorageDump = Object.keys(window.localStorage)
+      .map((key) => window.localStorage.getItem(key) ?? '')
+      .join('\n');
+    expect(localStorageDump).not.toContain('QUESTION-MARKER-4711');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  /**
+   * MODULE HISTORY IS NOT THE CONVERSATION (docs/17 row 367, row 63): the
+   * applied edit's DURABLE pre-change snapshot — the undo record for a change
+   * to the MODULE, whose label carries the instruction — survives the removal
+   * of the thread that asked for it. Deleting undo history to satisfy a chat
+   * removal is the defect; the session ledger's own emptying (pinned above) is
+   * the documented, different decision.
+   */
+  it('leaves the module\'s durable record of the applied edit untouched', async () => {
+    const user = userEvent.setup();
+    await renderCanvasPreview();
+    mockChatReply(APPLY_REPLY);
+    await sendChat(user, 'make the rain heavier');
+
+    // The applied edit left a durable snapshot, and the saved thread is real.
+    const versionsBefore = await actDrained(() => listModuleVersions(world.moduleId));
+    expect(versionsBefore).toHaveLength(1);
+    expect(versionsBefore[0]?.source).toBe('chat');
+    expect(versionsBefore[0]?.label).toContain('Chat: make the rain heavier');
+    const rowBefore = await actDrained(async () => {
+      await flushChatPersist(canvasChatKey(world.moduleId));
+      return getModule(world.moduleId);
+    });
+    expect(rowBefore?.chatThread.length).toBeGreaterThan(0);
+    expect(rowBefore?.parts[0]?.markdown).toContain('Rain drowns every word.');
+
+    await clearChatThroughUi(user);
+
+    // The conversation is gone…
+    expect(chatMessages()).toHaveLength(0);
+    const after = await actDrained(() => getModule(world.moduleId));
+    expect(after?.chatThread).toEqual([]);
+    // …while the module's record of the change it applied survives byte for
+    // byte, and so does the document that change produced.
+    expect(await actDrained(() => listModuleVersions(world.moduleId))).toEqual(versionsBefore);
+    expect(after?.parts).toEqual(rowBefore?.parts);
     await flushAsyncUpdates();
   }, 30_000);
 });

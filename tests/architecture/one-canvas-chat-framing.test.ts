@@ -24,6 +24,7 @@ import { CODE, filesWith } from '../helpers/sourceCode';
 const LLM = 'src/llm/canvasChat.ts';
 const TURN = 'src/features/modules/canvas/chatTurn.ts';
 const CLEAR = 'src/features/modules/canvas/clearChat.ts';
+const CHAT_PERSIST = 'src/features/modules/canvas/chatPersist.ts';
 const STORE = 'src/features/modules/canvas/chatStore.ts';
 const SIDEBAR = 'src/features/modules/canvas/ChatSidebar.tsx';
 const PAGE = 'src/features/modules/canvas/CanvasPage.tsx';
@@ -93,5 +94,20 @@ describe('ONE canvas chat system prompt, parameterised by framing (SOURCE SCAN, 
     // way to turn "which chat" into "which store key".
     expect(filesWith('gmAssistKey(')).toEqual([STORE]);
     expect(filesWith('canvasChatKeyFor(')).toEqual([PAGE, SIDEBAR, STORE]);
+  });
+
+  it('writes the module row chat thread from ONE file and removes it through ONE entry point', () => {
+    // ONE WRITER (docs/17 row 367): the row's `chatThread` field is patched
+    // only by the persist module — its debounced writer AND its clear half — so
+    // a second writer born in another file, the cheap way to "remove" a thread
+    // by hand, reds here by NAME before it can drift from the debounce it
+    // would have to cancel.
+    expect(filesWith('patchModule(moduleId, { chatThread')).toEqual([CHAT_PERSIST]);
+    expect(filesWith('clearPersistedChatThread(')).toEqual([CHAT_PERSIST, CLEAR]);
+    // ONE removal entry point: only the panel's control asks `clearModuleChat`
+    // for a removal, and the orchestration lives in exactly one file — a second
+    // removal path beside it is the twin action this project forbids.
+    // (`filesWith` answers SORTED, so the panel file leads on case order.)
+    expect(filesWith('clearModuleChat(')).toEqual([SIDEBAR, CLEAR]);
   });
 });

@@ -8332,6 +8332,61 @@ baseline hashes; the focused file ran under the suite lock, one worker,
 debounced persistence (this adds a control, not a second chat), the repo's
 compare-and-swap and its backup/export behaviour, and the canvas chat's own
 clear (bytes untouched).
+
+### The canvas chat's Clear chat IS the conversation removal — no second action, and the proof is pinned (docs/17 row 367, docs/08-MODULE-DESIGNER §Module canvas chat, docs/18 §2.3)
+
+The owner asked for chats to be removable and chose the granularity "Delete a
+whole conversation", framed as "a real delete, not a visual clear". **THE
+MEASUREMENT SETTLED IT: the control he already has does exactly that.** Read end
+to end at this HEAD, `features/modules/canvas/clearChat.clearModuleChat` is the
+ONE removal seam: for the surface whose thread persists (the module chat) it
+awaits `chatPersist.clearPersistedChatThread` FIRST — `patchModule(moduleId,
+{ chatThread: [] })`, the SAME write the debounced writer uses, its pending
+debounce cancelled — so the conversation leaves the ROW and not merely the
+screen, then empties the live store and that module's session ledger, and the
+page drops the highlight. GM assist is session-only until its persistence slice,
+so there is no saved copy of its thread to delete. Nothing of the conversation
+remains, and what DOES remain (the document, the durable `moduleVersions` undo
+rows) is module history the brief forbids deleting. A second "Delete
+conversation" control would therefore be two destructive doors onto one
+conversation. **What was genuinely missing is the PIN FAMILY**, and it lands in
+the existing harness (`tests/features/canvas-chat-clear.test.tsx`, no new file:
+its five pre-existing pins were already green on all of this) plus one SOURCE
+SCAN in `tests/architecture/one-canvas-chat-framing.test.ts`.
+
+| Pin | What it holds | What reds it |
+|---|---|---|
+| `cancelling the confirm deletes NOTHING — store, row, ledger and highlight survive` | the dialog's CANCEL door leaves the live conversation at 2 entries, the saved thread on the row at `['user','assistant']`, the session ledger entry deep-equal, the preview replacement wash up and the parts byte-identical, and raises NO toast | a dialog that acts on open or on cancel (the classic bug; the Idea Board's clear has pinned this since row 227, the canvas chat's never had) |
+| `a module-chat removal leaves the GM assist thread BYTE-IDENTICAL` | with BOTH conversations populated, removing the module thread empties it in the store and on the row (`chatThread === []`) while the GM slice compares equal as a JSON string, and the panel after switching back shows the GM message and NOT the module one | a removal that reaches the other conversation's key, or one that clears the shared store slice instead of the surface's key |
+| `removes the conversation from EVERY table — nothing of the removed thread survives` | a marker put in BOTH halves of a thread (no `<edit>`, so nothing legitimately outlives it) is asserted ON the row first, then absent from the row AND from every Dexie table AND from `localStorage` after the removal | a "clear" that empties only the live store, or one that parks the thread in an archive/derived record keyed to the messages |
+| `leaves the module's durable record of the applied edit untouched` | the durable `moduleVersions` row the applied edit created (source `chat`, label `Chat: make the rain heavier`, pre-change `docText`) is deep-equal after the removal, and the parts are unchanged — row 63's claim, unpinned until now | a removal that also deletes undo history (the module's record of a change is not the conversation) |
+| `writes the module row chat thread from ONE file and removes it through ONE entry point` (SOURCE SCAN) | `patchModule(moduleId, { chatThread` occurs in exactly ONE file, `clearPersistedChatThread(` in exactly two (the writer and the clear), and `clearModuleChat(` in exactly one caller plus its declaration | a hand-rolled second writer of the row's thread, or a second removal path beside the one control |
+
+**The pin that matters most is the byte-identity one, and this landing adds the
+direction nothing asserted:** a GM clear leaving the module thread and its saved
+row half alone is pinned in `tests/features/canvas-chat.test.tsx` (row 362); the
+module clear leaving the GM-assist thread alone was asserted nowhere until now.
+
+**REVERT-PROVEN, five arms, every injected and restored blob hash PRINTED
+(`git hash-object`), no arm VOID, every file restored BYTE-IDENTICALLY
+(`git checkout --`), raw logs and the injector in `.gate-logs/row367/arms/`:**
+(A) the dialog's CANCEL wired to the confirm handler → `ChatSidebar.tsx`
+`72d8da94…` → `f386e341…`, **RED 1** = the cancel pin; (B) the module removal
+also clearing the GM key → `clearChat.ts` `b5a1a379…` → `31223569…`, **RED 1** =
+the byte-identity pin; (C) the row write dropped, a store-only "clear" →
+`clearChat.ts` → `5bb345e5…`, **RED 6** = the row-absence family (the two
+pre-existing pins, the marker scan, the byte-identity pin, the durable-record
+pin, and the one-writer scan, whose `clearPersistedChatThread(` call site
+vanishes with the write); (D) a hand-rolled SECOND writer of `chatThread` added
+in `ChatSidebar.tsx` → `72d8da94…` → `429ec1f3…`, **RED 1** = the one-writer
+source pin; (E) the removal also calling `clearModuleVersions` → `clearChat.ts`
+→ `c54d164b…`, **RED 1** = the durable-record pin.
+
+**NO SOURCE BYTES MOVED.** `clearChat.ts`, `chatPersist.ts`, `chatStore.ts`,
+`ChatSidebar.tsx` and `CanvasPage.tsx` are byte-unchanged by this landing; the
+one-writer scan and the arms above are what keep a future second writer or a
+second removal path from being born quietly.
+
 ### The campaign export's zip is built through the ONE streaming seam (docs/17 row 276, docs/18 §2.1)
 
 `lib/exportImport.buildZip` was the LAST caller of the synchronous `zipSync` in `src/` — the
