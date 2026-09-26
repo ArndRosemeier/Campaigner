@@ -1,6 +1,10 @@
 import type { Id } from '@/domain';
 import type { EditorView } from '@codemirror/view';
-import { composeFailureReport, type CanvasEditCommand } from '@/llm/canvasChat';
+import {
+  composeFailureReport,
+  type CanvasChatFraming,
+  type CanvasEditCommand,
+} from '@/llm/canvasChat';
 import { useCanvasChatStore, type CanvasChatMessage, type CanvasChatOutcome } from '@/features/modules/canvas/chatStore';
 import { editorChatHandle } from '@/features/modules/canvas/chatApply';
 import {
@@ -30,8 +34,17 @@ export type ChatTurnResult = CanvasChatTurnResult;
 
 export interface ChatTurnOptions {
   moduleId: Id;
-  /** Per-MODULE chat key (canvasChatKey) — one conversation per module. */
+  /**
+   * The surface's chat key (`canvasChatKeyFor(moduleId, framing)`) — one
+   * conversation per module per surface (docs/17 row 362).
+   */
   key: string;
+  /** WHICH chat surface this turn is (docs/17 row 362): the framing the system
+   * prompt carries and whether the thread persists on the module row. OPTIONAL
+   * here, defaulting to the module chat — the same default the prompt itself
+   * carries, so a caller that does not know about GM assist is byte-identical
+   * to the pre-362 contract. The canvas surfaces always pass it. */
+  framing?: CanvasChatFraming | undefined;
   /** Pre-flight: a module without planned parts must not send an empty
    * context (`llm/canvasChat.NO_PARTS_MESSAGE` — the ONE sentence, declared
    * beside the engine guard that raises it). */
@@ -59,6 +72,7 @@ export async function runChatTurn(
     {
       moduleId: options.moduleId,
       key: options.key,
+      framing: options.framing ?? 'module',
       hasPlannedParts: options.hasPlannedParts,
       handle: editorChatHandle(options.view),
       surface: EDITOR_TURN_SURFACE,

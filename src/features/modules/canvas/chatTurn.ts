@@ -2,10 +2,12 @@ import type { Id } from '@/domain';
 import {
   NO_PARTS_MESSAGE,
   canvasChatChangeLabel,
+  canvasChatThreadPersists,
   chatProseSoFar,
   isArtifactChange,
   sendCanvasChatMessage,
   type CanvasChatChangeOutcome,
+  type CanvasChatFraming,
   type CanvasEditCommand,
 } from '@/llm/canvasChat';
 import { ModuleBusyError } from '@/llm/moduleGen';
@@ -32,17 +34,21 @@ import { toastError } from '@/lib/toast';
 
 /**
  * ONE canvas chat turn controller (08-MODULE-DESIGNER §Module canvas chat):
- * send → stream → parse → apply → persist → thread, for BOTH chat surfaces.
+ * send → stream → parse → apply → persist → thread, for EVERY canvas chat
+ * surface.
  *
- * The canvas has two of them and they are the same turn over different
- * documents: the EDITOR (the live whole-document CM6 view, `chatController`)
- * and the PREVIEW SNAPSHOT STRING (the editor is unmounted in preview,
- * `snapshotChat`). Those were two ~87%-identical copies of this flow (266 of
+ * There are TWO axes of surface, and neither forks this flow. (1) The DOCUMENT:
+ * the EDITOR (the live whole-document CM6 view, `chatController`) and the
+ * PREVIEW SNAPSHOT STRING (the editor is unmounted in preview,
+ * `snapshotChat`) — those were two ~87%-identical copies of this flow (266 of
  * 306 code lines verbatim), and unlike the applier pair they DID diverge — on
  * their failure paths (see below). The flow lives here once; the two modules
  * are thin surface wrappers that hand in a `ChatDocumentHandle`
  * (`chatApply.ts`) and a `ChatTurnSurface` naming where their unsaved edits
- * live.
+ * live. (2) The CHAT: the module co-editor and GM assist (docs/17 row 362),
+ * which are the SAME turn over the SAME document with a different FRAMING
+ * (`CanvasChatFraming`) and a different store key — one controller, one
+ * applier, one busy registry, never a second pipeline.
  *
  * The turn owns: the LIVE document as the model's context (read at send time
  * through the handle — unsaved edits in EVERY part ride along), the streamed
@@ -126,8 +132,20 @@ export const PREVIEW_TURN_SURFACE: ChatTurnSurface = {
 
 export interface CanvasChatTurnOptions {
   moduleId: Id;
-  /** Per-MODULE chat key (canvasChatKey) — one conversation per module. */
+  /**
+   * The surface's chat key (`canvasChatKeyFor(moduleId, framing)`) — one
+   * conversation per module per SURFACE (docs/17 row 362): the module chat and
+   * GM assist never share a message.
+   */
   key: string;
+  /**
+   * WHICH surface this turn is (docs/17 row 362). It decides the system
+   * prompt's framing and whether the thread reaches the module row: the
+   * GM-assist thread is SESSION-ONLY in this slice (slice 2 persists it), so
+   * its key must never reach `scheduleChatPersist`, which would write it into
+   * the module's ONE `chatThread` field — over the module chat's own history.
+   */
+  framing: CanvasChatFraming;
   /** Pre-flight: a module without planned parts must not send an empty
    * context (`llm/canvasChat.NO_PARTS_MESSAGE` — the ONE sentence, declared
    * beside the engine guard that raises it). */
@@ -312,6 +330,7 @@ export async function runCanvasChatTurn(
       instruction: text,
       history,
       model: options.modelSelection ?? undefined,
+      framing: options.framing,
       turn: options.turn,
       // THE WRITE HALF (docs/17 row 104): a `<change>` block runs the specialist
       // for the resolved row's kind through the ONE changeArtifact seam, and
@@ -571,6 +590,14 @@ export async function runCanvasChatTurn(
     // aborted (or never landed for pre-flight throws — then the store is
     // unchanged and the writer is a no-op). Debounced; failures toast
     // loudly inside the writer and never reach the caller.
-    scheduleChatPersist(options.moduleId, options.key);
+    //
+    // ONLY the surface whose thread persists asks for it (docs/17 row 362):
+    // the GM-assist thread is session-only in this slice, and `chatPersist`
+    // writes whatever the store holds for the key into the module row's ONE
+    // `chatThread` field — so a GM key reaching it would both persist a thread
+    // this slice keeps session-only AND overwrite the module chat's history.
+    if (canvasChatThreadPersists(options.framing)) {
+      scheduleChatPersist(options.moduleId, options.key);
+    }
   }
 }

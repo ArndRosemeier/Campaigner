@@ -1270,6 +1270,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
       {
         moduleId: world.moduleId,
         key,
+        framing: 'module',
         hasPlannedParts: true,
         handle,
         surface: PREVIEW_TURN_SURFACE,
@@ -1302,6 +1303,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
       {
         moduleId: world.moduleId,
         key,
+        framing: 'module',
         hasPlannedParts: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,
@@ -1344,6 +1346,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
       {
         moduleId: world.moduleId,
         key,
+        framing: 'module',
         hasPlannedParts: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,
@@ -1392,6 +1395,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
       {
         moduleId: world.moduleId,
         key,
+        framing: 'module',
         hasPlannedParts: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,

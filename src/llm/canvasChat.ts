@@ -1186,15 +1186,76 @@ const WIKI_TOKEN_RULES =
   '- Wiki-links are [[Name]] tokens (names, never IDs). Keep every token\'s EXACT canonical spelling when the instruction does not rename the entity; never inflect inside the token — write [[Halmund]]\'s tower, not [[Halmunds]] Haus; write [[Name|display]] when the surface text must differ from the canonical name. The same rules apply in any language.';
 
 /**
+ * WHICH canvas chat surface a turn belongs to (docs/17 row 362). ONE identity
+ * threaded through the system prompt's framing, the store key and the thread's
+ * persistence contract — never a second chat pipeline. `'module'` is the
+ * module co-editor the canvas has always had; `'gm-assist'` is the same chat
+ * with live-mastering framing, hosted beside it in the same column.
+ */
+export type CanvasChatFraming = 'module' | 'gm-assist';
+
+/**
+ * Whether that surface's thread PERSISTS on the module row (docs/17 row 362).
+ * The module thread owns the row's ONE `chatThread` field and the module's
+ * session Versions ledger; the GM-assist thread is SESSION-ONLY in this slice
+ * (slice 2 owns its persistence), so a clear/persist decision must ask HERE
+ * rather than re-spelling `framing === 'module'` at each site.
+ */
+export function canvasChatThreadPersists(framing: CanvasChatFraming): boolean {
+  return framing === 'module';
+}
+
+/** The MODULE chat's framing: the system prompt's opening paragraph. */
+const MODULE_CHAT_FRAMING =
+  'You are the Canvas chat co-editor for tabletop RPG modules — an expert editor of GM-facing markdown prose.';
+
+/**
+ * The GM-ASSIST framing (docs/17 row 362; the owner's request, verbatim: *"I
+ * want to have a new module chat, called GM assist. It can reuse most of the
+ * current module chat (including the edit capabilitie), but is focused on
+ * helping the GM to actually life mastering. Meaning, the GM can tell it what
+ * the party does or what else just happened, and the chat will offer helpfull
+ * ideas what should happen now (as a default)."*, sharpened by his own
+ * clarification: *"this is not about handling encounters, it's about the story
+ * side of Mastering, so it should live next to the current chat. And you are
+ * right, that the GM needs to keep the chat roughly informed what actually
+ * happened."*).
+ *
+ * It REPLACES the module framing's opening paragraph and nothing else: the
+ * command protocol below it (edits, requests, changes — including the
+ * adversarial review) is the SAME shared text, because GM assist keeps the
+ * module chat's edit capabilities on the ONE pipeline. Discipline the text
+ * holds: the subject is the NARRATIVE (never encounters, battlemaps, tokens or
+ * stat blocks), the GM's report is the live state of the story, and the model
+ * never claims to know what happened unless the GM said it.
+ */
+export const GM_ASSIST_FRAMING = [
+  'You are the Canvas chat GM assist for tabletop RPG modules — you help the GM run the table during play, and the STORY is your subject: the situation the party is in, the people in it and what they want, the consequences of what already happened, the pacing, and what the world does next.',
+  'The GM keeps you informed as play goes on: the GM tells you what just happened — what the party did, what they said, what they skipped, what they rolled badly on. Treat every such report as the LIVE STATE of the story: keep it straight, build on it, and never ask the GM to repeat it. The module document and the reference-only context below are what this table has written down — read them instead of asking the GM to retell them, and never claim to know what happened unless the GM said it.',
+  'YOUR DEFAULT ANSWER — unless the GM asks for something else — is 2-4 concrete ideas for what happens next: specific things an NPC does, a complication that lands, a consequence of what the party just did, a scene the story could turn to. Make them usable at the table right now (name who and what) and let them follow from what the GM told you; say plainly when an idea leans on something you were not told. When the GM does ask you to write or change the module text itself, use the commands below exactly as the module chat does — a passage you write lands in the module document and is saved.',
+].join('\n');
+
+/** The two framings, as the ONE system-prompt builder reads them. */
+const CHAT_FRAMINGS: Record<CanvasChatFraming, string> = {
+  module: MODULE_CHAT_FRAMING,
+  'gm-assist': GM_ASSIST_FRAMING,
+};
+
+/**
  * The fixed system prompt (08 §Module canvas chat): the XML protocol, the
  * whole-module doc-is-current contract, the scaffold rules (separator +
  * label lines never appear in a command; one command lives inside ONE
  * part), the empty-part label-anchor fill convention, the REFERENCE-ONLY
  * grounding rule, replace-all guidance, small-edit preference.
+ *
+ * ONE builder for BOTH surfaces (docs/17 row 362): only the FRAMING paragraph
+ * varies (`framing`), the protocol below it is the same for the module chat and
+ * for GM assist. The default keeps the module chat byte-identical — omitting
+ * `framing` is exactly what this function has always returned.
  */
-export function canvasChatSystemPrompt(): string {
+export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): string {
   return [
-    'You are the Canvas chat co-editor for tabletop RPG modules — an expert editor of GM-facing markdown prose.',
+    CHAT_FRAMINGS[framing],
     'You edit the WHOLE module — EVERY part of the parts document below — by replying with short conversational prose plus ZERO OR MORE XML edit commands:',
     '<edit all="false"><search>the exact current text</search><replace>the new text</replace></edit>',
     'Command rules:',
@@ -1444,8 +1505,12 @@ export function buildCanvasChatPayload(input: {
   grounding: string;
   instruction: string;
   history: { role: 'user' | 'assistant'; text: string }[];
+  /** The surface's framing (docs/17 row 362); omitted = the module chat. */
+  framing?: CanvasChatFraming | undefined;
 }): ChatMessage[] {
-  const messages: ChatMessage[] = [{ role: 'system', content: canvasChatSystemPrompt() }];
+  const messages: ChatMessage[] = [
+    { role: 'system', content: canvasChatSystemPrompt(input.framing) },
+  ];
   let previousRole: 'user' | 'assistant' | null = null;
   for (const entry of input.history) {
     if (entry.role === 'user') {
@@ -1507,12 +1572,15 @@ export function buildCanvasChatFollowUpPayload(input: {
   details?: string | undefined;
   /** The rendered `<change-results>` content (omitted when nothing was changed). */
   changeResults?: string | undefined;
+  /** The surface's framing (docs/17 row 362); omitted = the module chat. */
+  framing?: CanvasChatFraming | undefined;
 }): ChatMessage[] {
   const messages = buildCanvasChatPayload({
     document: input.document,
     grounding: input.grounding,
     instruction: input.instruction,
     history: input.history,
+    framing: input.framing,
   });
   messages.push({ role: 'assistant', content: input.requestedReply });
   messages.push({
@@ -2360,6 +2428,12 @@ export interface CanvasChatTurnInput {
   history: { role: 'user' | 'assistant'; text: string }[];
   /** The canvas model selection; falls back to Settings defaultChatModel. */
   model?: string | undefined;
+  /**
+   * WHICH canvas chat surface this turn is (docs/17 row 362): the framing its
+   * system prompt carries. Omitted = the module chat, byte-identical to the
+   * pre-framing contract.
+   */
+  framing?: CanvasChatFraming | undefined;
   /** The caller's per-turn controller. Required: the app-level sweep reaches
    * canvas turns through the `canvasBusy` abort registry, which pairs this
    * controller with the turn's model signal (so a sweep abort also fires the
@@ -2573,6 +2647,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       grounding,
       instruction,
       history: input.history,
+      framing: input.framing,
     });
     const { text: raw, modelUsed } = await chat(messages, {
       model,
@@ -2705,6 +2780,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       instruction,
       history: input.history,
       requestedReply: raw,
+      framing: input.framing,
       ...(wantsDetails ? { details: detailsBlock } : {}),
       ...(wantsChanges ? { changeResults: changeBlock } : {}),
     });

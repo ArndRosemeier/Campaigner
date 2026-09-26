@@ -2703,6 +2703,66 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   stays ENABLED while the preview is open (the live default view —
   preview turns need no editor).
 
+
+#### GM assist — a SECOND chat surface on the ONE pipeline (docs/17 row 362)
+
+Owner request, verbatim: *"I want to have a new module chat, called GM assist.
+It can reuse most of the current module chat (including the edit capabilitie),
+but is focused on helping the GM to actually life mastering. Meaning, the GM can
+tell it what the party does or what else just happened, and the chat will offer
+helpfull ideas what should happen now (as a default)."* — clarified by him as the
+STORY side of mastering (*"this is not about handling encounters, it's about the
+story side of Mastering, so it should live next to the current chat"*), with the
+GM keeping the chat informed about what actually happened.
+
+**It is a SURFACE, not a second chat.** The chat column hosts the SAME
+`ChatSidebar` with a two-button switcher at its top (`Module chat` / `GM assist`,
+`data-testid="canvas-chat-surface-module"` /
+`canvas-chat-surface-gm-assist`); the selection is PAGE state
+(`CanvasPage.chatSurface`) because the preview/report paths must resolve the same
+store key from it. What differs between the two chats is ONE value —
+`CanvasChatFraming` (`'module' | 'gm-assist'`) — and everything else is shared:
+the turn controller, the applier, the split-save, the busy registry and every
+edit protocol (`<edit>`, `<request>`, `<change>`, the adversarial review). A
+GM-assist turn that replies with `<edit>` lands in the module document through
+the same `chatApply` + `saveWholeModuleDocument` path, with the same outcome
+cards.
+
+- **The framing parameter.** `canvasChatSystemPrompt(framing = 'module')` is the
+  ONE system-prompt builder: the framing paragraph is chosen from
+  `CHAT_FRAMINGS`, the protocol below it is ONE shared literal, and the default
+  is byte-identical to the pre-362 module prompt — a golden captured from the
+  tree before the parameter landed holds it
+  (`tests/fixtures/gmAssistFraming/module-chat-golden.json`). The exported
+  `GM_ASSIST_FRAMING` states the role (live-mastering help; the story — the
+  situation, the people in it and what they want, consequences, pacing, what the
+  world does next), the INPUT MODEL (the GM tells it what just happened — what
+  the party did, said, skipped, rolled badly on — treated as the LIVE STATE of
+  the story, kept straight, built on, never re-asked for, never claimed unless
+  the GM said it) and the DEFAULT ANSWER (2-4 concrete ideas for what happens
+  next). It deliberately reads as a STORY tool: no encounters, battlemaps,
+  tokens, initiative or stat blocks. Slice 3 owns extra context (the live
+  battle) — this slice sends exactly what the module chat sends.
+- **The thread.** `chatStore.canvasChatKeyFor(moduleId, framing)` is the ONE key
+  resolver — the module chat keeps `canvasChatKey(moduleId)`, GM assist gets
+  `gmAssistKey(moduleId)` (`<moduleId>#gm-assist`) — and
+  `canvasChatThreadPersists(framing)` is the ONE rule that only the module
+  thread owns the row's `chatThread` half and the module's session Versions
+  ledger. **STATED LIMIT: the GM-assist thread is SESSION-ONLY in this slice** —
+  it dies on reload, the panel's empty state says so, and slice 2 owns
+  persisting it. A clear under one surface never reaches the other's messages,
+  the other's saved thread, or the shared ledger.
+- **Pins.** `tests/llm/gmAssistFraming.test.ts` (the module bytes, the GM
+  framing's role/input/default sentences asserted by name, its subject
+  discipline, and the SAME protocol tail under both framings);
+  `tests/architecture/one-canvas-chat-framing.test.ts` (a SOURCE SCAN: ONE
+  builder, ONE call site, exactly TWO role literals in ONE file, ONE engine with
+  ONE caller, ONE key resolver, ONE persistence predicate — a second prompt
+  literal reds by name); and the GM-assist describe in
+  `tests/features/canvas-chat.test.tsx` (each surface's system message asserted
+  BOTH ways, a turn AND a clear under one never reaching the other, the `<edit>`
+  path, and the GM framing on BOTH calls of a `<change>` round trip).
+
 ---
 
 ## M4-D — Integration & retirement

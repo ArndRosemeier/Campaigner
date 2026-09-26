@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { CanvasEditCommand } from '@/llm/canvasChat';
+import type { CanvasChatFraming, CanvasEditCommand } from '@/llm/canvasChat';
 
 /**
  * Canvas chat state (08-MODULE-DESIGNER §Module canvas chat): the per-MODULE
@@ -105,6 +105,25 @@ export interface CanvasChatModuleState {
 /** The chat state key: per MODULE — one conversation across part switches. */
 export function canvasChatKey(moduleId: string): string {
   return moduleId;
+}
+
+/**
+ * The GM-assist chat's state key (docs/17 row 362): its OWN conversation on
+ * the same module, beside the module chat. The suffix cannot collide with a
+ * module id (ids are uuids), so the two threads share the ONE store and the
+ * SAME sidebar while never sharing a message.
+ */
+export function gmAssistKey(moduleId: string): string {
+  return `${moduleId}#gm-assist`;
+}
+
+/**
+ * THE key resolver for a canvas chat surface (docs/17 row 362) — the ONE place
+ * a caller turns "which chat" into "which store key", so the sidebar and the
+ * page's preview/report paths can never disagree about it.
+ */
+export function canvasChatKeyFor(moduleId: string, framing: CanvasChatFraming): string {
+  return framing === 'module' ? canvasChatKey(moduleId) : gmAssistKey(moduleId);
 }
 
 interface CanvasChatStoreState {

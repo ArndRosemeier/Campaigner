@@ -15,6 +15,7 @@ import {
 import type { AnyArtifact, Id } from '@/domain';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
+import type { CanvasChatFraming } from '@/llm/canvasChat';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,7 +33,7 @@ import { ModelWidget } from '@/features/settings/model-widget';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import {
-  canvasChatKey,
+  canvasChatKeyFor,
   useCanvasChatStore,
   type CanvasChatMessage,
   type CanvasChatOutcome,
@@ -72,6 +73,16 @@ import { cn } from '@/lib/utils';
 
 export interface ChatSidebarProps {
   moduleId: Id;
+  /**
+   * WHICH canvas chat this sidebar shows (docs/17 row 362): the module
+   * co-editor or GM assist. The PAGE owns the selection (its preview/report
+   * paths turn it into the same store key), and everything the sidebar derives
+   * from it — the store key, the framing it sends, the panel copy — follows
+   * from this ONE value. There is no second sidebar.
+   */
+  surface: CanvasChatFraming;
+  /** The user picked the other chat (switcher): the page holds the selection. */
+  onSurfaceChange: (framing: CanvasChatFraming) => void;
   /** Pre-flight: a module without planned parts must not send. */
   hasPlannedParts: boolean;
   pool: readonly AnyArtifact[];
@@ -112,6 +123,8 @@ export interface ChatSidebarProps {
 
 export function ChatSidebar({
   moduleId,
+  surface,
+  onSurfaceChange,
   hasPlannedParts,
   pool,
   aiBusy,
@@ -124,7 +137,8 @@ export function ChatSidebar({
   onPreviewStop,
   onChatCleared,
 }: ChatSidebarProps): JSX.Element {
-  const chatKey = canvasChatKey(moduleId);
+  const gmAssist = surface === 'gm-assist';
+  const chatKey = canvasChatKeyFor(moduleId, surface);
   const state = useCanvasChatStore((store) => store.byModule[chatKey]);
   const settings = useLiveQuery(() => readSettings(), []);
   const [input, setInput] = useState('');
@@ -180,6 +194,7 @@ export function ChatSidebar({
         {
           moduleId,
           key: chatKey,
+          framing: surface,
           hasPlannedParts,
           modelSelection,
           turn: controller,
@@ -217,7 +232,7 @@ export function ChatSidebar({
       return;
     }
     try {
-      await clearModuleChat({ moduleId, key: chatKey });
+      await clearModuleChat({ moduleId, key: chatKey, framing: surface });
     } catch (error) {
       toastError(
         'Could not clear the chat — nothing was cleared; the saved thread is still on the module',
@@ -226,7 +241,11 @@ export function ChatSidebar({
       return;
     }
     onChatCleared?.();
-    toastSuccess('Chat cleared — the module text was not changed');
+    toastSuccess(
+      gmAssist
+        ? 'GM assist cleared — the module text and the module chat were not changed'
+        : 'Chat cleared — the module text was not changed',
+    );
   }
 
   /** Every editor turn (send + report) needs the live view; busy rethrows from the
@@ -269,6 +288,7 @@ export function ChatSidebar({
         {
           moduleId,
           key: chatKey,
+          framing: surface,
           hasPlannedParts,
           modelSelection,
           turn: controller,
@@ -293,6 +313,7 @@ export function ChatSidebar({
         {
           moduleId,
           key: chatKey,
+          framing: surface,
           hasPlannedParts,
           modelSelection,
           turn: controller,
@@ -309,9 +330,32 @@ export function ChatSidebar({
       className="flex h-full min-h-0 w-96 shrink-0 flex-col border-r bg-card"
       data-testid="canvas-chat"
     >
+      <div className="flex border-b" data-testid="canvas-chat-surface-switcher">
+        {(['module', 'gm-assist'] as const).map((option) => (
+          <Button
+            key={option}
+            variant="ghost"
+            className={cn(
+              'h-11 flex-1 rounded-none text-sm',
+              surface === option
+                ? 'bg-muted font-semibold text-foreground'
+                : 'text-muted-foreground',
+            )}
+            aria-pressed={surface === option}
+            data-testid={`canvas-chat-surface-${option}`}
+            onClick={() => {
+              onSurfaceChange(option);
+            }}
+          >
+            {option === 'module' ? 'Module chat' : 'GM assist'}
+          </Button>
+        ))}
+      </div>
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <MessageSquareTextIcon aria-hidden className="size-4 text-muted-foreground" />
-        <span className="font-heading text-sm font-semibold">Chat co-editor</span>
+        <span className="font-heading text-sm font-semibold">
+          {gmAssist ? 'GM assist' : 'Chat co-editor'}
+        </span>
         {inFlight && <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-muted-foreground" />}
         <Button
           variant="ghost"
@@ -346,12 +390,27 @@ export function ChatSidebar({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="canvas-chat-messages">
         {messages.length === 0 ? (
-          <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-            Ask for edits in plain language — the whole module is in context, so edits can land in
-            any part. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
-            blocks) that are applied to the document{previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
-            changed parts are saved to the module row.
-          </p>
+          gmAssist ? (
+            <p
+              className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+              data-testid="canvas-chat-gm-assist-intro"
+            >
+              Tell it what just happened — what the party did, said or skipped, how a roll went, what
+              an NPC is doing. It keeps the story straight and answers with 2-4 concrete ideas for
+              what happens next. It can edit the module text too, when you ask:{' '}
+              <code>&lt;edit&gt;</code> commands apply to the document
+              {previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
+              changed parts are saved to the module row. This chat lives in this browser session only
+              for now — it is not saved with the module and is gone after a reload.
+            </p>
+          ) : (
+            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+              Ask for edits in plain language — the whole module is in context, so edits can land in
+              any part. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
+              blocks) that are applied to the document{previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
+              changed parts are saved to the module row.
+            </p>
+          )
         ) : (
           <div className="flex flex-col gap-3">
             {messages.map((message) => (
@@ -380,9 +439,13 @@ export function ChatSidebar({
       )}
       <div className="flex items-end gap-2 border-t p-3">
           <Textarea
-            aria-label="Chat message"
+            aria-label={gmAssist ? 'GM assist message' : 'Chat message'}
             data-testid="canvas-chat-input"
-            placeholder="e.g. make the gate scene rainier · rename every mention of the old lord"
+            placeholder={
+              gmAssist
+                ? 'e.g. the party refused the Keeper\'s offer and threatened her · they skipped the cellar entirely'
+                : 'e.g. make the gate scene rainier · rename every mention of the old lord'
+            }
             value={input}
             rows={2}
             className="min-h-11"
@@ -445,16 +508,36 @@ export function ChatSidebar({
       <AlertDialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
         <AlertDialogContent data-testid="canvas-chat-clear-dialog">
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear this module&apos;s chat?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {gmAssist ? "Clear this module's GM assist chat?" : "Clear this module's chat?"}
+            </AlertDialogTitle>
             <AlertDialogDescription data-testid="canvas-chat-clear-description">
-              Cleared: this module&apos;s conversation and its outcome cards — in this session and in
-              the saved thread on the module — plus this module&apos;s session Versions list and the
-              last-replacement highlight.
-              <span className="mt-2 block font-medium text-foreground">
-                NOT cleared: the module&apos;s DOCUMENT TEXT. Edits the chat already applied are
-                saved content — this is not an undo, and the text will not roll back. To put text
-                back, restore a version from Versions (session-only by design).
-              </span>
+              {gmAssist ? (
+                <>
+                  Cleared: this module&apos;s GM assist conversation and its outcome cards, in this
+                  session — plus the last-replacement highlight.
+                  <span className="mt-2 block font-medium text-foreground">
+                    NOT cleared: the module chat&apos;s own conversation and its SAVED thread on the
+                    module (the two chats never share messages), this module&apos;s session Versions
+                    list (it carries BOTH chats&apos; undo and cannot tell them apart), and the
+                    module&apos;s DOCUMENT TEXT. GM assist is session-only for now, so there is no
+                    saved copy to clear. To put text back, restore a version from Versions
+                    (session-only by design).
+                  </span>
+                </>
+              ) : (
+                <>
+                  Cleared: this module&apos;s conversation and its outcome cards — in this session and
+                  in the saved thread on the module — plus this module&apos;s session Versions list and
+                  the last-replacement highlight.
+                  <span className="mt-2 block font-medium text-foreground">
+                    NOT cleared: the module&apos;s DOCUMENT TEXT, and the GM assist chat (its own
+                    conversation, session-only for now). Edits the chat already applied are saved
+                    content — this is not an undo, and the text will not roll back. To put text back,
+                    restore a version from Versions (session-only by design).
+                  </span>
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

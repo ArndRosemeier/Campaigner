@@ -329,6 +329,8 @@ describe('the canvas chat states why its controls cannot act', () => {
     render(
       <ChatSidebar
         moduleId={world.moduleId}
+        surface="module"
+        onSurfaceChange={() => undefined}
         hasPlannedParts
         pool={[]}
         aiBusy={props.aiBusy}

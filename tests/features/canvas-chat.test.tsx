@@ -36,8 +36,17 @@ import {
 } from '@/domain/modulePartsDocument';
 import {
   canvasChatKey,
+  gmAssistKey,
   useCanvasChatStore,
 } from '@/features/modules/canvas/chatStore';
+import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
+import {
+  GM_ASSIST_FRAMING,
+  canvasChatSystemPrompt,
+  sendCanvasChatMessage,
+  type CanvasChatChangeCommand,
+  type CanvasChatChangeContext,
+} from '@/llm/canvasChat';
 
 /**
  * Canvas CHAT sidebar — page flows (08-MODULE-DESIGNER §Module canvas
@@ -803,5 +812,178 @@ describe('canvas chat send key', () => {
     await flushAsyncUpdates();
     expect(chatMock).toHaveBeenCalledTimes(1);
     expect(input).toHaveValue('');
+  });
+});
+
+/**
+ * GM ASSIST — the second chat SURFACE on the ONE pipeline (docs/17 row 362).
+ *
+ * The owner asked for a module chat focused on live mastering, reusing the
+ * module chat wholesale "including the edit capabilitie". What is pinned here
+ * is that it is a SURFACE and not a second chat: the module surface sends the
+ * module framing and the GM surface the GM framing (both asserted, so neither
+ * can silently become the other), the two conversations never share a message,
+ * a clear under one never reaches the other (messages, the saved thread and
+ * the session ledger), and an `<edit>` from GM assist still applies through the
+ * SAME applier and split-save. The thread is session-only in this slice (slice
+ * 2 persists it) — the panel says so out loud.
+ */
+describe('GM assist (a second surface on the ONE chat, docs/17 row 362)', () => {
+  /** The system message of the Nth chat call (the framing under test). */
+  function systemOfCall(index: number): string {
+    const [messages] = chatMock.mock.calls[index] ?? [];
+    const system = messages?.[0];
+    if (system === undefined || typeof system.content !== 'string') return '';
+    return system.content;
+  }
+
+  async function switchSurface(
+    user: ReturnType<typeof userEvent.setup>,
+    surface: 'module' | 'gm-assist',
+  ): Promise<void> {
+    await user.click(screen.getByTestId(`canvas-chat-surface-${surface}`));
+  }
+
+  it('sends the GM framing from GM assist and the unchanged module framing from the module chat', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+
+    mockChatReply('Understood.');
+    await sendChat(user, 'the party arrived at the gate');
+    expect(systemOfCall(0)).toBe(canvasChatSystemPrompt());
+    expect(systemOfCall(0)).toContain('You are the Canvas chat co-editor for tabletop RPG modules');
+    expect(systemOfCall(0)).not.toContain(GM_ASSIST_FRAMING);
+
+    chatMock.mockClear();
+    await switchSurface(user, 'gm-assist');
+    mockChatReply('Idea one.\nIdea two.');
+    await sendChat(user, 'they refused the Keeper and threatened her');
+    expect(systemOfCall(0)).toBe(canvasChatSystemPrompt('gm-assist'));
+    expect(systemOfCall(0)).toContain(GM_ASSIST_FRAMING);
+    expect(systemOfCall(0)).not.toContain('You are the Canvas chat co-editor');
+  });
+
+  it('says out loud that the GM thread is session-only (the stated limit of this slice)', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    await switchSurface(user, 'gm-assist');
+    const intro = await screen.findByTestId('canvas-chat-gm-assist-intro');
+    expect(intro.textContent).toContain('not saved with the module');
+    expect(intro.textContent).toContain('gone after a reload');
+  });
+
+  it('keeps the two conversations apart: a turn and a clear under one never reach the other', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+
+    // A module turn that lands an edit too, so the session ledger has an entry
+    // the GM clear must NOT take away.
+    mockChatReply(
+      'Noted.\n<edit><search>Rain hammers the stones.</search><replace>Rain hammers the roof.</replace></edit>',
+    );
+    await sendChat(user, 'MODULE-INSTRUCTION');
+    await switchSurface(user, 'gm-assist');
+    mockChatReply('GM answer.');
+    await sendChat(user, 'GM-INSTRUCTION');
+
+    // The panel shows GM assist's own conversation ONLY.
+    const panel = screen.getByTestId('canvas-chat');
+    expect(within(panel).getByText('GM-INSTRUCTION')).toBeInTheDocument();
+    expect(within(panel).queryByText('MODULE-INSTRUCTION')).toBeNull();
+    expect(within(panel).getAllByTestId('canvas-chat-user-message')).toHaveLength(1);
+
+    // Two conversations in the ONE store, under two keys.
+    expect(useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).messages).toHaveLength(2);
+    expect(useCanvasChatStore.getState().module(gmAssistKey(world.moduleId)).messages).toHaveLength(2);
+
+    // The MODULE thread persists on the row; the GM one never reaches it (the
+    // persist gate asks `canvasChatThreadPersists`), even after flushing BOTH
+    // keys — there is no timer for the GM key at all.
+    await actDrained(() => flushChatPersist(canvasChatKey(world.moduleId)));
+    await actDrained(() => flushChatPersist(gmAssistKey(world.moduleId)));
+    const before = await actDrained(() => getModule(world.moduleId));
+    const texts = (before?.chatThread ?? []).map((entry) => entry.text);
+    expect(texts).toContain('MODULE-INSTRUCTION');
+    expect(texts).not.toContain('GM-INSTRUCTION');
+    const ledgerKey = canvasLedgerKey(world.moduleId, 0);
+    expect(useCanvasLedgerStore.getState().byPart[ledgerKey]?.versions).toHaveLength(1);
+
+    // CLEAR under GM assist: only the GM conversation goes. The module thread
+    // (store AND row) and the shared session ledger survive.
+    await user.click(screen.getByTestId('canvas-chat-clear'));
+    await user.click(await screen.findByTestId('canvas-chat-clear-confirm'));
+    await flushAsyncUpdates();
+    expect(useCanvasChatStore.getState().module(gmAssistKey(world.moduleId)).messages).toHaveLength(0);
+    expect(useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).messages).toHaveLength(2);
+    const after = await actDrained(() => getModule(world.moduleId));
+    expect((after?.chatThread ?? []).map((entry) => entry.text)).toContain('MODULE-INSTRUCTION');
+    expect(useCanvasLedgerStore.getState().byPart[ledgerKey]?.versions).toHaveLength(1);
+
+    // Switching back shows the module conversation, untouched.
+    await switchSurface(user, 'module');
+    expect(within(screen.getByTestId('canvas-chat')).getByText('MODULE-INSTRUCTION')).toBeInTheDocument();
+  });
+
+  it('applies an <edit> from GM assist through the SAME applier and split-save', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    await switchSurface(user, 'gm-assist');
+
+    mockChatReply(
+      'Rain it is.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
+    );
+    await sendChat(user, 'make it rain harder');
+
+    const view = activeCanvasView.current;
+    expect(view?.state.doc.toString()).toBe(
+      WHOLE_DOC.replace('Rain hammers the stones.', 'Rain drowns every word.'),
+    );
+    const card = await within(screen.getByTestId('canvas-chat')).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'applied');
+    const row = await actDrained(() => getModule(world.moduleId));
+    expect(row?.parts[0]?.markdown).toContain('Rain drowns every word.');
+    expect(row?.parts[0]?.edited).toBe(true);
+  });
+
+  it('carries the GM framing on BOTH calls of a round trip — the <change> half is the SAME engine', async () => {
+    mockChatReply(
+      '<change><name>Keeper Ilse</name><instruction>soften her</instruction></change>',
+    );
+    const executeChange = vi.fn(
+      (_change: CanvasChatChangeCommand, _context: CanvasChatChangeContext) =>
+        Promise.resolve({
+          status: 'unsupported' as const,
+          artifactId: null,
+          kind: null,
+          detail: 'mocked for the framing pin',
+        }),
+    );
+    const result = await actDrained(() =>
+      sendCanvasChatMessage({
+        moduleId: world.moduleId,
+        document: WHOLE_DOC,
+        instruction: 'soften the keeper',
+        history: [],
+        framing: 'gm-assist',
+        turn: new AbortController(),
+        executeChange,
+        reportChange: () => undefined,
+      }),
+    );
+    expect(result.changes?.status).toBe('ok');
+    expect(executeChange).toHaveBeenCalledTimes(1);
+    // The reply + the follow-up: both carry the GM framing, because the round
+    // trip is built by the SAME payload builders, threaded with the surface.
+    expect(chatMock.mock.calls).toHaveLength(2);
+    expect(systemOfCall(0)).toBe(canvasChatSystemPrompt('gm-assist'));
+    expect(systemOfCall(1)).toBe(canvasChatSystemPrompt('gm-assist'));
   });
 });

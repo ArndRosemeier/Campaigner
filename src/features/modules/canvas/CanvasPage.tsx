@@ -73,6 +73,7 @@ import {
   type ModuleVersionSource,
 } from '@/domain';
 import { cancelModuleGen, ModuleBusyError, repairModuleEncounterFloor } from '@/llm/moduleGen';
+import type { CanvasChatFraming } from '@/llm/canvasChat';
 import { getModule } from '@/db/moduleRepo';
 import {
   deriveAutomationDeviation,
@@ -96,7 +97,11 @@ import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
-import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
+import {
+  canvasChatKey,
+  canvasChatKeyFor,
+  useCanvasChatStore,
+} from '@/features/modules/canvas/chatStore';
 import { flushChatPersist, hydrateChatFromThread } from '@/features/modules/canvas/chatPersist';
 import {
   resolveCanvasScrollTarget,
@@ -348,6 +353,11 @@ export function CanvasPage(): JSX.Element {
   // by side, and the Edit affordance stays one click away.
   const chatKey = canvasChatKey(moduleId);
   const chatOpen = useCanvasChatStore((store) => store.module(chatKey).open);
+  // WHICH canvas chat the ONE sidebar shows (docs/17 row 362): session-only,
+  // and owned HERE because this page's preview/report paths must turn the same
+  // selection into the same store key (`canvasChatKeyFor`). Switching surfaces
+  // switches the key — the two threads never share a message.
+  const [chatSurface, setChatSurface] = useState<CanvasChatFraming>('module');
   const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? true);
   // The preview renders the doc AS OF THE TOGGLE (captured once) — or, on
   // first open (no toggle yet), the assembled/mount doc. While the preview
@@ -1203,14 +1213,16 @@ export function CanvasPage(): JSX.Element {
     }
   }
 
-  function snapshotTurnOptions(): {
+  function snapshotTurnOptions(framing: CanvasChatFraming): {
     key: string;
+    framing: CanvasChatFraming;
     modelSelection: string | null;
     hasPlannedParts: boolean;
   } {
-    const key = canvasChatKey(moduleId);
+    const key = canvasChatKeyFor(moduleId, framing);
     return {
       key,
+      framing,
       modelSelection: useCanvasChatStore.getState().module(key).modelSelection,
       hasPlannedParts: plans.length > 0,
     };
@@ -1233,11 +1245,12 @@ export function CanvasPage(): JSX.Element {
     const controller = new AbortController();
     previewAbortRef.current = controller;
     try {
-      const options = snapshotTurnOptions();
+      const options = snapshotTurnOptions(chatSurface);
       const result = await runSnapshotChatTurn(
         {
           moduleId,
           key: options.key,
+          framing: options.framing,
           hasPlannedParts: options.hasPlannedParts,
           doc: source,
           modelSelection: options.modelSelection,
@@ -1260,11 +1273,12 @@ export function CanvasPage(): JSX.Element {
     }
     const controller = new AbortController();
     previewAbortRef.current = controller;
-    const options = snapshotTurnOptions();
+    const options = snapshotTurnOptions(chatSurface);
     void reportSnapshotOutcome(
       {
         moduleId,
         key: options.key,
+        framing: options.framing,
         hasPlannedParts: options.hasPlannedParts,
         doc: source,
         modelSelection: options.modelSelection,
@@ -1299,11 +1313,12 @@ export function CanvasPage(): JSX.Element {
     }
     const controller = new AbortController();
     previewAbortRef.current = controller;
-    const options = snapshotTurnOptions();
+    const options = snapshotTurnOptions(chatSurface);
     void reportSnapshotMessage(
       {
         moduleId,
         key: options.key,
+        framing: options.framing,
         hasPlannedParts: options.hasPlannedParts,
         doc: source,
         modelSelection: options.modelSelection,
@@ -1801,6 +1816,8 @@ export function CanvasPage(): JSX.Element {
         {chatOpen && (
           <ChatSidebar
             moduleId={currentModule.id}
+            surface={chatSurface}
+            onSurfaceChange={setChatSurface}
             hasPlannedParts={plans.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
