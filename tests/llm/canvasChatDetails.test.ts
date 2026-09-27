@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -29,6 +32,7 @@ import {
   moduleSpineSchema,
   npcDataSchema,
   statBlockSchema,
+  storedSpellDataSchema,
   type Id,
 } from '@/domain';
 import { createCampaign } from '@/db/campaignRepo';
@@ -770,5 +774,137 @@ describe('the details payload builder (roles + one document)', () => {
     const twice = renderArtifactDetails({ artifact: encounter, requestedName: 'Salt Gate Ambush', moduleId: world.moduleId, extras });
     expect(once).toBe(twice);
     expect(once.startsWith('### Salt Gate Ambush — Encounter · owned by this module')).toBe(true);
+  });
+});
+
+/**
+ * SPELLCASTING REACHES THE CHAT (docs/17 row 375). `statBlockLines` — the ONE
+ * reader that turns a STORED stat block into the lines a chat model reads —
+ * used to emit nothing about spells at all, so a chat shown a caster (an NPC,
+ * or the player character docs/17 row 373 made generatable) silently saw no
+ * spell list and could not answer what the character can cast.
+ *
+ * The bounds these pins hold, and why: the reader emits the STORED assignment
+ * (name + cast rank) rather than the card's library resolution —
+ * `domain/mobSpells.mobSpellChips` needs the campaign's spell index, which this
+ * prompt builder does not carry — and it NEVER renders the copy-only
+ * `spellData` payload (the full library entry), because that would bloat every
+ * prompt that mentions a caster. Both are asserted, not described.
+ */
+describe('spellcasting reaches the chat (docs/17 row 375)', () => {
+  /** A string that exists ONLY inside the copied assignment's `spellData`
+   * payload, so its absence from the rendered lines is provable. */
+  const SPELL_PAYLOAD_SENTINEL = "evocation · 8d6 fire in a 20-foot radius · Player's Handbook p. 241";
+
+  /** The no-spellcasting golden: captured from the tree BEFORE the row-375
+   * reader change, so "a non-caster renders byte-identically" is a real
+   * comparison rather than a restatement of the new code. */
+  const NPC_NO_SPELLS_GOLDEN = join(
+    import.meta.dirname,
+    '..',
+    'fixtures',
+    'canvasChatStatblock',
+    'npc-no-spells.txt',
+  );
+
+  function casterStatBlock() {
+    return statBlockSchema.parse({
+      ...statBlock(),
+      spellDC: 18,
+      spellAttack: 8,
+      tradition: 'arcane',
+      spells: [
+        {
+          name: 'Fireball',
+          castRank: 3,
+          // The COPY-ONLY payload (docs/17 row 255c): a copied assignment
+          // carries the whole library entry. The reader must read `name` and
+          // `castRank` and never this.
+          spellData: storedSpellDataSchema.parse({
+            system: 'dnd5e',
+            rank: 3,
+            cantrip: false,
+            cast: {},
+            heighteningUnparsed: [SPELL_PAYLOAD_SENTINEL],
+          }),
+        },
+        { name: 'Shield', castRank: 1 },
+        // No cast rank: a cantrip's own rank is the rule's to derive, so the
+        // reader prints the name alone rather than inventing one.
+        { name: 'Ray of Frost' },
+      ],
+    });
+  }
+
+  async function seedCaster(): Promise<void> {
+    await createArtifact({
+      campaignId: world.campaignId,
+      moduleId: world.moduleId,
+      kind: 'npc',
+      name: 'Archmage Vell',
+      summary: 'A caster with a spell list.',
+      data: npcDataSchema.parse({ appearance: '', personality: '', statBlock: casterStatBlock() }),
+    });
+  }
+
+  it('renders every spell NAME with its cast rank, the caster line — and NEVER the spellData payload', async () => {
+    await seedCaster();
+    const pool = await listArtifactsByCampaign(world.campaignId);
+    const { answers, block } = await resolveChatDetailsRequests({
+      requests: [{ name: 'Archmage Vell' }],
+      moduleId: world.moduleId,
+      pool,
+    });
+    expect(answers[0]?.status).toBe('answered');
+    // The three stated caster fields, through the SAME selector the card's
+    // line uses (`domain/statblock.casterStatFields`).
+    expect(block).toContain('Spellcasting: Spell DC 18 · spell attack +8 · tradition arcane');
+    expect(block).toContain('Spells:');
+    expect(block).toContain('- Fireball (cast rank 3)');
+    expect(block).toContain('- Shield (cast rank 1)');
+    expect(block).toContain('- Ray of Frost');
+    // The copy-only library payload is the FULL spell text — deliberately never
+    // rendered (a future edit reaching for it here is the defect this pins).
+    expect(block).not.toContain(SPELL_PAYLOAD_SENTINEL);
+    expect(block).not.toContain('spellData');
+  });
+
+  it('a block with NO spellcasting is byte-identical to the golden captured BEFORE the reader change', async () => {
+    const pool = await listArtifactsByCampaign(world.campaignId);
+    const ilse = pool.find((artifact) => artifact.id === world.npcId);
+    if (ilse === undefined) throw new Error('unreachable — the seeded NPC must exist');
+    const extras = { byId: new Map(pool.map((artifact) => [artifact.id, artifact] as const)) };
+    const section = renderArtifactDetails({
+      artifact: ilse,
+      requestedName: 'Keeper Ilse',
+      moduleId: world.moduleId,
+      extras,
+    });
+    expect(section).toBe(readFileSync(NPC_NO_SPELLS_GOLDEN, 'utf8'));
+    expect(section).not.toContain('Spellcasting:');
+    expect(section).not.toContain('Spells:');
+  });
+
+  it('the caster\'s spell list reaches the MODEL through the real chat-prompt path', async () => {    await seedCaster();
+    chatMock
+      .mockResolvedValueOnce({
+        text: 'Let me check the archmage.\n<request><name>Archmage Vell</name></request>',
+        modelUsed: 'first-call-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({ text: 'Noted.', modelUsed: 'second-call-model', fallback: null });
+    const result = await sendCanvasChatMessage(baseInput());
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(servedDetails(result).answers[0]?.status).toBe('answered');
+    // The SECOND call is the one that carries the requested details; the pin is
+    // on the prompt the model actually receives, not on `statBlockLines`.
+    const second = payloadTextOf(1);
+    expect(second).toContain('Spellcasting: Spell DC 18 · spell attack +8 · tradition arcane');
+    expect(second).toContain('- Fireball (cast rank 3)');
+    expect(second).toContain('- Shield (cast rank 1)');
+    expect(second).toContain('- Ray of Frost');
+    expect(second).not.toContain(SPELL_PAYLOAD_SENTINEL);
+    // The FIRST call never carried the details at all.
+    expect(payloadTextOf(0)).not.toContain('Fireball (cast rank 3)');
   });
 });

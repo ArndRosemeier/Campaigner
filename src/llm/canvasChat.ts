@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import type { AnyArtifact, ArtifactKind, Id, Module, MonsterEntry, StatBlock } from '@/domain';
-import { ARTIFACT_KIND_SINGULAR, sameAliasName } from '@/domain';
+import { ARTIFACT_KIND_SINGULAR, casterStatFields, sameAliasName } from '@/domain';
 import { canvasPartLabel, splitModulePartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -1707,6 +1707,40 @@ function statBlockLines(statBlock: StatBlock, indent: string): string[] {
   if (extras.length > 0) {
     lines.push(`${indent}Extras:`);
     for (const [key, value] of extras) lines.push(`${indent}  - ${key}: ${value}`);
+  }
+  // SPELLCASTING (docs/17 row 375). Before this row the reader emitted NOTHING
+  // about a caster's spells, so a chat shown an NPC's — or the player
+  // character's — stored block silently saw no spell list and could not answer
+  // what the character can cast. Two deliberate bounds:
+  //
+  // (1) THE STORED ASSIGNMENT, NOT A LIBRARY RESOLUTION. The card/chips resolve
+  //     through the ONE rule seam `domain/mobSpells.mobSpellChips`, which needs
+  //     the campaign's spell index; this prompt builder does not carry one, and
+  //     threading the library through every details/grounding renderer is a
+  //     wider change than this defect. The chat's job is to tell the model what
+  //     the character KNOWS, not to restate the rules VALUES the card already
+  //     computes from the library, so it renders the assignment's own name and
+  //     cast rank. It still shares the caster-line FIELDS with the card through
+  //     `domain/statblock.casterStatFields`, so DC/attack/tradition cannot be
+  //     spelled two ways.
+  // (2) THE `spellData` PAYLOAD IS NEVER RENDERED. A copied assignment may carry
+  //     the full library entry (`domain/statblockFields.COPIED_SPELL_ENTRY_KEY`,
+  //     a copy-only key) — printing it would bloat every chat prompt that
+  //     mentions a caster with a whole spell document it does not need. This
+  //     reader reads `name` and `castRank` ONLY; reaching for `spellData` here
+  //     (or for the other assignment keys) is a defect, not an enrichment.
+  const caster = casterStatFields(statBlock);
+  if (caster.length > 0) lines.push(`${indent}Spellcasting: ${caster.join(' · ')}`);
+  const spells = statBlock.spells ?? [];
+  if (spells.length > 0) {
+    lines.push(`${indent}Spells:`);
+    for (const spell of spells) {
+      const rank =
+        spell.castRank === null || spell.castRank === undefined
+          ? ''
+          : ` (cast rank ${String(spell.castRank)})`;
+      lines.push(`${indent}  - ${spell.name}${rank}`);
+    }
   }
   return lines;
 }

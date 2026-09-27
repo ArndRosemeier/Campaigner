@@ -666,6 +666,7 @@ test) · ❌ gap.
 | **EVERY campaign player is on EVERY battle board, always** (docs/17 row 308): a statless PC gets a token staged beside the statful ones with its own HP and no invented stats; a RE-seed keeps exactly the campaign's count; a battle seeded BEFORE the players were created gains them through the OPEN seam (`openEncounterBattle`) while `getBattleForEncounter` alone adds nothing and an unchanged open writes nothing; the lookup resolves the statless PC with `maxHp: null` and `initiativeBonus = initiativeOverride ?? 0` so it rolls initiative; the surface shows its HP with no invented ceiling and no "no stats" badge; and a new PC is born at 20 HP | `battleSeed.test` (seed/re-seed/statless resolution), `battleRepo.test` (the inverted statless pin + the OPEN-path pair), `battle-engine.test` (the pure name-only arm + membership/roll), `battle-surface.test` (the rendered readout), `open-encounter-battle.test` (the trigger's unit pin), `pc-artifact.test` (the 20 HP default) | ✅ REVERT-PROVEN (five injections, each `tsc -b` exit 0, every file restored byte-identically: the statless drop back in `pcFightersOf` → RED 4; `fighterStatsFromPc` returning undefined for a statless PC → RED 4; the open-path trigger removed → RED 2; `currentHp: 0` → RED 1; the readout's `maxHp` printed for a null maximum → RED 1 — raw arms `.gate-logs/row308-diff/`) |
 | **THE PLAYER CHARACTER ASSISTANT** (docs/17 row 373): the player card's dead "Generate with AI" is LIVE through the EXISTING refill lane; `resolveRefillPersona(personas, 'pc')` is exactly `pc-smith` and `pc-smith` is the ONLY built-in producing `pc`; a `pc` run RUNS the stat-block step (the plan's gate now admits `npc` and `pc` only); the PC stat-block prompt states the FORMAT and carries NONE of the three NPC limits (no corpus whitelist, no "2 cantrips" caster clause, no `"extras"` line the strict schema could not carry) while the NPC prompt with the SAME library is BYTE-IDENTICAL to a golden captured at the base tree `42cd064`; an unlisted PC spell keeps its name with NO repair turn and NO "Unresolved mob spells" notice (the NPC lane with the same library and the same name DOES both — the non-vacuity arm); a refill writes INTO the pc row and leaves `playerName`/`currentHp`/`initiativeOverride` byte-identical (and the target's own summary/body/`notes` reach the draft prompt); a module level hint neither binds nor rejects a PC's block while the NPC lane in the same module still is bound, repaired and rejected; `pcDraftSchema` has no `concept` and no `needsStatBlock`, and a statless PC row stays legal; and `mobCasterLevel` is the mechanical reason the PC format asks for a BARE numeric level (a `"Wizard 3"` level makes an in-library cantrip a spurious chip issue) | `llm/pc-assistant.test.ts` (7 pins, NEW), `llm/mob-spells-lanes.test.ts` (+ the with-corpus NPC byte-identity pin), `llm/personaDescriptionClause.test.ts` (pc-smith joins the EXEMPT capture), `llm/draftSchemas.test.ts` (the pc shape), `db/personaSeed.test.ts` (membership, order-independent) | ✅ focused GREEN: 10 files / 131 tests in-turn (plus `tests/architecture` 38/38 after the `realSpell` fold) — **INJECTION ARMS NOT RUN BY THE WRITER; owed to the dispatcher's verification.** The NPC byte-identity is PROVEN base-vs-post: the same harness run with the three spell-seam `src/` files stashed at `42cd064` produced `d779da58…` (with corpus) and `0b47403c…` (without), byte-identical to the post-change run (raw captures `.gate-logs/row373/`) |
 | **THE REFILL REQUEST IS NEVER SILENTLY DROPPED** (docs/17 row 374, docs/18 §2/§5): the panel's refill effect tells "the persona list has not loaded yet" (wait, silently, KEEP the request) apart from "loaded, and nothing claims this kind" (raise the ONE house error surface `toastError` NAMING the kind, then CLEAR the request); with the list loaded and no persona producing the requested kind, `toastError` fires EXACTLY ONCE and the request is cleared from the store; a request placed BEFORE mount survives the unloaded pass with no toast and is CLAIMED when the list resolves; and a kind that HAS a persona still selects it, targets the row, clears the box and raises NO toast (the unchanged path) | `features/persona-refill-unclaimed.test.tsx` (3 pins, NEW — through the REAL panel with the existing `@/lib/toast` surface mocked) | ✅ REVERT-PROVEN (one arm: the effect collapsed back to the old one-line conflation in `persona-panel.tsx`, sha256 `1bed6ec7…` before and after and restored byte-identically by hash → **RED 1 = the loaded-and-unclaimed pin**; the not-loaded and happy-path arms stayed GREEN, which is the asymmetry the fix creates) |
+| **THE CHAT'S STAT-BLOCK READER EMITS SPELLCASTING** (docs/17 row 375, docs/18 §2/§5): `canvasChat.statBlockLines` renders `Spellcasting: <spell DC · spell attack · tradition>` (the stated fields only, through the ONE `domain/statblock.casterStatFields`) and `Spells:` with every STORED assignment as `- <name> (cast rank <n>)`, name-only when no rank is stated, and NEVER the copy-only `spellData` payload (its own sentinel string is asserted absent); a block with NO spellcasting is BYTE-IDENTICAL to a golden captured from the tree BEFORE the change (655 B, sha256 `c860e67a…`); and the caster's list reaches the MODEL through the REAL chat-prompt path (a `sendCanvasChatMessage` round trip, the SECOND call's payload) — not by calling the reader directly; the three caster FIELDS are shared with the card's line through `casterStatFields`, whose refactor keeps `casterStatLine`'s bytes (the card + both PDF boxes' existing pins green) | `llm/canvasChatDetails.test.ts` (+3 pins, the existing seed/helpers reused), `fixtures/canvasChatStatblock/npc-no-spells.txt` (NEW golden, captured PRE-change), `domain/statblock-caster.test.ts`, `features/statblock-caster.test.tsx`, `lib/mob-spells-pdf.test.ts` (the unchanged caster line) | ✅ REVERT-PROVEN (one arm: the whole spellcasting emission removed from `canvasChat.ts`, sha256 `db894daa…` before and after and restored byte-identically by hash → **RED 2 = the rendered-spells pin and the real-chat-prompt pin**; the non-caster golden arm stayed GREEN, which is the control it is for). **NO chat-prompt golden moved:** the only one (`gmAssistFraming/module-chat-golden.json`) carries no `statBlockLines` output, and `llm/gmAssistFraming.test.ts` + `llm/canvasChat.test.ts` are green unedited |
 | A CAST creature (`creatureRef`, no stored block) in an encounter resolves in battle — the DERIVED stats are frozen under the artifact id, `statless` stays empty, and the fighter-stats lookup returns them (docs/17 row 239) | `battleSeed.test` (`resolves a CAST creature (creatureRef) instead of badging it statless`) | ✅ REVERT-PROVEN (stashing the freeze reds it `expected [] to deeply equal [ObjectContaining{…}]`) |
 | Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
 | Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `settings-page.test`, `images-ui.test` | ✅ |
@@ -9463,3 +9464,64 @@ above the refill effect has the SAME conflated shape
 different consequence, it is not covered by this row's brief or pins, and
 folding it here would silently change a second surface — so it is queued (see
 docs/18 §5) rather than taken.
+
+## The chat's stat-block reader emits spellcasting: the stored assignment, never the payload (docs/17 row 375, docs/18 §2/§5)
+
+THE PIN FAMILY is three tests appended to the EXISTING details harness
+`tests/llm/canvasChatDetails.test.ts` (no new file, no copied helper — the same
+seeded world, `baseInput`, `payloadTextOf` and `servedDetails` the file already
+uses):
+
+1. **(a) THE RENDER.** A caster NPC (spell DC 18, spell attack +8, tradition
+   `arcane`) renders `Spellcasting: Spell DC 18 · spell attack +8 · tradition
+   arcane`, a `Spells:` header and one line per STORED assignment —
+   `- Fireball (cast rank 3)`, `- Shield (cast rank 1)` and the rankless
+   `- Ray of Frost` (a cantrip's rank is the rule's to derive, so the reader
+   never invents one). The Fireball assignment carries the copy-only
+   `spellData` payload (docs/17 row 255c) whose own text contains a sentinel
+   string: the rendered block contains NEITHER that sentinel NOR the literal
+   `spellData`.
+2. **(b) THE BYTE-IDENTITY ARM.** A block with NO spellcasting renders exactly
+   the golden `tests/fixtures/canvasChatStatblock/npc-no-spells.txt` (655 bytes,
+   sha256 `c860e67a964e5059cd92fd773a75c7a156a2c421033f5e677f6e39765ce07252`),
+   captured from the tree BEFORE the reader change (the two `src/` files were
+   stashed, the capture ran, the stash was popped) and re-captured afterwards
+   to `.gate-logs/row375/npc-block-post.txt`: the two files are BYTE-IDENTICAL
+   (`cmp`, equal sha256). This is the control — it passes with and without the
+   change.
+3. **(c) THE MODEL ACTUALLY SEES IT.** A full `sendCanvasChatMessage` round trip
+   whose first reply carries `<request><name>Archmage Vell</name></request>`
+   asserts the SECOND call's payload (the prompt the model really receives)
+   carries the `Spellcasting:` line and all three spell lines, with the payload
+   sentinel absent. The pin is on the shipped prompt path, not on the pure
+   reader.
+
+**THE ARM (watched red by the writer, hashes printed, file restored
+byte-identically).** The whole spellcasting emission was removed from
+`src/llm/canvasChat.ts` — sha256
+`db894daa869e868f8e4348db6b4e0d119612f55dc4bbd840e3253d92373c7917` before and
+after, restored from a hash-verified copy that was then removed. Result: **RED 2
+= pins (a) and (c)**; pin (b), the non-caster golden, stayed GREEN — exactly the
+control it is for.
+
+**WHICH GOLDEN MOVED: NONE.** The only chat-prompt golden in the tree
+(`tests/fixtures/gmAssistFraming/module-chat-golden.json`, docs/17 row 362) was
+grepped before the change: it does NOT carry a `statBlockLines` output (its
+rendered detail for «Keeper Ilse» is the compact `level 4, CR 2` request
+summary, a different renderer), and `tests/llm/gmAssistFraming.test.ts` (7 pins)
+and `tests/llm/canvasChat.test.ts` (61 pins) are green with zero edits. The one
+golden this row adds is a PRE-CHANGE capture, never a re-capture.
+
+**THE CENTRALIZATION, STATED.** The three stated caster FIELDS (spell DC, spell
+attack, tradition) are selected by ONE exported seam,
+`domain/statblock.casterStatFields`; `casterStatLine` (the card and both PDF
+boxes) was refactored onto it and its bytes are unchanged (its three existing
+test files stay green), and `statBlockLines` uses the SAME selector for its
+`Spellcasting:` line. The chat deliberately does NOT call
+`domain/mobSpells.mobSpellChips`: that resolver needs the campaign's spell
+INDEX, which this pure prompt builder does not carry, and threading the library
+through every details/grounding renderer is a wider change than the defect. The
+chat renders the STORED assignment — it tells the model what the character
+KNOWS, not the rules VALUES the card computes from the library. That boundary,
+and the ban on ever rendering the copy-only `spellData` payload, are in a
+comment at the render site.

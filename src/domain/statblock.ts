@@ -149,25 +149,44 @@ export function statBlockStatesNoSpellDc(statBlock: StatBlock): boolean {
 }
 
 /**
- * THE caster line a stat block renders (docs/17 row 201): the stated numbers,
- * or the LOUD marker when the caster stated no DC. `null` for a non-caster, so
- * every surface is unchanged for a mundane or legacy block. ONE composer — the
- * card and both PDF stat boxes render exactly these bytes, so the screen and
- * the printed book cannot disagree about a mob's spell DC.
+ * THE caster line's STATED fields, each present only when the block states it:
+ * `Spell DC 25`, `spell attack +17`, `tradition arcane` (docs/17 row 201). THE
+ * one selector: `casterStatLine` (the card and both PDF stat boxes) and
+ * `llm/canvasChat.statBlockLines` (the model-facing sheet reader, docs/17 row
+ * 375) both build from it, so the three fields cannot be spelled twice or
+ * drift. Empty for a mundane or legacy block.
+ *
+ * The MISSING-DC marker is deliberately NOT here: it is a UI/print affordance
+ * that `casterStatLine` adds on top, while the chat reader OMITS what a block
+ * does not state rather than printing a marker into a prompt (row 375).
  */
-export function casterStatLine(statBlock: StatBlock): string | null {
-  if (!statBlockIsCaster(statBlock)) return null;
-  const parts: string[] = [
-    statBlock.spellDC === null || statBlock.spellDC === undefined
-      ? SPELL_DC_MISSING_MARKER
-      : `Spell DC ${String(statBlock.spellDC)}`,
-  ];
+export function casterStatFields(statBlock: StatBlock): string[] {
+  const parts: string[] = [];
+  if (statBlock.spellDC !== null && statBlock.spellDC !== undefined) {
+    parts.push(`Spell DC ${String(statBlock.spellDC)}`);
+  }
   if (statBlock.spellAttack !== null && statBlock.spellAttack !== undefined) {
     parts.push(`spell attack ${formatModifier(statBlock.spellAttack)}`);
   }
   const tradition = statBlock.tradition?.trim() ?? '';
   if (tradition !== '') parts.push(`tradition ${tradition}`);
-  return parts.join(' · ');
+  return parts;
+}
+
+/**
+ * THE caster line a stat block renders (docs/17 row 201): the stated numbers,
+ * or the LOUD marker when the caster stated no DC. `null` for a non-caster, so
+ * every surface is unchanged for a mundane or legacy block. ONE composer — the
+ * card and both PDF stat boxes render exactly these bytes, so the screen and
+ * the printed book cannot disagree about a mob's spell DC. The DC slot is
+ * ALWAYS the first part: the stated DC, or the marker that says the caster
+ * stated none.
+ */
+export function casterStatLine(statBlock: StatBlock): string | null {
+  if (!statBlockIsCaster(statBlock)) return null;
+  const stated = casterStatFields(statBlock);
+  const missingDc = statBlock.spellDC === null || statBlock.spellDC === undefined;
+  return (missingDc ? [SPELL_DC_MISSING_MARKER, ...stated] : stated).join(' · ');
 }
 
 /**
