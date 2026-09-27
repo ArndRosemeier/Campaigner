@@ -95,6 +95,38 @@ Rules:
     isolated. No assertion moved, nothing is skipped, and the guard is
     untouched; the row-165 `act`-wrapped `afterEach` drain stays as the tail
     settle only.
+  - **…and the FOURTH shape of the same window: a live query whose first
+    non-default value arrives WITH the test's own awaited write (docs/17 row
+    372).** `feature-shell-and-editor.test.tsx` → "a SECOND encounter in the
+    same module gets its OWN board and leaves the first untouched (owner repro)"
+    reddened in a union gate with `An update to RunBattleButton inside a test
+    was not wrapped in act(...)` (`run-battle.tsx:41`, mounted from
+    `EncounterRunAction`) and passes 51/51 isolated. There is no foreign
+    cascade: `RunBattleButton` stays MOUNTED for the whole test (only the
+    `LocationProbe` is route-driven) and its `useLiveQuery(getBattleForEncounter
+    (…))` resolves `undefined` at mount, so the PRESS's own seed write is what
+    makes it re-emit — a delivery the test neither awaits nor controls, landing
+    wherever the event loop next turns: inside the act-DISABLED `waitFor` on an
+    idle box, inside the test's raw post-seed row reads on a busy one. The
+    trailing `flushAsyncUpdates()` cannot cover it, because the warning fires
+    DURING the body (the row-178 lesson, one window later). **Reproduced by
+    DELAYING THE CAUSE, not by load:** 120 ms (and again 250 ms) injected into
+    `db/battleRepo.getBattleByEncounter` — the read the button's liveQuery awaits
+    AND the read the test's own assertions call, which is exactly what a busy box
+    does to it — reds the undrained form with the guard's exact entry, and the
+    same injection is green with the cure (120 ms 3/3, 250 ms 1/1); with no delay
+    the undrained form is green, so the delay is the whole difference. **Cure:**
+    the three post-seed reads run through `actDrained` (this file's own idiom for
+    this button, line ~419), assertions byte-identical. **The inverse is
+    measured too, and is why this bullet is not a licence to wrap every read:**
+    the undrained form with 300 ms injected into `getBattleForEncounter` ALONE
+    (the liveQuery's path only, so the delivery lands later than the whole body)
+    is GREEN — an update scheduled after the body's last await finds the
+    component unmounted and never warns. A delivery later than the test is not a
+    window, so the picker sibling with the same bare-read shape was measured
+    under the same injection, came back green (its only `RunBattleButton` lives
+    in the dialog that unmounts on the close the test waits out) and was
+    deliberately NOT edited.
 - **Base UI dialogs add timed updates of their own**: opening schedules a
   transition-reset `requestAnimationFrame` (DialogRoot's state) and closing
   unmounts the popup on a timer. Under an open dialog, raw awaited reads need

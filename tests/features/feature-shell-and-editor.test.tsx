@@ -519,11 +519,25 @@ describe('editor-run-battle.test.tsx', () => {
           battlePath(campaignId, crypt.id, owned.id),
         );
       });
+      // The raw row reads below sit exactly where the seed's liveQuery cascade
+      // lands: RunBattleButton stays MOUNTED (only the LocationProbe is
+      // route-driven) and its `getBattleForEncounter` query re-emits the moment
+      // this encounter's board exists, so a bare `await` hands that delivery the
+      // event loop OUTSIDE act and the console guard fails this test with
+      // `An update to RunBattleButton … was not wrapped in act(...)`. On an idle
+      // machine the same delivery lands inside `waitFor` (whose asyncWrapper
+      // disables the act environment) instead — which is why this only reds
+      // under load. Every read goes through `actDrained` (docs/08-TESTING.md
+      // §Console guard), so the window is act-scoped whenever it resolves.
+      const boardCount = await actDrained(() =>
+        db.battles.where('moduleId').equals(crypt.id).count(),
+      );
+      const second = await actDrained(() => getBattleByEncounter(owned.id));
+      const first = await actDrained(() => getBattleByEncounter(encounter.id));
       // TWO boards in ONE module, each owned by its own encounter…
-      expect(await db.battles.where('moduleId').equals(crypt.id).count()).toBe(2);
-      expect((await getBattleByEncounter(owned.id))?.encounterArtifactId).toBe(owned.id);
+      expect(boardCount).toBe(2);
+      expect(second?.encounterArtifactId).toBe(owned.id);
       // …and the first encounter's board is byte-untouched — nothing re-seeded.
-      const first = await getBattleByEncounter(encounter.id);
       expect(first?.id).toBe(running.id);
       expect(first?.board.activeIndex).toBe(2);
       await flushAsyncUpdates();
