@@ -27,7 +27,9 @@ export const REFILL_PERSONA_SLUGS: Readonly<Partial<Record<ArtifactKind, string>
 };
 
 /** The generate-mode persona that refills artifacts of `kind` (undefined =
- * none exists — the panel leaves the request unclaimed and says nothing). */
+ * none exists — the panel then reports it through `toastError`, NAMING the
+ * kind, and clears the request; docs/17 row 374. It is never a silent drop,
+ * and it is never confused with "the persona list has not loaded yet"). */
 export function resolveRefillPersona(
   personas: readonly Persona[],
   kind: ArtifactKind,

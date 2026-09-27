@@ -269,9 +269,23 @@ export function PersonaPanel({
   const clearRefillRequest = useContentRefillRequest((state) => state.clear);
   useEffect(() => {
     if (refillRequestId === null || refillKind === null) return;
-    const persona =
-      personas === undefined ? undefined : resolveRefillPersona(personas, refillKind);
-    if (persona === undefined) return; // personas not loaded yet
+    // TWO DIFFERENT WORLDS USED TO SHARE ONE `return` HERE (docs/17 row 374),
+    // and that is how the button died silently: `personas === undefined` means
+    // the live query has not resolved — returning is right, the effect re-runs
+    // when the list arrives and the request must be KEPT — while a LOADED list
+    // that resolves to no persona is a FINAL answer (no assistant for this
+    // kind, or the canonical persona's own row is missing / not generate mode).
+    // The second case must SPEAK through the ONE error surface and CLEAR the
+    // request, or a stale unclaimed request sits in the store forever.
+    if (personas === undefined) return; // not loaded yet — wait, keep the request
+    const persona = resolveRefillPersona(personas, refillKind);
+    if (persona === undefined) {
+      toastError(
+        `Could not refill this ${ARTIFACT_KIND_SINGULAR[refillKind]} — no assistant persona can generate it.`,
+      );
+      clearRefillRequest();
+      return;
+    }
     setPersonaId(persona.id);
     setTargetArtifactId(refillRequestId);
     // The box starts EMPTY: it carries only the OWNER'S instruction for this
