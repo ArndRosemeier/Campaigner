@@ -304,6 +304,51 @@ describe('foundry-pf2e-rules adapter', () => {
     ]);
   });
 
+  it('STILL names a miss for a heading shape the VALUE pattern cannot read under ANY emphasis tag (docs/17 row 370)', async () => {
+    // THE ANTI-LOOSENING PIN. Row 370 anchored the miss probe to heading
+    // MARKUP (it used to be the bare word, which matched running prose), so the
+    // one thing that must not change is this: a section that IS in the
+    // document's own markup while the VALUE pattern reads nothing is still
+    // NAMED. `<b>` here is deliberately NOT what the corpus ships (every one of
+    // the 1,994 real headings is `<strong>`), so it also proves the probe is
+    // looser than the VALUE pattern rather than a copy of it.
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes(
+        '<p>Base text.</p>\n<p><b>Heightened (special)</b> As listed in the summon trait.</p>',
+      ),
+    );
+    expect(parsed.failures).toEqual([
+      {
+        file: 'spells/spells/rank-2/synthetic-bolt.json',
+        name: 'Synthetic Bolt',
+        message:
+          '"Heightened" is present in this document\'s own markup, but the spell ' +
+          'reader did not match it — that section was not read (docs/17 row 294)',
+      },
+    ]);
+    const entry = (parsed.sections ?? [])[0];
+    expect(entry?.spell?.heighteningEntries).toEqual([]);
+    expect(entry?.spell?.heighteningUnparsed).toEqual([
+      'Heightened (special) As listed in the summon trait.',
+    ]);
+  });
+
+  it('is SILENT for a spell that only mentions heightening in running prose (an ABSENCE, docs/17 row 370)', async () => {
+    // The same document as the miss pin above, minus the heading: the word in a
+    // sentence is not a section, so there is no issue AND no unread line.
+    const parsed = await foundryPf2eRulesAdapter.parseFile(
+      'spells/spells/rank-2/synthetic-bolt.json',
+      syntheticSpellBytes(
+        '<p>Base text.</p><p>This has the effect of @UUID[Compendium.pf2e.spells-srd.Item.Illusory Scene] on the area, as if heightened to a rank 1 rank lower.</p>',
+      ),
+    );
+    expect(parsed.failures).toEqual([]);
+    const entry = (parsed.sections ?? [])[0];
+    expect(entry?.spell?.heighteningEntries).toEqual([]);
+    expect(entry?.spell?.heighteningUnparsed).toEqual([]);
+  });
+
   it('reports NOTHING for a spell that never mentions heightening (ABSENCE is not a miss, docs/17 row 294)', async () => {
     const parsed = await foundryPf2eRulesAdapter.parseFile(
       'spells/spells/rank-2/synthetic-bolt.json',

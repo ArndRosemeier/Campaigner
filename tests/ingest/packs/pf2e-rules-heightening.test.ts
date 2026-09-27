@@ -171,3 +171,124 @@ describe('the bare Heightened shape — a NOTES-ONLY entry that computes nothing
     }
   });
 });
+
+/**
+ * A MENTION IN RUNNING PROSE IS AN ABSENCE, NOT A SECTION (docs/17 row 370).
+ *
+ * The owner reported EIGHT spells failing a FIRST import with `"Heightened" is
+ * present in this document's own markup, but the spell reader did not match it
+ * — that section was not read` — Fey Glamour named among them. The documents
+ * are the problem, not his library: the miss probe was the BARE WORD
+ * (`/heightened/i`), so it matched a sentence that merely NAMES the mechanism
+ * while the spell has no heightening section at all. Two harms came out of that
+ * one test: a spurious issue on the import report, AND a fabricated
+ * `heighteningUnparsed` line (the sentence, stripped) that the spell card then
+ * printed as an unread heightening rule.
+ *
+ * MEASURED over ALL 1,994 `v14-dev` documents under `packs/pf2e/spells`
+ * (fetched byte-for-byte 2026-09-25 for this row, docs/17 row 370): 1,134 carry
+ * a readable `Heightened` heading and exactly EIGHT carry the word only in
+ * prose — the eight below, and NOT ONE of them carries a `Heightened` heading
+ * or a `system.heightening` object. The whole corpus's heading vocabulary is
+ * `<strong>` and nothing else (bare `Heightened` ×12, `Heightened (+1..+4)`
+ * ×673, `Heightened (2nd..10th)` ×738), and the VALUE pattern reads all 1,423
+ * of them — so there was no fourth heading shape to read, and the probe is the
+ * defect this row fixes.
+ */
+describe('a heightening MENTION in running prose is an ABSENCE, not a miss (docs/17 row 370)', () => {
+  const FEY_GLAMOUR_SHA256 = 'dbb2f86c17bce1fd8f1dfb4053f1c2e1392addfe84f72ffaab51a39810edd3f7';
+
+  /**
+   * The paragraph carrying the mention, VERBATIM from each real document (the
+   * smallest exact excerpt that reproduces the shape). Each is asserted to be
+   * a real substring of its own fixture-class document below, so an excerpt
+   * cannot drift into an invented one.
+   */
+  const PROSE_MENTIONS: readonly (readonly [string, string])[] = [
+    [
+      'spells/focus/fey-glamour.json',
+      "<p>You call upon fey glamours to cloak an area or the targets in illusion. This has the effect of either @UUID[Compendium.pf2e.spells-srd.Item.Illusory Scene] on the area or @UUID[Compendium.pf2e.spells-srd.Item.Illusory Disguise] on the creatures, as if heightened to a rank 1 rank lower than <em>fey glamour</em>, using <em>fey glamour</em>'s range and duration.</p>",
+    ],
+    [
+      'spells/focus/magic-warrior-transformation.json',
+      "<p>You transform into the animal from your mask. You gain the effects of @UUID[Compendium.pf2e.spells-srd.Item.Animal Form], heightened to magic warrior transformation's level, and you can transform into only the type of animal your mask represents.</p>",
+    ],
+    [
+      'spells/focus/mantis-form.json',
+      "<p>You become a mantis. You gain the effects of @UUID[Compendium.pf2e.spells-srd.Item.Insect Form], heightened to mantis form's level, and you can only transform into a mantis.</p>",
+    ],
+    [
+      'spells/focus/mystic-beacon.json',
+      '<p>The next damaging or healing spell the target casts before the start of your next turn deals damage or restores Hit Points as if the spell were heightened 1 rank higher than its actual rank. This applies only to initial healing or damage when the spell is cast, not any ongoing effects. The spell otherwise functions at its actual rank. Once the target casts the spell, <em>mystic beacon</em> ends.</p>',
+    ],
+    [
+      'spells/focus/weapon-trance.json',
+      '<p>The serenity of violence fills your mind, giving you a heightened sense of knowing exactly where your weapons need to be. For the duration, your proficiency with martial weapons is equal to your proficiency with simple weapons.</p>',
+    ],
+    [
+      'spells/spells/rank-4/reflected-beauty.json',
+      "<p>When you cast reflected beauty, choose a willing creature that's the same size as you and that you can see within 30 feet. The spell then disguises you with a realistic illusion, as if via @UUID[Compendium.pf2e.spells-srd.Item.Illusory Disguise] heightened to 3rd rank, but includes tactile and olfactory sensation in addition to visual and voice. The appearance of the illusion that disguises you includes any changes to sex characteristics or other aspects needed to match the target creature's heart's desire, allowing you to interact with them as the person they could be. If you're ever more than 30 feet from the subject you're reflecting, <em>reflected beauty</em> immediately ends. You can Dismiss this spell.</p>",
+    ],
+    [
+      'spells/spells/rank-8/mimic-spell.json',
+      '<p>On your next turn, you spend the same number of actions to Cast the Spell as the triggering creature, but you choose the targets (if any) and use your spell attack modifier or spell DC as appropriate. The spell is heightened to the same rank as mimic spell. The mimicked spell is of the same tradition as the spells you normally cast.</p>',
+    ],
+    [
+      'spells/spells/rank-9/metamorphosis.json',
+      '<p>Harnessing your mastery of transformative magic, you hide forms within forms. You transform yourself into any form you could choose with a polymorph spell in your spell repertoire or that you could prepare of 8th-rank or lower (including any 8th-rank or lower heightened versions of spells you know). You gain 40 temporary Hit Points rather than the amount normally granted by the form.</p>',
+    ],
+  ];
+
+  /** The eight excerpts really are sentences of the eight upstream documents. */
+  it('the eight excerpts are VERBATIM upstream text (Fey Glamour from the pinned fixture)', async () => {
+    const feyGlamourDocument = readFileSync(join(SPELL_FIXTURES, 'fey-glamour.json'), 'utf8');
+    // The fixture is the fetched document byte-for-byte (never synthesised):
+    // a drift REDS by name here.
+    expect(await sha256Hex(feyGlamourDocument)).toBe(FEY_GLAMOUR_SHA256);
+    const [feyGlamourPath, feyGlamourParagraph] = PROSE_MENTIONS[0] ?? ['', ''];
+    expect(feyGlamourPath).toBe('spells/focus/fey-glamour.json');
+    expect(feyGlamourDocument).toContain(feyGlamourParagraph);
+  });
+
+  it('Fey Glamour: NO issue on the import report AND no fabricated heightening line', async () => {
+    // `payload` asserts `parsed.failures` is EMPTY, which is the assertion the
+    // owner's report is about: before row 370 this document produced the loud
+    // `"Heightened" is present … that section was not read` issue.
+    const spell = await payload(SPELL_FIXTURES, 'fey-glamour.json', 'spells/focus/fey-glamour.json');
+    expect(spell.heightening).toBeNull();
+    expect(spell.heighteningEntries).toEqual([]);
+    // The defect's SECOND half: the mention was stored as an unread heightening
+    // line, so the spell card printed a sentence about ANOTHER spell's
+    // heightening as this spell's own rule.
+    expect(spell.heighteningUnparsed).toEqual([]);
+  });
+
+  /** A minimal spell document carrying ONE verbatim upstream paragraph. */
+  function proseSpellBytes(description: string): Uint8Array {
+    return new TextEncoder().encode(
+      JSON.stringify({
+        name: 'Prose Mention',
+        type: 'spell',
+        system: {
+          description: { value: description },
+          traits: { value: ['attack'], rarity: 'common', traditions: ['arcane'] },
+          level: { value: 2 },
+          time: { value: '2' },
+          range: { value: '60 feet' },
+          target: { value: '1 creature' },
+          duration: { value: '' },
+        },
+      }),
+    );
+  }
+
+  it('all EIGHT real prose mentions are silent — no issue and no unparsed line', async () => {
+    for (const [packPath, paragraph] of PROSE_MENTIONS) {
+      const parsed = await foundryPf2eRulesAdapter.parseFile(packPath, proseSpellBytes(paragraph));
+      expect(parsed.failures, packPath).toEqual([]);
+      const spell = (parsed.sections ?? [])[0]?.spell;
+      expect(spell?.heighteningEntries, packPath).toEqual([]);
+      expect(spell?.heighteningUnparsed, packPath).toEqual([]);
+    }
+  });
+});

@@ -1191,10 +1191,21 @@ on the book, network-free adapters, loud per-entry failures.
   `{kind:'note', text}` from a bare `<strong>Heightened</strong> …` with
   neither — the summon-spell family's shape, docs/17 row 221, where the
   scaling is delegated to a trait and NOTHING is computed); and
-  `heighteningUnparsed` (the description line(s) that mention "Heightened" but
-  matched NONE of the three shapes, each stripped by the same HTML→text seam
-  so it is PLAIN PROSE — never markup, never `@UUID[…]` notation — LOUD DATA,
-  never a run failure and never a silent drop). The payload ALSO
+  `heighteningUnparsed` (the description line(s) that carry a heightening
+  HEADING which matched NONE of the three shapes, each stripped by the same
+  HTML→text seam so it is PLAIN PROSE — never markup, never `@UUID[…]`
+  notation — LOUD DATA, never a run failure and never a silent drop). **A
+  description that only MENTIONS heightening in running prose has no section at
+  all and is an ABSENCE — no entry, NO `heighteningUnparsed` line and no issue
+  on the import report (docs/17 row 370).** The line that decides both halves is
+  the ONE section probe `HEIGHTENING_HEADING_PROBE`, anchored to the section's
+  own MARKUP (an emphasis/heading element whose text starts with `Heightened`);
+  it is deliberately looser than the VALUE pattern (any of
+  `strong|b|em|i|h1`–`h6`, any attributes, any parenthetical) so a variant
+  upstream spelling is still DETECTED and named rather than read, and it never
+  extracts or rewrites a byte (the ingest layer has exactly ONE HTML→text
+  stripper, in `packs/text`).
+  The payload ALSO
   carries the BASE numbers a heightening delta is combined against (ledger
   183, amendment): `damage` (the source's own `system.damage` record
   VERBATIM — each entry's `formula`/`type`/`category`/`materials`, keys

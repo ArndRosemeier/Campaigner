@@ -236,21 +236,48 @@ function castLine(doc: ParsedRulesDoc): string | null {
  * `Heightened (Nth)` (an exact rank), `Heightened (+N)` (an interval) and a
  * bare `Heightened` with neither (the summon-spell family, which delegates the
  * scaling to a trait). Case-insensitive and whitespace-tolerant; ordinals are
- * `st|nd|rd|th`. A description that mentions Heightened but matches none of
- * these is captured unparsed, never dropped.
+ * `st|nd|rd|th`. A description that CARRIES this heading shape but matches none
+ * of these is captured unparsed, never dropped.
  */
 const HEIGHTENING_HEADING =
   /<strong>\s*Heightened\s*(?:\((?:(\d+)(?:st|nd|rd|th)|([+-]\d+))\))?\s*<\/strong>/gi;
 
-/** The description mentions heightening at all (case-insensitive) — ALSO the
- *  MISS PROBE of docs/17 row 294: the mention is the loose test for "this
- *  document HAS a heightening section", while `HEIGHTENING_HEADING` above is
- *  the VALUE pattern that reads it. A description that mentions Heightened but
- *  reads NO heading is a MISS: the notes still ride `unparsed` (row 221) AND
- *  the import report is told, so a document whose markup differs from the
- *  pattern in hand is no longer indistinguishable from one with no heightening
- *  at all. */
-const HEIGHTENING_MENTION = /heightened/i;
+/**
+ * The heightening SECTION's own MARKUP SHAPE — ALSO the MISS PROBE of docs/17
+ * row 294: this is the loose test for "this document HAS a heightening
+ * section", while `HEIGHTENING_HEADING` above is the VALUE pattern that reads
+ * it. A document that carries this shape while the VALUE pattern reads NO
+ * heading is a MISS: the notes still ride `unparsed` (row 221) AND the import
+ * report is told, so a document whose heading differs from the pattern in hand
+ * is no longer indistinguishable from one with no heightening at all.
+ *
+ * THE SHAPE IS A HEADING, AND THAT IS THE ROW-370 CORRECTION. This probe used
+ * to be the bare word (`/heightened/i`), which is not a markup shape at all: it
+ * matched a MENTION in running prose, so a spell that merely names the
+ * mechanism while having no heightening section of its own was reported as a
+ * miss and the sentence it was mentioned in was stored as `heighteningUnparsed`
+ * — a fabricated heightening line. MEASURED against ALL 1,994 `v14-dev`
+ * documents under `packs/pf2e/spells` (fetched byte-for-byte, docs/17 row 370):
+ * 1,134 carry a readable heading and exactly EIGHT carry the word only in
+ * prose — `focus/fey-glamour` ("…as if heightened to a rank 1 rank lower than
+ * <em>fey glamour</em>…"), `focus/magic-warrior-transformation`,
+ * `focus/mantis-form`, `focus/mystic-beacon`, `focus/weapon-trance`,
+ * `rank-4/reflected-beauty`, `rank-8/mimic-spell`, `rank-9/metamorphosis` —
+ * and not one of them has a `Heightened` heading or a `system.heightening`
+ * object. Those eight were the owner's "8 spells" on a first import.
+ *
+ * Anchoring detection to heading markup is the technique docs/18 §5(2) already
+ * ratified for the sibling family ("The dnd5e probe is block-anchored to shrink
+ * this as far as a pattern can"), and it is still DELIBERATELY LOOSER than the
+ * VALUE pattern: any emphasis or heading element may carry the heading
+ * (`<b>`/`<em>`/`<i>`/`<h1>`–`<h6>` as well as the corpus's `<strong>`), any
+ * attributes and any case, and the parenthetical may be anything at all — so a
+ * variant upstream spelling is still DETECTED and named rather than read. It is
+ * NOT an HTML stripper (the ingest layer has exactly one of those, in
+ * `./text`, and its source scan holds this file to that): nothing is removed or
+ * rewritten.
+ */
+const HEIGHTENING_HEADING_PROBE = /<(?:strong|b|em|i|h[1-6])\b[^>]*>\s*Heightened\b/i;
 
 /**
  * Parse a spell's heightening notes out of the RAW description HTML, BEFORE it
@@ -258,11 +285,15 @@ const HEIGHTENING_MENTION = /heightened/i;
  * returned in document order; each note's `text` is the prose between its
  * heading and the next one, stripped by the lane's ONE HTML→text seam. A
  * heading that names no rank and no interval is a `note` — the source's own
- * prose, from which NOTHING is computed (docs/17 row 221). A description that
- * mentions Heightened but matches NO shape yields no entries and its offending
- * line(s) in `unparsed`, each stripped by that SAME seam so a GM reads prose
- * and never markup or `@UUID[…]` notation — loud data, not a failure and not a
- * silent drop.
+ * prose, from which NOTHING is computed (docs/17 row 221). A document that
+ * carries a heightening HEADING (see `HEIGHTENING_HEADING_PROBE`) which the
+ * VALUE pattern reads as NO shape yields no entries and its offending line(s)
+ * in `unparsed`, each stripped by that SAME seam so a GM reads prose and never
+ * markup or `@UUID[…]` notation — loud data, not a failure and not a silent
+ * drop. A document whose description only MENTIONS heightening in running prose
+ * has no section at all: that is an ABSENCE, so it yields no entries, NO
+ * `unparsed` line (the mention is not a heightening line) and no miss
+ * (docs/17 row 370).
  */
 function parseHeighteningEntries(html: string): {
   entries: SpellHeighteningEntry[];
@@ -286,14 +317,14 @@ function parseHeighteningEntries(html: string): {
       entries.push({ kind: 'note', text });
     }
   }
-  if (entries.length === 0 && HEIGHTENING_MENTION.test(html)) {
+  if (entries.length === 0 && HEIGHTENING_HEADING_PROBE.test(html)) {
     return {
       entries,
       unparsed: html
         .split('\n')
         .map((line) => line.trim())
-        .filter((line) => line !== '' && HEIGHTENING_MENTION.test(line))
-        // The mention is found on the RAW line (no raw mention is ever
+        .filter((line) => line !== '' && HEIGHTENING_HEADING_PROBE.test(line))
+        // The heading shape is found on the RAW line (no raw heading is ever
         // dropped) and the STORED line is the seam's plain prose, so a GM
         // reads the source's words and never its markup (docs/17 row 221).
         .map((line) => htmlToText(line, AT_BRACE_LABEL_BLOCK_AND_TABLE).trim())
@@ -328,12 +359,14 @@ function spellDataFor(
   }
   const heightening = parseHeighteningEntries(doc.system.description.value);
   // ABSENCE vs MISS (docs/17 row 294): a spell with no heightening at all is
-  // normal and SILENT; a description that mentions Heightened while the VALUE
-  // pattern reads no heading is a MISS named on the import report. The notes
-  // row 221 stores stay exactly as they are — this ADDS the report surface.
+  // normal and SILENT; a description that carries the heightening HEADING shape
+  // while the VALUE pattern reads no heading is a MISS named on the import
+  // report (docs/17 row 370 anchored the probe to that markup shape, so a
+  // running-prose mention is an ABSENCE and not a miss). The notes row 221
+  // stores stay exactly as they are — this ADDS the report surface.
   const miss = sectionMissFailure(
     doc.system.description.value,
-    HEIGHTENING_MENTION,
+    HEIGHTENING_HEADING_PROBE,
     heightening.entries.length > 0,
     { file: fileName, name: doc.name, section: 'Heightened', entry: 'spell' },
   );
