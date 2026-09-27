@@ -56,6 +56,10 @@ import { refillBrief, useContentRefillRequest } from '@/features/campaign/conten
 // THE ONE refill-persona rule lives beside its request channel, so it can be
 // pinned as the pure function it is (docs/17 row 373); the panel is its caller.
 import { resolveRefillPersona } from '@/features/campaign/refillPersona';
+// THE ONE loaded-vs-unclaimed decision behind BOTH hand-offs (docs/17 rows
+// 374/376): the refill effect and the illustration effect go through it, so
+// the conflation that dropped each request silently cannot be re-inlined here.
+import { resolveHandoffPersona } from '@/features/campaign/handoffPersona';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
 import type { PostCreateExtra } from '@/domain';
@@ -247,11 +251,23 @@ export function PersonaPanel({
 
   // "Illustrate…" from the artifact editor: select the Illustrator persona,
   // target the requesting artifact, and focus the Assistant tab (M3-A).
+  //
+  // THE LOADED-vs-UNCLAIMED DECISION IS NOT WRITTEN HERE (docs/17 rows 374/376):
+  // it goes through the ONE `resolveHandoffPersona` seam, the same one the
+  // refill hand-off below uses. This effect keeps its OWN store and its OWN
+  // message; the seam owns only the classification.
   useEffect(() => {
     if (requestArtifactId === null) return;
-    const illustrator = personas?.find((persona) => persona.slug === 'illustrator');
-    if (illustrator === undefined) return; // personas not loaded yet
-    setPersonaId(illustrator.id);
+    const outcome = resolveHandoffPersona(personas, (list) =>
+      list.find((persona) => persona.slug === 'illustrator'),
+    );
+    if (outcome.status === 'loading') return; // not loaded yet — wait, keep the request
+    if (outcome.status === 'unclaimed') {
+      toastError('Could not illustrate this artifact — no Illustrator persona is available.');
+      clearRequest();
+      return;
+    }
+    setPersonaId(outcome.persona.id);
     setTargetArtifactId(requestArtifactId);
     setAutonomy('auto');
     setTab('assistant');
@@ -269,24 +285,28 @@ export function PersonaPanel({
   const clearRefillRequest = useContentRefillRequest((state) => state.clear);
   useEffect(() => {
     if (refillRequestId === null || refillKind === null) return;
-    // TWO DIFFERENT WORLDS USED TO SHARE ONE `return` HERE (docs/17 row 374),
-    // and that is how the button died silently: `personas === undefined` means
-    // the live query has not resolved — returning is right, the effect re-runs
-    // when the list arrives and the request must be KEPT — while a LOADED list
-    // that resolves to no persona is a FINAL answer (no assistant for this
-    // kind, or the canonical persona's own row is missing / not generate mode).
-    // The second case must SPEAK through the ONE error surface and CLEAR the
-    // request, or a stale unclaimed request sits in the store forever.
-    if (personas === undefined) return; // not loaded yet — wait, keep the request
-    const persona = resolveRefillPersona(personas, refillKind);
-    if (persona === undefined) {
+    // THE LOADED-vs-UNCLAIMED DECISION GOES THROUGH THE ONE SEAM (docs/17 row
+    // 374, folded with the illustration hand-off above by row 376):
+    // `personas === undefined` means the live query has not resolved — waiting
+    // is right, the effect re-runs when the list arrives and the request must be
+    // KEPT — while a LOADED list that yields no persona is a FINAL answer (no
+    // assistant for this kind, or the canonical persona's own row is missing /
+    // not generate mode). The second case SPEAKS through the ONE error surface
+    // and CLEARS the request, or a stale unclaimed request sits in the store
+    // forever. This effect keeps its OWN store and its OWN message; the seam
+    // owns only the classification.
+    const outcome = resolveHandoffPersona(personas, (list) =>
+      resolveRefillPersona(list, refillKind),
+    );
+    if (outcome.status === 'loading') return; // not loaded yet — wait, keep the request
+    if (outcome.status === 'unclaimed') {
       toastError(
         `Could not refill this ${ARTIFACT_KIND_SINGULAR[refillKind]} — no assistant persona can generate it.`,
       );
       clearRefillRequest();
       return;
     }
-    setPersonaId(persona.id);
+    setPersonaId(outcome.persona.id);
     setTargetArtifactId(refillRequestId);
     // The box starts EMPTY: it carries only the OWNER'S instruction for this
     // artifact, while the app's own framing is DERIVED at start() from the

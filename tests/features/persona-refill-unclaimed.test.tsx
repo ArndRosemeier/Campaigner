@@ -1,17 +1,16 @@
 import 'fake-indexeddb/auto';
 
-import { act, render, screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import type { AnyArtifact, Campaign } from '@/domain';
-import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+import { renderPersonaPanel } from '../helpers/personaPanel';
 
 /**
  * THE REFILL REQUEST IS NEVER SILENTLY DROPPED (docs/17 row 374). The panel's
@@ -78,19 +77,11 @@ async function seedArtifact(campaign: Campaign, kind: 'npc' | 'pc'): Promise<Any
   });
 }
 
-function renderPanel(campaign: Campaign): void {
-  render(
-    <MemoryRouter>
-      <PersonaPanel campaign={campaign} hasApiKey />
-    </MemoryRouter>,
-  );
-}
-
 describe('PersonaPanel refill request — loaded vs not loaded (docs/17 row 374)', () => {
   it('personas LOADED and nothing claims the kind: toastError names the kind and the request is cleared', async () => {
     const campaign = await seedSmithCampaign();
     const target = await seedArtifact(campaign, 'pc');
-    renderPanel(campaign);
+    renderPersonaPanel(campaign);
     // Let the live persona query resolve: from here on `personas` is a list,
     // and no persona in it produces `pc` (there is no `pc-smith` here).
     await flushAsyncUpdates();
@@ -124,7 +115,7 @@ describe('PersonaPanel refill request — loaded vs not loaded (docs/17 row 374)
     act(() => {
       useContentRefillRequest.getState().request(target.id, 'npc', false);
     });
-    renderPanel(campaign);
+    renderPersonaPanel(campaign);
 
     // Synchronously after mount the personas have not resolved: silence is
     // CORRECT here, and the request must be KEPT.
@@ -145,7 +136,7 @@ describe('PersonaPanel refill request — loaded vs not loaded (docs/17 row 374)
   it('a kind that HAS a persona is unchanged: selected, targeted, box cleared, no toast', async () => {
     const campaign = await seedSmithCampaign();
     const target = await seedArtifact(campaign, 'npc');
-    renderPanel(campaign);
+    renderPersonaPanel(campaign);
     await flushAsyncUpdates();
     expect(toastErrorMock).not.toHaveBeenCalled();
 

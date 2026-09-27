@@ -667,6 +667,7 @@ test) · ❌ gap.
 | **THE PLAYER CHARACTER ASSISTANT** (docs/17 row 373): the player card's dead "Generate with AI" is LIVE through the EXISTING refill lane; `resolveRefillPersona(personas, 'pc')` is exactly `pc-smith` and `pc-smith` is the ONLY built-in producing `pc`; a `pc` run RUNS the stat-block step (the plan's gate now admits `npc` and `pc` only); the PC stat-block prompt states the FORMAT and carries NONE of the three NPC limits (no corpus whitelist, no "2 cantrips" caster clause, no `"extras"` line the strict schema could not carry) while the NPC prompt with the SAME library is BYTE-IDENTICAL to a golden captured at the base tree `42cd064`; an unlisted PC spell keeps its name with NO repair turn and NO "Unresolved mob spells" notice (the NPC lane with the same library and the same name DOES both — the non-vacuity arm); a refill writes INTO the pc row and leaves `playerName`/`currentHp`/`initiativeOverride` byte-identical (and the target's own summary/body/`notes` reach the draft prompt); a module level hint neither binds nor rejects a PC's block while the NPC lane in the same module still is bound, repaired and rejected; `pcDraftSchema` has no `concept` and no `needsStatBlock`, and a statless PC row stays legal; and `mobCasterLevel` is the mechanical reason the PC format asks for a BARE numeric level (a `"Wizard 3"` level makes an in-library cantrip a spurious chip issue) | `llm/pc-assistant.test.ts` (7 pins, NEW), `llm/mob-spells-lanes.test.ts` (+ the with-corpus NPC byte-identity pin), `llm/personaDescriptionClause.test.ts` (pc-smith joins the EXEMPT capture), `llm/draftSchemas.test.ts` (the pc shape), `db/personaSeed.test.ts` (membership, order-independent) | ✅ focused GREEN: 10 files / 131 tests in-turn (plus `tests/architecture` 38/38 after the `realSpell` fold) — **INJECTION ARMS NOT RUN BY THE WRITER; owed to the dispatcher's verification.** The NPC byte-identity is PROVEN base-vs-post: the same harness run with the three spell-seam `src/` files stashed at `42cd064` produced `d779da58…` (with corpus) and `0b47403c…` (without), byte-identical to the post-change run (raw captures `.gate-logs/row373/`) |
 | **THE REFILL REQUEST IS NEVER SILENTLY DROPPED** (docs/17 row 374, docs/18 §2/§5): the panel's refill effect tells "the persona list has not loaded yet" (wait, silently, KEEP the request) apart from "loaded, and nothing claims this kind" (raise the ONE house error surface `toastError` NAMING the kind, then CLEAR the request); with the list loaded and no persona producing the requested kind, `toastError` fires EXACTLY ONCE and the request is cleared from the store; a request placed BEFORE mount survives the unloaded pass with no toast and is CLAIMED when the list resolves; and a kind that HAS a persona still selects it, targets the row, clears the box and raises NO toast (the unchanged path) | `features/persona-refill-unclaimed.test.tsx` (3 pins, NEW — through the REAL panel with the existing `@/lib/toast` surface mocked) | ✅ REVERT-PROVEN (one arm: the effect collapsed back to the old one-line conflation in `persona-panel.tsx`, sha256 `1bed6ec7…` before and after and restored byte-identically by hash → **RED 1 = the loaded-and-unclaimed pin**; the not-loaded and happy-path arms stayed GREEN, which is the asymmetry the fix creates) |
 | **THE CHAT'S STAT-BLOCK READER EMITS SPELLCASTING** (docs/17 row 375, docs/18 §2/§5): `canvasChat.statBlockLines` renders `Spellcasting: <spell DC · spell attack · tradition>` (the stated fields only, through the ONE `domain/statblock.casterStatFields`) and `Spells:` with every STORED assignment as `- <name> (cast rank <n>)`, name-only when no rank is stated, and NEVER the copy-only `spellData` payload (its own sentinel string is asserted absent); a block with NO spellcasting is BYTE-IDENTICAL to a golden captured from the tree BEFORE the change (655 B, sha256 `c860e67a…`); and the caster's list reaches the MODEL through the REAL chat-prompt path (a `sendCanvasChatMessage` round trip, the SECOND call's payload) — not by calling the reader directly; the three caster FIELDS are shared with the card's line through `casterStatFields`, whose refactor keeps `casterStatLine`'s bytes (the card + both PDF boxes' existing pins green) | `llm/canvasChatDetails.test.ts` (+3 pins, the existing seed/helpers reused), `fixtures/canvasChatStatblock/npc-no-spells.txt` (NEW golden, captured PRE-change), `domain/statblock-caster.test.ts`, `features/statblock-caster.test.tsx`, `lib/mob-spells-pdf.test.ts` (the unchanged caster line) | ✅ REVERT-PROVEN (one arm: the whole spellcasting emission removed from `canvasChat.ts`, sha256 `db894daa…` before and after and restored byte-identically by hash → **RED 2 = the rendered-spells pin and the real-chat-prompt pin**; the non-caster golden arm stayed GREEN, which is the control it is for). **NO chat-prompt golden moved:** the only one (`gmAssistFraming/module-chat-golden.json`) carries no `statBlockLines` output, and `llm/gmAssistFraming.test.ts` + `llm/canvasChat.test.ts` are green unedited |
+| **THE ILLUSTRATION HAND-OFF IS NEVER SILENTLY DROPPED, AND ITS DECISION IS FOLDED WITH THE REFILL'S** (docs/17 row 376, docs/18 §2/§5): the panel's illustration effect tells "personas not loaded yet" (wait, silently, KEEP the request) apart from "loaded, and no `illustrator` persona exists" (raise `toastError` NAMING the Illustrator, then CLEAR the request); with the list loaded and no Illustrator, `toastError` fires EXACTLY ONCE and the request is cleared; a request placed BEFORE mount survives the unloaded pass with no toast and is CLAIMED when the list resolves (Illustrator selected, illustrate target picker shows the row); and the happy path is unchanged — Illustrator selected, target set, **Assistant tab focused after the tab is moved away first**, request cleared, no toast. BOTH hand-off effects reach ONE decision seam, proven by SHAPE | `features/persona-illustration-unclaimed.test.tsx` (3 pins, NEW, through the REAL panel with the shared `helpers/personaPanel.renderPersonaPanel` mount), `architecture/one-handoff-persona-decision.test.ts` (3 SOURCE-SCAN pins: defined once; asked from exactly the seam + the panel with 2 call sites; no caller re-inlines the loading guard), `features/persona-refill-unclaimed.test.tsx` (assertions untouched, private `renderPanel` folded into the shared helper) | ✅ REVERT-PROVEN (one arm: the illustration effect reverted to the old one-line conflation in `persona-panel.tsx`, sha256 `40f4b52c…` before and after and restored byte-identically by hash → **RED 3 = the loaded-and-unclaimed pin plus BOTH shape pins**; the not-loaded and happy-path arms stayed GREEN, which is the asymmetry the fix creates). The `renderPanel` copy the new pin file grew at birth was caught by `architecture/no-duplicate-implementations.test.ts` and FOLDED into `helpers/personaPanel.tsx` (no baseline entry added) |
 | A CAST creature (`creatureRef`, no stored block) in an encounter resolves in battle — the DERIVED stats are frozen under the artifact id, `statless` stays empty, and the fighter-stats lookup returns them (docs/17 row 239) | `battleSeed.test` (`resolves a CAST creature (creatureRef) instead of badging it statless`) | ✅ REVERT-PROVEN (stashing the freeze reds it `expected [] to deeply equal [ObjectContaining{…}]`) |
 | Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
 | Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `settings-page.test`, `images-ui.test` | ✅ |
@@ -9525,3 +9526,60 @@ chat renders the STORED assignment — it tells the model what the character
 KNOWS, not the rules VALUES the card computes from the library. That boundary,
 and the ban on ever rendering the copy-only `spellData` payload, are in a
 comment at the render site.
+
+## The illustration hand-off is never silently dropped, and the decision is ONE seam (docs/17 row 376, docs/18 §2/§5)
+
+THE PIN FAMILY is `tests/features/persona-illustration-unclaimed.test.tsx` (NEW,
+3 pins) plus the shape scan
+`tests/architecture/one-handoff-persona-decision.test.ts` (NEW, 3 pins). Both
+hand-off pin files now mount the panel through the ONE shared helper
+`tests/helpers/personaPanel.renderPersonaPanel` — the private `renderPanel` the
+new file grew was byte-identical to the row-374 file's and the duplicate
+tripwire named both at birth, so it was FOLDED there (no baseline entry added;
+a writer may only delete them).
+
+Behavioural pins, through the REAL panel with `@/lib/toast` mocked:
+
+1. **(a) LOADED AND NO ILLUSTRATOR.** A loaded, NON-EMPTY persona list with no
+   `illustrator` slug: the request calls `toastError` EXACTLY ONCE, the message
+   names the Illustrator, and `useIllustrationRequest` is CLEARED (and does not
+   re-fire on a later effect pass).
+2. **(b) NOT LOADED YET — THE NON-VACUITY ARM.** The request is placed in the
+   file-global store BEFORE mount, so the first effect run is provably the
+   `personas === undefined` one: NO toast, the request is RETAINED, and it is
+   claimed once the list resolves (the Illustrator is selected, so the
+   "Artifact to illustrate" picker appears showing the requested row).
+3. **(c) THE HAPPY PATH.** The test moves the tab to **Runs** first, then raises
+   the request: the Illustrator is selected, the target is set, the **Assistant
+   tab becomes focused**, the request is cleared and NO toast is raised. Moving
+   the tab first is what makes the focus claim non-vacuous (Assistant is the
+   panel's own default).
+
+**THE SHAPE PIN ("exactly one", centralization obligation 2).** The decision
+"is the live persona list loaded, and did the lookup yield the persona this
+hand-off needs?" is a discriminated union
+(`features/campaign/handoffPersona.resolveHandoffPersona`: `loading` /
+`unclaimed` / `claimed`) reached by BOTH effects. The scan (through the ONE
+`tests/helpers/sourceCode` glob seam, not a 21st hand-rolled walker) asserts it
+is DEFINED in exactly one file; that the `unclaimed`/`claimed` states are
+DECLARED in exactly one file; that `resolveHandoffPersona(` is ASKED from
+exactly the seam plus the panel, with exactly TWO call sites in the panel (one
+per effect); and that NEITHER effect re-inlines the loading guard
+(`personas === undefined)` count 0) or the old raw
+`personas?.find((persona) => persona.slug === …)` lookup. This is the pin a
+behaviour test cannot be: a fourth hand-off that re-inlines the guard reads
+correctly today and drops its request tomorrow.
+
+**THE ARM (watched red by the writer, hashes printed, file restored
+byte-identically).** The illustration effect was reverted to the old one-line
+conflation in `src/features/campaign/components/persona-panel.tsx` — sha256
+`40f4b52c7f2a839ef11f3edfb6b4c8da9662ea975f3f36e1d87eaa2bb87ed42a` before and
+after, restored from a hash-verified copy that was then removed. Result: **RED 3
+= feature pin (a) plus BOTH shape pins**; feature pins (b) and (c) stayed GREEN
+— the asymmetry the fix creates.
+
+**WHAT THE FOLD DELIBERATELY DID NOT MOVE.** `resolveRefillPersona` and
+`REFILL_PERSONA_SLUGS` stay in `features/campaign/refillPersona.ts` (rows
+373/374 pin them there); the refill effect passes that rule as the seam's `find`
+callback, and keeps its own message and its own store. Row 374's three pins and
+row 375's are GREEN with their assertions unchanged.
