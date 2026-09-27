@@ -230,10 +230,10 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
   user of this app at the moment."*):
   1. **The COMPILE tier blocks the push.**
      `GATE_TESTS=0 bash scripts/gate.sh` — typecheck (+ lint if asked).
-     MEASURED 27s. It exists because the deploy job runs `pnpm build` =
-     `tsc -b && vite build`, so a **type error** is what breaks a deploy: the
-     workflow fails and the live site silently keeps the previous bundle. Lint is
-     NOT deploy-critical (nothing in CI runs it), which is why it is opt-in
+     MEASURED 27s. It exists because the PUBLISH builds with `pnpm build` =
+     `tsc -b && vite build`, so a **type error** is what breaks the build the owner
+     tests: the publish fails and the live site keeps the previous bundle. Lint is
+     NOT build-critical (nothing in CI runs it), which is why it is opt-in
      (`GATE_CHECKS=all`, ~2m) rather than the default. Exit 2 = compiles/clean —
      a result that did NOT run the suite and must never be reported as "the gate
      passed".
@@ -292,33 +292,34 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
   set per-commit via
   `git -c user.name='Campaigner Dev' -c user.email='dev@campaigner.local' commit`.
 - One logical task per commit; push to `origin/main` after committing.
-- **PUSHING IS PUBLISHING — ALWAYS CONFIRM THE PUBLISH** (owner-directed,
-  2026-09-21, verbatim: *"you can make this a local rule to always publish when
-  you push."*). In this project a push to `main` **IS the deploy**: the
-  `Deploy to futuremagic.de` workflow runs on every push to `main` (and on
-  `workflow_dispatch`), builds, and FTP-uploads `dist/` to
-  `/webseiten/Campaigner/`. So "I pushed it" is not "it is live", and a push is
-  not finished until the publish is confirmed:
-  1. **Every push to `main` publishes, documentation-only included** — there is
-     no such thing as a push here that does not re-run the deploy, so never skip
-     the confirmation because the diff was prose or records.
-  2. **Confirm the run after the push** — read the workflow's conclusion from the
-     GitHub API (`https://api.github.com/repos/ArndRosemeier/Campaigner/actions/runs?per_page=3`,
-     unauthenticated works for this public repo) rather than assuming, and prefer
-     the run whose `head_sha` is the commit just pushed.
-  3. **A FAILED publish is NAMED in the next report to the owner**, with the run
-     link and what the live version therefore still is — the workflow's last step
-     is the FTP upload, so a failure leaves the PREVIOUS bundle serving and the
-     owner testing code that never shipped (owner, verbatim: *"Just tell me so i
-     know the current version is not up."*). Keep pushing: the next push
-     re-triggers the deploy.
-  4. **The live badge is the owner's window into this** — check
-     `https://futuremagic.de/Campaigner/build-status.json` when a publish matters
-     to what he sees; it is generated at BUILD time from the board, so a payload
-     that lags the newest landing is expected until the next deploy and is not a
-     defect (`scripts/buildStatus.mjs`).
-  5. If the project ever gains a separate publish step beside the deploy, it runs
-     as part of the push, in the same routine — never as a remembered extra.
+- **PUSHING NO LONGER PUBLISHES — THE PUBLISH IS A SEPARATE, CONFIRMED STEP**
+  (owner-directed intent, 2026-09-21, verbatim: *"you can make this a local rule to
+  always publish when you push."*; the MECHANISM changed 2026-09-26). The
+  `Deploy to futuremagic.de` Actions workflow was DELETED at `cc0179a` ("remove the
+  Actions auto-deploy — the old host is retired") — verified, not assumed: `.github/`
+  does not exist in HEAD and the newest Actions run in the repo predates every
+  commit since. **A push to `main` now triggers NOTHING**, so "I pushed it" and
+  "it is live" are two facts, and the old confirmation (read the workflow's
+  conclusion) has no workflow left to read.
+  **The INTENT is unchanged and still binding: a push is not finished until the
+  owner can test the build.** The route is now the `apps-publish` skill
+  (`apps.futuremagic.de/Campaigner`), run after the push:
+  1. **Publish after every push that changes what he can see** — source, tests and
+     build config always. A records-only push produces no new bundle: say which of
+     the two it was rather than implying a publish happened.
+  2. **Confirm the publish by CONTENT, never by a status code** — a partial or
+     failed upload can still answer `200`, so compare the SERVED asset hash against
+     the freshly built `dist/` (the hash in `index.html`'s script tag is the honest
+     check). This has already caught one silently partial publish in this project.
+  3. **A FAILED or SKIPPED publish is NAMED in the next report to the owner**, with
+     what the live version therefore still is (owner, verbatim: *"Just tell me so i
+     know the current version is not up."*). Keep pushing — the next push plus
+     publish fixes it.
+  4. **The live badge is the owner's window into this** — `scripts/buildStatus.mjs`
+     generates `build-status.json` at BUILD time from the board, so a payload that
+     lags the newest landing is expected until the next publish and is not a defect.
+  5. `deploy-sync.bat` / `deploy-sync.ps1` at the repo root are the OWNER's own
+     manual route; never run them on his behalf.
 
 ## Parallel writers
 
@@ -472,18 +473,18 @@ chained command, and never leave one uncommitted while a writer is gating.
   Their runs are outside our rules, and the OOM killer takes whatever is
   largest, which is the harness BOTH projects live in: the discipline below
   protects the other project's sessions as much as ours.
-- **A push to `main` DEPLOYS** (GitHub to the owner's own server), and he then
-  tests it in Chrome on Windows. So `main` is not a staging area: a red or
-  half-finished landing is user-visible within minutes of the push, which is why
-  the gate runs before every push and why an unverified landing is never
+- **A push to `main` NO LONGER DEPLOYS** (the Actions workflow was removed at
+  `cc0179a` — see §Workflow, "PUSHING NO LONGER PUBLISHES"), and the owner tests
+  the app in Chrome on Windows. So `main` is still not a staging area: a red or
+  half-finished landing reaches him as soon as it is PUBLISHED, which is why the
+  gate runs before every push and why an unverified landing is never
   "probably fine".
-  **A RED DEPLOY IS REPORTED, NEVER SILENTLY RETRIED (owner-directed 2026-09-19).**
-  The workflow's last step is an FTP upload; when it fails, the site keeps serving the
-  PREVIOUS bundle, so the owner is testing code that was never shipped. Owner,
-  verbatim: *"Just tell me so i know the current version is not up."* So a failed
-  deploy run is NAMED in the next report to the owner, with the run link and what the
-  live version therefore still is. Keep pushing — the next push re-triggers a deploy —
-  but a red deploy never passes unmentioned.
+  **A FAILED PUBLISH IS REPORTED, NEVER SILENTLY RETRIED (owner-directed 2026-09-19).**
+  A failed or skipped upload leaves the site serving the PREVIOUS bundle, so the owner
+  is testing code that was never shipped. Owner, verbatim: *"Just tell me so i know the
+  current version is not up."* So a failed publish is NAMED in the next report to the
+  owner, with what the live version therefore still is. Keep pushing — the next push
+  plus publish fixes it — but a red publish never passes unmentioned.
 - Starving this box does not merely slow a build — it costs the owner his
   remote screen and can kill the harness itself (§Host hygiene 7).
 
