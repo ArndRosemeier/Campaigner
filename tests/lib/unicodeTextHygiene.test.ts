@@ -317,6 +317,7 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     // its REASONS entry below goes with it).
     'src/ingest/packs/dnd5e-foundry.ts': 2,
     'src/ingest/packs/pf2e-journal.ts': 2,
+    'src/ingest/packs/pf2e-rules.ts': 1,
     'src/ingest/packs/text.ts': 2,
     'src/ingest/statblock.ts': 11,
     'src/lib/backup.ts': 1,
@@ -348,6 +349,8 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
       'TWO machine-format patterns, neither of them prose: the `@abilities.str.mod` FORMULA grammar of the Foundry pack format, and the higher-levels SECTION PROBE row 294 added (`/(?:^|</p>|<br…)\\s*(?:<[^<>]+>\\s*)*(?:at\\s+)?higher\\s+levels?\\b/i`), which matches the pack\u2019s own `<strong>At Higher Levels</strong>` markup to tell a MISS from an absence — the English words are the PUBLISHER\u2019s heading, not user text',
     'src/ingest/packs/pf2e-journal.ts':
       'the `<em>… pg. …</em>` page-reference markup: the English `pg.` abbreviation is printed by the pack\u2019s own publisher',
+    'src/ingest/packs/pf2e-rules.ts':
+      'the higher-levels HEADING PROBE (`HEIGHTENING_HEADING_PROBE`, docs/17 row 370): it matches the pack\u2019s OWN `<strong>Heightened…</strong>` heading markup to tell a MISS from an absence — the English word is the PUBLISHER\u2019s heading, exactly like the dnd5e sibling above, not user text. It replaced a bare `/heightened/i` word test that fired on ordinary prose (the owner\u2019s eight false errors, and a fabricated unparsed line on each); the narrowing and the 1,994-document census that justified it are recorded in docs/18 §5(2)',
     'src/ingest/packs/text.ts':
       'the `@Type[…]{…}` inline-notation grammar of the Foundry pack format: machine syntax',
     'src/ingest/statblock.ts':
