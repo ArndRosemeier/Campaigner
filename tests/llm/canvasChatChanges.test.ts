@@ -577,7 +577,13 @@ describe('a change goes THROUGH the seam (never a row write of its own)', () => 
     expect(changeArtifactMock).toHaveBeenCalledTimes(1);
     const block = changeBlockOf(result);
     expect(block).toContain('### Change «Bryn» — NOT APPLIED: NO ENGINE FOR THIS KIND');
-    expect(block).toContain('authored, not generated');
+    // THE UPDATED REASON (docs/17 row 373): the Party is still NOT
+    // instruction-changeable — the distinguishing claim this pin exists for —
+    // AND the sentence now NAMES the door a PC does have, so a rewording that
+    // silently drops either half reds here.
+    expect(block).toContain('authored, not instruction-changed');
+    expect(block).toContain('no module-scoped change engine serves a PC');
+    expect(block).toContain('player card\'s "Generate with AI"');
     expect(repopulateMock).not.toHaveBeenCalled();
     expect(runEntityBatchMock).not.toHaveBeenCalled();
     expect(await revisionCount(pc.id)).toBe(1);

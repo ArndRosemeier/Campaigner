@@ -375,7 +375,13 @@ describe('the citation survives every writer', () => {
     expect(result.status).toBe('unsupported');
     expect(result).toMatchObject({ kind: 'pc' });
     if (result.status !== 'unsupported') throw new Error('expected an unsupported result');
-    expect(result.reason).toContain('authored, not generated');
+    // THE UPDATED REASON (docs/17 row 373): the Party is still NOT
+    // instruction-changeable — the distinguishing claim this pin exists for —
+    // AND the sentence now NAMES the door a PC does have, so a rewording that
+    // silently drops either half reds here.
+    expect(result.reason).toContain('authored, not instruction-changed');
+    expect(result.reason).toContain('no instruction-driven change path');
+    expect(result.reason).toContain('player card\'s "Generate with AI"');
     expect(runEntityBatchMock).not.toHaveBeenCalled();
     expect(repopulateMock).not.toHaveBeenCalled();
     expect(regenerateMock).not.toHaveBeenCalled();
