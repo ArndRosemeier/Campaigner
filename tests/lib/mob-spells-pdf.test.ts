@@ -1,8 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -20,8 +17,8 @@ import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import { buildModulePdf, buildModulePdfDocument } from '@/lib/modulePdf';
+import { realSpell } from '../helpers/spellFixtures';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -32,19 +29,9 @@ import { clearDatabase } from '../db/helpers';
  *
  * The definition is CAPTURED (the `generate` seam `buildModulePdf` already
  * takes) and asserted as text: pdfmake has no DOM here, and the document's own
- * JSON is the printable truth.
+ * JSON is the printable truth. The spell fixture read is the ONE helper
+ * (`tests/helpers/spellFixtures`, docs/17 row 373).
  */
-
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
-
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
 
 async function seedSpellBook(spell: SpellData): Promise<void> {
   const book = await createPackBook({

@@ -664,6 +664,7 @@ test) · ❌ gap.
 | **THE SPAWN DIALOG HAS ONE SCROLL CONTAINER — THE BODY — AND IS CAPPED AGAINST THE SMALL VISIBLE VIEWPORT** (docs/17 row 340; owner, verbatim: *"Spawn dialog now does not scroll anymore on my ipad"*): the Core-mobs list is NOT independently scrollable (`overflow`/`max-h-*` gone); the virtualizer's scroll observation lands on `spawn-picker-body` and NOT on the list; its visible window is computed in the BODY's CONTENT coordinates — with the track's own offset stubbed at 1000px, dragging the body to `scrollTop = 1000` makes row 0 the FIRST visible row at `translateY(0px)` (without the `scrollMargin` the first index is far higher; without the subtraction the row sits 1000px down); the dialog declares `max-h-[85vh]` plus `supports-[height:100svh]:max-h-[min(85svh,85dvh)]`; the shared `DialogContent` base cap declares `max-h-[calc(100vh-2rem)]` plus `supports-[height:100svh]:max-h-[min(calc(100svh_-_2rem),calc(100dvh_-_2rem))]` (**BOTH DECLARATIONS SUPERSEDED BY ROW 343**, which made the picker carry a DEFINITE `h-[85vh]` / `min(85svh,85dvh)` plus the shared `DIALOG_SCROLL_BODY` through the one `DIALOG_VIEWPORT_BOX` seam and made the base's plain cap the conservative `calc(85vh-2rem)`; the current declarations are pinned by the row-343 entries, and the arm hashes in this cell are kept as the record of the row-340 landing, measured on that tree) | `spawn-picker-illustrate.test` (2 new pins + the extended row-336 scroller pin + the row-339 cap pin), `ipad-chrome.test` (1) | ✅ REVERT-PROVEN (SIX arms, each RED by name, every injected hash different from its pristine one, all files restored byte-identically — the SAME diff hash before and after the runs, `36b3bb32…`; raw arms + logs `.gate-logs/row340/arms/`): inner scroller restored → the row-336 scroller pin; the picker's `svh` dropped → the row-336 scroller pin AND the row-339 cap pin; the base cap's `svh` dropped → the ipad-chrome pin; `getScrollElement` back at the list → the scroll-observation pin; the transform's `− scrollMargin` dropped → the windowing pin; `scrollMargin` removed → the windowing pin. **AND THE HONEST LIMIT, which is the sharpest case in this table: jsdom computes no layout AND cannot scroll by touch or momentum, so NOTHING here can prove the dialog scrolls on the owner's iPad. The pins assert the structure (one scroller, which element the virtualizer observes, the window's coordinate space, the cap's units); the REAL-DEVICE CHECK IS OWED and the fix is never reported as proven.** |
 | **EVERY DIALOG WHOSE BODY IS THE SCROLLER USES THE ONE `DIALOG_VIEWPORT_BOX` + `DIALOG_SCROLL_BODY` SEAM** (docs/17 row 343, a fix-forward of row 340; owner, verbatim: *"Still can't scroll an I also see no scroll bar"*). The RENDER pins assert the STRUCTURE: the spawn dialog carries a DEFINITE `h-[85vh]` (asserted PRESENT, with `max-h-[85vh]` — row 340's shape — asserted ABSENT and the shared base's BELT `max-h-[calc(85vh-2rem)]` asserted present with `max-h-[calc(100vh-2rem)]` absent) plus the `supports-[height:100svh]:h-[min(85svh,85dvh)]` refinement; the body is still the only element inside the dialog with a scroll box; the virtualizer still observes it and still windows the Core-mobs list in the body's content coordinates; and the shared `DialogContent` base cap's plain fallback is the conservative `calc(85vh-2rem)`. The SOURCE SCAN `tests/architecture/one-dialog-viewport-box.test.ts` (5 pins) requires the box VALUE to be spelled in exactly ONE file (`components/ui/dialog.tsx`, the seam); REFUSES the row-340 shape outright (any `DialogContent`-bearing file whose class list carries `overflow-hidden` + `flex-col` + a viewport `max-h-[…vh]`); requires the seam's consumer population to be exactly the three inner-body-scroller dialogs (`SpawnPicker`, `SetupWizardDialog`, `peek-modal`) for BOTH constants; requires each of them to USE both seams inside a `className` EXPRESSION read through a brace matcher (an import, or a comment mentioning the seam, cannot satisfy it); and requires the declared CONTROL `HelpDialog` to keep its OWN definite `h-[80vh]` while staying out of the consumer inventory | `spawn-picker-illustrate.test` (the row-343 definite-height pin + the re-pointed row-336 scroller pin + the row-340 `describe`), `ipad-chrome.test` (the re-pointed shared-cap pin), `one-dialog-viewport-box.test` (new, SOURCE SCAN, 5 pins) | ✅ REVERT-PROVEN (NINE arms, each RED BY NAME, every injected hash DIFFERENT from its pristine one, every file restored BYTE-IDENTICALLY — the pre-arm and post-arm `git diff` hashes are identical, `12909667…`; runner and raw logs `.gate-logs/row343/arms/`). Pristine `SpawnPicker.tsx` `9a0be6ea21fa618a`, `dialog.tsx` `bad343035e3d98ee`, `HelpDialog.tsx` `38828acd1e60e793`. **A** the seam's definite height dropped (`dialog.tsx` → `efe9578475c1c628`) → RED 3 (the source-scan spelling pin + both picker height pins); **B** the seam's value made the ROW-340 `max-h` shape again (`→ 83926d56d02bd19a`) → RED the same 3; **C** the inner `max-h-56 overflow-auto` restored on the Core-mobs list (`SpawnPicker.tsx` → `ec217d4e2b21b4eb`) → RED the only-scroller pin + the scroll-observation pin; **D** the base belt back to `calc(100vh-2rem)` (`dialog.tsx` → `1c08c0f098482076`) → RED the ipad-chrome pin + the picker height pin; **E** `getScrollElement` pointed at the track (`→ 98cc72669878e5d7`) → RED the scroll-observation pin; **F** a SECOND SPELLING of the box value at a call site (`→ a983f0a9159e8ca0`) → RED the source-scan spelling pin; **G** a consumer drops the height seam for the row-340 shape with its import left in place (`→ 5e4b45acdc790b65`) → RED 4 (the row-340-shape pin, the USE pin, and both picker height pins) — which is what the brace-matched USE assertion exists for; **H** a FOURTH dialog (`HelpDialog`) copies the row-340 shape (`→ 3a259d0f8e1ca743`) → RED the shape pin; **I** the CONTROL loses its own definite height (`→ 119e1232294abf42`) → RED the control pin. **AND THE HONEST LIMIT, THE SHARPEST IN THIS TABLE: jsdom computes no layout — it cannot see clipping, overflow or a scrollbar — and it cannot scroll by touch or momentum, so NOTHING here can prove the dialog scrolls on the owner's iPad and nothing here MEASURES the diagnosis this row rests on (a WebKit failure to bound a `flex-1 min-h-0` child under a `max-height`-only ancestor, whose evidence is the in-repo CONTROL `HelpDialog` — the same body under a definite `h-[80vh]` — and never a device measurement). The pins assert the structure; the REAL-DEVICE CHECK IS OWED and the fix is never reported as proven.** |
 | **EVERY campaign player is on EVERY battle board, always** (docs/17 row 308): a statless PC gets a token staged beside the statful ones with its own HP and no invented stats; a RE-seed keeps exactly the campaign's count; a battle seeded BEFORE the players were created gains them through the OPEN seam (`openEncounterBattle`) while `getBattleForEncounter` alone adds nothing and an unchanged open writes nothing; the lookup resolves the statless PC with `maxHp: null` and `initiativeBonus = initiativeOverride ?? 0` so it rolls initiative; the surface shows its HP with no invented ceiling and no "no stats" badge; and a new PC is born at 20 HP | `battleSeed.test` (seed/re-seed/statless resolution), `battleRepo.test` (the inverted statless pin + the OPEN-path pair), `battle-engine.test` (the pure name-only arm + membership/roll), `battle-surface.test` (the rendered readout), `open-encounter-battle.test` (the trigger's unit pin), `pc-artifact.test` (the 20 HP default) | ✅ REVERT-PROVEN (five injections, each `tsc -b` exit 0, every file restored byte-identically: the statless drop back in `pcFightersOf` → RED 4; `fighterStatsFromPc` returning undefined for a statless PC → RED 4; the open-path trigger removed → RED 2; `currentHp: 0` → RED 1; the readout's `maxHp` printed for a null maximum → RED 1 — raw arms `.gate-logs/row308-diff/`) |
+| **THE PLAYER CHARACTER ASSISTANT** (docs/17 row 373): the player card's dead "Generate with AI" is LIVE through the EXISTING refill lane; `resolveRefillPersona(personas, 'pc')` is exactly `pc-smith` and `pc-smith` is the ONLY built-in producing `pc`; a `pc` run RUNS the stat-block step (the plan's gate now admits `npc` and `pc` only); the PC stat-block prompt states the FORMAT and carries NONE of the three NPC limits (no corpus whitelist, no "2 cantrips" caster clause, no `"extras"` line the strict schema could not carry) while the NPC prompt with the SAME library is BYTE-IDENTICAL to a golden captured at the base tree `42cd064`; an unlisted PC spell keeps its name with NO repair turn and NO "Unresolved mob spells" notice (the NPC lane with the same library and the same name DOES both — the non-vacuity arm); a refill writes INTO the pc row and leaves `playerName`/`currentHp`/`initiativeOverride` byte-identical (and the target's own summary/body/`notes` reach the draft prompt); a module level hint neither binds nor rejects a PC's block while the NPC lane in the same module still is bound, repaired and rejected; `pcDraftSchema` has no `concept` and no `needsStatBlock`, and a statless PC row stays legal; and `mobCasterLevel` is the mechanical reason the PC format asks for a BARE numeric level (a `"Wizard 3"` level makes an in-library cantrip a spurious chip issue) | `llm/pc-assistant.test.ts` (7 pins, NEW), `llm/mob-spells-lanes.test.ts` (+ the with-corpus NPC byte-identity pin), `llm/personaDescriptionClause.test.ts` (pc-smith joins the EXEMPT capture), `llm/draftSchemas.test.ts` (the pc shape), `db/personaSeed.test.ts` (membership, order-independent) | ✅ focused GREEN: 10 files / 131 tests in-turn (plus `tests/architecture` 38/38 after the `realSpell` fold) — **INJECTION ARMS NOT RUN BY THE WRITER; owed to the dispatcher's verification.** The NPC byte-identity is PROVEN base-vs-post: the same harness run with the three spell-seam `src/` files stashed at `42cd064` produced `d779da58…` (with corpus) and `0b47403c…` (without), byte-identical to the post-change run (raw captures `.gate-logs/row373/`) |
 | A CAST creature (`creatureRef`, no stored block) in an encounter resolves in battle — the DERIVED stats are frozen under the artifact id, `statless` stays empty, and the fighter-stats lookup returns them (docs/17 row 239) | `battleSeed.test` (`resolves a CAST creature (creatureRef) instead of badging it statless`) | ✅ REVERT-PROVEN (stashing the freeze reds it `expected [] to deeply equal [ObjectContaining{…}]`) |
 | Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
 | Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `settings-page.test`, `images-ui.test` | ✅ |
@@ -9337,3 +9338,78 @@ dialog.
 `textContent` index, not on pixels, and no pin observes a real iPad tab discard
 mid-persist — the partial state is BUILT explicitly (two `putChunks` batches),
 which is the honest form of a state the device would produce.
+
+## The player character assistant: one persona, one branch, and the byte-identity of the ONE other stat-block kind (docs/17 row 373, docs/18 §2/§5)
+
+THE PIN FAMILY lives in `tests/llm/pc-assistant.test.ts` (NEW, 7 pins) and runs
+the REAL engine with only the transport faked — the persona, the step plan, the
+stat-block prompt, the reply contract, the spell boundary, the refill merge and
+the Dexie write are the shipped ones:
+
+1. **(c) ONE declared persona.** `resolveRefillPersona(personas, 'pc')` is
+   `pc-smith`; exactly one built-in persona produces `pc`; its `mode` is
+   `generate` and its `postCreateExtras` is `[]`; its prompt carries the sparse
+   contract (the rules are the model's, the app explains only the FORMAT, no
+   invented cap, spells named) and its description reads as player characters,
+   never as a mob smith.
+2. **(f) THE STEP EXISTS.** A `pc` run's steps are
+   `['retrieve','draft','statblock','finalize']` and the statblock step is
+   `done`. At the base tree this is RED by construction: the plan gave the step
+   to `producesKind === 'npc'` only.
+3. **(b) THE PC PROMPT IS FORMAT-ONLY.** It contains the format section, the
+   OPEN `"spells"` clause and the bare-number level rule, and it contains
+   NEITHER `MOB_SPELL_SECTION_PREFIX`, NOR `MOB_SPELL_CASTER_CLAUSE`, NOR the
+   `copied EXACTLY from this prompt's spell list` wording, NOR
+   `"extras": Record<string,string>` (a field the strict request cannot carry).
+4. **(a) THE UNLISTED SPELL + ITS NON-VACUITY ARM.** A PC run whose reply names
+   a spell outside the library makes EXACTLY TWO chat calls (draft + stat
+   block), stores the name on the block and stamps no notice; the NPC lane with
+   the SAME library and the SAME absent name makes THREE calls and stamps
+   `Unresolved mob spells` naming the spell. Without the NPC arm the pin would
+   prove nothing.
+5. **(d) THE REFILL.** The run writes INTO the pc row (same id, one artifact),
+   `playerName`/`currentHp`/`initiativeOverride` are byte-identical, the model's
+   `notes`/`body`/stat block land, and the DRAFT prompt renders the target's own
+   summary/body/notes — the owner's "it takes the description that is there".
+6. **(g) THE MODULE LEVEL HINT.** A module-owned PC with a band of 1–3 and a
+   level-9 reply finishes `done` with the level `9` stored and two chat calls;
+   the NPC lane in the SAME module is bound, repaired and `rejected`. Both
+   directions in one suite.
+7. **THE SCHEMA DECISIONS AND THE LEVEL GRAMMAR.** `pcDraftSchema.shape` is
+   exactly `['name','summary','suggestedTags','body','notes']` (no `concept`, no
+   `needsStatBlock` — the two required fields that went nowhere are REMOVED),
+   extra keys in a reply are stripped rather than honored, a statless PC row
+   creates legally, and the differential `mobCasterLevel('3')` vs
+   `mobCasterLevel('Wizard 3')` shows WHY the format asks for a bare number: a
+   free-form level makes an in-library cantrip a spurious chip issue.
+
+**(e) BYTE-IDENTITY OF THE OTHER KIND.** The only other kind whose stat-block
+prompt exists is `npc`. `tests/llm/mob-spells-lanes.test.ts` gained a pin that
+the with-corpus NPC stat-block prompt equals the NEW golden
+`tests/fixtures/mobSpells/statblock-with-corpus.txt`, captured from the BASE
+tree `42cd064`; the pre-existing no-corpus golden pin stays green. **The capture
+was taken both ways rather than argued:** the same harness was run with
+`src/llm/runEngine.ts`, `src/llm/statBlockContract.ts` and
+`src/llm/mobSpellPrompt.ts` STASHED at the base revision and then restored
+(hashes verified equal before and after), and the two runs are byte-identical —
+`d779da5824646eb1a77db99b5aa0bcc1a9b75fa4fc4e28db3f73a05711cd14d7` with the
+corpus and `0b47403c88081730de3e8abaf9bc8eec5370140940374c57595ccac4885db40c`
+without (the latter equal to the existing golden). Raw captures in
+`.gate-logs/row373/`.
+
+**THE FOLD THIS ROW OWED.** The duplicate tripwire named six private `realSpell`
+fixture readers as a baseline group whose own `reason` already said a shared
+helper was the fold candidate. Adding a seventh would have been a new blessing
+of a duplication, so the copies were folded into `tests/helpers/spellFixtures.ts`
+(`realSpell`, `seedSpellCorpus`, `userPromptOf`), the six callers import it, and
+the baseline entry was DELETED (delete-only, as the rules require). The new pin
+file uses the same helpers, so no helper body was copied.
+
+**WHAT IS NOT PROVEN HERE.** No injection arm was run by the writer: the pins
+were run GREEN in-turn (10 files / 131 tests, plus `tests/architecture` 38/38
+after the fold), and the dispatcher's verification owes the WATCHED-RED arms.
+Nothing proves a live model obeys the sparse prompt; what is proven is the
+wiring, the prompt bytes, the reply contract and the row the engine writes. The
+`sandbox`-visible residual is recorded in docs/18 §5: a model that ignores the
+bare-number level rule still renders a spurious cantrip issue, because the chip
+render path is shared and not kind-aware.

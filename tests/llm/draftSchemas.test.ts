@@ -143,7 +143,10 @@ describe('draft schema minimum content', () => {
       personality: 'p',
       needsStatBlock: false,
     },
-    pc: { ...BASE, concept: 'c', notes: 'n', needsStatBlock: false },
+    // No `concept`, no `needsStatBlock`: docs/17 row 373 removed both — the PC's
+    // concept is the artifact's own summary/body/notes, and a player character
+    // always runs the statblock step (there is no veto field to set).
+    pc: { ...BASE, notes: 'n' },
     location: { ...BASE, locationType: 't', inhabitants: 'i', pointsOfInterest: [], hooks: [] },
     event: { ...BASE, locationType: 't', inhabitants: 'i', pointsOfInterest: [], hooks: [] },
     faction: { ...BASE, goals: 'g', methods: 'm', resources: 'r', ranks: [] },

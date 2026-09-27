@@ -5,7 +5,7 @@ import {
   MOB_SPELL_SECTION_PREFIX,
   MOB_SPELL_SECTION_SUFFIX,
 } from '@/llm/promptScaffolding';
-import { spellEntryShape } from '@/llm/statBlockContract';
+import { openSpellEntryShape, spellEntryShape } from '@/llm/statBlockContract';
 
 /**
  * The mob-spells prompt section (docs/17 rows 184, 200, 205 and 211, docs/18
@@ -73,6 +73,22 @@ export function formatMobSpellContractClause(
 ): string | null {
   if (!mobSpellVocabularyRenders(vocabulary)) return null;
   return `"spells": [${spellEntryShape(system)}]`;
+}
+
+/**
+ * THE OPEN reply-contract clause (docs/17 row 373, the player-character
+ * assistant). A PC is offered NO vocabulary — its spellbook is the model's
+ * knowledge of the system, not the campaign's imported library — but the reply
+ * contract must still name `spells` with THIS SYSTEM's entry keys, or the model
+ * could not write one. It renders the SAME per-system keys as
+ * `formatMobSpellContractClause` through the SAME builder
+ * (`statBlockContract.openSpellEntryShape`); only the `name` hint differs, so
+ * the two arms cannot drift on what a spell entry IS. There is deliberately NO
+ * corpus gate here: the PC arm has no list to gate on, and gating it on the
+ * campaign's library would be the whitelist this row removes.
+ */
+export function formatOpenSpellContractClause(system: GameSystem): string {
+  return `"spells": [${openSpellEntryShape(system)}]`;
 }
 
 /** The spell half of a repair turn: the named offenders, one per line. */

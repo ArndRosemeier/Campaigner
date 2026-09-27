@@ -142,7 +142,9 @@ Seed on app start (insert if slug missing; never overwrite user edits).
 Milestone 1 shipped **NPC Smith** fully wired; the other definitions are seeded
 but their runs reuse the exact same pipeline with different prompts and
 `producesKind` (implement in M2 — pipeline must not hardcode NPC anywhere
-except step `statblock`, which runs only when `producesKind === 'npc'`).
+except step `statblock`, which runs for the two kinds that OWN a stat block,
+`producesKind === 'npc'` and `producesKind === 'pc'` (docs/17 row 373), and is
+dropped for every other kind).
 
 `producesKind` is required for generate/review personas; image personas
 (`mode: 'image'`, M3-A) never produce an artifact and omit it. Image personas
@@ -150,6 +152,7 @@ are not chainable (chainRunner/moduleForge reject them).
 
 | slug             | name              | producesKind | mode     | one-line purpose                       |
 |------------------|-------------------|--------------|----------|----------------------------------------|
+| pc-smith         | Character Smith   | pc           | generate | ONE full player character from the description already on the row (docs/17 row 373; the player card's "Generate with AI"). Deliberately SPARSE: the system's rules are the model's, the app explains only the FORMAT, and no count of spells/cantrips/options may be invented. Not a mob smith |
 | npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
 | worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; hazards welcome. The monster boundary is NOT carried by this prompt (a built-in prompt is a seed-once row — see below): it is ENFORCED in code, keyed by kind, in `buildEntityBrief` (docs/17 row 140) — the opposition belongs to the encounter artifact, `inhabitants` means people and factions, and a location writes no tactics and no GM handling advice |
 | event-weaver     | Event Weaver      | event        | generate | Social/non-combat occasions; location-shaped, with the SAME kind-keyed ownership boundary in code (docs/17 row 140) |
@@ -271,9 +274,17 @@ Steps for every persona (M1):
    common model variations: bare strings for object lists (pointsOfInterest,
    ranks, beats), objects inside string lists (hooks/prep/openThreads),
    numeric-string counts, and a single string or omitted `suggestedTags`.
-3. **statblock** (npc only) — second LLM call asking to fill the `StatBlock`
-   JSON schema for this NPC at a user-hinted level (from brief) grounded in the
-   excerpts. Same retry policy. Skippable by user.
+3. **statblock** (`npc` and `pc` — the two kinds that own a stat block, docs/17
+   row 373) — second LLM call asking to fill the `StatBlock` JSON schema. For an
+   NPC: at a user-hinted level (from brief) grounded in the excerpts, offered the
+   campaign's imported spell corpus and checked against it. For a player
+   character: the FORMAT only (the `pc-smith` persona's arm), with no corpus
+   whitelist, no "2 cantrips, then 2 spells of each rank" caster clause and no
+   no-invention spell repair or "Unresolved mob spells" notice — the model knows
+   the system's rules and the app does not enumerate the character's options;
+   a module level hint never binds or rejects a PC's block. Same retry policy.
+   Skippable by user for an NPC; a PC always runs it and a PC row without a
+   stat block stays legal (docs/17 row 308).
 4. **finalize** — create the Artifact (kind from persona), revision 1,
    `source:'persona'`, `runId` set; link run `resultArtifactId`. The run's
    `placementModuleId` (creation dialog, one-off) is applied on fresh creates

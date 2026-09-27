@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -13,29 +10,18 @@ import {
   statBlockIsCaster,
   statBlockSchema,
   statBlockStatesNoSpellDc,
-  type SpellData,
   type StatBlock,
 } from '@/domain';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+import { realSpell } from '../helpers/spellFixtures';
 
 /**
  * The caster fields on a stat block (docs/17 row 201): spell DC, spell attack
  * and tradition are additive/nullable, are never invented (a caster that states
  * no DC yields the LOUD marker, not a number derived from its level), and the
  * cantrip auto-heightening the owner asked about is confirmed at the NPC
- * caster's OWN printed level through the ONE rule.
+ * caster's OWN printed level through the ONE rule. The fixture read is the ONE
+ * helper (`tests/helpers/spellFixtures`, docs/17 row 373).
  */
-
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
-
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
 
 /** A complete PF2e block; every caster field is left to the caller. */
 function block(over: Record<string, unknown> = {}): StatBlock {

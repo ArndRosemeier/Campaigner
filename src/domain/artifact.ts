@@ -212,9 +212,12 @@ export interface ArtifactBase extends BaseEntity {
 // --- Kind-specific structured data -----------------------------------------
 
 /**
- * Player character (M5-A): the human side of a battle. The battle engine
- * REQUIRES the stat block for initiative/HP — a statless PC is a loud
- * warning in the UI, never a silent placeholder.
+ * Player character (M5-A): the human side of a battle. A stat block is NOT
+ * required — docs/17 row 308 is the owner's rule: every campaign player is on
+ * every battle board with HP and initiative, and a statless PC participates
+ * with an UNKNOWN maximum HP rather than an invented one. The stat block is
+ * filled in when it exists (the player card's `pc-smith` assistant writes one,
+ * docs/17 row 373) and the ordinary editor remains the manual route.
  */
 export const pcDataSchema = z.object({
   /** The human player's name; '' for GM-run PCs. */

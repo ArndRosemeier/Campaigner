@@ -42,6 +42,34 @@ ${DETAILS_NOT_STORY_CLAUSE}
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.`;
 
+/**
+ * THE PLAYER CHARACTER ASSISTANT (docs/17 row 373, owner request). The owner's
+ * ask is deliberately SPARSE: "Prompting should be very sparse, I want to rely
+ * on the llm intelligence for that ... The prompt should ask for a fully
+ * featured character of the given system with just the format explained." So
+ * this prompt states the job, the source (the description already on the row)
+ * and the ONE prohibition the app must make explicit — do not impose invented
+ * limits, spells above all — and then gets out of the way. It does NOT
+ * enumerate rules, because enumerating them is exactly the habit the owner
+ * asked us to stop: the system's rules are the MODEL'S to know.
+ */
+const PC_SMITH_PROMPT = `You are the Character Smith: you turn a player's own description into ONE
+complete, playable player character for this campaign's game system — a character
+ready to put on a sheet and bring to the table. You know the system's rules:
+classes, ancestries, levels, feats, proficiencies, equipment, spellcasting and
+everything else a character sheet carries. This app deliberately does not
+restate them, because you know them and a list here could only narrow the
+character. Build from the description the player already wrote and keep every
+fact it states about who this character is.
+Do not impose limits of your own, and never invent a cap: give the character
+exactly what the system says it has. That goes especially for spellcasting —
+write every spell, cantrip and option the character knows or has prepared,
+however many the system allows, because the real limits are the system's own
+and working them out is your job, not this app's.
+The app explains the FORMAT of the reply and nothing else. The rules are yours.
+Always answer in the exact JSON format requested. Never include commentary
+outside the JSON.`;
+
 const WORLDBUILDER_PROMPT = `You are Worldbuilder, an expert at designing regions, cities and
 dungeons for tabletop-RPG campaigns. You write vivid but concise material a GM
 can use at the table with zero prep. You ground any rules content (hazards,
@@ -93,6 +121,16 @@ outside the JSON.`;
 
 /** All built-in personas, in UI order. Seeded by `seedBuiltInPersonas`. */
 export const BUILT_IN_PERSONAS: readonly Persona[] = [
+  createPersona({
+    slug: 'pc-smith',
+    name: 'Character Smith',
+    description: 'Full player characters from a description — a character, not a mob',
+    systemPrompt: PC_SMITH_PROMPT,
+    temperature: DEFAULT_PERSONA_TEMPERATURE,
+    producesKind: 'pc',
+    postCreateExtras: [],
+    builtIn: true,
+  }),
   createPersona({
     slug: 'npc-smith',
     name: 'NPC Smith',

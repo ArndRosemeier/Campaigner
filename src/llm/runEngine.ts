@@ -235,6 +235,7 @@ import {
   formatMobSpellContractClause,
   formatMobSpellRepair,
   formatMobSpellSection,
+  formatOpenSpellContractClause,
   mobSpellVocabularyRenders,
 } from '@/llm/mobSpellPrompt';
 import { loadSpellChunksFor } from '@/db/spellRepo';
@@ -1210,8 +1211,21 @@ function encounterAdvisoryText(
  * printed "2 (−4)" for a creature whose Strength bonus is +2. The app stores
  * d20-scale SCORES in EVERY system (docs/12 §5 is the authority for the
  * conversion); the clause below states that AND the signed-value tell.
+ *
+ * THE PLAYER-CHARACTER ARM (docs/17 row 373, `pcArm`). A PC is offered no
+ * vocabulary (its spellbook is the model's own knowledge of the system), so the
+ * shape must still name `spells` — through the OPEN clause, whose entry keys
+ * are the SYSTEM's own — and it must NOT name `extras`: the strict request
+ * subset cannot carry a free-form `z.record()` at all (`llm/strictSchema` drops
+ * it), so telling a PC model about `extras` would invite a field the reply
+ * contract does not have. The two differences are the ONLY ones; the default
+ * arm's bytes are untouched.
  */
-function statBlockSchemaHint(system: GameSystem, vocabulary: MobSpellVocabulary | null): string {
+function statBlockSchemaHint(
+  system: GameSystem,
+  vocabulary: MobSpellVocabulary | null,
+  pcArm = false,
+): string {
   // THE SPELLS CLAUSE (docs/17 rows 200 and 205): the reply contract's own
   // field list must name `spells` exactly when this lane is offered the
   // vocabulary, and its entry keys must be THIS SYSTEM'S — rendered through the
@@ -1222,6 +1236,9 @@ function statBlockSchemaHint(system: GameSystem, vocabulary: MobSpellVocabulary 
   // that authors no inline block) keeps the pre-arc bytes exactly.
   const spellClause =
     vocabulary === null ? null : formatMobSpellContractClause(vocabulary, system);
+  const tail = pcArm
+    ? `, ${formatOpenSpellContractClause(system)} }`
+    : `"extras": Record<string,string>${spellClause === null ? '' : `, ${spellClause}`} }`;
   return (
     `{ "system": "${system}", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), ` +
     `"size": string, "creatureType": string, "ac": number, ` +
@@ -1230,9 +1247,7 @@ function statBlockSchemaHint(system: GameSystem, vocabulary: MobSpellVocabulary 
     '"saves": string, "skills": string, "senses": string, "languages": string, ' +
     '"traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], ' +
     '"reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], ' +
-    '"extras": Record<string,string>' +
-    (spellClause === null ? '' : `, ${spellClause}`) +
-    ' }'
+    tail
   );
 }
 
@@ -2795,6 +2810,12 @@ export class RunEngine {
     void this.recordChatModelInUse(input.persona);
 
     const steps: RunStep[] = [...run.steps];
+    // THE STAT-BLOCK STEP'S TWO KINDS (docs/17 row 373). It is the step that
+    // AUTHORS a stat block, and exactly two kinds own one: an npc and a player
+    // character. Every other generate kind (location/event/faction/note/plotarc)
+    // authors no numbers, so the step is dropped for them and their pipelines
+    // stay byte-identical. This is the ONE place the plan decides it — the step
+    // itself branches on the kind for its prompt, never on a second plan.
     const kinds: StepName[] =
       input.persona.mode === 'review'
         ? [...REVIEW_STEP_NAMES]
@@ -2802,7 +2823,7 @@ export class RunEngine {
           ? [...IMAGE_STEP_NAMES]
           : input.persona.mode === 'encounter'
             ? this.encounterPipelineKinds(input, run.steps)
-            : input.persona.producesKind === 'npc'
+            : input.persona.producesKind === 'npc' || input.persona.producesKind === 'pc'
             ? [...STEP_NAMES]
             : STEP_NAMES.filter((name) => name !== 'statblock');
 
@@ -3358,6 +3379,39 @@ export class RunEngine {
   }
 
   /**
+   * The target PC's OWN text, as ONE prompt section for the `pc` draft
+   * (docs/17 row 373). This is the material the player-character assistant
+   * exists to expand, and it is deliberately read from the target ROW rather
+   * than from any remembered brief: `pcDataSchema` stores it in `notes`, and
+   * the artifact itself in `summary`/`body`, so all three are rendered and
+   * nothing the owner wrote is invisible to the model. The section is for the
+   * `pc` arm ONLY (its caller gates on the kind), so no other kind's prompt
+   * bytes move. `null` when the target carries none of the three — there is
+   * nothing to ground, and the run still works from the name and the brief;
+   * that is an ABSENCE, never a placeholder standing in for text (AGENTS
+   * rule 1). A vanished target throws here exactly as the module grounding does.
+   */
+  private async pcOwnDescriptionSection(targetArtifactId: Id | undefined): Promise<string | null> {
+    if (targetArtifactId === undefined) return null;
+    const target = await getAnyArtifact(targetArtifactId);
+    if (target === undefined) {
+      throw new Error(`The player character to fill (${targetArtifactId}) no longer exists`);
+    }
+    if (target.kind !== 'pc') return null;
+    const notes = target.data.notes.trim();
+    const own = [
+      target.summary.trim() === '' ? null : `Summary: ${target.summary.trim()}`,
+      target.body.trim() === '' ? null : target.body.trim(),
+      notes === '' ? null : `Notes: ${notes}`,
+    ].filter((part): part is string => part !== null);
+    if (own.length === 0) return null;
+    return [
+      `The player character's own description — the material this character is built from (keep every fact it states):`,
+      ...own,
+    ].join('\n\n');
+  }
+
+  /**
    * The in-place refill's module grounding (parity with automatic module
    * generation, 08 §M4-C): a targeted GENERATE run grounds its draft in the
    * target artifact's owning module exactly as `runEntityBatch` would —
@@ -3677,6 +3731,18 @@ export class RunEngine {
     // sources the automatic module generation grounds its briefs in. Every
     // inapplicable state names itself (moduleGroundingSection).
     const moduleSection = moduleGroundingSection(context.moduleGrounding);
+    // THE PLAYER CHARACTER'S OWN DESCRIPTION (docs/17 row 373). The owner's
+    // request is that the PC assistant "takes the description that is there and
+    // creates a full character" — but the refill lane grounds in the MODULE and
+    // the campaign, never in the target row's own prose (`targetModuleGrounding`
+    // carries only the target's NAME for a campaign-level artifact). This is the
+    // ONE section that renders the target's own text, and it renders ONLY for a
+    // `pc` refill, so every other kind's draft prompt bytes are unchanged. The
+    // player's description may live in the artifact's summary, its body or the
+    // PC's `notes`; all three are rendered, and a target that carries none
+    // renders no section (nothing to ground — never a placeholder).
+    const ownDescriptionSection =
+      kind === 'pc' ? await this.pcOwnDescriptionSection(input.targetArtifactId) : null;
     // THE NAME ANCHOR (docs/17 row 226): an in-place refill states the target
     // artifact's identity VERBATIM, so the model answers as the artifact it is
     // regenerating instead of as a co-mentioned entity the grounding also fed
@@ -3757,6 +3823,7 @@ export class RunEngine {
       kind === 'encounter' ? ASSERTED_CAST_TRANSCRIPTION_SECTION : null,
       kind === 'encounter' ? assertedCastSectionFor(storedAssertedCast) : null,
       moduleSection,
+      ownDescriptionSection,
       groundingSection,
       contextSection,
       context.excerpts === ''
@@ -4266,10 +4333,25 @@ export class RunEngine {
     // THE MINTED BLOCK's level, read through the ONE reader (`mobLevelFor`, the
     // SAME one the panel's chip and the stat-block card use). `'—'` and an
     // unreadable level read as NO level, so they can never win this chain.
-    const mintedBlockText = refillTarget === undefined ? undefined : mobLevelFor(refillTarget);
+    //
+    // THE PLAYER-CHARACTER ARM (docs/17 row 373). A player character's level is
+    // the CHARACTER's own — it is a free-form stat-block string — so a module's
+    // recorded level or level band must neither BIND the block nor REJECT it,
+    // and the owner's instruction is not read for a level here (a PC may
+    // legitimately be any level, and the read would spend a call only to be
+    // discarded). `isPc` gates every module/hint/brief source below; the
+    // instruction, the minted block, the record, the module statement and the
+    // brief are all left unset, so `level` and `band` are `undefined` and
+    // `statBlockLevelIssue` has nothing to compare (its own no-level arm). The
+    // step's prompt states the FORMAT for a PC instead of a level clause.
+    const isPc = input.persona.producesKind === 'pc';
+    const mintedBlockText =
+      isPc || refillTarget === undefined ? undefined : mobLevelFor(refillTarget);
     const mintedBlockLevel =
       mintedBlockText === undefined ? undefined : parseLevelSort(mintedBlockText);
-    const storedHint = input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint;
+    const storedHint = isPc
+      ? undefined
+      : (input.entityLevelHint ?? context.moduleGrounding?.entityLevelHint);
     const recordedLevel = mintedBlockLevel ?? storedHint;
     // SOURCE 1 — THE OWNER'S INSTRUCTION IS READ BY THE MODEL (docs/17 row 289,
     // AGENTS rule 5: free text is never parsed by a pattern). NO INSTRUCTION ⇒
@@ -4285,7 +4367,7 @@ export class RunEngine {
     // model's honest answer that the instruction asks for no level, and it
     // leaves the chain below to the block/hint/module exactly as today.
     const instructionRead =
-      statedInstruction === ''
+      isPc || statedInstruction === ''
         ? null
         : await readInstructionLevel({
             instruction: statedInstruction,
@@ -4297,19 +4379,23 @@ export class RunEngine {
           });
     const explicitLevel = instructionRead?.level ?? undefined;
     const placementModule =
-      input.placementModuleId === undefined ? undefined : await getModule(input.placementModuleId);
-    const moduleLevel =
-      context.moduleGrounding?.statedLevel ??
-      (placementModule === undefined
+      isPc || input.placementModuleId === undefined
         ? undefined
-        : moduleStatedLevel(placementModule, asString(draft?.name)));
+        : await getModule(input.placementModuleId);
+    const moduleLevel = isPc
+      ? undefined
+      : (context.moduleGrounding?.statedLevel ??
+        (placementModule === undefined
+          ? undefined
+          : moduleStatedLevel(placementModule, asString(draft?.name))));
     // A run whose entity belongs to a module: the grounding names the owning
     // module for a targeted refill, and a CREATE run carries the module it is
     // being born into. Only such a run has a module whose BAND may bound the
     // reply — and whose absence (the row is gone) refuses loudly (docs/17 row
     // 247); a one-off campaign-level statblock run has no such author.
     const moduleOwned =
-      context.moduleGrounding?.status === 'ok' || input.placementModuleId !== undefined;
+      !isPc &&
+      (context.moduleGrounding?.status === 'ok' || input.placementModuleId !== undefined);
     const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel;
     // WHOSE level the clause states, honestly (docs/17 row 282): the owner's
     // instruction, the entity's own minted block, or the module's statement.
@@ -4367,13 +4453,13 @@ export class RunEngine {
     // arm). It is NOT a structured level (its provenance is a sentence), which
     // is why the clause it produces keeps the pre-197 prompt bytes.
     const briefLevel =
-      resolvedLevel === undefined
-        ? nameScopedLevel(
+      isPc || resolvedLevel !== undefined
+        ? undefined
+        : nameScopedLevel(
             withoutPartyLevelLines(stepBrief),
             asString(draft?.name),
             'whole-text',
-          )
-        : undefined;
+          );
     const level = resolvedLevel ?? briefLevel;
     // THE MODULE'S BAND, when nothing EXACT resolved (docs/17 row 247). A range
     // is NOT a level, so it can never bind one value — but it is the module's own
@@ -4431,12 +4517,38 @@ export class RunEngine {
     // reaches `mobCasterLevel('')` → null → the whole corpus, which is why an
     // unconstrained level also offered high-rank spells. A BAND windows at its
     // TOP: the widest offer the module licenses.
-    const spellLibrary = await this.spellLibraryFor(
-      input.campaign.system,
-      mobCasterLevel(level === undefined ? (band === undefined ? '' : String(band.max)) : String(level)),
-    );
+    //
+    // A PLAYER CHARACTER is offered NO corpus at all (docs/17 row 373): its
+    // spellbook is the model's knowledge of the system, so the library is not
+    // read, not listed and not validated against. `null` here is the pc arm's
+    // marker; the prompt branch below renders the OPEN spell contract instead.
+    const spellLibrary = isPc
+      ? null
+      : await this.spellLibraryFor(
+          input.campaign.system,
+          mobCasterLevel(
+            level === undefined ? (band === undefined ? '' : String(band.max)) : String(level),
+          ),
+        );
+    // THE PLAYER-CHARACTER FORMAT SECTION (docs/17 row 373). The character's
+    // mechanics ride the stat block's MODEL-VISIBLE fields — `extras` cannot be
+    // emitted by a strict request at all — so the mapping is stated once here
+    // and the model fills it. `level` is asked for as a BARE NUMBER because the
+    // app's own cantrip rule reads it through `mobCasterLevel` (a bare-integer
+    // grammar): a free-form "Wizard 3" would make every in-library cantrip
+    // render a spurious issue on the character's own card, the battle board and
+    // the PDF. The count of spells is the SYSTEM's to decide, never this app's.
+    const pcFormatSection = [
+      'Format for this player character — the system\u2019s rules are yours to know and are deliberately not restated here; only the FORMAT is explained:',
+      '- "level": the character\u2019s level as a bare number (e.g. "3") — the app\u2019s spell rule reads that number; put the class and ancestry in "creatureType" and "traits".',
+      '- "ac", "hp" and all six ability scores are required, and abilities are d20 SCORES — never a signed modifier.',
+      '- Ancestry features, class features and feats belong in "traits"; attacks and activated abilities in "actions"; reactions in "reactions"; proficiencies in "saves"/"skills".',
+      '- "spells" carries every spell the character knows or has prepared, plus "spellDC"/"spellAttack"/"tradition" — write as many as the character should have; the system decides the count, not this app.',
+    ].join('\n');
     const instruction = [
-      `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelClause}${levelInstruction}, grounded in the rule excerpts.`,
+      isPc
+        ? `Fill the StatBlock for "${asString(draft?.name) || 'the player character'}" — a complete, playable player character built from the description above.`
+        : `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelClause}${levelInstruction}, grounded in the rule excerpts.`,
       // THE BRIEF THE STAT-BLOCK STEP READS has the app's generated party-level
       // line REMOVED (docs/17 row 247): it states the PARTY's level, and leaving
       // it in the prompt is how the owner's premise-stated level-5 smith came
@@ -4446,19 +4558,35 @@ export class RunEngine {
       // entity-hint paragraph is removed too (docs/17 row 282): it states the
       // contradicted number in the imperative, which is a second exact level in
       // one prompt — the clause above already states the level this run builds.
-      withoutPartyLevelLines(stepBrief),
+      // A PC has no level clause at all, so its brief is passed UNTOUCHED.
+      isPc ? stepBrief : withoutPartyLevelLines(stepBrief),
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
       // Null when the campaign's system has no imported spells at all, so a
       // dnd5e prompt keeps its pre-arc bytes (the validation below still runs).
-      formatMobSpellSection(spellLibrary.vocabulary, input.campaign.system),
+      // A PC is never offered the corpus (nor the caster clause): the whole
+      // point of this lane is that the app does not enumerate the character's
+      // options.
+      !isPc && spellLibrary !== null
+        ? formatMobSpellSection(spellLibrary.vocabulary, input.campaign.system)
+        : null,
       // THE CASTER CLAUSE at the STAT-BLOCK step (docs/17 row 201): the step
       // that writes the spells AND the DC, through the SAME composer and the
       // SAME corpus gate as the vocabulary just above. Rendered only for this
-      // NPC lane — the encounter draft and the Cartographer never call it.
-      formatMobSpellCasterClause(spellLibrary.vocabulary),
-      `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system, spellLibrary.vocabulary)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
+      // NPC lane — the encounter draft and the Cartographer never call it, and
+      // a PC is excluded with the vocabulary it belongs to.
+      !isPc && spellLibrary !== null
+        ? formatMobSpellCasterClause(spellLibrary.vocabulary)
+        : null,
+      // THE PC FORMAT (row 373) replaces both NPC spell sections: no list, no
+      // "2 cantrips then 2 spells of each rank" rule, no cap of any kind.
+      isPc ? pcFormatSection : null,
+      `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(
+        input.campaign.system,
+        spellLibrary === null ? null : spellLibrary.vocabulary,
+        isPc,
+      )}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       additionalInstructionSection(extraInstruction),
     ]
       .filter((part) => part !== null)
@@ -4476,9 +4604,15 @@ export class RunEngine {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
+        // THE REPLY CONTRACT — ONE call site for every lane (docs/17 row 373).
+        // A PC ALWAYS gets the system-aware assignment keys (it may know spells,
+        // and the keys must be THIS system's), never gated on the campaign's
+        // imported corpus: there is no list to gate on, and the corpus is not
+        // the PC's source. Every other lane keeps its existing corpus gate, so
+        // its request bytes are unchanged.
         responseFormat: statBlockResponseFormat(
           input.campaign.system,
-          mobSpellVocabularyRenders(spellLibrary.vocabulary),
+          spellLibrary === null ? true : mobSpellVocabularyRenders(spellLibrary.vocabulary),
         ),
         signal,
       }),
@@ -4610,11 +4744,28 @@ export class RunEngine {
     // so its chip renders the UNRESOLVED state with the name visible, and the
     // step carries a loud notice naming the spell AND the mob (the policy the
     // owner set — a named issue and an unresolved chip, never a silent drop).
-    const spellIssueList = statblockSpellIssues(
-      statBlock,
-      asString(draft?.name) || 'the NPC',
-      spellLibrary.index,
-    );
+    //
+    // A PLAYER CHARACTER IS NOT A MOB AND ITS SPELLBOOK IS NOT THE LIBRARY
+    // (docs/17 row 373, AGENTS rule 1). This boundary does not run for `pc`:
+    //   • the repair turn orders the model to "assign ONLY names copied from the
+    //     spell list in this prompt" — a LIMIT on the character's spellbook,
+    //     which is exactly what the owner asked the app to stop imposing;
+    //   • the notice says "Unresolved mob spells" about a player character;
+    //   • and the resolver reads the block's `level` through `mobCasterLevel`,
+    //     which requires a BARE INTEGER — a PC's level is the character's own
+    //     (class + level), so feeding it here would report every in-library
+    //     cantrip as an issue.
+    // NOTHING IS DROPPED AND NOTHING FAILS: the assignments stay on the block, so
+    // the shared card still renders each spell as a chip (a name the library does
+    // not hold stays visibly unresolved) on the character's card, the battle
+    // board and the PDFs. The owner verifies the character; the app states the
+    // format. `spellLibrary === null` IS the pc arm (see the prompt branch
+    // above), and the empty list is what keeps the repair, the notice and the
+    // stored `spellIssues` record off this lane.
+    const spellIssueList =
+      spellLibrary === null
+        ? []
+        : statblockSpellIssues(statBlock, asString(draft?.name) || 'the NPC', spellLibrary.index);
     if (spellIssueList.length > 0 && !this.statblockRetried.has(runId)) {
       this.statblockRetried.add(runId);
       debugLog('run', 'statblock reply assigned unresolvable spells — retrying once', {

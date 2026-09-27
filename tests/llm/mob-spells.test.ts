@@ -1,8 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
@@ -24,8 +21,8 @@ import {
   type SpellData,
 } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
 import { MOB_SPELL_SECTION_PREFIX } from '@/llm/promptScaffolding';
+import { realSpell } from '../helpers/spellFixtures';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -33,7 +30,8 @@ import { clearDatabase } from '../db/helpers';
  * the stat-block step of an AI-authored NPC, the library the prompt offers,
  * the boundary that checks what came back, and the row the engine finally
  * writes. The chat is mocked; nothing else is — the schema, the corpus read,
- * the resolver and the loud notice are the shipped ones.
+ * the resolver and the loud notice are the shipped ones. The spell fixture read
+ * is the ONE helper (`tests/helpers/spellFixtures`, docs/17 row 373).
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -50,17 +48,6 @@ vi.mock('@/llm/openrouter', () => ({
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
-
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
-
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
 
 const VALID_DRAFT = {
   name: 'Grix',

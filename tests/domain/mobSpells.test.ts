@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -16,7 +13,7 @@ import {
 import { spellDataSchema, type SpellData } from '@/domain/spellData';
 import { pf2eCantripRankFor, PROSE_ONLY_MARKER, spellAtRank } from '@/domain/spellHeightening';
 import { formatMobSpellSection } from '@/llm/mobSpellPrompt';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+import { realSpell } from '../helpers/spellFixtures';
 
 /**
  * The mob-spell resolver (docs/17 row 184): the ONE place an assigned spell
@@ -26,18 +23,9 @@ import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
  * The Fireball/Ignition payloads are the REAL v14-dev documents mapped by the
  * ingest lane's own field mapping, so the formulas asserted here are the
  * source's numbers — the same fixtures `pf2e-rules-heightening.test.ts` pins.
+ * They are read through the ONE helper (`tests/helpers/spellFixtures`), which
+ * docs/17 row 373 folded the six private copies onto.
  */
-
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
-
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
 
 const fireball = (): Promise<SpellData> =>
   realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');

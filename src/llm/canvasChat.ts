@@ -1833,7 +1833,11 @@ function artifactKindLines(artifact: AnyArtifact, extras: ArtifactDetailsExtras)
       if (data.statBlock !== null) {
         lines.push('stat block (stored on this row):', ...statBlockLines(data.statBlock, '  '));
       } else {
-        lines.push('stat block: NOT RECORDED (null on the row) — a statless PC is a loud warning in the app, never a silent default');
+        // A statless PC is LEGAL, not a warning (docs/17 row 308, which
+        // superseded the older "loud warning" claim this line used to repeat):
+        // every campaign player is on every battle board with HP and
+        // initiative, and no stat block is required.
+        lines.push('stat block: NOT RECORDED (null on the row) — a player character needs no stat block; the player is on every battle board with HP and initiative regardless');
       }
       lines.push(`current HP: ${data.currentHp}`);
       lines.push(`initiative override: ${data.initiativeOverride === null ? 'none (dexterity only)' : String(data.initiativeOverride)}`);

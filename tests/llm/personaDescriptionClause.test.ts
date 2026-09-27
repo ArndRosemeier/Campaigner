@@ -18,7 +18,7 @@ import { personaBySlug } from '../helpers/builtInPersona';
  * THE LOAD-BEARING PIN IS THE GOLDEN:
  * `tests/fixtures/personaDescriptions/pre-change-prompts.json` was captured
  * from the tree BEFORE the clause landed, by reading the REAL
- * `BUILT_IN_PERSONAS`. The seven EXEMPT personas must reproduce it byte for
+ * `BUILT_IN_PERSONAS`. The eight EXEMPT personas must reproduce it byte for
  * byte, and each in-scope persona must reproduce it after REMOVING exactly one
  * clause — so the clause is proven ADDITIVE (nothing existing was dropped,
  * reworded or weakened) and to ride each in-scope prompt exactly once.
@@ -38,7 +38,10 @@ const PRE_CHANGE: Readonly<Record<string, string>> = JSON.parse(
  */
 const IN_SCOPE: string[] = ['faction-designer', 'npc-smith', 'worldbuilder'];
 
-/** Everything that must stay byte-identical — including the two `note` writers. */
+/** Everything that must stay byte-identical — including the two `note` writers.
+ * `pc-smith` joined the roster as a NEW built-in with docs/17 row 373, so its
+ * prompt is captured at its birth (it never carried the clause) and held
+ * byte-identical from here on. */
 const EXEMPT: string[] = [
   'arc-weaver',
   'continuity-editor',
@@ -46,6 +49,7 @@ const EXEMPT: string[] = [
   'encounter-smith',
   'event-weaver',
   'illustrator',
+  'pc-smith',
   'plot-architect',
 ];
 

@@ -1020,18 +1020,6 @@
       ]
     },
     {
-      "hash": "e11c36f7320634fe",
-      "reason": "Six `realSpell` fixture-parse helpers (mobSpells, statblock-caster, mob-spell-chips, mob-spells-pdf, mob-spells-lanes, mob-spells); a shared spell-fixture parser helper is a real fold candidate.",
-      "sites": [
-        "tests/domain/mobSpells.test.ts:realSpell",
-        "tests/domain/statblock-caster.test.ts:realSpell",
-        "tests/features/mob-spell-chips.test.tsx:realSpell",
-        "tests/lib/mob-spells-pdf.test.ts:realSpell",
-        "tests/llm/mob-spells-lanes.test.ts:realSpell",
-        "tests/llm/mob-spells.test.ts:realSpell"
-      ]
-    },
-    {
       "hash": "e227f6d4a5c58211",
       "reason": "Four `createBook` recording stubs (pack-import, pf2e-conditions, pf2e-journal, pf2e-rules) sharing the created array; folds with `memoryDeps` and `finalizeBook` onto the shared pack-deps helper.",
       "sites": [

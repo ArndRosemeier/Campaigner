@@ -45,7 +45,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import { defaultSettings, ENCOUNTER_PARTY_LEVEL_MAX, ENCOUNTER_PARTY_LEVEL_MIN, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
+import { defaultSettings, ENCOUNTER_PARTY_LEVEL_MAX, ENCOUNTER_PARTY_LEVEL_MIN, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { withAdditionalInstruction } from '@/llm/additionalInstruction';
@@ -53,6 +53,9 @@ import { rejectionIssues } from '@/llm/rejectionReason';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { refillBrief, useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
+// THE ONE refill-persona rule lives beside its request channel, so it can be
+// pinned as the pure function it is (docs/17 row 373); the panel is its caller.
+import { resolveRefillPersona } from '@/features/campaign/refillPersona';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
 import type { PostCreateExtra } from '@/domain';
@@ -67,32 +70,6 @@ const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
   { value: 'review', label: 'Review' },
   { value: 'auto', label: 'Auto' },
 ];
-
-/**
- * Canonical smith persona per refillable kind (the STUB_PERSONA_SLUGS
- * convention, 08 §M4-C, extended with the Arc Weaver for plotarcs): the
- * slug match wins over a producesKind scan so a user-created persona with
- * the same kind never outranks the built-in smith.
- */
-const REFILL_PERSONA_SLUGS: Readonly<Partial<Record<ArtifactKind, string>>> = {
-  npc: 'npc-smith',
-  location: 'worldbuilder',
-  event: 'event-weaver',
-  faction: 'faction-designer',
-  note: 'plot-architect',
-  plotarc: 'arc-weaver',
-};
-
-/** The generate-mode persona that refills artifacts of `kind` (undefined =
- * none exists — the panel leaves the request unclaimed and says nothing). */
-function resolveRefillPersona(personas: readonly Persona[], kind: ArtifactKind): Persona | undefined {
-  const slug = REFILL_PERSONA_SLUGS[kind];
-  if (slug !== undefined) {
-    const bySlug = personas.find((persona) => persona.slug === slug && persona.mode === 'generate');
-    if (bySlug !== undefined) return bySlug;
-  }
-  return personas.find((persona) => persona.mode === 'generate' && persona.producesKind === kind);
-}
 
 /** One "After creation" extra: the offered set derives from the CHOSEN
  * persona (extrasForPersona) — the checkbox writes a remembered preference

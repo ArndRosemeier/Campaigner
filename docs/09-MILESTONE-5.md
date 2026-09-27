@@ -102,6 +102,43 @@ export const pcDataSchema = z.object({
 - The module PDF's player document renders PC cards (name, portrait, HP — no
   `notes`, which are GM material; docs/07 §M3-D).
 
+### The player character assistant (docs/17 row 373 — NEW DESIGN)
+
+M5-A designed the `pc` schema, the editor, the party wizard and the PDF, and
+left the stat block to manual entry; the `pcDraftSchema` / `dataForDraft('pc')` /
+`mergeRefillData` pc arms existed only because `draftContractFor` is an exhaustive
+`switch` over `ArtifactKind`. **No persona ever produced a `pc` and no spec ever
+named one, so this is NEW design, not a restoration** — and it is the ONE lane:
+the player card's existing "Generate with AI" (`ContentAiSection`), through the
+existing content-refill channel, now resolves (via
+`features/campaign/refillPersona`) to the ONE new built-in **`pc-smith`
+("Character Smith")** and writes a full character INTO the player card from the
+description already on the row — name, relations and images preserved, the
+player's own `playerName`/`currentHp`/`initiativeOverride` untouched.
+
+The prompt is deliberately SPARSE (the owner's own words: *"Prompting should be
+very sparse, I want to rely on the llm intelligence for that … The prompt should
+ask for a fully featured character of the given system with just the format
+explained."*): it asks for one complete, playable character of the campaign's
+system, written from that description; it states that the system's rules are the
+MODEL'S to know and are not restated; and it forbids self-imposed limits, naming
+spells — no cap on known/prepared spells, cantrips or options by any count the
+app or the model invents. The app explains the FORMAT only.
+
+The FORMAT work is the stat-block step's `pc` arm: the NPC's three invented
+limits are OFF for a PC (the campaign-corpus whitelist, the "2 cantrips, then
+2 spells of each rank" caster clause, and the no-invention spell repair plus its
+`Unresolved mob spells` notice), a module level hint can neither bind nor reject
+the block, and the character's mechanics ride the stat block's model-visible
+fields (class/ancestry → `creatureType`/`traits`, feats → `traits`,
+proficiencies → `saves`/`skills`, spellcasting → `spells`/`spellDC`/
+`spellAttack`/`tradition`, equipment/backstory → the artifact's `body`/`notes`) —
+never `extras`, which strict structured output drops. A `pc` row without a stat
+block stays legal (docs/17 row 308). The app validates the FORMAT through zod as
+everywhere else; the RULES are the user's to verify (the owner's rule), and an
+unresolved spell name stays on the row so its chip renders unresolved on the
+card, the battle board and the PDFs.
+
 ### Dexie (version 8)
 
 No data migration (new kind, new table below) — the upgrade only adds

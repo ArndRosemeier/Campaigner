@@ -25,7 +25,7 @@ import {
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import { foundryDnd5eSrdAdapter } from '@/ingest/packs/dnd5e-foundry';
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
+import { realSpell } from '../helpers/spellFixtures';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -34,10 +34,10 @@ import { clearDatabase } from '../db/helpers';
  * renders the UNRESOLVED state with the name visible, and the chip's detail is
  * `spellAtRank`'s output at the cast rank. Row 189 adds the LIBRARY half: a
  * real imported creature's OWN `spell` items reach the same field, so the
- * chips render through this SAME harness with no second path.
+ * chips render through this SAME harness with no second path. The spell fixture
+ * read is the ONE helper (`tests/helpers/spellFixtures`, docs/17 row 373).
  */
 
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
 const PF2E_CREATURE_FIXTURES = join(
   import.meta.dirname,
   '..',
@@ -45,15 +45,6 @@ const PF2E_CREATURE_FIXTURES = join(
   'packs',
   'pf2e',
 );
-
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
 
 let seq = 0;
 async function seedSpells(

@@ -41,7 +41,7 @@ import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy
  * | `faction` / `note`                  | (with `buildEntityBrief`)        | `runEngine`'s refill (identity preserved)         |
  * | `npc` carrying a cast origin       | REFUSED — `castCreatureWritePermitted` | no instruction ⇒ nothing is written at all |
  * | (a CAST CREATURE npc, docs/11 D4)   | (docs/17 row 284)                | an INSTRUCTION ⇒ the entity lane, as the owner ruled |
- * | `pc`                                | UNSUPPORTED — the Party is authored | no persona produces a player character         |
+ * | `pc`                                | UNSUPPORTED — the Party is authored | not instruction-CHANGEABLE; its ONE assistant is the player card's own refill (`pc-smith`, docs/17 row 373) |
  * | `plotarc`                           | UNSUPPORTED — outside the entity lane | the arc engine is not a module entity kind    |
  *
  * WHAT IS UNIFORM, because a seam that re-invents semantics is worse than none:
@@ -199,11 +199,14 @@ const ENTITY_CHANGE_KINDS: readonly EntityChangeKind[] = ENTITY_KINDS.filter(
 );
 type EntityChangeKind = Exclude<StubKind, 'encounter'>;
 
-/** The Party is AUTHORED, not generated (docs/17 row 69: the module-creation
- * pool excludes it, and no persona produces one) — said as the reason rather
- * than as a silent skip. */
+/** The Party is not instruction-CHANGEABLE (docs/17 row 69 excluded it from the
+ * module-creation pool, and no module-scoped entity engine serves a PC) — but it
+ * DOES have ONE assistant since docs/17 row 373: the player card's own
+ * "Generate with AI" (the `pc-smith` persona), which authors a full character
+ * from the description already on the row. The reason names that door rather
+ * than claiming no design engine produces a PC. */
 function partyReason(artifact: AnyArtifact): string {
-  return `«${artifact.name}» is a player character, and the Party is authored, not generated: no design engine produces a PC, so there is no instruction-driven change path for it. Edit it in the artifact editor's own fields — that is where a player character is written.`;
+  return `«${artifact.name}» is a player character, and the Party is authored, not instruction-changed: no module-scoped change engine serves a PC, so there is no instruction-driven change path for it. Its own assistant is the player card's "Generate with AI", which writes a full character from the description on the row — use that, or edit the character in the artifact editor's own fields.`;
 }
 
 /** A plot arc is a real artifact kind with a real engine (the Arc Weaver), but

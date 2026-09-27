@@ -8,20 +8,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
-import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
-import { putChunks } from '@/db/chunkRepo';
 import { getRun } from '@/db/runRepo';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { MOB_SPELL_CASTER_CLAUSE, MOB_SPELL_SECTION_PREFIX } from '@/llm/promptScaffolding';
 import { spellEntryShape } from '@/llm/statBlockContract';
-import { foundryPf2eRulesAdapter } from '@/ingest/packs/pf2e-rules';
-import {
-  ruleChunkSchema,
-  stampNewEntity,
-  type Persona,
-  type RuleChunk,
-  type SpellData,
-} from '@/domain';
+import { type Persona } from '@/domain';
+import { seedSpellCorpus, userPromptOf } from '../helpers/spellFixtures';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -57,65 +49,23 @@ const chatMock = vi.mocked(chat);
 const { searchRules } = await import('@/search');
 const searchRulesMock = vi.mocked(searchRules);
 
-/** The user turn of the Nth chat call — the prompt the model actually received. */
-function lastPrompt(callIndex: number): string {
-  const content = chatMock.mock.calls[callIndex]?.[0].at(-1)?.content;
-  return typeof content === 'string' ? content : '';
-}
-
 /** The full-pipeline waits below can ride a repair turn, so the bound is 15s. */
 function waitForRun(assertion: () => void | Promise<void>) {
   return waitFor(assertion, { timeout: 15000 });
 }
 
-const SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'spells');
 const MOB_SPELL_FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'mobSpells');
 const NPC_GOLDEN = join(MOB_SPELL_FIXTURES, 'statblock-no-corpus.txt');
+/** The WITH-corpus NPC stat-block prompt, captured from the tree at `42cd064`
+ * (the row-373 base) so the pc arm's branch is proven not to have moved the ONE
+ * other kind that authors a stat block (docs/17 row 373, pin (e)). */
+const NPC_WITH_CORPUS_GOLDEN = join(MOB_SPELL_FIXTURES, 'statblock-with-corpus.txt');
 /** Pre-arc goldens, captured at HEAD before the caster-awareness slice. */
 const NPC_DRAFT_GOLDEN = join(MOB_SPELL_FIXTURES, 'npc-draft-no-corpus.txt');
 const ENCOUNTER_DRAFT_GOLDEN = join(MOB_SPELL_FIXTURES, 'encounter-draft-with-corpus.txt');
 const CARTOGRAPHER_BRIEF_GOLDEN = join(MOB_SPELL_FIXTURES, 'cartographer-brief-with-corpus.txt');
 
-async function realSpell(file: string, packRelative: string): Promise<SpellData> {
-  const bytes = new TextEncoder().encode(readFileSync(join(SPELL_FIXTURES, file), 'utf8'));
-  const parsed = await foundryPf2eRulesAdapter.parseFile(packRelative, bytes);
-  expect(parsed.failures).toEqual([]);
-  const spell = parsed.sections?.[0]?.spell;
-  if (spell === undefined) throw new Error(`fixture ${file} produced no spell payload`);
-  return spell;
-}
-
 let seq = 0;
-
-/** Seeds the campaign's OWN system with the REAL Fireball + Ignition payloads. */
-async function seedCorpus(system: 'pathfinder2e' | 'dnd5e'): Promise<void> {
-  const fireball = await realSpell('fireball.json', 'spells/spells/rank-3/fireball.json');
-  const ignition = await realSpell('ignition.json', 'spells/spells/cantrip/ignition.json');
-  const book = await createPackBook({ title: 'Spells', system, filename: 'spells.json' });
-  const finished = await finalizePackBook(book.id, {
-    sourceId: 'test-spells',
-    license: 'ORC',
-    entriesImported: 2,
-    entriesSkipped: 0,
-    entriesFailed: 0,
-  });
-  const chunk = (name: string, spellData: SpellData): RuleChunk => {
-    seq += 1;
-    return ruleChunkSchema.parse({
-      ...stampNewEntity(),
-      bookId: finished.id,
-      pageStart: 1,
-      pageEnd: 1,
-      chunkType: 'spell',
-      headingPath: ['Spells', name],
-      text: `${name}\nSource: Pathfinder Player Core (ORC)`,
-      statBlock: null,
-      spellData,
-      contentHash: 'b'.repeat(63) + String(seq % 10),
-    });
-  };
-  await putChunks([chunk('Fireball', fireball), chunk('Ignition', ignition)]);
-}
 
 async function seedPersona(mode: 'npc' | 'encounter-draft' | 'cartographer'): Promise<Persona> {
   seq += 1;
@@ -174,7 +124,7 @@ async function npcStatblockPrompt(
   system: 'pathfinder2e' | 'dnd5e' = 'pathfinder2e',
 ): Promise<string> {
   const campaign = await createCampaign({ name: 'Ember', system });
-  if (withCorpus) await seedCorpus(system);
+  if (withCorpus) await seedSpellCorpus(system);
   const persona = await seedPersona('npc');
   const input: StartRunInput = {
     campaign,
@@ -202,13 +152,13 @@ async function npcStatblockPrompt(
   await waitForRun(async () => {
     expect((await getRun(runId))?.steps.find((step) => step.name === 'statblock')?.status).toBe('done');
   });
-  return lastPrompt(1);
+  return userPromptOf(chatMock.mock.calls[1]?.[0]);
 }
 
 /** Drives the NPC smith to its DRAFT step and returns that step's prompt. */
 async function npcDraftPrompt(withCorpus: boolean): Promise<string> {
   const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
-  if (withCorpus) await seedCorpus('pathfinder2e');
+  if (withCorpus) await seedSpellCorpus('pathfinder2e');
   const persona = await seedPersona('npc');
   const input: StartRunInput = {
     campaign,
@@ -228,7 +178,7 @@ async function npcDraftPrompt(withCorpus: boolean): Promise<string> {
   });
   // The LAST call: a mocked reply can ride a repair turn, and the draft prompt
   // is the one this helper is asked for.
-  return lastPrompt(chatMock.mock.calls.length - 1);
+  return userPromptOf(chatMock.mock.calls.at(-1)?.[0]);
 }
 
 function encounterDraftReply(withCorpus: boolean): Record<string, unknown> {
@@ -259,7 +209,7 @@ function encounterDraftReply(withCorpus: boolean): Record<string, unknown> {
 /** Drives the encounter Smith to its draft step and returns that step's prompt. */
 async function encounterDraftPrompt(withCorpus: boolean): Promise<string> {
   const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
-  if (withCorpus) await seedCorpus('pathfinder2e');
+  if (withCorpus) await seedSpellCorpus('pathfinder2e');
   const persona = await seedPersona('encounter-draft');
   const input: StartRunInput = {
     campaign,
@@ -277,7 +227,7 @@ async function encounterDraftPrompt(withCorpus: boolean): Promise<string> {
   await waitForRun(async () => {
     expect((await getRun(runId))?.steps.find((step) => step.name === 'draft')?.status).toBe('done');
   });
-  return lastPrompt(0);
+  return userPromptOf(chatMock.mock.calls[0]?.[0]);
 }
 
 function cartographerBriefReply(spells: readonly { name: string; castRank?: number }[]): Record<string, unknown> {
@@ -336,7 +286,7 @@ function cartographerInput(
 /** Drives the Cartographer to its brief step and returns that step's prompt. */
 async function cartographerBriefPrompt(withCorpus: boolean): Promise<string> {
   const campaign = await createCampaign({ name: 'Ember', system: 'pathfinder2e' });
-  if (withCorpus) await seedCorpus('pathfinder2e');
+  if (withCorpus) await seedSpellCorpus('pathfinder2e');
   const persona = await seedPersona('cartographer');
   chatMock.mockResolvedValueOnce({
     text: JSON.stringify(
@@ -349,7 +299,7 @@ async function cartographerBriefPrompt(withCorpus: boolean): Promise<string> {
   await waitForRun(async () => {
     expect((await getRun(runId))?.steps.find((step) => step.name === 'brief')?.status).toBe('done');
   });
-  return lastPrompt(0);
+  return userPromptOf(chatMock.mock.calls[0]?.[0]);
 }
 
 beforeEach(async () => {
@@ -441,6 +391,20 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
     expect(absent).not.toContain('"spells"');
   }, 60000);
 
+  it('the NPC stat-block step keeps its WITH-CORPUS bytes — the pc arm moved nothing (docs/17 row 373)', async () => {
+    // THE BYTE-IDENTITY PIN FOR THE ONE OTHER KIND THAT OWNS A STAT BLOCK. The
+    // pc branch (docs/17 row 373) added a format section, an open spell clause
+    // and a level-gating `isPc` in `runStatblock`; the NPC arm must be
+    // byte-identical to the prompt captured from the base tree (`42cd064`).
+    // Both halves are asserted: the capture matches, and the bytes are the NPC
+    // ones (the corpus whitelist and the caster clause are present).
+    const present = await npcStatblockPrompt(true);
+    expect(present).toBe(readFileSync(NPC_WITH_CORPUS_GOLDEN, 'utf8'));
+    expect(present).toContain(MOB_SPELL_SECTION_PREFIX);
+    expect(present).toContain(MOB_SPELL_CASTER_CLAUSE);
+    expect(present).toContain('"extras": Record<string,string>');
+  }, 60000);
+
   it('the encounter draft carries the clause and the vocabulary with a corpus', async () => {
     const present = await encounterDraftPrompt(true);
     expect(present).toContain(MOB_SPELL_SECTION_PREFIX);
@@ -480,7 +444,7 @@ describe('every AI-authored mob lane carries the ONE spells instruction (docs/17
 
   it('the Cartographer validates an invented spell, repairs ONCE, then ships it LOUD', async () => {
     const campaign = await createCampaign({ name: 'Ash', system: 'dnd5e' });
-    await seedCorpus('dnd5e');
+    await seedSpellCorpus('dnd5e');
     const persona = await seedPersona('cartographer');
     const invented = cartographerBriefReply([{ name: 'Flameball', castRank: 3 }]);
     // Every call (the brief, then the one repair) re-serves the same invention.

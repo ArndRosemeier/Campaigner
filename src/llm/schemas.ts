@@ -138,16 +138,20 @@ export const npcDraftSchema = z.object({
 export type NpcDraft = z.infer<typeof npcDraftSchema>;
 
 /**
- * PC draft (M5-A): a persona drafts the character concept/notes and may flag
- * the statblock step. Human-owned fields (playerName, currentHp,
+ * PC draft (M5-A; docs/17 row 373): a persona drafts the character's prose and
+ * `notes`, and the statblock step ALWAYS runs for a `pc` run — a player
+ * character is a full character, so there is deliberately NO `needsStatBlock`
+ * veto here (the field an NPC uses to skip numbers is not a question a player
+ * character is asked). Human-owned fields (playerName, currentHp,
  * initiativeOverride) are NEVER drafted — the player owns them.
+ *
+ * There is deliberately NO `concept` field: the PC's concept is the artifact's
+ * own `summary`/`body` (drafted through `draftBase`) plus `notes`, and a
+ * required field that no reader consumed was a field thrown away (row 373).
  */
 export const pcDraftSchema = z.object({
   ...draftBase,
-  concept: z.string(),
   notes: z.string(),
-  /** Same rule as NPCs: false skips the statblock step entirely. */
-  needsStatBlock: booleanish(),
 });
 
 export type PcDraft = z.infer<typeof pcDraftSchema>;

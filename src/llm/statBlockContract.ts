@@ -52,9 +52,9 @@ const DND5E_ASSIGNMENT_KEYS = ['casterLevel', 'characterLevel'] as const;
  *  `spellEntryShape` is the only assembler: the vocabulary header, the
  *  reply-contract `"spells"` clause and the inline stat-block shape hint all
  *  render these exact bytes for the same system. */
-function assignmentShapeParts(system: GameSystem): string[] {
+function assignmentShapeParts(system: GameSystem, spellNameHint: string): string[] {
   const base = [
-    '"name": <copied EXACTLY from this prompt\'s spell list>',
+    `"name": ${spellNameHint}`,
     '"castRank": <the rank it is cast at, or null for the spell\'s own rank; a cantrip ignores it — a cantrip\'s rank is derived from the creature\'s level>',
   ];
   if (system === 'dnd5e') {
@@ -72,13 +72,26 @@ function assignmentShapeParts(system: GameSystem): string[] {
 
 /** THE one per-system `{ "name", … }` prose shape. */
 export function spellEntryShape(system: GameSystem): string {
-  return `{ ${assignmentShapeParts(system).join(', ')} }`;
+  return `{ ${assignmentShapeParts(system, "<copied EXACTLY from this prompt's spell list>").join(', ')} }`;
+}
+
+/**
+ * THE OPEN arm of the same shape (docs/17 row 373, the player-character
+ * assistant): the spell COUNT and NAMES are the model's own knowledge of the
+ * system, never copied from a list this app carries — so the entry keys stay
+ * the system's own (the SAME `assignmentShapeParts`, never a second spelling)
+ * while only the `name` hint changes. A PC is deliberately not offered the
+ * campaign's imported spell corpus, so no "copied from this prompt's list"
+ * wording may reach it.
+ */
+export function openSpellEntryShape(system: GameSystem): string {
+  return `{ ${assignmentShapeParts(system, "<the spell's name as this system writes it>").join(', ')} }`;
 }
 
 /** The keys `spellEntryShape(system)` names, in the same order. The contract
  *  pin compares this against the request schema's OWN `spells` property keys. */
 export function spellEntryShapeKeys(system: GameSystem): string[] {
-  return assignmentShapeParts(system).map((part) => /^"([^"]+)"/.exec(part)?.[1] ?? '');
+  return assignmentShapeParts(system, '').map((part) => /^"([^"]+)"/.exec(part)?.[1] ?? '');
 }
 
 /** One system's spell assignment as the REQUEST contract sees it. A fresh

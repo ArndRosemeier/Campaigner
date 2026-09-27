@@ -21,8 +21,14 @@ describe('built-in persona seeding', () => {
     await seedBuiltInPersonas();
 
     expect(await db.personas.count()).toBe(BUILT_IN_PERSONAS.length);
-    const slugs = (await listPersonas()).map((persona) => persona.slug);
-    // listPersonas sorts by name.
+    // MEMBERSHIP, not display order: `listPersonas` sorts by NAME, so both
+    // sides are sorted by slug before the comparison (the old expectation
+    // compared name-order against slug-order and only passed while the two
+    // happened to coincide — docs/17 row 373's `pc-smith`, whose name sorts
+    // before `continuity-editor`, broke that coincidence and exposed it).
+    const slugs = (await listPersonas())
+      .map((persona) => persona.slug)
+      .sort((a, b) => a.localeCompare(b));
     expect(slugs).toEqual(
       [...BUILT_IN_PERSONAS.map((persona) => persona.slug)].sort((a, b) => a.localeCompare(b)),
     );
