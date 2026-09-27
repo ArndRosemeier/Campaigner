@@ -1,8 +1,40 @@
 import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach, beforeEach } from 'vitest';
+
+import { ASYNC_UTIL_TIMEOUT_MS } from './helpers/asyncWaitBudget';
+
+/**
+ * THE SUITE'S ASYNC UI-WAIT BUDGET — configured ONCE here, never at a call site
+ * (docs/17 row 377).
+ *
+ * WHY IT EXISTS, measured rather than stylistic. `waitFor` / `findBy*` use
+ * @testing-library's own default of 1000 ms, and on this shared box under the
+ * two-chunk gate a CORRECT wait can need slightly more. The dispatcher's
+ * integrated gate over rows 374/375 came back RED on ONE test that passes
+ * 122/122 in isolation — `battle-surface.test.tsx` > "keeps a spawn that lands
+ * while the reconcile's prune commits" — where the failing run's wait took
+ * 1183 ms against the 1000 ms default. The class is real, not one pin: that
+ * file alone carries ~110 default-budget waits, and the same false RED has
+ * burned a ~10-minute full gate twice in this repo's history.
+ *
+ * THE REPRODUCTION was by DELAYING THE CAUSE, never by loading the machine
+ * (the `89e5d71` method): a 1500 ms delay inside that test's
+ * `boardWrites.interleave` hook reds exactly that pin deterministically.
+ *
+ * The VALUE and its justification live in `tests/helpers/asyncWaitBudget.ts`
+ * (ONE declaration, imported by the pin that reads the live config back).
+ * Do NOT pass a per-call `timeout` to `waitFor` to work around a busy box:
+ * that is the distributed-copy defect this seam exists to prevent —
+ * `tests/architecture/one-async-wait-budget.test.ts` holds the population to
+ * this file, and `tests/features/async-wait-budget.test.ts` reads the
+ * configured value back from testing-library, so a silent revert to the
+ * 1000 ms default reds.
+ */
+configure({ asyncUtilTimeout: ASYNC_UTIL_TIMEOUT_MS });
+
 
 // jsdom has neither IndexedDB nor ResizeObserver; the app (Dexie) and the
 // resizable workspace panes (react-resizable-panels) need them in tests.

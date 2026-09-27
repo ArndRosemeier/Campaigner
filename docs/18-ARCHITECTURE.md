@@ -4266,3 +4266,39 @@ known-debt item).
   spell list reaching the model through the REAL chat-prompt path).
 
 
+
+### §5 (the async UI-wait budget, docs/17 row 377) — a library DEFAULT caused the false `GATE RED`, and the budget is ONE seam
+
+- **WHAT HAPPENED, measured by the dispatcher rather than inferred.** The
+  integrated full gate over rows 374/375 came back RED on exactly ONE test —
+  `tests/features/battle-surface.test.tsx` > *"keeps a spawn that lands while
+  the reconcile's prune commits (docs/17 row 336)"* — while the whole file
+  passes **122/122 in isolation**. `waitFor` / `findBy*` default to
+  @testing-library's own `asyncUtilTimeout` of **1000 ms**; under the two-chunk
+  gate the reconcile commit plus its interleaved spawn needed **1183 ms**. The
+  reproduction was by DELAYING THE CAUSE, never by loading the machine (the
+  `89e5d71` method): 1500 ms injected into the test's `boardWrites.interleave`
+  hook reds that pin deterministically. `battle-surface.test.tsx` alone has
+  **~110** default-budget waits, so this is a CLASS, and it had already burned a
+  ~10-minute full gate twice.
+- **THE SEAM.** `tests/setup.ts` — the suite's ONE shared setup file
+  (`vite.config.ts` → `setupFiles`) — calls
+  `configure({ asyncUtilTimeout: ASYNC_UTIL_TIMEOUT_MS })`. The value is
+  declared ONCE in `tests/helpers/asyncWaitBudget.ts` and is **3000 ms**: 2.5×
+  the measured 1183 ms (real headroom), far below the 20 s per-test timeout, so
+  a wait that is genuinely broken still fails — with the wait's own message, not
+  a test-timeout hang.
+- **THE RULE THIS SLICE IS REALLY ABOUT: the budget belongs to the SEAM, never
+  to a call site.** A per-call `waitFor(..., { timeout })` would be the
+  distributed-copy defect the fold rules exist for — whichever wait someone
+  forgets is the next false RED. The population is held to the seam by
+  `tests/architecture/one-async-wait-budget.test.ts` (exactly one configure
+  site; the number declared once) and the configured value is read back from
+  testing-library by `tests/features/async-wait-budget.test.ts`, so a silent
+  revert to the library default reds. A legitimate per-test override would have
+  to be DECLARED as data in that scan; none exists.
+- **WHAT IS *NOT* CLAIMED.** The budget does not make a broken wait pass: a
+  delay BEYOND it (4000 ms against 3000) still reds the pin, verified in the
+  same differential as the cure (1500 ms reds at 1000, passes at 3000). And a
+  3 s budget lengthens, per wait, only the failure path of a wait that will
+  never be satisfied.

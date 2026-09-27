@@ -9583,3 +9583,52 @@ after, restored from a hash-verified copy that was then removed. Result: **RED 3
 373/374 pin them there); the refill effect passes that rule as the seam's `find`
 callback, and keeps its own message and its own store. Row 374's three pins and
 row 375's are GREEN with their assertions unchanged.
+
+## The async UI-wait budget is ONE seam — never a per-call timeout (docs/17 row 377, docs/18 §5)
+
+THE MEASUREMENT. The dispatcher's integrated gate over rows 374/375 came back
+RED on exactly one test — `tests/features/battle-surface.test.tsx` > *"keeps a
+spawn that lands while the reconcile's prune commits (docs/17 row 336)"* — while
+the file passes **122/122 in isolation** (re-verified here three sequential
+times, 122/122 each). The wait is correct; the BUDGET was @testing-library's
+default `asyncUtilTimeout` of **1000 ms**, and the gate's failing run needed
+**1183 ms**. The file alone carries ~110 default-budget `waitFor` calls, so the
+cure is ONE seam, not 110 `{ timeout }` options. The dispatcher reproduced it by
+DELAYING THE CAUSE (a 1500 ms delay inside the test's `boardWrites.interleave`
+hook), never by loading the machine.
+
+THE SEAM. `tests/setup.ts` (the suite's ONE shared setup file) calls
+`configure({ asyncUtilTimeout: ASYNC_UTIL_TIMEOUT_MS })`; the value is declared
+once in `tests/helpers/asyncWaitBudget.ts` and is **3000 ms** — 2.5× the
+measured 1183 ms, far below the 20 s per-test timeout.
+
+THE PINS.
+1. **Read-back (jsdom project, `tests/features/async-wait-budget.test.ts`).**
+   `getConfig().asyncUtilTimeout` equals the ONE declared value and is `> 1000`
+   (the non-vacuity half: the library default must not satisfy it). The file
+   runs in jsdom deliberately — the project whose waits the budget governs.
+2. **"Exactly one" source scan (`tests/architecture/one-async-wait-budget.test.ts`).**
+   Exactly one test-tree file carries the configure property (`tests/setup.ts`),
+   and the number is DECLARED in exactly one file
+   (`tests/helpers/asyncWaitBudget.ts`). The file list comes from Vite's glob
+   with keys only (no 21st hand-rolled walker), and the two needles are built at
+   runtime so the scan cannot match its own assertions.
+3. **The flake pin is UNTOUCHED** — same assertions, same intent,
+   `battle-surface.test.tsx` byte-unchanged (sha256 `b50dac63…`).
+
+THE ARMS — a differential on the SAME injection, run in-turn, all logged
+(`.gate-logs/row377/`):
+
+| arm | injected delay | budget | result |
+|---|---|---|---|
+| reproduce the gate | 1500 ms | **1000** (library default) | **RED 1** (`1 failed \| 121 skipped`) |
+| the seam cures it | 1500 ms | **3000** (the seam) | **GREEN 1 passed \| 121 skipped** |
+| beyond the budget (non-vacuity) | 4000 ms | **3000** | **RED 1** |
+
+Every arm restored `battle-surface.test.tsx` byte-identically (sha256 equal to
+the baseline above) and the budget file back to 3000.
+
+THE RULE. An async wait budget belongs to the SEAM, never to a call site: a
+forgotten per-call `timeout` is the next false RED, which is why the
+population is pinned as data. A legitimate per-test override would have to be
+declared in that scan; none exists.
