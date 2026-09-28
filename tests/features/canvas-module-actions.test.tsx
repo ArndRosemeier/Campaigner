@@ -18,7 +18,7 @@ import {
   defaultSettings,
   modulePartSchema,
   moduleSpineSchema,
-  splitPartsDocument,
+  moduleDocumentSections,
   type Id,
 } from '@/domain';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
@@ -357,13 +357,10 @@ describe('"Fix module problems" on the canvas', () => {
     // `restoreDurableVersion` checks before proposing) and its part 2 is the
     // pre-repair text byte-for-byte.
     const plan = (await actDrained(() => getModule(world.moduleId)))?.spine?.partPlan ?? [];
-    const snapshotParts = splitPartsDocument(fixSnapshot?.docText ?? '', plan);
-    expect(snapshotParts.find((part) => part.planIndex === 1)?.text).toContain(
-      'PART-TWO: The drowned cathedral waits',
-    );
-    expect(snapshotParts.find((part) => part.planIndex === 1)?.text).not.toContain(
-      'PART-TWO-REPAIRED',
-    );
+    const snapshotParts = moduleDocumentSections(fixSnapshot?.docText ?? '', plan);
+    // planIndex 1 is LEVEL 2; section index 0 is the PREMISE.
+    expect(snapshotParts[2]?.text).toContain('PART-TWO: The drowned cathedral waits');
+    expect(snapshotParts[2]?.text).not.toContain('PART-TWO-REPAIRED');
     // The canvas re-seeded from the row: the preview shows the repaired text.
     expect(screen.getByTestId('canvas-preview')).toHaveTextContent('PART-TWO-REPAIRED');
     // The floor is met now, so the control is gone without a reload.
@@ -396,10 +393,10 @@ describe('"Fix module problems" on the canvas', () => {
     // prior recorded version.
     const versions = await listModuleVersions(world.moduleId);
     expect(versions.map((version) => version.docText)).toEqual([
-      (await import('@/domain')).assembleModulePartsDocument({
-        partPlan: PART_PLAN,
+      (await import('@/domain')).moduleDocumentFromView({
+        spine: after?.spine ?? null,
         parts: after?.parts ?? [],
-      }).document,
+      }),
     ]);
     expect(toastErrorMock).toHaveBeenCalled();
     // The problem is still there, so the control stays for a retry.

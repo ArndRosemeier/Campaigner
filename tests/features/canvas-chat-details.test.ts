@@ -1,21 +1,20 @@
 import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
 
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
   createModule,
   encounterDataSchema,
   modulePartSchema,
   moduleSpineSchema,
   type Id,
 } from '@/domain';
+import { editorOptionsFor, previewOptionsFor } from '../helpers/chatTurnOptions';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { createArtifact } from '@/db/artifactRepo';
-import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
+import { useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
 import { runChatTurn } from '@/features/modules/canvas/chatController';
 import { clearDatabase } from '../db/helpers';
@@ -53,13 +52,13 @@ const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
   { title: 'Under the Docks', levelBand: '1' },
 ];
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+const PARTS_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise.' },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
   ],
-}).document;
+});
 
 const STORED_ONLY_TREASURE = 'a silver locket with an engraved tide-mark';
 
@@ -120,17 +119,8 @@ function messagesFor(key: string): ReturnType<typeof useCanvasChatStore.getState
 }
 
 describe('runSnapshotChatTurn — the preview round trip', () => {
-  function options(overrides: Partial<Parameters<typeof runSnapshotChatTurn>[0]> = {}) {
-    return {
-      moduleId: world.moduleId,
-      key: canvasChatKey(world.moduleId),
-      hasDocument: true,
-      doc: PARTS_DOCUMENT,
-      modelSelection: null,
-      turn: new AbortController(),
-      ...overrides,
-    };
-  }
+  /** The ONE shared option builders (docs/17 row 385). */
+  const options = previewOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
 
   it('lands the follow-up as its OWN message and applies BOTH batches in reply order', async () => {
     chatMock
@@ -235,17 +225,7 @@ describe('runSnapshotChatTurn — the preview round trip', () => {
 });
 
 describe('runChatTurn — the editor round trip', () => {
-  function editorOptions() {
-    const view = new EditorView({ state: EditorState.create({ doc: PARTS_DOCUMENT }) });
-    return {
-      moduleId: world.moduleId,
-      key: canvasChatKey(world.moduleId),
-      hasDocument: true,
-      view,
-      modelSelection: null,
-      turn: new AbortController(),
-    };
-  }
+  const editorOptions = editorOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
 
   it('applies the follow-up batch as a CM6 transaction over the same live doc', async () => {
     const options = editorOptions();

@@ -9,8 +9,8 @@ import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
-import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
-import { assembleModulePartsDocument, splitPartsDocument } from '@/domain/modulePartsDocument';
+import { createModule, moduleDocumentFromView, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
+import { assembleModuleDocument, moduleDocumentSections } from '@/domain/moduleDocument';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
@@ -56,14 +56,18 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The doc the canvas mounts with — assembled from the PLAIN text only. */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: PART_TEXTS.map((markdown, planIndex) => ({ planIndex, markdown })),
-}).document;
+/** The module DOCUMENT the canvas mounts with — composed from the PLAIN text
+ * only (docs/17 row 384): level 0 is the premise, then one section per level. */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise promises a drowned vault.' },
+    ...PART_TEXTS.map((text, index) => ({ number: index + 1, text })),
+  ],
+});
 
-/** Start of part 0's TEXT (hand edits must land in a part, never the labels). */
-const PART0_FROM = splitPartsDocument(WHOLE_DOC, PART_PLAN)[0]?.textFrom ?? 0;
+/** Start of level 1's TEXT (hand edits must land in a level, never a
+ * separator line; section index 0 is the PREMISE). */
+const PART0_FROM = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.textFrom ?? 0;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -247,10 +251,7 @@ describe('the ids never enter the module text', () => {
     //    parts, and each part's own markdown.
     const row = await getModule(world.moduleId);
     if (row === undefined) throw new Error('module row missing');
-    const assembled = assembleModulePartsDocument({
-      partPlan: row.spine?.partPlan ?? [],
-      parts: row.parts,
-    }).document;
+    const assembled = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
     for (const model of ALL_MODELS) {
       expect(assembled).not.toContain(model);
       for (const part of row.parts) expect(part.markdown).not.toContain(model);
@@ -262,7 +263,7 @@ describe('the ids never enter the module text', () => {
 
     // 3. The per-part SECTION text the preview renders from: the caption is a
     //    sibling of this text, never part of it.
-    for (const section of splitPartsDocument(liveDoc, PART_PLAN)) {
+    for (const section of moduleDocumentSections(liveDoc, PART_PLAN)) {
       for (const model of ALL_MODELS) expect(section.text).not.toContain(model);
     }
     await flushAsyncUpdates();

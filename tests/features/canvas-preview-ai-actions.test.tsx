@@ -15,7 +15,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
-import { assembleModulePartsDocument, splitPartsDocument } from '@/domain/modulePartsDocument';
+import { assembleModuleDocument, moduleDocumentSections } from '@/domain/moduleDocument';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { CROSS_PART_SELECTION_REASON } from '@/features/modules/canvas/CanvasPreview';
@@ -76,17 +76,19 @@ const PART_PLAN = [
   { title: 'The Flooded Nave', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The WHOLE-module editor doc the page mounts with (byte-exact pin). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module DOCUMENT the page mounts with (byte-exact pin, docs/17 row 384):
+ * level 0 is the PREMISE, then one section per planned level. */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise promises a drowned [[Vault Door]].' },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
   ],
-}).document;
+});
 
-/** Part 0's text starts here in the whole doc ("party" is [FROM+4, FROM+9)). */
-const PART0_FROM = splitPartsDocument(WHOLE_DOC, PART_PLAN)[0]?.textFrom ?? 0;
+/** Level 1's text starts here ("party" is [FROM+4, FROM+9)); section index 0
+ * is the PREMISE. */
+const PART0_FROM = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.textFrom ?? 0;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 

@@ -74,14 +74,6 @@
       ]
     },
     {
-      "hash": "16adad303a9f4a61",
-      "reason": "Two `editorOptions` canvas-chat option objects (canvas-chat-changes, canvas-chat-details) built from an EditorView; per-test scenario setup, but a shared canvas-chat fixture is a reasonable fold.",
-      "sites": [
-        "tests/features/canvas-chat-changes.test.ts:editorOptions",
-        "tests/features/canvas-chat-details.test.ts:editorOptions"
-      ]
-    },
-    {
       "hash": "198e12196d6f9838",
       "reason": "`owned` campaign-id assertion in modulePdf.test.ts and pdfLayoutFixtures.ts; a shared assert helper in `tests/helpers/` is a small fold candidate.",
       "sites": [
@@ -306,15 +298,6 @@
       "sites": [
         "tests/features/campaign-tree-plan-control.test.tsx:source",
         "tests/lib/wiki-raw-export.test.ts:source"
-      ]
-    },
-    {
-      "hash": "480ed9c12381d100",
-      "reason": "Three canvas-chat option objects (`options` in canvas-chat-changes and canvas-chat-details, `previewOptions` in canvas-chat-turn-parity); the same shape as the `editorOptions` group \u2014 a shared canvas-chat fixture is a real fold candidate.",
-      "sites": [
-        "tests/features/canvas-chat-changes.test.ts:options",
-        "tests/features/canvas-chat-details.test.ts:options",
-        "tests/features/canvas-chat-turn-parity.test.ts:previewOptions"
       ]
     },
     {

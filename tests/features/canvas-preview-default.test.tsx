@@ -15,7 +15,7 @@ import {
   moduleSpineSchema,
   type Id,
 } from '@/domain';
-import { ModulePartsDocumentError } from '@/domain/modulePartsDocument';
+import { ModuleDocumentError } from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
@@ -28,9 +28,10 @@ import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import type * as PartTextModule from '@/features/modules/partText';
 import { applyChatCommandsToSnapshot } from '@/features/modules/canvas/snapshotChat';
 import {
-  assembleModulePartsDocument,
-  splitPartsDocument,
-} from '@/domain/modulePartsDocument';
+  assembleModuleDocument,
+  moduleDocumentSections,
+  moduleLevelSeparator,
+} from '@/domain/moduleDocument';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 
 /**
@@ -78,14 +79,16 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The WHOLE-module snapshot the preview renders from (canvas v3). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module DOCUMENT the preview renders from (docs/17 row 384): level 0 is
+ * the PREMISE, then one section per planned level (level 3 empty). */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise promises a drowned vault.' },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -218,7 +221,7 @@ describe('preview default + full width + live chat', () => {
     const card = await within(panel).findByTestId('canvas-chat-outcome');
     expect(card).toHaveAttribute('data-kind', 'applied');
     expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
-      'Part 1 — The Gate Bargain',
+      'Level 1 — The Gate Bargain',
     );
     expect(card.textContent).toContain('Rain hammers the stones.');
     expect(card.textContent).toContain('Rain drowns every word.');
@@ -243,17 +246,19 @@ describe('preview default + full width + live chat', () => {
     await flushAsyncUpdates();
   });
 
-  it('a scaffolding-broken snapshot fails the send LOUDLY (no editor to fall back on)', async () => {
+  it('a malformed snapshot fails the send LOUDLY (no editor to fall back on)', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     // Break the scaffolding in Edit, then carry the broken snapshot back.
     await user.click(screen.getByTestId('canvas-preview-toggle'));
     await screen.findByTestId('canvas-editor');
     const doc = activeCanvasView.current?.state.doc.toString() ?? '';
-    const firstDelimiter = doc.indexOf('\n\n==========\n\n');
+    // Delete LEVEL 1's separator: the parser then meets level 2 first — a gap.
+    const level1 = moduleLevelSeparator(1);
+    const at = doc.indexOf(level1);
     act(() => {
       activeCanvasView.current?.dispatch({
-        changes: { from: firstDelimiter, to: firstDelimiter + '\n\n==========\n\n'.length, insert: '\n\n' },
+        changes: { from: at, to: at + level1.length, insert: '' },
       });
     });
     await user.click(screen.getByTestId('canvas-preview-toggle'));
@@ -265,7 +270,10 @@ describe('preview default + full width + live chat', () => {
     await sendChat(user, 'make the rain heavier');
     const panel = screen.getByTestId('canvas-chat');
     const errorCard = await within(panel).findByTestId('canvas-chat-error-card');
-    expect(within(errorCard).getByTestId('canvas-chat-error-text').textContent).toMatch(/separator/i);
+    // The parser names the LINE and the reason (a missing level, here).
+    expect(within(errorCard).getByTestId('canvas-chat-error-text').textContent).toMatch(
+      /level 1 is missing|skips or reorders/i,
+    );
     // Nothing persisted.
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
@@ -395,13 +403,14 @@ describe('last-replacement highlight, both surfaces', () => {
     await flushAsyncUpdates();
   });
 
-  it('an empty-part fill highlights the filled section text', async () => {
+  it('an empty-level fill highlights the filled section text', async () => {
     const user = userEvent.setup();
     await renderCanvas();
+    const separator = moduleLevelSeparator(3);
     mockChatReply(
-      '<edit><search>[Part 3 of 3 — The Long Watch]</search><replace>[Part 3 of 3 — The Long Watch]\n\nThe watch begins in fog.</replace></edit>',
+      `<edit><search>${separator}</search><replace>${separator}\n\nThe watch begins in fog.</replace></edit>`,
     );
-    await sendChat(user, 'write the last part');
+    await sendChat(user, 'write the last level');
     const mark = await within(screen.getByTestId('canvas-preview')).findByTestId(
       'replacement-highlight',
     );
@@ -484,13 +493,13 @@ describe('WikiMarkdown highlight contract', () => {
 
 describe('applyChatCommandsToSnapshot (pure string units)', () => {
   const PLAN = [{ title: 'Open Part' }, { title: 'Other Part' }];
-  const DOC = assembleModulePartsDocument({
-    partPlan: PLAN,
-    parts: [
-      { planIndex: 0, markdown: 'Rain here.\nRain there.' },
-      { planIndex: 1, markdown: 'Fog elsewhere.' },
+  const DOC = assembleModuleDocument({
+    levels: [
+      { number: 0, text: 'The premise.' },
+      { number: 1, text: 'Rain here.\nRain there.' },
+      { number: 2, text: 'Fog elsewhere.' },
     ],
-  }).document;
+  });
 
   it('splices a replacement and reports the post-apply range for the highlight', () => {
     const result = applyChatCommandsToSnapshot({
@@ -534,8 +543,8 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
       doc: DOC,
     });
     expect(result.doc).toBe(DOC.replace('Fog elsewhere.', 'Mist elsewhere.'));
-    expect(result.doc).toContain('[Part 1 of 2 — Open Part]');
-    expect(result.doc).toContain('==========');
+    expect(result.doc).toContain(moduleLevelSeparator(1));
+    expect(result.doc).toContain(moduleLevelSeparator(2));
   });
 
   it('zero matches fail loud with the closest candidate; the doc is untouched', () => {
@@ -561,16 +570,20 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     expect(result.doc).toBe(DOC);
   });
 
-  it('an empty-part label-anchor fill writes the remainder and highlights it', () => {
-    const withEmpty = assembleModulePartsDocument({
-      partPlan: PLAN,
-      parts: [{ planIndex: 0, markdown: 'Rain here.' }],
-    }).document;
+  it('an empty-level separator-anchor fill writes the remainder and highlights it', () => {
+    const separator = moduleLevelSeparator(2);
+    const withEmpty = assembleModuleDocument({
+      levels: [
+        { number: 0, text: 'The premise.' },
+        { number: 1, text: 'Rain here.' },
+        { number: 2, text: '' },
+      ],
+    });
     const result = applyChatCommandsToSnapshot({
       commands: [
         {
-          search: '[Part 2 of 2 — Other Part]',
-          replace: '[Part 2 of 2 — Other Part]\n\nFog rolls in.',
+          search: separator,
+          replace: `${separator}\n\nFog rolls in.`,
           all: false,
         },
       ],
@@ -584,21 +597,25 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     expect(result.doc.slice(range.from, range.to)).toBe('Fog rolls in.');
   });
 
-  it('a scaffolding-broken snapshot throws ModulePartsDocumentError (loud send path)', () => {
-    const broken = DOC.replace('\n\n==========\n\n', '\n\n');
+  it('a malformed snapshot throws ModuleDocumentError (loud send path)', () => {
+    // Deleting level 1's separator leaves level 2 first — a gap the parser
+    // refuses by line.
+    const broken = DOC.replace(moduleLevelSeparator(1), '');
     expect(() =>
       applyChatCommandsToSnapshot({
         commands: [{ search: 'Rain', replace: 'Mist', all: false }],
         partPlan: PLAN,
         doc: broken,
       }),
-    ).toThrow(ModulePartsDocumentError);
+    ).toThrow(ModuleDocumentError);
   });
 
   it('agrees with the editor path section-for-section (split parity)', () => {
-    // Both paths split the same snapshot — the section texts are the ladder input.
-    const sections = splitPartsDocument(DOC, PLAN);
+    // Both paths parse the same snapshot — the section texts are the ladder
+    // input, level 0 (the premise) included.
+    const sections = moduleDocumentSections(DOC, PLAN);
     expect(sections.map((section) => section.text)).toEqual([
+      'The premise.',
       'Rain here.\nRain there.',
       'Fog elsewhere.',
     ]);

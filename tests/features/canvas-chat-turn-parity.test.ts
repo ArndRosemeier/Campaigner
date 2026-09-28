@@ -4,8 +4,6 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
 
 import {
   assembleModuleDocument,
@@ -14,6 +12,7 @@ import {
   moduleSpineSchema,
   type Id,
 } from '@/domain';
+import { editorOptionsFor, previewOptionsFor } from '../helpers/chatTurnOptions';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { countModuleVersions } from '@/db/moduleVersionRepo';
@@ -122,41 +121,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function previewOptions(overrides: Partial<Parameters<typeof runSnapshotChatTurn>[0]> = {}) {
-  return {
-    moduleId: world.moduleId,
-    key: canvasChatKey(world.moduleId),
-    hasDocument: true,
-    doc: PARTS_DOCUMENT,
-    modelSelection: null,
-    turn: new AbortController(),
-    ...overrides,
-  };
-}
-
-function editorOptions(
-  overrides: Partial<Omit<Parameters<typeof runChatTurn>[0], 'view'>> & { doc?: string } = {},
-): Parameters<typeof runChatTurn>[0] & { destroy: () => void } {
-  const host = document.createElement('div');
-  document.body.appendChild(host);
-  const view = new EditorView({
-    state: EditorState.create({ doc: overrides.doc ?? PARTS_DOCUMENT }),
-    parent: host,
-  });
-  return {
-    moduleId: world.moduleId,
-    key: canvasChatKey(world.moduleId),
-    hasDocument: true,
-    modelSelection: null,
-    turn: new AbortController(),
-    ...overrides,
-    view,
-    destroy: () => {
-      view.destroy();
-      host.remove();
-    },
-  };
-}
+/** The ONE shared option builders (docs/17 row 385). */
+const previewOptions = previewOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
+const editorOptions = editorOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
 
 describe('one turn controller — the machine-write signature on BOTH callers', () => {
   it('PREVIEW: the applied parts record the model that served the reply', async () => {

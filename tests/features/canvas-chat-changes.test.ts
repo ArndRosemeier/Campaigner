@@ -1,8 +1,6 @@
 import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
 
 import {
   assembleModuleDocument,
@@ -13,10 +11,11 @@ import {
   npcDataSchema,
   type Id,
 } from '@/domain';
+import { editorOptionsFor, previewOptionsFor } from '../helpers/chatTurnOptions';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { createArtifact, getAnyArtifact, listRevisions, restoreRevision } from '@/db/artifactRepo';
-import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
+import { useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
 import { runChatTurn } from '@/features/modules/canvas/chatController';
 import { artifactPath } from '@/app/routes';
@@ -202,17 +201,8 @@ function specialistWrites(artifactId: Id, patch: string) {
 }
 
 describe('the preview flow runs a change through the seam and tells the owner', () => {
-  function options(overrides: Partial<Parameters<typeof runSnapshotChatTurn>[0]> = {}) {
-    return {
-      moduleId: world.moduleId,
-      key: canvasChatKey(world.moduleId),
-      hasDocument: true,
-      doc: PARTS_DOCUMENT,
-      modelSelection: null,
-      turn: new AbortController(),
-      ...overrides,
-    };
-  }
+  /** The ONE shared option builders (docs/17 row 385). */
+  const options = previewOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
 
   it('a change lands as a NEW revision with the PRIOR one intact — and is RESTORABLE', async () => {
     const before = await getAnyArtifact(world.npcId);
@@ -380,17 +370,7 @@ describe('the preview flow runs a change through the seam and tells the owner', 
 });
 
 describe('the editor flow wires the same change half', () => {
-  function editorOptions() {
-    const view = new EditorView({ state: EditorState.create({ doc: PARTS_DOCUMENT }) });
-    return {
-      moduleId: world.moduleId,
-      key: canvasChatKey(world.moduleId),
-      hasDocument: true,
-      view,
-      modelSelection: null,
-      turn: new AbortController(),
-    };
-  }
+  const editorOptions = editorOptionsFor(() => world.moduleId, PARTS_DOCUMENT);
 
   it('a change runs once, the owner is told, and the follow-up batch still applies to the doc', async () => {
     specialistWrites(world.npcId, 'Rewritten for the chat.');
