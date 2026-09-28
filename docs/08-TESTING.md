@@ -780,8 +780,11 @@ test) · ❌ gap.
 
 | Surface | Covered by | State |
 | --- | --- | --- |
-| The document is read from the MODULE (premise, part plan, `parts` through `splitPartsDocument`), not from a stored document | `modulePdf.test` — "prints the module's own premise, part plan and parts" | ✅ |
-| The `==========` separators and `[Part n of total — title]` scaffold labels of a stored document appear NOWHERE in the definition (and the fixture proves they are present in the row's assembled doc first) | `modulePdf.test` — non-vacuity assertion on the assembled text | ✅ |
+| The document is read from the MODULE's own level sections through the ONE document seam (`moduleDocumentSectionsFromView`), not from a stored or legacy document | `modulePdf.test` — "prints ONE chapter element per LEVEL, named and texted by the ONE document seam (docs/17 row 386)" | ✅ |
+| No scaffold labels print: the legacy `==========` separators and `[Part n of total — title]` labels appear NOWHERE in the definition, and the fixture proves the level text really is present (non-vacuity) | `modulePdf.test` — "never prints the parts-document SCAFFOLDING" | ✅ |
+| The legacy parts format is GONE: its vocabulary (`modulePartsDocument`, `CANVAS_PARTS_DELIMITER`, `canvasPartLabel`, `splitPartsDocument`, `assembleModulePartsDocument`) appears nowhere under `src/` or `tests/`, the ONE format's five entry points are each defined once, and the reader/PDF are the only `moduleDocumentSectionsFromView` callers | `tests/architecture/one-module-document-format.test.ts` (source scan, docs/17 row 386) | ✅ |
+| A changed level whose text links another module's artifact PROMOTES it through the REAL save seam; an unchanged level's link is not promoted; a save with no changed level promotes nothing | `tests/features/canvas-document-promotion.test.ts` (docs/17 row 387) | ✅ |
+| An export→import round trip preserves the module's STORED `document` BYTE-IDENTICALLY, with `levelPlans`/`levelStates`/`themes`/premise provenance | `tests/lib/exportImport.test.ts` — "carries the module STORED row byte-exactly" | ✅ |
 | A map plate is printed INSIDE its encounter, from `encounter.data.mapImageId`, and the live board's `mapImageId` is the fallback | `modulePdf.test` — one plate at its anchor; one board-fallback case through `ensureBattle`/`patchBattle`/`refreshBattle` | ✅ |
 | A battle with NO stored image prints NO plate — and no schematic, no room geometry, no `data.layout` text | `modulePdf.test` — the `layout` fixture carries a room named "Schematic Room" whose name must not print | ✅ |
 | Budgets: a map decodes at 4096, a cover at 1024 (asserted on the values that REACHED the codec) | `modulePdf.test` — injected `PdfImageCodec` | ✅ |

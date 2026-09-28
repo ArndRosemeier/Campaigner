@@ -332,8 +332,9 @@ goes further and prescribes no shape of any kind (§Freestyle).
 **It is a DOCUMENT-FORMAT convention, not a schema.** The block lives in the
 part's markdown, so there is no schema change, no Dexie version, no migration
 and no second document format: the part text stays one ordinary markdown
-string in the ONE `assembleModulePartsDocument` / `splitPartsDocument` format
-(`domain/modulePartsDocument.ts`). Assembly, splitting, the canvas split-save,
+string inside the ONE module DOCUMENT (`domain/moduleDocument.ts`, level 0 =
+the premise, then `=====Level N=====` sections — the legacy `==========` parts
+format is DELETED, docs/17 row 386). Assembly, splitting, the canvas split-save,
 the byte-exact durable version snapshots and the reader's `WikiMarkdown`
 rendering all operate on the same text they always did, and the round-trip is
 pinned by test (`tests/features/scene-block-document.test.ts`).
@@ -938,11 +939,11 @@ format.** A part's replacement goes through THE one part-text save path
 `db/moduleRepo.patchModulePartText`, the same seam the canvas rewrite's Apply
 uses): one transaction, the whole replacement applied or nothing,
 `status:'ready'` + `edited:true`, the editor's own `modelUsed` recorded as the
-part's `writerModel`, and the second-module promote scan after it. The
-parts-document scaffolding (`==========` separators and
-`[Part <n> of <total> — <title>]` labels) is DERIVED from the plan and the
-per-part markdown (`domain/modulePartsDocument`), so it is structurally
-untouched — there is nothing to hand-assemble. The premise's replacement is a
+part's `writerModel`, and the second-module promote scan after it. The module
+document's scaffolding (`=====Level N=====` separator lines) is spliced by
+`domain/moduleDocument`, so it is structurally untouched — there is nothing to
+hand-assemble (the legacy `==========` parts document and its parser are
+DELETED, docs/17 row 386). The premise's replacement is a
 SPINE-SUBFIELD write and rides the ONE atomic subfield seam
 (`db/moduleRepo.patchModuleSpine`, docs/17 row 357) with the editor's
 provenance and `'model'` authorship, followed by the promote scan a rewritten
@@ -2042,18 +2043,18 @@ beside **Board** was retired by owner request, ledger row 138, because it and
 implementation in
 `src/features/modules/canvas/`.
 
-> **THIS SECTION IS MID-MIGRATION — READ THE BUILD STATE FIRST (phase 1c is COMPLETE: docs/17 row 385)** (docs/23-CAMPAIGN-ARC, docs/17 rows
-> 380/382/383/384). Since **row 384 the canvas document, the chat's context and the save path ARE THE
-> MODULE DOCUMENT**: ONE text of `=====Level N=====` sections over **level 0 (the premise, which has no
-> separator of its own)**, owned by `domain/moduleDocument` (`moduleDocumentFromView` /
-> `moduleDocumentSections` / `splitModuleDocument`; the write is `moduleRepo.saveModuleDocument`). The
-> paragraphs BELOW that still describe the `==========` + `[Part n of m — title]` parts document
-> (`domain/modulePartsDocument`, which EXCLUDED the premise) are being migrated in this docs pass; do
-> NOT build anything new on the parts format — the only remaining caller is the PDF lane
-> (`lib/modulePdf` — phase 1d/1e), and docs/18 §2/§5 carry the frontier. The test tree is migrated and green
-> (row 385), and two behavioural rules the migration settled are worth knowing here: a document whose LAST level
-> is empty keeps its separator line TERMINATED (so text typed or filled there lands on its own line), and an
-> empty level is filled by a search on its own separator line.
+> **PHASE 1d IS LANDED — THE LEGACY PARTS FORMAT IS DELETED (docs/17 row 386)** (docs/23-CAMPAIGN-ARC,
+> docs/17 rows 380/382/383/384/385/386). Since **row 384 the canvas document, the chat's context and the
+> save path ARE THE MODULE DOCUMENT**: ONE text of `=====Level N=====` sections over **level 0 (the
+> premise, which has no separator of its own)**, owned by `domain/moduleDocument`
+> (`moduleDocumentFromView` / `moduleDocumentSections` / `splitModuleDocument`; the write is
+> `moduleRepo.saveModuleDocument`). Since **row 386 the reader and the PDF lanes read that same level
+> list** (`moduleDocumentSectionsFromView`) and `domain/modulePartsDocument` is DELETED with its pins; a
+> source-scan pin holds its vocabulary absent from `src/` and `tests/`. Any paragraph BELOW that still
+> describes the `==========` + `[Part n of m — title]` parts document is HISTORICAL (pre-row-384 design)
+> and must not be built on. Two behavioural rules the migration settled are worth knowing here: a
+> document whose LAST level is empty keeps its separator line TERMINATED (so text typed or filled there
+> lands on its own line), and an empty level is filled by a search on its own separator line.
 
 - **The substrate is CodeMirror 6, text-first** (research-ratified): the
   editor mounts `@uiw/react-codemirror` + `@codemirror/lang-markdown` (both
@@ -2205,16 +2206,20 @@ implementation in
   content in a version. Make an option under versions to clear all previous
   versions."; ledger 63, docs/18 §2.3):
   - **What a version is**: ONE row per AI change holding the WHOLE module TEXT
-    BYTE-EXACT as it stood immediately before that change — the parts document
-    (`docText`: the same text `assembleModulePartsDocument` builds and
-    `splitPartsDocument` splits — `==========` separators, `[Part <n> of
-    <total> — <title>]` labels, every planned part) AND the spine PREMISE in
-    its own `premise` field beside it (docs/17 row 357, the owner's *"Please
-    make undoable"*). Never a second document format: the premise is
-    deliberately NOT folded into `docText` (that would be a format the split
-    seam cannot read), so a restore re-splits the stored string against the
-    CURRENT plan through the existing split/save seam and puts the premise
-    back through the ONE spine-subfield seam (`moduleRepo.patchModuleSpine`).
+    BYTE-EXACT as it stood immediately before that change. **Since docs/17 row
+    384 that text IS the module document** (`docText`, level 0 = the premise,
+    `=====Level N=====` sections; `documentFormat` tags which format the bytes
+    are in, and a legacy `'parts-document'` entry is REFUSED by name on
+    restore, row 385), so the premise is CARRIED inside `docText` and the
+    `premise` field beside it is the Versions menu's display record — the
+    premise-twice debt recorded in docs/18 §5 rather than a second half a
+    restore needs. Before row 384 the row held the legacy parts document
+    (`==========` separators, `[Part <n> of <total> — <title>]` labels — a
+    format DELETED at row 386) with the spine PREMISE in its own `premise`
+    field beside it (docs/17 row 357, the owner's *"Please make undoable"*), and
+    the restore put it back through the ONE spine-subfield seam
+    (`moduleRepo.patchModuleSpine`). That older description is history and must
+    not be built on.
     `premise` is additive (`.default(null)`, NO index, NO migration): a row
     written before the field parses as `null` = NOT CAPTURED and restores
     exactly what it always restored, leaving the premise as it stands — while
@@ -2784,13 +2789,14 @@ cards.
 
 ## M4-D — Integration & retirement
 
-- **Module PDF rendering REPLACES deliverable seeding** (docs/17 row 108):
-  there is no outline to seed because there is no outline — the renderer reads
-  the module's premise, part plan and parts directly (through
-  `assembleModulePartsDocument`/`splitPartsDocument`, so no `==========`
-  scaffolding prints) and selects its artifacts from the module's own mentions
-  plus its owned rows. `mdToPdfmake` renders the `[[...]]` tokens as display
-  text, bold (docs/17 row 105).
+- **Module PDF rendering REPLACES deliverable seeding** (docs/17 row 108; the
+  level source is row 386): there is no outline to seed because there is no
+  outline — the renderer reads the module's premise, its level sections and its
+  artifacts directly (each level's number, title and text through
+  `moduleDocumentSectionsFromView`, the ONE document seam the reader and the
+  canvas share, so no separator scaffolding can print) and selects its artifacts
+  from the module's own mentions plus its owned rows. `mdToPdfmake` renders the
+  `[[...]]` tokens as display text, bold (docs/17 row 105).
 - **Play mode**: quick-find gains modules/parts as a third result group;
   selecting scrolls the reader. (The peek-modal "Focus in Play" button was
   removed when module mode became the play mode — M4-C.)
