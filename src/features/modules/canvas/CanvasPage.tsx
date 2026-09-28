@@ -56,19 +56,20 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  assembleModulePartsDocument,
-  canvasPartLabel,
-  CANVAS_PARTS_DELIMITER,
-  ModulePartsDocumentError,
+  ModuleDocumentError,
   ModuleVersionPremiseError,
   MODULE_VERSION_CAP,
   MODULE_VERSION_SOURCE_LABELS,
+  moduleDocumentFromView,
+  moduleDocumentSections,
+  moduleLevelSeparator,
   moduleVersionPremiseNote,
   savedVersionsNoun,
-  splitPartsDocument,
+  splitModuleDocument,
   type AnyArtifact,
   type Campaign,
   type Module,
+  type ModuleDocumentSection,
   type ModuleDocumentVersion,
   type ModuleVersionSource,
 } from '@/domain';
@@ -145,23 +146,26 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * Module canvas (08-MODULE-DESIGNER §Module canvas, canvas v3 — docs/17
- * ledger row 53): ChatGPT-canvas-style co-authoring of the WHOLE module in
- * ONE document — a CodeMirror 6 markdown doc assembled by the shared
- * `assembleModulePartsDocument` (every planned part in plan order, the
- * spine premise EXCLUDED, `==========` separators + `[Part <n> of
- * <total> — <title>]` label lines). There is NO part selector: the editor
- * doc and the chat's context are THE SAME whole-module format, and deep
- * links (`?part=<planIndex|premise>`, the reader's `#part-<n>` hash) are
- * SCROLL targets.
+ * ledger row 53; THE MODULE DOCUMENT since row 384): ChatGPT-canvas-style
+ * co-authoring of the WHOLE module in ONE document — a CodeMirror 6 markdown
+ * doc that IS the module document (docs/23 §2–§4: level 0 = the premise, then
+ * `=====Level N=====` sections), composed by the ONE
+ * `moduleDocument.moduleDocumentFromView`. There is NO part selector: the
+ * editor doc and the chat's context are THE SAME whole-module document, the
+ * premise included, and deep links (`?part=<planIndex|premise>`, the reader's
+ * `#part-<n>` hash) are SCROLL targets.
  *
- * The scaffolding lines are ordinary editable text while editing; they are
- * validated only at the boundaries that need the split. Save is ONE action
- * (manual Save, accepted proposals, chat batches): the doc is split by the
- * shared `splitPartsDocument` and ONLY the parts whose text changed land
- * through THE one part-text save path (+ per-part ledger entries) — a doc
- * whose scaffolding no longer parses fails the save loudly with the
- * splitter's reason (editor keeps the text). Leaving with unsaved edits or
- * a pending proposal demands the explicit discard confirm.
+ * The separator lines are ordinary editable text while editing; they are
+ * validated only at the boundaries that need the parse (save, chat send,
+ * proposal ranges) — and a malformed document is refused LOUDLY, naming the
+ * line, never silently repaired.
+ *
+ * Save is ONE action (manual Save, accepted proposals, chat batches): the doc
+ * is parsed by the shared `splitModuleDocument` and written through THE one
+ * DOCUMENT write (`moduleRepo.saveModuleDocument` → the row's ONE text), which
+ * stamps only the levels whose text changed; a malformed document fails the
+ * save loudly with the parser's reason (editor keeps the text). Leaving with
+ * unsaved edits or a pending proposal demands the explicit discard confirm.
  *
  * AI actions (cursor plays no role): selection refine works on an explicit
  * text SELECTION over the whole doc; rewrite part works on an explicitly
@@ -170,8 +174,8 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * acceptance IS persistence (split-save + session version ledger).
  *
  * Preview (header toggle, session-only per module, OPEN BY DEFAULT on
- * first open): hides the editor and renders the per-part texts (scaffolding
- * stripped) through the shared `WikiMarkdown` — the reader's exact renderer
+ * first open): hides the editor and renders the document's level sections
+ * through the shared `WikiMarkdown` — the reader's exact renderer
  * with the reader pool — filling its pane (no centered narrow measure). The
  * chat sidebar persists beside it and stays FULLY LIVE in preview: sends
  * run against the preview SNAPSHOT STRING (the editor is unmounted — the
@@ -259,36 +263,34 @@ export function CanvasPage(): JSX.Element {
   // Part text lives in the EDITOR (the doc string is the truth); the page
   // mirrors it only as a render trigger for the Save affordance and the
   // leave-guard. `initialDoc` is captured ONCE per module — the editor doc
-  // is never re-assembled from the row mid-session (that would clobber
+  // is never re-composed from the row mid-session (that would clobber
   // unsaved edits).
   const [initialDoc, setInitialDoc] = useState<string | null>(null);
   const [baselineDoc, setBaselineDoc] = useState<string | null>(null);
-  // The doc the editor (re)mounts with: the assembled row doc on first
+  // The doc the editor (re)mounts with: the composed row document on first
   // mount, the toggle-time snapshot when returning from the preview (the
-  // preview UNMOUNTS the editor, so remounting from the pristine assemble
+  // preview UNMOUNTS the editor, so remounting from the pristine document
   // would silently discard unsaved edits — AGENTS 1).
   const [mountDoc, setMountDoc] = useState<string | null>(null);
   const [mountedModuleId, setMountedModuleId] = useState<string | null>(null);
   const [docText, setDocText] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // Adjusting state during render (React's derive-state pattern): the whole
-  // document is assembled the first time the module row is available, and
-  // never again while the same module stays mounted.
+  // Adjusting state during render (React's derive-state pattern): the module
+  // document is composed the first time the module row is available, and
+  // never again while the same module stays mounted. `spine !== null` is the
+  // "the document is not empty" test (docs/23 §4: `spine` is null iff the
+  // document is empty), so a premise-only module opens here too.
   if (
     module !== undefined &&
     module !== null &&
     module.spine !== null &&
-    module.spine.partPlan.length > 0 &&
     mountedModuleId !== module.id
   ) {
-    const assembled = assembleModulePartsDocument({
-      partPlan: module.spine.partPlan,
-      parts: module.parts,
-    });
+    const assembled = moduleDocumentFromView(module);
     setMountedModuleId(module.id);
-    setInitialDoc(assembled.document);
-    setBaselineDoc(assembled.document);
-    setMountDoc(assembled.document);
+    setInitialDoc(assembled);
+    setBaselineDoc(assembled);
+    setMountDoc(assembled);
   }
 
   // AI proposal state: the page mirrors the editor's suggestion field for
@@ -449,18 +451,28 @@ export function CanvasPage(): JSX.Element {
       });
       return;
     }
-    // The section's label line anchors the scroll (tolerant: a doc whose
-    // scaffolding is broken simply doesn't scroll — its brokenness surfaces
-    // at save/preview time, not here).
-    const plan = plans.find((entry) => entry.planIndex === target.planIndex);
-    if (plan === undefined) return;
+    // The section's own separator line anchors the scroll (tolerant: a doc
+    // whose separators are broken simply doesn't scroll — its brokenness
+    // surfaces at save/preview time, not here).
     let offset: number | null = null;
-    if (target.planIndex === 0) {
-      offset = 0;
-    } else {
-      const label = canvasPartLabel(target.planIndex + 1, plans.length, plan.title);
-      const at = initialDoc.indexOf(`\n\n${CANVAS_PARTS_DELIMITER}\n\n${label}\n`);
-      if (at !== -1) offset = at + `\n\n${CANVAS_PARTS_DELIMITER}\n\n`.length;
+    try {
+      const sections = moduleDocumentSections(
+        initialDoc,
+        plans.map((plan) => ({ title: plan.title })),
+      );
+      const section = sections.find((entry) => entry.planIndex === target.planIndex);
+      if (section !== undefined) {
+        offset =
+          section.number === 0
+            ? 0
+            : (() => {
+                const at = initialDoc.indexOf(moduleLevelSeparator(section.number));
+                return at === -1 ? section.textFrom : at;
+              })();
+      }
+    } catch {
+      // A document that no longer parses has no section to scroll to.
+      offset = null;
     }
     if (offset === null) return;
     lastCanvasScroll.current = { target: 'doc', offset };
@@ -489,10 +501,10 @@ export function CanvasPage(): JSX.Element {
   // Explicitly narrowed: the handlers below are hoisted function declarations,
   // for which TS's control-flow narrowing of `campaign` does not survive.
   const currentCampaign: Campaign = campaign;
-  if (currentModule.spine === null || currentModule.spine.partPlan.length === 0 || initialDoc === null) {
+  if (currentModule.spine === null || initialDoc === null) {
     return (
       <MissingEntityPanel
-        message="This module has no planned parts yet — the canvas edits its parts once the spine exists."
+        message="This module has no document yet — the canvas edits its premise and levels once there is text."
         campaignId={campaignId}
       />
     );
@@ -553,8 +565,8 @@ export function CanvasPage(): JSX.Element {
   const resumeBlocked = derivedBlocked !== null || resumeRunning;
 
   // The preview highlight: the whole-doc replacement mapped onto its
-  // part's range (identity-gated — a hand edit, proposal accept or next
-  // apply clears/replaces the page state, and a broken scaffolding simply
+  // section's range (identity-gated — a hand edit, proposal accept or next
+  // apply clears/replaces the page state, and a broken document simply
   // shows no highlight while the preview shows its loud reason).
   let previewHighlight: { planIndex: number; from: number; to: number } | null = null;
   if (
@@ -564,7 +576,10 @@ export function CanvasPage(): JSX.Element {
     lastReplacement.to > lastReplacement.from
   ) {
     try {
-      const highlightSections = splitPartsDocument(previewSource, currentModule.spine.partPlan);
+      const highlightSections = moduleDocumentSections(
+        previewSource,
+        currentModule.spine.partPlan,
+      );
       const highlightSection = highlightSections.find(
         (section) => lastReplacement.from >= section.textFrom && lastReplacement.to <= section.textTo,
       );
@@ -576,7 +591,8 @@ export function CanvasPage(): JSX.Element {
         };
       }
     } catch {
-      // Broken scaffolding: no highlight — the preview shows the loud reason.
+      // A document that no longer parses has no highlight — the preview shows
+      // the parser's loud reason.
     }
   }
 
@@ -628,12 +644,12 @@ export function CanvasPage(): JSX.Element {
 
   /**
    * ONE save action for the whole document (manual Save, accepted
-   * proposals, chat batches): split → save ONLY the changed parts through
-   * THE one part-text save path (+ per-part ledger entries). A doc whose
-   * scaffolding no longer parses fails loud with the splitter's reason —
-   * the editor keeps its text so the problem can be fixed. Per-part save
-   * failures toast loudly naming the part (saveWholeModuleDocument) while
-   * the remaining parts still land.
+   * proposals, chat batches): parse → write the ONE document through
+   * `moduleRepo.saveModuleDocument` (+ one session-ledger entry per level
+   * whose text changed). A doc whose separators no longer parse fails loud
+   * with the parser's reason (naming the line) — the editor keeps its text so
+   * the problem can be fixed, and NOTHING is written (a whole-document write
+   * is atomic: there is no per-part half state to report).
    *
    * `ai` saves also take the durable whole-document snapshot BEFORE writing
    * (docs/18 §2.3 simple undo), so the caller passes the AI action it is
@@ -642,14 +658,14 @@ export function CanvasPage(): JSX.Element {
    *
    * PROVENANCE (docs/17 row 93): `writerModel` is the model that served the
    * turn whose text this save lands. A manual Save and a restore omit it, and
-   * the parts then keep the ids they already carry — a hand edit must not
+   * the levels then keep the ids they already carry — a hand edit must not
    * erase which model wrote the text (owner decision).
    *
    * THE RESTORE'S PREMISE (docs/17 row 357): `restorePremise` carries the
-   * stored premise a durable restore must put back beside the parts. A failed
-   * premise aborts the whole save LOUDLY with a restore-specific sentence —
-   * never the generic save copy, and never a half restore reported as a
-   * success.
+   * stored premise a durable restore puts back before the document write. A
+   * failed premise aborts the whole save LOUDLY with a restore-specific
+   * sentence — never the generic save copy, and never a half restore reported
+   * as a success.
    */
   async function saveDoc(
     origin: 'user' | 'ai',
@@ -666,7 +682,7 @@ export function CanvasPage(): JSX.Element {
     const doc = view.state.doc.toString();
     setSaving(true);
     try {
-      const result = await saveWholeModuleDocument({
+      await saveWholeModuleDocument({
         moduleId: currentModule.id,
         doc,
         module: currentModule,
@@ -681,13 +697,13 @@ export function CanvasPage(): JSX.Element {
           : { restorePremise: options.restorePremise }),
       });
       setBaselineDoc(doc);
-      if (successMessage !== null && result.failedParts.length === 0) {
+      if (successMessage !== null) {
         toastSuccess(successMessage);
       }
     } catch (error) {
-      if (error instanceof ModulePartsDocumentError) {
+      if (error instanceof ModuleDocumentError) {
         toastError(
-          'Could not save — the parts-document scaffolding no longer parses. Fix the separator / label lines, then Save again.',
+          'Could not save — the module document no longer parses. Fix the separator line it names, then Save again.',
           error,
         );
       } else if (error instanceof ModuleVersionPremiseError) {
@@ -735,9 +751,9 @@ export function CanvasPage(): JSX.Element {
       if (planIndex === null) {
         return { ok: false, loud: false, reason: PICK_PART_REASON };
       }
-      let section;
+      let section: ModuleDocumentSection | undefined;
       try {
-        section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
+        section = moduleDocumentSections(doc, currentModule.spine?.partPlan ?? []).find(
           (entry) => entry.planIndex === planIndex,
         );
       } catch {
@@ -944,16 +960,18 @@ export function CanvasPage(): JSX.Element {
   }
 
   /**
-   * The restore door for a DURABLE version (docs/18 §2.3): the stored whole
-   * document is VALIDATED against the CURRENT part plan first — a version
-   * saved under a different plan (a re-drafted spine) would produce a doc
-   * whose scaffold labels lie, so it is refused LOUDLY instead of proposed —
-   * then it rides the SAME proposal machinery as every other AI change (a
-   * block replace over the whole document, NO side-door row write). Accepting
-   * it lands through the split-save, and because that save is an AI save it
-   * snapshots the pre-restore document first: a wrong restore stays
-   * recoverable. Restore needs the mounted editor (the suggestion machinery
-   * is CM6 state), so preview mode says so loudly instead of doing nothing.
+   * The restore door for a DURABLE version (docs/18 §2.3, docs/17 row 384):
+   * the stored document is VALIDATED first — a version saved in the LEGACY
+   * parts-document format is refused LOUDLY rather than proposed, because that
+   * text would be misread as one giant premise (`documentFormat`) — then it
+   * rides the SAME proposal machinery as every other AI change (a block
+   * replace over the whole document, NO side-door row write). The document
+   * carries the preview's premise (level 0), so the restore puts BOTH halves
+   * back. Accepting it lands through the document save, and because that save
+   * is an AI save it snapshots the pre-restore document first: a wrong restore
+   * stays recoverable. Restore needs the mounted editor (the suggestion
+   * machinery is CM6 state), so preview mode says so loudly instead of doing
+   * nothing.
    */
   function restoreDurableVersion(version: ModuleDocumentVersion): void {
     const view = activeCanvasView.current;
@@ -965,13 +983,17 @@ export function CanvasPage(): JSX.Element {
       toastInfo('Discard the pending proposal first.');
       return;
     }
-    try {
-      splitPartsDocument(version.docText, currentModule.spine?.partPlan ?? []);
-    } catch (error) {
+    if (version.documentFormat !== 'module-document') {
       toastError(
-        'Could not restore that version — it was saved for a different part plan, so its part labels no longer match this module.',
-        error,
+        'Could not restore that version — it was saved in the old parts-document format, which is not the module document. Its text cannot be read as one and restoring it would damage the module.',
+        new Error(`version ${version.id} carries documentFormat "${version.documentFormat}"`),
       );
+      return;
+    }
+    try {
+      splitModuleDocument(version.docText);
+    } catch (error) {
+      toastError('Could not restore that version — its saved document no longer parses.', error);
       return;
     }
     const doc = view.state.doc.toString();
@@ -1023,16 +1045,13 @@ export function CanvasPage(): JSX.Element {
       return;
     }
     const doc = view.state.doc.toString();
-    let section;
+    let section: ModuleDocumentSection | undefined;
     try {
-      section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
+      section = moduleDocumentSections(doc, currentModule.spine?.partPlan ?? []).find(
         (candidate) => candidate.planIndex === planIndex,
       );
     } catch (error) {
-      toastError(
-        'Could not restore — the parts-document scaffolding no longer parses.',
-        error,
-      );
+      toastError('Could not restore — the module document no longer parses.', error);
       return;
     }
     if (section === undefined) {
@@ -1159,15 +1178,16 @@ export function CanvasPage(): JSX.Element {
       });
       const next =
         range.doc.slice(0, range.from) + refined.replacement + range.doc.slice(range.to);
-      // The replacement is written as a whole parts-document: validate it at
+      // The replacement is written as a whole module DOCUMENT: validate it at
       // THIS boundary before anything is persisted (AGENTS 3). A reply that
-      // breaks the scaffolding is refused here — loudly, with nothing written
-      // and no durable snapshot of a change that was never applied.
+      // breaks the format (a line the parser reads as a level header) is
+      // refused here — loudly, with nothing written and no durable snapshot of
+      // a change that was never applied.
       try {
-        splitPartsDocument(next, currentModule.spine?.partPlan ?? []);
+        splitModuleDocument(next);
       } catch (error) {
         toastError(
-          'The replacement would break the parts-document scaffolding — nothing was applied. Try a different instruction.',
+          'The replacement would break the module document — nothing was applied. Try a different instruction.',
           error,
         );
         return;
@@ -1217,14 +1237,14 @@ export function CanvasPage(): JSX.Element {
     key: string;
     framing: CanvasChatFraming;
     modelSelection: string | null;
-    hasPlannedParts: boolean;
+    hasDocument: boolean;
   } {
     const key = canvasChatKeyFor(moduleId, framing);
     return {
       key,
       framing,
       modelSelection: useCanvasChatStore.getState().module(key).modelSelection,
-      hasPlannedParts: plans.length > 0,
+      hasDocument: currentModule.spine !== null,
     };
   }
 
@@ -1232,8 +1252,8 @@ export function CanvasPage(): JSX.Element {
    * Preview-mode chat send: the turn runs against the preview SNAPSHOT
    * STRING (no view — the editor is unmounted) through the same protocol +
    * ladder, persists through the existing split-save, and re-renders the
-   * preview. A scaffolding-broken snapshot fails the send LOUDLY through
-   * the existing `ModulePartsDocumentError` path (failed card). Busy
+   * preview. A malformed snapshot fails the send LOUDLY through the
+   * existing `ModuleDocumentError` path (failed card). Busy
    * rethrows for the sidebar's toast (canvasRefine surface).
    */
   async function handlePreviewSend(text: string): Promise<void> {
@@ -1251,7 +1271,7 @@ export function CanvasPage(): JSX.Element {
           moduleId,
           key: options.key,
           framing: options.framing,
-          hasPlannedParts: options.hasPlannedParts,
+          hasDocument: options.hasDocument,
           doc: source,
           modelSelection: options.modelSelection,
           turn: controller,
@@ -1279,7 +1299,7 @@ export function CanvasPage(): JSX.Element {
         moduleId,
         key: options.key,
         framing: options.framing,
-        hasPlannedParts: options.hasPlannedParts,
+        hasDocument: options.hasDocument,
         doc: source,
         modelSelection: options.modelSelection,
         turn: controller,
@@ -1319,7 +1339,7 @@ export function CanvasPage(): JSX.Element {
         moduleId,
         key: options.key,
         framing: options.framing,
-        hasPlannedParts: options.hasPlannedParts,
+        hasDocument: options.hasDocument,
         doc: source,
         modelSelection: options.modelSelection,
         turn: controller,
@@ -1377,16 +1397,13 @@ export function CanvasPage(): JSX.Element {
    * the repair; the doc epoch remounts the editor from the fresh row.
    */
   function reseedFromRow(row: Module): void {
-    if (row.spine === null || row.spine.partPlan.length === 0) return;
-    const assembled = assembleModulePartsDocument({
-      partPlan: row.spine.partPlan,
-      parts: row.parts,
-    });
-    setInitialDoc(assembled.document);
-    setBaselineDoc(assembled.document);
-    setMountDoc(assembled.document);
-    setDocText(assembled.document);
-    setPreviewDoc(previewOpen ? assembled.document : null);
+    if (row.spine === null) return;
+    const document = moduleDocumentFromView(row);
+    setInitialDoc(document);
+    setBaselineDoc(document);
+    setMountDoc(document);
+    setDocText(document);
+    setPreviewDoc(previewOpen ? document : null);
     setLastReplacement(null);
     setDocEpoch((epoch) => epoch + 1);
   }
@@ -1818,7 +1835,7 @@ export function CanvasPage(): JSX.Element {
             moduleId={currentModule.id}
             surface={chatSurface}
             onSurfaceChange={setChatSurface}
-            hasPlannedParts={plans.length > 0}
+            hasDocument={currentModule.spine !== null}
             pool={pool}
             aiBusy={aiBlocked}
             aiBusyReason={aiBlockedReason}
@@ -2282,7 +2299,7 @@ const PICK_PART_REASON = 'Pick the part to rewrite first.';
 const STALE_SELECTION_REASON =
   'The document changed since that selection was made — select the text again.';
 const SCAFFOLDING_REASON =
-  'Could not read the parts-document scaffolding — fix the separator / label lines first.';
+  'Could not read the module document — fix the separator line it names first.';
 /**
  * The proposal bar's own gate: Apply/Discard are held while the replacement is
  * still streaming in (a half-streamed replacement is never accepted), and Stop

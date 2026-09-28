@@ -9,14 +9,19 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions, snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import {
-  assembleModulePartsDocument,
   createModule,
+  moduleDocumentFromView,
   modulePartSchema,
   moduleSpineSchema,
-  splitPartsDocument,
   type Id,
   type Module,
 } from '@/domain';
+import {
+  ModuleDocumentError,
+  assembleModuleDocument,
+  moduleDocumentSections,
+  splitModuleDocument,
+} from '@/domain/moduleDocument';
 import { countModuleEncounters, encounterFloorMessage } from '@/llm/moduleGen';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import { clearDatabase } from '../db/helpers';
@@ -24,16 +29,16 @@ import { clearDatabase } from '../db/helpers';
 /**
  * The scene block is a DOCUMENT-FORMAT change with no schema behind it
  * (08-MODULE-DESIGNER §M4-B-2, docs/18 §2.2, docs/17 row 73): the block lives
- * inside the part's ordinary markdown, so the ONE `assembleModulePartsDocument`
- * / `splitPartsDocument` format, the canvas split-save, the byte-exact durable
- * version snapshots and the encounter floor's `[[encounter]]` counting must all
- * keep working on exactly the same text.
+ * inside a level's ordinary markdown, so the ONE module document
+ * (`assembleModuleDocument` / `splitModuleDocument`, docs/23 §2–§4), the canvas
+ * document save, the byte-exact durable version snapshots and the encounter
+ * floor's `[[encounter]]` counting must all keep working on exactly the same
+ * text. Since docs/17 row 384 the document carries the PREMISE as level 0.
  *
  * This file pins that contract end to end, without the UI:
- * assemble → split → split-save → snapshot → restore-from-snapshot, with a
- * generated-style scene block part AND a legacy prose part in the same
- * document. A legacy part has no scene blocks at all and must keep rendering,
- * counting and saving.
+ * compose → parse → document save → snapshot → restore-from-snapshot, with a
+ * scene-block level AND a plain-prose level in the same document. A prose level
+ * has no scene blocks at all and must keep rendering, counting and saving.
  */
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -84,13 +89,15 @@ const ENTITY_KINDS = [
   { name: 'The Flooded Nave', kind: 'location' as const },
 ];
 
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: LEGACY_PART },
-    { planIndex: 1, markdown: SCENE_BLOCK },
+const PREMISE = 'A harbor town raised its bell to warn of the drownings.';
+
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: PREMISE },
+    { number: 1, text: LEGACY_PART },
+    { number: 2, text: SCENE_BLOCK },
   ],
-}).document;
+});
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -128,13 +135,9 @@ async function rowModule(): Promise<Module> {
   return row;
 }
 
-/** The row's document right now — assembled through the ONE format. */
+/** The row's document right now — composed through the ONE seam. */
 async function rowDocument(): Promise<string> {
-  const row = await rowModule();
-  return assembleModulePartsDocument({
-    partPlan: row.spine?.partPlan ?? [],
-    parts: row.parts,
-  }).document;
+  return moduleDocumentFromView(await rowModule());
 }
 
 beforeEach(async () => {
@@ -142,12 +145,15 @@ beforeEach(async () => {
   await seedModule();
 });
 
-describe('a scene block is ordinary part markdown (ONE document format)', () => {
-  it('survives assemble -> split byte-exactly, field labels and all', () => {
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
+describe('a scene block is ordinary level markdown (ONE document format)', () => {
+  it('survives compose -> parse byte-exactly, field labels and all', () => {
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
 
-    expect(sections).toHaveLength(2);
-    expect(sections[1]?.text).toBe(SCENE_BLOCK);
+    // Level 0 is the premise; levels 1 and 2 are the two planned sections.
+    expect(sections).toHaveLength(3);
+    expect(sections[0]?.text).toBe(PREMISE);
+    expect(sections[1]?.text).toBe(LEGACY_PART);
+    expect(sections[2]?.text).toBe(SCENE_BLOCK);
     // The block's own markdown is intact: heading, every label, the arrow
     // bullets and the blank lines that separate them.
     for (const label of [
@@ -161,37 +167,50 @@ describe('a scene block is ordinary part markdown (ONE document format)', () => 
       '**Leads**',
       '**Outcome**',
     ]) {
-      expect(sections[1]?.text).toContain(label);
+      expect(sections[2]?.text).toContain(label);
     }
-    expect(sections[1]?.text).toContain('Cut the bell rope -> the diver surfaces');
-    // Re-assembling the split sections reproduces the document byte-exactly.
+    expect(sections[2]?.text).toContain('Cut the bell rope -> the diver surfaces');
+    // Re-composing the parsed levels reproduces the document byte-exactly.
     expect(
-      assembleModulePartsDocument({
-        partPlan: PART_PLAN,
-        parts: sections.map((section) => ({ planIndex: section.planIndex, markdown: section.text })),
-      }).document,
+      assembleModuleDocument({
+        levels: sections.map((section) => ({ number: section.number, text: section.text })),
+      }),
     ).toBe(WHOLE_DOC);
   });
 
-  it('does not trip the fake-header guard — a scene heading is not a part label', () => {
-    // The guard refuses content that fakes the scaffolding. A scene block must
-    // never look like `[Part n of m — Title]`, and the reader-facing headings
-    // it uses instead are ordinary markdown.
-    expect(() => splitPartsDocument(WHOLE_DOC, PART_PLAN)).not.toThrow();
-    const spoofed = WHOLE_DOC.replace('## [[The Bell Beneath the Sluice]] — ENCOUNTER', '[Part 3 of 3 — Fake]');
-    expect(() => splitPartsDocument(spoofed, PART_PLAN)).toThrow(/fakes? the parts-document scaffolding/);
+  it('does not trip the near-miss guard — a scene heading is not a level header', () => {
+    // A scene block must never look like a `=====Level N=====` separator, and
+    // the reader-facing headings it uses instead are ordinary markdown.
+    expect(() => splitModuleDocument(WHOLE_DOC)).not.toThrow();
+    const spoofed = WHOLE_DOC.replace(
+      '## [[The Bell Beneath the Sluice]] — ENCOUNTER',
+      '=====Level 5=====',
+    );
+    expect(() => splitModuleDocument(spoofed)).toThrow(ModuleDocumentError);
+    // ...and the WRITE side refuses to compose a body that carries one at all
+    // (docs/17 row 382's lookalike arm): the dangerous case is the one that
+    // PARSES VALIDLY as a new level.
+    expect(() =>
+      assembleModuleDocument({
+        levels: [
+          { number: 0, text: 'p' },
+          { number: 1, text: 'prose\n=====Level 2=====' },
+        ],
+      }),
+    ).toThrow(/looks like a level header/);
   });
 
-  it('round-trips through the canvas split-save byte-exactly', async () => {
-    // A hand edit inside the block: the split-save writes ONLY the changed part.
+  it('round-trips through the canvas document save byte-exactly', async () => {
+    // A hand edit inside the block: the document save reports ONLY the changed
+    // level (level 2 → planIndex 1).
     const edited = SCENE_BLOCK.replace('**Secrets** — The gate key', '**Secrets** — The gate key is wet.');
-    const doc = assembleModulePartsDocument({
-      partPlan: PART_PLAN,
-      parts: [
-        { planIndex: 0, markdown: LEGACY_PART },
-        { planIndex: 1, markdown: edited },
+    const doc = assembleModuleDocument({
+      levels: [
+        { number: 0, text: PREMISE },
+        { number: 1, text: LEGACY_PART },
+        { number: 2, text: edited },
       ],
-    }).document;
+    });
 
     const result = await saveWholeModuleDocument({
       moduleId: world.moduleId,
@@ -201,13 +220,14 @@ describe('a scene block is ordinary part markdown (ONE document format)', () => 
       label: 'Hand edit',
     });
 
-    // Only part 1 changed (the legacy part is untouched → no write).
+    // Only the scene-block level changed (the prose level is untouched).
     expect(result.savedPlanIndexes).toEqual([1]);
-    expect(result.failedParts).toEqual([]);
     expect(await rowDocument()).toBe(doc);
     expect((await rowModule()).parts.find((part) => part.planIndex === 0)?.markdown).toBe(LEGACY_PART);
-    // The legacy part keeps whatever edit state it had: nothing marked it edited.
+    // The unchanged level keeps whatever edit state it had: nothing marked it
+    // edited, and the premise's own provenance is untouched too.
     expect((await rowModule()).parts.find((part) => part.planIndex === 0)?.edited).toBe(false);
+    expect((await rowModule()).spine?.premise).toBe(PREMISE);
   });
 
   it('survives a durable snapshot and a restore from that snapshot byte-exactly', async () => {
@@ -232,11 +252,11 @@ describe('a scene block is ordinary part markdown (ONE document format)', () => 
     expect(versions[0]?.docText).toBe(before);
     expect(versions[0]?.docText).toContain('## [[The Bell Beneath the Sluice]] — ENCOUNTER');
 
-    // Restore: the snapshot is validated against the CURRENT plan by the same
-    // split the canvas restore uses, then lands through the same split-save.
+    // Restore: the snapshot is validated by the same parse the canvas restore
+    // uses, then lands through the same document save.
     const snapshot = versions[0]?.docText ?? '';
-    const sections = splitPartsDocument(snapshot, PART_PLAN);
-    expect(sections[1]?.text).toBe(SCENE_BLOCK);
+    const sections = moduleDocumentSections(snapshot, PART_PLAN);
+    expect(sections[2]?.text).toBe(SCENE_BLOCK);
     await saveWholeModuleDocument({
       moduleId: world.moduleId,
       doc: snapshot,
@@ -248,23 +268,23 @@ describe('a scene block is ordinary part markdown (ONE document format)', () => 
     expect(await rowDocument()).toBe(before);
   });
 
-  it('a legacy prose part still saves, still parses and still counts (no migration)', async () => {
-    // Nothing about the legacy part's own text changes: it carries no scene
-    // blocks and no label lines, and the document around it still splits.
+  it('a plain-prose level still saves, still parses and still counts (no migration)', async () => {
+    // Nothing about the prose level's own text changes: it carries no scene
+    // blocks and no separators, and the document around it still parses.
     const row = await rowModule();
     const legacy = row.parts.find((part) => part.planIndex === 0)?.markdown ?? '';
     expect(legacy).toBe(LEGACY_PART);
-    expect(splitPartsDocument(WHOLE_DOC, PART_PLAN)[0]?.text).toBe(LEGACY_PART);
+    expect(moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.text).toBe(LEGACY_PART);
 
-    // A hand edit to the legacy part lands on the row through the SAME path.
+    // A hand edit to that level lands on the row through the SAME path.
     const editedLegacy = `${LEGACY_PART}\n\nThe keeper wants the party gone by dusk.`;
-    const doc = assembleModulePartsDocument({
-      partPlan: PART_PLAN,
-      parts: [
-        { planIndex: 0, markdown: editedLegacy },
-        { planIndex: 1, markdown: SCENE_BLOCK },
+    const doc = assembleModuleDocument({
+      levels: [
+        { number: 0, text: PREMISE },
+        { number: 1, text: editedLegacy },
+        { number: 2, text: SCENE_BLOCK },
       ],
-    }).document;
+    });
     const result = await saveWholeModuleDocument({
       moduleId: world.moduleId,
       doc,
@@ -278,13 +298,13 @@ describe('a scene block is ordinary part markdown (ONE document format)', () => 
   });
 
   it('the snapshot of a document that has no scene blocks is unchanged behavior', async () => {
-    const doc = assembleModulePartsDocument({
-      partPlan: PART_PLAN,
-      parts: [
-        { planIndex: 0, markdown: LEGACY_PART },
-        { planIndex: 1, markdown: LEGACY_PART },
+    const doc = assembleModuleDocument({
+      levels: [
+        { number: 0, text: PREMISE },
+        { number: 1, text: LEGACY_PART },
+        { number: 2, text: LEGACY_PART },
       ],
-    }).document;
+    });
     await saveWholeModuleDocument({
       moduleId: world.moduleId,
       doc,
@@ -302,7 +322,7 @@ describe('the encounter floor is untouched — the block links, nothing else cha
     // The block introduces no new link syntax and no new record: the only thing
     // the floor reads is a canonical `[[encounter]]` link in the part text, and
     // a scene-block heading carries exactly that.
-    const section = splitPartsDocument(WHOLE_DOC, PART_PLAN)[1]?.text ?? '';
+    const section = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[2]?.text ?? '';
     expect(section).toContain('[[The Bell Beneath the Sluice]]');
     const row = {
       ...createModule({

@@ -6,7 +6,7 @@ import { EditorView } from '@codemirror/view';
 import { history } from '@codemirror/commands';
 import { describe, expect, it } from 'vitest';
 
-import { assembleModulePartsDocument } from '@/domain/modulePartsDocument';
+import { assembleModuleDocument, moduleLevelSeparator } from '@/domain/moduleDocument';
 import {
   applyChatCommands,
   applyChatCommandsToDocument,
@@ -49,13 +49,14 @@ import type { CanvasEditCommand } from '@/llm/canvasChat';
  */
 describe('chat apply is ONE implementation — editor view vs preview string (DIFFERENTIAL)', () => {
   const PLAN = [{ title: 'Open Part' }, { title: 'Middle Part' }, { title: 'Other Part' }];
-  const DOC = assembleModulePartsDocument({
-    partPlan: PLAN,
-    parts: [
-      { planIndex: 0, markdown: 'Rain here.\nRain there.' },
-      { planIndex: 1, markdown: 'Fog elsewhere.' },
+  const DOC = assembleModuleDocument({
+    levels: [
+      { number: 0, text: 'The premise of the whole module.' },
+      { number: 1, text: 'Rain here.\nRain there.' },
+      { number: 2, text: 'Fog elsewhere.' },
+      { number: 3, text: '' },
     ],
-  }).document;
+  });
 
   /** One editor view reused for every case (reset per case — mounting 300 of them is waste). */
   function mountView(): { view: EditorView; host: HTMLElement } {
@@ -185,12 +186,12 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       commands: [{ search: '   ', replace: 'x', all: false }],
     },
     {
-      label: 'empty-part label-anchor fill',
+      label: 'empty-level separator-anchor fill',
       doc: DOC,
       commands: [
         {
-          search: '[Part 3 of 3 — Other Part]',
-          replace: '[Part 3 of 3 — Other Part]\n\nEmbers, at last.',
+          search: moduleLevelSeparator(3),
+          replace: `${moduleLevelSeparator(3)}\n\nEmbers, at last.`,
           all: false,
         },
       ],
@@ -207,11 +208,15 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       ],
     },
     {
-      label: 'a replace that fakes the scaffolding (throws on the NEXT split)',
+      label: 'a replace that writes a level header into a level (throws on the NEXT parse)',
       doc: DOC,
       commands: [
         { search: 'Fog elsewhere.', replace: 'Fog elsewhere.', all: false },
-        { search: 'Rain here.', replace: 'Rain here.\n\n==========\n\n', all: false },
+        {
+          search: 'Rain here.',
+          replace: `Rain here.\n\n${moduleLevelSeparator(9)}\n\n`,
+          all: false,
+        },
         { search: 'Embers', replace: 'Embers!', all: false },
       ],
     },
@@ -244,9 +249,9 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
     'e',
     'zzz not present',
     '   ',
-    '[Part 2 of 3 — Middle Part]',
+    moduleLevelSeparator(2),
     'Fog',
-    '==========',
+    moduleLevelSeparator(1),
     'here.\nRain',
   ];
   const REPLACES = [
@@ -255,8 +260,8 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
     '',
     'Longer rainy opening.',
     'The artifact "name" field must be exactly the name of the artifact.',
-    'Rain here.\n\n==========\n\n',
-    '[Part 3 of 3 — Other Part]\n\nEmbers.',
+    `Rain here.\n\n${moduleLevelSeparator(9)}\n\n`,
+    `${moduleLevelSeparator(3)}\n\nEmbers.`,
   ];
   const FUZZ_CASES = 300;
 

@@ -4,23 +4,18 @@ import { BaseEntitySchema } from '@/domain/entity';
 
 /**
  * Durable module document versions (owner-directed, 08-MODULE-DESIGNER
- * §Module canvas versions; docs/17 ledger rows 63 and 357): the simple undo
- * for AI changes. ONE row per AI change holding the WHOLE module text
- * BYTE-EXACT as it was immediately BEFORE that change — the parts document in
- * `docText` (the same shape `modulePartsDocument` assembles and splits:
- * `==========` separators + `[Part <n> of <total> — <title>]` labels, every
- * planned part) AND the spine premise in its own `premise` field beside it.
+ * §Module canvas versions; docs/17 ledger rows 63, 357 and 384): the simple
+ * undo for AI changes. ONE row per AI change holding the WHOLE module text
+ * BYTE-EXACT as it was immediately BEFORE that change.
  *
- * THE TWO HALVES STAY TWO FIELDS ON PURPOSE. "The whole module" is premise +
- * parts (the ONE `moduleFullText` reading), and the parts document
- * deliberately EXCLUDES the premise — that is the editor's and the chat's
- * document format, and it stays exactly what it was. Folding the premise into
- * `docText` would be a second document format and would break the split
- * contract; folding the two fields into one JSON blob would be a format the
- * split seam cannot read. So a restore re-splits `docText` through the
- * existing split/save seam AND puts `premise` back through the one
- * spine-subfield seam (docs/17 row 357; the owner's decision, verbatim:
- * *"Please make undoable"*).
+ * SINCE docs/17 ROW 384 the text is THE MODULE DOCUMENT (docs/23 §2–§4: level 0
+ * = the premise, then `=====Level N=====` sections) and it therefore CARRIES
+ * the premise; `documentFormat` records which format an entry is in, and the
+ * canvas refuses an entry it cannot read in the current format rather than
+ * misreading a legacy parts document as one giant premise. The `premise` field
+ * (row 357) is still captured beside it — it is the Versions menu's display
+ * source and the entry's own honest record of the premise half — but a restore
+ * no longer DEPENDS on it: the document is the whole text, premise included.
  *
  * DURABLE by owner decision — these rows live in Dexie and survive reload
  * (the session-only per-part ledger in `canvasStore.ts` stays exactly as it
@@ -70,8 +65,29 @@ export const moduleDocumentVersionSchema = z.object({
   /** What changed, in honest words ("Chat: make the rain heavier",
    * "Rewrite part 2 — Under the Docks", "Restore from 14:32:07"). */
   label: z.string(),
-  /** The WHOLE module parts document, byte-exact, as it was pre-change. */
+  /** The WHOLE module document, byte-exact, as it was pre-change. See
+   * `documentFormat` for WHICH document format the bytes are in. */
   docText: z.string(),
+  /**
+   * WHICH document format `docText` carries (docs/17 row 384).
+   *
+   * `'module-document'` is the ONE module document (docs/23 §2–§4: level 0 =
+   * the premise, then `=====Level N=====` sections) — the format the canvas
+   * and the chat speak since row 384. `'parts-document'` is the LEGACY
+   * `==========` + `[Part n of m — title]` format (row 382 and earlier), which
+   * EXCLUDED the premise and therefore has its own `premise` field.
+   *
+   * The discriminator is not bookkeeping: the two formats are both plain text
+   * and a legacy document PARSES as a module document with ONE level (the
+   * whole parts document read as the premise) — a silent misreading of history
+   * that would corrupt the module on restore. The canvas therefore REFUSES a
+   * version it cannot read in the current format, loudly and by name, instead
+   * of restoring it as a giant premise (AGENTS rule 1).
+   *
+   * ADDITIVE and defaulted: every row written before this field is a legacy
+   * parts document, which is exactly what `'parts-document'` means.
+   */
+  documentFormat: z.enum(['parts-document', 'module-document']).default('parts-document'),
   /**
    * The module's spine PREMISE, byte-exact, as it was immediately before the
    * change — the OTHER half of the undo (docs/17 row 357, the owner's

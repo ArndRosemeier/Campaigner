@@ -5,10 +5,10 @@ import { TriangleAlertIcon } from 'lucide-react';
 import { WriterModelId } from '@/components/writer-model-id';
 import type { AnyArtifact, Id, Module } from '@/domain';
 import {
-  splitPartsDocument,
-  ModulePartsDocumentError,
-  type ModulePartsSection,
-} from '@/domain/modulePartsDocument';
+  ModuleDocumentError,
+  moduleDocumentSections,
+  type ModuleDocumentSection,
+} from '@/domain/moduleDocument';
 import {
   resolveSelectionRange,
   WikiMarkdown,
@@ -16,27 +16,30 @@ import {
 import type { PreviewSelectionCapture } from '@/features/modules/canvas/previewStore';
 
 /**
- * The canvas PREVIEW (canvas v3, 08-MODULE-DESIGNER §Module canvas): the
- * whole-document editor rendered as the READER sees it — the
- * `==========`/label scaffolding is editor chrome and is stripped here; each
- * part's text renders through the shared `WikiMarkdown` (the reader's exact
- * renderer, reader parity by construction) with the reader pool and
- * clickable entity chips (`onOpenArtifact` → the peek modal).
+ * The canvas PREVIEW (canvas v3, 08-MODULE-DESIGNER §Module canvas; THE MODULE
+ * DOCUMENT since docs/17 row 384): the whole-document editor rendered as the
+ * READER sees it — the `=====Level N=====` separator lines are editor chrome
+ * and are stripped here (their caption line is ordinary prose and renders as
+ * the markdown heading it is); each level's text renders through the shared
+ * `WikiMarkdown` (the reader's exact renderer, reader parity by construction)
+ * with the reader pool and clickable entity chips (`onOpenArtifact` → the peek
+ * modal). Level 0 (the premise) renders too — it is a section of the document
+ * like any other.
  *
  * The preview renders the document AS OF THE TOGGLE (v1: while it is open
  * the editor is hidden and every writing surface is disabled, so the doc
  * cannot drift — EXCEPT the chat, which stays live in preview and applies
- * to the snapshot string the preview renders from). A doc whose scaffolding
- * no longer parses shows the splitter's loud reason instead of a silent
+ * to the snapshot string the preview renders from). A doc whose separators
+ * no longer parse shows the parser's loud reason instead of a silent
  * best-effort render (AGENTS 1).
  *
  * SELECTION → SOURCE (docs/17 row 102): the preview is where the owner reads
  * the module text, so "Refine selection" has to work HERE — and it needs an
  * exact SOURCE range for whatever was selected. This component therefore
- * renders each part with `WikiMarkdown`'s OPT-IN `sourceOffsets` (the reader
+ * renders each level with `WikiMarkdown`'s OPT-IN `sourceOffsets` (the reader
  * passes nothing, and its output is unchanged), and captures the browser
  * selection where the DOM is: `resolveSelectionRange` turns it into
- * part-relative source offsets, `textFrom` makes them whole-document
+ * section-relative source offsets, `textFrom` makes them whole-document
  * offsets, and the capture is reported upward. A capture is either MAPPED
  * (byte-exact) or REFUSED BY NAME — nothing is stored, no AI call happens
  * and no document is touched by making a selection.
@@ -50,9 +53,9 @@ import type { PreviewSelectionCapture } from '@/features/modules/canvas/previewS
  */
 
 export interface CanvasPreviewHighlight {
-  /** The part (planIndex) the highlight lives in. */
+  /** The level (its `planIndex`, level − 1) the highlight lives in. */
   planIndex: number;
-  /** Part-relative range of the last chat replacement. */
+  /** Section-relative range of the last chat replacement. */
   from: number;
   to: number;
 }
@@ -66,8 +69,8 @@ export interface CanvasPreviewProps {
   moduleId: Id;
   /** Resolved-chip click — the reader's peek-modal affordance. */
   onOpenArtifact: (artifact: AnyArtifact) => void;
-  /** The last chat replacement, mapped to its part (whole-doc coords are
-   * the page's; the preview forwards the part-relative range). */
+  /** The last chat replacement, mapped to its level (whole-doc coords are
+   * the page's; the preview forwards the section-relative range). */
   highlight?: CanvasPreviewHighlight | null | undefined;
   /** Reports every non-collapsed selection made inside this preview, mapped
    * to the document source or refused by name (see the header comment). */
@@ -75,15 +78,15 @@ export interface CanvasPreviewProps {
 }
 
 /**
- * The named refusal for a selection that starts in one part and ends in
- * another: a refine replaces ONE span, and a range across parts is not one
- * source span — the scaffolding between the parts would have to be replaced
- * too, which is a guess this feature never makes (docs/17 row 102).
+ * The named refusal for a selection that starts in one level and ends in
+ * another: a refine replaces ONE span, and a range across levels is not one
+ * source span — the separator between them would have to be replaced too,
+ * which is a guess this feature never makes (docs/17 row 102).
  */
 export const CROSS_PART_SELECTION_REASON =
-  'The selection spans more than one part — a refine replaces one span inside a single part. Select text within one part.';
+  'The selection spans more than one level — a refine replaces one span inside a single level. Select text within one level.';
 
-/** One part as the capture needs it: its text, its document offset, its root. */
+/** One level as the capture needs it: its text, its document offset, its root. */
 interface PartSource {
   planIndex: number;
   text: string;
@@ -92,8 +95,8 @@ interface PartSource {
 }
 
 interface ParsedDoc {
-  sections: ModulePartsSection[];
-  /** The splitter's loud message when the scaffolding no longer parses. */
+  sections: ModuleDocumentSection[];
+  /** The parser's loud message when the document no longer parses. */
   error: string | null;
 }
 
@@ -111,11 +114,14 @@ export function CanvasPreview({
 
   const parsed = useMemo((): ParsedDoc => {
     try {
-      return { sections: splitPartsDocument(doc, module.spine?.partPlan ?? []), error: null };
+      return {
+        sections: moduleDocumentSections(doc, module.spine?.partPlan ?? []),
+        error: null,
+      };
     } catch (error) {
       return {
         sections: [],
-        error: error instanceof ModulePartsDocumentError ? error.message : String(error),
+        error: error instanceof ModuleDocumentError ? error.message : String(error),
       };
     }
   }, [doc, module.spine]);
@@ -206,8 +212,8 @@ export function CanvasPreview({
               <p className="font-medium">The preview cannot render this document.</p>
               <p className="mt-1 break-words text-muted-foreground">{parsed.error}</p>
               <p className="mt-2 text-muted-foreground">
-                Switch back to Edit and fix the separator / label lines — the preview only renders
-                a document whose parts-document scaffolding parses.
+                Switch back to Edit and fix the separator line it names — the preview only renders
+                a document whose level separators parse.
               </p>
             </div>
           </div>
@@ -230,9 +236,6 @@ export function CanvasPreview({
             id={`part-${String(section.planIndex)}`}
             data-testid={`canvas-preview-part-${String(section.planIndex)}`}
           >
-            {section.title !== '' && (
-              <h2 className="mb-3 font-heading text-2xl font-bold tracking-tight">{section.title}</h2>
-            )}
             {/*
              * The mapping root (docs/17 row 102): a capture walks THIS div, and
              * `WikiMarkdown`'s opt-in `sourceOffsets` is what makes its runs
@@ -265,16 +268,25 @@ export function CanvasPreview({
              * PROVENANCE (owner decision, docs/17 row 93 amendment): the owner
              * reversed the earlier "the canvas shows no id" decision — "i do
              * want to see who wrote the module text … please put it below the
-             * module text". The id comes from the SAVED PART ROW, never from
-             * the document: `doc` is the editable module text and is persisted
-             * to the parts and re-sent to models, so an id placed in it would
-             * become model INPUT (docs/18 §4). Reading the row keeps the doc
-             * byte-identical to what the owner edits.
+             * module text". The id comes from the SAVED ROW (the level's run
+             * state / the premise's own provenance), never from the document:
+             * `doc` is the editable module text and is persisted to the row and
+             * re-sent to models, so an id placed in it would become model INPUT
+             * (docs/18 §4). Reading the row keeps the doc byte-identical to
+             * what the owner edits.
              */}
             <WriterModelId
-              model={module.parts.find((part) => part.planIndex === section.planIndex)?.writerModel}
+              model={
+                section.number === 0
+                  ? module.spine?.writerModel
+                  : module.parts.find((part) => part.planIndex === section.planIndex)?.writerModel
+              }
               testId={`canvas-preview-part-model-${String(section.planIndex)}`}
-              label={`Part ${String(section.planIndex + 1)} writing model`}
+              label={
+                section.number === 0
+                  ? 'Premise writing model'
+                  : `Level ${String(section.number)} writing model`
+              }
             />
           </article>
         ))}
@@ -283,7 +295,7 @@ export function CanvasPreview({
   );
 }
 
-/** The part whose mapping root contains `node`, or null when none does. */
+/** The level whose mapping root contains `node`, or null when none does. */
 function partSourceOf(parts: readonly PartSource[], node: Node): PartSource | null {
   for (const part of parts) {
     if (part.root.contains(node)) return part;

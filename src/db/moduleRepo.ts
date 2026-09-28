@@ -9,6 +9,7 @@ import type {
   TextOrigin,
 } from '@/domain';
 import {
+  moduleRowFromDocument,
   moduleRowFromView,
   moduleRowSchema,
   moduleViewFromRow,
@@ -261,6 +262,41 @@ export async function patchModulePartText(
       ? [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex)
       : module.parts.map((part) => (part.planIndex === planIndex ? nextPart : part));
     return saveModule({ ...module, parts });
+  });
+}
+
+/**
+ * THE one DOCUMENT write (docs/23 §2–§4, docs/17 row 384): replaces the
+ * module's ONE text, byte-exact, and nothing else. This is the canvas/chat's
+ * write — an edit is a TEXT edit over the whole document, so it cannot land
+ * per part.
+ *
+ * `document` is PARSED inside the transaction by `moduleRowFromDocument`, which
+ * refuses a malformed document LOUDLY by line (`ModuleDocumentError`) — the
+ * row is never written with text its own reader cannot read back (AGENTS rules
+ * 1/3), and because the parse happens in the SAME transaction as the write, a
+ * concurrent edit can never slip between validation and persistence.
+ *
+ * `writerModel` is the authorship signal (docs/17 row 93, exactly as
+ * `patchModulePartText` reads it): supplied = a model wrote this text, omitted =
+ * a hand edit that CARRIES the recorded id forward. Only the levels whose text
+ * actually changed are stamped; every other level's run state and provenance
+ * are byte-untouched.
+ */
+export async function saveModuleDocument(
+  id: Id,
+  document: string,
+  writerModel?: string,
+): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) throw new NotFoundError('Module', id);
+    const next = moduleRowSchema.parse({
+      ...moduleRowFromDocument(moduleRowSchema.parse(current), document, writerModel),
+      updatedAt: Date.now(),
+    });
+    await db.modules.put(next);
+    return moduleViewFromRow(next);
   });
 }
 

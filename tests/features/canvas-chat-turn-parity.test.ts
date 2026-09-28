@@ -124,7 +124,7 @@ function previewOptions(overrides: Partial<Parameters<typeof runSnapshotChatTurn
   return {
     moduleId: world.moduleId,
     key: canvasChatKey(world.moduleId),
-    hasPlannedParts: true,
+    hasDocument: true,
     doc: PARTS_DOCUMENT,
     modelSelection: null,
     turn: new AbortController(),
@@ -144,7 +144,7 @@ function editorOptions(
   return {
     moduleId: world.moduleId,
     key: canvasChatKey(world.moduleId),
-    hasPlannedParts: true,
+    hasDocument: true,
     modelSelection: null,
     turn: new AbortController(),
     ...overrides,

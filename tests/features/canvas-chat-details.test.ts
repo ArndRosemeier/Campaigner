@@ -124,7 +124,7 @@ describe('runSnapshotChatTurn — the preview round trip', () => {
     return {
       moduleId: world.moduleId,
       key: canvasChatKey(world.moduleId),
-      hasPlannedParts: true,
+      hasDocument: true,
       doc: PARTS_DOCUMENT,
       modelSelection: null,
       turn: new AbortController(),
@@ -240,7 +240,7 @@ describe('runChatTurn — the editor round trip', () => {
     return {
       moduleId: world.moduleId,
       key: canvasChatKey(world.moduleId),
-      hasPlannedParts: true,
+      hasDocument: true,
       view,
       modelSelection: null,
       turn: new AbortController(),

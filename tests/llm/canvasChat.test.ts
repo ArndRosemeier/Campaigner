@@ -27,6 +27,12 @@ import {
   splitModulePartsDocument,
   splitPartsDocument,
 } from '@/domain/modulePartsDocument';
+import {
+  ModuleDocumentError,
+  assembleModuleDocument,
+  moduleDocumentSections,
+  moduleLevelSeparator,
+} from '@/domain/moduleDocument';
 import { ModuleBusyError, PRIOR_MODULES_TOTAL_CAP } from '@/llm/moduleGen';
 import type { ChatContentPart } from '@/llm/openrouter';
 import { refineModuleText } from '@/llm/canvasRefine';
@@ -41,19 +47,23 @@ import { saveModule, patchModule } from '@/db/moduleRepo';
 import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
 
 /**
- * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): the XML
- * command protocol is parsed by a STRICT extractor (malformed/unbalanced/
- * over-cap replies fail loud, never partially), commands are zod-validated,
- * the tolerant match ladder resolves search text per PART (whole-module
- * context: a spanning search cannot match; the empty-part label-anchor
- * fill is the only way into a not-yet-written part), the parts document is
- * assembled from the module row at send time (no premise, `==========`
- * delimiters + `[Part n of total — title]` labels, the OPEN part's live
- * text substituted byte-exactly), and the REFERENCE-ONLY grounding block
- * (campaign premise + system label + ALL preceding modules' FULL text,
- * UNCAPPED — deliberately not moduleGen's capped renderer) rides every
- * request. The transport is mocked — extractor, ladder, assembly,
- * grounding and boundary logic run for real.
+ * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat; THE MODULE
+ * DOCUMENT since docs/17 row 384): the XML command protocol is parsed by a
+ * STRICT extractor (malformed/unbalanced/over-cap replies fail loud, never
+ * partially), commands are zod-validated, the tolerant match ladder resolves
+ * search text per LEVEL SECTION of the module document (level 0 is the
+ * PREMISE; a spanning search cannot match; the empty-level separator-anchor
+ * fill is the only way into a not-yet-written level), the document is
+ * composed from the module row at send time (premise included,
+ * `=====Level N=====` separators, the live doc substituted byte-exactly), and
+ * the REFERENCE-ONLY grounding block (campaign premise + system label + ALL
+ * preceding modules' FULL document text, UNCAPPED — deliberately not
+ * moduleGen's capped renderer) rides every request. The transport is mocked —
+ * extractor, ladder, composition, grounding and boundary logic run for real.
+ *
+ * The `assembleModulePartsDocument + splitPartsDocument` block below pins the
+ * LEGACY `==========` format, which still has a caller (`lib/modulePdf` builds
+ * its per-part plan text through it — docs/17 row 384, phases 1d/1e).
  */
 
 vi.mock('@/llm/openrouter', async (importOriginal) => ({
@@ -68,7 +78,7 @@ let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
 const PART_0 = '## The Gate Bargain\n\nThe party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
 const PART_1 = 'The docks breathe fog. Rain hammers the stones.';
-const SPINE_PREMISE = 'The premise that must NOT ride the parts document.';
+const SPINE_PREMISE = 'The premise — level 0 of the module document.';
 
 const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
@@ -76,15 +86,17 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2' },
 ];
 
-/** The WHOLE-module parts document the page's editor holds (canvas v3) —
- * exactly what the chat now receives as its live input. */
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+/** The module DOCUMENT the page's editor holds (docs/23 §2–§4): level 0 is the
+ * PREMISE, then one section per planned level — exactly what the chat receives
+ * as its live input. */
+const MODULE_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: SPINE_PREMISE },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({
@@ -304,7 +316,7 @@ describe('resolveCanvasEdit (tolerant ladder, single doc)', () => {
   });
 });
 
-describe('assembleModulePartsDocument + splitModulePartsDocument (one document, both directions)', () => {
+describe("assembleModulePartsDocument + splitPartsDocument (the LEGACY format, modulePdf's caller)", () => {
   const base = {
     partPlan: PART_PLAN,
     parts: [
@@ -433,114 +445,166 @@ describe('assembleModulePartsDocument + splitModulePartsDocument (one document, 
   });
 });
 
-describe('resolveCanvasEditAcrossParts (per-part matching)', () => {
-  const snapshots = assembleModulePartsDocument({
-    partPlan: PART_PLAN,
-    parts: [
-      { planIndex: 0, markdown: PART_0 },
-      { planIndex: 1, markdown: PART_1 },
-    ],
-  }).parts;
+describe('resolveCanvasEditAcrossParts (per-level matching over the module document)', () => {
+  const sections = moduleDocumentSections(MODULE_DOCUMENT, PART_PLAN);
 
-  it('one textual match across the whole module resolves in its own part', () => {
+  it('one textual match across the whole document resolves in its own level', () => {
     const resolution = resolveCanvasEditAcrossParts(
       { search: 'The docks breathe fog.', replace: 'x' },
-      snapshots,
+      sections,
     );
     expect(resolution.status).toBe('found');
     if (resolution.status !== 'found') throw new Error('unreachable');
     expect(resolution.totalRanges).toBe(1);
+    // Section index 2 is level 2 (index 0 is the premise — level 0).
     expect(resolution.matches).toEqual([
-      { partIndex: 1, ranges: [{ from: 0, to: 'The docks breathe fog.'.length }] },
+      { partIndex: 2, ranges: [{ from: 0, to: 'The docks breathe fog.'.length }] },
     ]);
   });
 
-  it('occurrences sum across parts (the caller enforces all="false" = exactly one)', () => {
-    const resolution = resolveCanvasEditAcrossParts({ search: 'Rain', replace: 'Mist' }, snapshots);
+  it('the PREMISE (level 0) is a section like any other — a command can edit it', () => {
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: SPINE_PREMISE, replace: 'A rewritten premise.' },
+      sections,
+    );
     expect(resolution.status).toBe('found');
     if (resolution.status !== 'found') throw new Error('unreachable');
-    expect(resolution.totalRanges).toBe(2); // once in part 0, once in part 1
-    expect(resolution.matches.map((match) => match.partIndex)).toEqual([0, 1]);
+    expect(resolution.matches.map((match) => match.partIndex)).toEqual([0]);
+    expect(sections[0]?.number).toBe(0);
+    expect(sections[0]?.planIndex).toBe(-1);
   });
 
-  it('a search SPANNING two parts cannot match (loud zero-match, never across the string)', () => {
-    const spanning = `${PART_0}\n\n${CANVAS_PARTS_DELIMITER}\n\n[Part 2 of 3 — Under the Docks]\n${PART_1}`;
-    const resolution = resolveCanvasEditAcrossParts({ search: spanning, replace: 'x' }, snapshots);
+  it('occurrences sum across levels (the caller enforces all="false" = exactly one)', () => {
+    const resolution = resolveCanvasEditAcrossParts({ search: 'Rain', replace: 'Mist' }, sections);
+    expect(resolution.status).toBe('found');
+    if (resolution.status !== 'found') throw new Error('unreachable');
+    expect(resolution.totalRanges).toBe(2); // once in level 1, once in level 2
+    expect(resolution.matches.map((match) => match.partIndex)).toEqual([1, 2]);
+  });
+
+  it('a search SPANNING two levels cannot match (loud zero-match, never across the string)', () => {
+    const spanning = `${PART_0}\n\n${moduleLevelSeparator(2)}\n${PART_1}`;
+    const resolution = resolveCanvasEditAcrossParts({ search: spanning, replace: 'x' }, sections);
     expect(resolution.status).toBe('none');
   });
 
-  it('zero matches pick the closest candidate across parts (real neighbor)', () => {
-    const parts = assembleModulePartsDocument({
-      partPlan: [{ title: 'A' }, { title: 'B' }],
-      parts: [
-        { planIndex: 0, markdown: 'The ferry crosses at dusk.' },
-        { planIndex: 1, markdown: 'The lighthouse keeper lights the lamp at dusk.' },
+  it('a search may not span the PREMISE into level 1 either', () => {
+    const spanning = `${SPINE_PREMISE}\n\n${moduleLevelSeparator(1)}\n${PART_0}`;
+    expect(resolveCanvasEditAcrossParts({ search: spanning, replace: 'x' }, sections).status).toBe(
+      'none',
+    );
+  });
+
+  it('zero matches pick the closest candidate across levels (real neighbor)', () => {
+    const doc = assembleModuleDocument({
+      levels: [
+        { number: 0, text: 'The road south.' },
+        { number: 1, text: 'The ferry crosses at dusk.' },
+        { number: 2, text: 'The lighthouse keeper lights the lamp at dusk.' },
       ],
-    }).parts;
+    });
     const resolution = resolveCanvasEditAcrossParts(
       { search: 'The lighthouse keeper lights the lamp at down.', replace: 'x' },
-      parts,
+      moduleDocumentSections(doc, [{ title: 'A' }, { title: 'B' }]),
     );
     expect(resolution.status).toBe('none');
     if (resolution.status !== 'none') throw new Error('unreachable');
-    expect(resolution.closestPartIndex).toBe(1);
+    expect(resolution.closestPartIndex).toBe(2);
     expect(resolution.closest).toContain('lighthouse');
     expect(resolution.closestFrom).not.toBeNull();
   });
 
-  it('the label-anchor fill fills an EMPTY part (replace starts with the same label)', () => {
-    const label = canvasPartLabel(3, 3, 'The Long Watch');
+  it('the separator-anchor fill fills an EMPTY level (replace starts with the same separator)', () => {
+    const separator = moduleLevelSeparator(3);
     const resolution = resolveCanvasEditAcrossParts(
-      { search: label, replace: `${label}\n\nThe watch begins in fog.` },
-      snapshots,
+      { search: separator, replace: `${separator}\n\nThe watch begins in fog.` },
+      sections,
     );
     expect(resolution.status).toBe('filled');
     if (resolution.status !== 'filled') throw new Error('unreachable');
-    expect(resolution.partIndex).toBe(2);
+    expect(resolution.partIndex).toBe(3);
     expect(resolution.newText).toBe('The watch begins in fog.');
   });
 
-  it('a fill whose replace lacks the label line fails loud', () => {
-    const label = canvasPartLabel(3, 3, 'The Long Watch');
+  it('a fill whose replace lacks the separator line fails loud', () => {
+    const separator = moduleLevelSeparator(3);
     const resolution = resolveCanvasEditAcrossParts(
-      { search: label, replace: 'The watch begins in fog.' },
-      snapshots,
+      { search: separator, replace: 'The watch begins in fog.' },
+      sections,
     );
     expect(resolution.status).toBe('fill-failed');
     if (resolution.status !== 'fill-failed') throw new Error('unreachable');
-    expect(resolution.reason).toContain('label line');
+    expect(resolution.reason).toContain('separator line');
   });
 
-  it('a label-only replace (no content after the label) fails loud', () => {
-    const label = canvasPartLabel(3, 3, 'The Long Watch');
-    const resolution = resolveCanvasEditAcrossParts({ search: label, replace: label }, snapshots);
+  it('a separator-only replace (no content after it) fails loud', () => {
+    const separator = moduleLevelSeparator(3);
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: separator, replace: separator },
+      sections,
+    );
     expect(resolution.status).toBe('fill-failed');
   });
 
-  it('a search equal to a NON-empty part\'s label never matches (labels are scaffolding)', () => {
-    const label = canvasPartLabel(1, 3, 'The Gate Bargain');
-    const resolution = resolveCanvasEditAcrossParts({ search: label, replace: 'x' }, snapshots);
+  it('a search equal to a NON-empty level\'s separator never matches (separators are scaffolding)', () => {
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: moduleLevelSeparator(1), replace: 'x' },
+      sections,
+    );
     expect(resolution.status).toBe('none');
+  });
+
+  it('the premise has no separator, so it cannot be filled from empty', () => {
+    const emptyPremise = assembleModuleDocument({
+      levels: [
+        { number: 0, text: '' },
+        { number: 1, text: 'Level one.' },
+      ],
+    });
+    const emptySections = moduleDocumentSections(emptyPremise, [{ title: 'A' }]);
+    expect(emptySections[0]?.text).toBe('');
+    expect(emptySections[0]?.number).toBe(0);
+    // The formatter refuses a level-0 separator at all — the premise HAS no
+    // separator, so there is no line a fill could anchor on.
+    expect(() => moduleLevelSeparator(0)).toThrow(/premise/);
+    expect(resolveCanvasEditAcrossParts({ search: '', replace: 'x' }, emptySections).status).toBe(
+      'none',
+    );
   });
 });
 
 describe('renderChatGrounding (read-only block)', () => {
   it('carries campaign premise + system label + preceding modules in story order, UNCAPPED', () => {
     const longText = 'x'.repeat(PRIOR_MODULES_TOTAL_CAP + 3000);
+    const firstDocument = assembleModuleDocument({
+      levels: [
+        { number: 0, text: 'First premise.' },
+        { number: 1, text: 'short' },
+      ],
+    });
+    const secondDocument = assembleModuleDocument({
+      levels: [
+        { number: 0, text: 'Second premise.' },
+        { number: 1, text: longText },
+      ],
+    });
     const block = renderChatGrounding({
       campaignName: 'Ember',
       campaignDescription: 'The ember war.',
       systemLabel: 'D&D 5e',
       priorModules: [
-        { title: 'First Module', premise: 'First premise.', parts: [{ label: '### Part 1: A', markdown: 'short' }] },
-        { title: 'Second Module', premise: 'Second premise.', parts: [{ label: '### Part 1: B', markdown: longText }] },
+        { title: 'First Module', document: firstDocument },
+        { title: 'Second Module', document: secondDocument },
       ],
     });
     expect(block).toContain('Campaign: Ember — The ember war.');
     expect(block).toContain('Game system: D&D 5e');
     expect(block.indexOf('## First Module')).toBeLessThan(block.indexOf('## Second Module'));
-    expect(block).toContain('Premise:\nFirst premise.');
-    expect(block).toContain('### Part 1: A\nshort');
+    // A prior module rides as ITS OWN document (docs/17 row 384): premise and
+    // separators included, so the model reads continuity in the format it edits.
+    expect(block).toContain(firstDocument);
+    expect(block).toContain('First premise.');
+    expect(block).toContain(moduleLevelSeparator(1));
     // UNCAPPED: the full text rides, no generation-time truncation marker.
     expect(block).toContain(longText);
     expect(block).not.toContain('[truncated]');
@@ -571,7 +635,7 @@ describe('buildCanvasChatPayload (context contract)', () => {
     return typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
   }
 
-  it('pins the CURRENT parts doc + the REFERENCE-ONLY grounding into the final user turn', () => {
+  it('pins the CURRENT module document + the REFERENCE-ONLY grounding into the final user turn', () => {
     const messages = buildCanvasChatPayload({
       document: PART_0,
       grounding: 'Campaign: Ember\nGame system: D&D 5e',
@@ -692,7 +756,7 @@ describe('sendCanvasChatMessage (engine)', () => {
   function baseInput(overrides: Partial<CanvasChatTurnInput> = {}): CanvasChatTurnInput {
     return {
       moduleId: world.moduleId,
-      document: PARTS_DOCUMENT,
+      document: MODULE_DOCUMENT,
       instruction: 'make the gate scene rainier',
       history: [],
       // Default per-turn controller: the turn must be reachable by Stop all
@@ -703,7 +767,7 @@ describe('sendCanvasChatMessage (engine)', () => {
     };
   }
 
-  it('sends the WHOLE module (no premise) + grounding and returns the per-part snapshot', async () => {
+  it('sends the WHOLE document (PREMISE INCLUDED) + grounding and returns the per-level snapshot', async () => {
     const raw =
       'Done — one edit.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>';
     chatMock.mockResolvedValue({ text: raw, modelUsed: 'test-model', fallback: null });
@@ -711,11 +775,13 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(result.parse.prose).toBe('Done — one edit.');
     expect(result.parse.commands).toHaveLength(1);
     expect(result.modelUsed).toBe('test-model');
-    // The per-part snapshot matches EXACTLY what the model saw.
-    expect(result.parts.map((part) => part.planIndex)).toEqual([0, 1, 2]);
-    expect(result.parts[0]?.text).toBe(PART_0);
-    expect(result.parts[1]?.text).toBe(PART_1);
-    expect(result.parts[2]?.text).toBe('');
+    // The per-level snapshot matches EXACTLY what the model saw, level 0 (the
+    // premise) included — `planIndex` is level − 1, so the premise is −1.
+    expect(result.parts.map((part) => part.planIndex)).toEqual([-1, 0, 1, 2]);
+    expect(result.parts[0]?.text).toBe(SPINE_PREMISE);
+    expect(result.parts[1]?.text).toBe(PART_0);
+    expect(result.parts[2]?.text).toBe(PART_1);
+    expect(result.parts[3]?.text).toBe('');
 
     const [messages, opts] = chatMock.mock.calls[0] ?? [];
     expect(messages?.[0]?.role).toBe('system');
@@ -724,10 +790,11 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(last?.role).toBe('user');
     expect(last?.content).toContain(PART_0);
     expect(last?.content).toContain(PART_1);
-    expect(last?.content).toContain(CANVAS_PARTS_DELIMITER);
-    expect(last?.content).toContain('[Part 3 of 3 — The Long Watch]');
-    // The spine premise NEVER rides the parts document.
-    expect(last?.content).not.toContain(SPINE_PREMISE);
+    expect(last?.content).toContain(moduleLevelSeparator(1));
+    expect(last?.content).toContain(moduleLevelSeparator(3));
+    // THE PREMISE RIDES (docs/17 row 384): it is level 0 of the document, so
+    // the model reads it AND may edit it.
+    expect(last?.content).toContain(SPINE_PREMISE);
     // Read-only grounding: campaign premise + system label + prior module FULL text.
     expect(last?.content).toContain('REFERENCE-ONLY CONTEXT');
     expect(last?.content).toContain('Campaign: Ember — The ember war.');
@@ -740,10 +807,10 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(opts?.responseFormat).toBeUndefined();
   });
 
-  it('the OPEN part rides from the live editor doc, not the row (unsaved edits apply)', async () => {
+  it('the live editor doc rides, not the row (unsaved edits apply)', async () => {
     chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
     const live = `${PART_0}\n\nAn unsaved hand edit.`;
-    await sendCanvasChatMessage(baseInput({ document: PARTS_DOCUMENT.replace(PART_0, live) }));
+    await sendCanvasChatMessage(baseInput({ document: MODULE_DOCUMENT.replace(PART_0, live) }));
     const [messages] = chatMock.mock.calls[0] ?? [];
     const last = messages?.[messages.length - 1];
     expect(last?.content).toContain('An unsaved hand edit.');
@@ -782,17 +849,38 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(chatMock).not.toHaveBeenCalled();
   });
 
-  it('a module without planned parts fails the pre-flight loudly', async () => {
+  it('a module whose DOCUMENT is empty fails the pre-flight loudly', async () => {
     const module = await (await import('@/db/moduleRepo')).getModule(world.moduleId);
     if (module === undefined) throw new Error('seed missing');
     await saveModule({ ...module, spine: null, parts: [] });
     // THE FULL SENTENCE, anchored (docs/17 row 150): this pin used to be the
     // PREFIX regex `/no parts to chat about/`, so rewording the tail of a
     // user-visible refusal could not fail anything. The sentence is now
-    // declared ONCE (`llm/canvasChat.NO_PARTS_MESSAGE`) and pinned verbatim.
+    // declared ONCE (`llm/canvasChat.NO_DOCUMENT_MESSAGE`) and pinned verbatim.
     await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(
-      /^no parts to chat about — generate the module first$/,
+      /^the module document is empty — write a premise or generate the module first$/,
     );
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('a PREMISE-only module (no level sections) IS chattable (docs/23 §2.1)', async () => {
+    const module = await (await import('@/db/moduleRepo')).getModule(world.moduleId);
+    if (module === undefined) throw new Error('seed missing');
+    await saveModule({ ...module, parts: [] });
+    const premiseOnly = assembleModuleDocument({
+      levels: [{ number: 0, text: SPINE_PREMISE }],
+    });
+    chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
+    const result = await sendCanvasChatMessage(baseInput({ document: premiseOnly }));
+    expect(result.parts.map((part) => part.planIndex)).toEqual([-1]);
+    expect(result.parts[0]?.text).toBe(SPINE_PREMISE);
+  });
+
+  it('a malformed document fails the send loudly (the parse is the guard)', async () => {
+    chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
+    await expect(
+      sendCanvasChatMessage(baseInput({ document: 'p\n=====level 2=====\nx' })),
+    ).rejects.toThrow(ModuleDocumentError);
     expect(chatMock).not.toHaveBeenCalled();
   });
 
@@ -858,29 +946,31 @@ describe('sendCanvasChatMessage (engine)', () => {
   });
 });
 
-// --- The ONE "no parts to chat about" sentence (docs/17 row 150) -------------
+// --- The ONE "empty document" sentence (docs/17 row 150) ---------------------
 
 /**
  * "a rule enforced at three call sites is a bug waiting at the fourth"
- * (AGENTS rule 4). `'no parts to chat about — generate the module first'` was
- * spelled THREE times: the exported `chatController.NO_PARTS_MESSAGE`, an
- * inline literal in `snapshotChat.ts`, and a third inline literal in this
- * module's own pre-flight. Only the two inline copies were behaviourally
- * identical by luck, and the only pin was a PREFIX regex — so the tail of a
- * user-visible refusal could be reworded with every test still green.
+ * (AGENTS rule 4). The sentence was spelled THREE times: the exported
+ * `chatController.NO_PARTS_MESSAGE`, an inline literal in `snapshotChat.ts`,
+ * and a third inline literal in this module's own pre-flight. Only the two
+ * inline copies were behaviourally identical by luck, and the only pin was a
+ * PREFIX regex — so the tail of a user-visible refusal could be reworded with
+ * every test still green.
  *
- * The sentence now lives at `llm/canvasChat.NO_PARTS_MESSAGE` (beside the
+ * The sentence now lives at `llm/canvasChat.NO_DOCUMENT_MESSAGE` (beside the
  * engine guard that raises it — a cycle-free home: the two turn controllers
- * already import from this module). The behaviour above pins its bytes; the
- * scan below is the "exactly ONE declarer" half.
+ * already import from this module). docs/17 row 384 gave it its CURRENT text,
+ * because the condition is the DOCUMENT's and not a plan's: the premise is
+ * level 0, so only an empty document has nothing to chat about. The behaviour
+ * above pins its bytes; the scan below is the "exactly ONE declarer" half.
  *
  * WHAT A SOURCE SCAN CANNOT PROVE: it sees a literal, not a meaning. A fourth
  * call site that builds the same sentence from fragments, or a second one
  * written in another language, would slip through. It is a GUARD against the
  * cheap re-copy, not a proof of uniqueness.
  */
-describe('the "no parts to chat about" sentence is declared EXACTLY once (SOURCE SCAN)', () => {
-  const SENTENCE = 'no parts to chat about — generate the module first';
+describe('the "empty document" sentence is declared EXACTLY once (SOURCE SCAN)', () => {
+  const SENTENCE = 'the module document is empty — write a premise or generate the module first';
 
   function srcSources(dir = join(process.cwd(), 'src')): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -910,7 +1000,7 @@ describe('the "no parts to chat about" sentence is declared EXACTLY once (SOURCE
         false,
       );
       // Both surfaces READ the one constant instead.
-      expect(text).toContain('NO_PARTS_MESSAGE');
+      expect(text).toContain('NO_DOCUMENT_MESSAGE');
     }
   });
 });

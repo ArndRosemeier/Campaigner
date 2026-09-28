@@ -61,9 +61,9 @@ export interface SnapshotChatTurnOptions {
    * carries, so a caller that does not know about GM assist is byte-identical
    * to the pre-362 contract. The canvas surfaces always pass it. */
   framing?: CanvasChatFraming | undefined;
-  /** Pre-flight: a module without planned parts must not send an empty context
-   * (`llm/canvasChat.NO_PARTS_MESSAGE` — the ONE sentence). */
-  hasPlannedParts: boolean;
+  /** Pre-flight: a module whose DOCUMENT is empty must not send an empty
+   * context (`llm/canvasChat.NO_DOCUMENT_MESSAGE` — the ONE sentence). */
+  hasDocument: boolean;
   /** The PREVIEW SNAPSHOT at send time (the string the preview renders
    * from — the editor is unmounted, so no view exists). */
   doc: string;
@@ -94,7 +94,7 @@ export async function runSnapshotChatTurn(
       moduleId: options.moduleId,
       key: options.key,
       framing: options.framing ?? 'module',
-      hasPlannedParts: options.hasPlannedParts,
+      hasDocument: options.hasDocument,
       handle: stringChatHandle(options.doc),
       surface: PREVIEW_TURN_SURFACE,
       modelSelection: options.modelSelection,

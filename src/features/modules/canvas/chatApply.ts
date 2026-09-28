@@ -1,6 +1,9 @@
 import type { EditorView } from '@codemirror/view';
 
-import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
+import {
+  moduleDocumentSections,
+  type ModuleDocumentSection,
+} from '@/domain/moduleDocument';
 import type { CanvasEditCommand } from '@/llm/canvasChat';
 import { resolveCanvasEditAcrossParts } from '@/llm/canvasChat';
 import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
@@ -36,13 +39,13 @@ import {
  * identical outcome fields.
  *
  * Whatever the handle, the semantics are the editor's, unchanged: command
- * matching stays PER PART (`resolveCanvasEditAcrossParts` against the
- * per-part texts) and RE-RESOLVED PER COMMAND against the CURRENT document —
- * earlier commands in one reply never shift later ranges (the split's section
- * ranges are re-derived from the live doc each time, so matched ranges map
- * onto exact whole-document coordinates and can never leak across a section
- * boundary). The caller persists the batch afterwards through the split-save
- * (only the parts whose text changed hit the row).
+ * matching stays PER LEVEL SECTION (`resolveCanvasEditAcrossParts` against
+ * the per-level texts) and RE-RESOLVED PER COMMAND against the CURRENT
+ * document — earlier commands in one reply never shift later ranges (the
+ * parse's section ranges are re-derived from the live doc each time, so
+ * matched ranges map onto exact whole-document coordinates and can never leak
+ * across a section boundary). The caller persists the batch afterwards through
+ * the document save (one whole-document write).
  *
  * Nothing is ever silently skipped: a command that cannot apply uniquely
  * comes back as a LOUD failed outcome (with the closest candidate snippet
@@ -163,7 +166,7 @@ export function stringChatHandle(doc: string): ChatStringHandle {
 export interface ChatApplyResult {
   outcomes: CanvasChatOutcome[];
   /** True when any command changed the doc (caller persists via the
-   * split-save; unchanged parts never hit the row). */
+   * document save; only the levels whose text changed hit the row). */
   docChanged: boolean;
   /** The LAST command's FIRST applied range in POST-apply whole-document
    * coordinates (the last-replacement highlight) — null when nothing
@@ -195,9 +198,9 @@ export function applyChatCommands(input: {
   let docChanged = false;
   let lastApplied: { from: number; to: number } | null = null;
 
-  /** Fresh per-part sections of the CURRENT doc (ranges included). */
-  const currentSections = (): ModulePartsSection[] =>
-    splitPartsDocument(handle.read(), input.partPlan);
+  /** Fresh per-level sections of the CURRENT doc (ranges included). */
+  const currentSections = (): ModuleDocumentSection[] =>
+    moduleDocumentSections(handle.read(), input.partPlan);
 
   for (const command of input.commands) {
     // Generated-text hygiene scan (canvasRefine parity): escape debris OR our
@@ -238,7 +241,7 @@ export function applyChatCommands(input: {
     }
     if (resolution.status === 'fill-failed') {
       const section = parts[resolution.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
+      if (section === undefined) throw new Error('level snapshot has no section for the fill target');
       outcomes.push(failedOutcome(command, resolution.reason, {
         targetParts: [{ planIndex: section.planIndex, title: section.title }],
       }));
@@ -246,9 +249,9 @@ export function applyChatCommands(input: {
     }
     if (resolution.status === 'filled') {
       // Empty-part label-anchor fill: the label line was the only anchor —
-      // the part's new text replaces its (empty) section range.
+      // the level's new text replaces its (empty) section range.
       const section = parts[resolution.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
+      if (section === undefined) throw new Error('level snapshot has no section for the fill target');
       const before = handle.read().slice(section.textFrom, section.textTo);
       handle.replaceRanges([{ from: section.textFrom, to: section.textTo }], resolution.newText);
       docChanged = true;
@@ -291,13 +294,13 @@ export function applyChatCommands(input: {
     const doc = handle.read();
     const ranges: { from: number; to: number }[] = [];
     const perPart: {
-      section: ModulePartsSection;
+      section: ModuleDocumentSection;
       docRanges: { from: number; to: number }[];
       before: string;
     }[] = [];
     for (const match of resolution.matches) {
       const section = parts[match.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for a match');
+      if (section === undefined) throw new Error('level snapshot has no section for a match');
       const docRanges = match.ranges.map((range) => ({
         from: section.textFrom + range.from,
         to: section.textFrom + range.to,

@@ -24,7 +24,6 @@ import {
   type CanvasChatTurnResult,
 } from '@/llm/canvasChat';
 import {
-  assembleModulePartsDocument,
   createModule,
   encounterDataSchema,
   factionDataSchema,
@@ -35,6 +34,7 @@ import {
   storedSpellDataSchema,
   type Id,
 } from '@/domain';
+import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -76,13 +76,13 @@ const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
   { title: 'Under the Docks', levelBand: '1' },
 ];
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+const PARTS_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise.' },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
   ],
-}).document;
+});
 
 /** The stored field that exists NOWHERE in the module text — the non-vacuity
  * anchor of every "answers come from the row" pin below. */
@@ -544,12 +544,12 @@ describe('sendCanvasChatMessage — the request round trip', () => {
     expect(payloadTextOf(0)).not.toContain('<requested-details>');
     expect(last?.content).toBe(
       [
-        'Module parts document — the CURRENT state, including all previously applied edits:',
+        'Module document — the CURRENT state, including all previously applied edits. Level 0 is the premise; each =====Level N===== line starts the next level:',
         '<document>',
         PARTS_DOCUMENT,
         '</document>',
         '',
-        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s parts document above:',
+        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s document above:',
         '<reference-only>',
         'Campaign: Ember — The ember war.',
         '',
@@ -749,12 +749,12 @@ describe('the details payload builder (roles + one document)', () => {
     expect(withUndefined).toBe(base);
     expect(base).toBe(
       [
-        'Module parts document — the CURRENT state, including all previously applied edits:',
+        'Module document — the CURRENT state, including all previously applied edits. Level 0 is the premise; each =====Level N===== line starts the next level:',
         '<document>',
         'DOC',
         '</document>',
         '',
-        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s parts document above:',
+        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s document above:',
         '<reference-only>',
         'GROUND',
         '</reference-only>',

@@ -205,7 +205,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
         {
           moduleId: world.moduleId,
           key: canvasChatKey(world.moduleId),
-          hasPlannedParts: true,
+          hasDocument: true,
           doc: WHOLE_DOC,
           modelSelection: null,
           turn: new AbortController(),
@@ -467,7 +467,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
         {
           moduleId: world.moduleId,
           key: canvasChatKey(world.moduleId),
-          hasPlannedParts: true,
+          hasDocument: true,
           doc: WHOLE_DOC,
           modelSelection: null,
           turn: new AbortController(),

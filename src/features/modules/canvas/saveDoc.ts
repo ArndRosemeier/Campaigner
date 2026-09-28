@@ -1,97 +1,91 @@
 import {
   ModuleVersionPremiseError,
+  moduleDocumentFromView,
+  planIndexForLevel,
+  splitModuleDocument,
   type Id,
   type Module,
   type ModuleVersionSource,
 } from '@/domain';
-import { splitPartsDocument } from '@/domain/modulePartsDocument';
-import { saveModulePartText } from '@/features/modules/partText';
-import { canvasLedgerKey, useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
-import { patchModuleSpine } from '@/db/moduleRepo';
+import { saveModuleDocument, patchModuleSpine } from '@/db/moduleRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
-import { toastError } from '@/lib/toast';
+import { canvasLedgerKey, useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
 
 /**
- * The canvas split-save (canvas v3, 08-MODULE-DESIGNER §Module canvas): ONE
- * save action for the whole-document editor — manual Save, accepted AI
- * proposals and applied chat batches all land here. The doc is split by the
- * shared `splitPartsDocument` (loud typed error when the scaffolding no
- * longer parses — the editor keeps its text and the caller toasts), and ONLY
- * the parts whose text changed vs the module row hit
- * `saveModulePartText` (THE one part-text save path) — a part whose planned
- * section is empty and unchanged saves nothing. Each saved part appends its
- * session-ledger entry (per part, same label). A failed part save is LOUD
- * per part (a toast naming the part) while the remaining parts still land —
- * never a silent partial: the return value reports exactly what did and did
- * not persist, and the editor keeps every in-doc edit so Save can retry.
+ * The canvas document save (docs/23 §2–§4, docs/17 row 384): ONE action for
+ * the whole-document editor — manual Save, accepted AI proposals and applied
+ * chat batches all land here. The doc IS the module document (level 0 = the
+ * premise, then `=====Level N=====` sections), and it is written through THE
+ * one DOCUMENT write (`moduleRepo.saveModuleDocument`) — never per part.
+ *
+ * A WHOLE-DOCUMENT WRITE IS ATOMIC, and that is the contract change this slice
+ * makes: the old per-part save could land three parts and fail a fourth, so it
+ * had to report `failedParts` and toast per part. The document is ONE text, so
+ * there is no such half state — the parse refuses a malformed document LOUDLY
+ * (`ModuleDocumentError`, naming the line) and nothing is written, or the write
+ * lands whole. The caller keeps its text either way.
+ *
+ * WHAT CHANGED IS REPORTED PER LEVEL: the write stamps only the levels whose
+ * text actually moved (`domain/moduleDocument.moduleRowFromDocument`), and this
+ * seam appends ONE session-ledger entry per changed level — keyed by the
+ * level's `planIndex` (level − 1), so the premise (level 0) is `-1` and the
+ * ledger can now name it like any other section.
  *
  * SIMPLE UNDO (owner-directed, docs/18 §2.3): an `origin: 'ai'` save FIRST
  * takes the durable whole-document snapshot of the row as it stands — the
  * exact pre-change text this save is about to replace (`snapshotModuleVersion`)
  * — and that snapshot is REQUIRED: a caller must name the AI action's `source`,
  * because an AI write whose pre-state was not recorded is exactly the bug this
- * seam exists to prevent (a missing source throws loudly, and the throw lands
- * in the caller's existing loud-failure surface — nothing is written).
- * `origin: 'user'` saves (manual typing / manual Save) never snapshot: CM6's
- * own history covers hand edits, and a hand edit is not an AI change. The
- * snapshot happens BEFORE the first part write, never after, and a snapshot
- * failure aborts the whole save (the editor keeps its text; the caller toasts).
+ * seam exists to prevent (a missing source throws loudly). `origin: 'user'`
+ * saves (manual typing / manual Save) never snapshot: CM6's own history covers
+ * hand edits. The snapshot happens BEFORE the write, never after, and a
+ * snapshot failure aborts the whole save.
  *
- * THE PREMISE HALF OF A RESTORE (docs/17 row 357). A durable version carries
- * the parts document AND the spine premise (the ONE
- * `moduleVersionRepo.snapshotModuleVersion` seam captures both). Since the
- * premise is NOT part of the parts document, re-splitting the stored text
- * alone would restore the parts while silently leaving a NEWER premise in
- * place — the defect this slice removes. `restorePremise` therefore names the
- * stored premise and it is put back HERE, through the ONE spine-subfield seam
- * (`moduleRepo.patchModuleSpine`), FIRST — after the required pre-restore
- * snapshot and BEFORE any part write. A premise that cannot be applied throws
- * `ModuleVersionPremiseError`, so the whole restore aborts with NO part
- * written: never a half-restored document presented as a success (AGENTS 1/2).
- * The restored premise gets the SAME second-module-use promote scan a restored
- * part gets. `undefined` (every non-restore save, and a version row that
- * predates the field) means the premise is not touched at all.
+ * THE PREMISE HALF OF A RESTORE (docs/17 row 357, superseded by row 384). A
+ * durable version's document now CARRIES the premise (level 0), so the restore
+ * no longer depends on putting it back separately. `restorePremise` is kept
+ * and still applied FIRST when a caller names it — it is byte-equal to the
+ * document's own level 0 for a version captured since row 384, so the two
+ * writes agree; a premise that cannot be applied still aborts the whole restore
+ * loudly with `ModuleVersionPremiseError`, so no half restore is ever reported
+ * as a success.
  */
 
 export interface SaveWholeDocResult {
-  /** The planIndexes that were persisted (changed + saved successfully). */
+  /** The `planIndex`es whose text changed and were persisted (level − 1; the
+   * premise is `-1`). */
   savedPlanIndexes: number[];
-  /** The parts whose save FAILED (loud toasts already fired). */
-  failedParts: { planIndex: number; title: string; error: unknown }[];
 }
 
 export async function saveWholeModuleDocument(input: {
   moduleId: Id;
   /** The live whole-document editor doc. */
   doc: string;
-  /** The module row (spine plan drives the split; parts drive the diff). */
+  /** The module row (the diff baseline; the document write reads its own). */
   module: Module;
   origin: 'user' | 'ai';
-  /** The ledger label for every part this save changes. */
+  /** The ledger label for every level this save changes. */
   label: string;
   /**
    * REQUIRED for `origin: 'ai'`: the durable pre-change snapshot this save
    * must take first (docs/18 §2.3) — the AI action's kind (`source`) and the
    * honest label the Versions menu shows for the captured text. A restore
-   * labels its snapshot with what is about to happen ("Restore from 14:32"),
-   * which is why this carries its own label rather than reusing `label`.
+   * labels its snapshot with what is about to happen ("Restore from 14:32").
    */
   version?: { source: ModuleVersionSource; label: string } | undefined;
   /**
    * PROVENANCE (docs/17 row 93): the model that served the AI turn whose
    * commands this save is landing — the CHAT model, because it wrote the text
-   * now on the row (the last writer). Omitted by a `'user'` save (manual
-   * typing / manual Save) and by a restore, where the parts KEEP the id they
-   * already carry — a hand edit never erases provenance.
+   * now on the row (the last writer). Omitted by a `'user'` save and by a
+   * restore, where the levels KEEP the id they already carry — a hand edit
+   * never erases provenance.
    */
   writerModel?: string | undefined;
   /**
-   * THE OTHER HALF OF A DURABLE RESTORE (docs/17 row 357): the stored premise
-   * to put back, BYTE-EXACT, before any part is written. Omitted by every save
-   * that is not a restore and by a restore whose version row PREDATES the
-   * field (`null` in the row) — those restore exactly what they always
-   * restored, leaving the premise as it stands.
+   * THE OTHER HALF OF A LEGACY DURABLE RESTORE (docs/17 row 357): the stored
+   * premise to put back before the document is written. Omitted by every save
+   * that is not a restore.
    */
   restorePremise?: string | undefined;
 }): Promise<SaveWholeDocResult> {
@@ -103,10 +97,14 @@ export async function saveWholeModuleDocument(input: {
     }
     await snapshotModuleVersion(input.moduleId, input.version.source, input.version.label);
   }
+  // THE ONE parse of what is about to be written: a malformed document is
+  // refused HERE, by line, before any row write and before any ledger entry —
+  // the editor keeps its text so the problem can be fixed.
+  const parsed = splitModuleDocument(input.doc);
   if (input.restorePremise !== undefined) {
-    // Premise FIRST, and loud: its failure must abort the restore before any
-    // part is written, so a failed restore is never a half-restored document
-    // wearing a success toast.
+    // Premise FIRST, and loud: its failure must abort the restore before the
+    // document is written, so a failed restore is never a half-restored
+    // document wearing a success toast.
     try {
       await patchModuleSpine(input.moduleId, { premise: input.restorePremise });
     } catch (error) {
@@ -116,32 +114,29 @@ export async function saveWholeModuleDocument(input: {
         }`,
       );
     }
-    // The same LINKS hook a restored part gets (`saveModulePartText`): a
-    // premise that links another module's artifact promotes it to campaign
-    // level, exactly as it would on the way in.
+    // The same LINKS hook a restored level gets: a premise that links another
+    // module's artifact promotes it to campaign level.
     await promoteSecondModuleUses(input.moduleId, [input.restorePremise]);
   }
-  const sections = splitPartsDocument(input.doc, input.module.spine?.partPlan ?? []);
-  const savedPlanIndexes: number[] = [];
-  const failedParts: SaveWholeDocResult['failedParts'] = [];
-  for (const section of sections) {
-    const rowPart = input.module.parts.find((part) => part.planIndex === section.planIndex);
-    if ((rowPart?.markdown ?? '') === section.text) continue; // unchanged — no write
-    try {
-      await saveModulePartText(input.moduleId, section.planIndex, section.text, input.writerModel);
-      useCanvasLedgerStore.getState().append(canvasLedgerKey(input.moduleId, section.planIndex), {
-        markdown: section.text,
-        origin: input.origin,
-        label: input.label,
-      });
-      savedPlanIndexes.push(section.planIndex);
-    } catch (error) {
-      failedParts.push({ planIndex: section.planIndex, title: section.title, error });
-      toastError(
-        `Could not save part "${section.title}" — the edit did not land on the module row`,
-        error,
-      );
-    }
+  const previous = splitModuleDocument(moduleDocumentFromView(input.module));
+  const changedPlanIndexes = parsed.levels
+    .filter((level, index) => previous.levels[index]?.text !== level.text)
+    .map((level) => planIndexForLevel(level.number));
+  await saveModuleDocument(
+    input.moduleId,
+    input.doc,
+    input.writerModel === undefined || input.writerModel === '' ? undefined : input.writerModel,
+  );
+  // Only a landed write appends ledger entries (there is no partial write to
+  // report: the row either took the whole document or threw).
+  const previousByLevel = new Map(previous.levels.map((level) => [level.number, level.text]));
+  for (const level of parsed.levels) {
+    if (previousByLevel.get(level.number) === level.text) continue;
+    useCanvasLedgerStore.getState().append(canvasLedgerKey(input.moduleId, planIndexForLevel(level.number)), {
+      markdown: level.text,
+      origin: input.origin,
+      label: input.label,
+    });
   }
-  return { savedPlanIndexes, failedParts };
+  return { savedPlanIndexes: changedPlanIndexes };
 }

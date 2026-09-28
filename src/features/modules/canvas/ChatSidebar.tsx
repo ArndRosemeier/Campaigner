@@ -83,8 +83,8 @@ export interface ChatSidebarProps {
   surface: CanvasChatFraming;
   /** The user picked the other chat (switcher): the page holds the selection. */
   onSurfaceChange: (framing: CanvasChatFraming) => void;
-  /** Pre-flight: a module without planned parts must not send. */
-  hasPlannedParts: boolean;
+  /** Pre-flight: a module whose DOCUMENT is empty must not send. */
+  hasDocument: boolean;
   pool: readonly AnyArtifact[];
   /** Module generating / refine in flight / block proposal pending. */
   aiBusy: boolean;
@@ -125,7 +125,7 @@ export function ChatSidebar({
   moduleId,
   surface,
   onSurfaceChange,
-  hasPlannedParts,
+  hasDocument,
   pool,
   aiBusy,
   aiBusyReason,
@@ -195,7 +195,7 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasPlannedParts,
+          hasDocument,
           modelSelection,
           turn: controller,
           view,
@@ -289,7 +289,7 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasPlannedParts,
+          hasDocument,
           modelSelection,
           turn: controller,
           view,
@@ -314,7 +314,7 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasPlannedParts,
+          hasDocument,
           modelSelection,
           turn: controller,
           view,
@@ -653,8 +653,12 @@ function OutcomeCard({
   disabledReason: string | null;
   onReport: (outcome: CanvasChatOutcome) => void;
 }) {
+  // A target is a DOCUMENT SECTION (docs/17 row 384): `planIndex` is the level
+  // minus one, so −1 is level 0 — the PREMISE, which names itself.
   const partNames = outcome.targetParts
-    .map((part) => `Part ${String(part.planIndex + 1)} — ${part.title}`)
+    .map((part) =>
+      part.planIndex < 0 ? 'Premise' : `Level ${String(part.planIndex + 1)} — ${part.title}`,
+    )
     .join(', ');
   // The adversarial review's findings (docs/17 row 360): the WHOLE reason the
   // owner asked for a chat-triggered pass, so they render above the edit on

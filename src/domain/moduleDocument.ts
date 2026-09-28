@@ -644,7 +644,9 @@ export function moduleLevelList(
  * ============================================================================
  */
 
-/** The `planIndex` of level section `number` (docs/23 §4): N − 1. */
+/** The `planIndex` of level section `number` (docs/23 §4): N − 1. Level 0 (the
+ * premise) therefore has planIndex −1 — the repo's own convention for "the
+ * premise" (see `entityRewriteProposalSchema`). */
 export function planIndexForLevel(number: number): number {
   return number - 1;
 }
@@ -652,6 +654,105 @@ export function planIndexForLevel(number: number): number {
 /** The level section number of `planIndex` — the inverse, one definition. */
 export function levelForPlanIndex(planIndex: number): number {
   return planIndex + 1;
+}
+
+/**
+ * The module VIEW's ONE document text (docs/23 §2–§4): level 0 is the
+ * premise, `parts[planIndex]` is level section `planIndex + 1`, and the level
+ * count is the larger of the plan's and the parts' (a pass-0 plan authored
+ * before its parts exist still reserves its sections). The SAME composition
+ * `moduleRowFromView` writes to the row — one function, so a reader that only
+ * wants the document (the canvas editor's initial doc) and the row write can
+ * never disagree about what the document is.
+ */
+export function moduleDocumentFromView(view: {
+  spine: ModuleSpine | null;
+  parts: readonly ModulePart[];
+}): string {
+  if (view.spine === null && view.parts.length === 0) return '';
+  const levels: { number: number; text: string }[] = [
+    { number: MODULE_PREMISE_LEVEL, text: view.spine?.premise ?? '' },
+  ];
+  const count = viewLevelCount(view);
+  for (let planIndex = 0; planIndex < count; planIndex += 1) {
+    levels.push({
+      number: levelForPlanIndex(planIndex),
+      text: view.parts.find((part) => part.planIndex === planIndex)?.markdown ?? '',
+    });
+  }
+  return assembleModuleDocument({ levels });
+}
+
+/** The level SECTION count a view implies — one definition, read by both the
+ * document composition and the row's metadata arrays. */
+function viewLevelCount(view: {
+  spine: ModuleSpine | null;
+  parts: readonly ModulePart[];
+}): number {
+  const highestWritten = view.parts.reduce(
+    (max, part) => Math.max(max, part.planIndex + 1),
+    0,
+  );
+  return Math.max(view.spine?.partPlan.length ?? 0, highestWritten);
+}
+
+/**
+ * The canvas and the chat's window onto one DOCUMENT LEVEL (docs/23 §4): the
+ * level's number, its prose and its text range, PLUS the two labels every
+ * part-shaped surface names it by — its `planIndex` (level − 1, so the premise
+ * is −1) and a display `title`.
+ *
+ * THIS IS A VIEW OF THE DOCUMENT, NOT A SECOND FORMAT. It is produced by
+ * `splitModuleDocument` — the ONE parser — and the ranges are that parse's own,
+ * so an edit applied through it is a splice in the document the owner is
+ * editing. `number` is the level's identity (§2: the number in the separator is
+ * load-bearing and nothing else is).
+ *
+ * The `title` is the STORED plan title (the generator's pass-0 state) when the
+ * section has one, and the label `Level N` otherwise; the premise is titled
+ * `Premise`. A title is DISPLAY ONLY: the caption line under a separator is
+ * prose and is never read (docs/23 §2, AGENTS rule 5), which is why nothing
+ * here ever looks at the section's first line.
+ */
+export interface ModuleDocumentSection {
+  /** Level identity: 0 is the premise, 1..N are the separator sections. */
+  number: number;
+  /** The legacy part-shaped identity: level − 1 (the premise is −1). */
+  planIndex: number;
+  /** Display title: the stored plan title, `Level N`, or `Premise`. */
+  title: string;
+  text: string;
+  textFrom: number;
+  textTo: number;
+}
+
+/**
+ * Splits a module document into the sections the canvas and the chat address
+ * (PURE, loud — the parse is `splitModuleDocument`, so a malformed document is
+ * refused by line here exactly as everywhere else). `planTitles` is the row's
+ * stored plan, position i being level section i + 1 (docs/23 §4); it is read
+ * for the DISPLAY title only.
+ */
+export function moduleDocumentSections(
+  doc: string,
+  planTitles: readonly { title: string }[],
+): ModuleDocumentSection[] {
+  return splitModuleDocument(doc).levels.map((level) => ({
+    number: level.number,
+    planIndex: planIndexForLevel(level.number),
+    title: sectionTitle(level.number, planTitles),
+    text: level.text,
+    textFrom: level.textFrom,
+    textTo: level.textTo,
+  }));
+}
+
+/** A section's display title: the premise, the stored plan title, or the
+ * level's own label — never a reading of the section's prose. */
+function sectionTitle(number: number, planTitles: readonly { title: string }[]): string {
+  if (number === MODULE_PREMISE_LEVEL) return 'Premise';
+  const title = planTitles[number - 1]?.title.trim() ?? '';
+  return title === '' ? `Level ${String(number)}` : title;
 }
 
 /** The per-level run state a level with no recorded state derives. */
@@ -745,25 +846,10 @@ export function moduleViewFromRow(row: ModuleRow): Module {
  */
 export function moduleRowFromView(view: Module): ModuleRow {
   const { spine, parts, ...rest } = view;
-  // The count is the highest level WRITTEN plus the plan's own length — never
-  // `parts.length`, which loses a sparse write (a single part at planIndex 11
-  // is level 12, not level 1).
-  const highestWritten = parts.reduce(
-    (max, part) => Math.max(max, part.planIndex + 1),
-    0,
-  );
-  const count = Math.max(spine?.partPlan.length ?? 0, highestWritten);
-  const written = new Map<number, string>();
-  for (const part of parts) written.set(part.planIndex, part.markdown);
-
-  const levels: { number: number; text: string }[] = [
-    { number: MODULE_PREMISE_LEVEL, text: spine?.premise ?? '' },
-  ];
-  for (let planIndex = 0; planIndex < count; planIndex += 1) {
-    levels.push({ number: levelForPlanIndex(planIndex), text: written.get(planIndex) ?? '' });
-  }
-  const empty = spine === null && parts.length === 0;
-  const document = empty ? '' : assembleModuleDocument({ levels });
+  const count = viewLevelCount(view);
+  // The document's own composition (docs/23 §4): ONE function, so the canvas's
+  // initial doc and the row write can never disagree about the text.
+  const document = moduleDocumentFromView(view);
 
   const levelPlans = Array.from({ length: count }, (_, planIndex) => ({
     title: spine?.partPlan[planIndex]?.title ?? '',
@@ -789,5 +875,83 @@ export function moduleRowFromView(view: Module): ModuleRow {
     levelStates,
     premiseWriterModel: spine?.writerModel ?? '',
     premiseOrigin: spine?.origin ?? null,
+  });
+}
+
+/**
+ * THE pure half of the DOCUMENT WRITE (docs/23 §4, docs/17 row 384): a stored
+ * row with its ONE text replaced, the generator's metadata carried onto the
+ * levels the new text has, and the AUTHORSHIP of every level whose text CHANGED
+ * stamped at the write.
+ *
+ * This is `saveModulePartText`'s successor for the canvas/chat: the owner's
+ * edit is a TEXT edit over the whole document, and only the levels whose text
+ * actually moved are marked edited — a level the write left byte-identical keeps
+ * its run state and provenance untouched (a hand edit of level 3 must never
+ * claim it wrote level 5).
+ *
+ * `document` is parsed HERE (`splitModuleDocument`; LOUD, naming the line) so a
+ * malformed document can never reach the row — the caller does not have to
+ * remember to validate, and there is no path that writes unreadable text.
+ *
+ * The level COUNT is the new text's, so `levelPlans`/`levelStates` are padded or
+ * truncated to it and stay index-aligned with the sections. A section with no
+ * recorded plan entry keeps `title: ''` (the derived view labels it `Level N`)
+ * and a section with no recorded state derives the honest "is there prose here"
+ * state — a plan is NOT authored by this write, because an edit is not a plan.
+ *
+ * `writerModel` follows THE one authorship rule (`patchModulePartText`): naming
+ * it records `origin: 'model'` (a chat apply, an accepted AI proposal), omitting
+ * it records `origin: 'human'` (manual typing, a manual Save) while CARRYING the
+ * recorded id forward — a hand edit must never erase which model wrote the text
+ * it edited (docs/17 row 93).
+ */
+export function moduleRowFromDocument(
+  row: ModuleRow,
+  document: string,
+  writerModel?: string,
+): ModuleRow {
+  const parsed = splitModuleDocument(document);
+  const previous = splitModuleDocument(row.document);
+  const sectionCount = Math.max(parsed.levels.length - 1, 0);
+
+  const levelPlans = Array.from({ length: sectionCount }, (_, planIndex) => {
+    const stored = row.levelPlans[planIndex];
+    return {
+      title: stored?.title ?? '',
+      synopsis: stored?.synopsis ?? '',
+      levelUpTrigger: stored?.levelUpTrigger ?? '',
+    };
+  });
+
+  const levelStates = Array.from({ length: sectionCount }, (_, planIndex) => {
+    const stored = row.levelStates[planIndex];
+    const before = previous.levels[planIndex + 1]?.text;
+    const after = parsed.levels[planIndex + 1]?.text ?? '';
+    // UNCHANGED: the run state and the provenance survive the write untouched.
+    if (before === after) return stored ?? derivedLevelState(after);
+    return {
+      status: after.trim() === '' ? ('pending' as const) : ('ready' as const),
+      errorMessage: '',
+      edited: true,
+      writerModel: writerModel ?? stored?.writerModel ?? '',
+      origin: writerModel === undefined ? ('human' as const) : ('model' as const),
+    };
+  });
+
+  const premiseChanged = previous.levels[0]?.text !== parsed.levels[0]?.text;
+  return moduleRowSchema.parse({
+    ...row,
+    document,
+    levelPlans,
+    levelStates,
+    premiseWriterModel: premiseChanged
+      ? (writerModel ?? row.premiseWriterModel)
+      : row.premiseWriterModel,
+    premiseOrigin: premiseChanged
+      ? writerModel === undefined
+        ? 'human'
+        : 'model'
+      : row.premiseOrigin,
   });
 }

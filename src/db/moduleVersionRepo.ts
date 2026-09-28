@@ -2,11 +2,10 @@ import type { IndexableType } from 'dexie';
 
 import type { Id, ModuleDocumentVersion, ModuleVersionSource } from '@/domain';
 import {
-  assembleModulePartsDocument,
   MODULE_VERSION_CAP,
   moduleDocumentVersionSchema,
   moduleRowSchema,
-  moduleViewFromRow,
+  splitModuleDocument,
 } from '@/domain';
 import { newId } from '@/domain/entity';
 import { db } from '@/db/db';
@@ -18,15 +17,13 @@ import { NotFoundError } from '@/lib/errors';
  * 63, docs/18 §2.3): the ONE snapshot seam every AI-produced whole-document
  * write funnels through, plus the menu's read and the Clear-all door.
  *
- * What a row IS: the WHOLE module text — the SAME parts document
- * `assembleModulePartsDocument` builds and `splitPartsDocument` splits
- * (`==========` separators, `[Part <n> of <total> — <title>]` labels, every
- * planned part in plan order) in `docText`, captured BYTE-EXACT as it stood
- * immediately BEFORE the change it precedes, PLUS the spine PREMISE in its own
- * `premise` field beside it (docs/17 row 357). There is no second document
- * format: a restore re-splits the stored text against the CURRENT plan through
- * the existing split/save seam and puts the premise back through the ONE
- * spine-subfield seam (`moduleRepo.patchModuleSpine`).
+ * What a row IS (docs/17 row 384): THE module document (docs/23 §2–§4: level 0
+ * = the premise, then `=====Level N=====` sections) in `docText`, captured
+ * BYTE-EXACT as it stood immediately BEFORE the change it precedes, tagged
+ * `documentFormat: 'module-document'`, plus the premise in `premise` as the
+ * entry's own display record. A restore re-reads `docText` in the current
+ * format and proposes it as the whole document — the premise included, because
+ * the document carries it.
  *
  * Snapshot BEFORE the write, never after — `saveWholeModuleDocument` takes it
  * inside its own seam for canvas AI saves, and `moduleGen`'s AI passes take
@@ -48,19 +45,17 @@ import { NotFoundError } from '@/lib/errors';
  */
 
 /**
- * Captures the pre-change whole-module text onto the durable stack: the parts
- * document in `docText` and the spine PREMISE in `premise` (docs/17 row 357),
- * each BYTE-EXACT. Returns the row, or `null` for a module with NO planned
- * parts: such a module has no parts document at all (the canvas and the chat
- * both refuse it, and no part text can exist to lose — `discardSpine` keeps
- * parts but clears the plan, which is the structural no-document case, not a
- * failed snapshot). A missing module row throws (nothing can be snapshotted
- * onto a deleted module), and so does a malformed row.
+ * Captures the pre-change whole-module text onto the durable stack: THE module
+ * document (docs/23 §2–§4) in `docText`, tagged `documentFormat:
+ * 'module-document'`, plus the premise in `premise` as the entry's own display
+ * record. Since the document CONTAINS the premise (level 0) the premise field
+ * is no longer a second half a restore must put back — a document restore
+ * covers it.
  *
- * The premise rides the SAME read as the document, so the two halves of one
- * row always describe the same instant. A module WITH a plan always has a
- * spine (the plan lives on it) and therefore always captures a premise —
- * `null` is reserved for rows written before the field existed.
+ * Returns the row, or `null` for a module whose document is EMPTY: there is no
+ * text to lose (the canvas does not open on such a module either). A missing
+ * module row throws (nothing can be snapshotted onto a deleted module), and so
+ * does a malformed row.
  */
 export async function snapshotModuleVersion(
   moduleId: Id,
@@ -74,10 +69,9 @@ export async function snapshotModuleVersion(
   // The row stores ONE document; the legacy `spine`/`parts` view is DERIVED
   // from it (docs/17 row 382). Parsing the raw row with the VIEW schema would
   // throw — the row carries no `spine`.
-  const module = moduleViewFromRow(moduleRowSchema.parse(row));
-  const partPlan = module.spine?.partPlan ?? [];
-  if (partPlan.length === 0) return null;
-  const { document } = assembleModulePartsDocument({ partPlan, parts: module.parts });
+  moduleRowSchema.parse(row);
+  if (row.document.trim() === '') return null;
+  const levels = splitModuleDocument(row.document);
   return db.transaction('rw', db.moduleVersions, async () => {
     // The module's rows are re-listed INSIDE the transaction: the stack that
     // decides the timestamp AND the prune is the one in the database, never a
@@ -96,8 +90,9 @@ export async function snapshotModuleVersion(
       moduleId,
       source,
       label,
-      docText: document,
-      premise: module.spine?.premise ?? null,
+      docText: row.document,
+      documentFormat: 'module-document',
+      premise: levels.levels[0]?.text ?? '',
     });
     await db.moduleVersions.put(version);
     // Prune in the SAME transaction: the retained window is never momentarily

@@ -2,7 +2,13 @@ import { z } from 'zod';
 
 import type { AnyArtifact, ArtifactKind, Id, Module, MonsterEntry, StatBlock } from '@/domain';
 import { ARTIFACT_KIND_SINGULAR, casterStatFields, sameAliasName } from '@/domain';
-import { canvasPartLabel, splitModulePartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
+import {
+  moduleDocumentFromView,
+  moduleDocumentSections,
+  moduleLevelSeparator,
+  MODULE_PREMISE_LEVEL,
+  type ModuleDocumentSection,
+} from '@/domain/moduleDocument';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -27,12 +33,14 @@ import {
  *   <edit all="false"><search>…current text…</search><replace>…new text…</replace></edit>
  *
  * Owner direction (docs/17 ledger row 51): no part selection — the model
- * sees the WHOLE module (all parts, spine premise excluded) split by a
- * clearly visible `==========` delimiter + `[Part <n> of <total> — <title>]`
- * scaffold labels, and can edit every part; a REFERENCE-ONLY block carries
- * the campaign premise, the game-system label and ALL preceding modules'
- * FULL text (uncapped — the generation-time PRIOR_*_CHAR_CAP frugality is
- * deliberately not applied to chat) for continuity.
+ * sees the WHOLE module, which since docs/17 row 384 is THE module DOCUMENT
+ * (docs/23 §2–§4): the PREMISE (level 0, everything before the first
+ * separator) followed by `=====Level N=====` sections. The premise is part of
+ * the document the model reads and may edit — it is level 0 like any other
+ * level. A REFERENCE-ONLY block carries the campaign premise, the game-system
+ * label and ALL preceding modules' FULL text (uncapped — the generation-time
+ * PRIOR_*_CHAR_CAP frugality is deliberately not applied to chat) for
+ * continuity.
  *
  * READ HALF (docs/17 ledger row 103) — the owner's words, verbatim: *"I am
  * considering right now if we should make the details available for the chat
@@ -87,16 +95,19 @@ import {
  *   regex-guessing across boundaries) and zod-validated at this boundary —
  *   a malformed, unbalanced or over-cap reply THROWS `CanvasChatParseError`
  *   (the whole reply fails loudly; nothing partial is applied).
- * - The context ALWAYS carries the CURRENT parts document — v3: the LIVE
+ * - The context ALWAYS carries the CURRENT module DOCUMENT — v3: the LIVE
  *   whole-document canvas editor doc passed by the page at send time (the
- *   doc IS the whole module; unsaved edits in EVERY part ride along). The
- *   per-part snapshot comes from the shared `splitModulePartsDocument`
- *   (domain) applied to that same doc, so application matches EXACTLY the
- *   text the model saw. A doc whose scaffolding no longer parses fails the
- *   send loudly with the splitter's reason.
- * - Matching is PER PART, never across the assembled string: a search
- *   spanning two parts cannot match and fails loudly (zero-match card with
- *   the closest candidate across parts).
+ *   doc IS the whole module; unsaved edits in EVERY level ride along,
+ *   the premise included). The per-level snapshot comes from the shared
+ *   `moduleDocument.moduleDocumentSections` (domain) applied to that same doc,
+ *   so application matches EXACTLY the text the model saw. A doc whose
+ *   separators no longer parse fails the send loudly with the splitter's
+ *   reason.
+ * - Matching is PER LEVEL SECTION, never across the assembled string: a search
+ *   spanning two levels cannot match and fails loudly (zero-match card with
+ *   the closest candidate across the sections). The separators themselves are
+ *   the APP's scaffolding and are never part of a match — the ONE exception is
+ *   the empty-level fill (see the prompt's fill rule).
  * - ONE generation per module — the SHARED `canvasBusy` registry (refine +
  *   chat serialize); `ModuleBusyError` is loud, never queued.
  * - Model: the canvas selection (session-only) defaulting to the Settings
@@ -265,7 +276,7 @@ export const MAX_DETAILS_BLOCK_CHARS = 12000;
 export const FAILURE_EXCERPT_RADIUS = 300;
 
 /**
- * THE sentence for "this module has no planned parts to chat about" — the ONE
+ * THE sentence for "this module has no document to chat about" — the ONE
  * source (AGENTS rule 4). It is raised in three places and they must read
  * identically: this file's own pre-flight (`sendCanvasChatMessage`, which the
  * turn controllers reach through the engine) and the two turn controllers'
@@ -275,8 +286,14 @@ export const FAILURE_EXCERPT_RADIUS = 300;
  * inline copies — so a reword could leave two surfaces lying about the same
  * condition; `tests/llm/canvasChat.test.ts` pins the sentence's full text AND
  * that it is declared exactly once under `src/`.
+ *
+ * THE CONDITION IS THE DOCUMENT'S, NOT A PLAN'S (docs/17 row 384): since the
+ * premise IS level 0, a module with a premise and no level sections is
+ * perfectly chattable — only an EMPTY document (no premise, no levels) has
+ * nothing to say.
  */
-export const NO_PARTS_MESSAGE = 'no parts to chat about — generate the module first';
+export const NO_DOCUMENT_MESSAGE =
+  'the module document is empty — write a premise or generate the module first';
 
 /** A malformed, unbalanced or over-cap reply — the whole reply fails. */
 export class CanvasChatParseError extends Error {
@@ -1057,29 +1074,30 @@ export function resolveCanvasEdit(doc: string, search: string): CanvasEditResolu
   };
 }
 
-// --- whole-module parts document --------------------------------------------------
+// --- the module document ----------------------------------------------------------
 
-// The parts-document format (delimiter + label lines + assemble/split) is
-// OWNED by the domain layer (`domain/modulePartsDocument.ts`) since canvas
-// v3: the editor doc, the chat context and the save path all share ONE
-// implementation. The chat consumes the shared `splitModulePartsDocument`
-// and the label helper (the empty-part fill convention anchors on it).
+// The document format (`=====Level N=====` separators, level 0 = the premise)
+// is OWNED by the domain layer (`domain/moduleDocument.ts`, docs/23 §2–§4): the
+// editor doc, the chat context and the save path all share ONE implementation.
+// The chat consumes `moduleDocumentSections` — the parse's own levels with
+// their ranges — so a command applies to the text the model was shown, byte for
+// byte, and an empty level can be filled through its own separator line.
 
-// --- cross-part resolution ---------------------------------------------------------
+// --- cross-section resolution ------------------------------------------------------
 
 export type CanvasCrossPartResolution =
   | {
       status: 'found';
-      /** Per-part matches in part order (only parts with ≥1 range). */
+      /** Per-section matches in document order (only sections with ≥1 range). */
       matches: { partIndex: number; ranges: { from: number; to: number }[] }[];
-      /** Total occurrences across the WHOLE module. */
+      /** Total occurrences across the WHOLE document. */
       totalRanges: number;
     }
   | {
       status: 'filled';
-      /** The empty part the label-anchor fill targets. */
+      /** The empty level section the separator-anchor fill targets. */
       partIndex: number;
-      /** The part's new text (label-stripped remainder, leading blank
+      /** The section's new text (separator-stripped remainder, leading blank
        * lines trimmed). */
       newText: string;
     }
@@ -1091,12 +1109,12 @@ export type CanvasCrossPartResolution =
     }
   | {
       status: 'none';
-      /** The closest candidate snippet across ALL parts. */
+      /** The closest candidate snippet across ALL sections. */
       closest: string;
-      /** Its offset within the closest part's text (null when nothing in
-       * any part corresponds). */
+      /** Its offset within the closest section's text (null when nothing in
+       * any section corresponds). */
       closestFrom: number | null;
-      /** The part holding the closest candidate (null when none). */
+      /** The section holding the closest candidate (null when none). */
       closestPartIndex: number | null;
     };
 
@@ -1106,22 +1124,31 @@ function trimLeadingBlankLines(text: string): string {
 }
 
 /**
- * Resolves ONE command across the WHOLE module (PURE; 08 §Module canvas
- * chat): the tolerant ladder runs against EACH part's snapshot text, never
- * across the assembled string — a search spanning two parts therefore
- * cannot match. `all="false"` needs EXACTLY ONE match across the WHOLE
- * module (the caller enforces it against `totalRanges`); `all="true"`
- * applies in every part where it matched. On zero textual matches, the
- * empty-part label-anchor convention applies: a search EXACTLY equal to an
- * empty part's label line fills that part (the replace must start with the
- * same label line — the part text becomes the remainder after the label,
- * leading blank lines trimmed; anything else fails loudly via
- * `fill-failed`). Zero matches return the closest candidate across parts
- * (best bigram-similarity part) — reporting only, never an auto-apply.
+ * Resolves ONE command across the WHOLE module document (PURE; docs/23 §2–§4):
+ * the tolerant ladder runs against EACH level's snapshot text, never across the
+ * assembled string — a search spanning two levels therefore cannot match.
+ * `all="false"` needs EXACTLY ONE match across the WHOLE document (the caller
+ * enforces it against `totalRanges`); `all="true"` applies in every level where
+ * it matched. Level 0 (the premise) is a section like any other, so a command
+ * can edit the premise through the SAME path.
+ *
+ * On zero textual matches, the EMPTY-LEVEL fill convention applies: a level
+ * section with no text yet is introduced by its own canonical separator line,
+ * so a search EXACTLY equal to `=====Level N=====` fills that level (the
+ * replace must start with the same separator line — the section text becomes
+ * the remainder after it, leading blank lines trimmed; anything else fails
+ * loudly via `fill-failed`). The separator line is the anchor because the
+ * document has no label line — the APP writes the separator, so it is unique
+ * per level exactly as the old label was. Level 0 has NO separator and can
+ * therefore not be filled from empty: it is edited once it has text (a
+ * level-addressed append for the premise is row 381's, deliberately not here).
+ *
+ * Zero matches return the closest candidate across the sections (best
+ * bigram-similarity section) — reporting only, never an auto-apply.
  */
 export function resolveCanvasEditAcrossParts(
   command: Pick<CanvasEditCommand, 'search' | 'replace'>,
-  parts: readonly ModulePartsSection[],
+  sections: readonly ModuleDocumentSection[],
 ): CanvasCrossPartResolution {
   if (command.search === '') {
     return { status: 'none', closest: '', closestFrom: null, closestPartIndex: null };
@@ -1130,8 +1157,8 @@ export function resolveCanvasEditAcrossParts(
   let totalRanges = 0;
   const needle = projectWhitespace(command.search).normalized.trim();
   let best: { partIndex: number; closest: string; closestFrom: number | null; score: number } | null = null;
-  for (const [partIndex, part] of parts.entries()) {
-    const resolution = resolveCanvasEdit(part.text, command.search);
+  for (const [partIndex, section] of sections.entries()) {
+    const resolution = resolveCanvasEdit(section.text, command.search);
     if (resolution.status === 'found') {
       matches.push({ partIndex, ranges: resolution.ranges });
       totalRanges += resolution.ranges.length;
@@ -1148,26 +1175,25 @@ export function resolveCanvasEditAcrossParts(
   if (matches.length > 0) {
     return { status: 'found', matches, totalRanges };
   }
-  // Empty-part label-anchor fill: the label line is an empty part's only
-  // anchor (labels are unique — the 1-based position differs per part).
-  const total = parts.length;
-  for (const [partIndex, part] of parts.entries()) {
-    if (part.text !== '') continue;
-    const label = canvasPartLabel(partIndex + 1, total, part.title);
-    if (command.search !== label) continue;
-    if (!command.replace.startsWith(label)) {
+  // Empty-level separator-anchor fill: the level's own separator line is an
+  // empty section's only anchor (the app writes it, one per level number).
+  for (const [partIndex, section] of sections.entries()) {
+    if (section.text !== '' || section.number === MODULE_PREMISE_LEVEL) continue;
+    const separator = moduleLevelSeparator(section.number);
+    if (command.search !== separator) continue;
+    if (!command.replace.startsWith(separator)) {
       return {
         status: 'fill-failed',
         partIndex,
-        reason: `filling the empty part "${part.title}" requires the replace to start with its label line ${label}`,
+        reason: `filling the empty level ${String(section.number)} requires the replace to start with its separator line ${separator}`,
       };
     }
-    const remainder = trimLeadingBlankLines(command.replace.slice(label.length));
+    const remainder = trimLeadingBlankLines(command.replace.slice(separator.length));
     if (remainder.trim() === '') {
       return {
         status: 'fill-failed',
         partIndex,
-        reason: 'the replace carries no content after the label line — write the part text after it',
+        reason: 'the replace carries no content after the separator line — write the level text after it',
       };
     }
     return { status: 'filled', partIndex, newText: remainder };
@@ -1243,31 +1269,32 @@ const CHAT_FRAMINGS: Record<CanvasChatFraming, string> = {
 
 /**
  * The fixed system prompt (08 §Module canvas chat): the XML protocol, the
- * whole-module doc-is-current contract, the scaffold rules (separator +
- * label lines never appear in a command; one command lives inside ONE
- * part), the empty-part label-anchor fill convention, the REFERENCE-ONLY
- * grounding rule, replace-all guidance, small-edit preference.
+ * document-is-current contract, the scaffold rules (the level separators are
+ * the APP's format; one command lives inside ONE level), the empty-level
+ * separator-anchor fill convention, the REFERENCE-ONLY grounding rule,
+ * replace-all guidance, small-edit preference.
  *
  * ONE builder for BOTH surfaces (docs/17 row 362): only the FRAMING paragraph
  * varies (`framing`), the protocol below it is the same for the module chat and
- * for GM assist. The default keeps the module chat byte-identical — omitting
- * `framing` is exactly what this function has always returned.
+ * for GM assist. The default keeps the module chat's prompt the ONE prompt —
+ * omitting `framing` is exactly what this function has always returned.
  */
 export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): string {
   return [
     CHAT_FRAMINGS[framing],
-    'You edit the WHOLE module — EVERY part of the parts document below — by replying with short conversational prose plus ZERO OR MORE XML edit commands:',
+    'You edit the WHOLE module document below — every level of it, the PREMISE included — by replying with short conversational prose plus ZERO OR MORE XML edit commands:',
     '<edit all="false"><search>the exact current text</search><replace>the new text</replace></edit>',
     'Command rules:',
-    '- "search" must match the CURRENT parts document (below / in the latest message) EXACTLY, byte for byte, including whitespace, punctuation and line breaks. Copy it verbatim from the document.',
-    '- With all="false" (the default) the search must match EXACTLY ONE place ACROSS ALL PARTS of the module; with all="true" EVERY occurrence in EVERY part is replaced (replace-all). Use all="true" whenever repetition is intended (a recurring heading, a name used many times).',
-    '- Prefer SMALL, targeted edits over whole-part rewrites: several small commands beat one giant replacement.',
-    '- The parts document is split into sections by a separator line of exactly ten equals signs (==========) and every section starts with a scaffold label line like [Part 2 of 3 — The Gate Bargain]. That scaffolding is NOT content: never include a separator or a label line in a search or replace, and never edit across a separator — one command lives inside ONE part.',
-    '- Filling an EMPTY part (a section whose label line is followed by no text): make the search EXACTLY that part\'s label line (nothing more) and start the replace with the same label line — the text after that label line becomes the part\'s content. Anything else fails.',
+    '- "search" must match the CURRENT document (below / in the latest message) EXACTLY, byte for byte, including whitespace, punctuation and line breaks. Copy it verbatim from the document.',
+    '- With all="false" (the default) the search must match EXACTLY ONE place ACROSS THE WHOLE document (the premise and every level); with all="true" EVERY occurrence in EVERY level is replaced (replace-all). Use all="true" whenever repetition is intended (a recurring heading, a name used many times).',
+    '- Prefer SMALL, targeted edits over whole-level rewrites: several small commands beat one giant replacement.',
+    '- THE DOCUMENT: level 0 is the PREMISE — everything before the first separator line. Every level after it is introduced by a line reading exactly =====Level N=====. Those separator lines are the APP\'S OWN FORMAT: they are not prose, you must PRESERVE them exactly as they are, and you must NEVER include one in a search or replace (the one exception is the empty-level fill rule below) and never move, renumber, edit or add one. A line that merely LOOKS like a level header (for example =====Level 3==== with different "=" or spacing, or any other "=" line mentioning a level) makes the whole document unreadable, so never write one into a level\'s text.',
+    '- The line under a separator (for example "## The cursed ship") is ordinary PROSE — it is a title your text carries, not a field. Never treat it as structure and never assume it must match anything.',
+    '- Filling an EMPTY level (a =====Level N===== line with no text under it): make the search EXACTLY that level\'s separator line (nothing more) and start the replace with the same separator line — the text after that line becomes the level\'s content. Anything else fails. The premise (level 0) has no separator line and cannot be filled this way; it is edited once it has text.',
     '- The search text may not be empty and must not contain the literal strings </search> or </edit>.',
     '- Write <search> and <replace> bodies verbatim — no escaping, no markdown code fences around them.',
-    'The parts document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
-    'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s parts document only.',
+    'The document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
+    'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s document only.',
     'You can also ASK for the STORED details of a named artifact you cannot see (an encounter\'s level, budget, rooms and roster; an NPC\'s stat block; a location\'s fields; any row\'s stored prose). Reply with a request block:',
     '<request><name>EXACT NAME</name></request>',
     'Request rules:',
@@ -1285,11 +1312,11 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- The app reports every change back to you in the follow-up turn as a <change-results> block: CHANGED means it already happened (never ask for it again), NOT APPLIED means it did not happen and the section says why (a refused operation, an ambiguous name, a busy module, a failed run). Correct what you can and continue.',
     '- In your SECOND reply (the one after the change results) do not send another <change>: one change round trip is served per message.',
     '- A change touches the stored ROW; prose is still changed with <edit> commands. If a change makes the document wrong (a renamed encounter, a new roster), fix the document with <edit> in the SAME reply or in your next message.',
-    'You can also ask the app to run its ADVERSARIAL REVIEW over the module PREMISE or ONE PART — the same review the automatic generation step runs: a critic judges the text against exactly four criteria (inconsistency, motivation, fun, originality), reports what it found, and an editor rewrites the text ONLY when the critique found something. Reply with one of:',
+    'You can also ask the app to run its ADVERSARIAL REVIEW over the module PREMISE or ONE LEVEL — the same review the automatic generation step runs: a critic judges the text against exactly four criteria (inconsistency, motivation, fun, originality), reports what it found, and an editor rewrites the text ONLY when the critique found something. Reply with one of:',
     '<change adversarial="premise"></change>',
     '<change adversarial="part" part="2"></change>',
     'Review rules:',
-    '- An adversarial <change> carries NO <name> and NO <instruction> — the pass has its own criteria and its own target, so a body is a parse failure. part="N" is the 1-based part number the parts document labels.',
+    '- An adversarial <change> carries NO <name> and NO <instruction> — the pass has its own criteria and its own target, so a body is a parse failure. part="N" is the 1-based level number the document\'s separators spell.',
     '- Ask for a review when the owner wants a passage CRITIQUED (its problems found and named); write <edit> when you already know what to change. The review\'s findings come back in the <change-results> block, and the edit it produces is applied and undoable from the Versions menu.',
     '- When the critique finds NOTHING, nothing is written and the results block says NOTHING TO FIX — that is a successful review, not a failure.',
     '- Never write the literal strings <edit>, <request>, <change>, </edit>, </request> or </change> in your prose — they are command blocks only.',
@@ -1301,9 +1328,10 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
 /** One prior module rendered into the read-only grounding block. */
 export interface ChatGroundingModule {
   title: string;
-  premise: string;
-  /** Plan-order parts, already labeled; empty markdown sections are skipped. */
-  parts: readonly { label: string; markdown: string }[];
+  /** The module's WHOLE document, byte-exact (docs/23 §2–§4): its own premise
+   * and its own `=====Level N=====` sections, so a prior module reads exactly
+   * the way the current one does. */
+  document: string;
 }
 
 /**
@@ -1314,6 +1342,10 @@ export interface ChatGroundingModule {
  * chat-specific renderer, NOT `moduleGen.priorModulesContext` — the
  * generation-time PRIOR_*_CHAR_CAP context frugality does not apply here
  * (owner-directed, docs/17 ledger row 51).
+ *
+ * A PRIOR MODULE'S TEXT IS ITS DOCUMENT (docs/17 row 384): the same one text
+ * the current module is, separators and all — so the model sees continuity in
+ * the format it is editing, and no per-part heading machinery exists here.
  */
 export function renderChatGrounding(input: {
   campaignName: string;
@@ -1332,10 +1364,7 @@ export function renderChatGrounding(input: {
     );
     for (const prior of input.priorModules) {
       lines.push(`## ${prior.title}`);
-      if (prior.premise !== '') lines.push(`Premise:\n${prior.premise}`);
-      for (const part of prior.parts) {
-        lines.push(`${part.label}\n${part.markdown}`);
-      }
+      if (prior.document.trim() !== '') lines.push(prior.document);
     }
   }
   return lines.join('\n\n');
@@ -1355,26 +1384,18 @@ async function loadChatGrounding(module: Module): Promise<string> {
     campaignName: campaign.name,
     campaignDescription: campaign.description,
     systemLabel: GAME_SYSTEM_LABELS[campaign.system],
-    priorModules: priors.map((prior) => {
-      const plan = prior.spine?.partPlan ?? [];
-      const parts: { label: string; markdown: string }[] = [];
-      for (let index = 0; index < plan.length; index += 1) {
-        const markdown = prior.parts.find((part) => part.planIndex === index)?.markdown ?? '';
-        if (markdown === '') continue;
-        const title = plan[index]?.title ?? '';
-        const head = title === '' ? `Part ${String(index + 1)}` : `Part ${String(index + 1)}: ${title}`;
-        parts.push({ label: `### ${head}`, markdown });
-      }
-      return { title: prior.title, premise: prior.spine?.premise ?? '', parts };
-    }),
+    priorModules: priors.map((prior) => ({
+      title: prior.title,
+      document: moduleDocumentFromView(prior),
+    })),
   });
 }
 
 /**
- * The per-turn user content: the CURRENT parts doc + grounding + instruction.
- * The `details` block (the request round trip's answer) is appended ONLY when
- * it exists — a turn without one is byte-identical to the pre-request contract
- * (docs/17 row 103, pinned).
+ * The per-turn user content: the CURRENT module document + grounding +
+ * instruction. The `details` block (the request round trip's answer) is
+ * appended ONLY when it exists — a turn without one is byte-identical to the
+ * pre-request contract (docs/17 row 103, pinned).
  */
 export function canvasChatTurnContent(input: {
   document: string;
@@ -1384,12 +1405,12 @@ export function canvasChatTurnContent(input: {
   details?: string | undefined;
 }): string {
   const lines = [
-    'Module parts document — the CURRENT state, including all previously applied edits:',
+    'Module document — the CURRENT state, including all previously applied edits. Level 0 is the premise; each =====Level N===== line starts the next level:',
     '<document>',
     input.document,
     '</document>',
     '',
-    'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s parts document above:',
+    'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s document above:',
     '<reference-only>',
     input.grounding,
     '</reference-only>',
@@ -2381,12 +2402,13 @@ export interface CanvasChatChangeContext {
   pool: readonly AnyArtifact[];
   signal: AbortSignal;
   /**
-   * The per-part split of the LIVE document at send time — the SAME snapshot
-   * the model read (docs/17 row 360). An adversarial part review reviews THIS
-   * text, exactly as the module generation trigger reviews the part it just
-   * wrote, so what the owner accepts is what the critic actually judged.
+   * The per-level snapshot of the LIVE document at send time — the SAME
+   * snapshot the model read (docs/17 row 360, docs/23 §2–§4). An adversarial
+   * level review reviews THIS text, exactly as the module generation trigger
+   * reviews the level it just wrote, so what the owner accepts is what the
+   * critic actually judged.
    */
-  parts: readonly ModulePartsSection[];
+  parts: readonly ModuleDocumentSection[];
 }
 
 export type CanvasChatChangeExecutor = (
@@ -2455,11 +2477,11 @@ export function renderChangeResults(outcomes: readonly CanvasChatChangeOutcome[]
 
 export interface CanvasChatTurnInput {
   moduleId: Id;
-  /** The LIVE whole-module parts document — the canvas editor's CM6 doc
-   * string, read at send time. Unsaved edits in EVERY part ride along; the
-   * per-part snapshot is the split of THIS doc, so application matches the
-   * text the model saw byte-exactly. A doc whose scaffolding no longer
-   * parses fails the send loudly (`ModulePartsDocumentError`). */
+  /** The LIVE whole-module DOCUMENT — the canvas editor's CM6 doc string,
+   * read at send time. Unsaved edits in EVERY level (the premise included)
+   * ride along; the per-level snapshot is the parse of THIS doc, so
+   * application matches the text the model saw byte-exactly. A doc whose
+   * separators no longer parse fails the send loudly (`ModuleDocumentError`). */
   document: string;
   instruction: string;
   /** Prior conversation (store order, oldest first) — rides whole. */
@@ -2533,9 +2555,9 @@ export interface CanvasChatTurnResult {
   raw: string;
   modelUsed: string;
   parse: ParsedCanvasChatReply;
-  /** The per-part snapshot EXACTLY as the model saw it (the split of the
+  /** The per-level snapshot EXACTLY as the model saw it (the parse of the
    * live editor doc) — application must match THIS text. */
-  parts: ModulePartsSection[];
+  parts: ModuleDocumentSection[];
   /** The turn's ONE follow-up call (docs/17 rows 103/104) — present iff the
    * first reply asked for details and/or requested a change. `answers`/`block`
    * are empty on a changes-only turn, exactly as the details-only turn carries
@@ -2584,17 +2606,16 @@ function errorTextOf(error: unknown): string {
 /**
  * Sends one chat turn (08 §Module canvas chat). Throws LOUDLY on busy
  * (`ModuleBusyError`, shared registry — chat + refine serialize), a
- * generating module, a module without planned parts ("no parts to chat
- * about"), a doc whose scaffolding no longer parses
- * (`ModulePartsDocumentError`), a vanished module or campaign, transport
- * errors, and `CanvasChatParseError` for malformed replies. User aborts
- * throw AbortError (distinguish via `signal.aborted`, 18-ARCHITECTURE).
+ * generating module, a module whose document is empty ("no document to chat
+ * about"), a doc whose separators no longer parse (`ModuleDocumentError`), a
+ * vanished module or campaign, transport errors, and `CanvasChatParseError`
+ * for malformed replies. User aborts throw AbortError (distinguish via
+ * `signal.aborted`, 18-ARCHITECTURE).
  *
- * The parts document is the caller-provided LIVE editor doc (never a cached
- * copy — the load-bearing context contract); the per-part snapshot is its
- * split against the row's plan. The read-only grounding block (campaign
- * premise + system label + ALL preceding modules' FULL text, uncapped,
- * story order) rides every request.
+ * The DOCUMENT is the caller-provided LIVE editor doc (never a cached
+ * copy — the load-bearing context contract); the per-level snapshot is its
+ * parse. The read-only grounding block (campaign premise + system label + ALL
+ * preceding modules' FULL text, uncapped, story order) rides every request.
  *
  * THE READ HALF (docs/17 row 103): a reply with NO `<request>` is the plain
  * single-call turn it always was — same payload, one call, same result
@@ -2663,15 +2684,15 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     if (module.status === 'generating') {
       throw new ModuleBusyError(input.moduleId);
     }
-    if (module.spine === null || module.spine.partPlan.length === 0) {
-      throw new Error(NO_PARTS_MESSAGE);
+    if (module.spine === null) {
+      throw new Error(NO_DOCUMENT_MESSAGE);
     }
     const settings = await getSettings();
     const grounding = await loadChatGrounding(module);
-    // The per-part snapshot: the split of the LIVE editor doc against the
-    // row's plan — loud on broken scaffolding (the same guard the save
-    // path uses), never a silent row re-assembly.
-    const parts = splitModulePartsDocument(input.document, module);
+    // The per-level snapshot: the parse of the LIVE editor doc against the
+    // row's plan (for the display titles only) — loud on a malformed document
+    // (the same guard the save path uses), never a silent row re-assembly.
+    const parts = moduleDocumentSections(input.document, module.spine.partPlan);
     const model = input.model !== undefined && input.model !== '' ? input.model : settings.defaultChatModel;
     // Only the SESSION-UNSET turn rides the GLOBAL first-try model; a session
     // selection is a DIFFERENT tier (the sidebar writes `setModelSelection`,

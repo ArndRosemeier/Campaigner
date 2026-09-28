@@ -204,7 +204,7 @@ describe('the preview flow runs a change through the seam and tells the owner', 
     return {
       moduleId: world.moduleId,
       key: canvasChatKey(world.moduleId),
-      hasPlannedParts: true,
+      hasDocument: true,
       doc: PARTS_DOCUMENT,
       modelSelection: null,
       turn: new AbortController(),
@@ -383,7 +383,7 @@ describe('the editor flow wires the same change half', () => {
     return {
       moduleId: world.moduleId,
       key: canvasChatKey(world.moduleId),
-      hasPlannedParts: true,
+      hasDocument: true,
       view,
       modelSelection: null,
       turn: new AbortController(),

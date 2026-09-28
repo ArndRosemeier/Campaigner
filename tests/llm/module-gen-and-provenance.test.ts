@@ -53,6 +53,7 @@ import {
   modulePartSchema,
   textOriginIsMachineWritten,
   assembleModulePartsDocument,
+  assembleModuleDocument,
   moduleCreationPool,
   MODULE_CREATION_EXCLUDED_KINDS,
   visibleToModuleCreation,
@@ -1620,8 +1621,13 @@ describe('moduleGen-party-exclusion.test.ts', () => {
         priorModules: [
           {
             title: 'An Earlier Module',
-            premise: 'The first module premise.',
-            parts: [{ label: '[Part 1 of 1 — Old]', markdown: 'Old part text.' }],
+            // A prior module rides as ITS OWN document (docs/17 row 384).
+            document: assembleModuleDocument({
+              levels: [
+                { number: 0, text: 'The first module premise.' },
+                { number: 1, text: 'Old part text.' },
+              ],
+            }),
           },
         ],
       });

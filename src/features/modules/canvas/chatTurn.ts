@@ -1,6 +1,6 @@
 import type { Id } from '@/domain';
 import {
-  NO_PARTS_MESSAGE,
+  NO_DOCUMENT_MESSAGE,
   canvasChatChangeLabel,
   canvasChatThreadPersists,
   chatProseSoFar,
@@ -146,10 +146,11 @@ export interface CanvasChatTurnOptions {
    * the module's ONE `chatThread` field — over the module chat's own history.
    */
   framing: CanvasChatFraming;
-  /** Pre-flight: a module without planned parts must not send an empty
-   * context (`llm/canvasChat.NO_PARTS_MESSAGE` — the ONE sentence, declared
-   * beside the engine guard that raises it). */
-  hasPlannedParts: boolean;
+  /** Pre-flight: a module whose DOCUMENT is empty must not send an empty
+   * context (`llm/canvasChat.NO_DOCUMENT_MESSAGE` — the ONE sentence, declared
+   * beside the engine guard that raises it). A premise-only module HAS a
+   * document (the premise is level 0) and is chattable. */
+  hasDocument: boolean;
   /** THE document this turn works over: the live editor handle, or the
    * preview snapshot handle. Read at send time; applied through; the
    * post-turn doc is its `read()`. */
@@ -246,8 +247,8 @@ export async function runCanvasChatTurn(
   if (text === '') {
     throw new Error('the chat instruction is empty');
   }
-  if (!options.hasPlannedParts) {
-    throw new Error(NO_PARTS_MESSAGE);
+  if (!options.hasDocument) {
+    throw new Error(NO_DOCUMENT_MESSAGE);
   }
   const store = useCanvasChatStore.getState();
   // The user turn + streaming placeholder land BEFORE the engine's

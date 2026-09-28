@@ -21,7 +21,6 @@ import {
   type CanvasChatTurnResult,
 } from '@/llm/canvasChat';
 import {
-  assembleModulePartsDocument,
   createModule,
   encounterDataSchema,
   modulePartSchema,
@@ -46,7 +45,7 @@ import {
 } from '@/features/modules/canvas/chatStore';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
-import { splitPartsDocument } from '@/domain/modulePartsDocument';
+import { assembleModuleDocument, moduleDocumentSections } from '@/domain/moduleDocument';
 import { schemaNameOf } from '../helpers/chatSchemaName';
 import { CODE, filesWith } from '../helpers/sourceCode';
 import type {
@@ -143,13 +142,13 @@ const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
   { title: 'Under the Docks', levelBand: '1' },
 ];
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+const PARTS_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise.' },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
   ],
-}).document;
+});
 
 let world: { campaignId: Id; moduleId: Id; encounterId: Id; npcId: Id; secondNpcId: Id } = {
   campaignId: '',
@@ -943,12 +942,12 @@ describe('unused replies are UNCHANGED (byte-for-byte)', () => {
     expect(last?.role).toBe('user');
     expect(last?.content).toBe(
       [
-        'Module parts document — the CURRENT state, including all previously applied edits:',
+        'Module document — the CURRENT state, including all previously applied edits. Level 0 is the premise; each =====Level N===== line starts the next level:',
         '<document>',
         PARTS_DOCUMENT,
         '</document>',
         '',
-        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s parts document above:',
+        'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s document above:',
         '<reference-only>',
         'Campaign: Ember — The ember war.',
         '',
@@ -1076,7 +1075,7 @@ function adversarialContext() {
     campaignId: world.campaignId,
     pool: [] as const,
     signal: new AbortController().signal,
-    parts: splitPartsDocument(PARTS_DOCUMENT, PART_PLAN),
+    parts: moduleDocumentSections(PARTS_DOCUMENT, PART_PLAN),
   };
 }
 
@@ -1277,7 +1276,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
         moduleId: world.moduleId,
         key,
         framing: 'module',
-        hasPlannedParts: true,
+        hasDocument: true,
         handle,
         surface: PREVIEW_TURN_SURFACE,
         modelSelection: null,
@@ -1310,7 +1309,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
         moduleId: world.moduleId,
         key,
         framing: 'module',
-        hasPlannedParts: true,
+        hasDocument: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,
         modelSelection: null,
@@ -1353,7 +1352,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
         moduleId: world.moduleId,
         key,
         framing: 'module',
-        hasPlannedParts: true,
+        hasDocument: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,
         modelSelection: null,
@@ -1402,7 +1401,7 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
         moduleId: world.moduleId,
         key,
         framing: 'module',
-        hasPlannedParts: true,
+        hasDocument: true,
         handle: stringChatHandle(PARTS_DOCUMENT),
         surface: PREVIEW_TURN_SURFACE,
         modelSelection: null,
