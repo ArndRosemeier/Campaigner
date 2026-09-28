@@ -87,11 +87,11 @@ async function seed(): Promise<void> {
       partPlan: [
         {
           title: 'The Dockyards',
-          levelBand: '1-2',
+          levelBand: '1',
           synopsis: 'Meet the wardens.',
           levelUpTrigger: 'The bell rings.',
         },
-        { title: 'The Vault', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+        { title: 'The Vault', levelBand: '2', synopsis: '', levelUpTrigger: '' },
       ],
     }),
   });
@@ -431,7 +431,10 @@ describe('modulePlanMessages — what the model is told it may decide', () => {
     expect(system).toContain('"gm"');
     // The inventory: what actually exists, with the ids it must use.
     expect(user).toContain(world.module.title);
-    expect(user).toContain('planIndex 0: “The Dockyards” · levels 1-2');
+    // Each plan entry is a level SECTION, and its level IS its own number
+    // (docs/23 §4 — one plan per level, so no entry carries a range).
+    expect(user).toContain('planIndex 0: “The Dockyards” · levels 1 · Meet the wardens.');
+    expect(user).toContain('planIndex 1: “The Vault” · levels 2');
     expect(user).toContain(world.artifacts[0]?.id ?? 'missing');
     expect(user).toContain('the map of “Pier Ambush”');
   });

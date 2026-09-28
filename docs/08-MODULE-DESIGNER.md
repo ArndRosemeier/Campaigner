@@ -40,7 +40,7 @@ interface ModuleSpine {
 }
 interface PartPlan {
   title: string;
-  levelBand: string;            // e.g. '1', '2–3'
+  levelBand: string;            // DERIVED: the level section's OWN number, e.g. '1', '2' (docs/23 §4 — one plan entry per level, never a range; docs/17 row 383)
   synopsis: string;             // one paragraph
   levelUpTrigger: string;       // what ends this part / triggers level-up
 }
@@ -706,9 +706,11 @@ cap, ~2.4k chars inside the 24k total) so follow-ups reuse promoted
 names exactly instead of inventing duplicates.
 
 Prompt requirements (verbatim intent, exact wording up to implementer):
-- Propose `partPlan` covering the level range: **default one part per level;
-  the model MAY merge adjacent levels into one part when the story is better
-  served** (so 1–10 → ~8–10 parts, 1–2 → 1–2 parts). Every level in the range
+- Propose `partPlan` covering the level range: **EXACTLY one part per level, in
+  ascending order** (so `levelCount` parts for levels X–Y). A part's `levelBand`
+  is its OWN level and adjacent levels are NEVER merged — the document carries
+  one section per level, so a merged part has nothing to be represented as
+  (docs/17 row 383 removed the pre-cut merge offer). Every level in the range
   must be covered by exactly one part, in order.
 - Think like an experienced GM: prioritize meaningful choices, varied pacing,
   clear stakes, and challenges that are exciting without feeling arbitrary. Let

@@ -9875,8 +9875,41 @@ argued about, and the measurement changed the design twice:
   VALIDLY and would silently become a level), the same prose without the lookalike composes, and the
   level-addressed edits refuse it too. Escaping such a line is never the fix — it would change the text the
   owner wrote, which is the truth.
-- **WHAT IS LEFT RED IS NAMED, NOT WEAKENED.** 16 pins assert the DELETED LEVEL RANGE (`levelBand` is the
-  section's own number now, so a part cannot cover levels 2–3: `tests/llm/structuredPartyLevel.test.ts` ×11,
-  `tests/features/module-reader.test.tsx` ×2, `tests/lib/modulePdf.test.ts`, `tests/llm/modulePlan.test.ts`,
-  `tests/llm/encounterRun.test.ts`) and 3 byte-identical prompt goldens differ by one trailing space because
-  the document format trims a level body. Nothing was deleted or weakened to buy a green tree.
+- **WHAT WAS LEFT RED WAS NAMED, NOT WEAKENED — AND IS NOW CLOSED (docs/17 row 383).** 16 pins asserted the
+  DELETED LEVEL RANGE (`levelBand` is the section's own number now, so a part cannot cover levels 2–3:
+  `tests/llm/structuredPartyLevel.test.ts` ×11, `tests/features/module-reader.test.tsx` ×2,
+  `tests/lib/modulePdf.test.ts`, `tests/llm/modulePlan.test.ts`, `tests/llm/encounterRun.test.ts`) and 3
+  prompt goldens differed by one trailing space because the document format trims a level body. Nothing was
+  deleted or weakened to buy a green tree. The section below records how each one moved.
+
+## Phase 1b's reds are CLOSED: the deleted RANGE is gone from the CODE, and every pin was MIGRATED — never weakened (docs/17 row 383, docs/23 BUILD STATE, docs/18 §5)
+
+The AUTHORITATIVE red list was the dispatcher's INTEGRATED full gate — **22 tests in 8 files** — not the 1b
+writer's 6-file affected-set measure, and it named two files the writer had missed. What the migration
+establishes, as pins rather than prose:
+
+- **THE LEVEL IS THE SECTION'S OWN NUMBER AND THE MENTION RESOLVER READS NO BAND.** `partLevelMentionFor`
+  returns `levelForPlanIndex(part.planIndex)`; the first section that mentions an entity decides. The pin
+  `tests/llm/structuredPartyLevel.test.ts` "resolves the SECTION'S number, never the (dead) declared band"
+  hands the resolver an IN-MEMORY view whose `levelBand` is the pre-cut range `'3-4'` and requires the
+  section's number — which is only observable if the band is not parsed at all. The briefs, the roster
+  window, the room stamp and the rendered form all follow it.
+- **A PROMPT MAY NOT OFFER A DELETED CAPABILITY.** `tests/llm/module-gen-spine-and-styles.test.ts` compares
+  the composed pass-0 prompt byte-for-byte against nine goldens; the merge offer's absence is now part of
+  what those bytes assert, and `tests/fixtures/adversarialGeneration/flag-off-transcript.json` holds the
+  recorded spine message a flag-off run must reproduce.
+- **A GOLDEN MOVES ONLY THROUGH THE REAL COMPOSER.** The recapture was driven by a temporary env-guarded
+  hook calling the REAL `runSpine`/`generatePart`/flag-off sequence (never a hand edit), and the hook was
+  removed before the commit — so the tree's goldens are render output, not transcriptions.
+- **A DIFFERENTIAL'S BASELINE IS UPDATED BY ITS OWN DELTA, NOT REGENERATED.** `tests/lib/pdfLayoutBaseline.json`
+  is the PRE-layout renderer's frozen run list; the two band labels that moved were rewritten 1:1 (counts
+  unchanged, `217/163/53` runs) so `missingRuns(before, after) === []` still binds and the "adds exactly …"
+  arm still reds on an extra run. Regenerating the whole baseline from the current renderer would have
+  blessed every navigation run as a baseline and destroyed the differential.
+- **A FLAG-OFF CHECKPOINT PIN IS A STATE-SHAPE UPDATE, AND SAYS SO.** `tests/llm/moduleGen-auto-spine.test.ts`
+  keeps the behaviour claim (`draft`, no post-generation call) and adds the stronger derived-state claim:
+  one EMPTY `pending` part per planned section and `modulePartsUntouched(module) === true`.
+- **THE CHANGE MOVED PINS OUTSIDE THE RED LIST, AND THEY WERE MIGRATED TOO:**
+  `tests/llm/level-language.test.ts` ×2 and `tests/features/encounter-form.test.tsx` ×1 read the mention
+  level from plain-value modules whose declared bands were not the section numbers; each now asserts the
+  section's number.

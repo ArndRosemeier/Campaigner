@@ -104,14 +104,15 @@ function cartographer(): Persona {
   });
 }
 
-/** Two-part module: part 0 is level 2, part 1 is level 3. */
+/** Two-section module — the sections ascend from 1, one plan entry per level
+ *  (docs/23 §1 decision 2/§4): part 0 is level 1, part 1 is level 2. */
 async function seedModule(campaignId: Id): Promise<Module> {
   const draft = createModule({
     campaignId,
     title: 'The Ash Descent',
     concept: 'concept',
-    levelMin: 2,
-    levelMax: 3,
+    levelMin: 1,
+    levelMax: 2,
     tone: '',
     sizeDial: 'standard',
   });
@@ -121,8 +122,8 @@ async function seedModule(campaignId: Id): Promise<Module> {
       premise: 'Ash premise.',
       themes: [],
       partPlan: [
-        { title: 'Cinder Gate', levelBand: '2', synopsis: '', levelUpTrigger: '' },
-        { title: 'Ember Halls', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+        { title: 'Cinder Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+        { title: 'Ember Halls', levelBand: '2', synopsis: '', levelUpTrigger: '' },
       ],
     }),
     parts: [
@@ -249,11 +250,13 @@ beforeEach(async () => {
 });
 
 describe('partLevelForMention', () => {
-  it('resolves the containing part exact level', async () => {
+  it('resolves the containing part exact level — its SECTION’S number', async () => {
     const { id: campaignId } = await createCampaign({ name: 'C', system: 'dnd5e' });
     const module = await seedModule(campaignId);
-    expect(partLevelForMention(module, 'Undercroft Feast')).toBe(3);
-    expect(partLevelForMention(module, 'Gate Ambush')).toBe(2);
+    // Sections ascend from 1 (docs/23 §4): the mentioning section's own number
+    // IS the level, never a declared band.
+    expect(partLevelForMention(module, 'Undercroft Feast')).toBe(2);
+    expect(partLevelForMention(module, 'Gate Ambush')).toBe(1);
   });
 
   it('first mention wins for a twice-mentioned encounter', async () => {
@@ -274,42 +277,45 @@ describe('partLevelForMention', () => {
     });
     const reloaded = (await listModulesByCampaign(campaignId)).find((row) => row.id === module.id);
     if (reloaded === undefined) throw new Error('module missing');
-    expect(partLevelForMention(reloaded, 'Undercroft Feast')).toBe(2);
+    // The FIRST mentioning SECTION decides: planIndex 0 is level 1.
+    expect(partLevelForMention(reloaded, 'Undercroft Feast')).toBe(1);
   });
 
-  it('parses a multi-level band to its low end, never loudly', async () => {
+  it('resolves the SECTION’S number, never the (dead) declared band, and never loudly', async () => {
     const { id: campaignId } = await createCampaign({ name: 'C', system: 'dnd5e' });
     const module = await seedModule(campaignId);
-    await saveModule({
+    // One plan entry per level means a RANGE is not representable (docs/23 §1
+    // decision 2): this VIEW carries a range-shaped `levelBand` (the pre-cut
+    // spelling) and the resolver must return the SECTION’S number — 2 — because
+    // it never parses the band at all. Deterministic, and never loud.
+    const withDeadRange = {
       ...module,
       spine: moduleSpineSchema.parse({
         premise: 'Ash premise.',
         themes: [],
         partPlan: [
-          { title: 'Cinder Gate', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+          { title: 'Cinder Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
           { title: 'Ember Halls', levelBand: '3-4', synopsis: '', levelUpTrigger: '' },
         ],
       }),
-    });
-    const reloaded = (await listModulesByCampaign(campaignId)).find((row) => row.id === module.id);
-    if (reloaded === undefined) throw new Error('module missing');
-    expect(partLevelForMention(reloaded, 'Undercroft Feast')).toBe(3);
+    };
+    expect(partLevelForMention(withDeadRange, 'Undercroft Feast')).toBe(2);
   });
 
-  it('returns undefined with no mention, no digits, or a blank name', async () => {
+  it('returns undefined with no mention or a blank name', async () => {
     const { id: campaignId } = await createCampaign({ name: 'C', system: 'dnd5e' });
     const module = await seedModule(campaignId);
     // Never mentioned anywhere in the parts.
     expect(partLevelForMention(module, 'Unmentioned Lair')).toBeUndefined();
-    // A premise-only mention carries no levelBand, so it does not count.
+    // A premise-only mention belongs to no level SECTION, so it does not count.
     await saveModule({
       ...module,
       spine: moduleSpineSchema.parse({
         premise: 'Whispers of [[Premise Ghost]] haunt the road.',
         themes: [],
         partPlan: [
-          { title: 'Cinder Gate', levelBand: '2', synopsis: '', levelUpTrigger: '' },
-          { title: 'Ember Halls', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+          { title: 'Cinder Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+          { title: 'Ember Halls', levelBand: '2', synopsis: '', levelUpTrigger: '' },
         ],
       }),
     });
@@ -338,7 +344,7 @@ describe('structured party line', () => {
       module.spine?.premise ?? '',
       partLevelForMention(module, 'Undercroft Feast'),
     );
-    expect(brief).toContain('Party of 4 adventurers at level 3.');
+    expect(brief).toContain('Party of 4 adventurers at level 2.');
   });
 
   it('the Smith brief stays byte-identical without a structured level', () => {
@@ -355,8 +361,8 @@ describe('Cartographer brief structured level', () => {
     const { db } = await import('@/db');
     await db.personas.put(persona);
     const module = await seedModule(campaign.id);
-    // Mentioned in the level-3 part, but the free-text hint says 5: the
-    // structured level must win for both the line and the numbers.
+    // Mentioned in the level-2 section, but the owner-set field says 5: the
+    // section's own level must win for both the line and the numbers.
     const targetId = await seedEncounterTarget(campaign.id, module.id, 'Undercroft Feast', 5);
     const runInput: StartRunInput = {
       campaign,
@@ -369,8 +375,8 @@ describe('Cartographer brief structured level', () => {
     };
     await runEngine.startRun(runInput);
     const prompt = await briefPrompt();
-    expect(prompt).toContain('Party of 4 adventurers at level 3.');
-    expect(prompt).toContain(stockingOrThrow(80, 3));
+    expect(prompt).toContain('Party of 4 adventurers at level 2.');
+    expect(prompt).toContain(stockingOrThrow(80, 2));
     expect(prompt).not.toContain(stockingOrThrow(80, 5));
   });
 
@@ -405,7 +411,7 @@ describe('Cartographer brief structured level', () => {
     };
     await runEngine.startRun(runInput);
     const prompt = await briefPrompt();
-    expect(prompt).toContain('Party of 4 adventurers at level 2.');
+    expect(prompt).toContain('Party of 4 adventurers at level 1.');
   });
 
   it('no mention falls to the OWNER-SET structured level, never a stored string (docs/17 row 291)', async () => {
@@ -493,10 +499,10 @@ describe('Cartographer brief structured level', () => {
     await db.personas.put(persona);
     await seedRosterBook();
     const module = await seedModule(campaign.id);
-    // Mentioned in the level-3 part, owner-set field says 5 (the divergence
-    // fixture the policy arc folded): BOTH resolvers must read 3.
+    // Mentioned in the level-2 section, owner-set field says 5 (the divergence
+    // fixture the policy arc folded): BOTH resolvers must read 2.
     const targetId = await seedEncounterTarget(campaign.id, module.id, 'Undercroft Feast', 5);
-    expect(encounterPartyLevel(module, 'Undercroft Feast', 5)).toBe(3);
+    expect(encounterPartyLevel(module, 'Undercroft Feast', 5)).toBe(2);
     const runInput: StartRunInput = {
       campaign,
       persona,
@@ -508,9 +514,9 @@ describe('Cartographer brief structured level', () => {
     };
     await runEngine.startRun(runInput);
     const prompt = await briefPrompt();
-    // The brief keys off the part level…
-    expect(prompt).toContain('Party of 4 adventurers at level 3.');
-    expect(prompt).toContain(stockingOrThrow(80, 3));
+    // The brief keys off the section level…
+    expect(prompt).toContain('Party of 4 adventurers at level 2.');
+    expect(prompt).toContain(stockingOrThrow(80, 2));
     // …and so does the roster window: the level-3 creature is NEARER than the
     // level-5 one. Under the old hint-first window resolver the order was the
     // reverse, which is exactly the two-resolver divergence this pins shut.
@@ -545,9 +551,9 @@ describe('Cartographer brief structured level', () => {
     expect(prompt).toContain('MODULE DIFFICULTY');
     expect(prompt).toContain('Much harder');
     expect(prompt).toContain('(targetLevel + 2) × 2');
-    // The stocking numbers the brief states are the SCALED ones: at part level
-    // 3 the standard 80% share would be 4.0 levels, doubled here to 8.
-    expect(prompt).toContain('roughly 8 creature-levels');
+    // The stocking numbers the brief states are the SCALED ones: at section
+    // level 2 the standard 80% share would be 3.2 levels, doubled here to 6.4.
+    expect(prompt).toContain('roughly 6.4 creature-levels');
   });
 
   it('the mentioning part is NAMED with its exact level — the read-only source the editor shows', async () => {
@@ -557,7 +563,7 @@ describe('Cartographer brief structured level', () => {
     // run sizes the fight from: the level half is `partLevelForMention`.
     expect(partLevelMentionFor(module, 'Undercroft Feast')).toEqual({
       partTitle: 'Ember Halls',
-      level: 3,
+      level: 2,
     });
     expect(partLevelMentionFor(module, 'Unmentioned Lair')).toBeUndefined();
   });
@@ -568,9 +574,9 @@ describe('Cartographer brief structured level', () => {
     const { db } = await import('@/db');
     await db.personas.put(persona);
     const module = await seedModule(campaign.id);
-    // The row's owner-set field says 5; the part that mentions the encounter is
-    // banded 3. The PART wins in EVERY sizing path, and the room-stamping path
-    // is the one asserted here (the brief line and the stocking numbers are
+    // The row's owner-set field says 5; the section that mentions the encounter
+    // is level 2. The SECTION wins in EVERY sizing path, and the room-stamping
+    // path is the one asserted here (the brief line and the stocking numbers are
     // asserted above, and the roster window's order just below).
     const targetId = await seedEncounterTarget(campaign.id, module.id, 'Undercroft Feast', 5);
     const runInput: StartRunInput = {
@@ -590,8 +596,8 @@ describe('Cartographer brief structured level', () => {
       | { parsed: { rooms: { targetLevel?: number }[] } }
       | undefined;
     // The single-room brief carries no `targetLevel`, so the stamp is the ONLY
-    // source of this number.
-    expect(output?.parsed.rooms[0]?.targetLevel).toBe(3);
+    // source of this number — the mentioning SECTION'S own level.
+    expect(output?.parsed.rooms[0]?.targetLevel).toBe(2);
   });
 
   it('an OLD row with a stored levelHint loads with no error state and is never a level', () => {
@@ -632,7 +638,7 @@ describe('Cartographer brief structured level', () => {
       'premise',
       partLevelForMention(module, 'Undercroft Feast'),
     );
-    expect(smith).toContain(`Party of ${String(PARTY_SIZE)} adventurers at level 3.`);
+    expect(smith).toContain(`Party of ${String(PARTY_SIZE)} adventurers at level 2.`);
     expect(partyLevelLine(3)).toContain(String(PARTY_SIZE));
   });
 });

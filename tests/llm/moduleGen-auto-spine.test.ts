@@ -6,7 +6,7 @@ import { waitFor } from '@testing-library/react';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { createModule } from '@/domain';
+import { createModule, modulePartsUntouched } from '@/domain';
 import { cancelModuleGen, createModuleAndRun, retrySpine } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import type { ChatResult } from '@/llm/openrouter';
@@ -184,7 +184,16 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
 
     const module = await getModule(moduleId);
     expect(module?.status).toBe('draft');
-    expect(module?.parts).toHaveLength(0);
+    // MECHANICAL STATE-SHAPE UPDATE (docs/17 row 382/383), not a behaviour
+    // change: pass 0 stores the plan, so the derived view now carries one EMPTY,
+    // `pending` part per planned level instead of `parts: []`. The pre-cut
+    // `parts.length === 0` is translated by the ONE seam
+    // (`domain/module.modulePartsUntouched`) — no part has been STARTED or
+    // written, which is exactly the checkpoint's own meaning.
+    expect(module?.parts).toHaveLength(2);
+    expect(module?.parts.every((part) => part.status === 'pending')).toBe(true);
+    expect(module?.parts.every((part) => part.markdown === '')).toBe(true);
+    expect(module === undefined ? false : modulePartsUntouched(module)).toBe(true);
     expect(runModulePostGenerationMock).not.toHaveBeenCalled();
   }, 20000);
 

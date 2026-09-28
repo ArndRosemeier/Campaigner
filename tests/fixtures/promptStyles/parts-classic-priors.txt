@@ -40,7 +40,7 @@ Premise:
 The Salt Ward burned on the first night of the tide.
 
 ### Part 1: The Burning Ward
-PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. 
+PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in.
 
 Writing instructions:
 - Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).

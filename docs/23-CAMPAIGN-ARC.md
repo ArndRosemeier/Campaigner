@@ -28,14 +28,27 @@ document's caption line under a separator is PROSE: it is never read, never comp
 (§2 — the title is flavor; reading prose for a value is AGENTS rule 5's forbidden pattern), so the plan
 title has exactly ONE path and the legacy `==========` labels still match it.
 
-**TWO THINGS THIS MODEL COSTS, MEASURED (`docs/18` §5, `.gate-logs/row382-blocked.md`).** (1) **A part no
-longer covers a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
-1 and "this part covers levels 2–3" is expressed as TWO sections — 16 behaviour pins still assert the
-deleted range (the generator's pass-0 prompt still OFFERS merging, and `partLevelForMention` still parses a
-range; both are 1f's to remove). (2) **The document format TRIMS a level body**, so a part's trailing
-whitespace is not content the row can carry — 3 byte-identical prompt goldens differ by one trailing space.
-`levelMin`/`levelMax` stay STORED and are NOT derived: they are the module's DECLARED range and pass 0's own
-spine prompt reads them BEFORE any section exists.
+**BUILD STATE (2026-09-28, docs/17 row 383). PHASE 1b IS GREEN — every red it left is closed, and the
+deleted capability is gone from the CODE, not only from the tests.** The 22 gate-red pins in 8 files (the
+integrated gate's own list, which named two files the 1b writer had missed) were migrated to the ratified
+model — the level is the SECTION'S own number, and an entity's level is the FIRST section that mentions it —
+with **no assertion deleted or weakened**. `roomBudget.partLevelMentionFor` now returns the mentioning
+section's number (`moduleDocument.levelForPlanIndex(planIndex)`) instead of parsing the derived `levelBand`,
+and pass 0's prompt no longer OFFERS a merge between adjacent levels (a merge cannot be represented: the
+plan's length IS the section count). The nine prompt goldens — three trailing-space and six carrying the
+removed offer, the recorded spine message inside the adversarial transcript among them — were recaptured
+through the project's own render path, with the byte delta and cause named in row 383, and the `pdfLayout`
+content-preservation baseline moved by two band labels per large document (a 1:1 replacement, so its counts
+are unchanged and the "loses not one text run" loss assertion was not weakened).
+
+**THE TWO COSTS OF THIS MODEL, AFTER ROW 383 (`docs/18` §5, `.gate-logs/row382-blocked.md`).** (1) **A part
+does not cover a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
+1 and "this part covers levels 2–3" is expressed as TWO sections — the 16 behaviour pins that asserted the
+deleted range are migrated to the new model, and no live code offers or parses a range any more. (2) **The
+document format TRIMS a level body**, so a part's trailing whitespace is not content the row can carry — the
+goldens that differed by one trailing space are recaptured. `levelMin`/`levelMax` stay STORED and are NOT
+derived: they are the module's DECLARED range and pass 0's own spine prompt reads them BEFORE any section
+exists.
 
 ## 1. The owner's decisions (verbatim substance)
 

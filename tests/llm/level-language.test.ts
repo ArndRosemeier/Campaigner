@@ -207,8 +207,9 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
   });
 
   it('resolves a NAMED entity’s part level, and NEVER a premise sentence that does not name it (docs/17 rows 282/285)', () => {
-    // The owner's exact shape: a part names the entity at 5 — a STRUCTURED,
-    // name-scoped statement — while the premise's prose says 3 about the whole
+    // The owner's exact shape: a part names the entity in a STRUCTURED,
+    // name-scoped way — the mentioning SECTION'S own number (docs/23 §4, one
+    // plan entry per level) — while the premise's prose says 3 about the whole
     // campaign. Row 253 made the part outrank the premise; row 282 removed the
     // MODULE-WIDE premise read entirely, because a CAMPAIGN story introduction
     // is not a level instruction ("Its very sloppy to infer all mobs levels from
@@ -217,7 +218,7 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
     // nobody, so it is still not evidence for anyone.
     const module = moduleFixture({
       premise: 'Eine Mine für Stufe 3 Charaktere. Die Stille Armee hat sich eingenistet.',
-      bands: ['3', '5'],
+      bands: ['1', '2'],
       parts: [
         { planIndex: 0, markdown: 'Die Mine ist dunkel und verlassen. Keine Spuren.' },
         {
@@ -229,12 +230,13 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
       levelMax: 3,
     });
     expect(firstLevelInText(module.spine?.premise ?? '')).toBe(3);
-    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(5);
+    // The mentioning part is SECTION 2, and the section's number is the level.
+    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(2);
     // The premise sentence carries no name, so the name-scoped prose rung is
-    // silent and the STRUCTURED part band decides.
+    // silent and the STRUCTURED part level decides.
     expect(entityProseLevel(module, 'Marten Graubruch')).toBeUndefined();
     // THE MEASURED OUTCOME: the named part states the level — structure, by name.
-    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(5);
+    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(2);
     // An entity NO part names takes the module's own statement, and a premise
     // sentence about nobody is not one: the exact band (3) is, so this is the
     // band and NOT the prose. With a band that states no single level the answer
@@ -246,13 +248,13 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
 
   it('lets the NAMED figure’s own PART SENTENCE outrank the part’s STRUCTURED band (docs/17 row 285, inversion I1)', () => {
     // THE OWNER'S DEFECT: a level-3 mob whose own paragraph says `level 5`
-    // shipped at 3, because `partLevelForMention` reads the part's levelBand and
-    // never its sentence — the band outranked the figure's own prose, inverting
-    // specificity (entity > part > module). The part NAMES the mob, so its
-    // sentence IS evidence about it.
+    // shipped at 3, because `partLevelForMention` read the part's STRUCTURE and
+    // never its sentence — the structure outranked the figure's own prose,
+    // inverting specificity (entity > part > module). The part NAMES the mob, so
+    // its sentence IS evidence about it.
     const module = moduleFixture({
       premise: 'Eine Mine für Stufe 3 Charaktere.',
-      bands: ['3'],
+      bands: ['1'],
       parts: [
         {
           planIndex: 0,
@@ -262,8 +264,8 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
       levelMin: 3,
       levelMax: 3,
     });
-    // The band still says 3…
-    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(3);
+    // The mentioning SECTION still says 1 (its own number)…
+    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(1);
     // …and the figure's own sentence says 5, which now wins.
     expect(entityProseLevel(module, 'Marten Graubruch')).toBe(5);
     expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(5);

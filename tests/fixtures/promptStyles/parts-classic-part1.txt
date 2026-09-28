@@ -18,7 +18,7 @@ Part ends when: The warden falls.
 
 Full markdown of the previous part (continue seamlessly from it):
 
-PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. 
+PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang.
 
 Module entities — wiki-link these ONLY by these exact canonical spellings:
 - Warden Bellamy (npc)

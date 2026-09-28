@@ -346,8 +346,8 @@ async function seed(): Promise<Seed> {
         '[[The Drowned Crown]] is what they are really guarding.',
       themes: [],
       partPlan: [
-        { title: 'The Dockyards', levelBand: '1-2', synopsis: 'Meet the wardens.', levelUpTrigger: 'The bell rings.' },
-        { title: 'The Vault', levelBand: '3', synopsis: 'Break the crown.', levelUpTrigger: 'The tide falls.' },
+        { title: 'The Dockyards', levelBand: '1', synopsis: 'Meet the wardens.', levelUpTrigger: 'The bell rings.' },
+        { title: 'The Vault', levelBand: '2', synopsis: 'Break the crown.', levelUpTrigger: 'The tide falls.' },
       ],
     }),
     parts: [
@@ -442,8 +442,10 @@ describe('buildModuleDefinition — the module IS the document', () => {
     // Premise + the parts, in plan order, each with its position kicker.
     expect(text).toContain('Premise');
     expect(text).toContain('A drowned vault beneath the');
-    expect(text).toContain('PART 1 OF 2 · LEVELS 1-2');
-    expect(text).toContain('PART 2 OF 2 · LEVELS 3');
+    // Each part's kicker names its OWN section's level (docs/23 §4: the band is
+    // the section's number, never a declared range).
+    expect(text).toContain('PART 1 OF 2 · LEVELS 1');
+    expect(text).toContain('PART 2 OF 2 · LEVELS 2');
     expect(text.indexOf('The party rows out at dusk')).toBeLessThan(
       text.indexOf('Below the waterline'),
     );

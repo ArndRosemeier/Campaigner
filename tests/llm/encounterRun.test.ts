@@ -1732,21 +1732,28 @@ describe('encounter runs (M3-B)', () => {
           sizeDial: 'standard',
         }),
       );
-      // THE PART IS THE LEVEL. The pre-291 tests here parsed the encounter's
-      // free-text `levelHint` at the run-engine boundary ("4–6" → 4, "CR 5" →
-      // 5 — the first digit run), a pattern over a model-written string that
-      // docs/17 row 291 DELETES. The structured `levelBand` of the part that
-      // names the encounter is the one source now.
+      // THE SECTION IS THE LEVEL (docs/23 §1 decision 2/§4): one plan entry per
+      // level, sections ascend from 1, so a level-4 home for the encounter means
+      // the plan reserves sections 1–4 and the mention sits in the FOURTH. The
+      // pre-291 tests here parsed the encounter's free-text `levelHint` at the
+      // run-engine boundary ("4–6" → 4, "CR 5" → 5 — the first digit run), a
+      // pattern over a model-written string that docs/17 row 291 DELETES. The
+      // mentioning SECTION's own number is the one source now.
       const module = await saveModule({
         ...draftModule,
         spine: moduleSpineSchema.parse({
           premise: 'Ash premise.',
           themes: [],
-          partPlan: [{ title: 'Ash Gate', levelBand: '4', synopsis: '', levelUpTrigger: '' }],
+          partPlan: [
+            { title: 'Ash Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+            { title: 'Cinder Stair', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+            { title: 'Ember Hall', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+            { title: 'The Deep Vault', levelBand: '4', synopsis: '', levelUpTrigger: '' },
+          ],
         }),
         parts: [
           modulePartSchema.parse({
-            planIndex: 0,
+            planIndex: 3,
             markdown: 'The party reaches [[Window Probe]] beyond the doors.',
             status: 'ready',
             errorMessage: '',
@@ -1762,7 +1769,8 @@ describe('encounter runs (M3-B)', () => {
         'Creature 305',
       );
 
-      // The window leads with the PART's exact level 4 and its neighbors.
+      // The window leads with the mentioning SECTION'S own level — 4 — and its
+      // neighbors, never ascending from level 1.
       expect(rosterLineAt(userContent, 'Creature 004 (4)')).toBeLessThan(
         rosterLineAt(userContent, 'Creature 003 (3)'),
       );

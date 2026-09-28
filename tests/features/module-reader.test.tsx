@@ -139,7 +139,7 @@ async function seedReaderModule(
       },
       {
         title: 'Into the Vault',
-        levelBand: '2–3',
+        levelBand: '2',
         synopsis: 'The vault floods as the relic is recovered.',
         levelUpTrigger: 'The relic is recovered.',
       },
@@ -248,7 +248,8 @@ describe('ModuleReaderPage', () => {
     expect(within(part0).getByText('Levels 1')).toBeInTheDocument();
     expect(within(part0).getByTestId('part-body')).toHaveTextContent('lantern still burns');
     expect(within(part1).getByRole('heading', { name: 'Into the Vault' })).toBeInTheDocument();
-    expect(within(part1).getByText('Levels 2–3')).toBeInTheDocument();
+    // The badge is the SECTION'S own number (docs/23 §4): section 2 is level 2.
+    expect(within(part1).getByText('Levels 2')).toBeInTheDocument();
 
     // The failed part is a loud card with the persisted error and a Retry.
     const failed = screen.getByTestId('part-failed');
@@ -395,12 +396,12 @@ describe('ModuleReaderPage', () => {
     const toc = screen.getByTestId('module-toc');
     expect(within(toc).getByText('Intro')).toBeInTheDocument();
     expect(within(toc).getByText('1 · The Gate Bargain')).toBeInTheDocument();
-    expect(within(toc).getByText('2–3 · Into the Vault')).toBeInTheDocument();
+    expect(within(toc).getByText('2 · Into the Vault')).toBeInTheDocument();
 
     // tests/setup.ts stubs Element.scrollIntoView (jsdom lacks it) — spy on
     // the stub to assert the reader actually scrolls to the section.
     const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView');
-    await user.click(within(toc).getByRole('button', { name: '2–3 · Into the Vault' }));
+    await user.click(within(toc).getByRole('button', { name: '2 · Into the Vault' }));
     expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth' });
     scrollSpy.mockRestore();
     await flushAsyncUpdates();

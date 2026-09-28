@@ -820,11 +820,11 @@ const partyLevelEncounterData: EncounterArtifactData = {
 };
 
 /**
- * A two-part module (part 0 banded 2, part 1 banded 3) whose SECOND part
- * mentions «Undercroft Feast» and nothing else — the same shape
- * `tests/llm/structuredPartyLevel.test.ts` seeds through the repo, built here
- * as a plain VALUE because `EncounterForm` reads the module record it is
- * handed rather than a row (docs/17 row 299).
+ * A two-SECTION module (section 0 is level 1, section 1 is level 2 — one plan
+ * entry per level, docs/23 §4) whose SECOND section mentions «Undercroft Feast»
+ * and nothing else — the same shape `tests/llm/structuredPartyLevel.test.ts`
+ * seeds through the repo, built here as a plain VALUE because `EncounterForm`
+ * reads the module record it is handed rather than a row (docs/17 row 299).
  */
 function mentionModule(): Module {
   return {
@@ -832,8 +832,8 @@ function mentionModule(): Module {
       campaignId: '00000000-0000-4000-8000-0000000000c1',
       title: 'The Ash Descent',
       concept: 'concept',
-      levelMin: 2,
-      levelMax: 3,
+      levelMin: 1,
+      levelMax: 2,
       tone: '',
       sizeDial: 'standard',
     }),
@@ -841,8 +841,8 @@ function mentionModule(): Module {
       premise: 'Ash premise.',
       themes: [],
       partPlan: [
-        { title: 'Cinder Gate', levelBand: '2', synopsis: '', levelUpTrigger: '' },
-        { title: 'Ember Halls', levelBand: '3', synopsis: '', levelUpTrigger: '' },
+        { title: 'Cinder Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+        { title: 'Ember Halls', levelBand: '2', synopsis: '', levelUpTrigger: '' },
       ],
     }),
     parts: [
@@ -887,10 +887,10 @@ describe('encounter form party level — the mentioning part decides, rendered (
       />,
     );
 
-    // The part's OWN band (3) is the level the fight is made for, READ-ONLY —
-    // the owner cannot type a second, disagreeing number over it.
+    // The mentioning SECTION'S OWN NUMBER (2) is the level the fight is made
+    // for, READ-ONLY — the owner cannot type a second, disagreeing number over it.
     const derived = screen.getByTestId('encounter-party-level-readonly');
-    expect(derived).toHaveValue('3');
+    expect(derived).toHaveValue('2');
     expect(derived).toHaveAttribute('readonly');
     // …and the part is NAMED, so the source of the number is visible.
     expect(screen.getByText(/mentions this encounter — its exact level is the party level\./)).toHaveTextContent(

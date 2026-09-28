@@ -627,9 +627,9 @@ const encounterDataShape = z.object({
    * made for when NO module part mentions the encounter (a campaign-level
    * encounter, a module with no parts, a module whose text never names it).
    *
-   * The ONE source of an encounter's party level is the part that mentions it
-   * (`roomBudget.partLevelForMention`, its EXACT `levelBand` — the part IS the
-   * level); this field is the owner's STRUCTURED answer for the honest
+   * The ONE source of an encounter's party level is the section that mentions it
+   * (`roomBudget.partLevelForMention`, its own SECTION'S number — the section IS
+   * the level, docs/23 §4); this field is the owner's STRUCTURED answer for the honest
    * no-part case, never written by a model, never defaulted, never derived
    * from the module's `levelMin`/`levelMax` range (a range is not a level).
    * Unset with no mentioning part makes a sizing run REFUSE loudly

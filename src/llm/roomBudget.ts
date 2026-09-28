@@ -9,7 +9,7 @@ import {
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { comparableName } from '@/domain/artifactAlias';
-import { sameAliasName } from '@/domain';
+import { levelForPlanIndex, sameAliasName } from '@/domain';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import { levelWordsPattern } from '@/llm/language';
 import { escapeRegExp } from '@/domain/escapeRegExp';
@@ -222,13 +222,14 @@ export function firstLevelInText(text: string): number | undefined {
  *    shipped at 3, because the part's STRUCTURED band outranked the figure's
  *    own sentence and specificity was inverted (entity > part > module).
  * 2. **The level of the part that mentions the entity** (`partLevelForMention`
- *    — the spine's own structured `partPlan[].levelBand`), WHEN the caller
- *    names the entity. It is a statement about THIS entity, from STRUCTURED
- *    data and scoped BY NAME — which is the shape the owner's level-7 gnome
- *    needed (that gnome, not every mob). This is a MODULE statement read by
- *    NAME from the plan, never the rendered party-level line the brief carries;
- *    docs/17 row 206 keeps the generated LINE out of the fallback regex, and
- *    this function never touches it.
+ *    — the mentioning part's own level, which IS its section's number since
+ *    docs/23 §4: `planIndex i ↔ level i + 1`), WHEN the caller names the entity.
+ *    It is a statement about THIS entity, from STRUCTURED data and scoped BY
+ *    NAME — which is the shape the owner's level-7 gnome needed (that gnome,
+ *    not every mob). This is a MODULE statement read by NAME from the plan,
+ *    never the rendered party-level line the brief carries; docs/17 row 206
+ *    keeps the generated LINE out of the fallback regex, and this function
+ *    never touches it.
  * 3. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
  *    stated level; a RANGE is not, and inventing a number from it (a midpoint,
  *    a maximum) is the guessing AGENTS rule 1 forbids. So a range `undefined`s
@@ -296,23 +297,24 @@ function firstPartMentioning(
 
 /**
  * The part that MENTIONS an entity, with BOTH facts a surface needs: its plan
- * TITLE and its EXACT level (docs/17 row 291). `partLevelForMention` is this
- * function's level half, so "which part mentions it" and "what level is it"
- * can never be answered twice — the editor names the part the run sized the
+ * TITLE and its EXACT level (docs/17 row 291, docs/23 §4/§6). `partLevelForMention`
+ * is this function's level half, so "which part mentions it" and "what level is
+ * it" can never be answered twice — the editor names the part the run sized the
  * fight from, and it reads the SAME pick.
  *
- * THE LEVEL IS THE PART'S EXACT LEVEL, never band math: a module generated for
- * a range builds exactly one part per level, each with an EXACT `levelBand`
- * ("2–4" is a 2-part, a 3-part and a 4-part). A pathological multi-level band
- * string on one part deterministically parses to its LOW end (the first digit
- * run) — a field the app itself defines, so reading it is a syntax read, never
- * a prose read. `undefined` when no part mentions the name, the spine has no
- * entry for the containing part, or its band carries no digits.
+ * THE LEVEL IS THE SECTION'S OWN NUMBER, never band math and never a parse: one
+ * plan entry per level, so `planIndex i` IS level `i + 1` (the ONE mapping,
+ * `moduleDocument.levelForPlanIndex`). A module's sections ascend from 1 and its
+ * `partPlan[].levelBand` is DERIVED from that same number, so a declared range
+ * has no representation at all any more (docs/23 §1 decision 2, §4) — reading
+ * the band here would resolve a value the model can no longer mean. `undefined`
+ * when no part mentions the name or the spine has no entry for the containing
+ * part.
  */
 export interface PartMention {
   /** The mentioning part's plan title — the part NAMED on the form. */
   partTitle: string;
-  /** The mentioning part's EXACT level (its structured `levelBand`). */
+  /** The mentioning part's EXACT level — its SECTION'S number. */
   level: number;
 }
 
@@ -326,17 +328,17 @@ export function partLevelMentionFor(
   if (part === undefined) return undefined;
   const plan = module.spine?.partPlan[part.planIndex];
   if (plan === undefined) return undefined;
-  const digits = /(\d+)/.exec(plan.levelBand)?.[1];
-  return digits === undefined ? undefined : { partTitle: plan.title, level: Number(digits) };
+  // The SECTION'S number — the ONE mapping, never the (derived, dead) band.
+  return { partTitle: plan.title, level: levelForPlanIndex(part.planIndex) };
 }
 
 /**
  * The referencing part's EXACT level for an encounter mention (docs/17 rows 11
  * and 291) — `partLevelMentionFor`'s level half, the ONE answer to "what level
- * is this encounter made for" when a part mentions it. `undefined` when there
- * is no honest answer (no part mentions it, no spine entry for the containing
- * part, a band with no digits), which is a legitimate state: the caller then
- * reads the OWNER-SET structured level (`partyLevel` /
+ * is this encounter made for" when a part mentions it: the mentioning SECTION'S
+ * own number. `undefined` when there is no honest answer (no part mentions it,
+ * or no spine entry for the containing part), which is a legitimate state: the
+ * caller then reads the OWNER-SET structured level (`partyLevel` /
  * `StartRunInput.encounterPartyLevel`) and REFUSES loudly when that is unset
  * too. Never throws for data conditions.
  */
@@ -395,10 +397,10 @@ export function nameScopedLevel(
  * figure states a level (docs/17 row 285).
  *
  * THE RUNG THAT WAS MISSING. `partLevelForMention` reads the part's STRUCTURED
- * `levelBand` and never the part's own sentence, so a mob whose paragraph said
- * `level 5` in a part banded 3 shipped at 3 — the band outranked the figure's
- * own prose, inverting specificity (entity > part > module). `moduleStatedLevel`
- * consults THIS before either band.
+ * level (its SECTION'S number, docs/23 §4) and never the part's own sentence, so
+ * a mob whose paragraph said `level 5` in a level-3 section shipped at 3 — the
+ * structure outranked the figure's own prose, inverting specificity (entity >
+ * part > module). `moduleStatedLevel` consults THIS before either band.
  *
  * NAME-SCOPED, ALWAYS (`nameScopedLevel` with `'nothing'`): the part is read
  * because it MENTIONS the name, and then only the sentence around that name is
@@ -431,13 +433,13 @@ export function entityProseLevel(
  * WINDOW, the Cartographer's brief guidance, the Smith's content guidance and
  * the room `targetLevel` stamping (docs/17 rows 180 and 291).
  *
- * THE PART IS THE LEVEL. A module generated for a level range builds exactly
- * one part per level, each with an EXACT `levelBand`, and the first part (plan
- * order) whose markdown carries the encounter's `[[Name]]` supplies ITS level.
- * There is no midpoint, no band arithmetic and no free text: an earlier version
- * fell through to a regex over a model-written `levelHint` string and, in one
- * fallback, to `(levelMin + levelMax) / 2` — two invented answers to a question
- * the part already answers.
+ * THE PART IS THE LEVEL. A module builds exactly one level SECTION per plan
+ * entry (docs/23 §1 decision 2), the sections ascend from 1, and the first part
+ * (plan order) whose markdown carries the encounter's `[[Name]]` supplies ITS
+ * SECTION'S number. There is no midpoint, no band arithmetic and no free text:
+ * an earlier version fell through to a regex over a model-written `levelHint`
+ * string and, in one fallback, to `(levelMin + levelMax) / 2` — two invented
+ * answers to a question the part already answers.
  *
  * When NO part mentions the encounter (a campaign-level encounter, a module
  * with no parts, a module that never names it) the ONLY other honest source is
