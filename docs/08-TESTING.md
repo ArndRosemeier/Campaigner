@@ -9632,3 +9632,77 @@ THE RULE. An async wait budget belongs to the SEAM, never to a call site: a
 forgotten per-call `timeout` is the next false RED, which is why the
 population is pinned as data. A legitimate per-test override would have to be
 declared in that scan; none exists.
+
+## The app-shell service worker fallback is ONE behavioural seam (docs/17 row 378, docs/18 §5)
+
+THE DEFECT, MEASURED AT BASE `2515416` (`public/sw.js` sha256
+`67f27e01ae3dc575151d4197271f0e625dbdc21811fdefe4fbc4874f1fe33b62`). A refresh
+or deep link on a client-side route (`/Campaigner/settings`) returned the
+static host's 404. There were TWO defects, and only the second was in the
+brief:
+
+1. **The worker was inert.** The fetch handler gated on
+   `url.pathname.startsWith(globalThis.registration.scope)`. `pathname` is
+   `/Campaigner/settings`; `registration.scope` is an ABSOLUTE url
+   (`https://apps.futuremagic.de/Campaigner/`, the serialization of the
+   registration's scope URL), so the test was always false and EVERY request
+   was deferred — neither the navigation arm nor the `/assets/*` arm ever ran.
+2. **The navigation arm fell back only on a network REJECTION.** A static host
+   answering 404 for a route it has no file for is a RESPONSE, so
+   `.catch(() => caches.match('./'))` never ran and the host's 404 reached the
+   browser; and `caches.match('./')` resolves `undefined` on a miss, so the
+   offline arm could `respondWith(undefined)` — a TypeError.
+
+THE PIN IS BEHAVIOURAL, AND THAT IS THE POINT. The fix changes no identifier
+and no statement SHAPE, so a text scan passes on the broken worker — the
+broken arm's source reads exactly like a plausible one. `tests/architecture/one-app-shell-fallback.test.ts`
+evaluates the REAL `public/sw.js` in a `node:vm` context with stubbed
+`caches` / `fetch` / `registration` / `location` (and `registration.scope` at
+its true absolute value), captures the listener the script registers for
+`fetch`, and dispatches synthetic FetchEvents at it. A real
+`FetchEvent.respondWith` rejects a non-Response argument, so the harness does
+too — which is how the latent `respondWith(undefined)` is caught instead of
+silently passing.
+
+THE ARMS (each is the named pin in the file):
+
+| pin | dispatch | required result |
+|---|---|---|
+| **a** | navigate + network **404**, shell cached | the CACHED SHELL, not the 404 (the owner's bug) |
+| **b** | navigate + network **OK**, shell cached | THAT response (network-first, not cache-first) AND the cached shell refreshed to it |
+| **c** | navigate + fetch **rejects** | the cached shell; with NO shell, a defined honest **503** — never `undefined` |
+| **d** | `/assets/…` GET | cache-first hit served without `fetch`; a miss fetched and cached; non-GET, cross-origin and out-of-scope deferred |
+| **e** | in-scope vs out-of-scope same-origin GET | in-scope handled at all (the scope-guard defect); out-of-scope left to the browser |
+
+RED AT THE BASE, IN-TURN (raw log `.gate-logs/row378/base-red.txt`):
+
+    node_modules/.bin/vitest run tests/architecture/one-app-shell-fallback.test.ts
+    → Test Files 1 failed (1) / Tests 5 failed (5)   [exit 1]
+
+THE DIFFERENTIAL (raw log `.gate-logs/row378/scope-guard-only.txt`). Injecting
+ONLY the scope-guard fix (`url.pathname` → `url.href`, sha256
+`bd58ff513d55f36bec5ef69fc0c3bcf62613910991cdd06a059a924e91acfd83`) leaves the
+file `3 failed | 2 passed`: **(a)** and **(c)'s no-shell arm are STILL RED**
+(the navigation-arm defect, proven independently), while (b), (d) and (e) go
+green. The base file was restored byte-identically (sha256 equal to the
+baseline above). With both fixes the file is 5/5 green
+(`.gate-logs/row378/green.txt`).
+
+THE HONEST LIMIT, which the pin does NOT claim to close: a COLD deep link — a
+browser that has never loaded the app, so no worker is registered and no shell
+is cached — still 404s on this host. The worker cannot reach a browser that has
+never run it, and the host offers no server-side fallback (no Apache; ignores
+`.htaccess` and a `404.html`). Only a client that has loaded the app once is
+covered.
+
+THE DEPLOY NOTE, MEASURED LIVE BEFORE THIS LANDING (`curl -sI
+https://apps.futuremagic.de/Campaigner/sw.js`): `cf-cache-status: HIT`,
+`cache-control: max-age=14400`, `age: 949`, and the SERVED body still carries
+the buggy `url.pathname.startsWith(...)` line. `sw.js` is a FIXED filename, and
+the `no-cache` header written for it lives in the inert `public/.htaccess`, so
+the CDN's four-hour edge TTL can keep the PREVIOUS worker serving after a
+publish — the SW update check would then keep the inert worker and the owner
+would still see the 404. After publishing, purge or bypass
+`…/Campaigner/sw.js` at the edge and verify the SERVED body by content (grep for
+`response.ok`), exactly as step 6 of the publish routine verifies the entry
+asset; do not conclude the fix is live from a `200`.

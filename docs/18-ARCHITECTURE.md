@@ -4302,3 +4302,20 @@ known-debt item).
   same differential as the cure (1500 ms reds at 1000, passes at 3000). And a
   3 s budget lengthens, per wait, only the failure path of a wait that will
   never be satisfied.
+- **THE APP SHELL'S SPA FALLBACK LIVES IN THE SERVICE WORKER, AND A *COLD* DEEP LINK IS STILL THE HOST'S 404
+  (docs/17 row 378).** `public/sw.js`'s navigation arm is network-first and since row 378 also serves the cached
+  shell when the network answers **NON-OK** — necessary because the static host answers **404** for a
+  client-side route it has no file for, and a 404 is a RESPONSE, not a network rejection (the old
+  `.catch`-only arm never ran). The same slice fixed the guard that made the whole worker inert: it compared
+  `url.pathname` against `registration.scope`, which is an ABSOLUTE url (`https://host/<base>/`), so it never
+  matched and deferred every request. `public/.htaccess` (`RewriteRule ^ index.html [L]`, the HTTPS
+  enforcement, the `sw.js` no-cache header) is the fallback the retired Apache/domainfactory host used and is
+  INERT on `apps.futuremagic.de` (no Apache). **DO NOT RE-DERIVE THIS: that host has no redirects and no
+  rewrites, and it IGNORES a `404.html`** — the dispatcher published one live, the deep link still returned the
+  host's generic `Error response` page, and the file was removed. There is NO server-side fix on this host; the
+  service worker is the only fallback available. **THE LIMIT THE WORKER CANNOT CLOSE, written down rather than
+  implied:** a COLD deep link — a browser that has never loaded the app, so no worker is registered and no shell
+  is cached — still 404s here. Only a client that has loaded the app once is covered. The pins are BEHAVIOURAL
+  (`tests/architecture/one-app-shell-fallback.test.ts` drives the real script in a `node:vm` across five arms
+  a–e), because the defect leaves the source's SHAPE unchanged — a text scan passed on the buggy worker; see
+  `docs/08-TESTING.md` §The app-shell service worker fallback is ONE behavioural seam.
