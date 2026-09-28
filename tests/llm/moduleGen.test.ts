@@ -14,7 +14,8 @@ import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, splitPartsDocument, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
+import { createModule, moduleDocumentFromView, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
+import { assembleModuleDocument, moduleDocumentSections } from '@/domain/moduleDocument';
 import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
 import { searchRules } from '@/search';
@@ -1626,10 +1627,10 @@ describe('incremental classification of names the text picked up later (08 §M4-
     expect(versions).toHaveLength(versionsBefore + 1);
     expect(versions[0]?.source).toBe('normalization');
     expect(versions[0]?.label).toBe('Classify new entity names');
-    const captured = assembleModulePartsDocument({
-      partPlan: before?.spine?.partPlan ?? [],
+    const captured = moduleDocumentFromView({
+      spine: before?.spine ?? null,
       parts: before?.parts ?? [],
-    }).document;
+    });
     expect(versions[0]?.docText).toBe(captured);
 
     // The no-op run (nothing unclassified) must not add a version row.
@@ -2179,14 +2180,12 @@ describe('adversarialGeneration — the creation data path (docs/17 row 354, sli
  * labels; the canvas/chat paths are pinned in canvas-versions.test.tsx.
  */
 describe('durable versions — the parts passes snapshot before they write', () => {
-  /** The module row's whole document right now (the pre-change expectation). */
+  /** The module row's whole document right now (the pre-change expectation)
+   * — composed through the ONE view→document seam (docs/17 row 384). */
   async function rowDocument(moduleId: Id): Promise<string> {
     const row = await getModule(moduleId);
     if (row === undefined) throw new Error('module row missing');
-    return assembleModulePartsDocument({
-      partPlan: row.spine?.partPlan ?? [],
-      parts: row.parts,
-    }).document;
+    return moduleDocumentFromView({ spine: row.spine, parts: row.parts });
   }
 
   it('a full parts pass snapshots the pre-pass document ONCE, at entry, labelled for the pass', async () => {
@@ -2530,10 +2529,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     await runSpine(moduleId, campaign);
     await runParts(moduleId, campaign, { planIndexes: [0, 1] });
     const row = await requireRow(moduleId);
-    const { document } = assembleModulePartsDocument({
-      partPlan: row.spine?.partPlan ?? [],
-      parts: row.parts,
-    });
+    const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
     return {
       calls: transcript(),
       premise: row.spine?.premise ?? '',
@@ -2708,22 +2704,18 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     expect(editedPart?.origin).toBe('model');
     expect(editedPart?.writerModel).toBe('editor/model');
 
-    // RE-ASSEMBLE and RE-SPLIT: the derived document still carries the label
-    // lines and the `==========` separators, and the edited markdown IS the
-    // section's text (never a hand-assembled second document format).
-    const { document, parts: sections } = assembleModulePartsDocument({
-      partPlan: row.spine?.partPlan ?? [],
-      parts: row.parts,
-    });
-    expect(document).toContain('[Part 1 of 3 — The Sunken Quarter]\n');
-    expect(document).toContain(
-      `\n\n==========\n\n[Part 2 of 3 — The Drowned Cathedral]\n`,
-    );
-    const split = splitPartsDocument(document, row.spine?.partPlan ?? []);
-    expect(split.map((section) => section.text)).toEqual(
-      sections.map((section) => section.text),
-    );
-    const first = split[0];
+    // COMPOSE and PARSE again: the derived document carries the module
+    // document's own separators (level 0 = the premise, then one section per
+    // level), and the edited markdown IS the level section's text (never a
+    // hand-assembled second document format — docs/17 row 384).
+    const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
+    expect(document).toContain('=====Level 1=====');
+    expect(document).toContain('=====Level 2=====');
+    expect(document).toContain('=====Level 3=====');
+    const sections = moduleDocumentSections(document, row.spine?.partPlan ?? []);
+    // Level 0 is the premise; the run's three planned levels follow it.
+    expect(sections).toHaveLength(4);
+    const first = sections[1];
     expect(first?.text).toBe(REPLACEMENT);
     expect(document.slice(first?.textFrom ?? 0, first?.textTo ?? 0)).toBe(REPLACEMENT);
   }, 20000);

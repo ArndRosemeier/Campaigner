@@ -18,7 +18,7 @@ import { db } from '@/db/db';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { sweepOrphanedArtifacts } from '@/db/orphanSweep';
 import {
-  assembleModulePartsDocument,
+  moduleDocumentFromView,
   battleSchema,
   blankStatBlock,
   createArtifact as buildArtifact,
@@ -1418,11 +1418,12 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     expect(versions).toHaveLength(1);
     expect(versions[0]?.source).toBe('normalization');
     expect(versions[0]?.label).toBe('Apply name-normalization rewrites');
+    // The pre-change document is the LIVE row's own view (docs/17 row 384):
+    // the document CARRIES the premise (level 0), so the expectation must read
+    // the seeded premise too — the legacy formatter could ignore it because it
+    // excluded it by construction.
     expect(versions[0]?.docText).toBe(
-      assembleModulePartsDocument({
-        partPlan: fixtureSpine.partPlan,
-        parts: module.parts,
-      }).document,
+      moduleDocumentFromView({ spine: module.spine, parts: module.parts }),
     );
     expect(versions[0]?.docText).toContain('[[Guard Mira]]');
     await flushAsyncUpdates();

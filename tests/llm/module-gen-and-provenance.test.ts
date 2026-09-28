@@ -52,7 +52,7 @@ import {
   moduleSpineSchema,
   modulePartSchema,
   textOriginIsMachineWritten,
-  assembleModulePartsDocument,
+  moduleDocumentFromView,
   assembleModuleDocument,
   moduleCreationPool,
   MODULE_CREATION_EXCLUDED_KINDS,
@@ -1091,10 +1091,10 @@ describe('moduleGen-floor-repair.test.ts', () => {
     it('takes a durable snapshot BEFORE the write, and restoring it brings the pre-repair text back', async () => {
       const { campaign, moduleId } = await seedShortModule();
       const before = await getModule(moduleId);
-      const preRepairDoc = assembleModulePartsDocument({
-        partPlan: before?.spine?.partPlan ?? [],
+      const preRepairDoc = moduleDocumentFromView({
+        spine: before?.spine ?? null,
         parts: before?.parts ?? [],
-      }).document;
+      });
       chatMock
         .mockResolvedValueOnce(prose('PART-TWO-REPAIRED', ['Flood Trial']))
         .mockResolvedValueOnce(encounterReply('Bell Trial', 'Flood Trial'));
@@ -1106,8 +1106,8 @@ describe('moduleGen-floor-repair.test.ts', () => {
         version.label.includes('Fix module problems'),
       );
       expect(repairVersion?.source).toBe('generation');
-      // Byte-exact pre-change document, in the ONE parts-document format — the
-      // same seam the Versions menu restores from.
+      // Byte-exact pre-change document, in THE module document format — the
+      // same seam the Versions menu restores from (docs/17 row 384).
       expect(repairVersion?.docText).toBe(preRepairDoc);
       expect(repairVersion?.docText).toContain('PART-TWO: The drowned cathedral');
       // The snapshot is the PRE-state: the repair's result is not in it.
@@ -2450,16 +2450,18 @@ describe('provenance-recording.test.ts', () => {
 
       const row = await getModule(module.id);
       if (row === undefined) throw new Error('seeded module missing');
-      // The canvas chat applies its rewrite by saving the WHOLE parts document
-      // (the same call `chatController` makes), so the seam under test is the
-      // one the chat really goes through.
-      const assembled = assembleModulePartsDocument({
-        partPlan: row.spine?.partPlan ?? [],
-        parts: [{ planIndex: 0, markdown: 'Rewritten by the chat model.' }],
+      // The canvas chat applies its rewrite by saving the WHOLE module
+      // DOCUMENT (the same call `chatController` makes), so the seam under test
+      // is the one the chat really goes through.
+      const document = assembleModuleDocument({
+        levels: [
+          { number: 0, text: row.spine?.premise ?? '' },
+          { number: 1, text: 'Rewritten by the chat model.' },
+        ],
       });
       await saveWholeModuleDocument({
         moduleId: module.id,
-        doc: assembled.document,
+        doc: document,
         module: row,
         origin: 'ai',
         label: 'Chat: rewrite the opening',

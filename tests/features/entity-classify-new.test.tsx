@@ -9,7 +9,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { useProgressStore } from '@/lib/progress';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id, type Module } from '@/domain';
-import { assembleModulePartsDocument } from '@/domain/modulePartsDocument';
+import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
@@ -69,13 +69,15 @@ const PART_1_TEXT = 'The docks breathe fog, and nothing moves.';
 
 const SPINE_PREMISE = 'A harbor town whose bell rings by itself beneath the water.';
 
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module DOCUMENT the canvas editor holds (docs/17 row 384): level 0 is
+ * the premise, then one section per planned level. */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: SPINE_PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
   ],
-}).document;
+});
 
 /** The recorded npc the generator knew about: unresolved, so it has a button. */
 const KAEL_RECORD = { name: 'Kael', kind: 'npc' as const, absorbed: [] };
