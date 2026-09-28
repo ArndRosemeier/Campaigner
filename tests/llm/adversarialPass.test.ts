@@ -18,7 +18,7 @@ import { isModuleGenerationClaimed } from '@/llm/canvasBusy';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import { createCampaign } from '@/db/campaignRepo';
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
   createModule,
   modulePartSchema,
   moduleSpineSchema,
@@ -318,12 +318,17 @@ describe('the editor — the ONE text-transform core, for a PREMISE and for a PA
 });
 
 describe('the durable snapshot is taken BEFORE the critique and the editor', () => {
-  it('records the pre-change parts document through the ONE snapshot seam, first', async () => {
+  it('records the pre-change module document through the ONE snapshot seam, first', async () => {
     const before = await getModule(world.moduleId);
     if (before === undefined) throw new Error('seeded module missing');
-    const { document } = assembleModulePartsDocument({
-      partPlan: before.spine?.partPlan ?? [],
-      parts: before.parts,
+    const document = assembleModuleDocument({
+      levels: [
+        { number: 0, text: before.spine?.premise ?? '' },
+        ...before.parts
+          .slice()
+          .sort((a, b) => a.planIndex - b.planIndex)
+          .map((part) => ({ number: part.planIndex + 1, text: part.markdown })),
+      ],
     });
 
     const versionsSeenAtEachCall: number[] = [];

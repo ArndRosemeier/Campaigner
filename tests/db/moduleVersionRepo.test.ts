@@ -15,7 +15,7 @@ import {
 } from '@/db/moduleVersionRepo';
 import { db } from '@/db/db';
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
   createModule as createModuleRow,
   MODULE_VERSION_CAP,
   MODULE_VERSION_PREMISE_NOTE_CAP,
@@ -50,14 +50,17 @@ const PART_0_TEXT = 'The party bargains at the gate.';
 const PART_1_TEXT = '';
 
 function documentFor(part0: string, part1: string): string {
-  return assembleModulePartsDocument({
-    partPlan: PART_PLAN,
-    parts: [
-      { planIndex: 0, markdown: part0 },
-      { planIndex: 1, markdown: part1 },
+  return assembleModuleDocument({
+    levels: [
+      { number: 0, text: PREMISE },
+      { number: 1, text: part0 },
+      { number: 2, text: part1 },
     ],
-  }).document;
+  });
 }
+
+/** The premise the seeded module stores — level 0 of its document. */
+const PREMISE = 'A drowned vault premise.';
 
 /** One ready module on the shared plan (part 1 written, part 2 still empty). */
 async function seedModule(campaignId: Id, title: string, part0: string): Promise<Module> {
@@ -108,14 +111,14 @@ describe('snapshotModuleVersion — byte-exact whole-document capture', () => {
     expect(version?.moduleId).toBe(moduleId);
     expect(version?.source).toBe('chat');
     expect(version?.label).toBe('Chat: make the rain heavier');
-    // Byte-exact: the SAME text the split/save seam reads back, scaffold
-    // labels included (a restore re-splits this string — never a second
-    // document format).
+    // Byte-exact: the SAME text the parse/save seam reads back, separators
+    // included (a restore parses this string — never a second document format).
     expect(version?.docText).toBe(documentFor(PART_0_TEXT, PART_1_TEXT));
-    expect(version?.docText).toContain('==========');
-    expect(version?.docText).toContain('[Part 1 of 2 — The Gate Bargain]');
-    // …and the spine premise is NOT in it (the document's own contract).
-    expect(version?.docText).not.toContain('A drowned vault premise.');
+    expect(version?.docText).toContain('=====Level 1=====');
+    expect(version?.docText).toContain('=====Level 2=====');
+    // …and the premise IS in it: it is level 0 of the module document
+    // (docs/17 row 384), which is why a restore no longer needs a second half.
+    expect(version?.docText).toContain('A drowned vault premise.');
   });
 
   it('parses on read — a row with an impossible source fails loud, never renders blank', async () => {
@@ -150,14 +153,15 @@ describe('snapshotModuleVersion — byte-exact whole-document capture', () => {
   });
 });
 
-describe('the PREMISE rides the SAME row, in its own field (docs/17 row 357)', () => {
-  it('captures the spine premise byte-exact beside the document — never inside docText', async () => {
+describe('the PREMISE is level 0 of the captured document (docs/17 rows 357 + 384)', () => {
+  it('captures the document WITH its premise — the entry no longer depends on a second half', async () => {
     const version = await snapshotModuleVersion(moduleId, 'generation', 'Adversarial pass: premise');
     expect(version?.premise).toBe('A drowned vault premise.');
-    // The document FORMAT is unchanged: the premise is not folded into it
-    // (that would be a second document format the split seam cannot read).
+    expect(version?.documentFormat).toBe('module-document');
     expect(version?.docText).toBe(documentFor(PART_0_TEXT, PART_1_TEXT));
-    expect(version?.docText).not.toContain('A drowned vault premise.');
+    // The PREMISE IS IN docText (level 0); the `premise` field is the entry's
+    // own display record of the same bytes, not a second half a restore needs.
+    expect(version?.docText).toContain('A drowned vault premise.');
   });
 
   it('captures an EMPTY premise as the empty string — captured-empty is not "not captured"', async () => {

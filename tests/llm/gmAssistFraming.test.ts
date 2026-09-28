@@ -21,15 +21,20 @@ import {
 
 /**
  * The canvas chat's FRAMING seam (docs/17 row 362): ONE system prompt,
- * parameterised by the surface, with the module chat byte-identical.
+ * parameterised by the surface, with the module chat rendered by the ONE
+ * default builder.
  *
  * THE LOAD-BEARING PIN IS THE GOLDEN:
- * `tests/fixtures/gmAssistFraming/module-chat-golden.json` was captured from
- * the tree BEFORE the framing parameter landed, by rendering the REAL
- * `canvasChatSystemPrompt()` and BOTH payload builders over fixed inputs. The
- * default (and an explicit `'module'`) must reproduce it character for
- * character — that is what makes parameterising the prompt safe for the chat
- * the owner already uses.
+ * `tests/fixtures/gmAssistFraming/module-chat-golden.json` is rendered from the
+ * REAL `canvasChatSystemPrompt()` and BOTH payload builders over fixed inputs
+ * (the table below), and the default (and an explicit `'module'`) must reproduce
+ * it character for character. It was FIRST captured before the framing
+ * parameter landed (row 362) and RECAPTURED at docs/17 row 384, when the chat
+ * context became the module DOCUMENT: the prompt's scaffold rules, the turn
+ * content's header and the grounding sentence all say `document` now, and the
+ * input table is the document (`=====Level N=====` sections, level 0 = the
+ * premise) instead of the legacy `==========` parts document. Recaptured
+ * through this same render path — never hand-edited.
  *
  * The rest holds the GM framing to its INTENT, in the owner's own words: the
  * story side of mastering (never encounters/battlemaps/tokens/initiative/stat
@@ -39,9 +44,11 @@ import {
  * keeps the module chat's edit capabilities.
  */
 
-/** The input table the golden was captured with (bytes must not move). */
+/** The input table the golden was captured with (bytes must not move). Since
+ * docs/17 row 384 the document is THE module document: level 0 is the premise,
+ * then `=====Level N=====` sections. */
 const DOCUMENT =
-  '[Part 1 of 2 — The Gate Bargain]\nThe party bargains with [[Keeper Ilse]].\n\n==========\n[Part 2 of 2 — Under the Docks]\nRain hammers the stones.\n';
+  'The premise of the drowned vault.\n\n=====Level 1=====\n## The Gate Bargain\nThe party bargains with [[Keeper Ilse]].\n\n=====Level 2=====\nRain hammers the stones.';
 const GROUNDING = 'Campaign: Ember\n\nGame system: D&D 5e';
 const INSTRUCTION = 'make it rain';
 const HISTORY = [
@@ -71,7 +78,7 @@ function golden(): Golden {
 const MODULE_FRAMING = golden().system.slice(0, golden().system.indexOf('\n'));
 
 describe('the module chat is BYTE-IDENTICAL (framing golden, docs/17 row 362)', () => {
-  it('the default system prompt is the pre-change bytes, character for character', () => {
+  it('the default system prompt is the golden bytes, character for character', () => {
     const before = golden();
     expect(before.system.length).toBeGreaterThan(1000);
     expect(canvasChatSystemPrompt()).toBe(before.system);
