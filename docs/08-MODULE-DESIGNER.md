@@ -2042,7 +2042,7 @@ beside **Board** was retired by owner request, ledger row 138, because it and
 implementation in
 `src/features/modules/canvas/`.
 
-> **THIS SECTION IS MID-MIGRATION — READ THE BUILD STATE FIRST** (docs/23-CAMPAIGN-ARC, docs/17 rows
+> **THIS SECTION IS MID-MIGRATION — READ THE BUILD STATE FIRST (phase 1c is COMPLETE: docs/17 row 385)** (docs/23-CAMPAIGN-ARC, docs/17 rows
 > 380/382/383/384). Since **row 384 the canvas document, the chat's context and the save path ARE THE
 > MODULE DOCUMENT**: ONE text of `=====Level N=====` sections over **level 0 (the premise, which has no
 > separator of its own)**, owned by `domain/moduleDocument` (`moduleDocumentFromView` /
@@ -2050,7 +2050,10 @@ implementation in
 > paragraphs BELOW that still describe the `==========` + `[Part n of m — title]` parts document
 > (`domain/modulePartsDocument`, which EXCLUDED the premise) are being migrated in this docs pass; do
 > NOT build anything new on the parts format — the only remaining caller is the PDF lane
-> (`lib/modulePdf`), and docs/18 §2/§5 carry the frontier and the 17-file test-migration remainder.
+> (`lib/modulePdf` — phase 1d/1e), and docs/18 §2/§5 carry the frontier. The test tree is migrated and green
+> (row 385), and two behavioural rules the migration settled are worth knowing here: a document whose LAST level
+> is empty keeps its separator line TERMINATED (so text typed or filled there lands on its own line), and an
+> empty level is filled by a search on its own separator line.
 
 - **The substrate is CodeMirror 6, text-first** (research-ratified): the
   editor mounts `@uiw/react-codemirror` + `@codemirror/lang-markdown` (both

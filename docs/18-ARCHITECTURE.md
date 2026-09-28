@@ -4534,3 +4534,31 @@ known-debt item).
   `patchModuleSpine` before the document write. For a version captured since row 384 the two writes agree
   byte-for-byte (same snapshot), so the redundancy is harmless; folding `restorePremise` away (the document
   restore covers it) is a follow-up for phase 1d/1f, not a second mechanism to keep.
+
+### §5 (the phase 1c closure, docs/17 row 385) — the three defects the source-only slice could not see, the two semantic claims that changed, and the test-seam fold
+
+- **THREE DEFECTS, EACH FIXED IN THE ONE SEAM THAT OWNS IT.** (1) **An empty TRAILING level had an unterminated
+  separator line.** `assembleModuleDocument` trimmed the newline a bodyless section needs, so the parse put that
+  section's range at the very end of the document and any text written there — a chat empty-level fill, or the
+  owner typing after the last separator — glued onto the separator (`…=====Level 3=====The watch`) and made the
+  document unreadable (the near-miss arm refuses it, so the failure was loud but the edit was lost). The formatter
+  now terminates the line; only an empty trailing section gains the byte. (2) **The per-part save's LINKS hook was
+  lost.** `saveModulePartText` promoted a changed part's artifact references after its write; the document write did
+  not, so a canvas edit that linked another module's artifact stopped promoting it — a silent loss of a
+  centralization that had been carried by the deleted seam. `saveWholeModuleDocument` now promotes the CHANGED
+  level texts only, after the write lands. (3) **The chat applier's plan titles were shifted by one level.** The
+  sections it passed as the plan include level 0 (the premise), so every outcome card named the previous level
+  ("Level 1 — Premise"); the caller drops level 0 before building the plan list.
+- **TWO SEMANTIC CLAIMS CHANGED (one rewritten, one REVERSED), each with its reason in the pin.** A plan-shaped
+  restore refusal ("saved for a different part plan") has NO document-model equivalent — the document has no plan
+  to contradict — and became two pins that DO: a saved document that no longer parses is refused by line, and a
+  LEGACY `'parts-document'` row is refused BY NAME (the `documentFormat` discriminator; without it the legacy text
+  would be misread as ONE giant premise). And a version row predating the `premise` field used to mean "premise
+  left as it stands"; the document CONTAINS the premise, so the restore brings it back whatever that field says —
+  the field is the versions menu's display record, not a second half (the recorded debt in the §5 entry above).
+- **A TEST-TREE FOLD THE TRIPWIRE FORCED.** The canvas-chat turn option builders in `canvas-chat-changes`,
+  `canvas-chat-details` and `canvas-chat-turn-parity` were byte-identical bodies BLESSED as debt by the row-212
+  baseline; the fixture migration re-hashed them, so the tripwire named both the new groups and the stale entries.
+  They are ONE seam now — `tests/helpers/chatTurnOptions.ts` (`previewOptionsFor`/`editorOptionsFor`, taking a
+  module-id GETTER because every caller reassigns its `world` in `beforeEach`) — and the two stale baseline lines
+  were DELETED. No baseline entry was added: the tripwire's direction is one-way.

@@ -3,8 +3,8 @@ import { EditorView } from '@codemirror/view';
 
 import type { Id } from '@/domain';
 import { canvasChatKey } from '@/features/modules/canvas/chatStore';
-import { runChatTurn } from '@/features/modules/canvas/chatController';
-import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
+import type { runChatTurn } from '@/features/modules/canvas/chatController';
+import type { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
 
 /**
  * THE shared option builders for the canvas chat's two turn surfaces
