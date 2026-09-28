@@ -16,6 +16,7 @@ import type { AnyArtifact, Id } from '@/domain';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import type { CanvasChatFraming } from '@/llm/canvasChat';
+import { isLevelEditCommand } from '@/llm/canvasChat';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -660,6 +661,13 @@ function OutcomeCard({
       part.planIndex < 0 ? 'Premise' : `Level ${String(part.planIndex + 1)} — ${part.title}`,
     )
     .join(', ');
+  // The card's mini before→after. `before` is the text the command REPLACED;
+  // an append_level (and a level it CREATED) replaced no span, so its command
+  // carries none and the struck line is omitted rather than shown empty. A
+  // search edit's own `<search>` is the fallback for an outcome that recorded
+  // no matched text — a level command has no search, so it falls back to null.
+  const replacedText =
+    outcome.before ?? (isLevelEditCommand(outcome.command) ? null : outcome.command.search);
   // The adversarial review's findings (docs/17 row 360): the WHOLE reason the
   // owner asked for a chat-triggered pass, so they render above the edit on
   // every kind of card — an outcome that showed only the edit would hide what
@@ -725,9 +733,11 @@ function OutcomeCard({
         )}
         {findingsBlock}
         <div className="grid gap-1 font-mono text-xs">
-          <span className="whitespace-pre-wrap rounded bg-destructive/10 px-1.5 py-1 text-destructive line-through decoration-destructive/50">
-            {outcome.before ?? outcome.command.search}
-          </span>
+          {replacedText !== null && (
+            <span className="whitespace-pre-wrap rounded bg-destructive/10 px-1.5 py-1 text-destructive line-through decoration-destructive/50">
+              {replacedText}
+            </span>
+          )}
           <span className="whitespace-pre-wrap rounded bg-emerald-500/10 px-1.5 py-1 text-emerald-800 dark:text-emerald-200">
             {outcome.command.replace}
           </span>

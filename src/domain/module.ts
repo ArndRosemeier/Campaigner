@@ -944,11 +944,25 @@ export function unmatchedEntityLevelHints(
  * point. Whole-doc offsets stored on outcomes (`from`/`to`/`failureFrom`)
  * are history anchors only, never apply coordinates.
  */
-export const moduleChatCommandSchema = z.object({
-  search: z.string(),
-  replace: z.string(),
-  all: z.boolean(),
-});
+export const moduleChatCommandSchema = z.union([
+  // The ORIGINAL search/replace command, byte-unchanged: every thread stored
+  // before docs/17 row 381 parses into exactly the object it always did.
+  z.object({
+    search: z.string(),
+    replace: z.string(),
+    all: z.boolean(),
+  }),
+  // The LEVEL-ADDRESSED commands (docs/17 row 381, docs/23 §2.1): the target is
+  // the level number the document spells (0 = the premise) and the body is the
+  // text the app places there. They must persist beside the search edits, or a
+  // turn carrying one would fail this schema, the chat-history write would
+  // throw, and the thread would never survive a reload.
+  z.object({
+    kind: z.enum(['replace_level', 'append_level']),
+    level: z.number().int().min(0),
+    replace: z.string(),
+  }),
+]);
 
 export type ModuleChatCommand = z.infer<typeof moduleChatCommandSchema>;
 

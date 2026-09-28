@@ -32,6 +32,24 @@ import {
  *
  *   <edit all="false"><search>…current text…</search><replace>…new text…</replace></edit>
  *
+ * LEVEL-ADDRESSED COMMANDS (docs/17 row 381, the owner's refinement: *the APP
+ * writes the canonical separator and the level number, so the model never emits
+ * the scaffold*). The SAME vocabulary carries two more commands — the same
+ * extractor, the same zod boundary, the same command array, the ONE applier:
+ *
+ *   <replace_level level="3"><replace>…level 3's whole new text…</replace></replace_level>
+ *   <append_level level="4"><replace>…text added at the end of level 4…</replace></append_level>
+ *
+ * The target is the level NUMBER the document spells, so **the premise is level
+ * 0 and is edited by the SAME commands** (there is deliberately no
+ * `replace_premise`). `replace_level` names a level the document HAS;
+ * `append_level` names one it has or exactly the NEXT one, which it then
+ * CREATES with the app's canonical `=====Level N=====` line. Any other target
+ * is refused LOUDLY by the domain seam (`domain/moduleDocument`) and reported as
+ * a failed outcome card — never silently dropped, never guessed, and never a
+ * second implementation of the edit, the `max + 1` rule or the
+ * separator-lookalike refusal.
+ *
  * Owner direction (docs/17 ledger row 51): no part selection — the model
  * sees the WHOLE module, which since docs/17 row 384 is THE module DOCUMENT
  * (docs/23 §2–§4): the PREMISE (level 0, everything before the first
@@ -116,14 +134,90 @@ import {
  * - Stop/cancel supported through `signal` (a user abort is not an error).
  */
 
-/** The zod boundary for one edit command. */
-export const canvasEditCommandSchema = z.object({
-  search: z.string(),
-  replace: z.string(),
-  all: z.boolean(),
-});
+/**
+ * The zod boundary for one SEARCH/REPLACE edit command — the protocol's
+ * original shape, and its parsed value stays BYTE-IDENTICAL: no discriminant
+ * field is added, so every pre-existing pin and every stored chat outcome
+ * reads exactly the object it always read.
+ */
+export const canvasSearchEditCommandSchema = z
+  .object({
+    search: z.string(),
+    replace: z.string(),
+    all: z.boolean(),
+  })
+  .strict();
+
+export type CanvasSearchEditCommand = z.infer<typeof canvasSearchEditCommandSchema>;
+
+/** The two LEVEL-ADDRESSED writes (docs/23 §2.1/§4, docs/17 row 381): replace
+ * level N's whole text, or append to level N — creating it when N is exactly
+ * the next level the document can take. */
+export const CANVAS_LEVEL_EDIT_KINDS = ['replace_level', 'append_level'] as const;
+
+export type CanvasLevelEditKind = (typeof CANVAS_LEVEL_EDIT_KINDS)[number];
+
+/**
+ * The zod boundary for ONE level-addressed command. The TARGET is the level
+ * NUMBER the document spells — `0` is the PREMISE, which is why there is
+ * deliberately no premise-shaped command — and the BODY is the text the app
+ * places there (`replace`). The model never emits the `=====Level N=====`
+ * scaffold: the app writes it (the whole point of the refinement the owner
+ * approved). `replace_level` names a level the document HAS; `append_level`
+ * names one it has, or exactly the next one — anything else is refused by the
+ * domain seam, loudly and by name.
+ */
+export const canvasLevelEditCommandSchema = z
+  .object({
+    kind: z.enum(CANVAS_LEVEL_EDIT_KINDS),
+    level: z.number().int().min(0),
+    replace: z.string(),
+  })
+  .strict();
+
+export type CanvasLevelEditCommand = z.infer<typeof canvasLevelEditCommandSchema>;
+
+/**
+ * THE edit-command vocabulary — ONE union, so the reply's command array, the
+ * ONE applier, the outcome cards and the persisted thread all carry the same
+ * things. A union rather than one object with optional fields because the two
+ * shapes have genuinely different required parts (a search edit has no level; a
+ * level edit has no search), and `.strict()` on both members is what makes a
+ * command carrying BOTH shapes a loud failure instead of one shape being
+ * silently stripped away — the rule the `<change>` union beside it already
+ * follows.
+ */
+export const canvasEditCommandSchema = z.union([
+  canvasSearchEditCommandSchema,
+  canvasLevelEditCommandSchema,
+]);
 
 export type CanvasEditCommand = z.infer<typeof canvasEditCommandSchema>;
+
+/**
+ * TRUE for a level-addressed command, narrowing to its shape. The discriminant
+ * is the `kind` field the search half does not carry — which is exactly why the
+ * original command's parsed value is unchanged by this union.
+ */
+export function isLevelEditCommand(
+  command: CanvasEditCommand,
+): command is CanvasLevelEditCommand {
+  return 'kind' in command;
+}
+
+/**
+ * The command as the reply protocol spells it — ONE formatter, so the
+ * report-to-LLM echo (and any surface that shows a command back) quotes a
+ * level-addressed command in ITS OWN spelling rather than as a search edit that
+ * would fail again. The search branch is byte-identical to the literal it
+ * replaced.
+ */
+export function canvasEditCommandBlock(command: CanvasEditCommand): string {
+  if (isLevelEditCommand(command)) {
+    return `<${command.kind} level="${String(command.level)}"><replace>${command.replace}</replace></${command.kind}>`;
+  }
+  return `<edit all="${command.all ? 'true' : 'false'}"><search>${command.search}</search><replace>${command.replace}</replace></edit>`;
+}
 
 /**
  * The zod boundary for one DETAILS request (`<request><name>…</name></request>`
@@ -412,6 +506,51 @@ type ChangeTagAttributes =
   | { kind: 'artifact'; operation?: CanvasChatChangeOperation }
   | { kind: 'adversarial'; target: CanvasChatAdversarialTarget };
 
+/** What a `<replace_level …>` / `<append_level …>` open tag declared. */
+interface LevelEditTagAttributes {
+  level: number;
+}
+
+/**
+ * Parses the tag-body attributes of `<replace_level …>` / `<append_level …>`:
+ * EXACTLY ONE required `level="N"`. N is a STRUCTURED value the app itself
+ * defines (the level number the document spells, never free text): a whole
+ * number written the canonical way — no sign, no leading zero — where `0` is
+ * the PREMISE. Anything else (an unknown attribute, a second `level`, a
+ * non-number, `level="03"`) is a loud parse failure of the WHOLE reply, never a
+ * near-miss that silently reads as a number (AGENTS rule 5's structured-field
+ * carve-out, and the near-miss rule the document format already applies).
+ */
+function parseLevelEditAttributes(body: string, tag: CanvasLevelEditKind): LevelEditTagAttributes {
+  const trimmed = body.trim();
+  let level: number | undefined;
+  for (const attribute of scanTagAttributes(body, tag)) {
+    if (attribute.name !== 'level') {
+      throw new CanvasChatParseError(
+        `unknown attribute "${attribute.name}" in <${tag}> tag — it takes exactly one level="N", the level number the document spells (0 is the premise)`,
+        trimmed,
+      );
+    }
+    if (level !== undefined) {
+      throw new CanvasChatParseError(`the <${tag}> tag carries "level" twice`, trimmed);
+    }
+    if (!/^\d+$/.test(attribute.value) || attribute.value !== String(Number(attribute.value))) {
+      throw new CanvasChatParseError(
+        `level must be the level number the document spells — a whole number without leading zeros, 0 being the premise; got "${attribute.value}"`,
+        trimmed,
+      );
+    }
+    level = Number(attribute.value);
+  }
+  if (level === undefined) {
+    throw new CanvasChatParseError(
+      `<${tag}> needs the level it writes — write <${tag} level="N"><replace>THE TEXT</replace></${tag}>, where level="0" is the premise`,
+      trimmed,
+    );
+  }
+  return { level };
+}
+
 /**
  * Parses the tag-body attributes of `<change …>`. Two shapes, ONE tag (so a
  * chat turn asks for either through the SAME seam):
@@ -540,17 +679,21 @@ function expectLiteral(text: string, at: number, literal: string, excerpt: strin
   }
 }
 
-/** The three command tags the reply protocol carries. */
-type CommandTag = 'edit' | 'request' | 'change';
+/** The command tags the reply protocol carries (docs/17 row 381 added the two
+ * level-addressed writes — SAME extractor, SAME command array, never a second
+ * parser). */
+type CommandTag = 'edit' | 'request' | 'change' | CanvasLevelEditKind;
 
 /** The scan order of the command tags — the earliest opener wins, so this only
  * decides ties, which two distinct literals can never share. */
-const COMMAND_TAGS: readonly CommandTag[] = ['edit', 'request', 'change'];
+const COMMAND_TAGS: readonly CommandTag[] = ['edit', 'request', 'change', ...CANVAS_LEVEL_EDIT_KINDS];
 
 const COMMAND_TAG_LENGTHS: Readonly<Record<CommandTag, number>> = {
   edit: '<edit'.length,
   request: '<request'.length,
   change: '<change'.length,
+  replace_level: '<replace_level'.length,
+  append_level: '<append_level'.length,
 };
 
 /**
@@ -641,6 +784,61 @@ function parseEditCommandAt(raw: string, at: number, commands: CanvasEditCommand
     replace: replace.content,
     all: attrs.all,
   }));
+  if (commands.length > MAX_COMMANDS_PER_REPLY) {
+    throw new CanvasChatParseError(
+      `reply carries more than ${String(MAX_COMMANDS_PER_REPLY)} edit commands — split the work across replies`,
+      raw.slice(Math.max(0, raw.length - 200)),
+    );
+  }
+  return cursor;
+}
+
+/**
+ * Parses ONE level-addressed block at `at` (its '<') and returns the cursor
+ * after its closing tag, appending the parsed command (docs/17 row 381).
+ *
+ * `<replace_level level="N"><replace>THE TEXT</replace></replace_level>` and
+ * `<append_level level="N"><replace>THE TEXT</replace></append_level>` — the
+ * SAME strict shape as `<edit>`, with two deliberate differences: the target is
+ * the `level` ATTRIBUTE (a number the app defines) instead of a `<search>` body,
+ * and the command carries EXACTLY ONE `<replace>` child. A `<search>` child here
+ * is refused rather than ignored: it would be a search edit wearing a level
+ * command's clothes, and the two have different application rules.
+ */
+function parseLevelEditCommandAt(
+  raw: string,
+  at: number,
+  tag: CanvasLevelEditKind,
+  commands: CanvasEditCommand[],
+): number {
+  const tagEnd = raw.indexOf('>', at);
+  if (tagEnd === -1) {
+    throw new CanvasChatParseError(`unterminated <${tag}> tag — no ">" before end of reply`, raw.slice(at));
+  }
+  if (raw[tagEnd - 1] === '/') {
+    throw new CanvasChatParseError(
+      `<${tag}> cannot be self-closing — it carries a <replace> body: <${tag} level="N"><replace>THE TEXT</replace></${tag}>`,
+      raw.slice(at),
+    );
+  }
+  const attrs = parseLevelEditAttributes(raw.slice(at + tag.length + 1, tagEnd), tag);
+  const excerpt = raw.slice(at, Math.min(raw.length, at + 400));
+  let cursor = tagEnd + 1;
+  while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
+  expectLiteral(raw, cursor, '<replace>', excerpt, tag);
+  const replace = scanUntilClose(raw, cursor + '<replace>'.length, 'replace');
+  cursor = replace.next;
+  while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
+  if (!raw.startsWith(`</${tag}>`, cursor)) {
+    throw new CanvasChatParseError(
+      `expected </${tag}> to close the command block (it carries exactly one <replace> body and NO <search> — the LEVEL is the target)`,
+      excerpt,
+    );
+  }
+  cursor += `</${tag}>`.length;
+  commands.push(
+    canvasEditCommandSchema.parse({ kind: tag, level: attrs.level, replace: replace.content }),
+  );
   if (commands.length > MAX_COMMANDS_PER_REPLY) {
     throw new CanvasChatParseError(
       `reply carries more than ${String(MAX_COMMANDS_PER_REPLY)} edit commands — split the work across replies`,
@@ -828,7 +1026,8 @@ export function parseCanvasChatReply(raw: string): ParsedCanvasChatReply {
     proseParts.push(raw.slice(cursor, next.at));
     if (next.tag === 'edit') cursor = parseEditCommandAt(raw, next.at, commands);
     else if (next.tag === 'request') cursor = parseRequestAt(raw, next.at, requests);
-    else cursor = parseChangeAt(raw, next.at, changes);
+    else if (next.tag === 'change') cursor = parseChangeAt(raw, next.at, changes);
+    else cursor = parseLevelEditCommandAt(raw, next.at, next.tag, commands);
   }
   return {
     prose: proseParts.join('').trim(),
@@ -1140,14 +1339,15 @@ function trimLeadingBlankLines(text: string): string {
  * loudly via `fill-failed`). The separator line is the anchor because the
  * document has no label line — the APP writes the separator, so it is unique
  * per level exactly as the old label was. Level 0 has NO separator and can
- * therefore not be filled from empty: it is edited once it has text (a
- * level-addressed append for the premise is row 381's, deliberately not here).
+ * therefore not be filled from empty: it is edited once it has text (the
+ * level-addressed commands extend it from empty instead — `append_level 0`,
+ * docs/17 row 381).
  *
  * Zero matches return the closest candidate across the sections (best
  * bigram-similarity section) — reporting only, never an auto-apply.
  */
 export function resolveCanvasEditAcrossParts(
-  command: Pick<CanvasEditCommand, 'search' | 'replace'>,
+  command: Pick<CanvasSearchEditCommand, 'search' | 'replace'>,
   sections: readonly ModuleDocumentSection[],
 ): CanvasCrossPartResolution {
   if (command.search === '') {
@@ -1293,6 +1493,15 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- Filling an EMPTY level (a =====Level N===== line with no text under it): make the search EXACTLY that level\'s separator line (nothing more) and start the replace with the same separator line — the text after that line becomes the level\'s content. Anything else fails. The premise (level 0) has no separator line and cannot be filled this way; it is edited once it has text.',
     '- The search text may not be empty and must not contain the literal strings </search> or </edit>.',
     '- Write <search> and <replace> bodies verbatim — no escaping, no markdown code fences around them.',
+    'When you want to write a WHOLE level, extend one, or add the NEXT one, you do not have to hunt for its text: address the level by its NUMBER instead of searching. Two commands do that, and the APP writes the =====Level N===== separator and its number for you — never write that scaffold yourself:',
+    '<replace_level level="3"><replace>the level\'s new text</replace></replace_level>',
+    '<append_level level="4"><replace>text to add at the end of level 4</replace></append_level>',
+    'Level command rules:',
+    '- "level" is the level number the document spells. Level 0 is the PREMISE (it has no separator of its own); 1, 2, 3 … are the =====Level N===== sections. There is deliberately no premise-shaped command: replace_level level="0" rewrites the premise through the SAME path.',
+    '- replace_level N replaces level N\'s WHOLE text. N must be a level the document ALREADY HAS (0 up to its last level) — a number that is not there is refused and nothing is created.',
+    '- append_level N adds your text at the END of level N. If N is exactly ONE MORE than the last level the document has, it CREATES that level (the app writes its separator); any other number is refused, because a level numbering with a gap makes the document unreadable. On a document with no level sections yet the last level is 0, so append_level level="1" creates level 1.',
+    '- Both take exactly ONE <replace> body and NO <search>: the level number IS the target. The body is the text itself — never write a =====Level N===== line inside it (a line that looks like a level header is refused).',
+    '- A refused level command changes NOTHING and comes back to you as a failed card naming the reason; the other commands in the same reply still apply.',
     'The document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
     'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s document only.',
     'You can also ASK for the STORED details of a named artifact you cannot see (an encounter\'s level, budget, rooms and roster; an NPC\'s stat block; a location\'s fields; any row\'s stored prose). Reply with a request block:',
@@ -1319,7 +1528,7 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- An adversarial <change> carries NO <name> and NO <instruction> — the pass has its own criteria and its own target, so a body is a parse failure. part="N" is the 1-based level number the document\'s separators spell.',
     '- Ask for a review when the owner wants a passage CRITIQUED (its problems found and named); write <edit> when you already know what to change. The review\'s findings come back in the <change-results> block, and the edit it produces is applied and undoable from the Versions menu.',
     '- When the critique finds NOTHING, nothing is written and the results block says NOTHING TO FIX — that is a successful review, not a failure.',
-    '- Never write the literal strings <edit>, <request>, <change>, </edit>, </request> or </change> in your prose — they are command blocks only.',
+    '- Never write the literal strings <edit>, <request>, <change>, <replace_level>, <append_level>, </edit>, </request>, </change>, </replace_level> or </append_level> in your prose — they are command blocks only.',
     WIKI_TOKEN_RULES,
     'Match the language of the document. Prose between commands is shown to the user — keep it brief.',
   ].join('\n');
@@ -1488,10 +1697,7 @@ export function composeFailureReport(input: {
     `Error: ${input.errorText}`,
   ];
   if (input.command !== null) {
-    parts.push(
-      'The failed command:',
-      `<edit all="${input.command.all ? 'true' : 'false'}"><search>${input.command.search}</search><replace>${input.command.replace}</replace></edit>`,
-    );
+    parts.push('The failed command:', canvasEditCommandBlock(input.command));
   }
   if (input.failureFrom !== null && input.document !== '') {
     const from = Math.max(0, input.failureFrom - FAILURE_EXCERPT_RADIUS);

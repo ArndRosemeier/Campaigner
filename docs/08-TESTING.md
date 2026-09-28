@@ -9913,3 +9913,64 @@ establishes, as pins rather than prose:
   `tests/llm/level-language.test.ts` ×2 and `tests/features/encounter-form.test.tsx` ×1 read the mention
   level from plain-value modules whose declared bands were not the section numbers; each now asserts the
   section's number.
+
+## The level-addressed chat commands: one vocabulary, the applier CALLS the seam, and the persisted shape is a union (docs/17 row 381, docs/23 §2.1/§4, docs/18 §2/§5)
+
+The owner asked the chat for two level-addressed commands — `replace_level N` (replace level N's whole section)
+and `append_level N` (append to level N, **CREATING it when N = max + 1**) — with the approved refinement that
+**the APP writes the canonical separator and the level number**, so the model never emits the scaffold. THE
+PREMISE IS LEVEL 0, so the same commands edit it and there is deliberately no `replace_premise`.
+
+**ONE vocabulary, ONE applier, ONE edit.** The two tags join the extractor's `COMMAND_TAGS`, so
+`parseCanvasChatReply` parses them in the same walk and the same `CanvasEditCommand[]`; `canvasEditCommandSchema`
+became a union whose original `{search, replace, all}` arm is BYTE-UNCHANGED (pinned by the pre-existing
+`parseCanvasChatReply` pins, which assert whole command objects). The applier is the SAME
+`chatApply.applyChatCommands`; `applyLevelCommand` calls `moduleDocument.replaceLevelText`/`appendLevelText` and
+adapts their returned text to the handle, so level 0's acceptance, the `max + 1` creation rule, the separator
+formatter and the separator-lookalike refusal have exactly ONE implementation.
+
+**The pins, by file.**
+- `tests/llm/canvasChat-level-commands.test.ts` (NEW, 9): both commands parse into the ONE array in reply order
+  beside a search edit; `level="0"` is accepted and the kind list holds no premise command; TEN malformed shapes
+  (missing / non-number / negative / leading-zero / duplicated `level`, unknown attribute, self-closing, a
+  `<search>` child, unterminated, stray closing tag) each fail the WHOLE reply; the shared per-reply cap counts
+  level commands; `canvasEditCommandBlock` echoes each shape and the search branch is byte-identical;
+  `composeFailureReport` echoes the level command; the system prompt states both commands, the level-0 rule, the
+  no-scaffold rule, the `max + 1` creation rule and the "a refusal changes NOTHING, the siblings still apply"
+  sentence; and **the persistence round trip** below.
+- `tests/features/canvas-chat-apply-differential.test.tsx`: TEN new hand-built cases inside the existing
+  editor-vs-snapshot differential (310 → 320 cases, the count assertions updated) so BOTH surfaces must agree on
+  the level commands exactly as on any edit, plus a new `describe` (9 pins) stating the contract the differential
+  cannot: the DOCUMENT TEXT after each command (`replace_level 0` moves the PREMISE and nothing else,
+  `replace_level N` exactly level N, `append_level <max+1>` CREATES the level with the app's own
+  `=====Level N=====` line **asserted in the text, not by a flag**, `append_level 1` creates the first level on a
+  premise-only document), out-of-range / jump / header-shaped bodies refused with the document BYTE-IDENTICAL and
+  a reason naming the level, the last-replacement highlight anchored on the level that moved, and the PINNED
+  multi-command semantics.
+- `tests/features/canvas-chat.test.tsx` (2 new page pins): a real mocked reply carrying both commands lands in the
+  editor doc AND the module row, the outcome cards name `Premise` and `Level 4`; a refused target renders a
+  `failed` card whose reason names level 9 while the document stays byte-identical.
+
+**THE MULTI-COMMAND SEMANTICS, CHOSEN AND PINNED.** When one command in a reply is invalid, the refusal is
+**PER COMMAND**: the bad target becomes one LOUD `failed` outcome card (carrying the domain seam's own reason,
+which names the levels the document has or the next level it can take), the document is byte-identical for that
+command, and the reply's OTHER commands still apply and persist. This is exactly the loudness the applier already
+had for a search that matches nothing (one card, siblings land) — never a wholesale turn refusal, never a silently
+dropped command. `tests/features/canvas-chat-apply-differential.test.tsx` pins the three-command case
+(`applied, failed, applied`) and `tests/llm/canvasChat-level-commands.test.ts` pins the prompt sentence that tells
+the model the same thing.
+
+**THE DEFECT THE PERSISTENCE PIN CAUGHT.** `domain/module.moduleChatCommandSchema` is the STORED shape of an
+outcome's command, and its `{search, replace, all}` were all REQUIRED — so a level-addressed outcome failed the
+module ROW's own schema, `chatPersist`'s write threw, and the thread never survived a reload. The schema is now a
+union with the level arm ADDED and the search arm byte-unchanged, and the round trip is pinned end to end
+(`serializeChatThread` → `patchModule` validates the row → reload → the restored card still names the level), with
+a second pin that an OLD thread carrying only a search command loads unchanged. That file is also being edited by
+the phase-1d writer (one comment line); the hunks do not overlap and the dispatcher pre-authorized a both-hunks
+resolution.
+
+**THE GOLDEN MOVED THROUGH THE PROJECT'S OWN RENDER PATH.** `tests/fixtures/gmAssistFraming/module-chat-golden.json`
+**27322 → 32659 bytes (+5337)** — a temporary capture test drove the REAL `canvasChatSystemPrompt` + both payload
+builders over the golden's OWN input table and was deleted before the commit. The delta is exactly the new
+level-command paragraph plus the extended "never write these literal strings" sentence (`system` 7594 → 9346
+characters); the `payload`/`followUp` arrays keep their 4/6 entries and only their system message moved.

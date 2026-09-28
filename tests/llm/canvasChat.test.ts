@@ -199,8 +199,13 @@ describe('parseCanvasChatReply (strict extractor)', () => {
     const raw =
       '<edit><search>line one\nline **two** | [[Gate]]</search><replace>one\n\ntwo</replace></edit>';
     const parsed = parseCanvasChatReply(raw);
-    expect(parsed.commands[0]?.search).toBe('line one\nline **two** | [[Gate]]');
-    expect(parsed.commands[0]?.replace).toBe('one\n\ntwo');
+    // Compared as a WHOLE command, which also asserts the search half's shape
+    // is unchanged by the level-command union beside it (docs/17 row 381).
+    expect(parsed.commands[0]).toEqual({
+      search: 'line one\nline **two** | [[Gate]]',
+      replace: 'one\n\ntwo',
+      all: false,
+    });
   });
 
   it('a reply with zero commands parses to prose only', () => {

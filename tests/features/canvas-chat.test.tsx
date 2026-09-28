@@ -274,6 +274,66 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
   });
 
+  it('the LEVEL-ADDRESSED commands ride the same applier: the card names the level and the app writes the separator', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    // One reply carrying BOTH new commands (docs/17 row 381): the premise is
+    // level 0, and level 4 does not exist yet (max is 3), so appending to 4
+    // CREATES it — the model never writes the scaffold.
+    mockChatReply(
+      [
+        'Rewriting the premise and adding the next level.',
+        '<replace_level level="0"><replace>A new premise for the vault.</replace></replace_level>',
+        '<append_level level="4"><replace>## The Long Watch\nNobody sleeps.</replace></append_level>',
+      ].join('\n'),
+    );
+    await sendChat(user, 'rewrite the premise and add the next level');
+
+    const doc = activeCanvasView.current?.state.doc.toString() ?? '';
+    // The premise moved (level 0 has no separator of its own)…
+    expect(doc.startsWith('A new premise for the vault.')).toBe(true);
+    // …and level 4 was CREATED with the APP's canonical separator line.
+    expect(doc).toContain(`${moduleLevelSeparator(4)}\n## The Long Watch\nNobody sleeps.`);
+
+    const panel = screen.getByTestId('canvas-chat');
+    const cards = await within(panel).findAllByTestId('canvas-chat-outcome');
+    const premiseCard = cards[0];
+    const createdCard = cards[1];
+    if (premiseCard === undefined || createdCard === undefined) {
+      throw new Error('expected one card per level-addressed command (2)');
+    }
+    expect(cards).toHaveLength(2);
+    expect(premiseCard).toHaveAttribute('data-kind', 'applied');
+    // Level 0 IS the premise and the card says so; a created level with no plan
+    // entry reads by its derived label.
+    expect(within(premiseCard).getByTestId('canvas-chat-outcome-part').textContent).toContain('Premise');
+    expect(within(createdCard).getByTestId('canvas-chat-outcome-part').textContent).toContain('Level 4');
+
+    // The whole document was persisted through THE one document write: the
+    // premise and the CREATED level both land on the row.
+    const row = await getModule(world.moduleId);
+    expect(row?.spine?.premise).toBe('A new premise for the vault.');
+    expect(row?.parts[3]?.markdown).toBe('## The Long Watch\nNobody sleeps.');
+  });
+
+  it('a REFUSED level target is a LOUD card and leaves the document untouched', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    mockChatReply('No such level.\n<replace_level level="9"><replace>x</replace></replace_level>');
+    await sendChat(user, 'replace level nine');
+
+    // Nothing moved: the same document the page mounted with.
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    const card = await within(screen.getByTestId('canvas-chat')).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'failed');
+    // The reason NAMES the level and comes from the domain seam's own refusal.
+    expect(within(card).getByTestId('canvas-chat-outcome-reason').textContent).toContain('level 9');
+  });
+
   it('the payload carries the WHOLE DOCUMENT: every level, the separators, the PREMISE, and the grounding', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));

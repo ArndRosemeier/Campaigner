@@ -6,7 +6,7 @@ import { EditorView } from '@codemirror/view';
 import { history } from '@codemirror/commands';
 import { describe, expect, it } from 'vitest';
 
-import { assembleModuleDocument, moduleLevelSeparator } from '@/domain/moduleDocument';
+import { assembleModuleDocument, moduleDocumentSections, moduleLevelSeparator } from '@/domain/moduleDocument';
 import {
   applyChatCommands,
   applyChatCommandsToDocument,
@@ -14,7 +14,7 @@ import {
   stringChatHandle,
 } from '@/features/modules/canvas/chatApply';
 import type { CanvasChatOutcome } from '@/features/modules/canvas/chatStore';
-import type { CanvasEditCommand } from '@/llm/canvasChat';
+import type { CanvasEditCommand, CanvasLevelEditCommand } from '@/llm/canvasChat';
 
 /**
  * THE differential pin the applier fold owes (AGENTS §Centralization
@@ -57,6 +57,9 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       { number: 3, text: '' },
     ],
   });
+
+  /** The "starts with nothing" shape: level 0 only, no separators at all. */
+  const PREMISE_ONLY_DOC = 'Only the premise so far.';
 
   /** One editor view reused for every case (reset per case — mounting 300 of them is waste). */
   function mountView(): { view: EditorView; host: HTMLElement } {
@@ -225,6 +228,70 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       doc: DOC,
       commands: [],
     },
+    // --- the level-addressed commands (docs/17 row 381): they ride the SAME
+    // applier, so both surfaces must agree on them exactly like any edit. ---
+    {
+      label: 'replace_level 0 replaces the PREMISE through the level path',
+      doc: DOC,
+      commands: [{ kind: 'replace_level', level: 0, replace: 'A brand new premise.' }],
+    },
+    {
+      label: 'replace_level 2 replaces exactly level 2',
+      doc: DOC,
+      commands: [{ kind: 'replace_level', level: 2, replace: 'Fog, replaced whole.' }],
+    },
+    {
+      label: 'append_level 3 appends to the EXISTING (empty) level 3',
+      doc: DOC,
+      commands: [{ kind: 'append_level', level: 3, replace: 'Embers, at last.' }],
+    },
+    {
+      label: 'append_level 4 CREATES level 4 (the app writes the separator)',
+      doc: DOC,
+      commands: [{ kind: 'append_level', level: 4, replace: '## The Long Watch\nNobody sleeps.' }],
+    },
+    {
+      label: 'append_level 1 creates the FIRST level on a premise-only document',
+      doc: PREMISE_ONLY_DOC,
+      commands: [{ kind: 'append_level', level: 1, replace: 'The first level.' }],
+    },
+    {
+      label: 'replace_level 9 (out of range) is refused, the document unchanged',
+      doc: DOC,
+      commands: [{ kind: 'replace_level', level: 9, replace: 'x' }],
+    },
+    {
+      label: 'append_level 5 skips a number and is refused',
+      doc: DOC,
+      commands: [{ kind: 'append_level', level: 5, replace: 'x' }],
+    },
+    {
+      label: 'a level body carrying a header-shaped line is refused by the seam',
+      doc: DOC,
+      commands: [
+        { kind: 'replace_level', level: 2, replace: `Fog.\n\n${moduleLevelSeparator(9)}\n\n` },
+      ],
+    },
+    {
+      label: 'a level command with prompt scaffolding in its text (loud hygiene failure)',
+      doc: DOC,
+      commands: [
+        {
+          kind: 'append_level',
+          level: 4,
+          replace: 'The artifact "name" field must be exactly the name of the artifact.',
+        },
+      ],
+    },
+    {
+      label: 'multi-command: a bad level target is refused while its siblings still apply',
+      doc: DOC,
+      commands: [
+        { search: 'Rain here.', replace: 'Longer rainy opening.', all: false },
+        { kind: 'replace_level', level: 9, replace: 'x' },
+        { kind: 'append_level', level: 4, replace: 'A fourth level.' },
+      ],
+    },
   ];
 
   // --- deterministic fuzz (FIXED seed, bounded count) -----------------------------
@@ -288,9 +355,9 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
   it('runs every case through BOTH paths and finds them indistinguishable', () => {
     // The count is ASSERTED so a generator that silently empties out cannot
     // turn this pin into a no-op.
-    expect(HAND_BUILT).toHaveLength(10);
+    expect(HAND_BUILT).toHaveLength(20);
     expect(FUZZ).toHaveLength(300);
-    expect(CASES).toHaveLength(310);
+    expect(CASES).toHaveLength(320);
 
     const { view, host } = mountView();
     try {
@@ -394,6 +461,163 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
     } finally {
       host.remove();
     }
+  });
+});
+
+// --- the level-addressed commands: the CONTRACT the differential cannot state ---
+
+/**
+ * The differential above proves the two surfaces AGREE; it cannot say what they
+ * should agree ON. These pins state the level-addressed contract itself
+ * (docs/17 row 381) on the snapshot surface — the exact document text after an
+ * edit, which section the outcome card names, and that a refused target is LOUD
+ * and leaves the document BYTE-IDENTICAL.
+ *
+ * THE EDIT IS THE DOMAIN SEAM'S (`replaceLevelText`/`appendLevelText`): the app
+ * writes the canonical `=====Level N=====` line, level 0 is the premise, a new
+ * level is exactly `max + 1`. These pins assert the TEXT, not a flag, so a
+ * second implementation of any of those rules would have to reproduce this
+ * document byte for byte.
+ */
+describe('the level-addressed commands (docs/17 row 381)', () => {
+  const PREMISE = 'The premise of the whole module.';
+  const PREMISE_ONLY_DOC = 'Only the premise so far.';
+  const BASE = assembleModuleDocument({
+    levels: [
+      { number: 0, text: PREMISE },
+      { number: 1, text: 'Rain here.' },
+      { number: 2, text: 'Fog elsewhere.' },
+    ],
+  });
+  const PLAN = [{ title: 'The Gate' }, { title: 'The Docks' }];
+
+  function apply(commands: CanvasEditCommand[], doc: string = BASE) {
+    return applyChatCommandsToSnapshot({ commands, partPlan: PLAN, doc });
+  }
+
+  function levelTexts(doc: string): string[] {
+    return moduleDocumentSections(doc, PLAN).map((section) => section.text);
+  }
+
+  it('replace_level 0 replaces the PREMISE and nothing else (level 0 has no separator)', () => {
+    const result = apply([{ kind: 'replace_level', level: 0, replace: 'A new premise.' }]);
+    expect(result.docChanged).toBe(true);
+    expect(result.doc).toBe(
+      assembleModuleDocument({
+        levels: [
+          { number: 0, text: 'A new premise.' },
+          { number: 1, text: 'Rain here.' },
+          { number: 2, text: 'Fog elsewhere.' },
+        ],
+      }),
+    );
+    const outcome = result.outcomes[0];
+    expect(outcome?.kind).toBe('applied');
+    // planIndex − 1 IS the premise, and the card names it that way.
+    expect(outcome?.targetParts).toEqual([{ planIndex: -1, title: 'Premise' }]);
+    expect(outcome?.before).toBe(PREMISE);
+  });
+
+  it('replace_level N replaces exactly level N', () => {
+    const result = apply([{ kind: 'replace_level', level: 2, replace: 'Fog, replaced whole.' }]);
+    expect(result.docChanged).toBe(true);
+    expect(levelTexts(result.doc)).toEqual([PREMISE, 'Rain here.', 'Fog, replaced whole.']);
+    const outcome = result.outcomes[0];
+    expect(outcome?.targetParts).toEqual([{ planIndex: 1, title: 'The Docks' }]);
+    expect(outcome?.before).toBe('Fog elsewhere.');
+  });
+
+  it('append_level N on an EXISTING level appends to it (nothing is replaced)', () => {
+    const result = apply([{ kind: 'append_level', level: 1, replace: 'More rain.' }]);
+    expect(result.docChanged).toBe(true);
+    expect(levelTexts(result.doc)).toEqual([PREMISE, 'Rain here.\n\nMore rain.', 'Fog elsewhere.']);
+    const outcome = result.outcomes[0];
+    expect(outcome?.kind).toBe('applied');
+    expect(outcome?.targetParts).toEqual([{ planIndex: 0, title: 'The Gate' }]);
+    // An append replaced NO span: the card carries no before text.
+    expect(outcome?.before).toBeNull();
+  });
+
+  it('append_level max + 1 CREATES the level and the DOCUMENT TEXT carries the app separator', () => {
+    const result = apply([{ kind: 'append_level', level: 3, replace: '## The Long Watch' }]);
+    expect(result.docChanged).toBe(true);
+    // The TEXT, not just a flag: the app's own canonical separator line.
+    expect(result.doc).toContain('=====Level 3=====');
+    expect(result.doc).toBe(
+      assembleModuleDocument({
+        levels: [
+          { number: 0, text: PREMISE },
+          { number: 1, text: 'Rain here.' },
+          { number: 2, text: 'Fog elsewhere.' },
+          { number: 3, text: '## The Long Watch' },
+        ],
+      }),
+    );
+    const outcome = result.outcomes[0];
+    expect(outcome?.kind).toBe('applied');
+    // A created level has no plan entry, so its card uses the derived label.
+    expect(outcome?.targetParts).toEqual([{ planIndex: 2, title: 'Level 3' }]);
+    expect(outcome?.before).toBeNull();
+  });
+
+  it('append_level 1 creates the FIRST level on a premise-only document', () => {
+    const result = apply([{ kind: 'append_level', level: 1, replace: 'The first level.' }], PREMISE_ONLY_DOC);
+    expect(result.docChanged).toBe(true);
+    expect(moduleDocumentSections(result.doc, PLAN).map((section) => section.number)).toEqual([0, 1]);
+    expect(result.doc).toBe(`${PREMISE_ONLY_DOC}\n\n=====Level 1=====\nThe first level.`);
+  });
+
+  it('out of range is LOUD and changes NOTHING — the document stays byte-identical', () => {
+    const cases: CanvasLevelEditCommand[] = [
+      { kind: 'replace_level', level: 9, replace: 'x' },
+      { kind: 'append_level', level: 5, replace: 'x' },
+      { kind: 'append_level', level: 4, replace: 'x' },
+    ];
+    for (const command of cases) {
+      const result = apply([command]);
+      expect(result.docChanged, JSON.stringify(command)).toBe(false);
+      expect(result.doc).toBe(BASE);
+      const outcome = result.outcomes[0];
+      expect(outcome?.kind).toBe('failed');
+      // The refusal NAMES the level and the reason the seam gave.
+      expect(outcome?.reason).toContain(`level ${String(command.level)}`);
+      expect(outcome?.targetParts).toEqual([]);
+    }
+  });
+
+  it('a header-shaped body is refused by the seam, loudly and without a write', () => {
+    const result = apply([
+      { kind: 'append_level', level: 3, replace: `Header below.\n\n${moduleLevelSeparator(9)}` },
+    ]);
+    expect(result.docChanged).toBe(false);
+    expect(result.doc).toBe(BASE);
+    const outcome = result.outcomes[0];
+    expect(outcome?.kind).toBe('failed');
+    expect(outcome?.reason).toContain('looks like a level header');
+  });
+
+  it('multi-command: an invalid target is ONE loud card and its siblings still apply', () => {
+    const result = apply([
+      { search: 'Rain here.', replace: 'Longer rainy opening.', all: false },
+      { kind: 'replace_level', level: 9, replace: 'x' },
+      { kind: 'append_level', level: 3, replace: 'A third level.' },
+    ]);
+    // PINNED SEMANTICS: a refusal is PER COMMAND (exactly like a search that
+    // does not match) — never a wholesale turn refusal, never a silent drop.
+    expect(result.outcomes.map((outcome) => outcome.kind)).toEqual([
+      'applied',
+      'failed',
+      'applied',
+    ]);
+    expect(result.docChanged).toBe(true);
+    expect(result.doc).toContain('Longer rainy opening.');
+    expect(result.doc).toContain('=====Level 3=====');
+  });
+
+  it('the last-replacement highlight anchors on the level that moved', () => {
+    const result = apply([{ kind: 'replace_level', level: 2, replace: 'Fog, replaced whole.' }]);
+    const section = moduleDocumentSections(result.doc, PLAN).find((entry) => entry.number === 2);
+    expect(result.lastApplied).toEqual({ from: section?.textFrom, to: section?.textTo });
   });
 });
 

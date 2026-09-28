@@ -1,11 +1,20 @@
 import type { EditorView } from '@codemirror/view';
 
 import {
+  appendLevelText,
   moduleDocumentSections,
+  ModuleDocumentError,
+  replaceLevelText,
+  splitModuleDocument,
+  type ModuleDocumentEdit,
   type ModuleDocumentSection,
 } from '@/domain/moduleDocument';
-import type { CanvasEditCommand } from '@/llm/canvasChat';
-import { resolveCanvasEditAcrossParts } from '@/llm/canvasChat';
+import {
+  isLevelEditCommand,
+  resolveCanvasEditAcrossParts,
+  type CanvasEditCommand,
+  type CanvasLevelEditCommand,
+} from '@/llm/canvasChat';
 import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
@@ -47,6 +56,16 @@ import {
  * across a section boundary). The caller persists the batch afterwards through
  * the document save (one whole-document write).
  *
+ * THE LEVEL-ADDRESSED COMMANDS (docs/17 row 381) ride the SAME applier and the
+ * SAME command array. They are adapted here and the EDIT itself is the landed
+ * domain seam's (`replaceLevelText`/`appendLevelText` — the level-0 acceptance,
+ * the `max + 1` creation rule, the separator formatter and the
+ * separator-lookalike refusal all live there); this file only splices the seam's
+ * returned text through the handle and renders its outcome. A refused target is
+ * the SEAM'S OWN typed `ModuleDocumentError`, converted to a FAILED outcome
+ * card naming the reason — the same per-command loudness as a search that does
+ * not match, so the other commands in the batch still land.
+ *
  * Nothing is ever silently skipped: a command that cannot apply uniquely
  * comes back as a LOUD failed outcome (with the closest candidate snippet
  * across parts on zero matches) — never a guess, never a partial apply
@@ -81,7 +100,7 @@ function appliedOutcome(
   occurrences: number,
   from: number | null,
   to: number | null,
-  before: string,
+  before: string | null,
 ): CanvasChatOutcome {
   return {
     id: newChatId('outcome'),
@@ -178,14 +197,87 @@ export interface ChatApplyResult {
 }
 
 /**
+ * ONE level-addressed command through the LANDED domain seam (docs/17 row
+ * 381). The applier owns nothing of the edit: `domain/moduleDocument` parses
+ * the current text and `replaceLevelText`/`appendLevelText` perform it (level 0
+ * is the premise, creation is exactly `max + 1`, the separator is the APP's own
+ * formatter, and a body carrying a header-shaped line is refused there). This
+ * function adapts their result to the handle and to the outcome card, and
+ * converts the seam's typed refusal into a FAILED outcome:
+ *
+ * - the seam THROWS before writing anything, so a refused target leaves the
+ *   document BYTE-IDENTICAL and the owner gets a card whose reason is the
+ *   seam's own message (which levels exist, or which level is the next one it
+ *   can take) — LOUD and named, never a silently dropped command;
+ * - an accepted edit is written as ONE splice of the whole document, because
+ *   the seam returns the edited TEXT (with its own parse beside it): that text
+ *   IS the command's single user action, and re-deriving a smaller range here
+ *   would be a second implementation of the edit.
+ *
+ * The card names the LEVEL it touched (`planIndex` is level − 1, so level 0
+ * reads as the premise) and carries the level's new text range in post-apply
+ * coordinates as the last-replacement highlight. `before` is the level's prior
+ * text for a `replace_level` (the span that was replaced) and `null` for an
+ * append or a creation (nothing was replaced — the text was ADDED).
+ */
+function applyLevelCommand(
+  command: CanvasLevelEditCommand,
+  handle: ChatDocumentHandle,
+  planTitles: readonly { title: string }[],
+): { outcomes: CanvasChatOutcome[]; lastApplied: { from: number; to: number } | null } {
+  const before = handle.read();
+  let edit: ModuleDocumentEdit;
+  try {
+    const document = splitModuleDocument(before);
+    edit =
+      command.kind === 'replace_level'
+        ? replaceLevelText(document, command.level, command.replace)
+        : appendLevelText(document, command.level, command.replace);
+  } catch (error) {
+    if (!(error instanceof ModuleDocumentError)) throw error;
+    return { outcomes: [failedOutcome(command, error.message)], lastApplied: null };
+  }
+  handle.replaceRanges([{ from: 0, to: before.length }], edit.document);
+  const section = moduleDocumentSections(edit.document, planTitles).find(
+    (candidate) => candidate.number === command.level,
+  );
+  if (section === undefined) {
+    // An accepted level edit always leaves the level in the document (the seam
+    // creates it at `max + 1`); a miss here is an internal inconsistency and is
+    // never papered over.
+    throw new Error(
+      `the module document seam accepted level ${String(command.level)} but the edited document carries no such section`,
+    );
+  }
+  const previous = moduleDocumentSections(before, planTitles).find(
+    (candidate) => candidate.number === command.level,
+  );
+  return {
+    outcomes: [
+      appliedOutcome(
+        command,
+        { planIndex: section.planIndex, title: section.title },
+        1,
+        section.textFrom,
+        section.textTo,
+        command.kind === 'replace_level'
+          ? (previous?.text ?? '').slice(0, MAX_CARD_SNIPPET)
+          : null,
+      ),
+    ],
+    lastApplied: { from: section.textFrom, to: section.textTo },
+  };
+}
+
+/**
  * Applies commands IN ORDER to the handle's document; outcomes in reply
  * order, one per (command × part) application plus one per failure. Each
  * command re-splits the CURRENT doc against the plan and re-resolves against
  * those per-part texts, the canvasRefine-parity debris scan runs per replace
  * text, and `all="false"` demands EXACTLY ONE match across the WHOLE module.
  * A broken scaffolding mid-batch (a replace faked a section header) throws
- * `ModulePartsDocumentError` loud — the caller surfaces it; the already-
- * applied commands stay in the doc as unsaved edits.
+ * `ModuleDocumentError` loud — the caller surfaces it; the already-applied
+ * commands stay in the doc as unsaved edits.
  */
 export function applyChatCommands(input: {
   commands: readonly CanvasEditCommand[];
@@ -211,6 +303,15 @@ export function applyChatCommands(input: {
       outcomes.push(
         failedOutcome(command, `unusable generated text in the replace text — ${issues.join('; ')}`),
       );
+      continue;
+    }
+    // The two level-addressed commands (docs/17 row 381): the same scan above
+    // already checked their text, and the LANDED domain seam performs the edit.
+    if (isLevelEditCommand(command)) {
+      const levelResult = applyLevelCommand(command, handle, input.partPlan);
+      outcomes.push(...levelResult.outcomes);
+      if (levelResult.outcomes.some((outcome) => outcome.kind === 'applied')) docChanged = true;
+      if (levelResult.lastApplied !== null) lastApplied = levelResult.lastApplied;
       continue;
     }
     if (command.search.trim() === '') {
