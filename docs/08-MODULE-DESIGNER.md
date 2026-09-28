@@ -2042,13 +2042,15 @@ beside **Board** was retired by owner request, ledger row 138, because it and
 implementation in
 `src/features/modules/canvas/`.
 
-> **THE DOCUMENT FORMAT THIS SECTION DESCRIBES IS THE LEGACY ONE** (docs/23-CAMPAIGN-ARC, docs/17
-> row 380). Everything below still describes HEAD: the canvas document is the `==========` +
-> `[Part n of m — title]` parts document that `domain/modulePartsDocument` assembles and splits, over
-> `spine.partPlan` and `parts[]`. The RATIFIED successor is ONE text of `=====Level N=====` sections
-> over **level 0 (the premise)**, owned by `domain/moduleDocument` — landed and pinned, but wiring it
-> (the `version(32)` clean cut that deletes the stored triple) is blocked; docs/18 §5 carries the
-> measured census. Do not extend the parts format: a new consumer wants `domain/moduleDocument`.
+> **THIS SECTION IS MID-MIGRATION — READ THE BUILD STATE FIRST** (docs/23-CAMPAIGN-ARC, docs/17 rows
+> 380/382/383/384). Since **row 384 the canvas document, the chat's context and the save path ARE THE
+> MODULE DOCUMENT**: ONE text of `=====Level N=====` sections over **level 0 (the premise, which has no
+> separator of its own)**, owned by `domain/moduleDocument` (`moduleDocumentFromView` /
+> `moduleDocumentSections` / `splitModuleDocument`; the write is `moduleRepo.saveModuleDocument`). The
+> paragraphs BELOW that still describe the `==========` + `[Part n of m — title]` parts document
+> (`domain/modulePartsDocument`, which EXCLUDED the premise) are being migrated in this docs pass; do
+> NOT build anything new on the parts format — the only remaining caller is the PDF lane
+> (`lib/modulePdf`), and docs/18 §2/§5 carry the frontier and the 17-file test-migration remainder.
 
 - **The substrate is CodeMirror 6, text-first** (research-ratified): the
   editor mounts `@uiw/react-codemirror` + `@codemirror/lang-markdown` (both
@@ -2057,16 +2059,15 @@ implementation in
   and tables by construction; there is NO parse→serialize round-trip
   anywhere. WYSIWYG canvases were rejected on license AND fidelity grounds
   (decision ledger 48).
-- **ONE document for the whole module — no part selector** (v3, ledger 53):
-  the editor doc is assembled by the shared `assembleModulePartsDocument`
-  (pure, `src/domain/modulePartsDocument.ts` — the SAME format the chat sees:
-  every planned part in `spine.partPlan` order, the spine premise EXCLUDED,
-  each section introduced by its `[Part <n> of <total> — <title>]` label line
-  and separated by a blank line + exactly ten `=` + a blank line). A
-  not-yet-written part opens as a labeled empty section. The doc is assembled
-  ONCE per module mount — never re-assembled mid-session (that would clobber
-  unsaved edits). The scaffold lines are ordinary editable text while
-  editing; they are validated only at the boundaries that need the split
+- **ONE document for the whole module — no part selector** (v3, ledger 53;
+  THE MODULE DOCUMENT since row 384): the editor doc is composed by the shared
+  `moduleDocumentFromView` (pure, `src/domain/moduleDocument.ts` — the SAME
+  text the chat sees and the save path writes: **level 0 is the premise**, then
+  one `=====Level N=====` section per planned level, in plan order). A level
+  with no text yet opens as an empty section UNDER its own separator line. The
+  doc is composed ONCE per module mount — never re-composed mid-session (that
+  would clobber unsaved edits). The separator lines are ordinary editable text
+  while editing; they are validated only at the boundaries that need the parse
   (save, chat send, proposal ranges) by the shared INVERSE
   `splitPartsDocument`/`splitModulePartsDocument`, which FAIL LOUDLY (typed
   `ModulePartsDocumentError` naming the offending line/section) on a
@@ -2444,28 +2445,31 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   `all="true"` (in every part where it matched), else a failed card ("N
   matches — add surrounding context or set all"); zero matches → failed card
   with the candidate.
-- **Whole-module parts document** (context contract, load-bearing): EVERY
-  request carries the CURRENT document — v3: the LIVE whole-document canvas
-  editor doc passed by the page at send time (the doc IS the whole module,
-  so unsaved edits in EVERY part ride along; never a cached copy, never a
-  row re-assembly). The per-part snapshot the model saw comes from the
-  SHARED `splitModulePartsDocument` (domain) applied to that SAME doc, so
-  application matches EXACTLY the text the model saw — a doc whose
-  scaffolding no longer parses fails the send loudly with the splitter's
-  reason. Every planned part in `spine.partPlan` order (missing/empty part
-  = empty section); the spine premise is EXCLUDED (owner: "without
-  premise"). **Delimiter + label spec**: sections are separated by a blank
-  line + a line of exactly ten `=` characters (`==========`) + a blank
-  line, and every section OPENS with the scaffold label line `[Part <n> of
-  <total> — <title>]` (n = 1-based position in the plan; no usable title →
-  `[Part <n> of <total>]`). That scaffolding is never content: the prompt
-  forbids separators/label lines inside any search/replace and forbids
-  editing across a separator (one command lives inside ONE part). **Empty-part label-anchor convention**:
-  an empty (not-yet-written) part's label line is its only anchor — a
-  command whose search EXACTLY equals an empty part's label line fills that
-  part; the replace must START with the same label line and the part text
-  becomes the remainder after the label (leading blank lines trimmed);
-  anything else fails loudly. The prompt states this convention explicitly.
+- **The module DOCUMENT** (context contract, load-bearing; row 384): EVERY
+  request carries the CURRENT document — the LIVE whole-document canvas editor
+  doc passed by the page at send time (the doc IS the whole module, so unsaved
+  edits in EVERY level, **the premise included**, ride along; never a cached
+  copy, never a row re-assembly). The per-level snapshot the model saw comes
+  from the SHARED `moduleDocumentSections` (domain) applied to that SAME doc,
+  so application matches EXACTLY the text the model saw — a document whose
+  separators no longer parse fails the send loudly with `ModuleDocumentError`
+  naming the line. **Format**: level 0 is the PREMISE (everything before the
+  first separator), then one section per level, each introduced by a line
+  reading exactly `=====Level N=====`. Those separators are the APP's format:
+  the prompt tells the model to PRESERVE them, never to include one in a
+  search/replace, and never to write a line that LOOKS like a level header
+  (that would make the document unreadable). The line under a separator is
+  ordinary PROSE (a `##` title the text carries) — never a field, never read
+  for a value. **Empty-level fill convention**: an empty level's only anchor is
+  its OWN separator line — a command whose search EXACTLY equals
+  `=====Level N=====` fills that level; the replace must START with the same
+  separator line and the section text becomes the remainder (leading blank
+  lines trimmed); anything else fails loudly. Level 0 has no separator and
+  cannot be filled from empty (the level-addressed `append_level` commands are
+  docs/17 row 381's). A module whose document is EMPTY fails the pre-flight
+  (`NO_DOCUMENT_MESSAGE`); **a premise-only module — no level sections — IS
+  chattable**, since the premise is level 0 and is edited through the ordinary
+  `<edit>` path.
 - **Read-only grounding (unconditional, UNCAPPED)**: every request carries a
   clearly-marked `<reference-only>` block, riding INSIDE the final user turn
   (outside the persisted conversation history — carried fresh every turn,

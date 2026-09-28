@@ -1835,7 +1835,7 @@ export function CanvasPage(): JSX.Element {
             moduleId={currentModule.id}
             surface={chatSurface}
             onSurfaceChange={setChatSurface}
-            hasDocument={currentModule.spine !== null}
+            hasDocument={currentModule.spine.premise.trim() !== '' || currentModule.parts.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
             aiBusyReason={aiBlockedReason}
