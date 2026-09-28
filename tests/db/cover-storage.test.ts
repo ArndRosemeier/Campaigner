@@ -64,8 +64,9 @@ describe('cover storage honesty', () => {
       levelMax: 1,
       tone: '',
       sizeDial: 'sketch',
-      spine: null,
-      parts: [],
+      // The `version(32)` storage cut: the row carries the ONE document and
+      // no `spine`/`parts` (those are derived at read time).
+      document: '',
       status: 'draft',
       errorMessage: '',
       createdAt: 1,
@@ -75,9 +76,9 @@ describe('cover storage honesty', () => {
     expect((await getCampaign(campaignId))?.coverImageId).toBeNull();
     expect((await getModule(moduleId))?.coverImageId).toBeNull();
     // The schemas validate the legacy rows (golden-test pattern).
-    const { campaignSchema, moduleSchema } = await import('@/domain');
+    const { campaignSchema, moduleRowSchema } = await import('@/domain');
     expect(campaignSchema.parse(await db.campaigns.get(campaignId)).coverImageId).toBeNull();
-    expect(moduleSchema.parse(await db.modules.get(moduleId)).coverImageId).toBeNull();
+    expect(moduleRowSchema.parse(await db.modules.get(moduleId)).coverImageId).toBeNull();
   });
 
   it('artifact cascades prune gallery blobs but never covers', async () => {

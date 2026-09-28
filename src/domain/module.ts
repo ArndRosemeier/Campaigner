@@ -52,13 +52,24 @@ export const modulePartStatusSchema = z.enum(['pending', 'generating', 'ready', 
 
 export type ModulePartStatus = z.infer<typeof modulePartStatusSchema>;
 
-/** One planned part of the module (spine pass output, user-editable). */
+/**
+ * One planned part of the module (spine pass output, user-editable).
+ *
+ * BUILD STATE (docs/23 storage cut, row 382): this object survives ONLY as a
+ * field of the DERIVED COMPATIBILITY VIEW. `synopsis` and `levelUpTrigger` are
+ * deleted by docs/23 §5 and are DERIVED AS EMPTY STRINGS by
+ * `moduleViewFromRow`; `levelBand` is derived as the level SECTION's exact
+ * number written as a string. They stay declared here (rather than deleted from
+ * the type) so the ~100 test fixtures and every reader that still names them
+ * keep COMPILING while the cut is multi-slice.
+ */
 export const partPlanSchema = z.object({
   title: z.string().min(1),
-  /** e.g. '1', '2–3' — the level band this part covers. */
+  /** The level SECTION's number as a string, e.g. '3' (docs/23 §4). */
   levelBand: z.string().min(1),
+  /** DELETED by docs/23 §5 — derived as `''`. */
   synopsis: z.string().default(''),
-  /** What ends this part / triggers the level-up. */
+  /** DELETED by docs/23 §5 — derived as `''`. */
   levelUpTrigger: z.string().default(''),
 });
 
@@ -99,8 +110,20 @@ export type TextOrigin = z.infer<typeof textOriginSchema>;
 export const moduleSpineSchema = z.object({
   /** Markdown, a few paragraphs; rendered as the intro section. */
   premise: z.string(),
+  /** DELETED by docs/23 §5 — derived as `[]` (the document has no themes). */
   themes: z.array(z.string()).default([]),
-  partPlan: z.array(partPlanSchema).min(1).max(20),
+  /**
+   * The per-level plan, DERIVED from the document's level sections (docs/23
+   * §4): plan entry i is level section i+1. The generator's pass-0 authoring
+   * still WRITES this through `saveSpine`, which composes the document — but a
+   * read NEVER gets a plan it did not first put into the text, which is why
+   * pass-0 titles/synopses do not survive a round trip (recorded in the row-382
+   * report; phase 1f deletes the authoring).
+   *
+   * EMPTY IS LEGAL: a document with no separators is the level-0-only state, so
+   * `.min(1)` is gone with the old model (docs/23 §2.1).
+   */
+  partPlan: z.array(partPlanSchema).max(20),
   /**
    * PROVENANCE (provenance arc, docs/17 row 93): the model that wrote this
    * spine's premise — the `modelUsed` of the serving spine call (the
@@ -961,8 +984,7 @@ export const moduleChatMessageSchema = z.object({
 
 export type ModuleChatMessage = z.infer<typeof moduleChatMessageSchema>;
 
-export const moduleSchema = z
-  .object({
+const baseModuleSchema = z.object({
     ...BaseEntitySchema.shape,
     campaignId: z.uuid(),
     title: z.string().min(1),
@@ -1133,13 +1155,40 @@ export const moduleSchema = z
      * reads it straight off the row, so no call site passes a plan around.
      */
     documentPlan: z.unknown().default(null),
-  })
-  .refine((module) => module.levelMax >= module.levelMin, {
+});
+
+/**
+ * THE IN-MEMORY module view (docs/23 §2–§4, the storage cut): the shape every
+ * reader in the tree speaks — the premise plus the per-level `spine.partPlan[]`
+ * and `parts[]`. Since the storage cut these two are a DERIVED COMPATIBILITY
+ * VIEW: `moduleRowSchema` below is what a row actually STORES (ONE document
+ * text) and `moduleViewFromRow` in `domain/moduleDocument.ts` derives this
+ * shape from it. Nothing stores a second copy of the text (docs/23 §4).
+ */
+export const moduleSchema = baseModuleSchema.refine(
+  (module) => module.levelMax >= module.levelMin,
+  { message: 'levelMax must be >= levelMin', path: ['levelMax'] },
+);
+
+export type Module = z.infer<typeof moduleSchema>;
+
+/**
+ * THE STORED module row (docs/23 §9, `version(32)`) — the ONE document text
+ * plus every field that is not part of the deleted `spine`/`parts` text triple.
+ *
+ * The row does NOT carry `spine` or `parts`: those are derived at read time by
+ * `moduleViewFromRow`, so the text exists ONCE (docs/23 §4 forbids a stored
+ * second truth) while every existing reader keeps compiling against the view.
+ */
+export const moduleRowSchema = baseModuleSchema
+  .omit({ spine: true, parts: true })
+  .extend({ document: z.string() })
+  .refine((row) => row.levelMax >= row.levelMin, {
     message: 'levelMax must be >= levelMin',
     path: ['levelMax'],
   });
 
-export type Module = z.infer<typeof moduleSchema>;
+export type ModuleRow = z.infer<typeof moduleRowSchema>;
 
 export type ModulePatch = Partial<
   Omit<Module, keyof BaseEntity | 'campaignId' | 'id'>

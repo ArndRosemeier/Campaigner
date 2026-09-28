@@ -69,6 +69,7 @@ import type {
   Id,
   Module,
   ModuleEntityKind,
+  ModuleRow,
   ModulePart,
   EncounterFloorGuardrail,
   EntityKind,
@@ -1812,15 +1813,14 @@ describe('promptStyles-classic-identity.test.ts', () => {
     });
     const saved = await saveModule(draft);
     if (options.legacyRow === true) {
-      // The real pre-arc shape: the key is not in the stored row at all.
-      const legacy: Record<string, unknown> = {
-        ...(moduleSchema.parse({ ...saved, promptStyle: undefined }) as unknown as Record<
-          string,
-          unknown
-        >),
-      };
+      // The real pre-arc shape: the key is not in the stored row at all. The
+      // row is taken from the STORE (the `version(32)` shape carries `document`
+      // and no `spine`/`parts`), then the later field is deleted.
+      const stored = await db.modules.get(saved.id);
+      if (stored === undefined) throw new Error('seedModule: the saved row vanished');
+      const legacy: Record<string, unknown> = { ...stored };
       delete legacy.promptStyle;
-      await db.modules.put(legacy as unknown as Module);
+      await db.modules.put(legacy as unknown as ModuleRow);
     }
     return { campaign, moduleId: saved.id };
   }
@@ -2695,14 +2695,11 @@ describe('promptStyles-default-style.test.ts', () => {
       }),
     );
     if (options.legacyRow === true) {
-      const legacy: Record<string, unknown> = {
-        ...(moduleSchema.parse({ ...saved, promptStyle: undefined }) as unknown as Record<
-          string,
-          unknown
-        >),
-      };
+      const stored = await db.modules.get(saved.id);
+      if (stored === undefined) throw new Error('seedModule: the saved row vanished');
+      const legacy: Record<string, unknown> = { ...stored };
       delete legacy.promptStyle;
-      await db.modules.put(legacy as unknown as Module);
+      await db.modules.put(legacy as unknown as ModuleRow);
     }
     // Campaign-scoped shared cast, so the campaign index + cast blocks render.
     if (options.withArtifacts !== false) {

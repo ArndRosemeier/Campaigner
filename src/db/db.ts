@@ -8,7 +8,7 @@ import type {
   ChunkEmbedding,
   CreatureImage,
   IdeaBoard,
-  Module,
+  ModuleRow,
   MobPortraitCacheEntry,
   ModuleDocumentVersion,
   Persona,
@@ -32,7 +32,10 @@ import { DECLARED_DB_VERSION, purgeLegacyCampaignData } from '@/db/cleanCut';
  * NOW is no big deal ... i would rather like to abolish any migration code to
  * get to a clean base."* The database NAME (`campaigner`) is kept, and ONE
  * `version(31)` — ABOVE the last stored version, 30 — carries the v30 store
- * block and a single `.upgrade()` body that calls `purgeLegacyCampaignData`.
+ * block and a single `.upgrade()` body that calls `purgeLegacyCampaignData`;
+ * `version(32)` (docs/23 §9, docs/17 row 382) is the campaign-arc STORAGE CUT:
+ * the same purge, because the module row now stores ONE document text and the
+ * old `spine`/`parts` rows are not converted (clean cut, owner-ratified).
  *
  * THE VERSION NUMBER IS LOAD-BEARING. Dexie runs only declared versions
  * `>= oldVersion` (`dexie.js:3815`), so declaring `version(1)` against a stored
@@ -45,8 +48,9 @@ import { DECLARED_DB_VERSION, purgeLegacyCampaignData } from '@/db/cleanCut';
  * where it was, every row survives, and a reload is a clean retry. There is
  * deliberately NO `try`/`catch` around it (see `db/cleanCut.ts`).
  *
- * COMPATIBILITY DISCIPLINE RESUMES HERE: this amnesty is ONE-TIME. The next
- * schema change owes a real `version(32)` with its own `.upgrade()` body.
+ * COMPATIBILITY DISCIPLINE RESUMES HERE: this amnesty is ONE-TIME. `version(32)`
+ * is the SECOND clean cut (the campaign arc), and the next schema change owes a
+ * real `version(33)` with its own `.upgrade()` body.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -58,7 +62,7 @@ export class CampaignerDB extends Dexie {
   embeddings!: Table<ChunkEmbedding, string>;
   personas!: Table<Persona, Id>;
   runs!: Table<PersonaRun, Id>;
-  modules!: Table<Module, Id>;
+  modules!: Table<ModuleRow, Id>;
   battles!: Table<Battle, Id>;
   pdfFiles!: Table<StoredPdf, Id>;
   mobPortraits!: Table<MobPortraitCacheEntry, Id>;

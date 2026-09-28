@@ -9,7 +9,8 @@ import type { CleanCutReport } from '@/domain/settings';
  * campaigns get cleanly deleted. I think the other settings can survive, right?
  * I just don't want to get stuck in an error state."* So the app keeps its
  * database NAME (`campaigner`) and declares ONE version ABOVE the stored one
- * (`31`), whose upgrade body calls THIS function: every campaign-scoped row is
+ * (`32`, the campaign-arc storage cut — `version(31)` was the first clean cut),
+ * whose upgrade body calls THIS function: every campaign-scoped row is
  * removed in the same versionchange transaction that opens the clean base, and
  * the LIBRARY (`rulebooks`/`chunks`/`embeddings`/`pdfFiles`), the GLOBAL
  * presentation rows (`mobPortraits`, `personas`, `ideaBoards`) and `settings`
@@ -37,7 +38,7 @@ import type { CleanCutReport } from '@/domain/settings';
 
 /** The version the clean base declares. MUST stay above the last pre-cut
  * version (30) or Dexie runs nothing (see the module doc). */
-export const DECLARED_DB_VERSION = 31;
+export const DECLARED_DB_VERSION = 32;
 
 /** The campaign-scoped stores whose every row goes. */
 const CLEARED_STORES = [

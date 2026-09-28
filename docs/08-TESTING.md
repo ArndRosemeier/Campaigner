@@ -9849,3 +9849,31 @@ separator of its own, then `=====Level N=====` sections. What it holds, and why 
 - **WHAT THESE PINS DO NOT COVER, stated rather than implied:** the STORAGE cut of the arc's phase 1
   (`version(32)`, the schema shape, and every compile-forced surface) is NOT attempted and is NOT pinned
   here — docs/18 §5 carries the measured census and why no smaller compiling cut exists.
+
+## The storage cut's breakage is MEASURED, not assumed: `tsc -b` was CLEAN and the 240 failures are semantic (docs/17 row 382, docs/23 §4–§5, docs/18 §2/§5)
+
+The `version(32)` storage cut (the module row stores ONE document; the legacy `spine`/`parts` shape is
+DERIVED at read time) was implemented and measured rather than argued about, and the measurement
+overturned the plan's own premise:
+
+- **The compile-forced census is an IDENTIFIER GREP, and it over-counted by two orders of magnitude.** The
+  census found 67 `src/` and 147 `tests/` files naming the module model, and concluded "no smaller
+  COMPILING cut exists". Measured: the full cut produces **3 type errors** (`lib/exportImport.ts` ×1, one
+  `legacyRow` fixture ×2), and `node_modules/.bin/tsc -b` is **exit 0, 0 errors**, because the cut keeps
+  `moduleSchema`/`Module` as the in-memory VIEW (only the STORED shape changes, to
+  `moduleRowSchema`/`ModuleRow`), so the ~100 fixture files needed no signature change. **A type-shaped
+  claim about a compile-forced surface must be run through the compiler before it is written into a plan.**
+- **Measure the affected set in BOUNDED CHUNKS and COUNT, and split mechanical from semantic.** The 106
+  affected files (the fixture grep plus every module-model seam name) ran in three chunks, one worker,
+  `--reporter=dot`, logs kept raw: **41 files failed, 240 tests, 65 files passed unchanged**; **6
+  failures were MECHANICAL (fixed: the `version(31)` literals, a raw-row fixture without `document`, and
+  two `legacyRow` fixtures built from the view)** while the other 240 are BEHAVIOUR PINS on the old model.
+- **A red run is worth more than a green one here, but its EVIDENCE must be kept:** the four semantic
+  classes were only nameable because the logs held the assertion bodies (`ModulePartsDocumentError: the
+  label line of part N … contradicts the plan` ×41; pass-1 prompts reading `1. [1] Level 1 — ` instead of
+  the plan's title; `expected null to be 'model'`; `expected 'pending' to be 'generating'`).
+  `.gate-logs/row382-failtests.txt` carries every failed test name.
+- **A pin that asserts a LOSS is the right instrument for a temporary view.** `tests/domain/moduleStorageCut.test.ts`
+  pins the derivation itself, INCLUDING an arm whose assertion is that a plan-authored title/synopsis does
+  NOT survive the round trip — so a later reader cannot mistake the compatibility view for a faithful
+  model, and the fork is visible in the test suite rather than only in a report.

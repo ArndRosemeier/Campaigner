@@ -13,6 +13,21 @@ every compile-forced surface, follows 1a. The measured compile-forced surface is
 and 147 under `tests/`, and `tsconfig.app.json` typechecks `tests/`, which is why it does not fit one
 landing; `docs/18` §5 carries the census and the reasoning. Phases 2–4 are untouched.
 
+**BUILD STATE (2026-09-28, docs/17 row 382). PHASE 1b — the `version(32)` STORAGE CUT — is MEASURED and
+BLOCKED, committed on branch `arc-storage` and NOT pushed.** The cut was implemented in full and
+`tsc -b` is CLEAN (exit 0) — the "cannot compile" half of the census was a grep inference and is now
+disproved (`docs/18` §5, row 382). What blocks it is SEMANTIC: **41 of the 106 affected test files fail,
+240 tests, 65 pass unchanged**, all of them behaviour pins on the old model — 41 `ModulePartsDocumentError`s
+(the legacy `==========` parts document requires its label line to equal the plan's title, which the derived
+caption cannot supply once the plan is dropped) plus value assertions on the plan
+(`title`/`synopsis`/`levelUpTrigger`/`levelBand`-as-range/`themes`), per-part `status`, and per-part
+provenance. **THE FORK, stated for the owner: pass 0 authors the plan BEFORE any part text exists, and the
+document has no slot for a plan title, a synopsis, a part status or a provenance id — so "derive `spine`
+and `parts` from the levels" and "the generator keeps working (1f is out of scope)" cannot both hold.**
+The recommended resolution is that the ROW stores the ONE document for TEXT plus the plan and per-level
+METADATA (which are not text and not a second truth of it); the alternative folds 1f and most of 1c/1e
+into this slice. Full numbers, the named pins and the per-class evidence: `.gate-logs/row382-blocked.md`.
+
 ## 1. The owner's decisions (verbatim substance)
 
 > "One canvas chat that starts with nothing and ends with the campaign premise and produces module

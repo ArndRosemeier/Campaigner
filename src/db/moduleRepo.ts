@@ -3,11 +3,17 @@ import type {
   Module,
   ModulePart,
   ModulePatch,
+  ModuleRow,
   ModuleSpine,
   PartPlan,
   TextOrigin,
 } from '@/domain';
-import { moduleSchema, recordedWritingModel } from '@/domain';
+import {
+  moduleRowFromView,
+  moduleRowSchema,
+  moduleViewFromRow,
+  recordedWritingModel,
+} from '@/domain';
 import { db } from '@/db/db';
 import {
   deleteArtifact,
@@ -30,9 +36,14 @@ import { deleteBattlesByModule } from '@/db/battleRepo';
  * Parses on read so rows written before a schema addition pick up new
  * defaulted fields (e.g. `focusedEntities`, `entitySort`) — and an invalid
  * row fails loudly instead of leaking a partial type (AGENTS rule 1).
+ *
+ * Since the storage cut (docs/17 row 382, `version(32)`) the row stores ONE
+ * document and this DERIVES the legacy `spine`/`parts` view from it
+ * (`domain/moduleDocument.legacyViewFromModuleDocument`), so every reader in
+ * the tree speaks the same shape it always did. Nothing is stored twice.
  */
-function parseModuleRow(row: Module): Module {
-  return moduleSchema.parse(row);
+function parseModuleRow(row: ModuleRow): Module {
+  return moduleViewFromRow(moduleRowSchema.parse(row));
 }
 
 export async function getModule(id: Id): Promise<Module | undefined> {
@@ -88,7 +99,7 @@ export async function failInterruptedModuleGen(
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) return undefined;
-    const module = moduleSchema.parse(current);
+    const module = parseModuleRow(current);
     if (module.status !== 'generating') return undefined;
     if (isClaimed()) return undefined;
     const parts = module.parts.map((part) =>
@@ -106,9 +117,12 @@ export async function failInterruptedModuleGen(
  * via `getModule`/live query or produced by `patchModule`).
  */
 export async function saveModule(module: Module): Promise<Module> {
-  const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });
+  const valid = moduleRowSchema.parse({
+    ...moduleRowFromView(module),
+    updatedAt: Date.now(),
+  });
   await db.modules.put(valid);
-  return valid;
+  return moduleViewFromRow(valid);
 }
 
 /**
@@ -135,7 +149,7 @@ export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) throw new NotFoundError('Module', id);
-    return saveModule({ ...current, ...patch });
+    return saveModule({ ...parseModuleRow(current), ...patch });
   });
 }
 
@@ -162,10 +176,11 @@ export async function patchModuleSpine(id: Id, patch: Partial<ModuleSpine>): Pro
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) throw new NotFoundError('Module', id);
-    if (current.spine === null) {
+    const module = parseModuleRow(current);
+    if (module.spine === null) {
       throw new Error('Cannot patch the spine of a module without a spine');
     }
-    return saveModule({ ...current, spine: { ...current.spine, ...patch } });
+    return saveModule({ ...module, spine: { ...module.spine, ...patch } });
   });
 }
 
@@ -225,7 +240,7 @@ export async function patchModulePartText(
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) throw new NotFoundError('Module', id);
-    const module = moduleSchema.parse(current);
+    const module = parseModuleRow(current);
     const existing = module.parts.find((part) => part.planIndex === planIndex);
     const nextPart: ModulePart = {
       planIndex,

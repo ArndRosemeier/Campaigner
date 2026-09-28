@@ -1,4 +1,15 @@
-import { entityKindFor, type EntityKind, type ModuleEntityKind } from '@/domain/module';
+import {
+  entityKindFor,
+  moduleRowSchema,
+  moduleSchema,
+  type EntityKind,
+  type Module,
+  type ModuleEntityKind,
+  type ModulePart,
+  type ModuleRow,
+  type ModuleSpine,
+  type PartPlan,
+} from '@/domain/module';
 import { extractWikiLinks } from '@/lib/wikilinks';
 
 /**
@@ -548,4 +559,182 @@ export function moduleLevelList(
     levelMin: first?.number ?? MODULE_PREMISE_LEVEL,
     levelMax: last?.number ?? MODULE_PREMISE_LEVEL,
   };
+}
+
+/**
+ * ============================================================================
+ * THE STORAGE CUT'S COMPATIBILITY VIEW (docs/23 §4–§5, docs/17 row 382).
+ *
+ * The module ROW stores ONE document (`moduleRowSchema.document`). `spine` and
+ * `parts` are NOT stored — they are DERIVED HERE, at read time, so every reader
+ * in the tree keeps compiling and working while the cut is multi-slice.
+ *
+ * DERIVED-ON-READ IS NOT THE "SECOND TRUTH" docs/23 §4 FORBIDS: nothing is
+ * stored twice, and `moduleRowFromView` writes the view BACK into the one
+ * document. The view is TEMPORARY: phases 1c–1e move the canvas/chat, the
+ * reader/PDF/exports and the board onto the document, and 1g deletes this
+ * mapping. A later reader must not mistake it for drift.
+ *
+ * THE MAPPING, stated once here so it cannot be re-invented at a call site:
+ *   - level 0 (the premise)          ↔ `spine.premise`
+ *   - level section N (N ≥ 1)        ↔ `parts[N − 1]`, keyed by `planIndex N − 1`
+ *   - the level section's FIRST non-empty line (leading `#`/spaces stripped)
+ *     is the CAPTION the plan's `title` derives from — the app stores no title
+ *     (docs/23 §2), so this is the display-only caption the spec sanctions;
+ *     an empty section derives `Level N`;
+ *   - `levelBand` is the section's exact number as a string (`'3'`, never a
+ *     range);
+ *   - `synopsis` / `levelUpTrigger` / `themes` are DELETED (docs/23 §5) and
+ *     derive as `''` / `[]`;
+ *   - `spine` is `null` iff the document is EMPTY — the "starts with nothing"
+ *     state — which is what every `spine === null` reader already means.
+ *
+ * WHAT THIS MAPPING CANNOT CARRY, and it is a MEASURED loss rather than a
+ * remark (row-382 report): the plan's `synopsis`, its `levelUpTrigger` and a
+ * part's `status`/`errorMessage`/`edited`/`writerModel`/`origin` have NO
+ * representation in the document, so a `saveSpine` → read round trip drops
+ * them. That is why the generator's pass-1 prompts and the per-part provenance
+ * pins do not survive the cut as specified (phase 1f's authoring deletion and
+ * phase 3's chat are their replacement).
+ * ============================================================================
+ */
+
+/** The caption a level section derives from its first non-empty line. */
+function captionOf(level: ModuleDocumentLevel): string {
+  for (const raw of level.text.split('\n')) {
+    const line = raw.trim().replace(/^#+/, '').trim();
+    if (line !== '') return line;
+  }
+  return `Level ${String(level.number)}`;
+}
+
+/** The DERIVED `planIndex` of level section `number` (docs/23 §4): N − 1. */
+export function planIndexForLevel(number: number): number {
+  return number - 1;
+}
+
+/** The DERIVED level section number of `planIndex` — the inverse, one place. */
+export function levelForPlanIndex(planIndex: number): number {
+  return planIndex + 1;
+}
+
+/**
+ * Derives the legacy `spine`/`parts` view from the ONE document (PURE).
+ *
+ * See the block comment above for the full mapping and for what it cannot
+ * carry. The result is validated by the view schema, so a document the view
+ * cannot express (a separator shape the parser refuses) fails LOUDLY here
+ * rather than leaking a half-derived shape.
+ */
+export function legacyViewFromModuleDocument(document: string): {
+  spine: ModuleSpine | null;
+  parts: ModulePart[];
+} {
+  const parsed = splitModuleDocument(document);
+  const sections = parsed.levels.filter((level) => level.number >= 1);
+  if (document.trim() === '') return { spine: null, parts: [] };
+
+  const partPlan: PartPlan[] = sections.map((section) => ({
+    title: captionOf(section),
+    levelBand: String(section.number),
+    synopsis: '',
+    levelUpTrigger: '',
+    }));
+  const parts: ModulePart[] = sections.map((section) => ({
+    planIndex: planIndexForLevel(section.number),
+    markdown: section.text,
+    // The document records TEXT, not generator state: a section with prose is
+    // `ready`, one without is `pending`. 'generating'/'failed' are states of a
+    // run, not of a document, so they are not derivable — recorded as a loss.
+    status: section.text.trim() === '' ? 'pending' : 'ready',
+    errorMessage: '',
+    edited: false,
+    writerModel: '',
+    origin: null,
+  }));
+
+  const spine: ModuleSpine = {
+    premise: parsed.levels[0]?.text ?? '',
+    themes: [],
+    partPlan,
+    writerModel: '',
+    origin: null,
+  };
+  return { spine, parts };
+}
+
+/**
+ * The level list of a legacy `spine`/`parts` view, in order — level 0 first
+ * (the premise), then level N from `parts[N − 1]`. The level COUNT is the
+ * larger of the plan's and the written parts', so a plan authored before its
+ * parts exist still reserves its sections (the pass-0 → pass-1 shape).
+ */
+function levelsFromLegacyView(view: {
+  premise: string;
+  partPlan: readonly PartPlan[];
+  parts: readonly ModulePart[];
+}): { number: number; text: string }[] {
+  const written = new Map<number, string>();
+  for (const part of view.parts) written.set(part.planIndex, part.markdown);
+  const count = Math.max(view.partPlan.length, view.parts.length);
+  const levels: { number: number; text: string }[] = [
+    { number: MODULE_PREMISE_LEVEL, text: view.premise },
+  ];
+  for (let planIndex = 0; planIndex < count; planIndex += 1) {
+    levels.push({
+      number: levelForPlanIndex(planIndex),
+      text: written.get(planIndex) ?? '',
+    });
+  }
+  return levels;
+}
+
+/**
+ * COMPOSES the ONE document from a legacy `spine`/`parts` view (PURE) — the
+ * write-translation half of the cut (docs/17 row 382): a `saveSpine` /
+ * `savePartPlan` / part-text write is composed through the app's own separator
+ * formatter here rather than re-shaped into a parallel structure. A view with
+ * no spine and no parts is the empty document, the legal "level 0 only" state.
+ */
+export function moduleDocumentFromLegacyView(view: {
+  spine: ModuleSpine | null;
+  parts: readonly ModulePart[];
+}): string {
+  // The EMPTY view (no spine, no parts) is the empty document — the legal
+  // "level 0 only" state. A view with PARTS but no spine is NOT empty: it is a
+  // module whose first text landed before any plan existed (the board's and the
+  // chat's part writes), so its sections are composed with an empty premise.
+  if (view.spine === null && view.parts.length === 0) return '';
+  return assembleModuleDocument({
+    levels: levelsFromLegacyView({
+      premise: view.spine?.premise ?? '',
+      partPlan: view.spine?.partPlan ?? [],
+      parts: view.parts,
+    }),
+  });
+}
+
+/** The legacy view of a STORED row (docs/23 §4) — the read-translation half. */
+export function legacyViewFromModuleRow(row: ModuleRow): {
+  spine: ModuleSpine | null;
+  parts: ModulePart[];
+} {
+  return legacyViewFromModuleDocument(row.document);
+}
+
+/** A stored row as the in-memory view every reader speaks, validated. */
+export function moduleViewFromRow(row: ModuleRow): Module {
+  return moduleSchema.parse({ ...row, ...legacyViewFromModuleRow(row) });
+}
+
+/**
+ * The in-memory view AS A STORED ROW: the text is composed back into the ONE
+ * document and `spine`/`parts` are DROPPED (they are derived, never stored).
+ */
+export function moduleRowFromView(view: Module): ModuleRow {
+  const { spine, parts, ...rest } = view;
+  return moduleRowSchema.parse({
+    ...rest,
+    document: moduleDocumentFromLegacyView({ spine, parts }),
+  });
 }

@@ -18,7 +18,7 @@ import { monsterEntrySchema } from '@/domain/artifact';
 
 /**
  * THE CLEAN CUT (docs/17 row 278). The owner's amnesty: every CAMPAIGN-scoped
- * row is purged inside ONE `version(31)` upgrade body; the LIBRARY
+ * row is purged inside ONE `version(32)` upgrade body; the LIBRARY
  * (rulebooks/chunks/embeddings/pdfFiles), the global presentation rows
  * (mobPortraits/personas/ideaBoards) and `settings` survive; and the app can
  * never come up stuck.
@@ -236,7 +236,7 @@ describe('the clean-cut purge (docs/17 row 278)', () => {
     // Pin 9: the purge really ran. RED-PROOF: `version(1)` → the fallback
     // opens the stored 30 with versToRun empty and `db.verno` stays 30.
     expect(db.verno).toBe(DECLARED_DB_VERSION);
-    expect(db.verno).toBe(31);
+    expect(db.verno).toBe(32);
   });
 
   it('is IDEMPOTENT: a second purge deletes nothing and reports all-zero', async () => {
@@ -286,17 +286,19 @@ describe('the clean-cut purge (docs/17 row 278)', () => {
     // Removing the hook lets the SAME upgrade complete.
     setCleanCutFault(null);
     const db2 = await openAppDb();
-    expect(db2.verno).toBe(31);
+    expect(db2.verno).toBe(DECLARED_DB_VERSION);
+    expect(db2.verno).toBe(32);
     expect(await db2.campaigns.count()).toBe(0);
   });
 
   it('opens a NEWER stored database with a non-blocking result and DELETES nothing', async () => {
     await seedV30();
-    // Rewrite the stored database at native version 320 (declared 32).
+    // Rewrite the stored database at native version 330 (declared 33) — one
+    // ABOVE the current declared 32, which is what "newer" now means.
     const app = await import('@/db/db');
     app.db.close();
     const newer = new Dexie('campaigner');
-    newer.version(32).stores(V30_STORES);
+    newer.version(33).stores(V30_STORES);
     await newer.open();
     await newer.table('campaigns').put({ id: CAMPAIGN, name: 'From a newer build' });
     newer.close();
@@ -304,13 +306,13 @@ describe('the clean-cut purge (docs/17 row 278)', () => {
     const db = await openAppDb();
     // The open RESOLVED through Dexie's VersionError fallback (a blocking screen
     // would be the failure). The stored version is read off the raw backend:
-    // `db.verno` keeps the DECLARED 31 (MEASURED), which is why the guard must
+    // `db.verno` keeps the DECLARED 32 (MEASURED), which is why the guard must
     // not use it.
-    expect(Math.round(db.backendDB().version / 10)).toBe(32);
+    expect(Math.round(db.backendDB().version / 10)).toBe(33);
     // No delete: the newer build's rows are exactly as they were.
     expect(await db.campaigns.count()).toBe(1);
     const { openCampaignerDatabase } = await import('@/db/dbBoot');
-    expect((await openCampaignerDatabase()).newerVersion).toEqual({ stored: 32, declared: 31 });
+    expect((await openCampaignerDatabase()).newerVersion).toEqual({ stored: 33, declared: 32 });
   });
 
   it('keeps exactly ONE .version( and ONE .upgrade( in db.ts', () => {

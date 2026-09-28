@@ -5,7 +5,8 @@ import {
   assembleModulePartsDocument,
   MODULE_VERSION_CAP,
   moduleDocumentVersionSchema,
-  moduleSchema,
+  moduleRowSchema,
+  moduleViewFromRow,
 } from '@/domain';
 import { newId } from '@/domain/entity';
 import { db } from '@/db/db';
@@ -70,7 +71,10 @@ export async function snapshotModuleVersion(
   if (row === undefined) {
     throw new NotFoundError('Module', moduleId);
   }
-  const module = moduleSchema.parse(row);
+  // The row stores ONE document; the legacy `spine`/`parts` view is DERIVED
+  // from it (docs/17 row 382). Parsing the raw row with the VIEW schema would
+  // throw — the row carries no `spine`.
+  const module = moduleViewFromRow(moduleRowSchema.parse(row));
   const partPlan = module.spine?.partPlan ?? [];
   if (partPlan.length === 0) return null;
   const { document } = assembleModulePartsDocument({ partPlan, parts: module.parts });

@@ -23,7 +23,10 @@ import {
   exportMissingImageSchema,
   foldCreatureKey,
   moduleDocumentPlanSchema,
+  moduleRowFromView,
+  moduleRowSchema,
   moduleSchema,
+  moduleViewFromRow,
   personaRunSchema,
   readStoredDocumentPlan,
   storedImageSchema,
@@ -189,7 +192,7 @@ export async function buildCampaignExport(
           .where('campaignId')
           .equals(campaignId)
           .toArray()
-          .then((rows) => rows.map((row) => moduleSchema.parse(row))),
+          .then((rows) => rows.map((row) => moduleViewFromRow(moduleRowSchema.parse(row)))),
     selectionOnly
       ? Promise.resolve([])
       : db.battles
@@ -1003,14 +1006,16 @@ export async function importExport(
         if (moduleId === undefined) throw new Error(`Import lost the re-id for module ${exported.id}`);
         const plan = remapStoredDocumentPlan(exported.documentPlan, remap);
         await db.modules.add(
-          moduleSchema.parse({
-            ...exported,
-            ...(plan === null ? {} : { documentPlan: plan }),
-            id: moduleId,
-            campaignId: writeCampaignId,
-            createdAt: stamp,
-            updatedAt: stamp,
-          }),
+          moduleRowFromView(
+            moduleSchema.parse({
+              ...exported,
+              ...(plan === null ? {} : { documentPlan: plan }),
+              id: moduleId,
+              campaignId: writeCampaignId,
+              createdAt: stamp,
+              updatedAt: stamp,
+            }),
+          ),
         );
       }
 
