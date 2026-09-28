@@ -4521,7 +4521,7 @@ known-debt item).
   test's own input table (deleted after the capture). Cause: the prompt now describes the module document and
   the input table's document IS one. No other kind's byte-identity pin was touched.
 - **WHAT IS NOT PROVEN / THE REMAINDER.** The SOURCE slice compiles (`node_modules/.bin/tsc -b`, 0 errors) and
-  the domain/chat-level pins are green, but **62 pins in 17 test files are RED**: their fixtures still build
+  the domain/chat-level pins are green, but **59 pins in 15 test files are RED**: their fixtures still build
   the LEGACY document, which now parses as "level 0 only", so `parts` is empty and their assertions die on
   `undefined`. They are named per file in docs/17 row 384. The migration is mechanical (fixture →
   `assembleModuleDocument`/`moduleDocumentFromView`; `splitPartsDocument` → `moduleDocumentSections` with the
