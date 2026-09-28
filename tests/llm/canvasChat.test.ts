@@ -20,14 +20,6 @@ import {
   type CanvasChatTurnInput,
 } from '@/llm/canvasChat';
 import {
-  CANVAS_PARTS_DELIMITER,
-  ModulePartsDocumentError,
-  assembleModulePartsDocument,
-  canvasPartLabel,
-  splitModulePartsDocument,
-  splitPartsDocument,
-} from '@/domain/modulePartsDocument';
-import {
   ModuleDocumentError,
   assembleModuleDocument,
   moduleDocumentSections,
@@ -60,10 +52,6 @@ import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
  * preceding modules' FULL document text, UNCAPPED — deliberately not
  * moduleGen's capped renderer) rides every request. The transport is mocked —
  * extractor, ladder, composition, grounding and boundary logic run for real.
- *
- * The `assembleModulePartsDocument + splitPartsDocument` block below pins the
- * LEGACY `==========` format, which still has a caller (`lib/modulePdf` builds
- * its per-part plan text through it — docs/17 row 384, phases 1d/1e).
  */
 
 vi.mock('@/llm/openrouter', async (importOriginal) => ({
@@ -318,135 +306,6 @@ describe('resolveCanvasEdit (tolerant ladder, single doc)', () => {
 
   it('an empty search never matches', () => {
     expect(resolveCanvasEdit(PART_0, '')).toEqual({ status: 'none', closest: '', closestFrom: null });
-  });
-});
-
-describe("assembleModulePartsDocument + splitPartsDocument (the LEGACY format, modulePdf's caller)", () => {
-  const base = {
-    partPlan: PART_PLAN,
-    parts: [
-      { planIndex: 0, markdown: PART_0 },
-      { planIndex: 1, markdown: PART_1 },
-    ],
-  };
-
-  it('assembles every planned part in plan order with delimiter + label scaffolding', () => {
-    const { document, parts } = assembleModulePartsDocument(base);
-    expect(document).toContain(`\n\n${CANVAS_PARTS_DELIMITER}\n\n[Part 2 of 3 — Under the Docks]\n${PART_1}`);
-    expect(document).toContain('[Part 1 of 3 — The Gate Bargain]\n');
-    expect(document).toContain('[Part 3 of 3 — The Long Watch]\n');
-    // The spine premise is EXCLUDED (owner: "without premise").
-    expect(document).not.toContain(SPINE_PREMISE);
-    expect(parts.map((part) => part.planIndex)).toEqual([0, 1, 2]);
-    expect(parts.map((part) => part.title)).toEqual(['The Gate Bargain', 'Under the Docks', 'The Long Watch']);
-  });
-
-  it('a missing/empty planned part is an empty section (its label is the only content)', () => {
-    const { document, parts } = assembleModulePartsDocument(base);
-    expect(parts[2]?.text).toBe('');
-    expect(document).toContain(`${CANVAS_PARTS_DELIMITER}\n\n[Part 3 of 3 — The Long Watch]\n`);
-  });
-
-  it('the label falls back to [Part n of total] when the plan has no title', () => {
-    expect(canvasPartLabel(2, 3, '')).toBe('[Part 2 of 3]');
-    expect(canvasPartLabel(1, 2, 'Title')).toBe('[Part 1 of 2 — Title]');
-    const { document } = assembleModulePartsDocument({
-      partPlan: [{ title: '' }, { title: 'B' }],
-      parts: [{ planIndex: 0, markdown: 'x' }],
-    });
-    expect(document).toContain('[Part 1 of 2]\nx');
-  });
-
-  it('throws loud on an empty plan', () => {
-    expect(() => assembleModulePartsDocument({ partPlan: [], parts: [] })).toThrow(/planned part/);
-  });
-
-  it('split round-trips assemble BYTE-EXACTLY (part texts, titles, ranges)', () => {
-    const { document } = assembleModulePartsDocument(base);
-    const sections = splitPartsDocument(document, PART_PLAN);
-    expect(sections.map((section) => section.planIndex)).toEqual([0, 1, 2]);
-    expect(sections.map((section) => section.title)).toEqual([
-      'The Gate Bargain',
-      'Under the Docks',
-      'The Long Watch',
-    ]);
-    expect(sections.map((section) => section.text)).toEqual([PART_0, PART_1, '']);
-    // Ranges slice the exact texts back out of the doc.
-    for (const section of sections) {
-      expect(document.slice(section.textFrom, section.textTo)).toBe(section.text);
-    }
-    // And re-assembling the split is the identity.
-    expect(
-      assembleModulePartsDocument({
-        partPlan: PART_PLAN,
-        parts: sections.map((section) => ({ planIndex: section.planIndex, markdown: section.text })),
-      }).document,
-    ).toBe(document);
-  });
-
-  it('a bare ========== line INSIDE a part\'s content is harmless (the label line identifies sections)', () => {
-    const { document } = assembleModulePartsDocument({
-      partPlan: PART_PLAN,
-      parts: [
-        { planIndex: 0, markdown: `${PART_0}\n\n==========\n\nstill part one` },
-        { planIndex: 1, markdown: PART_1 },
-      ],
-    });
-    const sections = splitPartsDocument(document, PART_PLAN);
-    expect(sections[0]?.text).toBe(`${PART_0}\n\n==========\n\nstill part one`);
-    expect(sections[1]?.text).toBe(PART_1);
-  });
-
-  it('fails loud when the separator before a label is missing or malformed', () => {
-    const { document } = assembleModulePartsDocument(base);
-    const broken = document.replace(`\n\n${CANVAS_PARTS_DELIMITER}\n\n`, '\n\n'); // no delimiter line
-    expect(() => splitPartsDocument(broken, PART_PLAN)).toThrow(ModulePartsDocumentError);
-    expect(() => splitPartsDocument(broken, PART_PLAN)).toThrow(/separator before the label line of part 2/);
-    const nineEquals = document.replace(`\n\n${CANVAS_PARTS_DELIMITER}\n\n`, '\n\n=========\n\n');
-    expect(() => splitPartsDocument(nineEquals, PART_PLAN)).toThrow(/separator .* missing or malformed/);
-  });
-
-  it('fails loud when the section count does not match the plan (missing label)', () => {
-    const { document } = assembleModulePartsDocument(base);
-    const truncated = document.slice(0, document.indexOf(`${CANVAS_PARTS_DELIMITER}\n\n[Part 2`));
-    expect(() => splitPartsDocument(truncated, PART_PLAN)).toThrow(/label line of part 2 of 3 is missing/);
-  });
-
-  it('fails loud when a label\'s title contradicts the plan (lying label)', () => {
-    const { document } = assembleModulePartsDocument(base);
-    const lying = document.replace('[Part 2 of 3 — Under the Docks]', '[Part 2 of 3 — The Wrong Title]');
-    expect(() => splitPartsDocument(lying, PART_PLAN)).toThrow(/contradicts the plan/);
-    expect(() => splitPartsDocument(lying, PART_PLAN)).toThrow(/Under the Docks/);
-  });
-
-  it('fails loud when content fakes a full section header (the designed guard, never silent re-splitting)', () => {
-    const { document } = assembleModulePartsDocument({
-      partPlan: PART_PLAN,
-      parts: [
-        { planIndex: 0, markdown: `${PART_0}\n\n${CANVAS_PARTS_DELIMITER}\n\n[Part 2 of 3 — Under the Docks]\nFaked continuation.` },
-        { planIndex: 1, markdown: PART_1 },
-      ],
-    });
-    expect(() => splitPartsDocument(document, PART_PLAN)).toThrow(ModulePartsDocumentError);
-    expect(() => splitPartsDocument(document, PART_PLAN)).toThrow(
-      /contains a section header line .*Faked|contains a section header line "\[Part 2 of 3/,
-    );
-  });
-
-  it('fails loud when an extra section rides beyond the plan (count mismatch)', () => {
-    const { document } = assembleModulePartsDocument(base);
-    const extra = `${document}${CANVAS_PARTS_DELIMITER}\n\n[Part 4 of 3 — Smuggled]\nextra`;
-    expect(() => splitPartsDocument(extra, PART_PLAN)).toThrow(/contains a section header line/);
-  });
-
-  it('fails loud when the document does not open with part 1\'s label', () => {
-    expect(() => splitPartsDocument('just text\n', PART_PLAN)).toThrow(/must open with the label line/);
-    expect(() => splitPartsDocument('', PART_PLAN)).toThrow(/must open with the label line/);
-  });
-
-  it('fails loud on a module without planned parts', () => {
-    expect(() => splitPartsDocument('whatever', [])).toThrow(/no planned parts/);
-    expect(() => splitModulePartsDocument('whatever', { spine: null })).toThrow(/no planned parts/);
   });
 });
 

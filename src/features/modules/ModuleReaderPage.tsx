@@ -29,11 +29,20 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { AnyArtifact, Campaign, Id, Module, ModulePart } from '@/domain';
+import type {
+  AnyArtifact,
+  Campaign,
+  Id,
+  Module,
+  ModuleDocumentSection,
+  ModulePart,
+} from '@/domain';
 import {
+  MODULE_PREMISE_LEVEL,
   MODULE_SIZE_LABELS,
   aliasCollisionSentence,
   entityKindFor,
+  moduleDocumentSectionsFromView,
   moduleDocumentText,
   modulePartsUntouched,
   moduleTagFor,
@@ -184,20 +193,34 @@ export function ModuleReaderPage(): JSX.Element {
     [campaignId, moduleId],
   );
 
+  // THE DERIVED LEVEL LIST (docs/23 §4, docs/17 row 386): the reader lists the
+  // module document's OWN level sections — the same parse the canvas edits and
+  // the PDF prints (`moduleDocumentSectionsFromView`) — so the three surfaces
+  // cannot disagree about a level's number, its title or its text. Level 0 is
+  // the premise and is rendered by `IntroBlock`, never as a part section.
+  const sections = useMemo<readonly ModuleDocumentSection[]>(
+    () =>
+      module === undefined || module === null
+        ? []
+        : moduleDocumentSectionsFromView(module).filter(
+            (section) => section.number !== MODULE_PREMISE_LEVEL,
+          ),
+    [module],
+  );
+
   // The plan sections in render order, shaped as the ONE `#part-<n>` resolver's
-  // `PlannedPart` input. `useMemo` on `module` so a page-local state change (a
+  // `PlannedPart` input. `useMemo` on `sections` so a page-local state change (a
   // ToC toggle, a stub click, an edit-draft keystroke) does not hand the
   // deep-link effect a fresh array and re-trigger a smooth scroll every render.
-  const plans = useMemo<readonly PlannedPart[]>(() => {
-    const spine = module?.spine ?? null;
-    return spine === null
-      ? []
-      : spine.partPlan.map((plan, planIndex) => ({
-          planIndex,
-          title: plan.title,
-          levelBand: plan.levelBand,
-        }));
-  }, [module]);
+  const plans = useMemo<readonly PlannedPart[]>(
+    () =>
+      sections.map((section) => ({
+        planIndex: section.planIndex,
+        title: section.title,
+        levelBand: String(section.number),
+      })),
+    [sections],
+  );
 
   // The four live queries resolve separately, so an effect that touches the
   // rendered document can run while the page is still the `Loading…` fallback
@@ -434,7 +457,7 @@ export function ModuleReaderPage(): JSX.Element {
           >
             Intro
           </button>
-          {plans.map(({ title, levelBand, planIndex }) => {
+          {sections.map(({ title, number, planIndex }) => {
             const part = module.parts.find((entry) => entry.planIndex === planIndex);
             return (
               <button
@@ -459,7 +482,7 @@ export function ModuleReaderPage(): JSX.Element {
                   )}
                 />
                 <span className="truncate">
-                  {levelBand} · {title}
+                  {number} · {title}
                 </span>
               </button>
             );
@@ -709,13 +732,13 @@ export function ModuleReaderPage(): JSX.Element {
                 />
               </section>
 
-              {plans.map(({ title, levelBand, planIndex }) => {
+              {sections.map(({ title, number, planIndex }) => {
                 const part = module.parts.find((entry) => entry.planIndex === planIndex);
                 return (
                   <section key={planIndex} id={`part-${String(planIndex)}`} className="mb-12 scroll-mt-4">
                     <div className="mb-3 flex items-baseline gap-3">
                       <h1 className="font-heading text-2xl font-bold tracking-tight">{title}</h1>
-                      <Badge variant="outline">Levels {levelBand}</Badge>
+                      <Badge variant="outline">Levels {number}</Badge>
                       <PartActions
                         part={part}
                         editing={editPartIndex === planIndex}

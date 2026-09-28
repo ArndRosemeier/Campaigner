@@ -15,6 +15,7 @@ import { readSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
+  moduleDocumentSectionsFromView,
   modulePartSchema,
   moduleSpineSchema,
   type Campaign,
@@ -255,6 +256,38 @@ describe('ModuleReaderPage', () => {
     const failed = screen.getByTestId('part-failed');
     expect(failed).toHaveTextContent('boom');
     expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('names and orders its level sections through the ONE document seam (docs/17 row 386)', async () => {
+    // The reader no longer builds its level list from the derived
+    // `spine.partPlan`: it reads the DERIVED LEVEL LIST
+    // (`moduleDocumentSectionsFromView`), the same parse the canvas edits and
+    // the PDF prints. This pin is the differential that keeps the three
+    // surfaces from disagreeing about what a level is called: every heading and
+    // every ToC entry is EXACTLY the seam's own `number` + `title`.
+    const { campaignId, moduleId } = await seedReaderModule();
+    const seeded = await getModule(moduleId);
+    if (seeded === undefined) throw new Error('the seeded module is missing');
+    const levels = moduleDocumentSectionsFromView(seeded).filter(
+      (section) => section.number !== 0,
+    );
+    expect(levels.map((section) => section.number)).toEqual([1, 2]);
+
+    renderAppAt(modulePath(campaignId, moduleId));
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+
+    for (const level of levels) {
+      // ONE heading per level, named exactly as the seam names it…
+      expect(
+        await screen.findByRole('heading', { name: level.title }),
+      ).toBeInTheDocument();
+      // …and the mini-ToC lists the level's NUMBER with the same title.
+      expect(screen.getByText(`${String(level.number)} · ${level.title}`)).toBeInTheDocument();
+    }
+    // The premise is level 0 and is NOT a level section: it prints as the
+    // intro, and the ToC never lists a level 0 entry.
+    expect(screen.queryByText('0 · Premise')).toBeNull();
     await flushAsyncUpdates();
   }, 20_000);
 

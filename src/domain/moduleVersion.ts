@@ -117,8 +117,8 @@ export function savedVersionsNoun(count: number): string {
  * The stored premise could not be put back (docs/17 row 357). A restore whose
  * premise half fails is LOUD and writes NO part: the caller toasts this (its
  * message names the cause) and never reports a half-restored document as a
- * success. `name` is stable for callers that branch on the failure class, like
- * `ModulePartsDocumentError` beside it.
+ * success. `name` is stable for callers that branch on the failure class (the
+ * document seam's `ModuleDocumentError` is the sibling refusal).
  */
 export class ModuleVersionPremiseError extends Error {
   constructor(message: string) {

@@ -15,8 +15,8 @@ import type {
   StatBlock,
 } from '@/domain';
 import {
+  MODULE_PREMISE_LEVEL,
   abilityModifier,
-  assembleModulePartsDocument,
   casterStatLine,
   documentPlanIssues,
   documentPlanSectionDestination,
@@ -24,9 +24,9 @@ import {
   mobCasterLevel,
   mobSpellChipDetail,
   mobSpellChips,
+  moduleDocumentSectionsFromView,
   printsAbilityModifiers,
   readStoredDocumentPlan,
-  splitPartsDocument,
   statBlockStatesNoSpellDc,
 } from '@/domain';
 import {
@@ -76,7 +76,8 @@ import {
  * Module PDF renderer (07-MILESTONE-3 M3-D, module-sourced since docs/17 row
  * 108): **the module IS the document.** There is no deliverable, no outline and
  * no second document-authoring model — the renderer reads the module's own
- * premise, its part plan, its parts (through the ONE parts-document seam) and
+ * premise, its level sections (through the ONE document seam, `domain/
+ * moduleDocument`) and
  * the artifacts its prose owns or mentions, and lays them out as an
  * adventure-module PDF: cover, generated ToC, part banners with kickers, boxed
  * read-aloud quotes, labeled per-kind sections, two-column stat boxes, map
@@ -96,8 +97,8 @@ import {
  *    (docs/17 row 105): every body goes through `lib/mdToPdfmake`, which emits
  *    bold display runs.
  * 3. **Nothing fails silently** (AGENTS 1–2). An image that cannot be embedded
- *    prints a LOUD placeholder naming the site and the reason; a part section
- *    the parts-document seam refuses prints a LOUD placeholder; the closed set
+ *    prints a LOUD placeholder naming the site and the reason; a level the
+ *    document seam cannot read prints a LOUD placeholder; the closed set
  *    of problems rides back to the export surface, which reports them. The
  *    build itself never fails on missing data — a missing row or blob is a
  *    visible defect INSIDE the document, not a lost document.
@@ -283,7 +284,7 @@ const ALERT_BOX_LAYOUT = {
 
 /**
  * The ONE loud box for something the document could not carry — a failed
- * image, a refused parts document, a dangling reference. Red-bordered, italic,
+ * image, an unreadable level section, a dangling reference. Red-bordered, italic,
  * naming the site and the reason: a reader of the PDF must never have to guess
  * why a plate or a section is absent (AGENTS rule 1).
  */
@@ -648,7 +649,7 @@ export function modulePdfImageRequests(input: {
   }).requests;
 }
 
-/** The parts of the module, split through the ONE parts-document seam. */
+/** One LEVEL SECTION of the module document, as the PDF prints it. */
 interface RenderedPart {
   planIndex: number;
   title: string;
@@ -886,22 +887,22 @@ function renderedParts(module: Module, problems: ModulePdfProblem[]): RenderedPa
     });
     return [];
   }
-  const plan = spine.partPlan;
   try {
-    // The whole-module DOCUMENT, split with the seam the canvas owns: the
-    // `==========` separators and the `[Part n of total]` labels are
-    // scaffolding and never reach a PDF, and a section whose text FAKES a
-    // label fails the split loudly rather than printing the scaffolding.
-    const { document } = assembleModulePartsDocument({
-      partPlan: plan,
-      parts: module.parts.map((part) => ({ planIndex: part.planIndex, markdown: part.markdown })),
-    });
-    return splitPartsDocument(document, plan).map((section) => ({
-      planIndex: section.planIndex,
-      title: plan[section.planIndex]?.title ?? section.title,
-      levelBand: plan[section.planIndex]?.levelBand ?? '',
-      text: section.text,
-    }));
+    // THE LEVELS, read through the ONE document seam (docs/23 §4, docs/17 row
+    // 386). There is no parts-document to assemble and split back any more: the
+    // module's own level sections — the section's NUMBER, the stored plan title
+    // and the section's TEXT — come from the same parse the canvas edits and
+    // the reader lists, so the three surfaces cannot disagree about what a
+    // level is called or which text belongs to it. Level 0 (the premise) is not
+    // a part and is printed by the premise branch instead.
+    return moduleDocumentSectionsFromView(module)
+      .filter((section) => section.number !== MODULE_PREMISE_LEVEL)
+      .map((section) => ({
+        planIndex: section.planIndex,
+        title: section.title,
+        levelBand: String(section.number),
+        text: section.text,
+      }));
   } catch (error) {
     problems.push({
       where: 'the parts of the module',
@@ -1852,8 +1853,8 @@ function plannedSectionBlock(
       blocks = premiseContent(module, state.problems, state);
     } else {
       const part = parts.get(source.planIndex);
-      // A part the parts-document seam refused (or a module with no spine at
-      // all) is LOUD here, never an empty page.
+      // A level the document seam could not read (or a module with no spine
+      // at all) is LOUD here, never an empty page.
       blocks =
         part === undefined
           ? [
@@ -2670,7 +2671,7 @@ async function moduleBattles(module: Module): Promise<Battle[]> {
  * at, build the definition, render it.
  *
  * Returns the blob AND the loud problems — an image that could not be embedded,
- * a part the parts-document seam refused, or a stored document plan that could
+ * a level the document seam could not read, or a stored document plan that could
  * not be applied is visible TWICE: a placeholder or a statement in the document
  * the owner opens, and an entry here for the export surface to report (AGENTS
  * rule 2). The export itself never fails on missing data.

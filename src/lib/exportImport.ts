@@ -7,7 +7,7 @@ import type {
   Battle,
   Campaign,
   Id,
-  Module,
+  ModuleRow,
   PersonaRun,
 } from '@/domain';
 import {
@@ -23,10 +23,7 @@ import {
   exportMissingImageSchema,
   foldCreatureKey,
   moduleDocumentPlanSchema,
-  moduleRowFromView,
   moduleRowSchema,
-  moduleSchema,
-  moduleViewFromRow,
   personaRunSchema,
   readStoredDocumentPlan,
   storedImageSchema,
@@ -70,7 +67,7 @@ import { db } from '@/db/db';
  * behaviour and stays.
  */
 
-export const EXPORT_FORMAT_VERSION = 3;
+export const EXPORT_FORMAT_VERSION = 4;
 
 /** An image in an export bundle: metadata + optional inline base64 payload. */
 export interface ExportedImage {
@@ -96,8 +93,15 @@ export interface CampaignExport {
   artifacts: (Artifact & { revisions: ArtifactRevision[] })[];
   /** Present when the export was built with image support (M3-A). */
   images?: ExportedImage[];
-  /** Whole-campaign tables (M3-E, v2): absent on v1 files and single exports. */
-  modules?: Module[];
+  /**
+   * Whole-campaign tables (M3-E, v2; the module ROW since v4): absent on v1
+   * files and single exports. A module travels as its STORED row — the ONE
+   * `document` text plus the generator's metadata (`levelPlans`/`levelStates`/
+   * `themes` and the premise's provenance) — so an export→import round trip
+   * preserves the document BYTE-IDENTICALLY instead of recomposing it from the
+   * derived view (docs/17 row 386).
+   */
+  modules?: ModuleRow[];
   battles?: Battle[];
   runs?: PersonaRun[];
   /**
@@ -192,7 +196,10 @@ export async function buildCampaignExport(
           .where('campaignId')
           .equals(campaignId)
           .toArray()
-          .then((rows) => rows.map((row) => moduleViewFromRow(moduleRowSchema.parse(row)))),
+          // The STORED row, not the derived view (docs/17 row 386): the
+          // document text and the generator's metadata ride the export as they
+          // sit on the row, so the import can put back the same bytes.
+          .then((rows) => rows.map((row) => moduleRowSchema.parse(row))),
     selectionOnly
       ? Promise.resolve([])
       : db.battles
@@ -1005,17 +1012,20 @@ export async function importExport(
         const moduleId = moduleIds.get(exported.id);
         if (moduleId === undefined) throw new Error(`Import lost the re-id for module ${exported.id}`);
         const plan = remapStoredDocumentPlan(exported.documentPlan, remap);
+        // The STORED row is written AS IT TRAVELLED (docs/17 row 386): the
+        // document text and the generator's metadata are put back byte-for-byte,
+        // never recomposed from a derived view. Only the ids, the owning
+        // campaign and the timestamps are re-stamped, and the plan's artifact
+        // references go through the ONE remap pass.
         await db.modules.add(
-          moduleRowFromView(
-            moduleSchema.parse({
-              ...exported,
-              ...(plan === null ? {} : { documentPlan: plan }),
-              id: moduleId,
-              campaignId: writeCampaignId,
-              createdAt: stamp,
-              updatedAt: stamp,
-            }),
-          ),
+          moduleRowSchema.parse({
+            ...exported,
+            ...(plan === null ? {} : { documentPlan: plan }),
+            id: moduleId,
+            campaignId: writeCampaignId,
+            createdAt: stamp,
+            updatedAt: stamp,
+          }),
         );
       }
 
@@ -1297,8 +1307,8 @@ const exportSchema = z.object({
       dataBase64: z.string().nullable(),
     }),
   ).optional(),
-  /** Whole-campaign tables (M3-E, v2): absent on v1 files. */
-  modules: z.array(moduleSchema).optional(),
+  /** Whole-campaign tables (M3-E, v2; module ROW since v4): absent on v1 files. */
+  modules: z.array(moduleRowSchema).optional(),
   battles: z.array(battleSchema).optional(),
   runs: z.array(personaRunSchema).optional(),
   /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):

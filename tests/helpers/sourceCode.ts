@@ -29,3 +29,41 @@ export function filesWith(needle: string): string[] {
     .filter((path) => CODE[path]?.includes(needle) === true)
     .sort();
 }
+
+/**
+ * The RAW text of every `src/**` AND `tests/**` TypeScript file, keyed by
+ * repo-relative path (docs/17 row 386).
+ *
+ * WHY IT IS HERE RATHER THAN IN A PIN, and why it is a SECOND view of the tree
+ * beside `CODE`: the scan that proves a DELETED format stays deleted must see
+ * BOTH trees and must see COMMENTS, because the real drift it exists for was a
+ * stale comment naming the deleted seam (`tests/features/module-canvas.test.tsx`
+ * carried `assembleModulePartsDocument` in its header while no code used it).
+ * `CODE` is `src/`-only and comment-stripped, which is exactly right for "is
+ * this seam called anywhere" and exactly wrong for "does this name still exist".
+ *
+ * LAZY ON PURPOSE: it is a non-eager glob, so the whole test tree is read only
+ * when a pin actually asks for it — `CODE`'s eager `src/` glob serves every
+ * existing consumer unchanged.
+ */
+const RAW_MODULES = import.meta.glob(['/src/**/*.{ts,tsx}', '/tests/**/*.{ts,tsx}'], {
+  query: '?raw',
+  import: 'default',
+});
+
+let rawCache: Record<string, string> | undefined;
+
+/** The raw text of both trees, loaded once per test file that needs it. */
+export async function rawSourceText(): Promise<Record<string, string>> {
+  if (rawCache !== undefined) return rawCache;
+  const entries = await Promise.all(
+    Object.entries(RAW_MODULES).map(
+      async ([path, load]): Promise<[string, string]> => [
+        path.replace(/^\//, ''),
+        await load(),
+      ],
+    ),
+  );
+  rawCache = Object.fromEntries(entries);
+  return rawCache;
+}

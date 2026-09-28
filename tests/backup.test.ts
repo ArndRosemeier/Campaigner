@@ -8,6 +8,8 @@ import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
 import {
   createModule as buildModule,
+  modulePartSchema,
+  moduleSpineSchema,
   ruleChunkSchema,
   stampNewEntity,
   type RuleChunk,
@@ -101,6 +103,69 @@ describe('app backup', () => {
 
     expect(result.totalRows).toBeGreaterThan(0);
     expect(restoredArtifact?.id).toBe(artifact.id); // ids are preserved wholesale
+  });
+
+  it('round-trips a module’s STORED document and generator metadata byte-exactly (docs/17 row 386)', async () => {
+    // A backup dumps every table's rows verbatim, so the module row's ONE
+    // `document` text and the generator's metadata travel as they sit — the
+    // pin states that contract for the shape the storage cut introduced.
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await createModule({
+      ...buildModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: 'A flooded vault beneath a watchtower.',
+        levelMin: 1,
+        levelMax: 2,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+      status: 'ready',
+      spine: moduleSpineSchema.parse({
+        premise: 'A drowned vault beneath [[Old Tower]].',
+        themes: ['tide'],
+        writerModel: 'test/spine-model',
+        origin: 'model',
+        partPlan: [
+          { title: 'The Gate', levelBand: '1', synopsis: 'Enter.', levelUpTrigger: 'The gate opens.' },
+          { title: 'The Vault', levelBand: '2', synopsis: 'Recover it.', levelUpTrigger: 'The relic is out.' },
+        ],
+      }),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: 'The gate opens at dawn.',
+          status: 'ready',
+          errorMessage: '',
+          edited: true,
+          writerModel: 'test/part-model',
+          origin: 'model',
+        }),
+        modulePartSchema.parse({
+          planIndex: 1,
+          markdown: 'The vault floods.',
+          status: 'failed',
+          errorMessage: 'the tide came in',
+          edited: false,
+        }),
+      ],
+    });
+    const before = (await db.modules.toArray())[0];
+    if (before === undefined) throw new Error('the module row was not written');
+    expect(before.document).toContain('=====Level 1=====');
+    expect(before.levelPlans).toHaveLength(2);
+
+    const { bytes } = await buildBackup();
+    await clearDatabase();
+    await importBackup(bytes);
+
+    const restored = (await db.modules.toArray())[0];
+    expect(restored?.document).toBe(before.document);
+    expect(restored?.levelPlans).toEqual(before.levelPlans);
+    expect(restored?.levelStates).toEqual(before.levelStates);
+    expect(restored?.themes).toEqual(before.themes);
+    expect(restored?.premiseWriterModel).toBe(before.premiseWriterModel);
+    expect(restored?.premiseOrigin).toBe(before.premiseOrigin);
   });
 
   it('never exports the API key and preserves the local key on restore', async () => {

@@ -4,9 +4,9 @@ import { render, renderHook, cleanup } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  assembleModulePartsDocument,
   createModule,
   entityIntentFor,
+  moduleDocumentFromView,
   moduleDocumentText,
   moduleEntityKindSchema,
   newId,
@@ -186,11 +186,10 @@ describe('the intent never reaches a surface a READER sees (it is an authoring n
   it('the module DOCUMENT (premise + parts, what every export wiki-strips) does not print it', () => {
     const module = moduleWithIntent();
     expect(moduleDocumentText(module)).not.toContain(NOTE);
-    const assembled = assembleModulePartsDocument({
-      partPlan: module.spine?.partPlan ?? [],
-      parts: module.parts,
-    });
-    expect(assembled.document).not.toContain(NOTE);
+    // The ONE document composition (the canvas's and the row write's own
+    // `moduleDocumentFromView`, docs/23 §2–§4): level 0 is the premise, then
+    // the level sections. It is what every export wiki-strips.
+    expect(moduleDocumentFromView(module)).not.toContain(NOTE);
   });
 
   it('the READER render (wiki chips and their tooltips) does not print it', () => {

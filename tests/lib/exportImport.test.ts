@@ -22,6 +22,8 @@ import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import {
   contentCreatureKey,
   createModule as buildModule,
+  modulePartSchema,
+  moduleSpineSchema,
   newId,
   ruleChunkSchema,
   stageSnapshotSchema,
@@ -410,8 +412,13 @@ function fixtureStatBlock(over: Partial<StatBlock> = {}): StatBlock {
 describe('export v2', () => {
   beforeEach(clearDatabase);
 
-  it('writes format version 3 with tables and a golden Monster-Core manifest', async () => {
-    expect(EXPORT_FORMAT_VERSION).toBe(3);
+  it('writes format version 4 with tables and a golden Monster-Core manifest', async () => {
+    // The literal MOVED 3 → 4 deliberately (docs/17 row 386): a module now
+    // travels as its STORED row (ONE `document` + the generator's metadata)
+    // instead of the derived `spine`/`parts` view, so the file SHAPE changed.
+    // `parseExport` still REFUSES every other version by name, which is what
+    // makes an older file a named refusal rather than a ZodError.
+    expect(EXPORT_FORMAT_VERSION).toBe(4);
     const campaign = await createCampaign({ name: 'Export v2', system: 'pathfinder2e' });
 
     // Pack-origin book with one cited statblock chunk (the "Monster Core").
@@ -478,7 +485,7 @@ describe('export v2', () => {
     });
 
     const exported = await buildCampaignExport(campaign.id);
-    expect(exported.version).toBe(3);
+    expect(exported.version).toBe(4);
 
     const manifest = exported.dependencies;
     if (manifest === undefined) throw new Error('dependencies manifest missing');
@@ -624,6 +631,79 @@ describe('export v2', () => {
     const restored = await getImage(image.id);
     expect(restored?.campaignId).toBe(result.campaignId);
     expect(new TextDecoder().decode(restored?.bytes ?? new Uint8Array())).toBe('cover-bytes');
+  });
+
+  it('carries the module STORED row byte-exactly: the document and its generator metadata (docs/17 row 386)', async () => {
+    // A module travels as its STORED row now, not as the derived
+    // `spine`/`parts` view: the ONE `document` text plus `levelPlans`,
+    // `levelStates`, `themes` and the premise's provenance. This pin imports
+    // what it exported and requires the document to come back BYTE-IDENTICAL —
+    // a recomposition from the view would be canonical but not necessarily the
+    // same bytes, and would lose `levelPlans` entries no section uses.
+    const campaign = await createCampaign({ name: 'Byte trip', system: 'dnd5e' });
+    const module = await saveModuleRow({
+      ...buildModule({
+        campaignId: campaign.id,
+        title: 'The Warren',
+        concept: 'goblins below',
+        levelMin: 1,
+        levelMax: 2,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+      status: 'ready',
+      spine: moduleSpineSchema.parse({
+        premise: 'The warren lies under [[Old Tower]].',
+        themes: ['tide', 'bargains'],
+        writerModel: 'test/spine-model',
+        origin: 'model',
+        partPlan: [
+          { title: 'The Dockyards', levelBand: '1', synopsis: 'Meet the wardens.', levelUpTrigger: 'The bell.' },
+          { title: 'The Vault', levelBand: '2', synopsis: 'Break the crown.', levelUpTrigger: 'The tide.' },
+        ],
+      }),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: 'The party rows out at dusk.',
+          status: 'ready',
+          errorMessage: '',
+          edited: true,
+          writerModel: 'test/part-model',
+          origin: 'model',
+        }),
+        modulePartSchema.parse({
+          planIndex: 1,
+          markdown: 'Below the waterline the vault opens.',
+          status: 'failed',
+          errorMessage: 'the tide came in',
+          edited: false,
+        }),
+      ],
+    });
+    const stored = await db.modules.get(module.id);
+    if (stored === undefined) throw new Error('the module row was not written');
+    // Non-vacuity: a real multi-level document with the generator's metadata.
+    expect(stored.document).toContain('=====Level 1=====');
+    expect(stored.document).toContain('=====Level 2=====');
+    expect(stored.levelPlans).toHaveLength(2);
+    expect(stored.themes).toEqual(['tide', 'bargains']);
+
+    const exported = await buildCampaignExport(campaign.id);
+    expect(exported.modules).toHaveLength(1);
+    expect(exported.modules?.[0]?.document).toBe(stored.document);
+
+    const result = await importExport(JSON.parse(JSON.stringify(exported)) as unknown);
+    const imported = await db.modules.where('campaignId').equals(result.campaignId).toArray();
+    expect(imported).toHaveLength(1);
+    const after = imported[0];
+    // BYTE-IDENTICAL document, and the generator's metadata with it.
+    expect(after?.document).toBe(stored.document);
+    expect(after?.levelPlans).toEqual(stored.levelPlans);
+    expect(after?.levelStates).toEqual(stored.levelStates);
+    expect(after?.themes).toEqual(stored.themes);
+    expect(after?.premiseWriterModel).toBe(stored.premiseWriterModel);
+    expect(after?.premiseOrigin).toBe(stored.premiseOrigin);
   });
 
   it('folds a PRE-MIGRATION export’s creature keys onto the comparable form (docs/17 row 168)', async () => {

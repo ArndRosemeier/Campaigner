@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createModule as buildModule,
   encounterLayoutSchema,
+  moduleDocumentSectionsFromView,
   modulePartSchema,
   moduleSpineSchema,
   newId,
@@ -36,6 +37,7 @@ import {
 } from '@/lib/modulePdf';
 import { generatePdfBlob } from '@/lib/pdfExport';
 import { clearDatabase } from '../db/helpers';
+import { contentRuns } from './pdfLayoutFixtures';
 
 /**
  * Module PDF renderer (07-MILESTONE-3 M3-D, rewritten for docs/17 row 108):
@@ -404,6 +406,20 @@ function tableNodes(
   return out;
 }
 
+/** Every CHAPTER HEADING of a definition, in document order — the nodes the
+ * document's level sections print their titles through (`chapterHeading`). */
+function chapterHeadings(node: unknown, out: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const child of node) chapterHeadings(child, out);
+    return out;
+  }
+  if (typeof node !== 'object' || node === null) return out;
+  const record = node as Record<string, unknown>;
+  if (record.style === 'chapter' && typeof record.text === 'string') out.push(record.text);
+  for (const value of Object.values(record)) chapterHeadings(value, out);
+  return out;
+}
+
 describe('buildModuleDefinition — the module IS the document', () => {
   beforeEach(clearDatabase);
 
@@ -475,6 +491,47 @@ describe('buildModuleDefinition — the module IS the document', () => {
     expect(text).not.toContain('[Part 1 of');
     expect(text).not.toContain('[part 1 of');
     expect(text).not.toContain('[Part 2 of');
+  });
+
+  it('prints ONE chapter element per LEVEL, named and texted by the ONE document seam (docs/17 row 386)', async () => {
+    // The PDF lanes no longer assemble a `==========` parts document and split
+    // it back: each level's number, title and text come from the module
+    // document's own parse (`moduleDocumentSectionsFromView`). This is the
+    // contract pin — a defined element PER LEVEL, not merely "no throw" — and
+    // it is the same seam the reader and the canvas read, so the three surfaces
+    // cannot disagree about what a level is called.
+    const seeded = await seed();
+    const sections = moduleDocumentSectionsFromView(seeded.module);
+    // Non-vacuity: the premise (level 0) plus the two level sections exist.
+    expect(sections.map((section) => section.number)).toEqual([0, 1, 2]);
+    const levels = sections.filter((section) => section.number !== 0);
+
+    const definition = buildModuleDefinition({
+      module: seeded.module,
+      artifacts: seeded.artifacts,
+    });
+    const text = textOf(definition);
+    const headings = chapterHeadings(definition);
+    const runs = contentRuns(definition)
+      .map((run) => run.trim())
+      .filter((run) => run !== '');
+    for (const level of levels) {
+      // The level's OWN heading…
+      expect(headings).toContain(level.title);
+      // …and its OWN prose: every literal segment of the section's text (its
+      // wiki-links render as their own linked runs) arrives on the page.
+      const segments = level.text
+        .split(/\[\[[^\]]+\]\]/)
+        .map((segment) => segment.trim())
+        .filter((segment) => segment !== '');
+      expect(segments.length).toBeGreaterThan(0);
+      for (const segment of segments) expect(runs).toContain(segment);
+    }
+    // Level 0 is the premise: it prints as the document's Premise chapter and
+    // is never counted as a level SECTION.
+    expect(headings.filter((heading) => heading === 'Premise')).toHaveLength(1);
+    // The kicker names the SECTION's own number, never a plan-declared range.
+    expect(text).toContain(`PART 1 OF 2 · LEVELS ${String(levels[0]?.number)}`);
   });
 
   it('prints a markdown table at EVERY call site of the ONE markdown seam, as a real table (docs/17 row 157)', async () => {

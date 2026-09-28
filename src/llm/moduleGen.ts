@@ -2814,10 +2814,10 @@ async function reviewPremiseInGeneration(input: {
  * the canvas rewrite's Apply rides: one transaction, the whole replacement
  * applied or nothing, the row re-read inside the transaction, and the
  * second-module promote scan after it. The replacement is the COMPLETE new
- * markdown of that part, so the module's parts-document scaffolding
- * (`==========` separators + `[Part <n> of <total> — <title>]` labels) is never
- * touched — it is DERIVED by `domain/modulePartsDocument` from the plan and the
- * per-part markdown, and there is no second document format to hand-assemble.
+ * markdown of that LEVEL SECTION, so the module document's scaffolding
+ * (`=====Level N=====` separators) is never touched — the section's text is
+ * spliced into the ONE document by `domain/moduleDocument`, and there is no
+ * second document format to hand-assemble.
  *
  * THE FAILURE CONTAINMENT: a failed critique or a failed editor marks THIS part
  * failed with its text preserved (`failPartReview`) and returns — the module

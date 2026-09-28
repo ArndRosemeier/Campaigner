@@ -34,8 +34,8 @@ import { patchModule } from '@/db/moduleRepo';
 
 /**
  * Module canvas — page flows (08-MODULE-DESIGNER §Module canvas, canvas v3):
- * the editor document is the WHOLE module (assembled by the shared
- * assembleModulePartsDocument — no part selector), deep links are SCROLL
+ * the editor document is the WHOLE module (composed by the shared
+ * `moduleDocumentFromView` — no part selector), deep links are SCROLL
  * targets, Save is ONE split-save (only changed parts hit the save path, a
  * failed part save is loud), AI actions run refine-on-selection over the
  * whole doc and rewrite-part through an explicit PICKER (proposal range =

@@ -37,8 +37,7 @@ import { extractWikiLinks } from '@/lib/wikilinks';
  * SEPARATORS is legal and is simply the "level 0 only" state — the "starts with
  * nothing" document.
  *
- * The format belongs to the APP, exactly as `modulePartsDocument.ts` owns the
- * legacy `==========` parts document. The app WRITES the separators; the model
+ * The format belongs to the APP. The app WRITES the separators; the model
  * writes prose and is told to preserve the scaffold. So every read here is the
  * paired formatter/parser carve-out of AGENTS rule 5 — a pattern over the app's
  * OWN machine-generated line, kept beside the formatter that writes it and never
@@ -81,15 +80,15 @@ import { extractWikiLinks } from '@/lib/wikilinks';
  * `ModuleDocument` a read produces. The command VOCABULARY, its parsing and the
  * chat wiring are phase 3's and are deliberately not here.
  *
- * BUILD STATE, recorded here because an uncalled seam is otherwise a mystery.
- * This module is the phase-1 FORMAT CONTRACT and is complete and pinned on its
- * own; wiring it (replacing `spine.premise` / `spine.partPlan[]` / `parts[]`
- * with the one text under `version(32)`) is the same slice's second half and is
- * blocked — the compile-forced surface is 67 `src/` files (the generation
- * engine, the board, the canvas preview, the PDF planner, export/import, …) plus
- * 147 test files, and `tsconfig.app.json` typechecks `tests/`, so the clean cut
- * cannot land as one writer slice without a half-migrated tree. Nothing here
- * reads or writes storage: it is pure.
+ * BUILD STATE (docs/17 rows 382–386). This module is the phase-1 FORMAT
+ * CONTRACT and it is the ONLY one: the legacy `==========` parts document and
+ * its parser are DELETED (row 386), the `version(32)` cut made the row store
+ * this ONE text (`moduleRowSchema.document`) while `spine`/`parts` are the
+ * derived view below, and the canvas, the chat, the save path, the reader and
+ * the PDF lanes all read this module's parse. The derived view itself is
+ * TEMPORARY: the generator and the module board still read it (phases 1e/1f)
+ * and it dies when the chat authors the document (phase 3). Nothing here reads
+ * or writes storage: it is pure.
  */
 
 /**
@@ -129,8 +128,7 @@ export function moduleLevelSeparator(level: number): string {
 /**
  * A malformed module document — the split refuses loudly (AGENTS rule 1). The
  * message NAMES THE LINE (its 1-based number and its quoted text); `name` is
- * stable for callers that branch on the failure class, exactly like
- * `ModulePartsDocumentError` beside it.
+ * stable for callers that branch on the failure class.
  */
 export class ModuleDocumentError extends Error {
   constructor(message: string) {
@@ -283,10 +281,9 @@ function refuseSeparatorLookalike(body: string, where: string): void {
 }
 
 /**
- * The quoted offending line at `from` in `doc` — the ONE line-describer both
- * document formats use for a refusal (the legacy `==========` parts parser
- * imports it too), so a malformed read names its line the same way whoever reads
- * it, and a change to the phrasing cannot drift between the two.
+ * The quoted offending line at `from` in `doc` — the ONE line-describer every
+ * refusal uses, so a malformed read names its line the same way whoever reads
+ * it, and a change to the phrasing cannot drift between callers.
  */
 export function describeDocumentLine(doc: string, from: number): string {
   const newline = doc.indexOf('\n', from);
@@ -764,6 +761,23 @@ export function moduleDocumentSections(
     textFrom: level.textFrom,
     textTo: level.textTo,
   }));
+}
+
+/**
+ * The module VIEW's level sections — THE one read the reader and the PDF share
+ * (docs/23 §4, docs/17 row 386). The view already carries the document's text
+ * (level 0 is `spine.premise`, section N is `parts[N − 1].markdown`), so the
+ * sections are the ONE composition (`moduleDocumentFromView`) parsed by the ONE
+ * parser (`moduleDocumentSections`): the same level numbers, the same stored
+ * plan titles and the same texts the canvas parses out of the document it
+ * edits, which is what makes the three surfaces unable to disagree about what a
+ * level is called or which text belongs to it.
+ *
+ * Level 0 (the premise) IS a section of the result; a caller that lists or
+ * prints LEVEL SECTIONS filters it out by `number` (the premise is not a part).
+ */
+export function moduleDocumentSectionsFromView(view: Module): ModuleDocumentSection[] {
+  return moduleDocumentSections(moduleDocumentFromView(view), view.spine?.partPlan ?? []);
 }
 
 /** A section's display title: the premise, the stored plan title, or the

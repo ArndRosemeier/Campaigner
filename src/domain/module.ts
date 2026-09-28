@@ -1165,7 +1165,8 @@ const baseModuleSchema = z.object({
      * Dexie version, NO index change (the `modules` store indexes `id`,
      * `campaignId`, `updatedAt` only, and this field is not indexed), and it
      * rides backup plus campaign export/import with the rest of the row
-     * (`moduleSchema` IS the export shape).
+     * (`moduleRowSchema` IS the export shape since format v4 — the export
+     * carries the STORED row, docs/17 row 386).
      *
      * Stored UNVALIDATED (`z.unknown()`) on purpose, and this is the one field
      * of the row that is: a plan is model output, so a corrupt or hand-edited
