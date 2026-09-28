@@ -146,7 +146,7 @@ describe('moduleRepo', () => {
       origin: null,
       partPlan: [
         { title: 'Approach', levelBand: '1', synopsis: 'Reach the sea gate.', levelUpTrigger: 'The tide turns.' },
-        { title: 'Descent', levelBand: '2–4', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
+        { title: 'Descent', levelBand: '2', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
       ],
     };
     const spined = await saveSpine(created.id, spine);
@@ -157,15 +157,22 @@ describe('moduleRepo', () => {
     expect((await getModule(created.id))?.spine).toEqual({ ...spine, writerModel: '' });
 
     const nextPlan: PartPlan[] = [
-      { title: 'One long act', levelBand: '1–4', synopsis: 'Everything in a single part.', levelUpTrigger: 'Escape at dawn.' },
+      { title: 'One long act', levelBand: '1', synopsis: 'Everything in a single part.', levelUpTrigger: 'Escape at dawn.' },
     ];
     const replanned = await savePartPlan(created.id, nextPlan);
-    expect(replanned.spine?.partPlan).toEqual(nextPlan);
+    // The PLAN is metadata and is replaced entry-for-entry; the level COUNT is
+    // the DOCUMENT's (docs/17 row 382), so a plan write cannot delete a level
+    // section that already exists — the surviving section reads an empty plan.
+    expect(replanned.spine?.partPlan[0]).toEqual(nextPlan[0]);
+    expect(replanned.spine?.partPlan).toHaveLength(2);
+    expect(replanned.spine?.partPlan[1]?.levelBand).toBe('2');
+    expect(replanned.spine?.partPlan[1]?.synopsis).toBe('');
     expect(replanned.spine?.premise).toBe(spine.premise);
     expect(replanned.spine?.themes).toEqual(spine.themes);
 
     const row = await getModule(created.id);
-    expect(row?.spine?.partPlan).toEqual(nextPlan);
+    expect(row?.spine?.partPlan[0]).toEqual(nextPlan[0]);
+    expect(row?.spine?.partPlan).toHaveLength(2);
   });
 
   it('patchModuleSpine merges ONE spine subfield and leaves the rest byte-identical', async () => {
@@ -179,7 +186,7 @@ describe('moduleRepo', () => {
       origin: 'model',
       partPlan: [
         { title: 'Approach', levelBand: '1', synopsis: 'Reach the sea gate.', levelUpTrigger: 'The tide turns.' },
-        { title: 'Descent', levelBand: '2–4', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
+        { title: 'Descent', levelBand: '2', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
       ],
     };
     await saveSpine(created.id, spine);
@@ -232,24 +239,32 @@ describe('moduleRepo', () => {
     expect(await getModule(built.id)).toBeUndefined();
   });
 
-  it('saveSpine rejects a part plan above the 20-entry cap', async () => {
-    const created = await createModule(
-      buildModule({ campaignId: newId(), title: 'Capped', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+  it('saveSpine ACCEPTS a part plan above the old 20-entry ceiling — a long document must read (docs/17 row 382)', async () => {
+    // The plan-era `.max(20)` is gone: the level COUNT is the document's, so a
+    // hand-authored document with 21+ sections must be readable. This pin still
+    // holds the boundary, in the direction the new model declares.
+    const module = await createModule(
+      buildModule({ campaignId: newId(), title: 'Long', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
 
-    const tooBig: ModuleSpine = {
+    const long: ModuleSpine = {
       premise: 'p',
       themes: [],
       writerModel: '',
       origin: null,
       partPlan: Array.from({ length: 21 }, (_, index) => ({
-        title: `Part ${index + 1}`,
-        levelBand: '1',
-        synopsis: '',
+        title: `Part ${String(index + 1)}`,
+        levelBand: String(index + 1),
+        synopsis: `Synopsis ${String(index + 1)}`,
         levelUpTrigger: '',
       })),
     };
-    await expect(saveSpine(created.id, tooBig)).rejects.toThrow();
+    const saved = await saveSpine(module.id, long);
+    expect(saved.spine?.partPlan).toHaveLength(21);
+    expect(saved.spine?.partPlan[20]?.levelBand).toBe('21');
+    const row = await getModule(module.id);
+    expect(row?.spine?.partPlan).toHaveLength(21);
+    expect(row?.spine?.partPlan[20]?.title).toBe('Part 21');
   });
 
   it('deleteModule removes the row and is idempotent', async () => {

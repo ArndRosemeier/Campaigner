@@ -349,6 +349,14 @@
       "edited": false,
       "origin": "model",
       "writerModel": "test-model"
+    },
+    {
+      "planIndex": 2,
+      "markdown": "",
+      "status": "pending",
+      "edited": false,
+      "origin": null,
+      "writerModel": ""
     }
   ]
 }

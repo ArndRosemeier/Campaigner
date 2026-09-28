@@ -14,7 +14,6 @@ import {
   createModule,
   moduleDocumentText,
   modulePartSchema,
-  moduleSchema,
   moduleSpineSchema,
   type Id,
   type ModuleChatMessage,
@@ -396,7 +395,9 @@ describe('canvas chat thread persistence', () => {
     await clearDatabase();
     await importExport(JSON.parse(JSON.stringify(exported)));
     // Import re-ids campaigns + modules — read back whatever landed.
-    const modules = (await db.modules.toArray()).map((row) => moduleSchema.parse(row));
+    // The chat thread lives on the ROW; a raw row is not parsed with the VIEW
+    // schema since the storage cut (the view is derived — docs/17 row 382).
+    const modules = await db.modules.toArray();
     expect(modules).toHaveLength(1);
     expect(modules[0]?.chatThread).toEqual(thread);
     await flushAsyncUpdates();

@@ -67,8 +67,10 @@ const { toastError, toastSuccess } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 const toastSuccessMock = vi.mocked(toastSuccess);
 
-const OLD_TEXT = 'The old gate bargain text. '.repeat(10);
-const NEW_TEXT = 'The brand-new rewritten text. '.repeat(10);
+// A level body is TRIMMED by the document format (docs/23 §3), so a body the
+// storage cut round-trips never keeps a trailing space (docs/17 row 382).
+const OLD_TEXT = 'The old gate bargain text. '.repeat(10).trim();
+const NEW_TEXT = 'The brand-new rewritten text. '.repeat(10).trim();
 /** The model the mocked rewrite reports as its writer (the real engine stamps this). */
 const BOARD_REWRITE_MODEL = 'staged/board-rewrite-model';
 
@@ -103,7 +105,7 @@ async function seedModule(options: { includePriorModules?: boolean } = {}): Prom
     }),
     parts: [
       modulePartSchema.parse({ planIndex: 0, markdown: OLD_TEXT, status: 'ready', errorMessage: '', edited: false }),
-      modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10), status: 'ready', errorMessage: '', edited: false }),
+      modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10).trim(), status: 'ready', errorMessage: '', edited: false }),
     ],
   });
   world = { campaignId: campaign.id, moduleId: draft.id };
@@ -133,7 +135,7 @@ function mockEngineRun(): void {
           origin: 'model',
           writerModel: BOARD_REWRITE_MODEL,
         }),
-        modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10), status: 'ready', errorMessage: '', edited: false, origin: 'model', writerModel: BOARD_REWRITE_MODEL }),
+        modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10).trim(), status: 'ready', errorMessage: '', edited: false, origin: 'model', writerModel: BOARD_REWRITE_MODEL }),
       ],
     });
     moduleGenEvents.emit({ kind: 'done', moduleId });

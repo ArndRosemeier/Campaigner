@@ -13,20 +13,29 @@ every compile-forced surface, follows 1a. The measured compile-forced surface is
 and 147 under `tests/`, and `tsconfig.app.json` typechecks `tests/`, which is why it does not fit one
 landing; `docs/18` §5 carries the census and the reasoning. Phases 2–4 are untouched.
 
-**BUILD STATE (2026-09-28, docs/17 row 382). PHASE 1b — the `version(32)` STORAGE CUT — is MEASURED and
-BLOCKED, committed on branch `arc-storage` and NOT pushed.** The cut was implemented in full and
-`tsc -b` is CLEAN (exit 0) — the "cannot compile" half of the census was a grep inference and is now
-disproved (`docs/18` §5, row 382). What blocks it is SEMANTIC: **41 of the 106 affected test files fail,
-240 tests, 65 pass unchanged**, all of them behaviour pins on the old model — 41 `ModulePartsDocumentError`s
-(the legacy `==========` parts document requires its label line to equal the plan's title, which the derived
-caption cannot supply once the plan is dropped) plus value assertions on the plan
-(`title`/`synopsis`/`levelUpTrigger`/`levelBand`-as-range/`themes`), per-part `status`, and per-part
-provenance. **THE FORK, stated for the owner: pass 0 authors the plan BEFORE any part text exists, and the
-document has no slot for a plan title, a synopsis, a part status or a provenance id — so "derive `spine`
-and `parts` from the levels" and "the generator keeps working (1f is out of scope)" cannot both hold.**
-The recommended resolution is that the ROW stores the ONE document for TEXT plus the plan and per-level
-METADATA (which are not text and not a second truth of it); the alternative folds 1f and most of 1c/1e
-into this slice. Full numbers, the named pins and the per-class evidence: `.gate-logs/row382-blocked.md`.
+**BUILD STATE (2026-09-28, docs/17 row 382). PHASE 1b — the `version(32)` STORAGE CUT — IS LANDED**
+(owner decision after the row-382 measurement; `docs/17` row 382 has the full record). **The row stores the
+TEXT truth plus the GENERATOR'S STATE, and they are different things.** STORED: the ONE `document`, plus
+what the text cannot carry — `themes`, the per-level plan `levelPlans[]` (`title`/`synopsis`/
+`levelUpTrigger`), the per-level run state `levelStates[]` (`status`/`errorMessage`/`edited`/
+`writerModel`/`origin`) and the premise's own provenance (`premiseWriterModel`/`premiseOrigin`). DERIVED at
+read time: `spine.premise` ← level 0, `parts[].markdown` ← the level sections' text, `levelBand` ← the
+level's own NUMBER, and `spine` is `null` iff the document is empty. **No character of the TEXT is stored
+twice**; the metadata is the generator's working state and **DIES with 1f/phase 3**, when the chat authors
+the document and the plan stops existing — the spec's deletions of `themes` / `partPlan[]` /
+`synopsis` / `levelUpTrigger` / `parts[]` are therefore **DEFERRED BY SEQUENCING, NOT REVERSED**. The
+document's caption line under a separator is PROSE: it is never read, never compared, never a value
+(§2 — the title is flavor; reading prose for a value is AGENTS rule 5's forbidden pattern), so the plan
+title has exactly ONE path and the legacy `==========` labels still match it.
+
+**TWO THINGS THIS MODEL COSTS, MEASURED (`docs/18` §5, `.gate-logs/row382-blocked.md`).** (1) **A part no
+longer covers a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
+1 and "this part covers levels 2–3" is expressed as TWO sections — 16 behaviour pins still assert the
+deleted range (the generator's pass-0 prompt still OFFERS merging, and `partLevelForMention` still parses a
+range; both are 1f's to remove). (2) **The document format TRIMS a level body**, so a part's trailing
+whitespace is not content the row can carry — 3 byte-identical prompt goldens differ by one trailing space.
+`levelMin`/`levelMax` stay STORED and are NOT derived: they are the module's DECLARED range and pass 0's own
+spine prompt reads them BEFORE any section exists.
 
 ## 1. The owner's decisions (verbatim substance)
 

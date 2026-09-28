@@ -129,8 +129,10 @@ describe('snapshotModuleVersion — byte-exact whole-document capture', () => {
   });
 
   it('returns null for a module with no planned parts (no document exists) and throws for a missing module', async () => {
-    const planless = await seedModule(campaignId, 'Planless', 'text');
-    await saveModule({ ...planless, spine: null });
+    // NO document: no plan AND no part text (a module with part text HAS a
+    // document since the storage cut, so it snapshots — docs/17 row 382).
+    const planless = await seedModule(campaignId, 'Planless', '');
+    await saveModule({ ...planless, spine: null, parts: [] });
     expect(
       await snapshotModuleVersion(planless.id, 'normalization', 'Normalize entity names'),
     ).toBeNull();

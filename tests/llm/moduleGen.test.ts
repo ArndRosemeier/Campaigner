@@ -1133,7 +1133,12 @@ describe('stop-all aborts the parts chain (signal.aborted is the source of truth
     const part1 = after.parts.find((part) => part.planIndex === 1);
     expect(part1?.status).toBe('pending');
     expect(part1?.errorMessage).toBe('Cancelled');
-    expect(after.parts.find((part) => part.planIndex === 2)).toBeUndefined();
+    // A planned-but-unwritten level is a DERIVED empty part (docs/17 row 382):
+    // "never started" is stated by its empty text and its pending status.
+    const neverStarted = after.parts.find((part) => part.planIndex === 2);
+    expect(neverStarted?.markdown).toBe('');
+    expect(neverStarted?.status).toBe('pending');
+    expect(neverStarted?.writerModel).toBe('');
     // Cancellation is not an error surface: no failure toast, no errorMessage.
     expect(toastErrorMock).not.toHaveBeenCalled();
     // The dock job is finished: no 'generating' ghost left behind.
@@ -1210,7 +1215,9 @@ describe('stop-all aborts the parts chain (signal.aborted is the source of truth
     expect(after.errorMessage).toBe('');
     // Work that already landed stays; nothing new starts.
     expect(after.parts.find((part) => part.planIndex === 1)?.status).toBe('ready');
-    expect(after.parts.find((part) => part.planIndex === 2)).toBeUndefined();
+    const neverStarted = after.parts.find((part) => part.planIndex === 2);
+    expect(neverStarted?.markdown).toBe('');
+    expect(neverStarted?.status).toBe('pending');
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 20000);
 
@@ -2637,7 +2644,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
 
   it('reviews the PREMISE first — inside pass 0, before the first part is written', async () => {
     const { campaign, moduleId } = await seedFlaggedModule();
-    const PREMISE_EDIT = `THE BELL AND THE DROWNED — ${'a reviewed premise. '.repeat(8)}`;
+    const PREMISE_EDIT = `THE BELL AND THE DROWNED — ${'a reviewed premise. '.repeat(8)}`.trim();
     const phases: string[] = [];
     installChat((prompt) => {
       if (isCritique(prompt)) {
@@ -2681,7 +2688,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
   it('an accepted edit lands as the part text with the parts-document scaffolding INTACT', async () => {
     const { campaign, moduleId } = await seedFlaggedModule();
     await seedSpine(moduleId);
-    const REPLACEMENT = `PART-ONE REWRITTEN: ${'the drowned bell tolls beneath the quay. '.repeat(4)}`;
+    const REPLACEMENT = `PART-ONE REWRITTEN: ${'the drowned bell tolls beneath the quay. '.repeat(4)}`.trim();
     installChat((prompt) => {
       if (isCritique(prompt)) {
         return reviewKey(prompt) === 'part0' ? finding() : cleanCritique();

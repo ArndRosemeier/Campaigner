@@ -30,7 +30,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AnyArtifact, Campaign, Id, Module, ModulePart } from '@/domain';
-import { MODULE_SIZE_LABELS, aliasCollisionSentence, entityKindFor, moduleDocumentText, moduleTagFor } from '@/domain';
+import {
+  MODULE_SIZE_LABELS,
+  aliasCollisionSentence,
+  entityKindFor,
+  moduleDocumentText,
+  modulePartsUntouched,
+  moduleTagFor,
+} from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
@@ -314,7 +321,14 @@ export function ModuleReaderPage(): JSX.Element {
   const currentCampaign: Campaign = campaign;
 
   const busy = module.status === 'generating';
-  const parts = module.parts.slice().sort((a, b) => a.planIndex - b.planIndex);
+  // ONE definition of "the reader is at the spine checkpoint" — the pre-cut
+  // `spine !== null && parts.length === 0` (docs/17 row 382): the plan is
+  // approved and NO part has been started or written. A FAILED module is never
+  // at the checkpoint (it owes the failure banner), and a rewind inside
+  // `failInterruptedModuleGen` leaves no text but IS a started run, which is
+  // why the predicate reads status as well as text.
+  const showSpineCheckpoint =
+    module.spine !== null && modulePartsUntouched(module) && !busy && module.status !== 'failed';
   const hasMissingParts = plans.some(({ planIndex }) => {
     const part = module.parts.find((entry) => entry.planIndex === planIndex);
     return part?.status !== 'ready';
@@ -511,10 +525,7 @@ export function ModuleReaderPage(): JSX.Element {
                   Stop
                 </Button>
               )}
-              {!busy &&
-                module.spine !== null &&
-                hasMissingParts &&
-                module.parts.length > 0 && (
+              {!busy && hasMissingParts && !showSpineCheckpoint && (
                   <MissingPartsButton
                     moduleId={module.id}
                     campaignId={campaignId}
@@ -621,7 +632,7 @@ export function ModuleReaderPage(): JSX.Element {
                 and re-run the spine draft, or delete and recreate the module.
               </section>
             )
-          ) : parts.length === 0 && !busy ? (
+          ) : showSpineCheckpoint ? (
             <>
               <section id="module-intro" className="mb-8">
                 <IntroBlock

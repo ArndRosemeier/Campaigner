@@ -53,23 +53,29 @@ export const modulePartStatusSchema = z.enum(['pending', 'generating', 'ready', 
 export type ModulePartStatus = z.infer<typeof modulePartStatusSchema>;
 
 /**
- * One planned part of the module (spine pass output, user-editable).
+ * One planned part of the module — the SPINE PASS's own state (pass-0 output,
+ * user-editable), read through the derived compatibility VIEW.
  *
- * BUILD STATE (docs/23 storage cut, row 382): this object survives ONLY as a
- * field of the DERIVED COMPATIBILITY VIEW. `synopsis` and `levelUpTrigger` are
- * deleted by docs/23 §5 and are DERIVED AS EMPTY STRINGS by
- * `moduleViewFromRow`; `levelBand` is derived as the level SECTION's exact
- * number written as a string. They stay declared here (rather than deleted from
- * the type) so the ~100 test fixtures and every reader that still names them
- * keep COMPILING while the cut is multi-slice.
+ * BUILD STATE (docs/23 storage cut, docs/17 row 382, owner decision): `title`,
+ * `synopsis` and `levelUpTrigger` are the GENERATOR'S state and are STORED on
+ * the module row as `levelPlans` (they are not text — no character of the
+ * document is stored twice), because pass 0 authors them BEFORE any part text
+ * exists and the document has no slot for them. `levelBand` is NOT stored: it
+ * is the level SECTION's own number written as a string (docs/23 §4), derived
+ * by `moduleViewFromRow`. The document's caption line is prose and is NEVER
+ * read into `title` (docs/23 §2 — the title is flavor, and reading prose for a
+ * value is the free-text pattern AGENTS rule 5 forbids). docs/23 §5's deletion
+ * of `synopsis`/`levelUpTrigger`/`themes` is DEFERRED by sequencing, not
+ * reversed: they die with 1f/phase 3, when the chat authors the document and
+ * the plan stops existing.
  */
 export const partPlanSchema = z.object({
   title: z.string().min(1),
-  /** The level SECTION's number as a string, e.g. '3' (docs/23 §4). */
+  /** The level SECTION's number as a string, e.g. '3' — DERIVED, never stored. */
   levelBand: z.string().min(1),
-  /** DELETED by docs/23 §5 — derived as `''`. */
+  /** The generator's one-paragraph plan note for this level (STORED). */
   synopsis: z.string().default(''),
-  /** DELETED by docs/23 §5 — derived as `''`. */
+  /** What ends this level / triggers the level-up (STORED; dies with 1f). */
   levelUpTrigger: z.string().default(''),
 });
 
@@ -110,7 +116,7 @@ export type TextOrigin = z.infer<typeof textOriginSchema>;
 export const moduleSpineSchema = z.object({
   /** Markdown, a few paragraphs; rendered as the intro section. */
   premise: z.string(),
-  /** DELETED by docs/23 §5 — derived as `[]` (the document has no themes). */
+  /** Pass-0 state, STORED on the row as `themes` and derived into this view. */
   themes: z.array(z.string()).default([]),
   /**
    * The per-level plan, DERIVED from the document's level sections (docs/23
@@ -122,8 +128,14 @@ export const moduleSpineSchema = z.object({
    *
    * EMPTY IS LEGAL: a document with no separators is the level-0-only state, so
    * `.min(1)` is gone with the old model (docs/23 §2.1).
+   *
+   * AND THE COUNT IS THE DOCUMENT'S, NOT THE PLAN'S (docs/17 row 382): the
+   * plan-era `.max(20)` is GONE, because a document with 21+ level sections
+   * must READ (the derived view is a view of that document). The pass-0 prompt
+   * still asks the model for 1..20 parts; only the zod ceiling is dropped, so a
+   * long hand-authored document no longer throws at the read boundary.
    */
-  partPlan: z.array(partPlanSchema).max(20),
+  partPlan: z.array(partPlanSchema),
   /**
    * PROVENANCE (provenance arc, docs/17 row 93): the model that wrote this
    * spine's premise — the `modelUsed` of the serving spine call (the
@@ -1173,16 +1185,65 @@ export const moduleSchema = baseModuleSchema.refine(
 export type Module = z.infer<typeof moduleSchema>;
 
 /**
- * THE STORED module row (docs/23 §9, `version(32)`) — the ONE document text
- * plus every field that is not part of the deleted `spine`/`parts` text triple.
+ * ONE level's PLAN entry as STORED on the row — the generator's pass-0 state
+ * (`levelPlans[i]` is level section `i + 1`). It is NOT a second truth of the
+ * text: no character of the document lives here, and the document carries none
+ * of it. It dies with phases 1f/3, when the chat authors the document and the
+ * plan stops existing (docs/23 §5's deletion, DEFERRED by sequencing).
+ */
+export const levelPlanSchema = z.object({
+  title: z.string().default(''),
+  synopsis: z.string().default(''),
+  levelUpTrigger: z.string().default(''),
+});
+
+export type LevelPlan = z.infer<typeof levelPlanSchema>;
+
+/**
+ * ONE level's GENERATOR RUN STATE as STORED on the row (`levelStates[i]` is
+ * level section `i + 1`): the part's status/error and the authorship record.
+ * A run state is not text — 'generating'/'failed' describe a RUN, not a
+ * document, and `writerModel`/`origin` are provenance — so storing it is not
+ * the second truth docs/23 §4 forbids. It dies with the same phases.
+ */
+export const levelStateSchema = z.object({
+  status: modulePartStatusSchema.default('pending'),
+  errorMessage: z.string().default(''),
+  edited: z.boolean().default(false),
+  writerModel: z.string().default(''),
+  origin: textOriginSchema.nullable().default(null),
+});
+
+export type LevelState = z.infer<typeof levelStateSchema>;
+
+/**
+ * THE STORED module row (docs/23 §9, `version(32)`) — the ONE document text,
+ * plus the GENERATOR'S working state the text cannot carry.
  *
- * The row does NOT carry `spine` or `parts`: those are derived at read time by
- * `moduleViewFromRow`, so the text exists ONCE (docs/23 §4 forbids a stored
- * second truth) while every existing reader keeps compiling against the view.
+ * The row does NOT carry `spine` or `parts`: `spine.premise` and
+ * `parts[].markdown` are the DOCUMENT'S text and are derived at read time by
+ * `moduleViewFromRow`, so no character of the text is stored twice (docs/23 §4).
+ * What IS stored beside it is the state only the generator has — `themes`, the
+ * per-level plan (`levelPlans`: title/synopsis/levelUpTrigger), the per-level
+ * run state (`levelStates`: status/errorMessage/edited/writerModel/origin) and
+ * the premise's own provenance (`premiseWriterModel`/`premiseOrigin`). `levelBand`
+ * is deliberately NOT among them: it is the level's own NUMBER, derived.
+ *
+ * `levelMin`/`levelMax` stay STORED and are NOT derived: they are the module's
+ * DECLARED level range, chosen at creation, and pass 0's own spine prompt reads
+ * them BEFORE the document has a single level section (`llm/moduleGen`), so
+ * deriving them from the text would make that prompt read `(levels 0–0)`.
  */
 export const moduleRowSchema = baseModuleSchema
   .omit({ spine: true, parts: true })
-  .extend({ document: z.string() })
+  .extend({
+    document: z.string(),
+    themes: z.array(z.string()).default([]),
+    levelPlans: z.array(levelPlanSchema).default([]),
+    levelStates: z.array(levelStateSchema).default([]),
+    premiseWriterModel: z.string().default(''),
+    premiseOrigin: textOriginSchema.nullable().default(null),
+  })
   .refine((row) => row.levelMax >= row.levelMin, {
     message: 'levelMax must be >= levelMin',
     path: ['levelMax'],
@@ -1339,6 +1400,27 @@ export function createModule(input: NewModule): Module {
     promptStyle: input.promptStyle ?? null,
     automationIntent,
   });
+}
+
+/**
+ * Has generation NOT touched any part yet — the faithful translation of the
+ * pre-cut `parts.length === 0` (docs/17 row 382).
+ *
+ * The storage cut derives `parts` from the document, so a module whose plan
+ * exists but whose pass 1 has not run reads one `pending`, EMPTY part per
+ * planned level instead of `parts: []`. Every surface that used
+ * `parts.length` to mean "no part has been started or written" must therefore
+ * ask THIS question instead. A part that a run STARTED is no longer untouched,
+ * even when it left no text (a cancelled or failed part) — that is exactly the
+ * distinction the reader's recovery banner needs. Callers that genuinely mean
+ * "how many level sections exist" keep reading `parts.length`.
+ */
+export function modulePartsUntouched(module: {
+  parts: readonly ModulePart[];
+}): boolean {
+  return module.parts.every(
+    (part) => part.status === 'pending' && part.markdown.trim() === '',
+  );
 }
 
 /** The `module:<title>` tag stamped on artifacts produced for a module. */

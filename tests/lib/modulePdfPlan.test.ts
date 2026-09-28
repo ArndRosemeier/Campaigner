@@ -1055,12 +1055,15 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // for, which is exactly this fixture's single chapter-plus-pointer page.
     // The MARKER BRAND itself is a Symbol, so it adds no byte: the 101-character
     // delta is the frame's, and the BYTE-IDENTITY above is still the point.
-    // UPDATED AGAIN by docs/17 row 187 (8030 → 8308): the planned path now
+    // UPDATED AGAIN by docs/17 row 382 (8308 → 8306): `levelBand` is the level
+    // SECTION's own number since the storage cut, so the range spelling ("2–3")
+    // is gone from the part-plan line and the definition is two bytes shorter.
+    // UPDATED by docs/17 row 187 (8030 → 8308): the planned path now
     // prints the artifact's own artwork, and this fixture gained the gallery
     // NPC's portrait (the bystander's `coverImageId`), which is one more image
     // node — a data URL plus its `fit`/`margin` box, +278 characters. The
     // BYTE-IDENTITY above is untouched and is what this pin is about.
-    expect(first.length).toBe(8308);
+    expect(first.length).toBe(8306);
   });
 
   it('renders a stored plan with NO companion byte-identically, and materializes no key (docs/17 row 188)', async () => {
@@ -1076,7 +1079,7 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     const reparsed = moduleDocumentPlanSchema.parse(stored);
     expect(reparsed.sections.every((section) => !('companion' in section))).toBe(true);
     // …and the document it produces is the measured one the byte-identity pin
-    // above states (8308 chars): the no-companion path is untouched by row 188.
+    // above states (8306 chars): the no-companion path is untouched by row 188.
     const definition = JSON.stringify(
       buildModuleDefinition({
         module: withPlan(seeded, reparsed),
@@ -1085,7 +1088,7 @@ describe('determinism: the same (module, plan) renders the same book', () => {
         compiledAt: new Date('2026-01-01T12:00:00.000Z'),
       }),
     );
-    expect(definition.length).toBe(8308);
+    expect(definition.length).toBe(8306);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
@@ -1120,14 +1123,14 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     // x positions and the content streams move by 18 bytes. The pin's actual
     // claim is untouched: two builds of the same input are byte-identical
     // (`firstDiff: -1`) and carry the same problems. UPDATED AGAIN by docs/17
-    // row 187 (59233 → 60505): the planned book now carries the location's own
+    // row 382 (60505 → 60502, the band range) on top of row 187 (59233 → 60505):
     // cover, the encounter's own map plate and the gallery NPC's portrait
     // through the real image pipeline, and the preloader no longer narrows the
     // request set to the plan's anchors (the loaded set and the printed set are
     // ONE decision) — so the embedded image XObjects are in the bytes instead of
     // the loud "not in the preloaded image set" alert. `firstDiff: -1` is
     // unchanged.
-    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 60505 });
+    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 60502 });
     expect(first.problems).toEqual(second.problems);
   });
 

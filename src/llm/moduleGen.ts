@@ -19,6 +19,7 @@ import {
   moduleCreationPool,
   moduleDocumentText,
   moduleEntityKindSchema,
+  modulePartsUntouched,
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
@@ -369,7 +370,10 @@ async function runSpinePass(
   try {
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('Module to generate no longer exists');
-    if (module.parts.length > 0) {
+    // "Already has parts" means WRITTEN parts (docs/17 row 382): the derived
+    // view reserves one EMPTY part per planned level, which is exactly what
+    // pass 1 is about to write.
+    if (!modulePartsUntouched(module)) {
       throw new Error('Refusing to regenerate a spine for a module that already has parts');
     }
     await patchModule(moduleId, { status: 'generating', errorMessage: '' });
@@ -1150,7 +1154,7 @@ async function failModule(moduleId: Id, error: unknown, signal: AbortSignal): Pr
   if (isCancel(error, signal)) {
     // Cancellation: rewind a spine-only module so the user can retry cleanly.
     const module = await getModule(moduleId);
-    if (module?.status === 'generating' && module.parts.length === 0) {
+    if (module?.status === 'generating' && modulePartsUntouched(module)) {
       await patchModule(moduleId, { status: 'draft' });
     }
     return;
@@ -1697,7 +1701,7 @@ async function runPartsPassUnlocked(
       const module = await getModule(moduleId);
       if (module !== undefined) {
         await patchModule(moduleId, {
-          status: module.parts.length > 0 ? 'ready' : 'draft',
+          status: modulePartsUntouched(module) ? 'draft' : 'ready',
         });
       }
       // `aborted` is what tells the automation tail apart from a completed

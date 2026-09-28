@@ -9850,30 +9850,33 @@ separator of its own, then `=====Level N=====` sections. What it holds, and why 
   (`version(32)`, the schema shape, and every compile-forced surface) is NOT attempted and is NOT pinned
   here — docs/18 §5 carries the measured census and why no smaller compiling cut exists.
 
-## The storage cut's breakage is MEASURED, not assumed: `tsc -b` was CLEAN and the 240 failures are semantic (docs/17 row 382, docs/23 §4–§5, docs/18 §2/§5)
+## The storage cut is MEASURED, not assumed: the plan's "no smaller cut COMPILES" was a grep inference, and the cost is a DELETED LEVEL RANGE (docs/17 row 382, docs/23 §4–§5, docs/18 §2/§5)
 
-The `version(32)` storage cut (the module row stores ONE document; the legacy `spine`/`parts` shape is
-DERIVED at read time) was implemented and measured rather than argued about, and the measurement
-overturned the plan's own premise:
+The `version(32)` storage cut (the module row stores ONE document as the TEXT truth plus the GENERATOR'S
+state; the legacy `spine`/`parts` shape is DERIVED at read time) was implemented and measured rather than
+argued about, and the measurement changed the design twice:
 
-- **The compile-forced census is an IDENTIFIER GREP, and it over-counted by two orders of magnitude.** The
-  census found 67 `src/` and 147 `tests/` files naming the module model, and concluded "no smaller
-  COMPILING cut exists". Measured: the full cut produces **3 type errors** (`lib/exportImport.ts` ×1, one
-  `legacyRow` fixture ×2), and `node_modules/.bin/tsc -b` is **exit 0, 0 errors**, because the cut keeps
-  `moduleSchema`/`Module` as the in-memory VIEW (only the STORED shape changes, to
-  `moduleRowSchema`/`ModuleRow`), so the ~100 fixture files needed no signature change. **A type-shaped
-  claim about a compile-forced surface must be run through the compiler before it is written into a plan.**
-- **Measure the affected set in BOUNDED CHUNKS and COUNT, and split mechanical from semantic.** The 106
-  affected files (the fixture grep plus every module-model seam name) ran in three chunks, one worker,
-  `--reporter=dot`, logs kept raw: **41 files failed, 240 tests, 65 files passed unchanged**; **6
-  failures were MECHANICAL (fixed: the `version(31)` literals, a raw-row fixture without `document`, and
-  two `legacyRow` fixtures built from the view)** while the other 240 are BEHAVIOUR PINS on the old model.
-- **A red run is worth more than a green one here, but its EVIDENCE must be kept:** the four semantic
-  classes were only nameable because the logs held the assertion bodies (`ModulePartsDocumentError: the
-  label line of part N … contradicts the plan` ×41; pass-1 prompts reading `1. [1] Level 1 — ` instead of
-  the plan's title; `expected null to be 'model'`; `expected 'pending' to be 'generating'`).
-  `.gate-logs/row382-failtests.txt` carries every failed test name.
-- **A pin that asserts a LOSS is the right instrument for a temporary view.** `tests/domain/moduleStorageCut.test.ts`
-  pins the derivation itself, INCLUDING an arm whose assertion is that a plan-authored title/synopsis does
-  NOT survive the round trip — so a later reader cannot mistake the compatibility view for a faithful
-  model, and the fork is visible in the test suite rather than only in a report.
+- **A TYPE-SHAPED CLAIM ABOUT A COMPILE-FORCED SURFACE MUST BE RUN THROUGH THE COMPILER.** The census found
+  67 `src/` and 147 `tests/` files naming the module model and concluded "no smaller COMPILING cut exists".
+  Measured: the full cut produces **3 type errors**, and `tsc -b` is **exit 0, 0 errors**, because the cut
+  keeps `moduleSchema`/`Module` as the in-memory VIEW (only the STORED shape changes), so the ~100 fixture
+  files needed no signature change.
+- **MEASURE THE AFFECTED SET IN BOUNDED CHUNKS AND COUNT, SPLITTING MECHANICAL FROM SEMANTIC.** 106 files,
+  three chunks, one worker, `--reporter=dot`, raw logs kept (`GATE_TESTS=0` compile tier + focused runs; the
+  dispatcher owns the integrated full gate). The FIRST implementation (derive `spine`/`parts` entirely from
+  the levels) cost **240 failures in 41 files** — including **41 `ModulePartsDocumentError`s**, because the
+  legacy `==========` parts document requires each label line to equal the PLAN title, which a derived
+  caption cannot supply. Storing the generator's own state and NEVER reading the caption brought it to
+  **19 failures in 6 files**.
+- **A PIN THAT ASSERTS A LOSS IS THE RIGHT INSTRUMENT FOR A TEMPORARY VIEW** — but only when losing is
+  genuinely required. `tests/domain/moduleStorageCut.test.ts` pins the derivation itself, including the arm
+  that says the caption line under a separator is NEVER read into the plan title, and four lookalike arms:
+  a body whose line reads as a level header is REFUSED by the compose step (the dangerous direction PARSES
+  VALIDLY and would silently become a level), the same prose without the lookalike composes, and the
+  level-addressed edits refuse it too. Escaping such a line is never the fix — it would change the text the
+  owner wrote, which is the truth.
+- **WHAT IS LEFT RED IS NAMED, NOT WEAKENED.** 16 pins assert the DELETED LEVEL RANGE (`levelBand` is the
+  section's own number now, so a part cannot cover levels 2–3: `tests/llm/structuredPartyLevel.test.ts` ×11,
+  `tests/features/module-reader.test.tsx` ×2, `tests/lib/modulePdf.test.ts`, `tests/llm/modulePlan.test.ts`,
+  `tests/llm/encounterRun.test.ts`) and 3 byte-identical prompt goldens differ by one trailing space because
+  the document format trims a level body. Nothing was deleted or weakened to buy a green tree.
