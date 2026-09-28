@@ -119,19 +119,30 @@ export async function saveWholeModuleDocument(input: {
     await promoteSecondModuleUses(input.moduleId, [input.restorePremise]);
   }
   const previous = splitModuleDocument(moduleDocumentFromView(input.module));
-  const changedPlanIndexes = parsed.levels
-    .filter((level, index) => previous.levels[index]?.text !== level.text)
-    .map((level) => planIndexForLevel(level.number));
+  const previousByLevel = new Map(previous.levels.map((level) => [level.number, level.text]));
+  const changed = parsed.levels.filter(
+    (level) => previousByLevel.get(level.number) !== level.text,
+  );
+  const changedPlanIndexes = changed.map((level) => planIndexForLevel(level.number));
   await saveModuleDocument(
     input.moduleId,
     input.doc,
     input.writerModel === undefined || input.writerModel === '' ? undefined : input.writerModel,
   );
+  // THE LINKS HOOK, per changed level — the exact behaviour the per-part save
+  // path carried (`saveModulePartText` promotes a part's artifact references
+  // after its write): a level that now links another module's artifact
+  // promotes it to campaign level. It runs AFTER the document write, so a
+  // failed write promotes nothing.
+  if (changed.length > 0) {
+    await promoteSecondModuleUses(
+      input.moduleId,
+      changed.map((level) => level.text),
+    );
+  }
   // Only a landed write appends ledger entries (there is no partial write to
   // report: the row either took the whole document or threw).
-  const previousByLevel = new Map(previous.levels.map((level) => [level.number, level.text]));
-  for (const level of parsed.levels) {
-    if (previousByLevel.get(level.number) === level.text) continue;
+  for (const level of changed) {
     useCanvasLedgerStore.getState().append(canvasLedgerKey(input.moduleId, planIndexForLevel(level.number)), {
       markdown: level.text,
       origin: input.origin,

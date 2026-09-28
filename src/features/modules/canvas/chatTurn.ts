@@ -409,7 +409,13 @@ export async function runCanvasChatTurn(
       if (commands.length === 0) return;
       const applied = applyChatCommands({
         commands: [...commands],
-        partPlan: result.parts.map((part) => ({ title: part.title })),
+        // The plan titles are the LEVEL SECTIONS' display titles, position i
+        // being level i + 1 — so level 0 (the premise, titled `Premise`) is
+        // dropped here. Passing the sections unfiltered would shift every
+        // title by one level, which is exactly the bug this comment prevents.
+        partPlan: result.parts
+          .filter((section) => section.number >= 1)
+          .map((section) => ({ title: section.title })),
         handle: options.handle,
       });
       if (applied.docChanged) docChanged = true;

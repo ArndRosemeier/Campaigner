@@ -17,9 +17,10 @@ import {
   type Id,
 } from '@/domain';
 import {
-  assembleModulePartsDocument,
-  splitPartsDocument,
-} from '@/domain/modulePartsDocument';
+  assembleModuleDocument,
+  moduleDocumentSections,
+  moduleLevelSeparator,
+} from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
 import { expectBlockedReason } from '../helpers/blocked-reason';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
@@ -29,7 +30,6 @@ import {
   useCanvasLedgerStore,
 } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
-import type * as PartTextModule from '@/features/modules/partText';
 import { patchModule } from '@/db/moduleRepo';
 
 /**
@@ -62,21 +62,11 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   promoteSecondModuleUses: vi.fn(),
 }));
 
-vi.mock('@/features/modules/partText', async (importOriginal) => {
-  const original = await importOriginal<typeof PartTextModule>();
-  return {
-    ...original,
-    saveModulePartText: vi.fn(original.saveModulePartText),
-  };
-});
-
 const { promoteSecondModuleUses } = await import('@/db/artifactAutoPromote');
 const promoteSpy = vi.mocked(promoteSecondModuleUses);
 const { toastError, toastSuccess } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 const toastSuccessMock = vi.mocked(toastSuccess);
-const { saveModulePartText } = await import('@/features/modules/partText');
-const savePartMock = vi.mocked(saveModulePartText);
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 
@@ -89,21 +79,26 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The WHOLE-module editor doc the page mounts with (byte-exact pin). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+const PREMISE = 'The premise promises a drowned [[Vault Door]].';
+
+/** The module DOCUMENT the page mounts with (byte-exact pin, docs/17 row 384):
+ * level 0 is the PREMISE, then one section per planned level (level 3 empty). */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 /**
- * Whole-doc offset of part 1's TEXT start (the "party" span the AI-action
+ * Whole-doc offset of level 1's TEXT start (the "party" span the AI-action
  * tests select is `[PART0_FROM + 4, PART0_FROM + 9)` — bare small offsets
- * would land in the `[Part 1 of 3 …]` scaffold label line).
+ * would land in the separator line). Section index 0 is the PREMISE, so
+ * level 1 is section 1.
  */
-const PART0_FROM = splitPartsDocument(WHOLE_DOC, PART_PLAN)[0]?.textFrom ?? 0;
+const PART0_FROM = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.textFrom ?? 0;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -228,22 +223,24 @@ async function runInstruction(
 }
 
 describe('canvas whole-document editor', () => {
-  it('mounts ONE whole-module document (all planned parts, scaffolding, byte-exact) — no part selector', async () => {
+  it('mounts ONE module document (the PREMISE and every planned level, byte-exact) — no part selector', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     await enterEditMode(user);
     expect(screen.getByTestId('canvas-module-title')).toHaveTextContent('The Drowned Vault');
     // No selector anywhere.
     expect(screen.queryByTestId('canvas-part-select')).not.toBeInTheDocument();
-    // The editor doc IS the assembled whole-module document (byte-exact).
+    // The editor doc IS the module document, byte-exact.
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
-    expect(activeCanvasView.current?.state.doc.toString()).toContain('==========');
-    expect(activeCanvasView.current?.state.doc.toString()).toContain('[Part 1 of 3 — The Gate Bargain]');
-    expect(activeCanvasView.current?.state.doc.toString()).toContain('[Part 3 of 3 — The Long Watch]');
-    // The module's own premise stays OUT of the editor document.
-    expect(activeCanvasView.current?.state.doc.toString()).not.toContain('drowned [[Vault Door]]');
-    // An empty planned part still renders as a labeled empty section.
-    expect(activeCanvasView.current?.state.doc.toString()).toContain('[Part 3 of 3 — The Long Watch]\n');
+    expect(activeCanvasView.current?.state.doc.toString()).toContain(moduleLevelSeparator(1));
+    expect(activeCanvasView.current?.state.doc.toString()).toContain(moduleLevelSeparator(2));
+    expect(activeCanvasView.current?.state.doc.toString()).toContain(moduleLevelSeparator(3));
+    // THE PREMISE IS IN IT (docs/17 row 384): it is level 0, the one level with
+    // no separator of its own.
+    expect(activeCanvasView.current?.state.doc.toString()).toContain('drowned [[Vault Door]]');
+    // An empty planned level is present as its own (terminated) separator line,
+    // so text typed or filled there lands on its OWN line.
+    expect(activeCanvasView.current?.state.doc.toString()).toContain(`${moduleLevelSeparator(3)}\n`);
     // The editor renders wiki-link chips against the reader pool.
     await waitFor(() => {
       expect(document.querySelector('[data-wiki-name="Keeper Ilse"]')).not.toBeNull();
@@ -359,8 +356,8 @@ describe('canvas whole-document editor', () => {
         expect(lastCanvasScroll.current?.target).toBe('doc');
       });
       const doc = activeCanvasView.current?.state.doc.toString() ?? '';
-      const label2 = '[Part 2 of 3 — The Flooded Nave]';
-      expect(lastCanvasScroll.current?.offset).toBe(doc.indexOf(`\n\n==========\n\n${label2}\n`) + '\n\n==========\n\n'.length);
+      // `?part=1` is planIndex 1 → LEVEL 2, whose separator line anchors the scroll.
+      expect(lastCanvasScroll.current?.offset).toBe(doc.indexOf(moduleLevelSeparator(2)));
       first.unmount();
 
       // premise → top; the reader's #part-<n> hash works the same way.
@@ -384,7 +381,13 @@ describe('canvas whole-document editor', () => {
       });
       await enterEditMode(user);
       await waitFor(() => {
-        expect(lastCanvasScroll.current).toEqual({ target: 'doc', offset: 0 });
+        // `#part-0` is planIndex 0 → LEVEL 1, and level 1 no longer sits at
+        // offset 0: the PREMISE precedes it, so its own separator anchors.
+        const doc = activeCanvasView.current?.state.doc.toString() ?? '';
+        expect(lastCanvasScroll.current).toEqual({
+          target: 'doc',
+          offset: doc.indexOf(moduleLevelSeparator(1)),
+        });
       });
       third.unmount();
       await flushAsyncUpdates();
@@ -393,32 +396,37 @@ describe('canvas whole-document editor', () => {
     }
   });
 
-  it('manual Save is a split-save: only the parts whose text changed hit the save path', async () => {
+  it('manual Save writes the ONE document: only the changed levels are stamped and ledgered', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     await enterEditMode(user);
-    // Edit part 1's text AND part 3's (previously empty) section.
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
-    const part0From = sections[0]?.textFrom ?? 0;
-    const part2From = sections[2]?.textFrom ?? 0;
-    editDoc(part0From, part0From + 3, 'XXX'); // part 1 text changes
-    editDoc(part2From, part2From, 'Dusk falls.'); // part 3 gains text
+    // Edit level 1's text AND level 3's (previously empty) section.
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const level1From = sections[1]?.textFrom ?? 0;
+    const level3From = sections[3]?.textFrom ?? 0;
+    editDoc(level1From, level1From + 3, 'XXX'); // level 1's text changes
+    editDoc(level3From, level3From, 'Dusk falls.'); // level 3 gains text
 
+    const repo = await import('@/db/moduleRepo');
+    const write = vi.spyOn(repo, 'saveModuleDocument');
     act(() => {
       screen.getByTestId('canvas-save').click();
     });
     const nextPart0 = `XXX${PART_0_TEXT.slice(3)}`;
+    // ONE write of the WHOLE document (the per-part save path is gone: a
+    // document write is atomic — docs/17 rows 384/385).
     await waitFor(() => {
-      expect(savePartMock).toHaveBeenCalledTimes(2);
+      expect(write).toHaveBeenCalledTimes(1);
     });
-    // Per-part saves with per-part text — only the two CHANGED parts. The
-    // fourth argument is provenance (docs/17 row 93): a MANUAL save passes
-    // `undefined`, which the repo reads as "carry the recorded id" — the
-    // owner's hand edit must not erase which model wrote the passage.
-    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 0, nextPart0, undefined);
-    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 2, 'Dusk falls.', undefined);
+    expect(write.mock.calls[0]?.[1]).toBe(activeCanvasView.current?.state.doc.toString());
+    // A MANUAL save names no writer model (docs/17 row 93): the levels keep the
+    // ids they already carry — the owner's hand edit must not erase which model
+    // wrote the passage.
+    expect(write.mock.calls[0]?.[2]).toBeUndefined();
+    // The LINKS hook the per-part path carried still runs, over the CHANGED
+    // level texts only.
     await waitFor(() => {
-      expect(promoteSpy).toHaveBeenCalled();
+      expect(promoteSpy).toHaveBeenCalledWith(world.moduleId, [nextPart0, 'Dusk falls.']);
     });
     await waitFor(async () => {
       const row = await getModule(world.moduleId);
@@ -428,76 +436,87 @@ describe('canvas whole-document editor', () => {
     });
     expect(toastSuccessMock).toHaveBeenCalledWith('Module saved');
     expect(toastErrorMock).not.toHaveBeenCalled();
-    // A per-part ledger entry per changed part.
+    // A ledger entry per CHANGED level; none for the untouched one.
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)]?.versions).toHaveLength(1);
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 2)]?.versions).toHaveLength(1);
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 1)]).toBeUndefined();
+    write.mockRestore();
     await flushAsyncUpdates();
   });
 
-  it('an unchanged empty section saves nothing; scaffolding edits that break the parse fail the save LOUD', async () => {
+  it('a separator edit that breaks the parse fails the save LOUD, and nothing is written', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     await enterEditMode(user);
-    // Break the scaffolding: remove the first delimiter line.
+    // Break the document: delete LEVEL 1's separator line, so the first
+    // separator the parser meets is level 2 — a GAP, refused by name.
     const doc = activeCanvasView.current?.state.doc.toString() ?? '';
-    const firstDelimiter = doc.indexOf('\n\n==========\n\n');
-    editDoc(firstDelimiter, firstDelimiter + '\n\n==========\n\n'.length, '\n\n');
+    const level1 = moduleLevelSeparator(1);
+    editDoc(doc.indexOf(level1), doc.indexOf(level1) + level1.length, '');
     expect(screen.getByTestId('canvas-save')).toBeEnabled();
 
+    const repo = await import('@/db/moduleRepo');
+    const write = vi.spyOn(repo, 'saveModuleDocument');
     act(() => {
       screen.getByTestId('canvas-save').click();
     });
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        expect.stringContaining('scaffolding no longer parses'),
+        expect.stringContaining('no longer parses'),
         expect.anything(),
       );
     });
-    // The editor KEEPS the text (first delimiter gone, second still there —
-    // the doc no longer parses); the row is untouched.
-    expect(activeCanvasView.current?.state.doc.toString()).toContain(
-      'at the gate.\n\n[Part 2 of 3 — The Flooded Nave]',
-    );
+    // The editor KEEPS its text (the level 1 line is gone, level 2 still
+    // there); NOTHING reached the row.
+    expect(activeCanvasView.current?.state.doc.toString()).toContain(moduleLevelSeparator(2));
+    expect(write).not.toHaveBeenCalled();
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
-    expect(savePartMock).not.toHaveBeenCalled();
+    write.mockRestore();
     await flushAsyncUpdates();
   });
 
-  it('a failed part save is loud per part: toast names the part, the other part lands, ledger reflects reality', async () => {
+  it('a failed DOCUMENT save is loud and ATOMIC: nothing lands, no ledger, the editor keeps the edits', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     await enterEditMode(user);
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
-    const part0From = sections[0]?.textFrom ?? 0;
-    const part2From = sections[2]?.textFrom ?? 0;
-    editDoc(part0From, part0From + 3, 'XXX');
-    editDoc(part2From, part2From, 'Dusk falls.');
-    // First call (part 0) fails, second (part 3) succeeds.
-    savePartMock.mockImplementationOnce(() => Promise.reject(new Error('disk full')));
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const level1From = sections[1]?.textFrom ?? 0;
+    const level3From = sections[3]?.textFrom ?? 0;
+    editDoc(level1From, level1From + 3, 'XXX');
+    editDoc(level3From, level3From, 'Dusk falls.');
+    // THE FAILURE MODE IS GONE, NOT TRANSLATED (docs/17 rows 384/385): the old
+    // per-part save could land one part and fail another, so it reported
+    // `failedParts` and toasted per part. A whole-document write is atomic —
+    // the write THROWS and NOTHING of the batch lands.
+    const repo = await import('@/db/moduleRepo');
+    const write = vi
+      .spyOn(repo, 'saveModuleDocument')
+      .mockRejectedValueOnce(new Error('disk full'));
 
     act(() => {
       screen.getByTestId('canvas-save').click();
     });
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        expect.stringContaining('The Gate Bargain'),
+        'Could not save the module document',
         expect.anything(),
       );
     });
+    expect(write).toHaveBeenCalledTimes(1);
     await waitFor(async () => {
       const row = await getModule(world.moduleId);
-      expect(row?.parts.find((entry) => entry.planIndex === 2)?.markdown).toBe('Dusk falls.');
+      // NEITHER edit landed.
       expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
+      expect(row?.parts.find((entry) => entry.planIndex === 2)?.markdown).toBe('');
     });
-    // The ledger reflects what actually landed.
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)]).toBeUndefined();
-    expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 2)]?.versions).toHaveLength(1);
-    // No blanket success toast when a part failed.
+    expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 2)]).toBeUndefined();
+    // No blanket success toast.
     expect(toastSuccessMock).not.toHaveBeenCalled();
     // The editor keeps the in-doc edits (Save retries from there).
     expect(activeCanvasView.current?.state.doc.toString()).toContain('Dusk falls.');
+    write.mockRestore();
     await flushAsyncUpdates();
   });
 
@@ -775,20 +794,24 @@ describe('canvas preview (reader parity)', () => {
     expect(screen.getByTestId('canvas-preview-toggle')).toHaveTextContent('Edit');
   });
 
-  it('renders the scaffolding-stripped parts through WikiMarkdown with clickable chips', async () => {
+  it('renders the separator-stripped LEVEL SECTIONS through WikiMarkdown with clickable chips', async () => {
     const user = userEvent.setup();
     await renderCanvas();
 
     // Already in preview (the default view): the editor is hidden.
     expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
     expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
-    // Scaffolding stripped: no delimiter/label chrome, but the part texts render.
-    expect(screen.getByTestId('canvas-preview')).not.toHaveTextContent('[Part 1 of 3');
+    // The separator lines are editor chrome and are stripped; the section
+    // texts render, and the PREMISE (level 0) renders too.
+    expect(screen.getByTestId('canvas-preview')).not.toHaveTextContent('=====Level');
+    expect(screen.getByTestId('canvas-preview-part--1')).toHaveTextContent('drowned');
     expect(screen.getByTestId('canvas-preview-part-0')).toHaveTextContent('The party bargains with');
-    expect(screen.getByTestId('canvas-preview-part-0')).not.toHaveTextContent('==========');
     expect(screen.getByTestId('canvas-preview-part-1')).toHaveTextContent('Below the tower');
-    // Reader headings: the part titles.
-    expect(within(screen.getByTestId('canvas-preview-part-1')).getByText('The Flooded Nave')).toBeInTheDocument();
+    // THE PLAN TITLE IS NOT CHROME (docs/23 §2): the caption line under a
+    // separator is PROSE, and the stored plan title is generator metadata the
+    // preview never prints — it was an `<h2>` before row 384, when the preview
+    // rendered the plan rather than the document.
+    expect(within(screen.getByTestId('canvas-preview-part-1')).queryByText('The Flooded Nave')).toBeNull();
     // The shared renderer: real wiki chips, clickable (resolved → peek).
     const chip = within(screen.getByTestId('canvas-preview-part-0')).getByTestId('wiki-chip');
     expect(chip).toHaveAttribute('data-wiki-name', 'Keeper Ilse');
@@ -802,19 +825,19 @@ describe('canvas preview (reader parity)', () => {
     await flushAsyncUpdates();
   });
 
-  it('an empty planned part previews as explicitly unwritten; a broken scaffolding previews the loud reason', async () => {
+  it('an empty planned level previews as explicitly unwritten; a broken document previews the loud reason', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     expect(within(screen.getByTestId('canvas-preview-part-2')).getByText(/Nothing written yet/)).toBeInTheDocument();
     await enterEditMode(user);
 
-    // Break the scaffolding, then preview again: the splitter's reason shows.
+    // Delete LEVEL 1's separator, then preview again: the parser's reason shows.
     const doc = activeCanvasView.current?.state.doc.toString() ?? '';
-    const firstDelimiter = doc.indexOf('\n\n==========\n\n');
-    editDoc(firstDelimiter, firstDelimiter + '\n\n==========\n\n'.length, '\n\n');
+    const level1 = moduleLevelSeparator(1);
+    editDoc(doc.indexOf(level1), doc.indexOf(level1) + level1.length, '');
     await user.click(screen.getByTestId('canvas-preview-toggle'));
     expect(await screen.findByTestId('canvas-preview-error')).toBeInTheDocument();
-    expect(screen.getByTestId('canvas-preview-error')).toHaveTextContent(/separator/i);
+    expect(screen.getByTestId('canvas-preview-error')).toHaveTextContent(/level 1 is missing|skips or reorders/i);
     await flushAsyncUpdates();
   });
 

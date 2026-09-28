@@ -341,12 +341,31 @@ export function assembleModuleDocument(input: AssembleModuleDocumentInput): stri
     pieces.push(`${moduleLevelSeparator(level.number)}\n${body}`.trimEnd());
   }
   const assembled = pieces.join('\n\n');
+  // A SEPARATOR LINE IS A LINE, INCLUDING WHEN ITS BODY IS EMPTY. `trimEnd`
+  // above strips the newline a bodyless section would otherwise keep, so a
+  // document whose LAST section is empty used to end on the bare separator
+  // (`…=====Level 3=====`). The parse then puts that empty section's range at
+  // the very END of the document, where any text written into it — a chat
+  // empty-level fill, or the owner typing after the last separator — GLUES onto
+  // the separator line (`…=====Level 3=====The watch begins`) and the document
+  // becomes unreadable (the near-miss arm refuses it, so the failure is loud
+  // but the edit is lost). Terminating the line closes both paths: the section's
+  // range starts on its own line, so a fill splices into a valid document and
+  // typing behaves. Only an EMPTY trailing section gains this byte; every other
+  // document is byte-unchanged.
+  const lastLevel = input.levels[input.levels.length - 1];
+  const terminated =
+    lastLevel !== undefined &&
+    lastLevel.number !== MODULE_PREMISE_LEVEL &&
+    lastLevel.text.trimEnd() === ''
+      ? `${assembled}\n`
+      : assembled;
   // THE FORMATTER PARSES ITS OWN OUTPUT (the level-addressed edits' contract,
   // here too): a composed document that its own inverse refuses is a bug in this
   // module, never something to store. Catches anything the body check above
   // cannot see, and names the line exactly as the read would.
-  splitModuleDocument(assembled);
-  return assembled;
+  splitModuleDocument(terminated);
+  return terminated;
 }
 
 /**

@@ -26,14 +26,14 @@ import {
   canvasLedgerKey,
   useCanvasLedgerStore,
 } from '@/features/modules/canvas/canvasStore';
-import type * as PartTextModule from '@/features/modules/partText';
 import {
   applyChatCommandsToDocument,
 } from '@/features/modules/canvas/chatApply';
 import {
-  assembleModulePartsDocument,
-  splitPartsDocument,
-} from '@/domain/modulePartsDocument';
+  assembleModuleDocument,
+  moduleDocumentSections,
+  moduleLevelSeparator,
+} from '@/domain/moduleDocument';
 import {
   canvasChatKey,
   gmAssistKey,
@@ -77,18 +77,8 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   promoteSecondModuleUses: vi.fn(),
 }));
 
-vi.mock('@/features/modules/partText', async (importOriginal) => {
-  const original = await importOriginal<typeof PartTextModule>();
-  return {
-    ...original,
-    saveModulePartText: vi.fn(original.saveModulePartText),
-  };
-});
-
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
-const { saveModulePartText } = await import('@/features/modules/partText');
-const savePartMock = vi.mocked(saveModulePartText);
 const { toastError } = await import('@/lib/toast');
 
 const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.\n\n[[Keeper Ilse]] watches.';
@@ -102,14 +92,16 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The WHOLE-module editor doc the page mounts with (canvas v3). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module DOCUMENT the page mounts with (docs/17 row 384): level 0 is the
+ * PREMISE, then one section per planned level (level 3 has no text yet). */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: SPINE_PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -258,7 +250,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(card.textContent).toContain('Rain hammers the stones.');
     expect(card.textContent).toContain('Rain drowns every word.');
     expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
-      'Part 1 — The Gate Bargain',
+      'Level 1 — The Gate Bargain',
     );
     // Persistence rode THE one part-text save path (edited: true) + ledger.
     const row = await getModule(world.moduleId);
@@ -283,7 +275,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
   });
 
-  it('the payload carries the WHOLE module: other parts, delimiter + labels, grounding, NO premise', async () => {
+  it('the payload carries the WHOLE DOCUMENT: every level, the separators, the PREMISE, and the grounding', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -293,15 +285,16 @@ describe('canvas chat sidebar (page flows)', () => {
     const [messages] = chatMock.mock.calls[0] ?? [];
     const last = messages?.[messages.length - 1];
     expect(last?.role).toBe('user');
-    // Every planned part rides (the open part from the live view, others from the row).
+    // Every level rides (the live view's own text)…
     expect(last?.content).toContain(PART_0_TEXT);
     expect(last?.content).toContain(PART_1_TEXT);
-    expect(last?.content).toContain('==========');
-    expect(last?.content).toContain('[Part 1 of 3 — The Gate Bargain]');
-    expect(last?.content).toContain('[Part 2 of 3 — Under the Docks]');
-    expect(last?.content).toContain('[Part 3 of 3 — The Long Watch]');
-    // The spine premise is EXCLUDED from the parts document.
-    expect(last?.content).not.toContain(SPINE_PREMISE);
+    expect(last?.content).toContain(moduleLevelSeparator(1));
+    expect(last?.content).toContain(moduleLevelSeparator(2));
+    expect(last?.content).toContain(moduleLevelSeparator(3));
+    // …AND THE PREMISE RIDES TOO (docs/17 row 384): it is level 0, so the
+    // model reads it and may edit it. The non-vacuity arm of this pin is that
+    // the OLD behaviour excluded it by construction.
+    expect(last?.content).toContain(SPINE_PREMISE);
     // REFERENCE-ONLY grounding: campaign premise + system label + prior modules FULL text.
     expect(last?.content).toContain('REFERENCE-ONLY CONTEXT');
     expect(last?.content).toContain('Campaign: Ember — The ember war.');
@@ -315,12 +308,13 @@ describe('canvas chat sidebar (page flows)', () => {
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
-    // Unsaved edits in TWO parts BEFORE sending: part 1 (first section) and
-    // part 2 (its section). The row still holds the OLD texts.
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
-    const part0End = sections[0]?.textTo ?? 0;
-    const part1Text = sections[1]?.text ?? '';
-    const part1From = sections[1]?.textFrom ?? 0;
+    // Unsaved edits in TWO levels BEFORE sending: level 1 and level 2 (level 0
+    // is the premise, so section index N is level N in the array). The row
+    // still holds the OLD texts.
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const part0End = sections[1]?.textTo ?? 0;
+    const part1Text = sections[2]?.text ?? '';
+    const part1From = sections[2]?.textFrom ?? 0;
     act(() => {
       const view = activeCanvasView.current;
       view?.dispatch({
@@ -361,7 +355,7 @@ describe('canvas chat sidebar (page flows)', () => {
     const card = await within(panel).findByTestId('canvas-chat-outcome');
     expect(card).toHaveAttribute('data-kind', 'applied');
     expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
-      'Part 2 — Under the Docks',
+      'Level 2 — Under the Docks',
     );
     // The row for part 1 landed through the split-save; part 1 (planIndex 0) untouched.
     const row = await getModule(world.moduleId);
@@ -397,8 +391,8 @@ describe('canvas chat sidebar (page flows)', () => {
     const applied = cards.filter((entry) => entry.getAttribute('data-kind') === 'applied');
     // One outcome PER PART application, each naming its part.
     expect(applied).toHaveLength(2);
-    expect(applied.map((card) => card.textContent).join(' ')).toContain('Part 1 — The Gate Bargain');
-    expect(applied.map((card) => card.textContent).join(' ')).toContain('Part 2 — Under the Docks');
+    expect(applied.map((card) => card.textContent).join(' ')).toContain('Level 1 — The Gate Bargain');
+    expect(applied.map((card) => card.textContent).join(' ')).toContain('Level 2 — Under the Docks');
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(
       PART_1_TEXT.replace('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
@@ -415,8 +409,8 @@ describe('canvas chat sidebar (page flows)', () => {
     await openSidebar(user);
     // '[[Keeper Ilse]] watches.' appears TWICE in part 1's section (the user
     // appended a copy INSIDE it) and once in part 2 → 3 matches across the module.
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
-    const part0End = sections[0]?.textTo ?? 0;
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const part0End = sections[1]?.textTo ?? 0;
     act(() => {
       activeCanvasView.current?.dispatch({
         changes: { from: part0End, to: part0End, insert: '\n\n[[Keeper Ilse]] watches.' },
@@ -436,7 +430,7 @@ describe('canvas chat sidebar (page flows)', () => {
 
     // A search SPANNING the delimiter never matches (per-part matching).
     mockChatReply(
-      `<edit><search>${PART_0_TEXT}\n\n==========\n\n[Part 2 of 3 — Under the Docks]\nThe docks breathe fog.</search><replace>x</replace></edit>`,
+      `<edit><search>${PART_0_TEXT}\n\n${moduleLevelSeparator(2)}\nThe docks breathe fog.</search><replace>x</replace></edit>`,
     );
     await sendChat(user, 'spanning edit');
     const failedCards = await within(panel).findAllByTestId('canvas-chat-outcome');
@@ -454,25 +448,33 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
   });
 
-  it('an EMPTY part fills through its label anchor and lands on the row', async () => {
+  it('an EMPTY level fills through its separator anchor and lands on the row', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
+    const separator = moduleLevelSeparator(3);
     mockChatReply(
-      '<edit><search>[Part 3 of 3 — The Long Watch]</search><replace>[Part 3 of 3 — The Long Watch]\n\nThe watch begins in fog.</replace></edit>',
+      `<edit><search>${separator}</search><replace>${separator}\n\nThe watch begins in fog.</replace></edit>`,
     );
-    await sendChat(user, 'write the last part');
+    await sendChat(user, 'write the last level');
     const panel = screen.getByTestId('canvas-chat');
     const card = await within(panel).findByTestId('canvas-chat-outcome');
     expect(card).toHaveAttribute('data-kind', 'applied');
     expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
-      'Part 3 — The Long Watch',
+      'Level 3 — The Long Watch',
     );
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 2)?.markdown).toBe('The watch begins in fog.');
     expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      WHOLE_DOC.replace('[Part 3 of 3 — The Long Watch]\n', '[Part 3 of 3 — The Long Watch]\nThe watch begins in fog.'),
+      assembleModuleDocument({
+        levels: [
+          { number: 0, text: SPINE_PREMISE },
+          { number: 1, text: PART_0_TEXT },
+          { number: 2, text: PART_1_TEXT },
+          { number: 3, text: 'The watch begins in fog.' },
+        ],
+      }),
     );
   });
 
@@ -522,34 +524,45 @@ describe('canvas chat sidebar (page flows)', () => {
     );
   });
 
-  it('a failed part save in the batch is LOUD: toast naming the part, ledger reflects what landed', async () => {
+  it('a failed DOCUMENT save is LOUD: a failed reply card, nothing lands, Save stays available to retry', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
-    savePartMock.mockImplementationOnce(() => Promise.reject(new Error('disk full')));
+    // THE FAILURE MODE CHANGED WITH THE DOCUMENT (docs/17 rows 384/385): the
+    // canvas used to save ONE PART AT A TIME, so a batch could land three parts
+    // and fail a fourth — that per-part failure is GONE (a whole-document write
+    // is atomic). What replaced it, and what this pin now holds: a write that
+    // THROWS is LOUD through the turn's own loudness map (a FAILED assistant
+    // card carrying the error), NOTHING of the batch lands, and the editor
+    // keeps the text so Save can retry.
+    const repo = await import('@/db/moduleRepo');
+    const write = vi
+      .spyOn(repo, 'saveModuleDocument')
+      .mockRejectedValueOnce(new Error('disk full'));
     mockChatReply(
       '<edit><search>Mist climbs the stairs.</search><replace>Mist floods the stairwell.</replace></edit>',
     );
     await sendChat(user, 'flood the stairwell');
 
-    // The edit DID land in the editor doc (the outcome card is applied)…
+    // The write was attempted once and threw…
+    expect(write).toHaveBeenCalledTimes(1);
+    // …the turn's failure is LOUD: the assistant message is `failed` and names
+    // the error (the card, the error text and its Report affordance)…
     const panel = screen.getByTestId('canvas-chat');
-    const card = await within(panel).findByTestId('canvas-chat-outcome');
-    expect(card).toHaveAttribute('data-kind', 'applied');
+    const failed = await within(panel).findByTestId('canvas-chat-assistant-message');
+    expect(failed).toHaveAttribute('data-status', 'failed');
+    expect(within(panel).getByTestId('canvas-chat-error-text')).toHaveTextContent('disk full');
+    // …the EDIT stays in the editor doc (nothing in the doc is lost)…
     expect(activeCanvasView.current?.state.doc.toString()).toContain('Mist floods the stairwell.');
-    // …but the row save failed LOUDLY, naming the part.
-    expect(toastError).toHaveBeenCalledWith(
-      expect.stringContaining('Under the Docks'),
-      expect.anything(),
-    );
-    // The ledger/loaded state reflects what actually landed: nothing.
+    // …and NOTHING landed on the row: no text, no authorship, no ledger entry.
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
     expect(row?.parts.find((part) => part.planIndex === 1)?.edited).toBe(false);
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 1)]).toBeUndefined();
     // Save stays available to retry (the doc is dirty vs the baseline).
     expect(screen.getByTestId('canvas-save')).toBeEnabled();
+    write.mockRestore();
   });
 
   it('a malformed reply fails the WHOLE reply loudly with a report button', async () => {
@@ -710,13 +723,13 @@ describe('chatApply onto the whole-document editor (raw-view units)', () => {
   }
 
   const PART_PLAN_UNITS = [{ title: 'Open Part' }, { title: 'Other Part' }];
-  const UNIT_DOC = assembleModulePartsDocument({
-    partPlan: PART_PLAN_UNITS,
-    parts: [
-      { planIndex: 0, markdown: 'Rain here.\nRain there.' },
-      { planIndex: 1, markdown: 'Fog elsewhere.' },
+  const UNIT_DOC = assembleModuleDocument({
+    levels: [
+      { number: 0, text: 'The unit premise.' },
+      { number: 1, text: 'Rain here.\nRain there.' },
+      { number: 2, text: 'Fog elsewhere.' },
     ],
-  }).document;
+  });
 
   it('an applied replace-all rides ONE transaction (one undo step)', () => {
     const { view, host } = mountEditor(UNIT_DOC);
@@ -738,7 +751,7 @@ describe('chatApply onto the whole-document editor (raw-view units)', () => {
     host.remove();
   });
 
-  it('a command in ANOTHER part edits the doc inside that section; scaffolding untouched', () => {
+  it('a command in ANOTHER level edits the doc inside that section; separators untouched', () => {
     const { view, host } = mountEditor(UNIT_DOC);
     const result = applyChatCommandsToDocument({
       commands: [{ search: 'Fog elsewhere.', replace: 'Mist elsewhere.', all: false }],
@@ -747,8 +760,8 @@ describe('chatApply onto the whole-document editor (raw-view units)', () => {
     });
     expect(result.docChanged).toBe(true);
     expect(view.state.doc.toString()).toBe(UNIT_DOC.replace('Fog elsewhere.', 'Mist elsewhere.'));
-    expect(view.state.doc.toString()).toContain('[Part 1 of 2 — Open Part]');
-    expect(view.state.doc.toString()).toContain('==========');
+    expect(view.state.doc.toString()).toContain(moduleLevelSeparator(1));
+    expect(view.state.doc.toString()).toContain(moduleLevelSeparator(2));
     host.remove();
   });
 
