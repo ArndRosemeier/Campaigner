@@ -2040,6 +2040,14 @@ beside **Board** was retired by owner request, ledger row 138, because it and
 implementation in
 `src/features/modules/canvas/`.
 
+> **THE DOCUMENT FORMAT THIS SECTION DESCRIBES IS THE LEGACY ONE** (docs/23-CAMPAIGN-ARC, docs/17
+> row 380). Everything below still describes HEAD: the canvas document is the `==========` +
+> `[Part n of m — title]` parts document that `domain/modulePartsDocument` assembles and splits, over
+> `spine.partPlan` and `parts[]`. The RATIFIED successor is ONE text of `=====Level N=====` sections
+> over **level 0 (the premise)**, owned by `domain/moduleDocument` — landed and pinned, but wiring it
+> (the `version(32)` clean cut that deletes the stored triple) is blocked; docs/18 §5 carries the
+> measured census. Do not extend the parts format: a new consumer wants `domain/moduleDocument`.
+
 - **The substrate is CodeMirror 6, text-first** (research-ratified): the
   editor mounts `@uiw/react-codemirror` + `@codemirror/lang-markdown` (both
   MIT) with GFM extensions and line wrapping. **The editor doc string IS the

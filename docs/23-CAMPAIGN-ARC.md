@@ -3,6 +3,16 @@
 **Status: OWNER-RATIFIED 2026-09-28.** This spec is the contract the arc's slices are briefed from.
 It replaces the "module = premise + parts" storage model and the many-modules-per-campaign rule.
 
+**BUILD STATE (2026-09-28, docs/17 row 380).** **PHASE 1 IS SPLIT.** **Phase 1a — the FORMAT
+CONTRACT — is LANDED**: §2's level-0 model, §3's loud extraction, §4's derived level list and the
+level-addressed edits §4 names are implemented and pinned in `src/domain/moduleDocument.ts`
+(`tests/domain/moduleDocument.test.ts`, 33 pins). **The `version(32)` STORAGE CUT is NOT in phase 1a**
+and is re-briefed as its OWN slices: deleting `spine.premise` / `spine.partPlan[]` / `parts[]` /
+`themes` / the per-part `synopsis` + `levelUpTrigger` / the stored `levelMin`+`levelMax`, together with
+every compile-forced surface, follows 1a. The measured compile-forced surface is 67 files under `src/`
+and 147 under `tests/`, and `tsconfig.app.json` typechecks `tests/`, which is why it does not fit one
+landing; `docs/18` §5 carries the census and the reasoning. Phases 2–4 are untouched.
+
 ## 1. The owner's decisions (verbatim substance)
 
 > "One canvas chat that starts with nothing and ends with the campaign premise and produces module
@@ -40,11 +50,34 @@ It replaces the "module = premise + parts" storage model and the many-modules-pe
   and is told to preserve the scaffold; **every read VALIDATES and fails loudly**. This is AGENTS
   rule 5's "paired formatter/parser" carve-out: the app reads back its own format, and never guesses
   at prose.
-- **Zero separators is LEGAL** — a premise and no levels yet. That is the "starts with nothing" state.
+- **Zero separators is LEGAL** — a premise and no levels yet. That is the "starts with nothing" state,
+  and under §2.1 below it is simply "level 0 only".
 - **The title line is prose.** The app extracts NO title and stores NO title. Markdown renders a `##`
   line as a heading on its own; a level picker MAY display the section's first line as a CAPTION
   (display only — never a value, never a decision).
 - **Level identity is the number in the separator.** Nothing else is load-bearing.
+
+### 2.1 The premise IS level 0 (owner decision, 2026-09-28)
+
+The document is a list of LEVELS, and the premise is the FIRST of them: **level 0**. It is the one level
+with **no separator of its own** — it is everything before the first `=====Level 1=====`. Levels 1..N
+each begin with their canonical separator line.
+
+Three consequences, and they are why this is the model rather than a naming choice:
+
+- **ONE level-addressed family serves both.** Because the premise HAS a number, every section of the
+  document can be addressed the same way — replace a level's content, extend a level's content, append
+  the next level — and the premise is simply level 0. Nothing needs a premise-shaped command (there is
+  deliberately no `replace_premise`), and nothing needs a second document representation or a second
+  parser.
+- **"Zero separators" is a legal state, not an error:** it is exactly "level 0 only" — the premise and no
+  levels yet, which is the state a campaign starts in.
+- **A level RANGE is read from where the owner says it starts.** "Levels 1–3" means the sections 1, 2 and
+  3, so it excludes the premise by construction; a range whose low bound is 0 includes the premise.
+
+The ENGINE never writes a `=====Level 0=====` line: level 0 has no separator, so a document that carries
+one is a near miss and fails the read loudly (§3). The derived level list (§4) includes level 0 like any
+other level.
 
 ## 3. The extraction contract — LOUD, and never repaired
 
@@ -65,9 +98,12 @@ near-miss and therefore loud).
 
 ## 4. What is DERIVED (never stored twice)
 
-The **level list**: for each level, its number, its section's text range, and the wiki-linked names it
-mentions by kind (a wiki-link is the app's own syntax — `[[Name|alias]]`). Plus `levelMin`/`levelMax`.
-A stored copy of any of these would be a second truth and is deleted with the old model.
+The **level list**: for each level — **level 0 (the premise) included**, so a caller can address any
+section of the document by number (§2.1) — its number, its section's text range, and the wiki-linked
+names it mentions by kind (a wiki-link is the app's own syntax — `[[Name|alias]]`). Plus
+`levelMin`/`levelMax`: level 0 always exists, so `levelMin` is 0 for every document, and `levelMax` is
+the number of the last level SECTION — 0 when the document is level 0 only. A stored copy of any of
+these would be a second truth and is deleted with the old model.
 
 **Level scope falls out of this**: an entity named inside `=====Level 3=====` IS a level-3 entity, and
 "levels 1–3" means the wiki-links in sections 1, 2 and 3.

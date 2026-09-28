@@ -9800,3 +9800,52 @@ that has never loaded the app still gets the host's 404 (row 378's cold-deep-lin
 limit). The versioned url closes exactly one hole: a client that HAS the app
 stops being pinned to a four-hour-stale worker.
 
+
+## The module document: level 0, the loud arms, and the derived level list (docs/17 row 380, docs/23 §2–§4, docs/18 §2/§5)
+
+`tests/domain/moduleDocument.test.ts` (33 pins) is the pin file for the ONE module-document format
+(`src/domain/moduleDocument.ts`): a level list addressed by NUMBER, level 0 = the premise with no
+separator of its own, then `=====Level N=====` sections. What it holds, and why each arm exists:
+
+- **The formatter and its inverse, both ways round.** `assembleModuleDocument` writes level 0 with NO
+  separator and one canonical separator per section; `splitModuleDocument` returns
+  `levels[i].number === i`, and assemble→split and split→assemble are both pinned on a canonical
+  document. The two degenerate documents are pinned as LEGAL, not as edge cases to fix: the
+  premise-only document (zero separators — the "level 0 only" state) and the empty document.
+- **Every LOUD arm, each asserting the message NAMES THE LINE** (its 1-based number and its quoted
+  text): a NEAR MISS (eleven spellings, including a written `=====Level 0=====`), a duplicated level
+  number (naming BOTH lines), a gap or out-of-order number (naming the missing level), and level 0 /
+  a leading zero. The CLOSED tolerance is pinned in both directions — the line's own trailing
+  whitespace and its own `\r` are accepted, while case and indentation are REFUSED.
+- **The arm that matters most, with its own non-vacuity control.** The near-miss pin asserts the throw;
+  the control parses the SAME prose with a canonical separator and shows it yielding two sections, so
+  the refusal is provably the near-miss rule doing the work and not something else in the parse. A
+  near miss is therefore never a silent merge into the level above.
+- **The derived level list, never stored.** Level 0 included: each level's number, a text range whose
+  `doc.slice(textFrom, textTo)` equals its text, the wiki-linked names by kind (through the ONE
+  `lib/wikilinks` extractor and the ONE `domain/module.entityKindFor` read), `kind: null` for a name the
+  module recorded no kind for, per-level dedupe, and `levelMin`/`levelMax` (0/0 on a document with no
+  separators, because level 0 always exists).
+- **The level-addressed edits the phase-3 commands will ride, level 0 included.** One level replaced
+  with every sibling byte intact; the PREMISE replaced and extended through the SAME path; fresh ranges
+  across two edits with no re-read of the document; append-to-existing (paragraph break) and
+  append-the-next-level (the APP writes the separator and the number, `max + 1` where max is 0 on a
+  document with no sections); a refused skip; and a format-breaking body refused AT THE EDIT.
+- **TWO DEFECTS THE PINS CAUGHT BEFORE THE COMMIT**, both now pinned: replacing an EMPTY level spliced
+  its body onto the next separator line with no newline between them (a trimmed range on a
+  whitespace-only section collapses onto the NEXT line — an empty section's range now sits at the start
+  of its own text area), and the splice left a separator glued to the prose above it (the scaffolding
+  after a body is now re-written to the app's canonical blank line).
+- **The three whole-tree pins this seam feeds, run in-turn.** `tests/architecture/no-duplicate-implementations.test.ts`
+  18/18 — the fold of the offending-line DESCRIBER (now `moduleDocument.describeDocumentLine`, imported
+  by the legacy `==========` parser too) left no stale entry and created no new group.
+  `tests/lib/unicodeTextHygiene.test.ts` 11/11 — the parser spells the format with STRING OPERATIONS
+  (prefix/suffix checks and a digit walk) rather than a regex, so the ASCII-only regex registry declares
+  exactly the sites it did before. `tests/features/scene-block-document.test.ts` 8/8 — the legacy
+  parser whose describer moved, proving the fold is a byte-MOVE.
+- **The mutation arms are the pins themselves, and one of them is MEASURED RED**: the empty-level splice
+  defect above was found by these pins failing, not by inspection — a reminder that a range rule has to
+  be pinned against a WHITESPACE-ONLY section, which is the case a hand-written pin list tends to miss.
+- **WHAT THESE PINS DO NOT COVER, stated rather than implied:** the STORAGE cut of the arc's phase 1
+  (`version(32)`, the schema shape, and every compile-forced surface) is NOT attempted and is NOT pinned
+  here — docs/18 §5 carries the measured census and why no smaller compiling cut exists.

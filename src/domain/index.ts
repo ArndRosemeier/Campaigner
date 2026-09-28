@@ -24,6 +24,7 @@ export * from '@/domain/ideaBoard';
 export * from '@/domain/itemData';
 export * from '@/domain/module';
 export * from '@/domain/moduleDifficulty';
+export * from '@/domain/moduleDocument';
 export * from '@/domain/modulePartsDocument';
 export * from '@/domain/moduleVersion';
 export * from '@/domain/mobPortrait';

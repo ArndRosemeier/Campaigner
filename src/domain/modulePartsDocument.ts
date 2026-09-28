@@ -1,8 +1,19 @@
 import type { Module } from '@/domain/module';
+import { describeDocumentLine } from '@/domain/moduleDocument';
 
 /**
- * The WHOLE-module parts document (canvas v3, 08-MODULE-DESIGNER §Module
- * canvas + §Module canvas chat, docs/17 ledger row 53): the canvas editor
+ * THE LEGACY parts document — the `==========` + `[Part n of m — title]` format
+ * the module row still stores today (canvas v3, 08-MODULE-DESIGNER §Module
+ * canvas + §Module canvas chat, docs/17 ledger row 53).
+ *
+ * ITS SUCCESSOR IS `domain/moduleDocument.ts` (docs/23-CAMPAIGN-ARC §2–§4): the
+ * premise followed by `=====Level N=====` sections, which is the ONE text this
+ * whole file's model is replaced by. The two coexist only while the old shape is
+ * still on every module row; the `version(32)` clean cut that stores the one
+ * document deletes THIS format and this file with it. Do not extend this format
+ * — a new consumer wants `moduleDocument.ts`.
+ *
+ * The WHOLE-module parts document: the canvas editor
  * doc and the chat's context are THE SAME format — every planned part in
  * `spine.partPlan` order, the spine premise EXCLUDED (it lives on the
  * Board/reader), each section introduced by its scaffold label line and
@@ -119,14 +130,6 @@ function firstLabelShapedLine(text: string): { line: string; offset: number } | 
   return null;
 }
 
-/** Short quoted excerpt for error messages (first line, capped). */
-function describeLine(doc: string, from: number): string {
-  const newline = doc.indexOf('\n', from);
-  const line = doc.slice(from, newline === -1 ? doc.length : newline);
-  const capped = line.length > 80 ? `${line.slice(0, 80)}…` : line;
-  return JSON.stringify(capped);
-}
-
 /**
  * Splits a WHOLE-module parts document back into its per-part sections
  * (PURE — the inverse of `assembleModulePartsDocument`). Sections pair to
@@ -159,7 +162,7 @@ export function splitPartsDocument(
     if (index === 0) {
       if (!doc.startsWith(`${label}\n`)) {
         throw new ModulePartsDocumentError(
-          `the document must open with the label line ${JSON.stringify(label)} — found ${describeLine(doc, 0)}`,
+          `the document must open with the label line ${JSON.stringify(label)} — found ${describeDocumentLine(doc, 0)}`,
         );
       }
       textStart = label.length + 1;
@@ -177,7 +180,7 @@ export function splitPartsDocument(
       const prefixAt = doc.indexOf(`[Part ${String(index + 1)} of ${String(total)}`, textStart);
       if (prefixAt !== -1) {
         throw new ModulePartsDocumentError(
-          `the label line of part ${String(index + 1)} of ${String(total)} contradicts the plan — found ${describeLine(doc, prefixAt)} but the plan titles this part ${JSON.stringify(title)}`,
+          `the label line of part ${String(index + 1)} of ${String(total)} contradicts the plan — found ${describeDocumentLine(doc, prefixAt)} but the plan titles this part ${JSON.stringify(title)}`,
         );
       }
       throw new ModulePartsDocumentError(
