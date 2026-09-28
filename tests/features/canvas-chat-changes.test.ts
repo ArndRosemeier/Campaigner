@@ -5,7 +5,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
   createModule,
   encounterDataSchema,
   modulePartSchema,
@@ -81,13 +81,15 @@ const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
   { title: 'Under the Docks', levelBand: '1' },
 ];
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+/** The module DOCUMENT the editor holds (docs/17 row 384): level 0 is the
+ * PREMISE, then one section per planned level. */
+const PARTS_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise.' },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
   ],
-}).document;
+});
 
 let world: { campaignId: Id; moduleId: Id; npcId: Id; encounterId: Id } = {
   campaignId: '',

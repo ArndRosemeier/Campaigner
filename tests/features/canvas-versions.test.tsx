@@ -11,12 +11,13 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
 import { listModuleVersions, snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
+  moduleDocumentFromView,
+  moduleDocumentSections,
   createModule,
   MODULE_VERSION_CAP,
   modulePartSchema,
   moduleSpineSchema,
-  splitPartsDocument,
   type Id,
 } from '@/domain';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
@@ -99,13 +100,16 @@ const PART_PLAN = [
 ];
 
 /** The WHOLE-module doc the seeded row holds (byte-exact pin). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module DOCUMENT the seeded row holds (byte-exact pin, docs/17 row 384):
+ * level 0 is the PREMISE, then one section per planned level (level 3 empty). */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 /** A reply that APPLIES one edit to part 1 (the pre-change text is WHOLE_DOC). */
 const APPLY_REPLY =
@@ -274,10 +278,7 @@ async function partText(moduleId: Id, planIndex: number): Promise<string> {
 async function rowDocument(moduleId: Id): Promise<string> {
   const row = await actDrained(() => getModule(moduleId));
   if (row === undefined) throw new Error('module row missing');
-  return assembleModulePartsDocument({
-    partPlan: row.spine?.partPlan ?? [],
-    parts: row.parts,
-  }).document;
+  return moduleDocumentFromView({ spine: row.spine, parts: row.parts });
 }
 
 async function openVersionsMenu(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
@@ -326,8 +327,8 @@ describe('durable versions — snapshot BEFORE every AI change', () => {
   it('an accepted Refine proposal snapshots the pre-change document (source: refine)', async () => {
     const user = userEvent.setup();
     await renderCanvasEditor(user);
-    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
-    const part0From = sections[0]?.textFrom ?? 0;
+    const sections = moduleDocumentSections(WHOLE_DOC, PART_PLAN);
+    const part0From = sections[1]?.textFrom ?? 0;
     // The refine reply is the canvasRefine JSON contract (plain replacement).
     mockChatReplyJson('The party bargains harder than ever.');
     selectSpan(part0From + 4, part0From + 9); // "party" in part 1
@@ -475,20 +476,22 @@ describe('restore — byte-identical text, and the restore itself is undoable', 
     await flushAsyncUpdates();
   }, 30_000);
 
-  it('refuses a version whose part plan no longer matches instead of proposing a broken scaffold', async () => {
+  it('refuses a version whose saved document no longer parses instead of proposing it', async () => {
     const user = userEvent.setup();
     await renderCanvasEditor(user);
-    // A version captured under a DIFFERENT plan (hand-built: the same module
-    // id, labels that contradict today's plan).
     await actDrained(() =>
       snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'),
     );
     const [saved] = await versions();
     if (saved === undefined) throw new Error('snapshot missing');
     const { db } = await import('@/db/db');
+    // The saved text no longer parses: it carries a level-header LOOKALIKE,
+    // which the parser refuses by line (docs/23 §3). The pre-document version
+    // of this pin refused a different PLAN; the document has no plan to
+    // contradict, so the honest successor is the parse itself.
     await actDrained(() =>
       db.moduleVersions.update(saved.id, {
-        docText: '[Part 1 of 9 — Somewhere Else]\n\nold text',
+        docText: 'A premise.\n\n=====Level 1=====\n=====level 2=====\nProse.',
       }),
     );
 
@@ -497,10 +500,45 @@ describe('restore — byte-identical text, and the restore itself is undoable', 
     await flushAsyncUpdates();
 
     expect(toastErrorMock).toHaveBeenCalledWith(
-      'Could not restore that version — it was saved for a different part plan, so its part labels no longer match this module.',
+      'Could not restore that version — its saved document no longer parses.',
       expect.anything(),
     );
     // No proposal was raised and the document is untouched.
+    expect(screen.queryByTestId('canvas-proposal-apply')).not.toBeInTheDocument();
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+    expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('REFUSES a LEGACY parts-document version by name — it would be misread as ONE level', async () => {
+    const user = userEvent.setup();
+    await renderCanvasEditor(user);
+    await actDrained(() =>
+      snapshotModuleVersion(world.moduleId, 'generation', 'Generate parts'),
+    );
+    const [saved] = await versions();
+    if (saved === undefined) throw new Error('snapshot missing');
+    const { db } = await import('@/db/db');
+    // A row written before docs/17 row 384: the `==========` parts document,
+    // whose text is plain text that would PARSE as a module document with
+    // exactly one level (the whole thing read as the premise). The
+    // discriminator is what makes the refusal possible — without it the
+    // restore would silently replace the module with one giant premise.
+    await actDrained(() =>
+      db.moduleVersions.update(saved.id, {
+        docText: '[Part 1 of 9 — Somewhere Else]\n\nold text',
+        documentFormat: 'parts-document',
+      }),
+    );
+
+    await openVersionsMenu(user);
+    await user.click(screen.getByTestId(`canvas-saved-version-${saved.id}`));
+    await flushAsyncUpdates();
+
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not restore that version — it was saved in the old parts-document format, which is not the module document. Its text cannot be read as one and restoring it would damage the module.',
+      expect.anything(),
+    );
     expect(screen.queryByTestId('canvas-proposal-apply')).not.toBeInTheDocument();
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
@@ -526,6 +564,10 @@ describe('the version carries the PREMISE too — the owner\u2019s "Please make 
         source: 'chat',
         label: input.label,
         docText: WHOLE_DOC,
+        // The row PREDATES the `premise` field, but it is a module document
+        // (docs/17 row 384): the discriminator says so explicitly, because
+        // anything else is refused on restore.
+        documentFormat: 'module-document',
       } as never),
     );
   }
@@ -576,7 +618,7 @@ describe('the version carries the PREMISE too — the owner\u2019s "Please make 
     await flushAsyncUpdates();
   }, 30_000);
 
-  it('a version row from BEFORE the field restores exactly what it always restored — parts back, premise left as it stands', async () => {
+  it('a version row from BEFORE the premise field still restores the premise — the DOCUMENT carries it', async () => {
     const user = userEvent.setup();
     await renderCanvasEditor(user);
     await putPreChangeRow({ id: '00000000-0000-4000-8000-000000000358', createdAt: 5, label: 'Chat: older than the field' });
@@ -595,10 +637,14 @@ describe('the version carries the PREMISE too — the owner\u2019s "Please make 
     });
     await flushAsyncUpdates();
 
-    // The parts come back; the premise is untouched (there is no capture to
-    // apply) — byte-for-byte the pre-slice behaviour, never an invented one.
+    // THE CLAIM REVERSED (docs/17 rows 357 → 384). This pin used to assert the
+    // premise was LEFT AS IT STANDS, because the legacy parts document excluded
+    // it and a row without the `premise` field had no capture to apply. The
+    // module document CONTAINS the premise (level 0), so the document restore
+    // brings it back whatever the row's own field says — and the field is now
+    // the Versions menu's display record, not a second half the restore needs.
     expect(await rowDocument(world.moduleId)).toBe(WHOLE_DOC);
-    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(NEW_PREMISE);
+    expect((await actDrained(() => getModule(world.moduleId)))?.spine?.premise).toBe(PREMISE);
     await flushAsyncUpdates();
   }, 30_000);
 

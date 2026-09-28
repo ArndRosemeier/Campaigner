@@ -15,7 +15,7 @@ import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { createModule, moduleDocumentFromView, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
-import { assembleModuleDocument, moduleDocumentSections } from '@/domain/moduleDocument';
+import { moduleDocumentSections } from '@/domain/moduleDocument';
 import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
 import { searchRules } from '@/search';

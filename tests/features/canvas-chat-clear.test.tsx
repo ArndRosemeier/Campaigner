@@ -32,7 +32,7 @@ import {
 } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import type * as PartTextModule from '@/features/modules/partText';
-import { assembleModulePartsDocument } from '@/domain/modulePartsDocument';
+import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -94,14 +94,19 @@ const PART_PLAN = [
   { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-/** The WHOLE-module doc the editor mounts with (byte-exact pin). */
-const WHOLE_DOC = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0_TEXT },
-    { planIndex: 1, markdown: PART_1_TEXT },
+/** The module's own premise — level 0 of the document. */
+const PREMISE = 'A drowned vault premise.';
+
+/** The module DOCUMENT the editor mounts with (byte-exact pin, docs/17 row
+ * 384): level 0 is the PREMISE, then one section per planned level. */
+const WHOLE_DOC = assembleModuleDocument({
+  levels: [
+    { number: 0, text: PREMISE },
+    { number: 1, text: PART_0_TEXT },
+    { number: 2, text: PART_1_TEXT },
+    { number: 3, text: '' },
   ],
-}).document;
+});
 
 /** A reply that APPLIES one edit (part 1) — the highlight + ledger source. */
 const APPLY_REPLY =

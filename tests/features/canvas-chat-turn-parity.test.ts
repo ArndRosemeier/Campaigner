@@ -8,7 +8,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 
 import {
-  assembleModulePartsDocument,
+  assembleModuleDocument,
   createModule,
   modulePartSchema,
   moduleSpineSchema,
@@ -70,15 +70,17 @@ const PART_PLAN = [
   { title: 'The Gate Bargain', levelBand: '1' },
   { title: 'Under the Docks', levelBand: '1' },
 ];
-const PARTS_DOCUMENT = assembleModulePartsDocument({
-  partPlan: PART_PLAN,
-  parts: [
-    { planIndex: 0, markdown: PART_0 },
-    { planIndex: 1, markdown: PART_1 },
+/** The module DOCUMENT the two surfaces work over (docs/17 row 384): level 0
+ * is the PREMISE, then one section per planned level. */
+const PARTS_DOCUMENT = assembleModuleDocument({
+  levels: [
+    { number: 0, text: 'The premise.' },
+    { number: 1, text: PART_0 },
+    { number: 2, text: PART_1 },
   ],
-}).document;
+});
 
-/** One reply, ONE command per part — one split-save, two changed parts. */
+/** One reply, ONE command per level — one document save, two changed levels. */
 const TWO_PART_REPLY =
   'Rewriting both.\n<edit><search>The party bargains at the gate.</search><replace>The party bargains at the flooded gate.</replace></edit>\n<edit><search>fog</search><replace>mist</replace></edit>';
 

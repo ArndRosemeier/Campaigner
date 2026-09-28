@@ -79,7 +79,6 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
-const { toastError } = await import('@/lib/toast');
 
 const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.\n\n[[Keeper Ilse]] watches.';
 const PART_1_TEXT = 'The docks breathe fog.\n\nMist climbs the stairs.\n\n[[Keeper Ilse]] watches.';
