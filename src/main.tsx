@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import '@/index.css';
 import { App } from '@/app/App';
+import { SERVICE_WORKER_VERSION, serviceWorkerUrl } from '@/lib/serviceWorker';
 // Ratified: post-run post-create extras — subscribe to run completion ONCE.
 import '@/features/campaign/post-run-extras';
 
@@ -27,8 +28,15 @@ createRoot(rootElement).render(
 // lives in IndexedDB and is untouched. Production only — under `vite dev` a
 // SW would serve stale pre-bundle chunks.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  // Relative to the Vite base so non-root deployments scope correctly.
-  const swUrl = `${import.meta.env.BASE_URL}sw.js`;
+  // VERSIONED url, relative to the Vite base so non-root deployments scope
+  // correctly (docs/17 row 379). `sw.js` is a fixed filename and this host's
+  // CDN caches it for hours while ignoring a client `no-cache`, so a shipped
+  // worker change reaches a browser ONLY through a url whose name changes —
+  // `serviceWorkerUrl` appends the build-time content hash. An unchanged
+  // worker keeps its url. The query does not change the worker's scope, so a
+  // changed script url for the same scope is an ordinary update: no second
+  // registration, no second worker, no unregister step.
+  const swUrl = serviceWorkerUrl(import.meta.env.BASE_URL, SERVICE_WORKER_VERSION);
   void navigator.serviceWorker.register(swUrl).catch((error: unknown) => {
     // Offline support is an enhancement; a registration failure must not
     // break startup, but it must not vanish silently either — the global

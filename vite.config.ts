@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
 
+import { readServiceWorkerVersion } from './scripts/swVersion.ts';
+
 // DOM-free test files run in the node environment: a fresh jsdom window
 // costs ~0.75s of fixed worker time per file, and these files never touch
 // the DOM. vitest 4 removed environmentMatchGlobs; test.projects is the
@@ -139,9 +141,26 @@ export default defineConfig(({ mode }) => {
       : mode === 'domainfactory'
         ? '/Campaigner/'
         : '/';
+  // THE SERVICE WORKER'S CONTENT VERSION (docs/17 row 379). `sw.js` is a
+  // fixed-name asset and this host's CDN caches it for four hours while
+  // IGNORING a client `no-cache` (measured; the table lives in
+  // docs/08-TESTING.md §The service worker's URL is content-addressed), so a
+  // deployed worker change reaches a browser ONLY through a url whose NAME
+  // changes. The version is the hash of the worker's BYTES through the ONE
+  // seam `scripts/swVersion.ts` — never a timestamp or a build id, which
+  // would make every deploy a new worker url and force every client to
+  // re-fetch and re-install an unchanged worker. `tests/pwa-assets.test.ts`
+  // asserts the value injected here equals the hash of the real file.
+  const swVersion = readServiceWorkerVersion(fileURLToPath(new URL('.', import.meta.url)));
 
   return {
     base,
+    // Injected into the bundle: `src/lib/serviceWorker.ts` reads it and
+    // composes the registration url. Stringified so the bundle carries a
+    // string literal, not an identifier.
+    define: {
+      __SW_VERSION__: JSON.stringify(swVersion),
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

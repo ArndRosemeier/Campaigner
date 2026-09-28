@@ -4319,3 +4319,26 @@ known-debt item).
   (`tests/architecture/one-app-shell-fallback.test.ts` drives the real script in a `node:vm` across five arms
   a–e), because the defect leaves the source's SHAPE unchanged — a text scan passed on the buggy worker; see
   `docs/08-TESTING.md` §The app-shell service worker fallback is ONE behavioural seam.
+- **THE SERVICE WORKER'S *URL* IS CONTENT-ADDRESSED, BECAUSE THE FIXED NAME IS CACHED FOR FOUR HOURS BY AN EDGE THAT IGNORES `no-cache`
+  (docs/17 row 379).** Row 378 fixed WHAT the worker does and the fix still did not reach the owner's browser: measured live, a plain
+  GET and a GET carrying client `Cache-Control: no-cache` + `Pragma: no-cache` both answered `cf-cache-status: HIT` with the STALE body,
+  while a NEW query url answered `MISS` with the fresh one. The fix therefore lives in the DELIVERY PATH, and it is ONE seam:
+  `scripts/swVersion.ts` — `serviceWorkerVersion(source)` (sha256 truncated to 12 hex) and `readServiceWorkerVersion(root)` (read
+  `public/sw.js` and hash it through it) — is the ONE hash; `vite.config.ts` injects it with `define`; `src/lib/serviceWorker.ts`
+  exposes the injected `SERVICE_WORKER_VERSION` and composes the registration url with `serviceWorkerUrl(baseUrl, version)`
+  (`${base}/sw.js?v=<version>`); `src/main.tsx` registers that url; `src/vite-env.d.ts` declares the injected global so a typo is a
+  type error, never a silent `undefined`. **THE VERSION IS A CONTENT HASH — NEVER A TIMESTAMP OR A BUILD ID**, which would give every
+  client a new worker url on every deploy and force a re-install of an UNCHANGED worker while making the name carry no information. An
+  unchanged worker keeps its url; the query does not change the worker's SCOPE, so a changed script url for the same scope is an
+  ordinary registration update (no second registration, no second worker, no unregister step). Pinned by `tests/pwa-assets.test.ts`
+  (a: the injected version equals the hash of the real file; b: the composition as an exact string, never the bare url; c: the
+  DIFFERENTIAL — a modified copy hashes differently, so (a) cannot pass on a constant; d: a SHAPE pin on the registration site, which is
+  the only possible kind because registration runs only in a real browser under `PROD` and jsdom has no service-worker container) and by
+  `tests/architecture/one-service-worker-version.test.ts` (the exactly-one populations: the hash DEFINED once, the global
+  injected/declared/consumed once each, the versioned composition in exactly one file). `tsconfig.node.json` lists `scripts/**/*.ts`
+  so eslint's type-aware project service can see the seam — a `.ts` file in NO project is a lint PARSE error, not a warning. See
+  `docs/08-TESTING.md` §The service worker's URL is content-addressed for the measured table.
+- **WHAT A *WORKER* CHANGE CANNOT DO, EVEN VERSIONED.** The edge is not the only cache: reaching a new worker still requires the app
+  BUNDLE to be re-fetched (which the edge serves under a hashed asset name), and a client that has never loaded the app still gets the
+  host's 404 (row 378's cold-deep-link limit stands — the worker cannot reach a browser that never ran it). The versioned url closes
+  exactly one hole: a client that HAS the app stops being pinned to a four-hour-stale worker.

@@ -9706,3 +9706,97 @@ would still see the 404. After publishing, purge or bypass
 `…/Campaigner/sw.js` at the edge and verify the SERVED body by content (grep for
 `response.ok`), exactly as step 6 of the publish routine verifies the entry
 asset; do not conclude the fix is live from a `200`.
+
+**AMENDED BY row 379 — THE URL IS CONTENT-ADDRESSED NOW, SO THE PURGE IS NO
+LONGER THE MECHANISM.** The paragraph above records the measurement that
+PROVED the fixed name undeliverable (row 379's table below is the same
+measurement taken minutes later, with the client-`no-cache` arm and a new-query
+url control). Since row 379 the app registers `${BASE_URL}sw.js?v=<content
+hash>`, so a CHANGED worker is a url the edge has never cached — it answers
+`MISS` and the update needs no purge. The one place the old entry still
+matters is the MIGRATION WINDOW: a client still running a bundle from before
+row 379 updates its registration from the fixed name, and if the edge holds a
+stale copy under that name the browser's check is answered from it for up to
+the four hours — so a release that CHANGES the worker should still be verified
+by content at the versioned url (grep the served body for the changed line),
+which is the honest check the publish routine already performs.
+
+## The service worker's URL is content-addressed (docs/17 row 379, docs/18 §5)
+
+WHY — MEASURED ON THE LIVE HOST minutes after row 378 was published, with
+`curl` against `https://apps.futuremagic.de/Campaigner/sw.js`:
+
+| request | `cf-cache-status` | body |
+|---|---|---|
+| plain GET | **`HIT`**, `age: 1094`, `cache-control: max-age=14400` | **STALE — row 378's fix absent** |
+| GET with client `Cache-Control: no-cache` + `Pragma: no-cache` | **still `HIT`** | **STALE** |
+| GET `sw.js?cb=probe1` (a NEW url) | **`MISS`** | **fresh — the fix present** |
+
+The rule that used to protect the fixed name (`^sw\.js$` → `Cache-Control:
+no-cache`) lives in `public/.htaccess`, which is INERT on this host (no Apache
+— the same root cause as row 378). So every shipped worker change was invisible
+for up to four hours, INCLUDING to the browser's own service-worker update
+check: that check bypasses the HTTP cache CLIENT-side, and the edge still
+answered `HIT` with the old bytes. **ONLY A URL WHOSE NAME CHANGES GETS
+THROUGH** — which is why the fix is a content-addressed url and not a header,
+a purge, or a retry.
+
+THE SEAM. `scripts/swVersion.ts` is the ONE place the worker is versioned:
+
+- `serviceWorkerVersion(source)` — sha256 truncated to 12 hex characters, pure;
+- `readServiceWorkerVersion(root)` — read `public/sw.js` and hash it through it.
+
+`vite.config.ts` calls the seam at config time and injects the value with
+`define`. `src/lib/serviceWorker.ts` exposes the injected
+`SERVICE_WORKER_VERSION` and the composition helper `serviceWorkerUrl(baseUrl,
+version)`; `src/main.tsx` registers that url under `PROD`; `src/vite-env.d.ts`
+declares the injected global so a typo is a type error rather than a silent
+`undefined` in the bundle. `tsconfig.node.json` lists `scripts/**/*.ts` so
+eslint's type-aware project service can see the seam at all — an unlisted `.ts`
+file is a lint PARSE error, not a warning.
+
+**THE VERSION FOLLOWS THE CONTENT, AND THAT IS THE WHOLE PROPERTY.** A changed
+worker is a new url (so the edge cannot answer `HIT` with old bytes); an
+UNCHANGED worker keeps its url (so no client re-fetches or re-installs
+anything). A timestamp or a build id would invert both halves: every deploy
+would be a new worker url and the name would carry no information.
+
+THE PINS, in `tests/pwa-assets.test.ts`:
+
+| pin | what it asserts | why it is the right shape |
+|---|---|---|
+| **a** | the INJECTED version equals the hash of the real `public/sw.js`, read through the ONE seam | the load-bearing property; a hard-coded or stale value reds |
+| **b** | `serviceWorkerUrl(base, version)` is the EXACT string `${base}sw.js?v=<version>`, and never the bare url | pins the composition, so the pre-379 spelling cannot come back |
+| **c** | **DIFFERENTIAL** — the real file and a modified copy hash DIFFERENTLY through the same seam | without it, (a) could pass on a constant. Measured output: real `0768b2cb197d`, modified `4ee2918c3d64` |
+| **d** | `src/main.tsx` calls the helper and does not carry the bare spelling | a SHAPE pin, and deliberately: registration runs only in a real browser under `PROD`, and jsdom has no service-worker container, so no test here can observe the registered url |
+
+THE EXACTLY-ONE PIN, `tests/architecture/one-service-worker-version.test.ts`
+(AGENTS rule 4 / centralization obligation 2): the hash is DEFINED in exactly
+one file, the injected global is INJECTED once (the config), DECLARED once and
+CONSUMED once, and the versioned composition is in exactly one file. A second
+hash or a second composition answers identically today, so the behavioural pins
+above would all pass on it — this scan is what reds it BY FILE NAME.
+
+THE ARMS (raw logs `.gate-logs/row379/arms/`, summary
+`.gate-logs/row379/arms-summary.txt`; every injected file's sha256 printed and
+every file restored byte-identically):
+
+| arm | injection | result |
+|---|---|---|
+| **A** | the injected constant hard-coded in `src/lib/serviceWorker.ts` | RED 3 — (a), (c) and the exactly-one injection scan |
+| **B** | the hash made a constant in the seam | RED 1 — **(c) ALONE**, with (a) still green: the constant-blindness the differential exists for |
+| **C** | the registration reverted to the bare fixed-name url | RED 1 — (d) |
+| **D** | a SECOND versioned-url composition in `src/main.tsx` | RED 1 — the exactly-one composition scan |
+
+BUILD-PROVEN. `pnpm build` emits `var vtt=\`0768b2cb197d\`;function
+ytt(e,t){return\`${e}sw.js?v=${t}\`}` and registers `ytt(\`/\`, vtt)`, and
+`dist/sw.js` is byte-identical to `public/sw.js`. The pins must never be
+satisfied by the config alone: the value has to reach the shipped bundle, and
+this is the check that says it does.
+
+WHAT THIS DOES NOT CLOSE. Reaching a new worker still requires the app BUNDLE
+to be re-fetched (the edge serves it under a hashed asset name), and a client
+that has never loaded the app still gets the host's 404 (row 378's cold-deep-link
+limit). The versioned url closes exactly one hole: a client that HAS the app
+stops being pinned to a four-hour-stale worker.
+

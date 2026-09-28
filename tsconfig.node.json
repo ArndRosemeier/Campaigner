@@ -25,5 +25,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts"]
+  // `scripts/**/*.ts` holds the build-time seams the config imports (docs/17
+  // row 379: `scripts/swVersion.ts`, the service worker's content version).
+  // Listing them here is what lets `eslint`'s type-aware project service see
+  // them at all — a `.ts` file in NO project is a lint PARSE error, not a
+  // warning ("was not found by the project service").
+  "include": ["vite.config.ts", "scripts/**/*.ts"]
 }

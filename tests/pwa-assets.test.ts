@@ -3,6 +3,10 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { SERVICE_WORKER_VERSION, serviceWorkerUrl } from '@/lib/serviceWorker';
+
+import { readServiceWorkerVersion, serviceWorkerVersion } from '../scripts/swVersion.ts';
+
 /**
  * Static wiring checks for the PWA (05-UI.md §Tablet): the manifest is valid
  * and complete, index.html points at it, and the service worker only ever
@@ -103,5 +107,68 @@ describe('pwa assets', () => {
     expect(sw).toMatch(/registration\.scope/);
     // Fetch calls to the LLM API must never pass through the SW.
     expect(sw).not.toContain('openrouter');
+  });
+});
+
+/**
+ * THE SERVICE WORKER'S URL IS CONTENT-ADDRESSED (docs/17 row 379).
+ *
+ * `sw.js` is a FIXED-NAME asset and this host's CDN caches it for four hours
+ * while IGNORING a client `Cache-Control: no-cache` (measured; the table is in
+ * docs/08-TESTING.md §The service worker's URL is content-addressed). So a
+ * shipped worker change reaches a browser ONLY through a url whose NAME
+ * changes, and the name must change EXACTLY when the worker's bytes change —
+ * a timestamp or a build id would make every deploy a new worker url and force
+ * every client to re-fetch and re-install an unchanged worker.
+ *
+ * The version is computed by the ONE seam `scripts/swVersion.ts`, injected by
+ * `vite.config.ts` (`define`) and read here as `SERVICE_WORKER_VERSION`. These
+ * pins are what make "the version follows the content" load-bearing rather
+ * than aspirational: (a) is the property, (c) is the arm that stops (a)
+ * passing with a constant.
+ */
+describe('the service worker url is content-addressed (docs/17 row 379)', () => {
+  it('(a) the INJECTED version is the hash of the REAL public/sw.js', () => {
+    // Injected by vite.config.ts from the seam; a hard-coded or stale value
+    // (or a config that stopped reading the file) reds here.
+    expect(SERVICE_WORKER_VERSION).toMatch(/^[0-9a-f]{12}$/);
+    expect(SERVICE_WORKER_VERSION).toBe(readServiceWorkerVersion(root));
+  });
+
+  it('(b) registration composes the url from the Vite base AND the version', () => {
+    expect(serviceWorkerUrl('/Campaigner/', SERVICE_WORKER_VERSION)).toBe(
+      `/Campaigner/sw.js?v=${SERVICE_WORKER_VERSION}`,
+    );
+    expect(serviceWorkerUrl('/', SERVICE_WORKER_VERSION)).toBe(
+      `/sw.js?v=${SERVICE_WORKER_VERSION}`,
+    );
+    // The bare fixed-name url is the defect this row fixes; the versioned url
+    // must never collapse back to it.
+    expect(serviceWorkerUrl('/Campaigner/', SERVICE_WORKER_VERSION)).not.toBe('/Campaigner/sw.js');
+  });
+
+  it('(c) DIFFERENTIAL — the version FOLLOWS THE CONTENT', () => {
+    const source = readFileSync(resolve(root, 'public/sw.js'), 'utf8');
+    const real = serviceWorkerVersion(source);
+    const modified = serviceWorkerVersion(`${source}\n// row-379 differential probe\n`);
+    // The seam the config injected through really is this content's version…
+    expect(real).toBe(SERVICE_WORKER_VERSION);
+    // …and the arm that a constant version cannot pass: different bytes, a
+    // different version (so a changed worker really is a new url).
+    expect(modified).not.toBe(real);
+  });
+
+  it('(d) the registration site USES the helper — SHAPE pin, deliberately', () => {
+    const main = readFileSync(resolve(root, 'src/main.tsx'), 'utf8');
+    expect(main).toContain(
+      'serviceWorkerUrl(import.meta.env.BASE_URL, SERVICE_WORKER_VERSION)',
+    );
+    // The pre-379 spelling, which must never come back.
+    expect(main).not.toContain('${import.meta.env.BASE_URL}sw.js');
+    // WHY A SHAPE PIN AND NOT A BEHAVIOURAL ONE: the registration runs only in
+    // a real browser under `import.meta.env.PROD`, and jsdom has no service
+    // worker container, so no test here can observe the registered url. The
+    // helper's COMPOSITION is pinned behaviourally by (b); this pin only holds
+    // the one call site to that helper.
   });
 });
