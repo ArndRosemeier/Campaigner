@@ -820,8 +820,8 @@ export function resolveDocumentPlan(input: {
 /** The one-line statement a document carries when its plan could not be used. */
 function planFallbackStatement(reason: string): string {
   return (
-    'This document was laid out from the procedural outline: the module’s document plan ' +
-    `could not be applied — ${reason}. Regenerate it from the module’s “Document plan” ` +
+    'This document was laid out from the procedural outline: the document plan ' +
+    `could not be applied — ${reason}. Regenerate it from the “Document plan” ` +
     'surface to print the planned document.'
   );
 }
@@ -847,7 +847,7 @@ function omittedArtifactsStatement(omitted: readonly AnyArtifact[]): string {
   const names = omitted.map((artifact) => `“${artifact.name}”`).join(', ');
   const verb = omitted.length === 1 ? 'is' : 'are';
   return (
-    `Not placed: ${names} ${verb} named by the module’s document plan, but nothing in the ` +
+    `Not placed: ${names} ${verb} named by the document plan, but nothing in the ` +
     'module’s own text refers to ' +
     (omitted.length === 1 ? 'it' : 'them') +
     ' — so there is no page for ' +
@@ -873,7 +873,7 @@ function planFailureStatement(planApplied: boolean, reason: string): string {
     : 'This document was laid out from the procedural outline';
   return (
     `${head}: the automatic planning step for this export failed — ${reason}. ` +
-    'Regenerate the plan from the module’s “Document plan” surface and export again.'
+    'Regenerate the plan from the “Document plan” surface and export again.'
   );
 }
 

@@ -825,9 +825,9 @@ export function ModuleReaderPage(): JSX.Element {
       >
         <DialogContent data-testid="rewrite-dialog">
           <DialogHeader>
-            <DialogTitle>Rewrite part {rewriteTarget !== null ? rewriteTarget + 1 : ''}</DialogTitle>
+            <DialogTitle>Rewrite level {rewriteTarget !== null ? rewriteTarget + 1 : ''}</DialogTitle>
             <DialogDescription>
-              Regenerating replaces this part's markdown. Optionally steer the rewrite.
+              Regenerating replaces this level's markdown. Optionally steer the rewrite.
             </DialogDescription>
           </DialogHeader>
           {rewriteTarget !== null &&
@@ -854,7 +854,7 @@ export function ModuleReaderPage(): JSX.Element {
             <Button variant="outline" onClick={() => { setRewriteTarget(null); }}>
               Cancel
             </Button>
-            <Button onClick={() => void confirmRewrite()}>Rewrite part</Button>
+            <Button onClick={() => void confirmRewrite()}>Rewrite level</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -900,7 +900,8 @@ function StatusBadge({ status, errorMessage }: { status: Module['status']; error
       </Badge>
     );
   }
-  return <Badge variant="secondary">{status}</Badge>;
+  // 'draft' / 'ready' carry no information on a chat-authored document (docs/17 row 402).
+  return <></>;
 }
 
 function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
@@ -918,7 +919,7 @@ function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
     try {
       await patchModule(module.id, { title: next });
     } catch (error) {
-      toastError('Could not rename the module', error);
+      toastError('Could not rename the document', error);
       setTitle(module.title);
     }
   }
@@ -926,7 +927,7 @@ function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
   return (
     <Input
       value={title}
-      aria-label="Module title"
+      aria-label="Document title"
       data-testid="module-title"
       className="h-10 border-none bg-transparent px-0 font-heading text-3xl font-bold tracking-tight shadow-none dark:bg-transparent"
       onChange={(event) => {
@@ -1001,7 +1002,7 @@ function PartActions({
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label="Rewrite part"
+        aria-label="Rewrite level"
         onClick={onRewrite}
         data-testid="part-rewrite"
       >

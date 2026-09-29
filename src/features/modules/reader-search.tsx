@@ -104,8 +104,8 @@ export function ReaderSearch({
               navigate(event.shiftKey ? -1 : 1);
             }
           }}
-          placeholder="Search the module…"
-          aria-label="Search the module"
+          placeholder="Search the document…"
+          aria-label="Search the document"
           className="h-7 pl-7 text-xs"
           data-testid="reader-search-input"
         />

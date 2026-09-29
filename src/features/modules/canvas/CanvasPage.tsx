@@ -738,7 +738,7 @@ export function CanvasPage(): JSX.Element {
     } catch (error) {
       if (error instanceof ModuleDocumentError) {
         toastError(
-          'Could not save — the module document no longer parses. Fix the separator line it names, then Save again.',
+          'Could not save — the campaign document no longer parses. Fix the separator line it names, then Save again.',
           error,
         );
       } else if (error instanceof ModuleVersionPremiseError) {
@@ -747,7 +747,7 @@ export function CanvasPage(): JSX.Element {
           error,
         );
       } else {
-        toastError('Could not save the module document', error);
+        toastError('Could not save the campaign document', error);
       }
     } finally {
       setSaving(false);
@@ -798,7 +798,7 @@ export function CanvasPage(): JSX.Element {
         return {
           ok: false,
           loud: true,
-          reason: `Part ${String(planIndex + 1)} is not in the document — nothing was rewritten.`,
+          reason: `Level ${String(planIndex + 1)} is not in the document — nothing was rewritten.`,
         };
       }
       return { ok: true, range: { doc, from: section.textFrom, to: section.textTo } };
@@ -1086,7 +1086,7 @@ export function CanvasPage(): JSX.Element {
         (candidate) => candidate.planIndex === planIndex,
       );
     } catch (error) {
-      toastError('Could not restore — the module document no longer parses.', error);
+      toastError('Could not restore — the campaign document no longer parses.', error);
       return;
     }
     if (section === undefined) {
@@ -1230,7 +1230,7 @@ export function CanvasPage(): JSX.Element {
       const row = await getModule(currentModule.id);
       if (row === undefined) {
         toastError(
-          'Could not apply the change — the module row is gone.',
+          'Could not apply the change — the campaign document is gone.',
           new Error('module row missing after the canvas refine turn'),
         );
         return;
@@ -1493,7 +1493,7 @@ export function CanvasPage(): JSX.Element {
       if (row !== undefined) reseedFromRow(row);
       if (report.empty && report.refused === null) {
         toastInfo(
-          'Nothing is missing any more — the module already has everything creation was asked to automate.',
+          'Nothing is missing any more — the document already has everything creation was asked to automate.',
         );
       }
     } catch (error) {
@@ -1744,7 +1744,13 @@ export function CanvasPage(): JSX.Element {
             </Button>
           </>
         ) : (
-          <Badge variant="secondary">{currentModule.status}</Badge>
+          // A badge only where it CARRIES information (docs/17 row 402): 'draft' /
+          // 'ready' are noise on a chat-authored document; a failed run is not.
+          currentModule.status === 'failed' && (
+            <Badge variant="destructive" title={currentModule.errorMessage}>
+              failed
+            </Badge>
+          )
         )}
         <div className="ml-auto flex items-center gap-2">
           {/*
@@ -1822,7 +1828,7 @@ export function CanvasPage(): JSX.Element {
               }}
             >
               <NotebookPenIcon aria-hidden data-icon="inline-start" />
-              Rewrite part
+              Rewrite level
             </Button>
           </BlockedControl>
           {fixableProblems.length > 0 && (
@@ -1959,7 +1965,7 @@ export function CanvasPage(): JSX.Element {
                     return (
                       <DropdownMenuGroup key={String(plan.planIndex)}>
                         <DropdownMenuLabel>
-                          {`Part ${String(plan.planIndex + 1)} — ${plan.title}`}
+                          {`Level ${String(plan.planIndex + 1)} — ${plan.title}`}
                         </DropdownMenuLabel>
                         {[...versions].reverse().map((entry) => (
                           <DropdownMenuItem
@@ -2125,7 +2131,7 @@ export function CanvasPage(): JSX.Element {
         <DialogContent data-testid="canvas-instruction-dialog">
           <DialogHeader>
             <DialogTitle>
-              {instructionTarget === 'selection' ? 'Refine selection' : 'Rewrite part'}
+              {instructionTarget === 'selection' ? 'Refine selection' : 'Rewrite level'}
             </DialogTitle>
             <DialogDescription>
               {instructionTarget === 'selection'
@@ -2146,7 +2152,7 @@ export function CanvasPage(): JSX.Element {
                   ...Object.fromEntries(
                     plans.map((plan) => [
                       String(plan.planIndex),
-                      `Part ${String(plan.planIndex + 1)}: ${plan.title}`,
+                      `Level ${String(plan.planIndex + 1)}: ${plan.title}`,
                     ]),
                   ),
                 }}
@@ -2155,12 +2161,12 @@ export function CanvasPage(): JSX.Element {
                 }}
               >
                 <SelectTrigger id="canvas-rewrite-part-select" className="w-full" data-testid="canvas-rewrite-part-select">
-                  <SelectValue placeholder="Pick a part…" />
+                  <SelectValue placeholder="Pick a level…" />
                 </SelectTrigger>
                 <SelectContent>
                   {plans.map((plan) => (
                     <SelectItem key={String(plan.planIndex)} value={String(plan.planIndex)}>
-                      {`Part ${String(plan.planIndex + 1)}: ${plan.title}`}
+                      {`Level ${String(plan.planIndex + 1)}: ${plan.title}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2274,7 +2280,7 @@ export function CanvasPage(): JSX.Element {
           <AlertDialogHeader>
             <AlertDialogTitle>Fix module problems?</AlertDialogTitle>
             <AlertDialogDescription>
-              This rewrites the module TEXT only — no entities, no images. One attempt per part, and
+              This rewrites the document TEXT only — no entities, no images. One attempt per level, and
               the text as it is now is saved as a version first, so it can be restored from Versions.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -2353,10 +2359,10 @@ export function CanvasPage(): JSX.Element {
           <AlertDialogHeader>
             <AlertDialogTitle>Clear all previous versions for this module?</AlertDialogTitle>
             <AlertDialogDescription data-testid="canvas-versions-clear-description">
-              {`Cleared: all ${String(durableVersions?.length ?? 0)} ${savedVersionsNoun(durableVersions?.length ?? 0)} of THIS module — the whole-document snapshots taken before each AI change, in every session, not just this one. Clearing them is permanent: no version is saved first, so this is the one action the undo stack cannot take back.`}
+              {`Cleared: all ${String(durableVersions?.length ?? 0)} ${savedVersionsNoun(durableVersions?.length ?? 0)} of THIS campaign's document — the whole-document snapshots taken before each AI change, in every session, not just this one. Clearing them is permanent: no version is saved first, so this is the one action the undo stack cannot take back.`}
               <br />
               <br />
-              {"NOT cleared: the module's DOCUMENT TEXT — the current text stays exactly as it is (this is not an undo, and the text is not touched); the chat thread and this session's Versions list; and every OTHER module's saved versions."}
+              {"NOT cleared: the campaign's DOCUMENT TEXT — the current text stays exactly as it is (this is not an undo, and the text is not touched); the chat thread and this session's Versions list; and any other saved versions."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

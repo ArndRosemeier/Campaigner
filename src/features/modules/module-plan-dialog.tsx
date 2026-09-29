@@ -37,7 +37,7 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * The DOCUMENT PLAN surface (docs/17 row 109, docs/05 §Module PDF): what the
- * model decided about this module's PDF, and the ONE action that decides it
+ * model decided about this campaign's PDF, and the ONE action that decides it
  * again.
  *
  * **Since docs/17 row 139 it is NOT a prerequisite for anything.** Exporting
@@ -130,7 +130,7 @@ export function ModulePlanButton({
       <Button
         variant={variant}
         size={size}
-        title="See what the AI decided about this module's PDF"
+        title="See what the AI decided about this campaign's PDF"
         data-testid="module-plan-button"
         onClick={() => {
           setOpen(true);

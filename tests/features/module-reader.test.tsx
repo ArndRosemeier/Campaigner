@@ -200,11 +200,12 @@ describe('ModuleReaderPage', () => {
     renderAppAt(modulePath(campaignId, moduleId));
 
     expect(
-      await screen.findByLabelText('Module title', {}, { timeout: 10_000 }),
+      await screen.findByLabelText('Document title', {}, { timeout: 10_000 }),
     ).toHaveValue(MODULE_TITLE);
     expect(screen.getByText('Levels 1–3')).toBeInTheDocument();
     expect(screen.getByText('Standard')).toBeInTheDocument();
-    expect(screen.getByText('ready')).toBeInTheDocument();
+    // Row 402: 'ready'/'draft' carry no information on a chat-authored document.
+    expect(screen.queryByText('ready')).toBeNull();
     // There is NO module-level battle entry any more (docs/17 row 254): a
     // battle belongs to its ENCOUNTER, so the reader — ToC sidebar and header
     // alike — offers no module-wide "Battle table" link. The encounter card's
@@ -585,7 +586,7 @@ describe('ModuleReaderPage', () => {
     // the engine's unit is the level NUMBER — this reader card is level 1).
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog2 = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
-    await user.click(within(dialog2).getByRole('button', { name: 'Rewrite part' }));
+    await user.click(within(dialog2).getByRole('button', { name: 'Rewrite level' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 1, '');
     await flushAsyncUpdates();
@@ -749,7 +750,7 @@ describe('ModuleReaderPage', () => {
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
     expect(within(dialog).getByRole('alert')).toHaveTextContent('You wrote this part.');
-    await user.click(within(dialog).getByRole('button', { name: 'Rewrite part' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Rewrite level' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 1, '');
     await flushAsyncUpdates();

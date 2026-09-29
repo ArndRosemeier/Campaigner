@@ -1467,7 +1467,3 @@ export function moduleDocumentText(module: Module): string {
   ].join('\n\n');
 }
 
-/** Placeholder title used until the spine suggests nothing better. */
-export function defaultModuleTitle(): string {
-  return 'New Module';
-}

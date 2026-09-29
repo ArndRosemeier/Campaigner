@@ -264,7 +264,7 @@ export function ChatSidebar({
       await clearModuleChat({ moduleId, key: chatKey, framing: surface });
     } catch (error) {
       toastError(
-        'Could not clear the chat — nothing was cleared; the saved thread is still on the module',
+        'Could not clear the chat — nothing was cleared; the saved thread is still on the campaign',
         error,
       );
       return;
@@ -484,15 +484,15 @@ export function ChatSidebar({
               for what happens next. It can edit the document text too, when you ask:{' '}
               <code>&lt;edit&gt;</code> commands apply to the document
               {previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
-              changed parts are saved to the module row. This chat lives in this browser session only
-              for now — it is not saved with the module and is gone after a reload.
+              changed levels are saved to the campaign document. This chat lives in this browser session only
+              for now — it is not saved with the campaign and is gone after a reload.
             </p>
           ) : (
             <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-              Ask for edits in plain language — the whole module is in context, so edits can land in
-              any part. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
+              Ask for edits in plain language — the whole campaign is in context, so edits can land in
+              any level. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
               blocks) that are applied to the document{previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
-              changed parts are saved to the module row.
+              changed levels are saved to the campaign document.
             </p>
           )
         ) : (
@@ -642,7 +642,7 @@ export function ChatSidebar({
       </div>
       {previewOpen && (
         <p className="border-t px-3 pt-2 text-xs text-muted-foreground">
-          Preview mode: edits apply to the preview and save to the module row — with no undo.
+          Preview mode: edits apply to the preview and save to the campaign document — with no undo.
         </p>
       )}
       <div className="flex items-end gap-2 border-t p-3">
@@ -722,24 +722,24 @@ export function ChatSidebar({
             <AlertDialogDescription data-testid="canvas-chat-clear-description">
               {gmAssist ? (
                 <>
-                  Cleared: this module&apos;s GM assist conversation and its outcome cards, in this
+                  Cleared: this campaign&apos;s GM assist conversation and its outcome cards, in this
                   session — plus the last-replacement highlight.
                   <span className="mt-2 block font-medium text-foreground">
                     NOT cleared: the campaign chat&apos;s own conversation and its SAVED thread on
-                    the module (the two chats never share messages), this module&apos;s session
+                    the campaign (the two chats never share messages), this campaign&apos;s session
                     Versions list (it carries BOTH chats&apos; undo and cannot tell them apart), and
-                    the module&apos;s DOCUMENT TEXT. GM assist is session-only for now, so there is
+                    the campaign&apos;s DOCUMENT TEXT. GM assist is session-only for now, so there is
                     no saved copy to clear. To put text back, restore a version from Versions
                     (session-only by design).
                   </span>
                 </>
               ) : (
                 <>
-                  Cleared: this module&apos;s conversation and its outcome cards — in this session and
-                  in the saved thread on the module — plus this module&apos;s session Versions list and
+                  Cleared: this campaign&apos;s conversation and its outcome cards — in this session and
+                  in the saved thread on the campaign — plus this campaign&apos;s session Versions list and
                   the last-replacement highlight.
                   <span className="mt-2 block font-medium text-foreground">
-                    NOT cleared: the module&apos;s DOCUMENT TEXT, and the GM assist chat (its own
+                    NOT cleared: the campaign&apos;s DOCUMENT TEXT, and the GM assist chat (its own
                     conversation, session-only for now). Edits the chat already applied are saved
                     content — this is not an undo, and the text will not roll back. To put text back,
                     restore a version from Versions (session-only by design).

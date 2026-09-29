@@ -4,7 +4,6 @@ import {
   carriedTextOrigin,
   comparableName,
   createModule,
-  defaultModuleTitle,
   DEFAULT_MODULE_DIFFICULTY,
   defaultEncounterBudgetPolicy,
   encounterFloorGuardrailFor,
@@ -2675,7 +2674,7 @@ export interface NewModuleCreationInput {
 function emptyDocumentInput(campaign: Campaign): NewModuleCreationInput {
   return {
     campaignId: campaign.id,
-    title: defaultModuleTitle(),
+    title: campaign.name,
     concept: '',
     levelMin: 1,
     levelMax: 1,

@@ -109,6 +109,9 @@ describe('New campaign lands in the chat', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     const campaigns = await actDrained(() => listCampaigns());
     expect(campaigns.map((c) => c.name)).toEqual(['Ashen Crown']);
+    const { listModulesByCampaign } = await import('@/db/moduleRepo');
+    // Row 402: the document is titled with the typed campaign name.
+    expect((await actDrained(() => listModulesByCampaign(campaigns[0]?.id ?? '')))[0]?.title).toBe('Ashen Crown');
     expect(fetchSpy).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   }, 20_000);
@@ -120,6 +123,8 @@ describe('New campaign lands in the chat', () => {
     await screen.findByTestId('where');
     const campaigns = await actDrained(() => listCampaigns());
     expect(campaigns.map((c) => c.name)).toEqual(['New campaign']);
+    const { listModulesByCampaign } = await import('@/db/moduleRepo');
+    expect((await actDrained(() => listModulesByCampaign(campaigns[0]?.id ?? '')))[0]?.title).toBe('New campaign');
     await flushAsyncUpdates();
   }, 20_000);
 

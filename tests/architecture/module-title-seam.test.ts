@@ -23,7 +23,6 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC_DIR = join(process.cwd(), 'src');
-const MODULE_DOMAIN = 'src/domain/module.ts';
 
 /** Every `src/**` TypeScript file, recursively, as absolute paths. */
 const SOURCE_FILES: readonly string[] = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
@@ -31,29 +30,19 @@ const SOURCE_FILES: readonly string[] = readdirSync(SRC_DIR, { recursive: true, 
   .map((entry) => join(SRC_DIR, entry))
   .sort();
 
-describe('one module-title creation seam (SOURCE SCAN)', () => {
-  it('the placeholder title is defined once and only the empty-document default assigns it', () => {
-    // MIGRATED (docs/17 row 395): the creation dialog and its typed Name field
-    // are DELETED, so the blank->placeholder resolver (`resolveModuleTitle`) has
-    // no caller and is deleted with them. Creation asks nothing: the ONE default
-    // input (`emptyDocumentInput`) takes the placeholder straight from the domain.
-    const definitions = new Map<string, number>();
-    const literals = new Map<string, number>();
-    const resolverMentions = new Map<string, number>();
+describe('one module-title seam (SOURCE SCAN, docs/17 row 402)', () => {
+  it("the 'New Module' placeholder is gone: the empty document is titled with the campaign name", () => {
+    // MIGRATED (row 402): `defaultModuleTitle()` and its literal are DELETED; the ONE
+    // creation input takes `campaign.name`, and `updateCampaign` is the ONE rename seam.
     for (const file of SOURCE_FILES) {
       const text = readFileSync(file, 'utf8');
-      const path = relative(process.cwd(), file);
-      const defined = text.split('export function defaultModuleTitle(').length - 1;
-      if (defined > 0) definitions.set(path, defined);
-      const literal = text.split("title: 'New Module'").length - 1;
-      if (literal > 0) literals.set(path, literal);
-      const resolver = text.split('resolveModuleTitle' + '(').length - 1;
-      if (resolver > 0) resolverMentions.set(path, resolver);
+      expect(text.includes('defaultModuleTitle'), relative(process.cwd(), file)).toBe(false);
+      expect(text.includes("title: 'New Module'"), relative(process.cwd(), file)).toBe(false);
+      expect(text.includes('resolveModuleTitle' + '('), relative(process.cwd(), file)).toBe(false);
     }
-    expect([...definitions.entries()]).toEqual([[MODULE_DOMAIN, 1]]);
-    expect([...literals.entries()]).toEqual([]);
-    expect([...resolverMentions.entries()]).toEqual([]);
     const gen = readFileSync(join(process.cwd(), 'src/llm/moduleGen.ts'), 'utf8');
-    expect(gen).toContain('title: defaultModuleTitle(),');
+    expect(gen).toContain('title: campaign.name,');
+    const repo = readFileSync(join(process.cwd(), 'src/db/campaignRepo.ts'), 'utf8');
+    expect(repo).toContain('module.title === current.name');
   });
 });

@@ -443,8 +443,35 @@ describe('user edits and chat edits share ONE document', () => {
   });
 });
 
+describe('the canvas header status badge carries information only (docs/17 row 402)', () => {
+  it('shows the campaign title, no badge for draft, a badge for failed', async () => {
+    const row = await getModule(world.moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    await saveModule({ ...row, status: 'draft' });
+    await renderCanvas();
+    expect(screen.getByTestId('canvas-module-title')).toBeInTheDocument();
+    expect(screen.queryByText('draft')).toBeNull();
+    await actDrained(() => saveModule({ ...row, status: 'failed', errorMessage: 'boom' }));
+    await actDrained(() => screen.findByText('failed'));
+  });
+});
+
 describe('Campaign chat rename and the resizable split', () => {
-  it('the tab reads "Campaign chat"; no user-visible "Module chat" string remains in src', async () => {
+  // The row-399 rename pin, EXTENDED by row 402 (one scanner, one list): the
+  // paradigm-era user-visible literals. This file is their only carrier.
+  const BANNED_LITERALS = [
+    'Module chat',
+    'Rewrite part',
+    'Pick a part',
+    'Part ${String(plan.planIndex',
+    'the whole module is in context',
+    'saved to the module row',
+    'Search the module',
+    'aria-label="Module title"',
+    'No modules in this campaign',
+    'New Module (top bar',
+  ];
+  it('the tab reads "Campaign chat"; no banned user-visible string remains in src', async () => {
     await renderCanvas();
     const tabs = screen.getByTestId('canvas-chat-surface-switcher');
     expect(within(tabs).getByText('Campaign chat')).toBeInTheDocument();
@@ -460,7 +487,9 @@ describe('Campaign chat rename and the resizable split', () => {
             .forEach((line, index) => {
               const trimmed = line.trim();
               if (/^(\/\/|\*|\/\*)/.test(trimmed)) return;
-              if (line.includes('Module chat')) offenders.push(`${path}:${String(index + 1)}`);
+              for (const banned of BANNED_LITERALS) {
+                if (line.includes(banned)) offenders.push(`${path}:${String(index + 1)}: ${banned}`);
+              }
             });
         }
       }

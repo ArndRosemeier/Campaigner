@@ -120,7 +120,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'The creation dialog',
         markdown:
-          'Press "Document" in the top bar (or "New document" on the campaign landing — a campaign owns exactly ONE document). Fields:\n- **Name** — what the module is called; it comes pre-filled from your last creation (a fresh run is often a regeneration after deleting the old module) and the reader renames it any time.\n- **Concept** — one vivid sentence: "smugglers\' cove gone eldritch — the party raids a smuggling den that has dug into something older."\n- **Level from/to** — the band the parts are written for.\n- **Tone** (optional) — "grim", "folk-horror", "swashbuckling" steer the prose.\n- **Size** — sketch ≈ 400–700 words per part, standard ≈ 800–1500, detailed ≈ 1500–2500.',
+          'Press "Document" in the top bar (or "New document" on the campaign landing — a campaign owns exactly ONE document). Fields:\n- **Name** — the document is titled with the campaign name and follows a campaign rename; the reader can give it a title of its own.\n- **Concept** — one vivid sentence: "smugglers\' cove gone eldritch — the party raids a smuggling den that has dug into something older."\n- **Level from/to** — the band the parts are written for.\n- **Tone** (optional) — "grim", "folk-horror", "swashbuckling" steer the prose.\n- **Size** — sketch ≈ 400–700 words per part, standard ≈ 800–1500, detailed ≈ 1500–2500.',
       },
       {
         heading: 'Leave the pass automation off — the first time',
@@ -162,7 +162,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
     title: 'Read, edit, rewrite',
     minutes: 10,
     intro:
-      'The reader is the module: contents on the left, the prose in the middle, the entity panel on the right. Parts are individually editable and rewritable.',
+      'The reader shows the campaign document: contents on the left, the prose in the middle, the entity panel on the right. Levels are individually editable and rewritable.',
     sections: [
       {
         heading: 'Edit in place',
@@ -245,7 +245,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Print',
         markdown:
-          'The module canvas header → "Module PDF" prints the module itself: cover, contents, the premise, the part plan, every part in order, the artifacts its prose owns or mentions (with map plates at the encounters), the NPC gallery and the treasure ledger. The ledger is GM-only back matter: the treasure recorded on each printed encounter, and a named line for every mob that carries something — only what those fields hold, never loot parsed out of a published pack. The same button offers the player version, which leaves out the planning and the secrets. Individual artifacts still export GM notes or a player handout from the campaign tree.',
+          'The canvas header → "Module PDF" prints the campaign document: cover, contents, the premise, the part plan, every part in order, the artifacts its prose owns or mentions (with map plates at the encounters), the NPC gallery and the treasure ledger. The ledger is GM-only back matter: the treasure recorded on each printed encounter, and a named line for every mob that carries something — only what those fields hold, never loot parsed out of a published pack. The same button offers the player version, which leaves out the planning and the secrets. Individual artifacts still export GM notes or a player handout from the campaign tree.',
       },
     ],
     appLink: {

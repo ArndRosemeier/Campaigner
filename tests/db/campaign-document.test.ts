@@ -92,3 +92,21 @@ describe('createCampaignDocument — one document per campaign (docs/17 row 389)
     expect(await listModulesByCampaign(campaignId)).toHaveLength(1);
   });
 });
+
+describe('the document title follows the campaign name (docs/17 row 402)', () => {
+  beforeEach(clearDatabase);
+
+  it('a new campaign document is titled with the campaign name; a rename moves it; an owner-typed title stays', async () => {
+    const { startCampaignDocument } = await import('@/llm/moduleGen');
+    const { updateCampaign } = await import('@/db/campaignRepo');
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const id = await startCampaignDocument(campaign);
+    expect((await getModule(id))?.title).toBe('Ember');
+    await updateCampaign(campaign.id, { name: 'Cinder' });
+    expect((await getModule(id))?.title).toBe('Cinder');
+    const { patchModule } = await import('@/db/moduleRepo');
+    await patchModule(id, { title: 'My Own Title' });
+    await updateCampaign(campaign.id, { name: 'Ash' });
+    expect((await getModule(id))?.title).toBe('My Own Title');
+  });
+});

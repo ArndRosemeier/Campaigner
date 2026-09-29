@@ -55,9 +55,9 @@ export function RewritePartDialog({
     >
       <DialogContent data-testid="board-rewrite-dialog">
         <DialogHeader>
-          <DialogTitle>Rewrite part {String(target.level)}</DialogTitle>
+          <DialogTitle>Rewrite level {String(target.level)}</DialogTitle>
           <DialogDescription>
-            Regenerating replaces this part's markdown — the new text is staged on the
+            Regenerating replaces this level's markdown — the new text is staged on the
             card for review before you apply or discard it. Optionally steer the rewrite.
           </DialogDescription>
         </DialogHeader>
@@ -113,7 +113,7 @@ export function RewritePartDialog({
               onConfirm(instruction.trim(), includePriorModules);
             }}
           >
-            Rewrite part
+            Rewrite level
           </Button>
         </DialogFooter>
       </DialogContent>

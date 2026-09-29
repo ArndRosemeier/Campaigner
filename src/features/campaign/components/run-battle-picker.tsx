@@ -78,11 +78,10 @@ export function ModuleBattlePicker({
             className="rounded-md border border-dashed p-3 text-sm"
             data-testid="run-battle-picker-empty"
           >
-            <p className="font-medium">No modules in this campaign yet.</p>
+            <p className="font-medium">No document in this campaign yet.</p>
             <p className="mt-1 text-muted-foreground">
-              Battles anchor to modules — every battle table belongs to one module’s reader. Create
-              or open a module first (top-bar “New Module” or the Modules tab), then run this
-              encounter from here or from the module’s entity panel.
+              Battles anchor to the campaign document. Open the document first (top-bar “Document”), then run this
+              encounter from here or from the document’s entity panel.
             </p>
           </div>
         ) : (

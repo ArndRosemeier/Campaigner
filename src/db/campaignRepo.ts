@@ -7,7 +7,7 @@ import {
 } from '@/domain';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { listModulesByCampaign } from '@/db/moduleRepo';
+import { listModulesByCampaign, patchModule } from '@/db/moduleRepo';
 import {
   deleteModuleVersionsForModules,
   pruneOrphanedModuleVersions,
@@ -53,11 +53,21 @@ export async function createCampaign(input: NewCampaign): Promise<Campaign> {
  * re-validates through the schema, so the DB never holds invalid rows.
  */
 export async function updateCampaign(id: string, patch: CampaignPatch): Promise<Campaign> {
-  return db.transaction('rw', db.campaigns, async () => {
+  return db.transaction('rw', db.campaigns, db.modules, async () => {
     const current = await db.campaigns.get(id);
     if (!current) throw new NotFoundError('Campaign', id);
     const updated = campaignSchema.parse({ ...current, ...patch, updatedAt: Date.now() });
     await db.campaigns.put(updated);
+    // THE document-title seam (docs/17 row 402): a document's title starts as the
+    // campaign name (`llm/moduleGen.emptyDocumentInput`) and FOLLOWS a rename for
+    // as long as it still equals the old name; a title the owner typed in the
+    // reader differs from it and is left alone. This is the only place a rename
+    // is written, so every reader of `module.title` sees the new name.
+    if (updated.name !== current.name) {
+      for (const module of await listModulesByCampaign(id)) {
+        if (module.title === current.name) await patchModule(module.id, { title: updated.name });
+      }
+    }
     return updated;
   });
 }

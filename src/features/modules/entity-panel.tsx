@@ -462,7 +462,7 @@ export function EntityPanel({
           'Generation stopped — everything that was already generated is kept; run it again to fill what is left.',
         );
       } else if (report.empty && report.refused === null) {
-        toastInfo('Nothing is missing any more — the module already has every artifact, image and map.');
+        toastInfo('Nothing is missing any more — the document already has every artifact, image and map.');
       }
     } catch (error) {
       toastError('Could not generate everything for this module', error);

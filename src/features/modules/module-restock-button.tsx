@@ -55,7 +55,7 @@ export function ModuleRestockButton({
       if (error instanceof ModuleBusyError) {
         toastModuleBusy(error);
       } else {
-        toastError('Could not restock the module — no encounter was restocked', error);
+        toastError('Could not restock the campaign — no encounter was restocked', error);
       }
     } finally {
       setRunning(false);
@@ -75,7 +75,7 @@ export function ModuleRestockButton({
         variant={variant}
         size={size}
         disabled={running}
-        title="Repopulate every encounter in this module at the module's current difficulty — rooms, layout and maps are kept"
+        title="Repopulate every encounter in this campaign at its current difficulty — rooms, layout and maps are kept"
         data-testid="module-restock"
         onClick={() => {
           void run();
