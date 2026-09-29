@@ -2532,6 +2532,7 @@ only in WHICH set they name.
 
 - **Title seam (row 402):** a campaign rename re-titles the document only while the title equals the old name; `module:<title>` artifact tags are stamped at creation and are not re-tagged on rename (as for reader renames).
 
+- **Act-leak class (row 403):** a bare `await` of a repo call while a live query is mounted leaks an act() warning under load; the ONE seam is `actDrained` (`tests/helpers/flush.ts`). No source pin exists (hazard depends on runtime mount state) — the delayed-cause probe recipe is in docs/08 §1a; new tests must wrap such awaits themselves.
 - **Advisors (rows 396/400):** the row-396 level range was retired for scopes; the sidebar re-reads caret/selection on pointer/focus over its Advisors panel only; an in-place "Ask advisor" on a selection is unbuilt; advisor output quality is unmeasured; advisor cards are excluded from the writer's history by `historyFor` (`message.advisor == null`) — a new history reader must do the same.
 - **KNOWN DEBT (docs/17 rows 340 and 343) — the shared `DialogContent` cap wins the cascade over every
   caller's own plain `max-h-[…vh]`, because an `@supports` cap is invisible to `tailwind-merge`'s

@@ -3584,7 +3584,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
     expect(screen.getByTestId('spawn-picker-group-roster')).toHaveTextContent('Troll ×1');
     await user.click(screen.getByTestId('spawn-pick-roster-0'));
     await flushAsyncUpdates();
-    const row = await currentBattle(moduleId);
+    const row = await actDrained(() => currentBattle(moduleId));
     const fighters = row.board.tokens.filter((token) => token.visible);
     const spawned = fighters.find((token) => token.label === 'Troll 2');
     if (spawned === undefined) throw new Error('spawned troll missing');
@@ -3611,7 +3611,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('toggle-initiative'));
     await flushAsyncUpdates();
-    let battle = await currentBattle(moduleId);
+    let battle = await actDrained(() => currentBattle(moduleId));
     expect(battle.board.initiativeOrder).toHaveLength(3);
     await user.click(screen.getByTestId('open-spawn-picker'));
     await waitFor(() => {
@@ -3619,7 +3619,7 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
     });
     await user.click(screen.getByTestId('spawn-pick-roster-0'));
     await flushAsyncUpdates();
-    battle = await currentBattle(moduleId);
+    battle = await actDrained(() => currentBattle(moduleId));
     expect(battle.board.initiativeOrder).toHaveLength(4);
     const rolled = battle.board.tokens.find((token) => token.label === 'Troll 2');
     expect(rolled?.initiativeRoll).not.toBeNull();

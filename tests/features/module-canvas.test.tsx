@@ -462,7 +462,7 @@ describe('canvas whole-document editor', () => {
     // there); NOTHING reached the row.
     expect(activeCanvasView.current?.state.doc.toString()).toContain(moduleLevelSeparator(2));
     expect(write).not.toHaveBeenCalled();
-    const row = await getModule(world.moduleId);
+    const row = await actDrained(() => getModule(world.moduleId));
     expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
     write.mockRestore();
     await flushAsyncUpdates();

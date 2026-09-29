@@ -444,6 +444,37 @@ neither is a green run produced by loading the machine.
   a window in EVERY test that mounts it — the moment a shell-wide live read is
   added, the suites that already mount the shell inherit the hazard, and only
   act-wrapping the affected raw awaits closes it.
+- **WHICH RAW AWAIT IS SAFE WHILE A LIVE QUERY IS MOUNTED (docs/17 row 403 — the
+  CLASS, swept once after rows 393/397/400 each fixed one test).** Every `await`
+  of a repo/db call (`getModule`, `readSettings`, `currentBattle`,
+  `listArtifacts...`, `saveModule`, `patchModule`, `updateSettings`...) made AFTER
+  a component with `useLiveQuery` mounted (the shell's `CampaignBar`
+  `LegacyModulesNotice`, `CanvasPage`, `ChatSidebar`, `ModuleStyleBar`,
+  `GenerationDialog`, `SpawnPicker`...) is a window: the read turns
+  fake-indexeddb's queue and a live query's re-emission lands OUTSIDE act. SAFE:
+  `user.*`, `waitFor`/`findBy*`, `act(...)`, `actDrained(() => repoCall())`,
+  `flushAsyncUpdates()`, and any await when nothing live is mounted (or after
+  unmount). NOT SAFE: a bare `await repoCall()` between those. THE HELPER is
+  `actDrained` (`tests/helpers/flush.ts`) — wrap the call, keep the assertion
+  outside. **Measured with the delayed-cause probe** (a test-side wrapper of
+  `Dexie.liveQuery` that delivers every RE-emission after N real
+  `setTimeout(0)` rounds, first emission immediate, env `LQ_DELAY_ROUNDS`; the
+  patch is `.gate-logs/probe-livequery-delay.patch`, never committed; the
+  wrapper must use the REAL `setTimeout`, fake timers otherwise stall it): at
+  N=25 the pre-fix versions of rows 393/397/400 red again (canvas-module-actions,
+  generation-dialog, canvas-provenance, module-canvas), a sweep of 116 jsdom
+  `.tsx` files found exactly three MORE real hazards — `module-canvas > a
+  separator edit that breaks the parse` (bare `getModule`, `ChatSidebar` /
+  `ModuleStyleBar` update) and two `battle-surface > in-battle spawn picker`
+  tests (bare `currentBattle`, `SpawnPicker`) — now drained; afterwards ZERO
+  "not wrapped in act" entries across the sweep. The probe also reds 33
+  battle-surface / creature-portrait / reader tests that are NOT act leaks
+  (they assert synchronously on data a delayed emission has not yet delivered):
+  probe artefacts of a stricter-than-product timing, not hazards of this class.
+  **A source-level pin was judged NOT worth it:** whether an await is a hazard
+  depends on what is mounted at that instant, which a source scan cannot know;
+  any scan would either red on the ~thousands of safe reads or need an
+  allowlist as large as the population.
 - **A test that starts REAL orchestration must SETTLE it before teardown — the
   pending continuation's next write otherwise lands on a wiped database and turns a
   green gate RED.** This is the `post-run-extras` gate flake (dispatcher report,
