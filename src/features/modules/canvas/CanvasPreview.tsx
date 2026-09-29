@@ -60,9 +60,8 @@ import type { PreviewSelectionCapture } from '@/features/modules/canvas/previewS
 export interface CanvasPreviewHighlight {
   /** The level (its `planIndex`, level − 1) the highlight lives in. */
   planIndex: number;
-  /** Section-relative range of the last chat replacement. */
-  from: number;
-  to: number;
+  /** Section-relative ranges of the last chat turn's replacements. */
+  ranges: readonly { from: number; to: number }[];
 }
 
 export interface CanvasPreviewProps {
@@ -76,7 +75,7 @@ export interface CanvasPreviewProps {
   onOpenArtifact: (artifact: AnyArtifact) => void;
   /** The last chat replacement, mapped to its level (whole-doc coords are
    * the page's; the preview forwards the section-relative range). */
-  highlight?: CanvasPreviewHighlight | null | undefined;
+  highlights?: readonly CanvasPreviewHighlight[] | undefined;
   /** Reports every non-collapsed selection made inside this preview, mapped
    * to the document source or refused by name (see the header comment). */
   onSelectionChange?: ((capture: PreviewSelectionCapture) => void) | undefined;
@@ -119,7 +118,7 @@ export function CanvasPreview({
   artifacts,
   moduleId,
   onOpenArtifact,
-  highlight,
+  highlights,
   onSelectionChange,
   onRequestEdit,
   scrollToPos,
@@ -309,9 +308,7 @@ export function CanvasPreview({
                 moduleId={moduleId}
                 onOpenArtifact={onOpenArtifact}
                 highlight={
-                  highlight?.planIndex === section.planIndex
-                    ? { from: highlight.from, to: highlight.to }
-                    : undefined
+                  highlights?.find((entry) => entry.planIndex === section.planIndex)?.ranges
                 }
               />
             </div>

@@ -433,6 +433,9 @@ async function executeAdversarialChange(
       handle,
     });
     const failure = applied.outcomes.find((outcome) => outcome.kind === 'failed');
+    // The card's own range (this one edit); the TURN's highlight list lives on
+    // the handle's tracker, which applyChatCommands already fed.
+    const appliedFrom = applied.outcomes.find((outcome) => outcome.kind === 'applied')?.from ?? null;
     if (!applied.docChanged || failure !== undefined) {
       // The replacement did not land: NOTHING was written to the row either
       // (the turn persists only what the document carries), so this is a loud
@@ -457,7 +460,14 @@ async function executeAdversarialChange(
           replacement: report.edit.replacement,
           modelUsed: report.edit.modelUsed,
         },
-      ...(applied.lastApplied === null ? {} : { appliedToDocument: applied.lastApplied }),
+      ...(appliedFrom === null
+        ? {}
+        : {
+            appliedToDocument: {
+              from: appliedFrom,
+              to: appliedFrom + report.edit.replacement.length,
+            },
+          }),
     };
   } finally {
     progress.finish(progressId);

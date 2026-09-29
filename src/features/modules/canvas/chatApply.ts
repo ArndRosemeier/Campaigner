@@ -16,6 +16,10 @@ import {
   type CanvasEditCommand,
   type CanvasLevelEditCommand,
 } from '@/llm/canvasChat';
+import {
+  ReplacementTracker,
+  type ReplacementRange,
+} from '@/features/modules/canvas/lastReplacement';
 import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
@@ -140,11 +144,19 @@ export interface ChatDocumentHandle {
    * offset stays valid.
    */
   replaceRanges(ranges: readonly { from: number; to: number }[], insert: string): void;
+  /**
+   * The changed ranges of this handle's whole life (= one chat turn: a handle
+   * is made per turn), kept in FINAL-doc coordinates by the applier (docs/17
+   * row 405). Riding the handle is what lets the adversarial edit, every
+   * `<edit>` batch and the follow-up batch of ONE turn share ONE list.
+   */
+  readonly replacements: ReplacementTracker;
 }
 
 /** The editor handle: ONE transaction per `replaceRanges` call, normal history. */
 export function editorChatHandle(view: EditorView): ChatDocumentHandle {
   return {
+    replacements: new ReplacementTracker(),
     read: () => view.state.doc.toString(),
     replaceRanges: (ranges, insert) => {
       // ONE transaction per command (all its part ranges together) — CM6
@@ -170,6 +182,7 @@ export interface ChatStringHandle extends ChatDocumentHandle {
 export function stringChatHandle(doc: string): ChatStringHandle {
   let current = doc;
   return {
+    replacements: new ReplacementTracker(),
     read: () => current,
     replaceRanges: (ranges, insert) => {
       // Backwards: splicing the last range first keeps every earlier offset
@@ -188,13 +201,10 @@ export interface ChatApplyResult {
   /** True when any command changed the doc (caller persists via the
    * document save; only the levels whose text changed hit the row). */
   docChanged: boolean;
-  /** The LAST command's FIRST applied range in POST-apply whole-document
-   * coordinates (the last-replacement highlight) — null when nothing
-   * applied. A replace writes `command.replace` over the matched span, so
-   * the new text is `[from, from + replace.length)`; a fill writes
-   * `newText` at the section start. Valid in the doc as of the last
-   * command (no later command shifts it). */
-  lastApplied: { from: number; to: number } | null;
+  /** EVERY range this batch changed, normalised (sorted, merged) and in the
+   * coordinates of the FINAL doc: `ReplacementTracker` maps each earlier
+   * range through the later writes (docs/17 row 405). Empty = nothing applied. */
+  lastApplied: ReplacementRange[];
 }
 
 /**
@@ -225,7 +235,8 @@ function applyLevelCommand(
   command: CanvasLevelEditCommand,
   handle: ChatDocumentHandle,
   planTitles: readonly { title: string }[],
-): { outcomes: CanvasChatOutcome[]; lastApplied: { from: number; to: number } | null } {
+): { outcomes: CanvasChatOutcome[] } {
+  const tracker = handle.replacements;
   const before = handle.read();
   let edit: ModuleDocumentEdit;
   try {
@@ -236,9 +247,29 @@ function applyLevelCommand(
         : appendLevelText(document, command.level, command.replace);
   } catch (error) {
     if (!(error instanceof ModuleDocumentError)) throw error;
-    return { outcomes: [failedOutcome(command, error.message)], lastApplied: null };
+    return { outcomes: [failedOutcome(command, error.message)] };
   }
   handle.replaceRanges([{ from: 0, to: before.length }], edit.document);
+  // The seam returns the WHOLE edited text; the tracker needs the actually
+  // changed span (else earlier marks would collapse), so it is the common
+  // prefix/suffix diff of the two strings — one level's edit, exactly.
+  let prefix = 0;
+  const shorter = Math.min(before.length, edit.document.length);
+  while (prefix < shorter && before[prefix] === edit.document[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < shorter - prefix &&
+    before[before.length - 1 - suffix] === edit.document[edit.document.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  tracker.record(before.length, [
+    {
+      from: prefix,
+      to: before.length - suffix,
+      insert: edit.document.slice(prefix, edit.document.length - suffix),
+    },
+  ]);
   const section = moduleDocumentSections(edit.document, planTitles).find(
     (candidate) => candidate.number === command.level,
   );
@@ -253,6 +284,7 @@ function applyLevelCommand(
   const previous = moduleDocumentSections(before, planTitles).find(
     (candidate) => candidate.number === command.level,
   );
+  tracker.add({ from: section.textFrom, to: section.textTo });
   return {
     outcomes: [
       appliedOutcome(
@@ -266,7 +298,6 @@ function applyLevelCommand(
           : null,
       ),
     ],
-    lastApplied: { from: section.textFrom, to: section.textTo },
   };
 }
 
@@ -289,7 +320,7 @@ export function applyChatCommands(input: {
   const { handle } = input;
   const outcomes: CanvasChatOutcome[] = [];
   let docChanged = false;
-  let lastApplied: { from: number; to: number } | null = null;
+  const tracker = handle.replacements;
 
   /** Fresh per-level sections of the CURRENT doc (ranges included). */
   const currentSections = (): ModuleDocumentSection[] =>
@@ -316,7 +347,6 @@ export function applyChatCommands(input: {
       const levelResult = applyLevelCommand(command, handle, input.partPlan);
       outcomes.push(...levelResult.outcomes);
       if (levelResult.outcomes.some((outcome) => outcome.kind === 'applied')) docChanged = true;
-      if (levelResult.lastApplied !== null) lastApplied = levelResult.lastApplied;
       continue;
     }
     if (command.search.trim() === '') {
@@ -359,9 +389,11 @@ export function applyChatCommands(input: {
       const section = parts[resolution.partIndex];
       if (section === undefined) throw new Error('level snapshot has no section for the fill target');
       const before = handle.read().slice(section.textFrom, section.textTo);
+      tracker.record(handle.read().length, [
+        { from: section.textFrom, to: section.textTo, insert: resolution.newText },
+      ]);
       handle.replaceRanges([{ from: section.textFrom, to: section.textTo }], resolution.newText);
       docChanged = true;
-      lastApplied = { from: section.textFrom, to: section.textFrom + resolution.newText.length };
       outcomes.push(
         appliedOutcome(
           command,
@@ -418,12 +450,12 @@ export function applyChatCommands(input: {
       });
       ranges.push(...docRanges);
     }
+    tracker.record(
+      doc.length,
+      ranges.map((range) => ({ from: range.from, to: range.to, insert: command.replace })),
+    );
     handle.replaceRanges(ranges, command.replace);
     docChanged = true;
-    const firstRange = perPart[0]?.docRanges[0];
-    if (firstRange !== undefined) {
-      lastApplied = { from: firstRange.from, to: firstRange.from + command.replace.length };
-    }
     for (const applied of perPart) {
       outcomes.push(
         appliedOutcome(
@@ -437,7 +469,7 @@ export function applyChatCommands(input: {
       );
     }
   }
-  return { outcomes, docChanged, lastApplied };
+  return { outcomes, docChanged, lastApplied: tracker.ranges() };
 }
 
 /** `applyChatCommands` with the result type the editor callers use. */

@@ -307,6 +307,44 @@ describe('last-replacement highlight, both surfaces', () => {
     await flushAsyncUpdates();
   });
 
+  it('row 405: a reply with two commands in different levels washes BOTH sections, then a new turn replaces (never accumulates)', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    mockChatReply(
+      '<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>\n<edit><search>Mist climbs the stairs.</search><replace>Mist floods the stairwell.</replace></edit>',
+    );
+    await sendChat(user, 'both heavier');
+    const first = await within(screen.getByTestId('canvas-preview-part-0')).findByTestId(
+      'replacement-highlight',
+    );
+    expect(first).toHaveTextContent('Rain drowns every word.');
+    const second = await within(screen.getByTestId('canvas-preview-part-1')).findByTestId(
+      'replacement-highlight',
+    );
+    expect(second).toHaveTextContent('Mist floods the stairwell.');
+
+    // Editor: BOTH marks on the final doc offsets.
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await screen.findByTestId('canvas-editor');
+    const marks = await screen.findAllByTestId('canvas-last-replacement');
+    expect(marks.map((mark) => mark.textContent)).toEqual([
+      'Rain drowns every word.',
+      'Mist floods the stairwell.',
+    ]);
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+
+    // A NEW turn replaces both marks with its own single one.
+    mockChatReply(
+      '<edit><search>The docks breathe fog.</search><replace>The docks exhale fog.</replace></edit>',
+    );
+    await sendChat(user, 'again');
+    await waitFor(() => {
+      const all = within(screen.getByTestId('canvas-preview')).getAllByTestId('replacement-highlight');
+      expect(all.map((mark) => mark.textContent)).toEqual(['The docks exhale fog.']);
+    });
+    await flushAsyncUpdates();
+  });
+
   it('the preview wash sits inline over exactly the replaced words, and the part still reads as its source', async () => {
     const user = userEvent.setup();
     await renderCanvas();
@@ -512,13 +550,13 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     expect(result.outcomes).toHaveLength(1);
     expect(result.outcomes[0]?.kind).toBe('applied');
     // The highlight range covers the NEW text in the NEW doc.
-    expect(result.lastApplied).not.toBeNull();
-    const range = result.lastApplied;
-    if (range === null) throw new Error('highlight range missing');
+    expect(result.lastApplied).toHaveLength(1);
+    const range = result.lastApplied[0];
+    if (range === undefined) throw new Error('highlight range missing');
     expect(result.doc.slice(range.from, range.to)).toBe('Longer rainy opening.');
   });
 
-  it('re-resolves per command (earlier commands never shift later ranges) and keeps the LAST range', () => {
+  it('re-resolves per command (earlier commands never shift later ranges) and highlights BOTH ranges in the FINAL doc (row 405: was: keeps the LAST range)', () => {
     const result = applyChatCommandsToSnapshot({
       commands: [
         { search: 'Rain here.', replace: 'Longer rainy opening.', all: false },
@@ -531,9 +569,11 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     expect(result.doc).toBe(
       DOC.replace('Rain here.', 'Longer rainy opening.').replace('Rain there.', 'Closing rain.'),
     );
-    const range = result.lastApplied;
-    if (range === null) throw new Error('highlight range missing');
-    expect(result.doc.slice(range.from, range.to)).toBe('Closing rain.');
+    // Row 405: was "keeps the LAST range" — the first command's mark stays too.
+    expect(result.lastApplied.map((r) => result.doc.slice(r.from, r.to))).toEqual([
+      'Longer rainy opening.',
+      'Closing rain.',
+    ]);
   });
 
   it('a command in another part splices inside that section; scaffolding untouched', () => {
@@ -556,7 +596,7 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     expect(result.outcomes[0]?.kind).toBe('failed');
     expect(result.doc).toBe(DOC);
     expect(result.docChanged).toBe(false);
-    expect(result.lastApplied).toBeNull();
+    expect(result.lastApplied).toEqual([]);
   });
 
   it('multiple matches without all fail loud with the total count', () => {
@@ -592,8 +632,8 @@ describe('applyChatCommandsToSnapshot (pure string units)', () => {
     });
     expect(result.outcomes[0]?.kind).toBe('applied');
     expect(result.doc).toContain('Fog rolls in.');
-    const range = result.lastApplied;
-    if (range === null) throw new Error('highlight range missing');
+    const range = result.lastApplied[0];
+    if (range === undefined) throw new Error('highlight range missing');
     expect(result.doc.slice(range.from, range.to)).toBe('Fog rolls in.');
   });
 

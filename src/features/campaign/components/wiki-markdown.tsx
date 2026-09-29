@@ -66,7 +66,7 @@ export interface WikiMarkdownProps {
    * a block-level wash around that slice; OMITTED (never an empty range)
    * ⇒ the reader output is byte-identical to the unhighlighted render.
    */
-  highlight?: { from: number; to: number } | undefined;
+  highlight?: HighlightRange | readonly HighlightRange[] | undefined;
   /**
    * Source map (canvas preview only, docs/17 row 102): wraps every rendered
    * text run in an inline `<span data-md-from data-md-to>` carrying that run's
@@ -107,14 +107,7 @@ export const WikiMarkdown = memo(function WikiMarkdown({
 
   // The last-replacement range, clamped to the value (an out-of-range or
   // empty range is no wash at all — never an empty highlighted span).
-  const highlightRange =
-    highlight === undefined
-      ? null
-      : (() => {
-          const from = Math.max(0, Math.min(value.length, highlight.from));
-          const to = Math.max(0, Math.min(value.length, highlight.to));
-          return to > from ? { from, to } : null;
-        })();
+  const highlightRange = clampHighlights(value.length, highlight);
 
   // The remark pipeline, per render. `remarkGfm` (docs/17 row 158) is what
   // makes a markdown table parse as a table at all — it extends the PARSER, so
@@ -402,6 +395,24 @@ interface SourceMdNode {
  * washed piece carries its own source range (a selection inside the wash maps
  * exactly like any other text).
  */
+type HighlightRange = { from: number; to: number };
+
+/** The wash ranges clamped to the value, empty ones dropped; null = no wash at all. */
+function clampHighlights(
+  length: number,
+  highlight: HighlightRange | readonly HighlightRange[] | undefined,
+): HighlightRange[] | null {
+  if (highlight === undefined) return null;
+  const list = 'from' in highlight ? [highlight] : highlight;
+  const clamped = list
+    .map((range) => ({
+      from: Math.max(0, Math.min(length, range.from)),
+      to: Math.max(0, Math.min(length, range.to)),
+    }))
+    .filter((range) => range.to > range.from);
+  return clamped.length > 0 ? clamped : null;
+}
+
 export const HIGHLIGHT_ATTRIBUTE = 'data-testid';
 export const HIGHLIGHT_TEST_ID = 'replacement-highlight';
 const HIGHLIGHT_CLASSES = 'rounded-sm bg-amber-300/40 dark:bg-amber-400/25';
@@ -444,7 +455,7 @@ export interface SourceSpanOptions {
   /** Wrap every text run in its source range (the DOM→source map). */
   wrap?: boolean;
   /** Part-relative source range of the last replacement (wash), if any. */
-  highlight?: { from: number; to: number } | null;
+  highlight?: readonly HighlightRange[] | null;
 }
 
 export function remarkSourceSpans(
@@ -462,7 +473,7 @@ function wrapSourceRuns(
   node: SourceMdNode,
   base: number,
   insideLink: boolean,
-  highlight: { from: number; to: number } | null,
+  highlight: readonly HighlightRange[] | null,
   wrap: boolean,
 ): void {
   const children = node.children;
@@ -496,7 +507,7 @@ function wrapSourceRuns(
 function sourceRunNodes(
   node: SourceMdNode,
   range: { from: number; to: number },
-  highlight: { from: number; to: number } | null,
+  highlight: readonly HighlightRange[] | null,
   wrap: boolean,
 ): SourceMdNode[] | null {
   const value = node.value ?? '';
@@ -524,19 +535,32 @@ function sourceRunNodes(
 function washPieces(
   value: string,
   range: { from: number; to: number },
-  highlight: { from: number; to: number } | null,
+  highlight: readonly HighlightRange[] | null,
 ): { value: string; from: number; to: number; marked: boolean; position: SourceMdNode['position'] }[] | null {
   if (highlight === null) return null;
-  if (highlight.from >= range.to || highlight.to <= range.from) return null;
   if (value.length !== range.to - range.from) return null;
-  const start = Math.max(0, highlight.from - range.from);
-  const end = Math.min(value.length, highlight.to - range.from);
-  if (end <= start) return null;
+  // The wash ranges that touch this node, node-relative, in order.
+  const cuts = [...highlight]
+    .sort((a, b) => a.from - b.from)
+    .map((h) => ({
+      start: Math.max(0, h.from - range.from),
+      end: Math.min(value.length, h.to - range.from),
+    }))
+    .filter((cut) => cut.end > cut.start);
+  if (cuts.length === 0) return null;
   const pieces: { value: string; from: number; to: number; marked: boolean }[] = [];
-  if (start > 0) pieces.push({ value: value.slice(0, start), from: range.from, to: range.from + start, marked: false });
-  pieces.push({ value: value.slice(start, end), from: range.from + start, to: range.from + end, marked: true });
-  if (end < value.length) {
-    pieces.push({ value: value.slice(end), from: range.from + end, to: range.to, marked: false });
+  let cursor = 0;
+  for (const cut of cuts) {
+    const start = Math.max(cut.start, cursor);
+    if (cut.end <= start) continue;
+    if (start > cursor) {
+      pieces.push({ value: value.slice(cursor, start), from: range.from + cursor, to: range.from + start, marked: false });
+    }
+    pieces.push({ value: value.slice(start, cut.end), from: range.from + start, to: range.from + cut.end, marked: true });
+    cursor = cut.end;
+  }
+  if (cursor < value.length) {
+    pieces.push({ value: value.slice(cursor), from: range.from + cursor, to: range.to, marked: false });
   }
   return pieces.map((piece) => ({ ...piece, position: offsetPosition(piece.from, piece.to) }));
 }

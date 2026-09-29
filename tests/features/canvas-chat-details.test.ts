@@ -244,7 +244,7 @@ describe('runChatTurn — the editor round trip', () => {
     expect(chatMock).toHaveBeenCalledTimes(2);
     expect(options.view.state.doc.toString()).toContain('mist');
     expect(result.doc).toContain('mist');
-    expect(result.lastApplied).not.toBeNull();
+    expect(result.lastApplied.length).toBeGreaterThan(0);
     const messages = messagesFor(options.key);
     expect(messages.map((message) => message.role)).toEqual(['user', 'assistant', 'assistant']);
     expect(messages[2]?.outcomes[0]?.kind).toBe('applied');

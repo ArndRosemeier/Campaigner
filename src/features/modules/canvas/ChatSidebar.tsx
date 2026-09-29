@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
+import type { ReplacementRange } from '@/features/modules/canvas/lastReplacement';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import type { CanvasChatFraming } from '@/llm/canvasChat';
@@ -123,7 +124,7 @@ export interface ChatSidebarProps {
    * last-replacement highlight from the post-turn doc + range.
    */
   onEditorTurnApplied:
-    | ((doc: string, lastApplied: { from: number; to: number } | null) => void)
+    | ((doc: string, lastApplied: readonly ReplacementRange[]) => void)
     | undefined;
   /** Preview-mode Stop: aborts the page-owned snapshot turn. */
   onPreviewStop: (() => void) | undefined;

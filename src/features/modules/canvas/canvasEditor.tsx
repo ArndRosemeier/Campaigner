@@ -118,11 +118,7 @@ export function CanvasEditor({
     if (view === null) return;
     const current = view.state.field(lastReplacementField, false) ?? null;
     const next = replacementRef.current;
-    if (
-      current?.from === next?.from &&
-      current?.to === next?.to &&
-      current?.doc === next?.doc
-    ) {
+    if (current === next) {
       return;
     }
     view.dispatch({ effects: setLastReplacementEffect.of(next) });

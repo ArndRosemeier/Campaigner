@@ -88,7 +88,7 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
   interface Run {
     doc: string;
     docChanged: boolean;
-    lastApplied: { from: number; to: number } | null;
+    lastApplied: { from: number; to: number }[];
     outcomes: unknown[];
     threw: string | null;
   }
@@ -112,7 +112,7 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       return {
         doc: view.state.doc.toString(),
         docChanged: false,
-        lastApplied: null,
+        lastApplied: [],
         outcomes: [],
         threw: `${failure.name}: ${failure.message}`,
       };
@@ -138,7 +138,7 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
       return {
         doc: handle.text(),
         docChanged: false,
-        lastApplied: null,
+        lastApplied: [],
         outcomes: [],
         threw: `${failure.name}: ${failure.message}`,
       };
@@ -397,7 +397,7 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
             return {
               doc: view.state.doc.toString(),
               docChanged: false,
-              lastApplied: null,
+              lastApplied: [],
               outcomes: [],
               threw: `${failure.name}: ${failure.message}`,
             };
@@ -422,7 +422,7 @@ describe('chat apply is ONE implementation — editor view vs preview string (DI
             return {
               doc: testCase.doc,
               docChanged: false,
-              lastApplied: null,
+              lastApplied: [],
               outcomes: [],
               threw: `${failure.name}: ${failure.message}`,
             };
@@ -617,7 +617,7 @@ describe('the level-addressed commands (docs/17 row 381)', () => {
   it('the last-replacement highlight anchors on the level that moved', () => {
     const result = apply([{ kind: 'replace_level', level: 2, replace: 'Fog, replaced whole.' }]);
     const section = moduleDocumentSections(result.doc, PLAN).find((entry) => entry.number === 2);
-    expect(result.lastApplied).toEqual({ from: section?.textFrom, to: section?.textTo });
+    expect(result.lastApplied).toEqual([{ from: section?.textFrom, to: section?.textTo }]);
   });
 });
 

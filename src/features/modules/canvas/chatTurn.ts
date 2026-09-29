@@ -29,6 +29,7 @@ import {
   reportChatChangeOutcome,
 } from '@/features/modules/canvas/chatChanges';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
+import type { ReplacementRange } from '@/features/modules/canvas/lastReplacement';
 import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
 import { toastError } from '@/lib/toast';
 
@@ -102,9 +103,9 @@ export interface CanvasChatTurnResult {
   doc: string;
   /** True when any command changed the document this turn. */
   docChanged: boolean;
-  /** The LAST command's FIRST applied range in the returned doc (null when
-   * nothing applied) — the last-replacement highlight. */
-  lastApplied: { from: number; to: number } | null;
+  /** EVERY range this turn changed, normalised, in the returned doc's
+   * coordinates (empty when nothing applied) — the last-replacement highlight. */
+  lastApplied: ReplacementRange[];
 }
 
 /**
@@ -317,7 +318,6 @@ export async function runCanvasChatTurn(
     return message;
   };
   let docChanged = false;
-  let lastApplied: { from: number; to: number } | null = null;
   try {
     // The LIVE whole-document doc — read at send time through the surface's
     // handle (never a cached copy, never re-assembled from the row). Unsaved
@@ -417,7 +417,6 @@ export async function runCanvasChatTurn(
         handle: options.handle,
       });
       if (applied.docChanged) docChanged = true;
-      if (applied.lastApplied !== null) lastApplied = applied.lastApplied;
       // The document save comes FIRST; the level statements (docs/17 row 401)
       // are RECORD writes that re-read the row inside their own transaction, so
       // they land on top of whatever the save wrote.
@@ -450,7 +449,6 @@ export async function runCanvasChatTurn(
         if (outcome.appliedToDocument !== undefined) {
           docChanged = true;
           adversarialDocApplied = true;
-          lastApplied = outcome.appliedToDocument;
         }
       }
       if (reviews.length > 0) {
@@ -538,7 +536,7 @@ export async function runCanvasChatTurn(
         );
       }
     }
-    return { doc: options.handle.read(), docChanged, lastApplied };
+    return { doc: options.handle.read(), docChanged, lastApplied: options.handle.replacements.ranges() };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
     if (followUpRafRef.current !== null) cancelAnimationFrame(followUpRafRef.current);
@@ -563,9 +561,9 @@ export async function runCanvasChatTurn(
       }
       // The doc that stands: whatever an EARLIER reply of this turn already
       // applied (and saved) is still in it — the cut-off reply's own edits
-      // are not. `lastApplied` is dropped: the highlight belongs to a batch
+      // are not. `lastApplied` is dropped ([]): the highlight belongs to a batch
       // the user just stopped.
-      return { doc: options.handle.read(), docChanged, lastApplied: null };
+      return { doc: options.handle.read(), docChanged, lastApplied: [] };
     }
     const message = error instanceof Error ? error.message : String(error);
     useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
@@ -592,7 +590,7 @@ export async function runCanvasChatTurn(
     // editor copy already did this; the preview copy returned the PRE-TURN
     // doc with `docChanged: false`, i.e. it discarded exactly what its own
     // sentence promised was still there.
-    return { doc: options.handle.read(), docChanged, lastApplied: null };
+    return { doc: options.handle.read(), docChanged, lastApplied: [] };
   } finally {
     useCanvasChatStore.getState().setInFlight(options.key, false);
     // Write-after-settled-turn: the turn landed above as ok / failed /

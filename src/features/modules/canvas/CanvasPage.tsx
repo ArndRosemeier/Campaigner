@@ -102,7 +102,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import type { EditHandoff } from '@/features/modules/canvas/editHandoff';
 import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
-import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
+import { CanvasPreview, type CanvasPreviewHighlight } from '@/features/modules/canvas/CanvasPreview';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import {
   canvasChatKey,
@@ -142,7 +142,11 @@ import type {
   CanvasChatMessage,
   CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
-import type { LastReplacement } from '@/features/modules/canvas/lastReplacement';
+import {
+  normalizeReplacementRanges,
+  type LastReplacement,
+  type ReplacementRange,
+} from '@/features/modules/canvas/lastReplacement';
 import { clearModuleVersions } from '@/db/moduleVersionRepo';
 import {
   MODULE_GENERATING_REASON,
@@ -601,28 +605,25 @@ export function CanvasPage(): JSX.Element {
   // section's range (identity-gated — a hand edit, proposal accept or next
   // apply clears/replaces the page state, and a broken document simply
   // shows no highlight while the preview shows its loud reason).
-  let previewHighlight: { planIndex: number; from: number; to: number } | null = null;
+  let previewHighlights: CanvasPreviewHighlight[] = [];
   if (
     lastReplacement !== null &&
     previewSource !== null &&
     previewSource === lastReplacement.doc &&
-    lastReplacement.to > lastReplacement.from
+    lastReplacement.ranges.length > 0
   ) {
     try {
       const highlightSections = moduleDocumentSections(
         previewSource,
         currentModule.spine?.partPlan ?? [],
       );
-      const highlightSection = highlightSections.find(
-        (section) => lastReplacement.from >= section.textFrom && lastReplacement.to <= section.textTo,
-      );
-      if (highlightSection !== undefined) {
-        previewHighlight = {
-          planIndex: highlightSection.planIndex,
-          from: lastReplacement.from - highlightSection.textFrom,
-          to: lastReplacement.to - highlightSection.textFrom,
-        };
-      }
+      // Section-relative: each section takes the parts of every range inside it.
+      previewHighlights = highlightSections.flatMap((section) => {
+        const ranges = lastReplacement.ranges
+          .filter((range) => range.from >= section.textFrom && range.to <= section.textTo)
+          .map((range) => ({ from: range.from - section.textFrom, to: range.to - section.textFrom }));
+        return ranges.length === 0 ? [] : [{ planIndex: section.planIndex, ranges }];
+      });
     } catch {
       // A document that no longer parses has no highlight — the preview shows
       // the parser's loud reason.
@@ -1156,12 +1157,8 @@ export function CanvasPage(): JSX.Element {
       setBaselineDoc(result.doc);
       setDocText(result.doc);
     }
-    if (result.lastApplied !== null) {
-      setLastReplacement({
-        doc: result.doc,
-        from: result.lastApplied.from,
-        to: result.lastApplied.to,
-      });
+    if (result.lastApplied.length > 0) {
+      setLastReplacement({ doc: result.doc, ranges: result.lastApplied });
     }
   }
 
@@ -1249,8 +1246,9 @@ export function CanvasPage(): JSX.Element {
       setDocText(next);
       setLastReplacement({
         doc: next,
-        from: range.from,
-        to: range.from + refined.replacement.length,
+        ranges: normalizeReplacementRanges([
+          { from: range.from, to: range.from + refined.replacement.length },
+        ]),
       });
       toastSuccess(isSelection ? 'Refinement applied' : 'Rewrite applied');
     } catch (error) {
@@ -1398,9 +1396,9 @@ export function CanvasPage(): JSX.Element {
    * transactions with normal history — undoable); only the highlight is
    * page state.
    */
-  function handleEditorTurnApplied(doc: string, lastApplied: { from: number; to: number } | null): void {
-    if (lastApplied !== null) {
-      setLastReplacement({ doc, from: lastApplied.from, to: lastApplied.to });
+  function handleEditorTurnApplied(doc: string, lastApplied: readonly ReplacementRange[]): void {
+    if (lastApplied.length > 0) {
+      setLastReplacement({ doc, ranges: lastApplied });
     }
   }
 
@@ -1636,7 +1634,7 @@ export function CanvasPage(): JSX.Element {
             module={currentModule}
             artifacts={pool}
             moduleId={currentModule.id}
-            highlight={previewHighlight}
+            highlights={previewHighlights}
             onOpenArtifact={(artifact) => {
               setPeekArtifact(artifact);
             }}

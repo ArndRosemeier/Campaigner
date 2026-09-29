@@ -219,7 +219,7 @@ describe('the failed-turn return is what the user is TOLD (docs/17 row 150)', ()
     // plus `docChanged: false` was the copy contradicting its own message.
     expect(result.doc).toContain('The party bargains at the flooded gate.');
     expect(result.docChanged).toBe(true);
-    expect(result.lastApplied).toBeNull();
+    expect(result.lastApplied).toEqual([]);
     const messages = useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).messages;
     expect(messages[1]?.status).toBe('failed');
     expect(messages[1]?.error).toContain(
@@ -237,7 +237,7 @@ describe('the failed-turn return is what the user is TOLD (docs/17 row 150)', ()
       const result = await runChatTurn(options, 'flood the gate');
       expect(result.doc).toContain('The party bargains at the flooded gate.');
       expect(result.docChanged).toBe(true);
-      expect(result.lastApplied).toBeNull();
+      expect(result.lastApplied).toEqual([]);
       const messages = useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).messages;
       expect(messages[1]?.status).toBe('failed');
       expect(messages[1]?.error).toContain(
@@ -253,7 +253,7 @@ describe('the failed-turn return is what the user is TOLD (docs/17 row 150)', ()
     const result = await runSnapshotChatTurn(previewOptions(), 'flood the gate');
     expect(result.doc).toBe(PARTS_DOCUMENT);
     expect(result.docChanged).toBe(false);
-    expect(result.lastApplied).toBeNull();
+    expect(result.lastApplied).toEqual([]);
   });
 });
 

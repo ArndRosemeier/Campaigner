@@ -10241,3 +10241,8 @@ Pins: `tests/llm/level-statements.test.ts` (command grammar incl. refusals and '
 
 ### Row 402 - document title, status badge, wording (docs/17 row 402)
 Pins: `tests/db/campaign-document.test.ts` (title = campaign name, follows rename, owner title kept), `tests/features/campaign-entry.test.tsx` (typed/blank name), `tests/features/canvas-coauthor.test.tsx` (badge only for failed; BANNED_LITERALS extends the row-399 scan; the file is the only carrier), `tests/architecture/module-title-seam.test.ts` (migrated: placeholder gone). Migrated: `module-reader.test.tsx` labels 'Document title'/'Rewrite level' and 'ready' badge no longer shown.
+
+## The chat highlights every range the last turn changed (docs/17 row 405, docs/18 §2/§5)
+
+`tests/features/canvas-multi-highlight.test.tsx` pins: `normalizeReplacementRanges` (sort/drop empty/merge adjacent), the tracker mapping earlier marks through a later write, the applier reporting BOTH ranges of two commands on the FINAL doc, the offset-shift arms (a later command that lengthens / shortens text BEFORE an earlier range), `all="true"` every occurrence, a level command surviving a later shift, adjacent-edit merge, editor/snapshot agreement, the CM6 field rendering one mark per range and none after a hand edit, and `WikiMarkdown` washing a list. `canvas-preview-default` pins the page: two commands in two levels wash both sections and mark both in the editor, and a new turn replaces (never accumulates). Injections (hashes in the row-405 report): dropping the ChangeSet mapping, dropping the merge, keeping only the first range on the page, and dropping the doc-identity gate each redden a named pin. Moved pins: `lastApplied` null -> `[]`, and 'keeps the LAST range' -> both ranges.
+
