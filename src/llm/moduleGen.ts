@@ -63,10 +63,6 @@ import {
   MODULE_PREMISE_LABEL,
   PART_TOO_SHORT_REPAIR_SENTENCE,
 } from '@/llm/promptScaffolding';
-// The engine triggers the module's own post-generation automation (the
-// unattended paths have no UI to do it); the orchestrator never imports this
-// module, so the direction stays acyclic.
-import { runModulePostGeneration } from '@/features/modules/post-generation';
 // The ONE critique-and-edit pass (docs/17 row 356). It returns a REPORT and
 // never writes; the trigger below is the caller that persists an edit.
 import { runAdversarialPass, type AdversarialPassReport } from '@/llm/adversarialPass';
@@ -2307,6 +2303,14 @@ export async function rewritePart(
  * Header action after pass 1 completed with holes: writes every LEVEL SECTION
  * that is not `ready` yet (pending/failed slots), leaving successful ones
  * untouched.
+ *
+ * IT NO LONGER STARTS ANYTHING ELSE (docs/23 §8, docs/17 row 394). It used to
+ * fire the module's post-generation sweep (`void runModulePostGeneration`) the
+ * moment a parts pass completed — the last automatic generation trigger in the
+ * app. Detail generation is now the owner's explicit act in the level-scoped
+ * generation dialog (`features/modules/generation-dialog`), so this seam writes
+ * the missing level TEXT and stops; no entity, image, map or portrait is started
+ * by it.
  */
 export async function generateMissingParts(moduleId: Id, campaign: Campaign): Promise<void> {
   const module = await getModule(moduleId);
@@ -2321,14 +2325,7 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
     })
     .map((section) => section.number);
   if (levels.length === 0) return;
-  const epoch = getStopEpoch();
-  const finished = await runPartsPass(moduleId, campaign, { levels }).catch(() => undefined);
-  // A floor-gated pass is not ready and a CANCELLED one is `aborted` (its
-  // row still says 'ready' so Retry stays available) — automation follows a
-  // COMPLETED pass, and never follows a stop.
-  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
-  if (finished.module.status !== 'ready') return;
-  void runModulePostGeneration(moduleId, campaign);
+  await runPartsPass(moduleId, campaign, { levels }).catch(() => undefined);
 }
 
 /**

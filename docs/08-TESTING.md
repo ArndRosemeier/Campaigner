@@ -10126,3 +10126,55 @@ deletion's failure mode is a revived helper or a stale comment — both invisibl
   moduleGen-cast `spinePrompt`/`entity-intent reply` pairs were DELETED with their tests. Their baseline lines are
   DELETED. Two shrunken site lists (`6ef5125f116e39cd`, `c3443366b6235ab5`) are UPDATED to the files that remain —
   no new duplicate and NO entry added.
+
+### The level-scoped generation dialog, and the automatisms it replaced (docs/17 row 394, docs/23 §7/§8)
+
+The owner's request — *"a detail generation dialog with checkboxes and level ranges … No automatism … I do not
+need the old generation mechanism anymore"* — is pinned in THREE files, split by what each can prove:
+
+- **`tests/features/generation-selection.test.ts` (11, PURE).** The seam's own truth, over a hand-written document
+  string run through the ONE derivation (`moduleLevelList`): the names a range picks and that each comes from ITS
+  OWN section; a sub-range dropping a name whose FIRST mention is outside it (the dedupe rule's consequence,
+  pinned so it cannot drift); the kind filter; **the premise arm in both directions** (a premise-only name is
+  reported in `premiseOnly` and selected ONLY when the low bound is level 0; a name the premise AND a section
+  mention is that section's entity, never a bucket entry); the dedupe both ways (a twice-mentioned entity appears
+  ONCE at its first level with `laterLevels`, and a single-level name reports no duplicate); and the scope's
+  arithmetic (`totalCount === detail + images + maps + mobPortraits`, over an empty pool and over a pool holding a
+  detailed, image-less entity).
+- **`tests/features/generation-dialog.test.tsx` (5, jsdom).** THE SCOPE STATEMENT IS TRUE, measured against the
+  seam rather than restated: the printed count equals `selectGenerationTargets(...).totalCount` for the same ticks,
+  the level line reads "Level 1: 3 · Level 2: 1 · Level 3: 1", the dedupe line names the entity and its later
+  level, unticking a kind re-derives the count (5 → 2), the encounter extras are OFF by default and say `0
+  battlemaps` / `0 mob portraits`, the premise bucket is named as NOT selected until the low bound moves to
+  "Premise (no level yet)" (5 → 6 jobs), and the dispatcher is called with EXACTLY the selection the dialog
+  announced (the run is mocked, so nothing generates). A WIDE selection (13 jobs) opens the confirmation and runs
+  only on ITS press — the first press starts nothing.
+- **`tests/architecture/one-generation-selection.test.ts` (7, SOURCE, node project).** The half behaviour cannot
+  see: a revived automatic trigger compiles and only fires on a path no unit test takes. Each `not.toContain` sits
+  beside a `toContain` proving the needle is greppable (non-vacuous), and the claims are (a) `llm/moduleGen` no
+  longer references `runModulePostGeneration` while the sweep itself STILL defines it, (b) `post-run-extras` keeps
+  `run.runExtras`/`enqueueEncounterPortraitFill` but names none of the automatic-path vocabulary
+  (`encounterNeedsMap`, `isEncounterMapPending`, `useEncounterMapQueue`, the two module switches), (c) the create
+  dialog's generation-only controls and the five flags in its creation payload are gone, (d) the selection seam is
+  defined exactly once and is what the dialog and the dispatcher both call, (e) the level derivation has ONE
+  definition (`domain/moduleDocument.moduleLevelList`) and no consumer re-parses, and (f) the seam reuses the
+  existing verdict/detector seams instead of re-deciding what is missing.
+
+**PRE-EXISTING PINS THAT MOVED, and why (no assertion deleted or weakened):**
+`tests/features/portrait-queues.test.ts` — the two describes that pinned the REMOVED automatic behaviour
+("automatic battlemaps for automated encounter creation", "automatic roster portraits for a restocked encounter")
+are REPLACED by one arm proving a completed run that CREATED an encounter enqueues nothing by itself, with the
+unused imports of the deleted blocks removed; `tests/features/new-module-draft.test.tsx` uses the adversarial
+checkbox as its round-trip representative (the spine control it used is deleted); `tests/features/module-ui-toast.test.tsx`'s
+"passes the post-generation automation checkboxes to the generator" is INVERTED into "passes NO post-generation
+automation" (the controls are absent and the payload carries none of the five flags); and
+`tests/features/entity-batch-failure-report-scan.test.ts`'s `SEAM_USERS` gains
+`features/modules/generation-run.ts` with its reason — the pin's own design demands a deliberate edit for a new
+reporter, and that is what happened.
+
+**COMPILE TIER (writer, in-turn):** `pnpm_config_verify_deps_before_run=false GATE_TESTS=0 GATE_CHECKS=all bash scripts/gate.sh` → **exit 2**, closing line `===== COMPILE TIER — typecheck + lint clean; the suite did NOT run (exit 2) =====`, `lint errors: 0`, wall 108s (re-run on the final tree), raw log `.gate-logs/row394/compile-tier-final.log`.
+
+**NO GOLDEN MOVED.** No prompt text changed in this row: the engine's prompts are untouched (only what STARTS a
+run changed), so every `tests/fixtures/promptStyles/*.txt`, the adversarial transcript and `pdfLayoutBaseline.json`
+are byte-identical. The goldens were confirmed by the affected suites, NOT by a recapture — a recapture would have
+been the wrong instrument for a row that changed no prompt byte.

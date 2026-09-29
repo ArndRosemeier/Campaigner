@@ -35,7 +35,6 @@ import {
   DEFAULT_MODULE_DIFFICULTY,
   ENCOUNTER_BUDGET_POLICIES,
   ENCOUNTER_BUDGET_POLICY_LABELS,
-  ENTITY_KINDS,
   MODULE_SIZE_LABELS,
   PROMPT_STYLE_FREESTYLE_ID,
   resolveModuleTitle,
@@ -102,16 +101,6 @@ import { registerPageFlush } from '@/lib/pageFlush';
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
-
-/** Human labels for the automation grid rows (artifact/entity kinds). */
-const KIND_LABELS: Readonly<Record<EntityKind, string>> = {
-  npc: 'NPC',
-  location: 'Location',
-  event: 'Event',
-  faction: 'Faction',
-  note: 'Note',
-  encounter: 'Encounter',
-};
 
 /** How long after the last edit the draft lands on the settings row. */
 const DRAFT_DEBOUNCE_MS = 500;
@@ -547,15 +536,6 @@ function NewModuleDialogContent({
 
   const canStart = concept.trim() !== '' && !starting;
 
-  /** Toggles one kind in one of the two automation lists (persisted on the row). */
-  function toggleKind(
-    list: EntityKind[],
-    setList: (next: EntityKind[]) => void,
-    kind: EntityKind,
-  ): void {
-    setList(list.includes(kind) ? list.filter((entry) => entry !== kind) : [...list, kind]);
-  }
-
   /**
    * One guardrail count: integers only, never below `min`. A cleared/invalid
    * field falls back to `min` instead of writing NaN — an integer, but NOT
@@ -599,12 +579,7 @@ function NewModuleDialogContent({
         tone: tone.trim(),
         sizeDial,
         includePriorModules,
-        autoApproveSpine,
         adversarialGeneration,
-        autoGenerateKinds,
-        autoImageKinds,
-        autoGenerateBattlemaps,
-        autoGenerateMobImages,
         encounterFloorGuardrail,
         // The user's explicit choice, or the app default as it stands NOW; the
         // creation path resolves it against the built-ins and the user's styles
@@ -808,26 +783,28 @@ function NewModuleDialogContent({
             </div>
           </div>
 
-          <div className="flex items-start gap-2">
-            <Checkbox
-              id="module-auto-spine"
-              data-testid="auto-spine"
-              checked={autoApproveSpine}
-              onCheckedChange={(checked) => {
-                markEdited();
-                setAutoApproveSpine(checked);
-              }}
-            />
-            <div className="flex flex-col gap-0.5">
-              <Label htmlFor="module-auto-spine">Generate parts without review</Label>
-              <p className="text-xs text-muted-foreground">
-                Recorded on the module for the generation step. Nothing runs at creation — the
-                canvas chat authors the document first, and a level’s prose is written from the
-                reader when you ask for it.
-              </p>
-            </div>
-          </div>
+          {/*
+            THE GENERATION-ONLY CONTROLS ARE GONE (docs/23 §8, docs/17 row 394).
+            Creation recorded what a later "Resume automatic module creation"
+            would generate (per-kind auto-generate/auto-image, encounter
+            battlemaps, mob images, and a skip-the-review spine flag). The owner
+            asked for the opposite — *"No automatism … I do not need the old
+            generation mechanism anymore"* — and detail generation is now the
+            explicit, level-scoped choice of the generation dialog on the canvas
+            (kinds + level range + a scope statement). A module created from now
+            on records an EMPTY automation intent, so no later surface can start
+            work the owner never asked for. The dialogue's remaining opinions are
+            about how the TEXT is written (style, guardrails, difficulty,
+            adversarial pass), never about what gets generated afterwards.
+          */}
 
+          {/*
+            ADVERSARIAL GENERATION STAYS: it is a choice about HOW the text is
+            written (a critique reviews each step and an editor improves it), it
+            is OFF by default, and it is the ONLY generation-shaped flag this
+            dialog still records. Recorded on the row and read by the engine's
+            own trigger (`moduleGen`), never a pass the app starts by itself.
+          */}
           <div className="flex items-start gap-2">
             <Checkbox
               id="module-adversarial-generation"
@@ -845,92 +822,6 @@ function NewModuleDialogContent({
                 written — and an editor improves it. Off by default.
               </p>
             </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label>When the module is generated from the canvas</Label>
-            <div className="rounded-md border p-2" data-testid="module-automation-grid">
-              <div className="flex items-center gap-2 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
-                <span className="flex-1">Artifact type</span>
-                <span className="w-14 text-center">Generate</span>
-                <span className="w-14 text-center">Image</span>
-              </div>
-              {ENTITY_KINDS.map((kind) => (
-                <div key={kind} className="flex items-center gap-2 py-0.5">
-                  <span className="flex-1 text-sm">{KIND_LABELS[kind]}</span>
-                  <span className="flex w-14 justify-center">
-                    <Checkbox
-                      aria-label={`Auto-generate ${KIND_LABELS[kind]} artifacts`}
-                      data-testid={`auto-generate-${kind}`}
-                      checked={autoGenerateKinds.includes(kind)}
-                      onCheckedChange={() => {
-                        markEdited();
-                        toggleKind(autoGenerateKinds, setAutoGenerateKinds, kind);
-                      }}
-                    />
-                  </span>
-                  <span className="flex w-14 justify-center">
-                    <Checkbox
-                      aria-label={`Auto-generate images for ${KIND_LABELS[kind]} artifacts`}
-                      data-testid={`auto-image-${kind}`}
-                      checked={autoImageKinds.includes(kind)}
-                      onCheckedChange={() => {
-                        markEdited();
-                        toggleKind(autoImageKinds, setAutoImageKinds, kind);
-                      }}
-                    />
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="module-auto-battlemaps"
-                data-testid="auto-battlemaps"
-                checked={autoGenerateBattlemaps}
-                onCheckedChange={(checked) => {
-                  markEdited();
-                  setAutoGenerateBattlemaps(checked);
-                }}
-              />
-              <div className="flex flex-col gap-0.5">
-                <Label htmlFor="module-auto-battlemaps">Generate encounter battlemaps</Label>
-                <p className="text-xs text-muted-foreground">
-                  Automatic and on by default: every encounter this module creates (or already has
-                  without a battlemap) gets an unattended map run with the campaign's defaults —
-                  aspect from Settings, the dungeon tier only for dungeon encounters. Untick to keep
-                  battlemaps manual (needs image generation in Settings).
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="module-auto-mob-images"
-                data-testid="auto-mob-images"
-                checked={autoGenerateMobImages}
-                onCheckedChange={(checked) => {
-                  markEdited();
-                  setAutoGenerateMobImages(checked);
-                }}
-              />
-              <div className="flex flex-col gap-0.5">
-                <Label htmlFor="module-auto-mob-images">Generate encounter mob images</Label>
-                <p className="text-xs text-muted-foreground">
-                  Every encounter this module creates queues a portrait for its rulebook-cited
-                  roster creatures — one per creature kind, grounded in the cited stat-block entry
-                  and canonically cached, so the same creature reuses its portrait everywhere (needs
-                  image generation in Settings).
-                </p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Recorded on the module and used when you start generation from the canvas (the
-              &quot;Resume automatic module creation&quot; action): unresolved wiki-links of the
-              checked types are detailed, images attach to their artifacts, every encounter gets its
-              battlemap, and its creatures queue for their portraits. Nothing runs at creation — the
-              chat authors the document first. Everything can also be run manually from the entity
-              panel.
-            </p>
           </div>
 
           <details className="rounded-md border p-2" data-testid="module-guardrails-advanced">

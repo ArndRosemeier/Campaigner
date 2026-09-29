@@ -60,12 +60,15 @@ function srcFiles(): { path: string; text: string }[] {
 const SRC = srcFiles();
 
 /** The files allowed to reference the reporting seam, each for a stated
- * reason. Asserted by EQUALITY: a THIRD caller reds this pin (a new batch
- * surface must report through the seam deliberately, not by accident). */
+ * reason. Asserted by EQUALITY: a NEW caller reds this pin (a new batch
+ * surface must report through the seam deliberately, not by accident). The
+ * generation dialog's dispatcher was added deliberately at docs/17 row 394. */
 const SEAM_USERS: Record<string, string> = {
   'features/modules/entity-batch-report.ts': 'the seam itself — it composes the count sentence, the console payload and the toast',
   'features/modules/entity-panel.tsx': "the entity panel's per-kind batch button",
   'features/modules/post-generation.ts': "the unattended module-generation sweep's entity batches",
+  'features/modules/generation-run.ts':
+    "the level-scoped generation dialog's dispatcher (docs/17 row 394) — the same seam, so the dialog and the panel cannot drift",
 };
 
 /** The files that may contain the count sentence at all. The seam COMPOSES it;

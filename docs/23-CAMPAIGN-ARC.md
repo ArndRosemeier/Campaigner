@@ -164,6 +164,8 @@ the CHAT authors the document, the engine writes LEVELS, and a legacy row that c
 is read (and its missing levels written) rather than approved at a checkpoint.
 
 
+**BUILD STATE (2026-09-28, docs/17 row 394). PHASE 4 IS LANDED — THE LEVEL-SCOPED GENERATION DIALOG EXISTS, AND EVERY AUTOMATIC GENERATION TRIGGER IS GONE.** The owner's control is built: `features/modules/generation-selection.selectGenerationTargets({ module, artifacts, kinds, levelRange })` is the ONE `(kinds, levelRange) → targets` seam, computed on the DERIVED LEVEL LIST (`domain/moduleDocument.moduleLevelList` — no second derivation, and none of the dialog, the seam or the dispatcher ever calls the parser `splitModuleDocument`; a source pin requires that), and `features/modules/generation-dialog` is the ONE dialog: per-kind checkboxes (npc / location / event / faction / note / encounter / images) plus a level range whose LOW BOUND may be **Premise (no level yet)**, with an **encounter-extras** pair (battlemaps, mob portraits) that is OFF unless ticked. **IT STATES ITS SCOPE BEFORE IT RUNS** — the levels, the kinds and the TARGET COUNT (`selection.totalCount`, the seam's own number: details + images + maps + mob portraits) — and a selection of `WIDE_SELECTION_JOBS` (12) or more asks a second, explicit confirmation carrying the same count. **THE DEDUPE RULE IS VISIBLE:** `duplicates` names every entity several levels mention with its first level and the later ones (*"Kael (Level 1; also Level 2)"*), and a **premise-only entity has NO automatic level** — it is reported in `premiseOnly`, NAMED in the scope statement whether or not it is selected, and selected ONLY by putting the low bound on "Premise (no level yet)", where the engine infers its level. The RUN half (`features/modules/generation-run.runGenerationSelection`) drives the EXISTING engine in the domain's stable kind order (encounters LAST, the fixed-cast pin) through `runEntityBatch`, `useEntityImageQueue`, `useEncounterMapQueue` and `enqueueEncounterPortraitFill`, behind the ONE entity gate (`features/modules/entity-gate`). **AUTOMATISM OFF, inventorial:** the `void runModulePostGeneration` in `llm/moduleGen.generateMissingParts` is DELETED (that seam now writes missing level TEXT and stops); the post-run automatic battlemap and the automatic roster-portrait triggers are DELETED from `features/campaign/post-run-extras` (only a run's OWN ticked `runExtras` survive); the New Module dialog's generation-only controls (the per-kind auto-generate/auto-image grid, "Generate encounter battlemaps", "Generate encounter mob images", "Generate parts without review") are DELETED and the creation payload no longer carries any automation flag — so a module created from now on records an EMPTY `automationIntent` and the old canvas resume control can never appear for it; **the queue pumps and the sweep itself STAY** (they are the engine the dialog drives). The **NAMED REMAINDER** is the old mechanism's USER-INVOKED surfaces (the canvas resume + the entity panel's "Generate everything" + `resume-automation`/`automation-deviation`), a second 1b-sized cut recorded with its reasoning in docs/18 §5. **NO GOLDEN MOVED** (no prompt changed). Pins: `tests/features/generation-selection.test.ts` (11 — the seam, both dedupe directions, the premise arm, the true count), `tests/features/generation-dialog.test.tsx` (5 — the printed count against the seam, the named bucket both ways, the extras off by default, the wide confirmation), `tests/architecture/one-generation-selection.test.ts` (7 — the automatisms absent, ONE seam, ONE derivation, the existing verdicts reused).
+
 ## 1. The owner's decisions (verbatim substance)
 
 > "One canvas chat that starts with nothing and ends with the campaign premise and produces module
@@ -295,6 +297,16 @@ Removed: the post-generation sweep fired `void` at three sites (`moduleGen.ts:29
 checkboxes. **The engine STAYS** — `runEngine` runs, the artifact writers and the in-place refill are
 what produce detail; the dialog drives them.
 
+**AS LANDED (docs/17 row 394), the removal is of the TRIGGERS, not of the engine.** Every AUTOMATIC pass is
+gone: the `void` sweep call inside `generateMissingParts`, the post-run automatic battlemap and automatic
+roster portraits, the New Module dialog's generation-only controls (so a new module records an EMPTY
+`automationIntent`), and `autoApproveSpine`'s control. The sweep itself (`post-generation.runModulePostGeneration`),
+its detectors, the three queue PUMPS and the app's USER-INVOKED old surfaces (the canvas "Resume automatic
+module creation" and the entity panel's "Generate everything", with `resume-automation`/`automation-deviation`)
+SURVIVE, because the dialog's dispatcher drives those same units and the detectors are what its selection seam
+reuses. Deleting the user-invoked surfaces and the stored automation fields is a NAMED second cut (docs/18 §5),
+not part of this phase.
+
 ## 9. Migration — the clean cut (owner-ratified, decision 8)
 
 A new `version(32)` in the established clean-cut style: campaign rows are PURGED, never converted.
@@ -308,7 +320,7 @@ The library and settings survive. No converter, no upgrade bodies.
 | **1** | THE DOCUMENT IS THE TRUTH: the format + the loud extraction, the derived level list, the canvas editor / chat / reader / PDF speaking one document, the deletes | `version(32)` |
 | **2** | ONE MODULE PER CAMPAIGN: the module LIST dies (the row survives as artifact ownership, chat thread and versions); the tree/navigation/list collapse | none |
 | **3** | THE CHAT FROM NOTHING: no parts precondition, it authors the premise and the level sections, persists as it goes; moduleGen's pass 0 retires — **3a LANDED (docs/17 row 390)**: the chat authors from an empty document and the app entry runs no pass 0; pass 0 survives as the generator's own entry for phase 4 | none |
-| **4** | LEVEL-SCOPED GENERATION + automation off | none |
+| **4** | LEVEL-SCOPED GENERATION + automation off — **LANDED, docs/17 row 394** (the dialog + the selection seam; the automatic triggers are gone, the engine and the user-invoked old surfaces are the named remainder) | none |
 
 Order is the owner's: the chat is the central piece and the dialog is useless without it.
 

@@ -14,7 +14,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { Campaign, EntityKind, Id } from '@/domain';
-import { moduleCreationPool, aliasCollisionSentence, sameAliasName } from '@/domain';
+import {
+  ARTIFACT_KIND_SINGULAR,
+  moduleCreationPool,
+  aliasCollisionSentence,
+  sameAliasName,
+} from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -22,15 +27,6 @@ import { promoteArtifactForModuleUseLoud } from '@/db/artifactAutoPromote';
 import { generateSingleEntity } from '@/features/modules/entity-detail';
 import { STUB_KINDS, type StubKind } from '@/features/modules/persona-request';
 import { toastError, toastSuccess } from '@/lib/toast';
-
-const STUB_KIND_LABELS: Readonly<Record<StubKind, string>> = {
-  npc: 'NPC',
-  location: 'Location',
-  event: 'Event',
-  faction: 'Faction',
-  note: 'Note',
-  encounter: 'Encounter',
-};
 
 /**
  * Stub popover (08-MODULE-DESIGNER M4-C; verdict flow amended by fix-01): the
@@ -379,7 +375,7 @@ export function StubPopover({
               <SelectContent>
                 {STUB_KINDS.map((stubKind) => (
                   <SelectItem key={stubKind} value={stubKind}>
-                    {STUB_KIND_LABELS[stubKind]}
+                    {ARTIFACT_KIND_SINGULAR[stubKind]}
                   </SelectItem>
                 ))}
               </SelectContent>

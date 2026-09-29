@@ -40,7 +40,6 @@ import { createImage, getImage } from '@/db/imageRepo';
 import {
   createModule as saveModuleRow,
   getModule,
-  createModule as saveModule,
   createModule as createModule__2,
 } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -54,7 +53,6 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   libraryCreatureKey,
-  moduleCreationPool,
 } from '@/domain';
 import type { Id, Campaign, Persona, EncounterArtifactData } from '@/domain';
 import {
@@ -67,7 +65,7 @@ import {
 } from '@/features/covers/cover-image-queue';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
-import { answerClassicBattlemapFigureChecks, chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
+import { chatAnsweringClassicFigures } from '../helpers/battlemapFigureChat';
 import '@/features/campaign/post-run-extras';
 import {
   createArtifact,
@@ -76,13 +74,12 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
-import { createPersona, listPersonas } from '@/db/personaRepo';
-import { listRunsByCampaign, getRun } from '@/db/runRepo';
+import { createPersona } from '@/db/personaRepo';
+import { getRun } from '@/db/runRepo';
 import { runEngine, encounterRunAdapters } from '@/llm/runEngine';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
 import {
   useMobPortraitQueue,
-  enqueueEncounterPortraitFill,
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
   planMobPortraitBatch,
@@ -91,9 +88,6 @@ import {
   regenerateInventedCreaturePortraits,
   regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
-import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
-import { encountersNeedingMobPortraits } from '@/features/modules/post-generation';
-import { restockModuleEncounters } from '@/features/modules/module-restock';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { creatureCoverImageId, creaturePortraitArt, setCreatureCover } from '@/db/creatureRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -530,65 +524,6 @@ describe('post-run-extras.test.ts', () => {
     treasure: 'none',
     locationKind: 'dungeon',
   };
-  /** The Cartographer brief the mocked chat returns when a map job runs: a
-   * fresh 4-room stocking (first generation briefs fresh — one fight per
-   * room, every entry source-cited). Sized to fit any drawn fill grade at
-   * levelHint 5 (2 creature-levels per room against a ≥2.1 minimum share). */
-  const CARTOGRAPHER_BRIEF = {
-    // Minimum-content contract: summary/body carry substance.
-    name: 'Ignored regeneration name',
-    summary: 'Kuo-toa in flooded cellars.',
-    body: '# The Drowned Cellars\nRoom prose.',
-    difficulty: 'deadly',
-    levelHint: '', partyLevel: 5,
-    terrain: 'flooded cellars',
-    tactics: '',
-    treasure: '',
-    theme: 'drowned cellars',
-    styleNotes: '',
-    negative: '',
-    monsters: [
-      { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
-      { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
-      { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
-      { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
-    ],
-    rooms: [
-      {
-        name: 'Entry',
-        description: '',
-        size: 'medium',
-        monsterIndexes: [0],
-        adjacentRoomIndexes: [1],
-        targetLevel: 5,
-      },
-      {
-        name: 'Flooded Hall',
-        description: '',
-        size: 'medium',
-        monsterIndexes: [1],
-        adjacentRoomIndexes: [0, 2],
-        targetLevel: 5,
-      },
-      {
-        name: 'Sunken Chapel',
-        description: '',
-        size: 'medium',
-        monsterIndexes: [2],
-        adjacentRoomIndexes: [1, 3],
-        targetLevel: 5,
-      },
-      {
-        name: 'Drowned Vault',
-        description: '',
-        size: 'medium',
-        monsterIndexes: [3],
-        adjacentRoomIndexes: [2],
-        targetLevel: 5,
-      },
-    ],
-    entryRoomIndex: 0,
-  };
 
   beforeEach(async () => {
     await clearDatabase();
@@ -973,17 +908,26 @@ describe('post-run-extras.test.ts', () => {
     }, 20000);
   });
 
-  describe('automatic battlemaps for automated encounter creation (owner request)', () => {
-    /** Seeds the built-ins plus a content-only Encounter Smith and a Cartographer. */
-    async function seedEncounterPersonas(): Promise<{
-      campaign: Campaign;
-      smith: Persona;
-      cartographer: Persona;
-    }> {
+  describe('NO automatic extras (docs/23 §8, docs/17 row 394)', () => {
+    /**
+     * THE AUTOMATIC TRIGGERS ARE GONE, and this arm is the behaviour half of
+     * that claim (the source half is
+     * `tests/architecture/one-generation-selection.test.ts`). This describe
+     * REPLACES two blocks that pinned the removed behaviour — "automatic
+     * battlemaps for automated encounter creation" and "automatic roster
+     * portraits for a restocked encounter (row 196)" — because the owner asked
+     * for the opposite (*"No automatism … I do not need the old generation
+     * mechanism anymore"*): a completed run now enqueues only the extras the
+     * owner ticked for THAT run, and the dialog is the one surface that starts
+     * battlemaps and mob portraits.
+     */
+
+    /** Seeds the built-ins plus a content-only Encounter Smith. */
+    async function seedEncounterPersona(): Promise<{ campaign: Campaign; smith: Persona }> {
       await seedBuiltInPersonas();
       const campaign = await createCampaign({ name: 'Cellars', system: 'dnd5e' });
       const smith = await createPersona({
-        slug: 'encounter-smith-auto-test',
+        slug: 'encounter-smith-no-automation-test',
         name: 'Encounter Smith',
         description: 'test',
         systemPrompt: 'You are a test persona. Reply with JSON only.',
@@ -991,41 +935,15 @@ describe('post-run-extras.test.ts', () => {
         mode: 'generate',
         builtIn: true,
       });
-      const cartographer = await createPersona({
-        slug: 'encounter-cartographer-auto-test',
-        name: 'Encounter Cartographer',
-        description: 'test',
-        systemPrompt: 'You are a test persona. Reply with JSON only.',
-        producesKind: 'encounter',
-        mode: 'encounter',
-        builtIn: true,
-      });
-      return { campaign, smith, cartographer };
+      return { campaign, smith };
     }
 
-    it('a fresh module-owned Smith encounter is auto-enqueued on the module queue and mapped with resolved defaults', async () => {
-      const { campaign, smith } = await seedEncounterPersonas();
-      const module = await saveModule(
-        createModule({
-          campaignId: campaign.id,
-          title: 'Ruins',
-          concept: '',
-          levelMin: 1,
-          levelMax: 3,
-          sizeDial: 'sketch',
-          // The dialog passes the master switch explicitly (default ON there).
-          autoGenerateBattlemaps: true,
-        }),
-      );
+    it('a completed run that CREATED an encounter enqueues nothing by itself', async () => {
+      const { campaign, smith } = await seedEncounterPersona();
       chatMock
         .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(ENCOUNTER_DRAFT)))
         .mockResolvedValueOnce({
           text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(CARTOGRAPHER_BRIEF),
           modelUsed: 'test-model',
           fallback: null,
         });
@@ -1036,9 +954,9 @@ describe('post-run-extras.test.ts', () => {
         autonomy: 'auto',
         brief: 'a flooded cellar ambush',
         pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
         encounterPartyLevel: 5,
-        placementModuleId: module.id,
+        // NO `extras`: the run's own ticked extras are the only automatic
+        // enqueue left, and this run asked for none.
       });
       await waitFor(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
@@ -1046,604 +964,23 @@ describe('post-run-extras.test.ts', () => {
       const run = await getRun(runId);
       const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      expect(artifact.moduleId).toBe(module.id);
 
-      // The unattended Cartographer ran on the encounter and mapped it.
+      // The completion listener has settled and started NOTHING: no map job, no
+      // portrait job, no Cartographer run, and the encounter row is untouched.
       await settleStartedQueues();
-      const mapped = await getAnyArtifact(artifact.id);
-      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-      expect(mapped.data.layout).not.toBeNull();
-      expect(mapped.data.mapImageId).not.toBeNull();
-      // First generation stocks the dungeon: a multi-room layout with a
-      // fresh roster (one fight per room), not the Smith stub's one fight.
-      expect(mapped.data.layout?.rooms).toHaveLength(4);
-      expect(mapped.data.monsters).toHaveLength(4);
-      // The queue's run carried the encounter's own moduleId.
-      const runs = await listRunsByCampaign(campaign.id);
-      const mapRun = runs.find(
-        (entry) => entry.targetArtifactId === artifact.id && entry.personaId !== smith.id,
-      );
-      expect(mapRun?.status).toBe('completed');
-      // Defaults resolved through the D10 chain: the draft's dungeon kind put
-      // the map on the dungeon tier (48x36 for the 4:3 aspect default).
-      expect(mapRun?.encounterPreset).toBe('dungeon');
-      expect(mapped.data.layout?.gridW).toBe(48);
-      // The Smith run itself was never reopened by the extras execution.
-      expect((await getRun(runId))?.status).toBe('completed');
-    }, 30000);
-
-    it('a campaign-level encounter auto-enqueues a campaign-level (moduleId null) job', async () => {
-      const { campaign, smith } = await seedEncounterPersonas();
-      answerClassicBattlemapFigureChecks(chatMock);
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(CARTOGRAPHER_BRIEF),
-          modelUsed: 'test-model',
-          fallback: null,
-        });
-
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: smith,
-        autonomy: 'auto',
-        brief: 'a flooded cellar ambush',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      const run = await getRun(runId);
-      const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
-      expect(artifact?.moduleId ?? null).toBeNull();
-
-      await settleStartedQueues();
-      const runs = await listRunsByCampaign(campaign.id);
-      const mapRun = runs.find(
-        (entry) => entry.targetArtifactId === artifact?.id && entry.personaId !== smith.id,
-      );
-      // The map run exists and the JOB was campaign-level (moduleId null —
-      // pinned via the run's campaign-level artifact and the queue's empty
-      // module dock state after settle).
-      expect(mapRun?.status).toBe('completed');
-      expect(useEncounterMapQueue.getState().failed).toEqual([]);
-    }, 30000);
-
-    it('a targeted content regeneration never auto-enqueues a map', async () => {
-      const { campaign, smith } = await seedEncounterPersonas();
-      const stub = await createArtifact({
-        campaignId: campaign.id,
-        kind: 'encounter',
-        name: 'Ford Ambush',
-        data: {
-          difficulty: '',
-          levelHint: '', partyLevel: 5,
-          monsters: [],
-          terrain: '',
-          tactics: '',
-          treasure: '',
-          mapImageId: null,
-          layout: null,
-          preset: 'standard',
-          locationKind: 'other',
-          siteShape: 'single',
-          budgetAdvisory: '',
-        },
-      });
-      chatMock.mockResolvedValue({
-        text: JSON.stringify(ENCOUNTER_DRAFT),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
-
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: smith,
-        autonomy: 'auto',
-        brief: 'refill the stub',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-        targetArtifactId: stub.id,
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      await new Promise((resolve) => {
-        setTimeout(resolve, 150);
-      });
+      const after = await getAnyArtifact(artifact.id);
+      if (after?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(after.data.layout).toBeNull();
+      expect(after.data.mapImageId).toBeNull();
       expect(useEncounterMapQueue.getState().queued).toEqual([]);
       expect(useEncounterMapQueue.getState().active).toEqual([]);
-      expect(useEncounterMapQueue.getState().failed).toEqual([]);
-      // Regenerating an existing map stays an EXPLICIT user action.
-    }, 30000);
-
-    it('the module master switch off keeps the encounter maps manual', async () => {
-      const { campaign, smith } = await seedEncounterPersonas();
-      const module = await saveModule({
-        ...createModule({
-          campaignId: campaign.id,
-          title: 'Quiet',
-          concept: '',
-          levelMin: 1,
-          levelMax: 3,
-          sizeDial: 'sketch',
-        }),
-        autoGenerateBattlemaps: false,
-      });
-      chatMock.mockResolvedValue({
-        text: JSON.stringify(ENCOUNTER_DRAFT),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
-
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: smith,
-        autonomy: 'auto',
-        brief: 'a flooded cellar ambush',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-        placementModuleId: module.id,
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      await new Promise((resolve) => {
-        setTimeout(resolve, 150);
-      });
-      expect(useEncounterMapQueue.getState().queued).toEqual([]);
-      expect(useEncounterMapQueue.getState().active).toEqual([]);
-      expect(useEncounterMapQueue.getState().failed).toEqual([]);
-    }, 30000);
-
-    it('a Cartographer run never auto-enqueues (it maps its own encounter in-run)', async () => {
-      const { campaign, cartographer } = await seedEncounterPersonas();
-      chatMock.mockImplementation(chatAnsweringClassicFigures(JSON.stringify(CARTOGRAPHER_BRIEF)));
-
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: cartographer,
-        autonomy: 'auto',
-        brief: 'a flooded cellar ambush',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-        encounterMapAspect: '4:3',
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      await new Promise((resolve) => {
-        setTimeout(resolve, 150);
-      });
-      expect(useEncounterMapQueue.getState().queued).toEqual([]);
-      expect(useEncounterMapQueue.getState().active).toEqual([]);
-      expect(useEncounterMapQueue.getState().failed).toEqual([]);
-    }, 30000);
-
-    it('a failed map job toasts loudly per artifact and never fails the completed run', async () => {
-      const { campaign, smith } = await seedEncounterPersonas();
-      const module = await saveModule(
-        createModule({
-          campaignId: campaign.id,
-          title: 'Ruins',
-          concept: '',
-          levelMin: 1,
-          levelMax: 3,
-          sizeDial: 'sketch',
-          // The dialog passes the master switch explicitly (default ON there).
-          autoGenerateBattlemaps: true,
-        }),
-      );
-      answerClassicBattlemapFigureChecks(chatMock);
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(CARTOGRAPHER_BRIEF),
-          modelUsed: 'test-model',
-          fallback: null,
-        });
-      // The stylize step collapses — the map run fails, the queue reports it.
-      vi.spyOn(encounterRunAdapters, 'generateImages').mockRejectedValue(new Error('image drift'));
-
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: smith,
-        autonomy: 'auto',
-        brief: 'a flooded cellar ambush',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-        placementModuleId: module.id,
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      const run = await getRun(runId);
-      const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
-      await waitFor(
-        () => {
-          expect(useEncounterMapQueue.getState().failed.map((job) => job.artifactId)).toEqual([
-            artifact?.id,
-          ]);
-        },
-        { timeout: 15000 },
-      );
-      const { toastError } = await import('@/lib/toast');
-      expect(toastError).toHaveBeenCalledWith(
-        expect.stringContaining('Drowned Cellars'),
-        expect.any(Error),
-      );
-      // The queue contract holds: the completed Smith run was never reopened.
+      expect(useMobPortraitQueue.getState().queued).toEqual([]);
+      expect(useMobPortraitQueue.getState().active).toEqual([]);
+      // The completed run was never reopened by the extras execution.
       expect((await getRun(runId))?.status).toBe('completed');
     }, 30000);
   });
 
-  describe('automatic roster portraits for a restocked encounter (row 196)', () => {
-    /**
-     * The owner's report, verbatim: *"There is still a small problem that
-     * encounters can have mobs without images even when \"generate mob
-     * encounter images\" is selected in the module creator. When selecting the
-     * image generation button inside the encounter, those images get created
-     * successfully."*
-     *
-     * The mechanism: the module sweep illustrated the Encounter Smith's STUB
-     * roster, then the unattended Cartographer restock (auto-enqueued by this
-     * very module) REPLACED it, and nothing re-enqueued the creatures that only
-     * exist after the restock. The fix is the run-completion trigger in
-     * `post-run-extras`: a completed run whose result artifact is an encounter
-     * that carried a `targetArtifactId` re-reads the row and runs both lanes
-     * over it. These tests drive the REAL flow (Smith run -> automatic
-     * battlemap -> Cartographer restock) and never call the sweep, so the only
-     * thing that can illustrate the fresh roster is the trigger.
-     */
-
-    const blob = (): Blob => new Blob(['fake-png'], { type: 'image/png' });
-
-    /**
-     * The shared `CARTOGRAPHER_BRIEF` with GROUNDED monsters. The restocked
-     * creatures are inline-statblock entries, so they materialize into authored
-     * `npc` artifacts whose `summary` IS the roster `notes` — and the portrait
-     * prompt refuses to illustrate an artifact with no appearance, summary or
-     * body. A non-empty `notes` is therefore what makes the fresh roster a
-     * legitimate portrait target, exactly like a real stocked dungeon's prose
-     * (`materializeMonsterNpc` writes `summary: notes`).
-     */
-    const RESTOCK_BRIEF = {
-      ...CARTOGRAPHER_BRIEF,
-      monsters: CARTOGRAPHER_BRIEF.monsters.map((monster) => ({
-        ...monster,
-        notes: 'a bog-drowned ambusher trailing weed and a barbed spear',
-      })),
-    };
-
-    function armPortraitGeneration(): void {
-      generateImagesMock.mockResolvedValue({
-        images: [blob()],
-        costUsd: null,
-        cappedToOne: false,
-        modelUsed: 'test-image-model',
-        fallback: null,
-        filteredCount: 0,
-      });
-      intakeImageMock.mockResolvedValue({
-        blob: blob(),
-        mimeType: 'image/webp',
-        width: 320,
-        height: 240,
-      });
-    }
-
-    async function createRestockedEncounter(options?: {
-      autoGenerateMobImages?: boolean;
-    }): Promise<{
-      campaign: Campaign;
-      moduleId: Id;
-      artifactId: Id;
-    }> {
-      await seedBuiltInPersonas();
-      const campaign = await createCampaign({ name: 'Cellars', system: 'dnd5e' });
-      const smith = (await listPersonas()).find((persona) => persona.slug === 'encounter-smith');
-      if (smith === undefined) throw new Error('the built-in Encounter Smith is missing');
-      const module = await saveModule(
-        createModule({
-          campaignId: campaign.id,
-          title: 'Ruins',
-          concept: '',
-          levelMin: 1,
-          levelMax: 3,
-          sizeDial: 'sketch',
-          autoGenerateBattlemaps: true,
-          autoGenerateMobImages: options?.autoGenerateMobImages ?? true,
-        }),
-      );
-      // Same proven reply sequence as the automatic-battlemap tests above: the
-      // Smith draft, then the Cartographer's 4-room fresh stocking.
-      chatMock
-        .mockImplementation(chatAnsweringClassicFigures(JSON.stringify(ENCOUNTER_DRAFT)))
-        .mockResolvedValueOnce({
-          text: JSON.stringify(ENCOUNTER_DRAFT),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(RESTOCK_BRIEF),
-          modelUsed: 'test-model',
-          fallback: null,
-        });
-      const runId = await runEngine.startRun({
-        campaign,
-        persona: smith,
-        autonomy: 'auto',
-        brief: 'a flooded cellar ambush',
-        pinnedChunkIds: [],
-        // The create dialog's structured party level (docs/17 row 291).
-        encounterPartyLevel: 5,
-        placementModuleId: module.id,
-      });
-      await waitFor(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-      const run = await getRun(runId);
-      const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
-      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      return { campaign, moduleId: module.id, artifactId: artifact.id };
-    }
-
-    /** The restock landed: the Smith stub's single fight is replaced by the
-     * Cartographer's 4-room, 4-entry population (the shape the existing
-     * automatic-battlemap pin already asserts at `:1032-1041`). */
-    async function waitForRestock(artifactId: Id): Promise<void> {
-      await waitFor(
-        async () => {
-          const mapped = await getAnyArtifact(artifactId);
-          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-          expect(mapped.data.layout?.rooms).toHaveLength(4);
-          expect(mapped.data.monsters).toHaveLength(4);
-        },
-        { timeout: 15000 },
-      );
-    }
-
-    it('P1 — the FINAL restocked roster is illustrated by the completion trigger (revert-proof)', async () => {
-      armPortraitGeneration();
-      const { campaign, artifactId } = await createRestockedEncounter();
-      await waitForRestock(artifactId);
-
-      // The trigger re-reads the row the restock just wrote and fills it
-      // through the shared enumeration. REVERT-PROOF: delete the automatic
-      // branch from `runPostCreateExtras` and nothing in this test enqueues a
-      // portrait (the sweep never runs here), so this wait never converges —
-      // RED. Before the fix the ONLY portraits in this flow belonged to the
-      // stub roster, which no longer matches the final one.
-      await waitFor(
-        async () => {
-          const mapped = await getAnyArtifact(artifactId);
-          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-          const plan = await planMobPortraitBatch(mapped, campaign.id);
-          expect(plan.missing).toEqual([]);
-          expect(plan.imaged.length).toBeGreaterThan(0);
-        },
-        { timeout: 15000 },
-      );
-
-      const mapped = await getAnyArtifact(artifactId);
-      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-      const plan = await planMobPortraitBatch(mapped, campaign.id);
-      // Every distinct creature kind the restock landed carries art.
-      expect(plan.missing).toEqual([]);
-      expect(plan.imaged.length).toBeGreaterThan(0);
-      // The completed runs were never reopened by the extras execution.
-      expect((await listRunsByCampaign(campaign.id)).every((entry) => entry.status !== 'running')).toBe(
-        true,
-      );
-    }, 40000);
-
-    it('P2 DIFFERENTIAL — the module trigger and the editor plan agree over the same post-restock state', async () => {
-      // Block the portrait lane's image call so NOTHING has committed art yet
-      // while both arms are read: the module arm is the trigger's actual
-      // enqueue set, the editor arm is `planMobPortraitBatch` (the read-only
-      // half of the editor's own enumeration) over the identical DB state.
-      type GenResult = Awaited<ReturnType<typeof generateImages>>;
-      const genResult: GenResult = {
-        images: [blob()],
-        costUsd: null,
-        cappedToOne: false,
-        modelUsed: 'test-image-model',
-        fallback: null,
-        filteredCount: 0,
-      };
-      let releaseImages: ((value: GenResult) => void) | undefined;
-      const gate = new Promise<GenResult>((resolve) => {
-        releaseImages = resolve;
-      });
-      // The run engine and the portrait lane share ONE `generateImages`
-      // function (`encounterRunAdapters.generateImages` IS this mock), so the
-      // gate must block ONLY the portrait call: the map run's own stylize call
-      // carries a battlemap prompt and resolves immediately, while every
-      // creature-portrait call parks on `gate` — leaving the restock landed
-      // and no portrait committed.
-      generateImagesMock.mockImplementation((prompt: string) =>
-        prompt.includes('battlemap') ? Promise.resolve(genResult) : gate,
-      );
-      intakeImageMock.mockResolvedValue({
-        blob: blob(),
-        mimeType: 'image/webp',
-        width: 320,
-        height: 240,
-      });
-
-      const { campaign, artifactId } = await createRestockedEncounter();
-      await waitForRestock(artifactId);
-      // The map queue drains (the restock is on the row)…
-      await waitFor(
-        () => {
-          expect(useEncounterMapQueue.getState().queued).toEqual([]);
-          expect(useEncounterMapQueue.getState().active).toEqual([]);
-        },
-        { timeout: 15000 },
-      );
-      // …and the trigger's jobs sit BLOCKED on the image call, so no art has
-      // committed and the two arms are read over the same state.
-      await waitFor(
-        () => {
-          const jobs = [
-            ...useMobPortraitQueue.getState().queued,
-            ...useMobPortraitQueue.getState().active,
-          ].filter((job) => job.encounterId === artifactId);
-          expect(jobs.length).toBeGreaterThan(0);
-        },
-        { timeout: 15000 },
-      );
-
-      try {
-        const mapped = await getAnyArtifact(artifactId);
-        if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-        const triggerJobs = [
-          ...useMobPortraitQueue.getState().queued,
-          ...useMobPortraitQueue.getState().active,
-        ].filter((job) => job.encounterId === artifactId);
-        const moduleArm = [...new Set(triggerJobs.map((job) => job.name))].sort();
-        const editorArm = (await planMobPortraitBatch(mapped, campaign.id)).missing.slice().sort();
-        // Two non-empty arms that DO differ from the empty set — a differential,
-        // never a VOID probe.
-        expect(moduleArm.length).toBeGreaterThan(0);
-        expect(editorArm.length).toBeGreaterThan(0);
-        expect(moduleArm).toEqual(editorArm);
-        // The additive trigger never sets `regen` (it replaces nothing).
-        expect(triggerJobs.every((job) => job.regen !== true)).toBe(true);
-      } finally {
-        releaseImages?.(genResult);
-      }
-      await settleStartedQueues();
-    }, 40000);
-
-    it('P3 — the fill is idempotent: a second pass and the sweep enqueue nothing for imaged kinds', async () => {
-      armPortraitGeneration();
-      const { campaign, moduleId, artifactId } = await createRestockedEncounter();
-      await waitFor(
-        async () => {
-          const mapped = await getAnyArtifact(artifactId);
-          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-          const plan = await planMobPortraitBatch(mapped, campaign.id);
-          expect(plan.missing).toEqual([]);
-        },
-        { timeout: 15000 },
-      );
-      await settleStartedQueues();
-
-      const mapped = await getAnyArtifact(artifactId);
-      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-      const generationsBefore = generateImagesMock.mock.calls.length;
-
-      // The trigger's own body, over the illustrated roster, TWICE.
-      const first = await enqueueEncounterPortraitFill(mapped, campaign.id);
-      const second = await enqueueEncounterPortraitFill(mapped, campaign.id);
-      expect(first.enqueued).toBe(0);
-      expect(second.enqueued).toBe(0);
-      expect(second.alreadyImaged.length).toBeGreaterThan(0);
-      // Zero additional generations were asked for, and nothing was detached
-      // or replaced.
-      expect(generateImagesMock.mock.calls.length).toBe(generationsBefore);
-      expect(
-        [...useMobPortraitQueue.getState().queued, ...useMobPortraitQueue.getState().active].every(
-          (job) => job.regen !== true,
-        ),
-      ).toBe(true);
-
-      // The module sweep's own detector agrees: the encounter is not in its
-      // work list, so the automatic sweep and the completion trigger cannot
-      // double-book it either.
-      const module = await getModule(moduleId);
-      if (module === undefined) throw new Error('module missing');
-      const sweepTargets = encountersNeedingMobPortraits(
-        module,
-        moduleCreationPool(await listArtifactsByCampaign(campaign.id)),
-        await presentationArtOfCampaign(campaign.id),
-      );
-      expect(sweepTargets.map((encounter) => encounter.id)).not.toContain(artifactId);
-    }, 40000);
-
-    it('the owning module switch OFF keeps the automatic roster portraits manual', async () => {
-      armPortraitGeneration();
-      const { campaign, artifactId } = await createRestockedEncounter({
-        autoGenerateMobImages: false,
-      });
-      await waitForRestock(artifactId);
-      // The restock landed, the trigger ran — and the switch stopped it: no
-      // portrait job was ever enqueued and no creature portrait was committed
-      // (the map run's OWN image calls are not portraits; the presentation
-      // table is the portrait pin).
-      await settleStartedQueues();
-      expect(await db.creatureImages.where('campaignId').equals(campaign.id).count()).toBe(0);
-      expect(useMobPortraitQueue.getState().failed).toEqual([]);
-      const mapped = await getAnyArtifact(artifactId);
-      if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-      const plan = await planMobPortraitBatch(mapped, campaign.id);
-      // The final roster genuinely lacks art — the editor button is its route,
-      // exactly as before the fix (the switch is the module's promise).
-      expect(plan.missing.length).toBeGreaterThan(0);
-    }, 40000);
-
-    it('the MODULE SWEEP leaves its fresh roster illustrated — the row-196 trigger fires for the run the sweep started (docs/17 row 195)', async () => {
-      // The owner's outcome: "new fights at the new difficulty, illustrated".
-      // The sweep starts the repopulate run, so the SAME completion trigger
-      // row 196 added must enqueue the roster THAT run wrote — a distinct
-      // creature identity makes the fresh roster unambiguous.
-      armPortraitGeneration();
-      const { campaign, moduleId, artifactId } = await createRestockedEncounter();
-      await waitForRestock(artifactId);
-
-      // A SECOND repopulate, this time started by the module-level sweep, with
-      // a roster of a DIFFERENT creature identity than the first restock.
-      const SWEEP_BRIEF = {
-        ...RESTOCK_BRIEF,
-        monsters: RESTOCK_BRIEF.monsters.map((monster) => ({ ...monster, name: 'Sahuagin' })),
-      };
-      chatMock.mockResolvedValue({
-        text: JSON.stringify(SWEEP_BRIEF),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
-
-      const report = await restockModuleEncounters(moduleId);
-      expect(report.total).toBe(1);
-      expect(report.restocked).toEqual([artifactId]);
-      expect(report.failed).toEqual([]);
-      expect(report.stopped).toBe(false);
-
-      const swept = await getAnyArtifact(artifactId);
-      if (swept?.kind !== 'encounter') throw new Error('encounter missing');
-      expect(swept.data.monsters.map((monster) => monster.name)).toContain('Sahuagin');
-
-      // The completion trigger re-reads the row the sweep just wrote and fills
-      // it. REVERT-PROOF for the sweep's own interaction: nothing else in this
-      // test enqueues a portrait for the Sahuagin roster, so a trigger that did
-      // not fire leaves `missing` non-empty and this wait never converges.
-      await waitFor(
-        async () => {
-          const mapped = await getAnyArtifact(artifactId);
-          if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
-          const plan = await planMobPortraitBatch(mapped, campaign.id);
-          expect(plan.missing).toEqual([]);
-          expect(plan.imaged.length).toBeGreaterThan(0);
-        },
-        { timeout: 15000 },
-      );
-    }, 40000);
-  });
 });
 
 describe('invented-creature-portraits.test.ts', () => {

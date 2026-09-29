@@ -2,7 +2,6 @@ import type { Campaign, Id, ModuleAutomationIntent } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
 import { getModule } from '@/db/moduleRepo';
-import { classifyNewModuleEntityNames, normalizeModuleEntityNames } from '@/llm/moduleGen';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { toastError, toastSuccess } from '@/lib/toast';
 import {
@@ -11,6 +10,7 @@ import {
   deviationIsEmpty,
 } from '@/features/modules/automation-deviation';
 import { FULL_AUTOMATION_TARGET, runModulePostGeneration } from '@/features/modules/post-generation';
+import { openEntityGate } from '@/features/modules/entity-gate';
 
 /**
  * "Resume automatic module creation" — the ONE user-invoked resume of what
@@ -176,49 +176,27 @@ async function runResume(
     swept: false,
     stopped: false,
   };
-  let gateOpen = module.entityNamesNormalized;
-
-  // Unit 1 — names the text picked up with no recorded kind, so no batch can see
-  // them yet: the existing incremental classification pass (append-only records,
-  // the same machinery the entity panel's button uses). It is skipped while the
-  // gate is closed, because it would refuse — and the full pass below records
-  // those names anyway.
-  if (gateOpen && deviation.unclassified.length > 0) {
-    const classified = await classifyNewModuleEntityNames(moduleId);
-    report.classified = classified.classified;
-    if (classified.failed) {
-      const reason =
-        'The new names in this module could not be classified, so nothing was generated — the entity work stays gated until normalization succeeds (retry it from the entity panel).';
-      toastError(reason);
-      report.refused = reason;
-      return report;
-    }
-    if (stoppedSince(epoch)) {
-      report.stopped = true;
-      return report;
-    }
-    gateOpen = (await getModule(moduleId))?.entityNamesNormalized ?? false;
+  // Units 1–2 are the entity-batch GATE, and its ORDER lives in ONE seam
+  // (`features/modules/entity-gate`, docs/17 row 394): classification first
+  // (only while the gate is open — it refuses otherwise), then normalization,
+  // each followed by a re-read of the row and a stop-epoch check, each refusal
+  // toasted there and returned here. THIS caller states its own needs from the
+  // deviation its confirmation describes (`unclassified` / `normalizationPending`
+  // — both are about the configured entity work), so a resume that asked for
+  // images only still runs neither pass.
+  const gate = await openEntityGate(moduleId, epoch, {
+    classification: deviation.unclassified.length > 0,
+    normalization: deviation.normalizationPending,
+  });
+  report.classified = gate.classified;
+  report.normalized = gate.normalized;
+  if (gate.stopped) {
+    report.stopped = true;
+    return report;
   }
-
-  // Unit 2 — `entityNamesNormalized: false` leaves EVERY entity batch gated, and
-  // a sweep called with the gate closed would quietly generate nothing. Run the
-  // existing pass; if it still fails, refuse loudly and run NOTHING (a half-run
-  // would be the silent no-op this guard exists to prevent).
-  if (!gateOpen && deviation.normalizationPending) {
-    await normalizeModuleEntityNames(moduleId);
-    report.normalized = true;
-    gateOpen = (await getModule(moduleId))?.entityNamesNormalized ?? false;
-    if (!gateOpen) {
-      const reason =
-        'Entity name normalization failed, so the entity batches stay gated — nothing was generated. Retry normalization from the entity panel, then generate again.';
-      toastError(reason);
-      report.refused = reason;
-      return report;
-    }
-    if (stoppedSince(epoch)) {
-      report.stopped = true;
-      return report;
-    }
+  if (!gate.ok) {
+    report.refused = gate.refused;
+    return report;
   }
 
   // Unit 3 — the sweep, with the SAME target the deviation was derived against

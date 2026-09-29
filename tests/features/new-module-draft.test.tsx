@@ -212,7 +212,10 @@ describe('the draft round-trips through the settings row', () => {
     let dialog = await openDialog(campaign);
 
     await user.type(within(dialog).getByLabelText('Concept'), 'A harbor bell rings underwater.');
-    await user.click(within(dialog).getByTestId('auto-spine'));
+    // The adversarial flag is the dialog's ONE surviving generation-shaped
+    // boolean (docs/17 row 394 deleted the spine/automation controls), so it
+    // stands in for the round-trip the old `auto-spine` checkbox proved.
+    await user.click(within(dialog).getByTestId('new-module-adversarial-generation'));
     await user.type(within(dialog).getByLabelText('Tone (optional)'), 'eerie');
     await user.click(within(dialog).getByRole('button', { name: 'Detailed' }));
     // The Advanced floor is part of the draft too. `<details>` toggles open on
@@ -241,7 +244,7 @@ describe('the draft round-trips through the settings row', () => {
       );
     });
     expect(within(dialog).getByLabelText('Tone (optional)')).toHaveValue('eerie');
-    expect(within(dialog).getByTestId('auto-spine')).toBeChecked();
+    expect(within(dialog).getByTestId('new-module-adversarial-generation')).toBeChecked();
     expect(within(dialog).getByRole('button', { name: 'Detailed' })).toHaveAttribute(
       'aria-pressed',
       'true',

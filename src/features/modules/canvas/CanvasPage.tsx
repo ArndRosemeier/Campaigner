@@ -90,6 +90,7 @@ import { useModule, useModuleVersions } from '@/features/modules/hooks';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { ModuleRestockButton } from '@/features/modules/module-restock-button';
+import { GenerationButton } from '@/features/modules/generation-dialog';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
@@ -1546,6 +1547,19 @@ export function CanvasPage(): JSX.Element {
           <Badge variant="secondary">{currentModule.status}</Badge>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {/*
+            THE level-scoped generation dialog (docs/23 §7, docs/17 row 394):
+            the ONE control that starts detail generation. It states its scope
+            (levels, kinds, target count) before it runs, and it is the only
+            surface that does — every automatic pass this app used to start by
+            itself is gone.
+          */}
+          <GenerationButton
+            module={currentModule}
+            campaign={currentCampaign}
+            artifacts={pool}
+            blockedReason={busy ? MODULE_GENERATING_REASON : null}
+          />
           {/*
             The module PDF (docs/17 row 108): the module IS the document, so
             its export lives here, next to the document it prints — and in the

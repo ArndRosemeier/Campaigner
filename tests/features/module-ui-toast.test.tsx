@@ -539,7 +539,7 @@ describe('campaign-document-landing.test.tsx', () => {
       await flushAsyncUpdates();
     }, 20_000);
 
-    it('passes the post-generation automation checkboxes to the generator', async () => {
+    it('passes NO post-generation automation to the generator — the controls are deleted', async () => {
       const user = userEvent.setup();
       const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
       renderAppAt(documentPath(campaign.id));
@@ -548,40 +548,40 @@ describe('campaign-document-landing.test.tsx', () => {
       await user.click(screen.getByTestId('new-module'));
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
 
-      // Default: the pass automations off, battlemaps ON (owner request:
-      // automated encounters map automatically with the campaign's defaults),
-      // mob portraits off (opt-in).
-      expect(within(dialog).getByTestId('auto-generate-npc')).not.toBeChecked();
-      expect(within(dialog).getByTestId('auto-image-npc')).not.toBeChecked();
-      expect(within(dialog).getByTestId('auto-spine')).not.toBeChecked();
-      expect(within(dialog).getByTestId('auto-battlemaps')).toBeChecked();
-      expect(within(dialog).getByTestId('auto-mob-images')).not.toBeChecked();
+      // THE GENERATION-ONLY CONTROLS ARE GONE (docs/23 §8, docs/17 row 394):
+      // the per-kind auto-generate/auto-image grid, the battlemap and mob-image
+      // switches and the skip-the-review spine flag. Detail generation is the
+      // level-scoped choice of the canvas's generation dialog.
+      for (const testId of [
+        'auto-generate-npc',
+        'auto-image-npc',
+        'auto-spine',
+        'auto-battlemaps',
+        'auto-mob-images',
+        'module-automation-grid',
+      ]) {
+        expect(within(dialog).queryByTestId(testId)).toBeNull();
+      }
 
-      // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs
-      // + mob portraits; untick battlemaps to keep this module's maps manual.
-      await user.click(within(dialog).getByTestId('auto-spine'));
-      await user.click(within(dialog).getByTestId('auto-generate-npc'));
-      await user.click(within(dialog).getByTestId('auto-generate-location'));
-      await user.click(within(dialog).getByTestId('auto-image-npc'));
-      await user.click(within(dialog).getByTestId('auto-battlemaps'));
-      await user.click(within(dialog).getByTestId('auto-mob-images'));
-
-      await user.type(within(dialog).getByLabelText('Concept'), 'Automated chapter.');
+      await user.type(within(dialog).getByLabelText('Concept'), 'No automation.');
       startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
       await user.click(within(dialog).getByTestId('start-module'));
       await waitFor(() => {
         expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
       });
-      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          autoApproveSpine: true,
-          autoGenerateKinds: ['npc', 'location'],
-          autoImageKinds: ['npc'],
-          autoGenerateBattlemaps: false,
-          autoGenerateMobImages: true,
-        }),
-      );
+      // An untouched creation records an EMPTY automation intent: none of the
+      // five flags rides the payload, so no later surface can start work the
+      // owner never asked for.
+      const input = startCampaignDocumentMock.mock.calls[0]?.[1];
+      for (const key of [
+        'autoApproveSpine',
+        'autoGenerateKinds',
+        'autoImageKinds',
+        'autoGenerateBattlemaps',
+        'autoGenerateMobImages',
+      ]) {
+        expect(input).not.toHaveProperty(key);
+      }
       await flushAsyncUpdates();
     }, 20_000);
   });
