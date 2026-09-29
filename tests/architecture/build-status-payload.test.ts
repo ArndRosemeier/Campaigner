@@ -78,6 +78,30 @@ describe('scripts/buildStatus.mjs (docs/17 row 250)', () => {
     expect(payload.detail).toContain(code.slice(0, 7));
   });
 
+  it('reads verified when the only change after the GATE GREEN landing is version.json (row 404)', () => {
+    const { repo, wip } = makeRepo();
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+    writeFileSync(join(repo, 'version.json'), '{ "major": 1, "build": 1 }\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'chore(version): 1.001');
+    const head = git('rev-parse', 'HEAD').trim();
+    expect(runStatus(repo, landedRecord(wip, GREEN_VERIFY), head).state).toBe('verified');
+  });
+
+  it('writes the --version it is given into the payload (row 404)', () => {
+    const { repo, docs } = makeRepo();
+    const boardPath = join(repo, 'board.md');
+    const outPath = join(repo, 'out.json');
+    writeFileSync(boardPath, landedRecord(docs, GREEN_VERIFY));
+    execFileSync(
+      'node',
+      [STATUS_SCRIPT, '--board', boardPath, '--out', outPath, '--head', docs, '--version', '1.004'],
+      { cwd: repo, encoding: 'utf8' },
+    );
+    expect((JSON.parse(readFileSync(outPath, 'utf8')) as { version: string }).version).toBe('1.004');
+  });
+
   it('reads verified when HEAD IS the verified landing (empty delta)', () => {
     const { repo, docs } = makeRepo();
     expect(runStatus(repo, landedRecord(docs, GREEN_VERIFY), docs).state).toBe('verified');

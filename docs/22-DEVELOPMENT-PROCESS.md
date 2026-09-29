@@ -287,6 +287,14 @@ landing amends the ledger, the testing doc and usually the seam index. So:
 later), `main` is not a staging area: a red or half-finished landing is
 user-visible, which is why the gate runs before every push.
 
+**Publishing and the version.** A publish is one script (`scripts/publish.mjs`), and
+the app version (`version.json`, shown `1.004` beside the build-status badge) counts
+PUBLISHED builds: the counter is incremented and committed only after the served
+content was verified, so a failed publish consumes no number. The owner raises `major`
+by hand (and sets `build` to 0). Portable rule: a counter file written after the gate
+must be classified as non-code by the same predicate the gate and the verified/WIP
+badge share, or every fresh publish reads unverified.
+
 **Cadence contract.** A brief says: report on LANDING or BLOCKED, nothing in
 between. The dispatcher waits in silence; a mid-flight nudge is a last resort for
 real stagnation (registry idle, no report across checks), never a demand for

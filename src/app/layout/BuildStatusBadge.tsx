@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 
 import {
+  APP_VERSION,
   useBuildStatus,
   type BuildStatusRead,
   type BuildStatusState,
@@ -48,15 +49,23 @@ export interface BuildStatusBadgeProps {
 export function BuildStatusBadge({ readStatus }: BuildStatusBadgeProps = {}): JSX.Element | null {
   const status = useBuildStatus(readStatus);
   if (status === null) return null;
+  // The bundle's own version is authoritative (it is the code running); a status
+  // file naming a different one is a stale/partial publish and is said so.
+  const mismatch = status.version !== undefined && status.version !== APP_VERSION;
+  const title = mismatch
+    ? `${status.detail} — MISMATCH: this code is ${APP_VERSION} but the status file says ${status.version ?? ''}`
+    : status.detail;
   return (
     <Badge
       variant="outline"
       data-testid="build-status-badge"
       data-state={status.state}
-      title={status.detail}
+      title={title}
+      data-version={APP_VERSION}
+      data-version-mismatch={mismatch ? 'true' : undefined}
       className={STATE_CLASSES[status.state]}
     >
-      {STATE_LABELS[status.state]}
+      {STATE_LABELS[status.state]} {APP_VERSION}
     </Badge>
   );
 }

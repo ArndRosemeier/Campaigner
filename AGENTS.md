@@ -303,7 +303,12 @@ was written — so it is caught by pins, not by discipline. **Four obligations:*
   conclusion) has no workflow left to read.
   **The INTENT is unchanged and still binding: a push is not finished until the
   owner can test the build.** The route is now the `apps-publish` skill
-  (`apps.futuremagic.de/Campaigner`), run after the push:
+  (`apps.futuremagic.de/Campaigner`), run after the push. **The repo's own script
+  `node scripts/publish.mjs` is the one way to run it** (docs/17 row 404): build, status,
+  rsync, verify by content, and only then the version counter `version.json` is
+  incremented, committed and pushed (`--dry-run` tests it; it refuses a dirty tree or a
+  branch other than main). The owner changes `major` in `version.json` by hand for a
+  major build and sets `build` to 0; past build 999 it fails until he does. The steps:
   1. **Publish after every push that changes what he can see** — source, tests and
      build config always. A records-only push produces no new bundle: say which of
      the two it was rather than implying a publish happened.

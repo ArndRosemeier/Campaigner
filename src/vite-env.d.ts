@@ -9,6 +9,14 @@
  */
 declare const __SW_VERSION__: string;
 
+/**
+ * The published app version (`1.004`), injected at BUILD time by
+ * `vite.config.ts` from `CAMPAIGNER_VERSION` (set by `scripts/publish.mjs`);
+ * `'dev'` in dev, test and any unversioned build (docs/17 row 404).
+ * `src/app/layout/build-status.ts` is its only consumer.
+ */
+declare const __APP_VERSION__: string;
+
 // pdfjs ships no types for its worker entry; we only need the module to exist
 // for the vitest fake-worker preload (see src/ingest/extract.ts).
 declare module 'pdfjs-dist/legacy/build/pdf.worker.mjs' {

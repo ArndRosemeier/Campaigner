@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 import { configDefaults, defineConfig } from 'vitest/config';
 
 import { readServiceWorkerVersion } from './scripts/swVersion.ts';
+import { DEV_VERSION } from './scripts/version.ts';
 
 // DOM-free test files run in the node environment: a fresh jsdom window
 // costs ~0.75s of fixed worker time per file, and these files never touch
@@ -153,6 +154,14 @@ export default defineConfig(({ mode }) => {
   // asserts the value injected here equals the hash of the real file.
   const swVersion = readServiceWorkerVersion(fileURLToPath(new URL('.', import.meta.url)));
 
+  // THE APP VERSION (docs/17 row 404), injected exactly like the SW version.
+  // `scripts/publish.mjs` computes the NEXT version from `version.json` and
+  // passes it as CAMPAIGNER_VERSION to `vite build`; every other run (dev,
+  // test, an ad-hoc build) gets the non-release marker 'dev'.
+  const fromVersionEnv = process.env.CAMPAIGNER_VERSION?.trim();
+  const appVersion =
+    fromVersionEnv !== undefined && fromVersionEnv !== '' ? fromVersionEnv : DEV_VERSION;
+
   return {
     base,
     // Injected into the bundle: `src/lib/serviceWorker.ts` reads it and
@@ -160,6 +169,7 @@ export default defineConfig(({ mode }) => {
     // string literal, not an identifier.
     define: {
       __SW_VERSION__: JSON.stringify(swVersion),
+      __APP_VERSION__: JSON.stringify(appVersion),
     },
     plugins: [react(), tailwindcss()],
     resolve: {

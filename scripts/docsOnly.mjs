@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url';
  *
  * THE RULE, stated once here and nowhere else: a path is documentation when it
  * lives under `docs/`, or when it is a Markdown file at the repository root
- * (`AGENTS.md`, `README.md`, …). This is exactly the rule `scripts/gate.sh`
+ * (`AGENTS.md`, `README.md`, …), or the publish counter `version.json`. This is exactly the rule `scripts/gate.sh`
  * used to spell inline; a Markdown file in a SUBDIRECTORY is deliberately not
  * covered, because the gate never treated one as documentation.
  *
@@ -39,6 +39,11 @@ export const DOCS_ONLY_PATTERNS = [
   /^docs\//,
   // … or a Markdown file at the repository root.
   /^[^/]+\.md$/,
+  // … or the publish counter (docs/17 row 404): `version.json` is written by
+  // the publish AFTER the gate and the build, so counting it as code would make
+  // every freshly published build read WIP and run the full suite for a
+  // counter-only diff. It is data the app never reads at runtime.
+  /^version\.json$/,
 ];
 
 /** Is this ONE path a documentation path? */

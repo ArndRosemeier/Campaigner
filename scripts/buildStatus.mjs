@@ -46,7 +46,7 @@ import { isDocsOnlyDiff } from './docsOnly.mjs';
  * repositories. The app validates the written payload at its own boundary
  * (`src/app/layout/build-status.ts`).
  *
- * Usage: node scripts/buildStatus.mjs [--board <path>] [--out <path>] [--head <rev>]
+ * Usage: node scripts/buildStatus.mjs [--board <path>] [--out <path>] [--head <rev>] [--version <n.nnn>]
  * Defaults: --board docs/20-ORCHESTRATION.md, --out dist/build-status.json,
  *           --head HEAD. Exit 0 whenever a payload was computed (including
  *           cannot-tell); exit 1 when the computation or the write failed, after
@@ -214,19 +214,20 @@ export function createGitAdapter(cwd) {
 }
 
 export function parseArgs(argv) {
-  const args = { board: DEFAULT_BOARD_PATH, out: DEFAULT_OUT_PATH, head: null };
+  const args = { board: DEFAULT_BOARD_PATH, out: DEFAULT_OUT_PATH, head: null, version: null };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (flag !== '--board' && flag !== '--out' && flag !== '--head') {
+    if (flag !== '--board' && flag !== '--out' && flag !== '--head' && flag !== '--version') {
       throw new Error(
-        `unknown argument '${flag}' (expected --board <path>, --out <path>, --head <rev>)`,
+        `unknown argument '${flag}' (expected --board <path>, --out <path>, --head <rev>, --version <n.nnn>)`,
       );
     }
     if (value === undefined) throw new Error(`${flag} needs a value`);
     if (flag === '--board') args.board = value;
     else if (flag === '--out') args.out = value;
-    else args.head = value;
+    else if (flag === '--head') args.head = value;
+    else args.version = value;
     index += 1;
   }
   return args;
@@ -236,9 +237,11 @@ function main() {
   let out = DEFAULT_OUT_PATH;
   let failed = false;
   let payload;
+  let version = null;
   try {
     const args = parseArgs(process.argv.slice(2));
     out = args.out;
+    version = args.version;
     const boardText = readFileSync(args.board, 'utf8');
     const head = args.head ?? execGit(process.cwd(), ['rev-parse', 'HEAD']).trim();
     payload = computeBuildStatus({ boardText, head, git: createGitAdapter(process.cwd()) });
@@ -249,6 +252,9 @@ function main() {
     // The badge must never be left claiming a state that was not computed.
     payload = cannotTell(`the build status could not be computed: ${message}`);
   }
+  // The published version rides the payload (docs/17 row 404) so the live
+  // version is verifiable by curl; absent when the caller named none.
+  if (version !== null) payload = { ...payload, version };
   try {
     writeFileSync(out, `${JSON.stringify(payload, null, 2)}\n`);
   } catch (error) {

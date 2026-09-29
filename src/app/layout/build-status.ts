@@ -40,7 +40,17 @@ export type BuildStatusState = (typeof BUILD_STATUS_STATES)[number];
 export interface BuildStatus {
   readonly state: BuildStatusState;
   readonly detail: string;
+  /** The version the status FILE names (docs/17 row 404); absent on older files. */
+  readonly version?: string | undefined;
 }
+
+/**
+ * The version of the code actually RUNNING — baked into the bundle at build
+ * time (`__APP_VERSION__`, `vite.config.ts`), so it is right even when the
+ * status file is stale or missing. `'dev'` in dev and test: the badge SHOWS
+ * that marker (an unversioned build must not look released).
+ */
+export const APP_VERSION: string = __APP_VERSION__;
 
 /** The same-origin file the deploy job writes into `dist/`. */
 export const BUILD_STATUS_FILE_NAME = 'build-status.json';
@@ -55,6 +65,8 @@ const NOT_A_DEPLOY_BUILD =
 export const buildStatusPayloadSchema = z.strictObject({
   state: z.enum(BUILD_STATUS_STATES),
   detail: z.string().min(1),
+  // Optional so a status file written before row 404 still validates.
+  version: z.string().min(1).optional(),
 });
 
 /** The honest answer whenever the state could not be established. */

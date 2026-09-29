@@ -2,7 +2,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BuildStatusBadge } from '@/app/layout/BuildStatusBadge';
-import { buildStatusUrl, readBuildStatus, type BuildStatusRead } from '@/app/layout/build-status';
+import {
+  APP_VERSION,
+  buildStatusPayloadSchema,
+  buildStatusUrl,
+  readBuildStatus,
+  type BuildStatusRead,
+} from '@/app/layout/build-status';
 
 /**
  * The build-status badge (docs/17 row 250, docs/18 §2): the owner's "WIP, right
@@ -116,5 +122,42 @@ describe('BuildStatusBadge (docs/17 row 250)', () => {
     const badge = screen.getByTestId('build-status-badge');
     expect(badge).toHaveAttribute('data-state', 'cannot-tell');
     expect(badge.getAttribute('title')).toContain('not produced by the deploy job');
+  });
+
+  it('resolves the bundle version to the non-release marker under test', () => {
+    expect(APP_VERSION).toBe('dev');
+  });
+
+  it.each([
+    ['verified', 'verified'],
+    ['wip', 'WIP'],
+    ['cannot-tell', 'cannot tell'],
+  ])('shows the version right beside the %s state text (row 404)', async (state, label) => {
+    stubFetch({ body: { state, detail: 'why', version: APP_VERSION } });
+    renderBadge();
+    await waitForBadge(state, 'why');
+    const badge = screen.getByTestId('build-status-badge');
+    expect(badge).toHaveTextContent(`${label} ${APP_VERSION}`);
+    expect(badge).not.toHaveAttribute('data-version-mismatch');
+  });
+
+  it('says so honestly when the status file names another version (row 404)', async () => {
+    stubFetch({ body: { state: 'wip', detail: 'why', version: '9.999' } });
+    renderBadge();
+    await waitForBadge('wip', 'MISMATCH');
+    const badge = screen.getByTestId('build-status-badge');
+    expect(badge.getAttribute('title')).toContain('9.999');
+    expect(badge).toHaveAttribute('data-version-mismatch', 'true');
+    expect(badge).toHaveTextContent(`WIP ${APP_VERSION}`);
+  });
+
+  it('validates the payload with and without a version, and rejects an empty one', () => {
+    expect(buildStatusPayloadSchema.safeParse({ state: 'wip', detail: 'x' }).success).toBe(true);
+    expect(
+      buildStatusPayloadSchema.safeParse({ state: 'wip', detail: 'x', version: '1.004' }).success,
+    ).toBe(true);
+    expect(buildStatusPayloadSchema.safeParse({ state: 'wip', detail: 'x', version: '' }).success).toBe(
+      false,
+    );
   });
 });
