@@ -186,6 +186,17 @@ describe('the change REPORTS what happened to the stat block (docs/17 row 247)',
     expect(result).toMatchObject({ status: 'changed', statBlock: 'kept' });
   });
 
+
+  it("carries the caller's Stop to the run it waits on (docs/17 row 413)", async () => {
+    const { npcId } = await seedNpc();
+    const stop = new AbortController();
+
+    await changeArtifact({ artifactId: npcId, signal: stop.signal });
+
+    // The chat turn's signal is the wait's cancelOnAbort: a Stop cancels the
+    // run, instead of the change running on behind a Stop that ends nothing.
+    expect(waitForRunStatusMock).toHaveBeenCalledWith('run-1', { cancelOnAbort: stop.signal });
+  });
 });
 
 describe('the brief builder itself', () => {

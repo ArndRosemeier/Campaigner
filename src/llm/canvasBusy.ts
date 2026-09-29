@@ -97,14 +97,27 @@ export function registerCanvasAbort(moduleId: Id, turn: AbortController): {
  */
 export function cancelCanvasGenerations(): Id[] {
   const moduleIds = [...handles.keys()];
+  for (const moduleId of moduleIds) cancelCanvasGeneration(moduleId);
+  return moduleIds;
+}
+
+/**
+ * Aborts ONE module's live canvas turn — the chat's own Stop (docs/17 row 413)
+ * and, per module, the sweep above. Keyed by module, not by the surface that
+ * started the turn, so Stop works after an Edit↔Preview switch mid-turn (each
+ * mode used to abort only its own controller, and a turn the other mode
+ * started kept running behind a Stop that did nothing). Returns whether a
+ * turn was registered.
+ */
+export function cancelCanvasGeneration(moduleId: Id): boolean {
+  const entry = handles.get(moduleId);
+  if (entry === undefined) return false;
   // Both directions, in order: the turn's own signal first (the streaming
   // model call), then the caller's controller (the UI's "cancelled, not
   // failed" branch — the partial reply is marked 'aborted' in place).
-  for (const entry of handles.values()) {
-    entry.handle.abort();
-    entry.turn.abort();
-  }
-  return moduleIds;
+  entry.handle.abort();
+  entry.turn.abort();
+  return true;
 }
 
 /** Test/inspection helper: is the module's canvas generation slot held? */

@@ -328,6 +328,7 @@ async function changeEncounterArtifact(
   artifact: AnyArtifact,
   requested: EncounterChangeOptions,
   instruction: string,
+  signal: AbortSignal | undefined,
 ): Promise<ChangeArtifactResult> {
   const options = {
     redesignProse: requested.redesignProse ?? false,
@@ -335,6 +336,7 @@ async function changeEncounterArtifact(
       ? {}
       : { dungeonMapPath: requested.dungeonMapPath }),
     ...(instruction === '' ? {} : { instruction }),
+    signal,
   };
   if (requested.operation === 'repopulate') {
     await repopulateEncounter(artifact.id, options);
@@ -365,6 +367,7 @@ async function changeEntityArtifact(
   kind: StubKind,
   moduleId: Id,
   instruction: string,
+  signal: AbortSignal | undefined,
 ): Promise<ChangeArtifactResult> {
   const module = await getModule(moduleId);
   if (module === undefined) {
@@ -376,6 +379,7 @@ async function changeEntityArtifact(
     kind,
     targets: [{ name: artifact.name, artifactId: artifact.id }],
     ...(instruction === '' ? {} : { instruction }),
+    signal,
   });
   const produced = result.produced[0];
   if (produced === undefined) {
@@ -433,8 +437,8 @@ export async function changeArtifact(
   if (moduleId !== null) claimModuleGeneration(moduleId);
   try {
     return resolved.route === 'entity'
-      ? await changeEntityArtifact(artifact, campaign, resolved.kind, resolved.moduleId, instruction)
-      : await changeEncounterArtifact(artifact, resolved.options, instruction);
+      ? await changeEntityArtifact(artifact, campaign, resolved.kind, resolved.moduleId, instruction, request.signal)
+      : await changeEncounterArtifact(artifact, resolved.options, instruction, request.signal);
   } finally {
     if (moduleId !== null) releaseModuleGeneration(moduleId);
   }

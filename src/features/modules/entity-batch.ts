@@ -302,6 +302,13 @@ export interface RunEntityBatchInput {
    * what every module-generation, panel and automation pin asserts.
    */
   instruction?: string;
+  /**
+   * The caller's Stop (docs/17 row 413): the canvas chat's `<change>` passes its
+   * turn signal here. An abort starts no further target and CANCELS the run in
+   * flight (`waitForRunStatus`'s `cancelOnAbort`), which then comes back as the
+   * withdrawn outcome this batch already keeps silent.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -639,7 +646,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       // Between units: the pool takes the next target only while no stop has
       // landed since this batch started. A stop that arrives while a run is
       // in flight is handled below (the outcome comes back 'cancelled').
-      if (stoppedSince(epoch)) return;
+      if (stoppedSince(epoch) || input.signal?.aborted === true) return;
       inFlight.set(target.name, null);
       updateDetail();
       // The run this entity starts, when it gets far enough to have one: the
@@ -827,7 +834,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             targetArtifactId: castOutcome.artifactId,
           });
           runNames.set(runId, target.name);
-          const outcome = await waitForRunStatus(runId);
+          const outcome = await waitForRunStatus(runId, { cancelOnAbort: input.signal });
           if (isRunWithdrawn(outcome)) {
             // The owner's Stop, not a failure — the ONE withdrawal rule, shared
             // with the creation arm below (`withdrawPool`).
@@ -884,7 +891,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         };
         runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
-        const outcome = await waitForRunStatus(runId);
+        const outcome = await waitForRunStatus(runId, { cancelOnAbort: input.signal });
         if (isRunWithdrawn(outcome)) {
           // WITHDRAWN, not failed — the ONE withdrawal rule (`withdrawPool`),
           // which stops the pool too: every later target would just start a run

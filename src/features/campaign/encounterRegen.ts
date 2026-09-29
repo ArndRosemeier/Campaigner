@@ -61,6 +61,11 @@ export interface EncounterRegenOptions {
    * the chained, stop-at-first-failure sequence it was.
    */
   instruction?: string;
+  /**
+   * The caller's Stop (docs/17 row 413): cancels the leg in flight, and a
+   * cancelled leg ends the chain like any leg that did not complete.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 interface RegenContext {
@@ -121,8 +126,14 @@ async function loadRegenContext(artifactId: Id): Promise<RegenContext & { comple
  * path awaits the NPC Smith run through THIS boundary, with a label naming the
  * mob it is authoring — one run-waiter for the app, never a second.
  */
-export async function awaitCompletedRun(runId: Id, label: string): Promise<void> {
-  const run = await waitForRunStatus(runId);
+export async function awaitCompletedRun(
+  runId: Id,
+  label: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  // `signal` = the caller's Stop (docs/17 row 413): it cancels the run, which
+  // then ends 'cancelled' and throws below like any run that did not complete.
+  const run = await waitForRunStatus(runId, { cancelOnAbort: signal });
   if (run.status !== 'completed') {
     throw new Error(
       `${label} ended ${run.status}${run.errorMessage === '' ? '' : `: ${run.errorMessage}`}`,
@@ -167,7 +178,7 @@ export async function repopulateEncounter(
       targetArtifactId: artifactId,
       ...(options.redesignProse ? { encounterRedesignName: true as const } : {}),
     });
-    await awaitCompletedRun(runId, 'Repopulate');
+    await awaitCompletedRun(runId, 'Repopulate', options.signal);
     return;
   }
   const artifact = await getAnyArtifact(artifactId);
@@ -188,7 +199,7 @@ export async function repopulateEncounter(
     encounterPreset: artifact.data.preset,
     encounterMapAspect: settings.encounterMapAspect,
   });
-  await awaitCompletedRun(runId, 'Repopulate');
+  await awaitCompletedRun(runId, 'Repopulate', options.signal);
   if (options.redesignProse) {
     await runProseRedesign(campaign, smith, artifactId, options);
   }
@@ -222,7 +233,7 @@ export async function regenerateEncounterEverything(
       targetArtifactId: artifactId,
       ...(options.redesignProse ? { encounterRedesignName: true as const } : {}),
     });
-    await awaitCompletedRun(smithRunId, 'Regenerate everything (content)');
+    await awaitCompletedRun(smithRunId, 'Regenerate everything (content)', options.signal);
     const refilled = await getAnyArtifact(artifactId);
     if (refilled?.kind !== 'encounter') {
       throw new Error('The encounter to regenerate no longer exists');
@@ -240,7 +251,7 @@ export async function regenerateEncounterEverything(
       encounterPreset: refilled.data.preset,
       encounterMapAspect: settings.encounterMapAspect,
     });
-    await awaitCompletedRun(mapRunId, 'Regenerate everything (battlemap)');
+    await awaitCompletedRun(mapRunId, 'Regenerate everything (battlemap)', options.signal);
     return;
   }
   const artifact = await getAnyArtifact(artifactId);
@@ -271,7 +282,7 @@ export async function regenerateEncounterEverything(
       ? {}
       : { dungeonMapPath: options.dungeonMapPath }),
   });
-  await awaitCompletedRun(runId, 'Regenerate everything');
+  await awaitCompletedRun(runId, 'Regenerate everything', options.signal);
   if (options.redesignProse) {
     await runProseRedesign(campaign, smith, artifactId, options);
   }
@@ -308,7 +319,7 @@ async function runProseRedesign(
     targetArtifactId: artifactId,
     encounterProseOnly: true,
   });
-  await awaitCompletedRun(runId, 'Prose redesign');
+  await awaitCompletedRun(runId, 'Prose redesign', options.signal);
 }
 
 /**

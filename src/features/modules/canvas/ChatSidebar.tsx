@@ -19,6 +19,7 @@ import type { AnyArtifact, Id } from '@/domain';
 import type { ReplacementRange } from '@/features/modules/canvas/lastReplacement';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
+import { cancelCanvasGeneration } from '@/llm/canvasBusy';
 import type { CanvasChatFraming } from '@/llm/canvasChat';
 import { levelAskMessage, levelProblemLine, type LevelProblem } from '@/domain/levelProblems';
 import { isLevelEditCommand, isLevelStatementCommand } from '@/llm/canvasChat';
@@ -809,11 +810,12 @@ export function ChatSidebar({
               aria-label="Stop chat reply"
               data-testid="canvas-chat-stop"
               onClick={() => {
-                if (previewOpen) {
-                  onPreviewStop?.();
-                } else {
-                  abortRef.current?.abort();
-                }
+                // The module's registered turn, whichever mode started it
+                // (docs/17 row 413); the two local controllers cover a turn
+                // stopped before it registered. Aborting is idempotent.
+                cancelCanvasGeneration(moduleId);
+                abortRef.current?.abort();
+                onPreviewStop?.();
               }}
             >
               <BanIcon aria-hidden />

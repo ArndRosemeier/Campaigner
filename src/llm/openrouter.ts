@@ -309,11 +309,7 @@ export async function fetchWithRetries(
     const retryable = response.status === 429 || response.status >= 500;
     const backoff = backoffs[attempt];
     if (!retryable || backoff === undefined) {
-      // The thrown error carries the body's `metadata.error_type` as its
-      // code (additive for the 'http' kind) — the structural class the
-      // classifier reads FIRST, before status checks and prose patterns.
-      const bodyText = await response.text();
-      throw new OpenRouterError('http', response.status, bodyText, errorTypeFromBody(bodyText));
+      throw await httpErrorOf(response, init.signal);
     }
     // Parallelization: several workers can hit the same provider limit at
     // once — Retry-After (OpenRouter sends it when every attempted provider
@@ -322,6 +318,58 @@ export async function fetchWithRetries(
     const hint = response.status === 429 ? retryAfterMs(response) : null;
     await sleep(hint ?? jitter(backoff), init.signal);
   }
+}
+
+/** How long an error response may take to deliver its body (docs/17 row 413). */
+export const ERROR_BODY_TIMEOUT_MS = 15_000;
+
+/**
+ * The body of a NON-OK response, bounded: the headers timer is already
+ * cleared and the stream watchdog never runs for an error, so a provider that
+ * sends error headers and then stalls the body used to hang the call until
+ * someone aborted it. Past the bound the error is still thrown with its real
+ * status — the text says the body never arrived, it never pretends to be one.
+ * The caller's Stop ends the wait at once.
+ */
+export async function readErrorBody(
+  response: Response,
+  signal: AbortSignal | undefined,
+  timeoutMs: number = ERROR_BODY_TIMEOUT_MS,
+): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const bound = new Promise<string>((resolve, reject) => {
+    timer = setTimeout(() => {
+      resolve(
+        `(HTTP ${String(response.status)}: the error body did not arrive within ${String(Math.round(timeoutMs / 1000))}s)`,
+      );
+    }, timeoutMs);
+    onAbort = (): void => {
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal?.aborted === true) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([response.text(), bound]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * THE error for a non-OK OpenRouter response (docs/17 row 413): the bounded
+ * body read above plus the body's `metadata.error_type` as the code — the
+ * structural class the classifier reads FIRST, before status checks and prose
+ * patterns. Every non-OK read goes through here, so none can hang on a body.
+ */
+export async function httpErrorOf(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<OpenRouterError> {
+  const bodyText = await readErrorBody(response, signal);
+  return new OpenRouterError('http', response.status, bodyText, errorTypeFromBody(bodyText));
 }
 
 /** Upper bound for an honored Retry-After hint: a hostile/large hint must
@@ -738,7 +786,7 @@ export async function listModels(): Promise<OpenRouterModel[]> {
   const response = await fetch(`${OPENROUTER_BASE}/models`, {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
-  if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
+  if (!response.ok) throw await httpErrorOf(response);
   const json = modelsResponseSchema.parse(await response.json());
   const models = (json.data ?? []).filter((model): model is OpenRouterModel => model !== null);
   setCachedModels(models);
@@ -756,7 +804,7 @@ export async function listImageModels(): Promise<string[]> {
   const response = await fetch(`${OPENROUTER_BASE}/models?output_modalities=image`, {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
-  if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
+  if (!response.ok) throw await httpErrorOf(response);
   const json = modelsResponseSchema.parse(await response.json());
   const imageModelIds: string[] = [];
   for (const model of json.data ?? []) {

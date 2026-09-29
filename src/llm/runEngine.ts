@@ -581,6 +581,16 @@ export interface WaitForRunOptions {
    * generating a map nobody asked for anymore).
    */
   signal?: AbortSignal;
+  /**
+   * STOPS THE RUN when this signal aborts (docs/17 row 413), and keeps waiting
+   * until the row is terminal — so the caller observes the run's own
+   * `'cancelled'` status through the handling it already has (the entity
+   * batch's withdrawal rule, `awaitCompletedRun`'s loud "ended cancelled").
+   * This is how a Stop that belongs to a CALLER (the canvas chat turn's own
+   * controller) reaches a run it started: without it the chat's Stop ended
+   * nothing while a `<change>` ran, and only Stop all could.
+   */
+  cancelOnAbort?: AbortSignal | undefined;
 }
 
 /**
@@ -629,6 +639,12 @@ export async function stopGeneratingRunsForCampaign(campaignId: Id): Promise<Id[
 }
 
 export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}): Promise<PersonaRun> {
+  if (opts.signal !== undefined && opts.cancelOnAbort !== undefined) {
+    // Two stop meanings on one wait (withdraw the WAIT vs stop the RUN) — no
+    // caller needs both, so the combination is refused rather than guessed.
+    throw new Error('waitForRunStatus takes signal OR cancelOnAbort, not both');
+  }
+  let cancelRequested = false;
   for (;;) {
     // An aborted wait wins even over a just-reached terminal status: the
     // caller withdrew the job and must not observe it as done.
@@ -646,7 +662,23 @@ export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}):
     ) {
       return run;
     }
-    await waitForRunRowChange(runId, run, opts.signal);
+    const stopper = opts.cancelOnAbort;
+    if (stopper?.aborted === true && !cancelRequested) {
+      cancelRequested = true;
+      // A failed cancel throws out of the wait: the caller's error surface
+      // names it (AGENTS rule 2), never a wait that quietly goes on.
+      await runEngine.cancel(runId);
+      continue;
+    }
+    const wake = cancelRequested ? undefined : (opts.signal ?? stopper);
+    try {
+      await waitForRunRowChange(runId, run, wake);
+    } catch (error) {
+      // The stopper woke the wait: loop round, cancel the run, and wait on
+      // for its terminal row. The caller's own wait signal still throws.
+      if (opts.signal?.aborted !== true && stopper?.aborted === true) continue;
+      throw error;
+    }
   }
 }
 
