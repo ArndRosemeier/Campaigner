@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { saveModule } from '@/db/moduleRepo';
+import { patchModule, saveModule } from '@/db/moduleRepo';
 import {
   createModule,
   libraryCreatureKey,
@@ -54,6 +54,14 @@ vi.mock('@/features/campaign/mob-portrait-queue', () => ({
 }));
 vi.mock('@/features/modules/entity-batch', () => ({
   runEntityBatch: runEntityBatchMock,
+}));
+// The name-normalization pass is a model call: faked here to WRITE what the real
+// pass records (the kinds + the gate flag), so the run's re-derivation after the
+// gate is what these pins observe (docs/17 row 414).
+const { normalizeMock } = vi.hoisted(() => ({ normalizeMock: vi.fn() }));
+vi.mock('@/llm/moduleGen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/llm/moduleGen')>()),
+  normalizeModuleEntityNames: normalizeMock,
 }));
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),
@@ -351,5 +359,46 @@ describe('runGenerationSelection re-derives after the detail pass (docs/17 row 4
     expect(report.notes).toEqual([
       'images were NOT queued — no selected entity without an image exists after this run',
     ]);
+  });
+});
+
+describe('a chat-born module is normalized before its first generation (docs/17 row 414)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    runEntityBatchMock.mockReset();
+    normalizeMock.mockReset();
+  });
+
+  it('runs the gate FIRST and generates from the kinds it recorded, not the empty pre-gate plan', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const recorded = moduleFixture(campaign.id, false);
+    // The chat creates a document with links and NO recorded kinds, gate closed.
+    const module: Module = { ...recorded, entityKinds: [], entityNamesNormalized: false };
+    await saveModule(module);
+    makeBatchWriteArtifacts(campaign.id, module.id);
+    normalizeMock.mockImplementation(async (moduleId: string) => {
+      await patchModule(moduleId, { entityKinds: recorded.entityKinds, entityNamesNormalized: true });
+    });
+
+    const report = await run(campaign, module, { kinds: ['npc'] });
+
+    expect(normalizeMock).toHaveBeenCalledTimes(1);
+    expect(report.refused).toBeNull();
+    expect(report.selection.detail.map((target) => target.name)).toEqual(['Kael']);
+    expect(report.generated).toBe(1);
+    expect(runEntityBatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'npc', targets: [{ name: 'Kael' }] }),
+    );
+  });
+
+  it('spends no model call when no kind is ticked', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module: Module = { ...moduleFixture(campaign.id, false), entityKinds: [], entityNamesNormalized: false };
+    await saveModule(module);
+
+    await run(campaign, module, { kinds: [] });
+
+    expect(normalizeMock).not.toHaveBeenCalled();
+    expect(runEntityBatchMock).not.toHaveBeenCalled();
   });
 });

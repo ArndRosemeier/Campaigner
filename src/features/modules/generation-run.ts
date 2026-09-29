@@ -4,7 +4,9 @@ import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { enqueueEncounterPortraitFill } from '@/features/campaign/mob-portrait-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
-import { entityGateNeeds, openEntityGate } from '@/features/modules/entity-gate';
+import { entityGateNeeds, namesAwaitingGate, openEntityGate } from '@/features/modules/entity-gate';
+import { getModule } from '@/db/moduleRepo';
+import { loadChatDetailsPool } from '@/llm/canvasChat';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import {
   reportEntityBatchFailures,
@@ -157,30 +159,39 @@ export async function runGenerationSelection(
     stopped: false,
     notes: [],
   };
-  if (selection.totalCount === 0) return report;
+  // Names no batch can see yet (a chat-born module: every name) put the gate
+  // FIRST — the selection is then derived from what the gate recorded
+  // (docs/17 row 414). Without this the selection is empty and the dialog's
+  // Generate did nothing, so a chat-born module was never normalized.
+  const gateFirst = kinds.length > 0 && namesAwaitingGate(module, artifacts).length > 0;
+  if (selection.totalCount === 0 && !gateFirst) return report;
 
   // The module's Web Lock is held for the whole run (docs/17 row 110): the
   // batches plus the enqueues are the app's longest-lived orchestration and a
   // held lock is one of Chromium's documented freeze opt-outs.
   return withGenerationLock(moduleGenLockName(module.id), () =>
-    runSelectionUnlocked(input, selection, report),
+    runSelectionUnlocked(input, selection, report, gateFirst),
   );
 }
 
 async function runSelectionUnlocked(
   input: GenerationRunInput,
-  selection: GenerationSelection,
+  planned: GenerationSelection,
   report: GenerationRunReport,
+  gateFirst: boolean,
 ): Promise<GenerationRunReport> {
-  const { module, campaign, artifacts, kinds, imageKinds, levelRange, encounterExtras } = input;
+  const { campaign, kinds, imageKinds, levelRange, encounterExtras } = input;
+  let { module } = input;
+  let selection = planned;
   try {
     const epoch = getStopEpoch();
 
-    // The gate FIRST, and only when the batch half has work: the two passes are
-    // model calls, and a selection of images-only must not pay for them. The
-    // request is the ONE gate rule (`entity-gate.entityGateNeeds`).
-    if (selection.detail.length > 0) {
-      const gate = await openEntityGate(module.id, epoch, entityGateNeeds(module, artifacts));
+    // The gate FIRST, and only when the batch half has work (or names only the
+    // gate can make visible): the two passes are model calls, and a selection
+    // of images-only must not pay for them. The request is the ONE gate rule
+    // (`entity-gate.entityGateNeeds`).
+    if (selection.detail.length > 0 || gateFirst) {
+      const gate = await openEntityGate(module.id, epoch, entityGateNeeds(module, input.artifacts));
       report.classified = gate.classified;
       if (gate.stopped) {
         report.stopped = true;
@@ -194,6 +205,23 @@ async function runSelectionUnlocked(
         toastSuccess(
           `${String(gate.classified.length)} new name${gate.classified.length === 1 ? '' : 's'} classified — now generating the selection.`,
         );
+      }
+      if (gate.normalized || gate.classified.length > 0) {
+        // The passes WROTE the row (kinds, canonical link targets): the plan is
+        // re-derived from what they recorded, never from the pre-gate snapshot
+        // the dialog showed (docs/17 row 414).
+        const fresh = await getModule(module.id);
+        if (fresh === undefined) throw new Error('The module was deleted while its names were classified');
+        module = fresh;
+        selection = selectGenerationTargets({
+          module,
+          artifacts: await loadChatDetailsPool(campaign.id),
+          kinds,
+          imageKinds,
+          levelRange,
+          encounterExtras,
+        });
+        report.selection = selection;
       }
     }
 

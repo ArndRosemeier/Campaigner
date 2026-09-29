@@ -45,6 +45,7 @@ import {
   type GenerationKind,
   type GenerationLevelRange,
 } from '@/features/modules/generation-selection';
+import { namesAwaitingGate } from '@/features/modules/entity-gate';
 import { runGenerationSelection, type GenerationRunReport } from '@/features/modules/generation-run';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { toastError, toastInfo } from '@/lib/toast';
@@ -202,7 +203,14 @@ export function GenerationDialog({
   }
 
   const blocked = blockedReason !== null;
-  const empty = selection.totalCount === 0;
+  // Linked names no batch can see yet (docs/17 row 414): the run classifies
+  // them FIRST (the gate's passes) and then generates from what they recorded,
+  // so they are work, not an empty selection. A chat-born module starts here.
+  const awaiting = useMemo(
+    () => (kinds.length === 0 ? [] : namesAwaitingGate(module, artifacts)),
+    [module, artifacts, kinds],
+  );
+  const empty = selection.totalCount === 0 && awaiting.length === 0;
 
   function toggleKind(kind: GenerationKind, checked: boolean): void {
     setKinds((current) =>
@@ -498,6 +506,11 @@ export function GenerationDialog({
                   {`${String(selection.needsLevel.length)} selected NPC/encounter${selection.needsLevel.length === 1 ? '' : 's'} need${selection.needsLevel.length === 1 ? 's' : ''} a level and ${selection.needsLevel.length === 1 ? 'is' : 'are'} NOT generated: ${selection.needsLevel.map((target) => target.name).join(', ')}.`}
                 </p>
               )}
+              {awaiting.length > 0 && (
+                <p className="mt-1" data-testid="generation-scope-unclassified">
+                  {`${String(awaiting.length)} linked name${awaiting.length === 1 ? ' has' : 's have'} no recorded kind yet (${awaiting.join(', ')}) — Generate first classifies ${awaiting.length === 1 ? 'it' : 'them'} and normalizes the links (one model call), then generates the selected kinds from the result.`}
+                </p>
+              )}
               {(blocked || empty) && (
                 <p className="mt-1 text-destructive" data-testid="generation-scope-blocked">
                   {blocked ? blockedReason : 'Nothing selected — tick a kind or widen the level range.'}
@@ -533,7 +546,9 @@ export function GenerationDialog({
                 <SparklesIcon aria-hidden data-icon="inline-start" />
                 {running
                   ? 'Generating…'
-                  : `Generate ${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'}`}
+                  : selection.totalCount === 0
+                    ? `Classify ${String(awaiting.length)} name${awaiting.length === 1 ? '' : 's'}, then generate`
+                    : `Generate ${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'}`}
               </Button>
             </BlockedControl>
           </DialogFooter>

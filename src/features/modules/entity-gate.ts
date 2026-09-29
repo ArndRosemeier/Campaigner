@@ -56,10 +56,20 @@ export function entityGateNeeds(
   artifacts: readonly AnyArtifact[],
 ): EntityGateRequest {
   return {
-    classification:
-      unclassifiedModuleNames(module, moduleCreationPool(artifacts)).length > 0,
+    classification: namesAwaitingGate(module, artifacts).length > 0,
     normalization: !module.entityNamesNormalized,
   };
+}
+
+/**
+ * The module text's linked names that NO batch can see yet: no recorded kind
+ * and no artifact they resolve to — only the gate's passes can record them
+ * (docs/17 row 414). A chat-born module starts with every name here, which is
+ * why the generation dialog names this count and runs the gate FIRST when it is
+ * non-zero instead of offering an empty selection.
+ */
+export function namesAwaitingGate(module: Module, artifacts: readonly AnyArtifact[]): string[] {
+  return unclassifiedModuleNames(module, moduleCreationPool(artifacts));
 }
 
 /** What opening the gate did (or why it did not open). */
