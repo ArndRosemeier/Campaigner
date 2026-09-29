@@ -338,31 +338,43 @@ export function assembleModuleDocument(input: AssembleModuleDocumentInput): stri
     pieces.push(`${moduleLevelSeparator(level.number)}\n${body}`.trimEnd());
   }
   const assembled = pieces.join('\n\n');
-  // A SEPARATOR LINE IS A LINE, INCLUDING WHEN ITS BODY IS EMPTY. `trimEnd`
-  // above strips the newline a bodyless section would otherwise keep, so a
-  // document whose LAST section is empty used to end on the bare separator
-  // (`…=====Level 3=====`). The parse then puts that empty section's range at
-  // the very END of the document, where any text written into it — a chat
-  // empty-level fill, or the owner typing after the last separator — GLUES onto
-  // the separator line (`…=====Level 3=====The watch begins`) and the document
-  // becomes unreadable (the near-miss arm refuses it, so the failure is loud
-  // but the edit is lost). Terminating the line closes both paths: the section's
-  // range starts on its own line, so a fill splices into a valid document and
-  // typing behaves. Only an EMPTY trailing section gains this byte; every other
-  // document is byte-unchanged.
-  const lastLevel = input.levels[input.levels.length - 1];
-  const terminated =
-    lastLevel !== undefined &&
-    lastLevel.number !== MODULE_PREMISE_LEVEL &&
-    lastLevel.text.trimEnd() === ''
-      ? `${assembled}\n`
-      : assembled;
-  // THE FORMATTER PARSES ITS OWN OUTPUT (the level-addressed edits' contract,
-  // here too): a composed document that its own inverse refuses is a bug in this
-  // module, never something to store. Catches anything the body check above
-  // cannot see, and names the line exactly as the read would.
-  splitModuleDocument(terminated);
-  return terminated;
+  // A SEPARATOR LINE IS A LINE, INCLUDING WHEN ITS BODY IS EMPTY (the ONE rule,
+  // `terminateTrailingLevelLine` below): a document whose LAST section is empty
+  // ends on its own newline, so the empty section's range starts on a fresh line
+  // and a body written there splices in instead of GLUING onto the separator.
+  // The formatter parses its own output — a composed document its own inverse
+  // refuses is a bug in this module, never something to store — and the
+  // termination is applied by that same parse, so the rule exists once.
+  return terminateTrailingLevelLine(assembled).document;
+}
+
+/**
+ * THE ONE rule for a document whose LAST section is empty: its separator line is
+ * TERMINATED (`…=====Level 3=====\n`). `trimEnd` on a bodyless section would
+ * otherwise leave the document ending on the bare separator line, and the parse
+ * then puts that empty section's range at the very END of the text — where any
+ * text written into it GLUES onto the separator (`…=====Level 3=====The watch
+ * begins`) and the document becomes unreadable. Terminating the line closes that
+ * path: the section's range starts on its own line, so a fill splices into a
+ * valid document. Only an EMPTY trailing section gains this byte; every other
+ * document is byte-unchanged.
+ *
+ * THE FORMATTER AND EVERY LEVEL-ADDRESSED EDIT GO THROUGH HERE (docs/17 rows 385
+ * and 391): `assembleModuleDocument` and `parsedEdit` both end in this function,
+ * so the invariant cannot hold on one write path and not the other — the second
+ * path is exactly where the engine's first write into an empty last level
+ * exposed it. It parses the text (LOUD, naming the line) and returns that very
+ * parse, so the caller never pays for a second read.
+ */
+function terminateTrailingLevelLine(text: string): ModuleDocumentEdit {
+  const parsed = splitModuleDocument(text);
+  const last = parsed.levels[parsed.levels.length - 1];
+  if (last === undefined || last.number === MODULE_PREMISE_LEVEL || last.text !== '') {
+    return { document: text, parsed };
+  }
+  if (text.endsWith('\n')) return { document: text, parsed };
+  const document = `${text}\n`;
+  return { document, parsed: splitModuleDocument(document) };
 }
 
 /**
@@ -468,9 +480,11 @@ function requireLevel(document: ModuleDocument, level: number): ModuleDocumentLe
   return found;
 }
 
-/** Parses an edited text so the edit's own result is verified, never assumed. */
+/** Parses an edited text so the edit's own result is verified, never assumed —
+ *  through the ONE trailing-line rule, so an edit can never leave a document on
+ *  a bare separator line. */
 function parsedEdit(text: string): ModuleDocumentEdit {
-  return { document: text, parsed: splitModuleDocument(text) };
+  return terminateTrailingLevelLine(text);
 }
 
 /**
@@ -499,7 +513,21 @@ export function replaceLevelText(
   const target = requireLevel(document, level);
   const body = text.trim();
   refuseSeparatorLookalike(body, `the replacement for level ${level}`);
-  const before = document.text.slice(0, target.textFrom);
+  const head = document.text.slice(0, target.textFrom);
+  // A LEVEL'S BODY STARTS ON ITS OWN LINE. When the target is the document's
+  // LAST, EMPTY section its collapsed range sits at the very end of the text, and
+  // a separator line that is not terminated would put the body ON it
+  // (`…=====Level 3=====prose`) — a near miss the parse refuses, so the edit
+  // would be lost loudly. Terminating the head first is the same rule
+  // `terminateTrailingLevelLine` states for the assembled form; level 0 (the
+  // premise) has no separator and needs none.
+  const before =
+    target.number !== MODULE_PREMISE_LEVEL && head !== '' && !head.endsWith('\n')
+      ? `${head}\n`
+      : head;
+  // The scaffolding ahead of the next section is normalized to the app's own one
+  // blank line (`rest` is TRIMMED at its head only in effect: a non-empty rest
+  // always begins with the blank scaffolding the parse left outside the range).
   const rest = document.text.slice(target.textTo).trim();
   return parsedEdit(rest === '' ? `${before}${body}` : `${before}${body}\n\n${rest}`);
 }
@@ -882,6 +910,21 @@ export function moduleDocumentSectionsFromView(view: Module): ModuleDocumentSect
   return moduleDocumentSections(moduleDocumentFromView(view), view.spine?.partPlan ?? []);
 }
 
+/**
+ * The module VIEW's LEVEL SECTIONS — the derived list with level 0 (the premise)
+ * dropped, which is what every PART-SHAPED surface iterates (docs/23 §2.1/§4,
+ * docs/17 row 391). ONE definition, so "the level sections of a module" cannot
+ * be answered three slightly different ways: the reader's ToC, the PDF's
+ * per-level chapters and the generation engine all read THIS list, and a caller
+ * that wants the premise too asks `moduleDocumentSectionsFromView` directly (the
+ * premise is a level, but it is not a part).
+ */
+export function moduleLevelSectionsFromView(view: Module): ModuleDocumentSection[] {
+  return moduleDocumentSectionsFromView(view).filter(
+    (section) => section.number !== MODULE_PREMISE_LEVEL,
+  );
+}
+
 /** A section's display title: the premise, the stored plan title, or the
  * level's own label — never a reading of the section's prose. */
 function sectionTitle(number: number, planTitles: readonly { title: string }[]): string {
@@ -1088,5 +1131,117 @@ export function moduleRowFromDocument(
         ? 'human'
         : 'model'
       : row.premiseOrigin,
+  });
+}
+
+/**
+ * A level's recorded RUN STATE and PROVENANCE — what `levelStates[level − 1]`
+ * carries, and the part of a level that is not its text (docs/23 §4).
+ */
+export interface ModuleLevelState {
+  status: ModulePart['status'];
+  errorMessage: string;
+  edited: boolean;
+  writerModel: string;
+  origin: ModulePart['origin'];
+}
+
+/**
+ * ONE level-addressed write over the ONE document (docs/23 §2–§4, docs/17 row
+ * 391). The engine's and the hand-edit's unit is the LEVEL NUMBER, and this is
+ * the value they hand the write seam:
+ *
+ * - `text` — the level's new section text. OMITTED leaves the document
+ *   BYTE-IDENTICAL (a run-state-only write: a failed review must not lose the
+ *   prose it failed to improve), which is why the two fields are both optional
+ *   and at least one is required.
+ * - `state` — the level's run state and provenance, MERGED over the state the
+ *   level already records (a caller states only what it knows: a hand edit
+ *   states `origin: 'human'` and lets the writer model be carried forward,
+ *   exactly as `patchModulePartText` did). Omitted = the recorded state
+ *   survives the text change (a link retarget is not a run).
+ *
+ * Level 0 (the premise) takes `text` like any other level; it has no run state,
+ * and its provenance rides `moduleRowFromLevelWrites`'s `premise` argument.
+ */
+export interface ModuleLevelWrite {
+  level: number;
+  text?: string | undefined;
+  state?: Partial<ModuleLevelState> | undefined;
+}
+
+/**
+ * THE pure half of the LEVEL-ADDRESSED document write (docs/23 §4, docs/17 row
+ * 391): a stored row with the named levels' texts and/or run states replaced
+ * through the ONE parser and the ONE level-addressed edit.
+ *
+ * WHY IT EXISTS BESIDE `moduleRowFromDocument`. That seam is the CANVAS/CHAT
+ * write — an owner's text edit over the whole document, where a changed level is
+ * by definition `edited: true`. The GENERATOR writes level text too, but its
+ * write is not an edit: it stamps the level's own run state (`generating`,
+ * `ready`, `failed`, `pending`) and `edited: false`, and it must be able to
+ * change a level's STATE without touching the document at all. Folding both into
+ * one seam would make "who wrote this level" a guess; keeping them apart and
+ * sharing the SAME `levelStates`/`levelPlans` bookkeeping (below) keeps ONE
+ * storage truth and ONE padding rule.
+ *
+ * The document is spliced by `replaceLevelText` over the row's OWN parsed text,
+ * so every byte the write does not name is preserved — a level write is not a
+ * whole-document recomposition. `levelPlans`/`levelStates` are padded or
+ * truncated to the document's section count and stay index-aligned; a level the
+ * write did not name keeps the state and provenance it had (or derives the
+ * honest "is there prose here" state when it records none).
+ *
+ * `premise` stamps the premise's own provenance (`premiseWriterModel`/
+ * `premiseOrigin`) for a write that CHANGED level 0 — the caller names it only
+ * when it rewrote the premise, so a write that left it alone cannot disturb it.
+ */
+export function moduleRowFromLevelWrites(
+  row: ModuleRow,
+  writes: readonly ModuleLevelWrite[],
+  premise?: { writerModel: string; origin: ModulePart['origin'] },
+): ModuleRow {
+  let parsed = splitModuleDocument(row.document);
+  const stateWrites = new Map<number, Partial<ModuleLevelState>>();
+  for (const write of writes) {
+    if (write.text === undefined && write.state === undefined) {
+      throw new Error(
+        `a level write for level ${String(write.level)} names neither text nor state — one of the two is the write`,
+      );
+    }
+    if (write.text !== undefined) parsed = replaceLevelText(parsed, write.level, write.text).parsed;
+    if (write.state !== undefined) {
+      // The ONE level↔planIndex conversion (never a second mapping): a level's
+      // recorded state lives at its planIndex slot.
+      const planIndex = planIndexForLevel(write.level);
+      if (planIndex < 0 || planIndex >= parsed.levels.length - 1) {
+        throw new ModuleDocumentError(
+          `a level write records the state of level ${String(write.level)}, but the document carries ${String(Math.max(parsed.levels.length - 1, 0))} level section(s) — a state is only recordable for a section that exists`,
+        );
+      }
+      stateWrites.set(planIndex, { ...stateWrites.get(planIndex), ...write.state });
+    }
+  }
+
+  const sectionCount = Math.max(parsed.levels.length - 1, 0);
+  const levelPlans = Array.from({ length: sectionCount }, (_, planIndex) => ({
+    title: row.levelPlans[planIndex]?.title ?? '',
+    synopsis: row.levelPlans[planIndex]?.synopsis ?? '',
+    levelUpTrigger: row.levelPlans[planIndex]?.levelUpTrigger ?? '',
+  }));
+  const levelStates = Array.from({ length: sectionCount }, (_, planIndex) => {
+    const text = parsed.levels[planIndex + 1]?.text ?? '';
+    const stored = row.levelStates[planIndex] ?? derivedLevelState(text);
+    const state = stateWrites.get(planIndex);
+    return state === undefined ? stored : { ...stored, ...state };
+  });
+
+  return moduleRowSchema.parse({
+    ...row,
+    document: parsed.text,
+    levelPlans,
+    levelStates,
+    premiseWriterModel: premise === undefined ? row.premiseWriterModel : premise.writerModel,
+    premiseOrigin: premise === undefined ? row.premiseOrigin : premise.origin,
   });
 }

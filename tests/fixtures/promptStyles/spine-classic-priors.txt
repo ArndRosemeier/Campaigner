@@ -19,7 +19,7 @@ Shared campaign cast (used across modules — reuse these exact names, do not du
 Premise:
 The Salt Ward burned on the first night of the tide.
 
-### Part 1: The Burning Ward
+### Level 1
 PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in.
 
 Design the module spine. Cover the whole level range with parts, in order:

@@ -24,14 +24,6 @@
       ]
     },
     {
-      "hash": "0992843ce12a06ee",
-      "reason": "Two `partCallText` extractors (fixedCast, module-gen-and-provenance) pulling the \"Write part\" user message out of the chat mock calls; a shared mock-call extractor in `tests/helpers/` is a real fold candidate.",
-      "sites": [
-        "tests/llm/fixedCast.test.ts:partCallText",
-        "tests/llm/module-gen-and-provenance.test.ts:partCallText"
-      ]
-    },
-    {
       "hash": "099c78af1d81ea24",
       "reason": "Two identical `removeEventListener` stubs over a fake view's listener map (board-page-flush, module-board); folds with `makeFakeView` into ONE `tests/helpers/fakeView.ts`.",
       "sites": [

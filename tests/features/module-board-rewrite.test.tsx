@@ -13,6 +13,7 @@ import {
   createModule,
   modulePartSchema,
   moduleSpineSchema,
+  planIndexForLevel,
   type Id,
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
@@ -115,11 +116,12 @@ async function seedModule(options: { includePriorModules?: boolean } = {}): Prom
  * exactly the observable surface a real runParts subset has. */
 function mockEngineRun(): void {
   runPartsMock.mockImplementation(async (moduleId, _campaign, options) => {
-    const planIndex = options?.planIndexes?.[0];
-    if (planIndex === undefined) throw new Error('mock expects a subset run');
+    const level = options?.levels?.[0];
+    if (level === undefined) throw new Error('mock expects a subset run');
+    const planIndex = planIndexForLevel(level);
     const { moduleGenEvents } = await import('@/llm/moduleGen');
-    moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta: 'The brand-new ' });
-    moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta: 'rewritten text. ' });
+    moduleGenEvents.emit({ kind: 'part-token', moduleId, level, delta: 'The brand-new ' });
+    moduleGenEvents.emit({ kind: 'part-token', moduleId, level, delta: 'rewritten text. ' });
     // The ready write carries what the REAL `generatePart` stamps: the
     // generator's own text (`edited: false`) written by a MODEL (`origin:
     // 'model'` + the serving id, docs/17 row 113). The board's Apply then
@@ -180,7 +182,7 @@ describe('board rewrite + staging', () => {
       expect(runPartsMock).toHaveBeenCalledTimes(1);
     });
     expect(runPartsMock.mock.calls[0]?.[2]).toMatchObject({
-      planIndexes: [0],
+      levels: [1],
       extraInstruction: 'make it rain',
       includePriorModules: false,
     });

@@ -11,11 +11,11 @@ import {
   createModule,
   getModule,
   listModulesByCampaign,
-  patchModulePartText,
   saveSpine,
 } from '@/db/moduleRepo';
+import { saveModuleLevelText } from '@/features/modules/levelText';
 import { evaluateOrphanGuards, sweepOrphanedArtifacts } from '@/db/orphanSweep';
-import { createModule as createModuleRow, type Id } from '@/domain';
+import { createModule as createModuleRow, levelForPlanIndex, type Id } from '@/domain';
 import { whereLabel } from '@/features/campaign/mentionView';
 import { computeCampaignGrounding } from '@/llm/campaignGrounding';
 import { clearDatabase } from '../db/helpers';
@@ -73,22 +73,31 @@ async function fixture(where: string): Promise<{ campaignId: Id; moduleId: Id }>
       sizeDial: 'sketch',
     }),
   );
+  // The `part-N` where-label names a planIndex; the DOCUMENT must carry the
+  // level that planIndex addresses (docs/17 row 391: the level-addressed write
+  // refuses a level the document does not have, where the old planIndex-keyed
+  // part save silently created one). One plan entry per level, so the plan is as
+  // long as the addressed label needs.
+  const labelledPlanIndex = where === 'premise' ? -1 : Number(where.slice('part-'.length));
   await saveSpine(module.id, {
     premise: where === 'premise' ? `[[${NAME}]].` : 'Nothing here.',
     themes: [],
     writerModel: '',
     origin: null,
-    partPlan: [
-      {
-        title: 'The Forge',
-        levelBand: '1–2',
-        synopsis: 'Reach the forge.',
-        levelUpTrigger: 'The forge goes cold.',
-      },
-    ],
+    partPlan: Array.from({ length: labelledPlanIndex + 1 }, () => ({
+      title: 'The Forge',
+      levelBand: '1',
+      synopsis: 'Reach the forge.',
+      levelUpTrigger: 'The forge goes cold.',
+    })),
   });
   if (where !== 'premise') {
-    await patchModulePartText(module.id, Number(where.slice('part-'.length)), `[[${NAME}]] brews by the forge.`);
+    // The level that `part-N` names: the ONE conversion.
+    await saveModuleLevelText(
+      module.id,
+      levelForPlanIndex(labelledPlanIndex),
+      `[[${NAME}]] brews by the forge.`,
+    );
   }
   await createArtifact({ campaignId: campaign.id, moduleId: module.id, kind: 'npc', name: NAME });
   return { campaignId: campaign.id, moduleId: module.id };

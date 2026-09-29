@@ -14,6 +14,7 @@ import { patchModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
+  levelForPlanIndex,
   modulePartSchema,
   moduleSpineSchema,
   type Campaign,
@@ -120,6 +121,7 @@ async function seedStreamingModule(): Promise<{
   campaignId: Id;
   moduleId: Id;
   streamingIndex: number;
+  streamingLevel: number;
 }> {
   await seedBuiltInPersonas();
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
@@ -164,7 +166,16 @@ async function seedStreamingModule(): Promise<{
       }),
     ),
   });
-  return { campaign, campaignId: campaign.id, moduleId: saved.id, streamingIndex };
+  // `streamingIndex` is the derived view's planIndex (the row this fixture
+  // seeds and the reader's own DOM id); the STREAM STORE is keyed by the LEVEL
+  // (docs/17 row 391), converted here through the ONE pair.
+  return {
+    campaign,
+    campaignId: campaign.id,
+    moduleId: saved.id,
+    streamingIndex,
+    streamingLevel: levelForPlanIndex(streamingIndex),
+  };
 }
 
 function renderReaderAt(campaignId: Id, moduleId: Id): void {
@@ -177,9 +188,10 @@ async function mountStreamingReader(): Promise<{
   campaignId: Id;
   moduleId: Id;
   streamingIndex: number;
+  streamingLevel: number;
   card: HTMLElement;
 }> {
-  const { campaignId, moduleId, streamingIndex } = await seedStreamingModule();
+  const { campaignId, moduleId, streamingIndex, streamingLevel } = await seedStreamingModule();
   renderReaderAt(campaignId, moduleId);
   const sections = await waitFor(
     () => {
@@ -195,7 +207,7 @@ async function mountStreamingReader(): Promise<{
   expect(sections).toHaveLength(PART_COUNT - 1);
   const card = await screen.findByTestId('part-streaming', {}, { timeout: 10_000 });
   await flushAsyncUpdates();
-  return { campaignId, moduleId, streamingIndex, card };
+  return { campaignId, moduleId, streamingIndex, streamingLevel, card };
 }
 
 /**
@@ -207,10 +219,10 @@ async function mountStreamingReader(): Promise<{
  * shows text. That is the documented contract of an in-memory emitter, not a
  * workaround for a slow render.
  */
-async function emitUntilStored(moduleId: Id, planIndex: number, delta: string): Promise<void> {
+async function emitUntilStored(moduleId: Id, level: number, delta: string): Promise<void> {
   await waitFor(() => {
-    emitToken(moduleId, planIndex, delta);
-    expect(streamTails.getSnapshot(moduleId, planIndex).tail).not.toBe('');
+    emitToken(moduleId, level, delta);
+    expect(streamTails.getSnapshot(moduleId, level).tail).not.toBe('');
   });
 }
 
@@ -219,24 +231,24 @@ async function emitUntilStored(moduleId: Id, planIndex: number, delta: string): 
  * The last delta is the one re-emitted until it lands, so a retry can never
  * duplicate text that already arrived.
  */
-async function streamTail(moduleId: Id, planIndex: number, text: string): Promise<void> {
+async function streamTail(moduleId: Id, level: number, text: string): Promise<void> {
   const first = text.slice(0, 4);
   const second = text.slice(4, 8);
   const rest = text.slice(8);
-  await emitUntilStored(moduleId, planIndex, first);
-  await emitUntilStored(moduleId, planIndex, second);
-  emitToken(moduleId, planIndex, rest);
+  await emitUntilStored(moduleId, level, first);
+  await emitUntilStored(moduleId, level, second);
+  emitToken(moduleId, level, rest);
   await waitFor(() => {
-    expect(streamTails.getSnapshot(moduleId, planIndex).tail).toContain(text);
+    expect(streamTails.getSnapshot(moduleId, level).tail).toContain(text);
   });
 }
 
-function emitToken(moduleId: Id, planIndex: number, delta: string): void {
+function emitToken(moduleId: Id, level: number, delta: string): void {
   // `act` is SYNCHRONOUS here: the emitter is synchronous and its store
   // notification flushes inside this call (an async act would be a
   // non-Promise await).
   act(() => {
-    moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta });
+    moduleGenEvents.emit({ kind: 'part-token', moduleId, level, delta });
   });
 }
 
@@ -252,10 +264,10 @@ afterEach(() => {
 
 describe('reader stream churn', () => {
   it('re-parses no part when a streaming tick arrives in another part', async () => {
-    const { moduleId, streamingIndex } = await mountStreamingReader();
+    const { moduleId, streamingLevel } = await mountStreamingReader();
     parsesByPart.clear();
 
-    await streamTail(moduleId, streamingIndex, 'The gate holds. Nobody dives.');
+    await streamTail(moduleId, streamingLevel, 'The gate holds. Nobody dives.');
 
     // THE PIN: a token tick rebuilds no markdown tree at all — not the six
     // ready parts, not the premise. Before the fix this was 5 parses per tick
@@ -264,20 +276,20 @@ describe('reader stream churn', () => {
   }, 20_000);
 
   it('shows the streaming tail, the thinking tail and their clearing, with the document intact', async () => {
-    const { moduleId, streamingIndex, card } = await mountStreamingReader();
+    const { moduleId, streamingLevel, card } = await mountStreamingReader();
 
     // Thinking deltas stream dimmed; the first content delta clears them.
     act(() => {
       moduleGenEvents.emit({
         kind: 'part-thinking',
         moduleId,
-        planIndex: streamingIndex,
+        level: streamingLevel,
         delta: 'Weighing ',
       });
       moduleGenEvents.emit({
         kind: 'part-thinking',
         moduleId,
-        planIndex: streamingIndex,
+        level: streamingLevel,
         delta: 'the gate…',
       });
     });
@@ -285,7 +297,7 @@ describe('reader stream churn', () => {
       expect(screen.getByTestId('thinking-tail')).toHaveTextContent('Weighing the gate…');
     });
 
-    await streamTail(moduleId, streamingIndex, 'The gate holds.');
+    await streamTail(moduleId, streamingLevel, 'The gate holds.');
     expect(within(card).getByText(/The gate holds\./)).toBeInTheDocument();
     expect(within(card).queryByTestId('thinking-tail')).not.toBeInTheDocument();
 
@@ -304,10 +316,10 @@ describe('reader stream churn', () => {
     // The generator emits `done` in a `finally` AFTER the row write, so the
     // handover is the row's own status change: the streamed part becomes an
     // ordinary body with its saved markdown, and the tail card goes away.
-    const { campaignId, moduleId, streamingIndex } = await seedStreamingModule();
+    const { campaignId, moduleId, streamingIndex, streamingLevel } = await seedStreamingModule();
     renderReaderAt(campaignId, moduleId);
     await screen.findByTestId('part-streaming', {}, { timeout: 10_000 });
-    await streamTail(moduleId, streamingIndex, 'The gate holds.');
+    await streamTail(moduleId, streamingLevel, 'The gate holds.');
     expect(
       within(screen.getByTestId('part-streaming')).getByText(/The gate holds\./),
     ).toBeInTheDocument();
@@ -335,11 +347,11 @@ describe('reader stream churn', () => {
   }, 20_000);
 
   it('drops the module’s tails when the reader unmounts', async () => {
-    const { campaignId, moduleId, streamingIndex } = await seedStreamingModule();
+    const { campaignId, moduleId, streamingLevel } = await seedStreamingModule();
     window.history.replaceState(null, '', modulePath(campaignId, moduleId));
     const view = render(<RouterProvider router={createAppRouter()} />);
     await screen.findByTestId('part-streaming', {}, { timeout: 10_000 });
-    await streamTail(moduleId, streamingIndex, 'The gate holds.');
+    await streamTail(moduleId, streamingLevel, 'The gate holds.');
     expect(within(screen.getByTestId('part-streaming')).getByText(/The gate holds\./)).toBeInTheDocument();
 
     act(() => {
@@ -347,7 +359,7 @@ describe('reader stream churn', () => {
     });
     // Leaving the reader empties its tails: coming back must not show the
     // previous visit's stream.
-    expect(streamTails.getSnapshot(moduleId, streamingIndex)).toEqual({
+    expect(streamTails.getSnapshot(moduleId, streamingLevel)).toEqual({
       tail: '',
       thinkingTail: '',
     });

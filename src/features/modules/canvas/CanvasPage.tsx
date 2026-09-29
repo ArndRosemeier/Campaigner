@@ -60,6 +60,7 @@ import {
   ModuleVersionPremiseError,
   MODULE_VERSION_CAP,
   MODULE_VERSION_SOURCE_LABELS,
+  levelForPlanIndex,
   moduleDocumentFromView,
   moduleDocumentSections,
   moduleLevelSeparator,
@@ -1408,11 +1409,16 @@ export function CanvasPage(): JSX.Element {
   }
 
   /**
-   * "Fix module problems" — rewrites ONLY the parts the confirmation named, for
+   * "Fix module problems" — rewrites ONLY the LEVELS the confirmation named, for
    * the check it named, through the EXISTING floor-repair seam (one attempt per
-   * part, a durable whole-document snapshot first, `toastError` if a repair
+   * level, a durable whole-document snapshot first, `toastError` if a repair
    * still fails). The scope is passed from the confirmation; the seam re-derives
    * it against the live row, so it can only ever rewrite LESS than promised.
+   *
+   * The confirmation's problem list is planIndex-keyed (the stored
+   * `entityRewriteProposals[]` shape, docs/17 row 388 keeps it for its own
+   * slice), so this call converts through the ONE pair — the engine's unit is
+   * the LEVEL.
    */
   async function handleFixProblems(): Promise<void> {
     if (fixRunning) return;
@@ -1422,7 +1428,7 @@ export function CanvasPage(): JSX.Element {
       const outcome = await repairModuleEncounterFloor(
         currentModule.id,
         currentCampaign,
-        fixableProblems.map((problem) => problem.planIndex),
+        fixableProblems.map((problem) => levelForPlanIndex(problem.planIndex)),
       );
       const row = await getModule(currentModule.id);
       if (row !== undefined) reseedFromRow(row);

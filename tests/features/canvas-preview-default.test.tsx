@@ -25,7 +25,7 @@ import {
 } from '@/features/modules/canvas/canvasStore';
 import { useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
-import type * as PartTextModule from '@/features/modules/partText';
+import type * as LevelTextModule from '@/features/modules/levelText';
 import { applyChatCommandsToSnapshot } from '@/features/modules/canvas/snapshotChat';
 import {
   assembleModuleDocument,
@@ -59,11 +59,11 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   promoteSecondModuleUses: vi.fn(),
 }));
 
-vi.mock('@/features/modules/partText', async (importOriginal) => {
-  const original = await importOriginal<typeof PartTextModule>();
+vi.mock('@/features/modules/levelText', async (importOriginal) => {
+  const original = await importOriginal<typeof LevelTextModule>();
   return {
     ...original,
-    saveModulePartText: vi.fn(original.saveModulePartText),
+    saveModuleLevelText: vi.fn(original.saveModuleLevelText),
   };
 });
 

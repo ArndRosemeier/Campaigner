@@ -296,25 +296,26 @@ function firstPartMentioning(
 }
 
 /**
- * The part that MENTIONS an entity, with BOTH facts a surface needs: its plan
- * TITLE and its EXACT level (docs/17 row 291, docs/23 §4/§6). `partLevelForMention`
- * is this function's level half, so "which part mentions it" and "what level is
- * it" can never be answered twice — the editor names the part the run sized the
- * fight from, and it reads the SAME pick.
+ * The LEVEL that MENTIONS an entity: its SECTION'S number (docs/17 row 291,
+ * docs/23 §4/§6, row 391). `partLevelForMention` is this function's level, so
+ * "which level mentions it" and "what level is it" can never be answered twice —
+ * the editor names the level the run sized the fight from, and it reads the
+ * SAME pick.
  *
  * THE LEVEL IS THE SECTION'S OWN NUMBER, never band math and never a parse: one
- * plan entry per level, so `planIndex i` IS level `i + 1` (the ONE mapping,
- * `moduleDocument.levelForPlanIndex`). A module's sections ascend from 1 and its
- * `partPlan[].levelBand` is DERIVED from that same number, so a declared range
- * has no representation at all any more (docs/23 §1 decision 2, §4) — reading
- * the band here would resolve a value the model can no longer mean. `undefined`
- * when no part mentions the name or the spine has no entry for the containing
- * part.
+ * section per level, so the containing `planIndex i` IS level `i + 1` (the ONE
+ * mapping, `moduleDocument.levelForPlanIndex`). A module's sections ascend from
+ * 1 and `partPlan[].levelBand` is DERIVED from that same number, so a declared
+ * range has no representation at all any more (docs/23 §1 decision 2, §4) —
+ * reading the band here would resolve a value the model can no longer mean.
+ * `undefined` when no level mentions the name.
+ *
+ * IT NO LONGER READS THE PLAN TITLE (docs/17 row 391): a chat-authored level
+ * has none (row 390), and a level's identity is its NUMBER (docs/23 §2) — so
+ * the form names the LEVEL, not a stored plan record.
  */
 export interface PartMention {
-  /** The mentioning part's plan title — the part NAMED on the form. */
-  partTitle: string;
-  /** The mentioning part's EXACT level — its SECTION'S number. */
+  /** The mentioning level's EXACT number — its SECTION'S number. */
   level: number;
 }
 
@@ -323,13 +324,11 @@ export function partLevelMentionFor(
   name: string,
 ): PartMention | undefined {
   if (name.trim() === '') return undefined;
-  // FIRST mention wins: the containing part decides, deterministically.
+  // FIRST mention wins: the containing section decides, deterministically.
   const part = firstPartMentioning(module, name);
   if (part === undefined) return undefined;
-  const plan = module.spine?.partPlan[part.planIndex];
-  if (plan === undefined) return undefined;
   // The SECTION'S number — the ONE mapping, never the (derived, dead) band.
-  return { partTitle: plan.title, level: levelForPlanIndex(part.planIndex) };
+  return { level: levelForPlanIndex(part.planIndex) };
 }
 
 /**

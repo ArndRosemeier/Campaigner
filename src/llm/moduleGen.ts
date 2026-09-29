@@ -1,4 +1,4 @@
-import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
+import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine } from '@/domain';
 import {
   aliasCollisionSentence,
   carriedTextOrigin,
@@ -16,13 +16,16 @@ import {
   ENTITY_LEVEL_HINT_MIN,
   entityBestiarySlotSchema,
   entityKindFor,
+  levelForPlanIndex,
   moduleCreationPool,
   moduleDocumentText,
   moduleEntityKindSchema,
+  moduleLevelSectionsFromView,
   modulePartsUntouched,
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
+  planIndexForLevel,
   sameAliasName,
   textOriginIsMachineWritten,
   withCombatEntityLevelHints,
@@ -30,6 +33,7 @@ import {
   type EncounterBudgetPolicy,
   type EncounterFloorGuardrail,
   type ModuleDifficulty,
+  type ModuleLevelState,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import {
@@ -46,7 +50,7 @@ import {
   spineContractValues,
 } from '@/llm/promptStyles';
 import { Emitter } from '@/llm/emitter';
-import { createCampaignDocument, getModule, listModulesByCampaign, patchModule, patchModuleSpine } from '@/db/moduleRepo';
+import { createCampaignDocument, getModule, listModulesByCampaign, patchModule, patchModuleSpine, saveModuleLevels } from '@/db/moduleRepo';
 // The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
 // WHICH creatures may a module entity be cast from? The answer is the window
 // `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
@@ -62,6 +66,9 @@ import { collectCreatorRoster } from '@/llm/creatorRoster';
 import { moduleStatedLevel } from '@/llm/roomBudget';
 import { addArtifactAliases, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
+// The LINKS hook (10 D12): every write that puts new prose on the row promotes
+// the second-module wikilink uses it carries. ONE import, shared by the
+// engine's own level write and the level-text edit path.
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import { getSettings, readPromptStyles } from '@/db/settingsRepo';
@@ -85,10 +92,6 @@ import {
 // unattended paths have no UI to do it); the orchestrator never imports this
 // module, so the direction stays acyclic.
 import { runModulePostGeneration } from '@/features/modules/post-generation';
-// THE one part-text save path (18-ARCHITECTURE §2.3): the adversarial edit is
-// an AI rewrite applied INSIDE generation (docs/17 row 358), so it rides the
-// same seam the canvas rewrite's Apply does — never a second part writer.
-import { saveModulePartText } from '@/features/modules/partText';
 // The ONE critique-and-edit pass (docs/17 row 356). It returns a REPORT and
 // never writes; the trigger below is the caller that persists an edit.
 import { runAdversarialPass, type AdversarialPassReport } from '@/llm/adversarialPass';
@@ -120,8 +123,13 @@ export type ModuleGenEvent =
   | { kind: 'spine-token'; moduleId: Id; delta: string }
   /** Reasoning-delta stream (illustration only; never persisted). */
   | { kind: 'spine-thinking'; moduleId: Id; delta: string }
-  | { kind: 'part-token'; moduleId: Id; planIndex: number; delta: string }
-  | { kind: 'part-thinking'; moduleId: Id; planIndex: number; delta: string }
+  /**
+   * A level's streaming text. THE UNIT IS THE LEVEL NUMBER (docs/23 §2.1,
+   * docs/17 row 391): a subscriber addresses the level it is watching by its
+   * number, exactly as the document does, and never by a `planIndex`.
+   */
+  | { kind: 'part-token'; moduleId: Id; level: number; delta: string }
+  | { kind: 'part-thinking'; moduleId: Id; level: number; delta: string }
   | { kind: 'done'; moduleId: Id };
 
 /** The generator event bus (the ONE emitter primitive, docs/18 §2.2). */
@@ -827,7 +835,7 @@ function floorRepairInstruction(target: PartEncounterCount): string | null {
  * invariant rather than a fallback: reaching it would mean a target was computed
  * for a floor that demands nothing.
  */
-function floorRepairRewriteInstruction(target: PartEncounterCount, planCount: number): string {
+function floorRepairRewriteInstruction(target: PartEncounterCount, levelCount: number): string {
   const instruction = floorRepairInstruction(target);
   if (instruction === null) {
     throw new Error(
@@ -836,7 +844,7 @@ function floorRepairRewriteInstruction(target: PartEncounterCount, planCount: nu
   }
   return (
     instruction +
-    (target.planIndex === planCount - 1
+    (levelForPlanIndex(target.planIndex) === levelCount
       ? `This is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
       : `End the part with a cost, a revelation, or a new pressure that carries into the next part.`)
   );
@@ -872,19 +880,21 @@ function truncate(text: string, cap: number): string {
   return text.length <= cap ? text : `${text.slice(0, cap)}…[truncated]`;
 }
 
-/** One prior module's block: title, premise, then its written parts in order. */
+/** One prior module's block: title, premise, then its written levels in order. */
 function priorModuleBlock(module: Module): string {
   const lines: string[] = [];
   lines.push(`## ${module.title} (levels ${String(module.levelMin)}–${String(module.levelMax)})`);
   const premise = module.spine?.premise ?? '';
   if (premise !== '') lines.push(`Premise:\n${truncate(premise, PRIOR_PART_CHAR_CAP)}`);
-  const planTitles = module.spine?.partPlan ?? [];
   const blockParts: string[] = [];
   for (const part of [...module.parts].sort((a, b) => a.planIndex - b.planIndex)) {
     if (part.markdown === '') continue;
-    const title = planTitles[part.planIndex]?.title ?? `Part ${String(part.planIndex + 1)}`;
+    // The heading names the LEVEL, from the derived view's planIndex through the
+    // ONE conversion — never the stored plan title (a chat-authored level has
+    // none, docs/17 row 390) and never arithmetic of our own.
+    const level = levelForPlanIndex(part.planIndex);
     blockParts.push(
-      `### Part ${String(part.planIndex + 1)}: ${title}\n${truncate(part.markdown, PRIOR_PART_CHAR_CAP)}`,
+      `### Level ${String(level)}\n${truncate(part.markdown, PRIOR_PART_CHAR_CAP)}`,
     );
   }
   if (blockParts.length > 0) lines.push(blockParts.join('\n\n'));
@@ -1235,26 +1245,30 @@ function encounterNamesIn(
 
 /**
  * Counts the module's encounter floor (pure): the whole-document distinct
- * encounter set against levelCount, allocated per band — each part's
- * markdown must name at least `levelsInLevelBand` encounters. A part with no
- * written row counts 0. sizeDial-independent; the 4× ceiling stays advisory
+ * encounter set against levelCount, allocated per band — each level section's
+ * markdown must name at least `levelsInLevelBand` encounters. A level with no
+ * written text counts 0. sizeDial-independent; the 4× ceiling stays advisory
  * and is never counted here (over-quota never fails). The FLOOR is the
  * module's own recorded guardrail (or today's default when it recorded none).
+ *
+ * THE PER-PART FIGURES COME FROM THE DOCUMENT'S LEVEL SECTIONS (docs/23 §4,
+ * docs/17 row 391): a level's own section text is what the floor counts, and
+ * `section.title` is the ONE display label (the derived `Level N`, or a stored
+ * plan title on a legacy row) — never a second reading of the plan record.
  */
 export function countModuleEncounters(
   module: Module,
   floor: EncounterFloorGuardrail = encounterFloorGuardrailFor(module),
 ): EncounterFloorReport {
   const required = encounterFloorTotal(floor, module.levelMax - module.levelMin + 1);
-  const perPart: PartEncounterCount[] = (module.spine?.partPlan ?? []).map((plan, planIndex) => {
-    const part = module.parts.find((entry) => entry.planIndex === planIndex);
-    const found = part === undefined ? 0 : encounterNamesIn(part.markdown, module.entityKinds).size;
+  const perPart: PartEncounterCount[] = moduleLevelSectionsFromView(module).map((section) => {
+    const levelBand = String(section.number);
     return {
-      planIndex,
-      title: plan.title,
-      levelBand: plan.levelBand,
-      required: encounterFloorPerPart(floor, levelsInLevelBand(plan.levelBand)),
-      found,
+      planIndex: section.planIndex,
+      title: section.title,
+      levelBand,
+      required: encounterFloorPerPart(floor, levelsInLevelBand(levelBand)),
+      found: encounterNamesIn(section.text, module.entityKinds).size,
     };
   });
   const found = encounterNamesIn(moduleDocumentText(module), module.entityKinds).size;
@@ -1331,19 +1345,35 @@ export function floorRepairTargets(
  * and NOT `origin`). ONE restore used
  * by the in-pass floor repair and by the "Fix module problems" entry point.
  */
-async function restorePartAfterFailedRepair(moduleId: Id, snapshot: ModulePart | undefined): Promise<void> {
+async function restoreLevelAfterFailedRepair(
+  moduleId: Id,
+  level: number,
+  snapshot: ModulePart | undefined,
+): Promise<void> {
   if (snapshot === undefined) return;
-  const live = (await getModule(moduleId))?.parts.find(
-    (entry) => entry.planIndex === snapshot.planIndex,
+  const current = await requireModule(moduleId);
+  const section = moduleLevelSectionsFromView(current).find((entry) => entry.number === level);
+  if (section?.text !== '') return;
+  // `edited` is "written outside the generator" (docs/17 row 113): text the
+  // attempt did not clear, and text the generator never owned, are both left
+  // alone. Read from the derived view's run state through the ONE conversion.
+  const liveState = current.parts.find(
+    (part) => part.planIndex === planIndexForLevel(level),
   );
-  if (live?.markdown !== '') return;
-  if (live.edited && !snapshot.edited) return;
-  const restored = (await requireModule(moduleId)).parts.filter(
-    (entry) => entry.planIndex !== snapshot.planIndex,
-  );
-  restored.push(snapshot);
-  restored.sort((a, b) => a.planIndex - b.planIndex);
-  await patchModule(moduleId, { parts: restored });
+  if (liveState?.edited === true && !snapshot.edited) return;
+  await saveModuleLevels(moduleId, [
+    {
+      level,
+      text: snapshot.markdown,
+      state: {
+        status: snapshot.status,
+        errorMessage: snapshot.errorMessage,
+        edited: snapshot.edited,
+        writerModel: snapshot.writerModel,
+        origin: snapshot.origin,
+      },
+    },
+  ]);
 }
 
 /**
@@ -1369,12 +1399,17 @@ function recordNormalizationFailure(error: unknown): void {
   toastError(NORMALIZATION_FAILURE_MESSAGE, error);
 }
 
-// --- Pass 1 — parts ----------------------------------------------------------
+// --- Pass 1 — levels ---------------------------------------------------------
 
 export interface PartsRunOptions {
-  /** Which plan entries to generate; default: all parts, in plan order. */
-  planIndexes?: readonly number[] | undefined;
-  /** Optional user instruction appended to a single-part rewrite. */
+  /**
+   * Which LEVEL SECTIONS to generate, BY LEVEL NUMBER (docs/23 §2.1, docs/17
+   * row 391); default: every level section of the document, in order. Level 0
+   * (the premise) is not a level section and is never named here — the chat
+   * authors the premise, and the engine writes level sections.
+   */
+  levels?: readonly number[] | undefined;
+  /** Optional user instruction appended to a single-level rewrite. */
   extraInstruction?: string | undefined;
   /**
    * Per-run override of the module row's `includePriorModules` flag (canvas
@@ -1385,34 +1420,50 @@ export interface PartsRunOptions {
 }
 
 /**
- * The honest one-line label for a parts pass (docs/18 §2.3): the Versions menu
+ * The honest one-line label for a level pass (docs/18 §2.3): the Versions menu
  * shows it against the snapshot taken BEFORE the pass, so it names what the
- * pass is about to do — "Generate parts" (full pass), "Generate N missing
- * parts" (hole fill), or "Rewrite part <n> — <title>: <instruction opening>"
- * (single-part rewrite/regenerate, board rewrite). Never a generic "AI change".
+ * pass is about to do — "Generate levels" (full pass), "Generate N missing
+ * levels" (hole fill), or "Rewrite level <n>: <instruction opening>"
+ * (single-level rewrite/regenerate, board rewrite). Never a generic "AI
+ * change".
+ *
+ * IT NAMES THE LEVEL BY ITS NUMBER. The stored plan title is NOT read here any
+ * more (docs/17 rows 390/391): a chat-authored level has none, and the level's
+ * load-bearing identity is its number (docs/23 §2).
  */
-function partsRunLabel(module: Module, options: PartsRunOptions): string {
-  const indexes = options.planIndexes;
-  if (indexes === undefined) return 'Generate parts';
-  if (indexes.length !== 1) return `Generate ${String(indexes.length)} missing parts`;
-  const planIndex = indexes[0] ?? 0;
-  const title = module.spine?.partPlan[planIndex]?.title ?? '';
-  const head = title.trim() === '' ? `Rewrite part ${String(planIndex + 1)}` : `Rewrite part ${String(planIndex + 1)} — ${title.trim()}`;
+function partsRunLabel(options: PartsRunOptions): string {
+  const levels = options.levels;
+  if (levels === undefined) return 'Generate levels';
+  if (levels.length !== 1) return `Generate ${String(levels.length)} missing levels`;
+  const level = levels[0];
+  if (level === undefined) return 'Generate levels';
+  const head = `Rewrite level ${String(level)}`;
   const instruction = (options.extraInstruction ?? '').trim();
   return instruction === '' ? head : `${head}: ${instruction.slice(0, 60)}`;
 }
 
 /**
- * Runs pass 1: one markdown call per plan entry, sequentially. Each finished
- * part lands on the module row immediately (progressive reveal — the reader
- * shows part 1 while part 3 streams). A failed part does NOT stop the chain:
- * it is marked failed (with its error) and generation continues. Continuity
- * for part i comes from the part at planIndex i−1 only — when that
- * predecessor failed, part i is written WITHOUT continuity context.
+ * The module's level sections, in document order — THE list a full pass
+ * iterates and the only place a default scope comes from.
+ */
+function runLevelSections(module: Module): { number: number; text: string }[] {
+  return moduleLevelSectionsFromView(module).map((section) => ({
+    number: section.number,
+    text: section.text,
+  }));
+}
+
+/**
+ * Runs pass 1: one markdown call per LEVEL SECTION, sequentially. Each finished
+ * level lands in the ONE document immediately (progressive reveal — the reader
+ * shows level 1 while level 3 streams). A failed level does NOT stop the chain:
+ * it is marked failed (with its error) and generation continues. Continuity for
+ * level N comes from the level at N−1 only — when that predecessor failed,
+ * level N is written WITHOUT continuity context.
  *
  * SIMPLE UNDO (docs/18 §2.3): the pass takes ONE durable whole-document
- * snapshot at ENTRY — before the first row write — so every part this pass
- * rewrites (generation, missing-part fill, single-part rewrite/regenerate,
+ * snapshot at ENTRY — before the first row write — so every level this pass
+ * rewrites (generation, missing-level fill, single-level rewrite/regenerate,
  * the board's staged rewrite, and the floor-repair rewrites inside the pass)
  * can be undone as a whole. The in-pass `normalizeModuleEntityNames` calls
  * take their OWN snapshot (see that function), because they are separate AI
@@ -1473,52 +1524,50 @@ async function runPartsPassUnlocked(
     // recorded — it is the escalation tier; docs/17 row 198).
     recordGlobalChatModelInUse(settings.defaultChatModel);
     const module = await requireModule(moduleId);
-    if (module.spine === null) throw new Error('Cannot generate parts without an approved spine');
-    // Durable pre-change snapshot (docs/18 §2.3 simple undo): the WHOLE parts
+    if (module.spine === null) throw new Error('Cannot generate levels without an approved document');
+    // Durable pre-change snapshot (docs/18 §2.3 simple undo): the WHOLE module
     // document as it stands before this pass writes anything. Loud on failure
-    // — an AI pass must not rewrite part text whose pre-state could not be
+    // — an AI pass must not rewrite level text whose pre-state could not be
     // recorded (the throw fails the module through the existing loud path).
-    await snapshotModuleVersion(moduleId, 'generation', partsRunLabel(module, options));
+    await snapshotModuleVersion(moduleId, 'generation', partsRunLabel(options));
     await patchModule(moduleId, { status: 'generating', errorMessage: '' });
 
-    const planIndexes =
-      options.planIndexes ?? module.spine.partPlan.map((_, index) => index);
-    const total = planIndexes.length;
+    const levels = options.levels ?? runLevelSections(module).map((section) => section.number);
+    const total = levels.length;
     progress.start(
       jobId,
-      `Writing ${String(total)} module part${total === 1 ? '' : 's'}`,
-      'Starting the first part…',
+      `Writing ${String(total)} module level${total === 1 ? '' : 's'}`,
+      'Starting the first level…',
       // The dock label opens the module reader, wherever the user currently is.
       modulePath(campaign.id, moduleId),
     );
     let index = 0;
-    for (const planIndex of planIndexes) {
+    for (const level of levels) {
       // A stop that landed between calls throws no error on its own — without
-      // this guard the loop would mark the next part 'generating' and fire a
+      // this guard the loop would mark the next level 'generating' and fire a
       // doomed chat call before the abort surfaces. Fail fast instead: the
       // outer catch owns the quiet rewind (ready/draft, no toast, no advance).
       if (controller.signal.aborted) {
         throw new DOMException('Module generation was cancelled', 'AbortError');
       }
       const target = await requireModule(moduleId);
-      if (target.spine === null) throw new Error('The spine was removed mid-generation');
-      const title = target.spine.partPlan[planIndex]?.title ?? `Part ${String(planIndex + 1)}`;
+      if (target.spine === null) throw new Error('The document was removed mid-generation');
       progress.update(jobId, {
         progress: index / total,
-        detail: `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
+        detail: `Writing level ${String(index + 1)} of ${String(total)}: level ${String(level)}`,
       });
-      // Live dock detail for the (multi-minute) part call itself: char count
+      // Live dock detail for the (multi-minute) level call itself: char count
       // while the answer streams, "thinking…" while reasoning deltas arrive.
       const partReporter = streamDetailReporter(
         jobId,
-        `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
+        `Writing level ${String(index + 1)} of ${String(total)}: level ${String(level)}`,
       );
       let written: string | null = null;
       try {
         written = await generatePart(
           moduleId,
           target,
-          planIndex,
+          level,
           campaign,
           settings.defaultChatModel,
           {
@@ -1526,14 +1575,14 @@ async function runPartsPassUnlocked(
             extraInstruction: options.extraInstruction ?? '',
             includePriorModules: options.includePriorModules,
             onToken: (delta) => {
-              moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta });
+              moduleGenEvents.emit({ kind: 'part-token', moduleId, level, delta });
               partReporter.onToken(delta);
             },
             onReasoning: (delta) => {
-              moduleGenEvents.emit({ kind: 'part-thinking', moduleId, planIndex, delta });
+              moduleGenEvents.emit({ kind: 'part-thinking', moduleId, level, delta });
             },
             onActivity: partReporter.onActivity,
-            // Embedding backfill on the part's retrieval path is reported on
+            // Embedding backfill on the level's retrieval path is reported on
             // the same job; the stream reporter overwrites the detail on the
             // first token/activity tick, so no staleness.
             onEmbeddingProgress: (done, total) => {
@@ -1548,17 +1597,16 @@ async function runPartsPassUnlocked(
         // The failed part is persisted with its error by generatePart; the
         // chain continues with the next part (08 §M4-B).
       }
-      // ADVERSARIAL PART REVIEW (docs/17 row 358): with the module's flag ON,
-      // each part is reviewed as soon as it is written — while its text is
-      // fresh, and before the next part reads it as continuity context. The
-      // review is contained (a failed critique/editor marks THIS part failed
+      // ADVERSARIAL LEVEL REVIEW (docs/17 row 358): with the module's flag ON,
+      // each level is reviewed as soon as it is written — while its text is
+      // fresh, and before the next level reads it as continuity context. The
+      // review is contained (a failed critique/editor marks THIS level failed
       // with its text preserved and the chain continues), and it never runs for
-      // a part that did not generate text.
+      // a level that did not generate text.
       if (written !== null && adversarialReviewEnabled(target)) {
-        await reviewPartInGeneration({
+        await reviewLevelInGeneration({
           moduleId,
-          planIndex,
-          title,
+          level,
           ordinal: index + 1,
           total,
           text: written,
@@ -1570,13 +1618,13 @@ async function runPartsPassUnlocked(
       progress.update(jobId, { progress: index / total });
     }
 
-    // A stop that ended the LAST part leaves no next loop iteration to guard:
+    // A stop that ended the LAST level leaves no next loop iteration to guard:
     // without this check the pass would fire its post-pass normalization call
     // for a module the user just stopped. Same quiet rewind as the loop
     // guard — the outer catch reads the signal, so it lands as `aborted`.
     throwIfStopped(controller.signal);
     progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
-    // Entity name normalization (fix-01): one call after the parts land —
+    // Entity name normalization (fix-01): one call after the levels land —
     // canonical names, kinds, link rewrites and aliases. A failure is
     // recorded on the module row (loud, batch gated, Retry in the panel).
     await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
@@ -1585,30 +1633,32 @@ async function runPartsPassUnlocked(
     });
     // Encounter-floor gate (08 §M4-B): counted on the NORMALIZED canonicals,
     // before the ready write — a short module is never shipped as ready.
-    // Each deficient part in this run's scope gets ONE repair rewrite (the
-    // rewritePart engine on the escalated model — see the repairModel
-    // rationale on partCall); hand-edited parts are NOT touched (their text
-    // changes only on explicit consent — they fail loud instead). Then
-    // re-normalize, recount, and fail the module loudly when still short.
-    // Good parts are preserved (no rollback — parts are individually
-    // regenerable); callers skip the post-generation automation on failure.
-    const scope = new Set(planIndexes);
+    // Each deficient level in this run's scope gets ONE repair rewrite (the
+    // same engine on the escalated model — see the repairModel rationale on
+    // levelCall); hand-edited levels are NOT touched (their text changes only
+    // on explicit consent — they fail loud instead). Then re-normalize,
+    // recount, and fail the module loudly when still short. Good levels are
+    // preserved (no rollback — levels are individually regenerable); callers
+    // skip the post-generation automation on failure.
+    //
+    // THE SCOPE IS LEVELS, converted through the ONE pair for the floor
+    // report's own planIndex vocabulary (docs/17 row 391) — no arithmetic.
+    const scope = new Set(levels.map((level) => planIndexForLevel(level)));
     // The FLOOR this run enforces comes from the module row (its recorded
-    // guardrail, or today's default) — the same numbers the spine pass asked
-    // for, so a repair and a later retry judge by the module's own rules rather
-    // than by whatever the dialog shows today.
+    // guardrail, or today's default) — the module's own rules rather than
+    // whatever the dialog shows today.
     const partsFloor = encounterFloorGuardrailFor(await requireModule(moduleId));
-    // A full run owns the whole-module total; a subset run (single-part
-    // rewrite/retry) owns only its parts' band shares — it can neither fix
+    // A full run owns the whole-module total; a subset run (single-level
+    // rewrite/retry) owns only its levels' band shares — it can neither fix
     // nor answer for the rest of the module.
     const isFullRun = (module: Module): boolean =>
-      module.spine?.partPlan.every((_, index) => scope.has(index)) ?? false;
+      runLevelSections(module).every((section) => scope.has(planIndexForLevel(section.number)));
     const inScopeTargets = (module: Module): PartEncounterCount[] => {
       const report = countModuleEncounters(module, partsFloor);
       const deficient = report.deficient.filter((entry) => scope.has(entry.planIndex));
       if (deficient.length > 0) return deficient;
-      // Full run whose bands are met but whose total repeats across parts:
-      // every in-scope part must add DISTINCT encounters.
+      // Full run whose bands are met but whose total repeats across levels:
+      // every in-scope level must add DISTINCT encounters.
       if (isFullRun(module) && report.found < report.required) {
         return report.perPart.filter((entry) => scope.has(entry.planIndex));
       }
@@ -1619,11 +1669,12 @@ async function runPartsPassUnlocked(
       if (isFullRun(module)) return report.found < report.required || report.deficient.length > 0;
       return report.deficient.some((entry) => scope.has(entry.planIndex));
     };
-    let gated = await requireModule(moduleId);
+    const gated = await requireModule(moduleId);
     const repairTargets = inScopeTargets(gated).filter((target) => {
       const part = gated.parts.find((entry) => entry.planIndex === target.planIndex);
       return part?.edited !== true;
     });
+    let gate = gated;
     if (repairTargets.length > 0) {
       progress.update(jobId, { progress: 1, detail: 'Repairing encounter shortfall…' });
       const floorRepairModel = repairModel(settings.defaultChatModel, settings);
@@ -1632,16 +1683,17 @@ async function runPartsPassUnlocked(
           throw new DOMException('Module generation was cancelled', 'AbortError');
         }
         const current = await requireModule(moduleId);
-        if (current.spine === null) throw new Error('The spine was removed mid-generation');
+        if (current.spine === null) throw new Error('The document was removed mid-generation');
         // Satisfaction is rationed to the finale: the repair carries the
         // resolution shape everywhere else, full-price satisfaction on the
-        // closing part.
+        // closing level.
         const floorInstruction = floorRepairRewriteInstruction(
           target,
-          current.spine.partPlan.length,
+          runLevelSections(current).length,
         );
+        const level = levelForPlanIndex(target.planIndex);
         try {
-          await generatePart(moduleId, current, target.planIndex, campaign, floorRepairModel, {
+          await generatePart(moduleId, current, level, campaign, floorRepairModel, {
             signal: controller.signal,
             extraInstruction: floorInstruction,
             onToken: undefined,
@@ -1651,13 +1703,14 @@ async function runPartsPassUnlocked(
           });
         } catch (error) {
           if (isCancel(error, controller.signal)) throw error;
-          // A failed repair must not destroy the part's pre-repair prose:
+          // A failed repair must not destroy the level's pre-repair prose:
           // restore the snapshot when the repair left nothing behind (and no
           // newer hand-edit landed meanwhile). The recount below still fails
-          // the module loudly with the part named — the user retries the
-          // part itself.
-          await restorePartAfterFailedRepair(
+          // the module loudly with the level named — the user retries the
+          // level itself.
+          await restoreLevelAfterFailedRepair(
             moduleId,
+            level,
             current.parts.find((entry) => entry.planIndex === target.planIndex),
           );
         }
@@ -1667,12 +1720,12 @@ async function runPartsPassUnlocked(
         if (isCancel(error, controller.signal)) throw error;
         recordNormalizationFailure(error);
       });
-      gated = await requireModule(moduleId);
+      gate = await requireModule(moduleId);
     }
-    const floorReport = countModuleEncounters(gated, partsFloor);
-    if (isFloorBlocking(gated)) {
+    const floorReport = countModuleEncounters(gate, partsFloor);
+    if (isFloorBlocking(gate)) {
       let floorMessage = encounterFloorMessage(floorReport);
-      if (!gated.entityNamesNormalized) {
+      if (!gate.entityNamesNormalized) {
         floorMessage +=
           ' Entity name normalization did not succeed for the current text, so the count uses the last recorded kinds — retry normalization from the entity panel if this looks wrong.';
       }
@@ -1681,7 +1734,7 @@ async function runPartsPassUnlocked(
       // sentence says what is true of the text (it was not rewritten) instead
       // of asserting the owner typed it.
       const untouchedDeficient = floorReport.deficient.filter((entry) =>
-        gated.parts.some((part) => part.planIndex === entry.planIndex && part.edited),
+        gate.parts.some((part) => part.planIndex === entry.planIndex && part.edited),
       );
       if (untouchedDeficient.length > 0) {
         floorMessage +=
@@ -1690,14 +1743,14 @@ async function runPartsPassUnlocked(
       }
       toastError('Module generation failed: encounter floor not met', new Error(floorMessage));
       await patchModule(moduleId, { status: 'failed', errorMessage: floorMessage });
-      return { module: (await getModule(moduleId)) ?? gated, aborted: false };
+      return { module: (await getModule(moduleId)) ?? gate, aborted: false };
     }
     return { module: await patchModule(moduleId, { status: 'ready', errorMessage: '' }), aborted: false };
   } catch (error) {
     if (isCancel(error, controller.signal)) {
-      // Parts already written stay; the interrupted part keeps its slot
+      // Levels already written stay; the interrupted level keeps its slot
       // status, and the module returns to `ready` (or `draft` before the
-      // first part) so its Retry buttons stay available.
+      // first level) so its Retry buttons stay available.
       const module = await getModule(moduleId);
       if (module !== undefined) {
         await patchModule(moduleId, {
@@ -1727,39 +1780,48 @@ async function requireModule(moduleId: Id): Promise<Module> {
 }
 
 /**
- * Generates ONE part and writes it to the module row. Writes the
- * `generating` status first (progressive reveal), then the finished markdown
- * — or a `failed` status with the error message, which it rethrows. Resolves
- * with the markdown (existing contract) after recording the model that served
- * the call on the part row (provenance arc, docs/17 row 93).
+ * Generates ONE LEVEL SECTION and writes it into the module DOCUMENT. Writes
+ * the `generating` run state first (progressive reveal), then the finished
+ * markdown — or a `failed` state with the error message, which it rethrows.
+ * Resolves with the markdown (existing contract) after recording the model that
+ * served the call on the level's own state (provenance arc, docs/17 row 93).
+ *
+ * THE UNIT IS THE LEVEL NUMBER (docs/23 §2.1, docs/17 row 391): the write goes
+ * through the ONE level-addressed DOCUMENT seam (`db/moduleRepo.saveModuleLevels`
+ * → `domain/moduleDocument.moduleRowFromLevelWrites`), so the level's SECTION
+ * TEXT is what changes and the `parts` record is the derived view it always was.
  */
 export async function generatePart(
   moduleId: Id,
   module: Module,
-  planIndex: number,
+  level: number,
   campaign: Campaign,
   model: string,
   options: PartCallOptions,
 ): Promise<string> {
   const spine = module.spine;
-  if (spine === null) throw new Error('Cannot generate a part without a spine');
-  const plan = spine.partPlan[planIndex];
-  if (plan === undefined) throw new Error(`No part plan entry for index ${planIndex}`);
+  if (spine === null) throw new Error('Cannot generate a level without a document');
+  const section = moduleLevelSectionsFromView(module).find((entry) => entry.number === level);
+  if (section === undefined) {
+    throw new Error(
+      `The document carries no level ${String(level)} section to write — the engine writes level sections and never creates them (the chat's append_level does that)`,
+    );
+  }
+  // A level's recorded run state lives at its planIndex slot: the ONE
+  // level↔planIndex conversion, here and nowhere else in this seam.
+  const planIndex = planIndexForLevel(level);
+  // The level's own state write: text plus the run state the engine stamps,
+  // through the ONE document seam.
+  const writeLevel = (markdown: string, state: ModuleLevelState): Promise<Module> =>
+    saveModuleLevels(moduleId, [{ level, text: markdown, state }]);
 
-  const setPart = (part: ModulePart): Promise<Module> => {
-    const parts = module.parts.filter((entry) => entry.planIndex !== planIndex);
-    parts.push(part);
-    parts.sort((a, b) => a.planIndex - b.planIndex);
-    return patchModule(moduleId, { parts });
-  };
-
-  // The part being replaced carries its own provenance; a write that cannot
+  // The level being replaced carries its own provenance; a write that cannot
   // observe its serving model must not BLANK an id that was already recorded
   // (`partWriterModelFor`) — the mirror of the hand-edit rule below.
   const previousWriterModel = module.parts.find(
     (entry): boolean => entry.planIndex === planIndex,
   )?.writerModel;
-  // PROVENANCE (docs/17 row 93): every row this seam writes carries the model
+  // PROVENANCE (docs/17 row 93): every write this seam lands carries the model
   // that served the call. The `generating`/`pending`/`failed` slots carry the
   // PREVIOUS id (they hold no new text), the `ready` slot carries the model
   // that actually wrote the markdown — a repair/rewrite escalation to the
@@ -1768,15 +1830,13 @@ export async function generatePart(
   // AUTHORSHIP (docs/17 row 113): the same distinction applies to `origin` —
   // the slots that hold NO new text (generating/pending/failed) carry the
   // previous origin, and the `ready` slot is `'model'` by construction: this
-  // seam is the generator writing part prose, so it can never be a hand edit.
+  // seam is the generator writing level prose, so it can never be a hand edit.
   const previousOrigin = module.parts.find(
     (entry): boolean => entry.planIndex === planIndex,
   )?.origin;
   const carriedOrigin = carriedTextOrigin(previousOrigin);
 
-  await setPart({
-    planIndex,
-    markdown: '',
+  await writeLevel('', {
     status: 'generating',
     errorMessage: '',
     edited: false,
@@ -1785,32 +1845,28 @@ export async function generatePart(
   });
 
   try {
-    const called: { markdown: string; modelUsed: string } = await partCall(
+    const called: { markdown: string; modelUsed: string } = await levelCall(
       module,
-      spine,
-      plan,
-      planIndex,
+      level,
       campaign,
       model,
       options,
     );
     const markdown: string = called.markdown;
-    // Generated-text hygiene backstop (18-ARCHITECTURE seam): generated part
+    // Generated-text hygiene backstop (18-ARCHITECTURE seam): generated level
     // prose is already-decoded stored text — a `?xx` tail or literal
     // `\uXXXX` in it is mangled output, never content, and OUR OWN prompt
-    // scaffolding echoed back into the part is the same class of defect
-    // (docs/17 row 142). The part fails with the defect named (existing failed
+    // scaffolding echoed back into the level is the same class of defect
+    // (docs/17 row 142). The level fails with the defect named (existing failed
     // semantics: the chain continues, the user retries) — never persisted as a
-    // ready part.
-    const partField = { field: `part ${String(planIndex + 1)}`, text: markdown };
-    const { issues: hygieneIssues } = generatedTextScanForFields([partField], [partField]);
+    // ready level.
+    const levelField = { field: `level ${String(level)}`, text: markdown };
+    const { issues: hygieneIssues } = generatedTextScanForFields([levelField], [levelField]);
     if (hygieneIssues.length > 0) {
       const hygieneMessage =
-        `Part text is not persistable (${hygieneIssues.join('; ')}) — ` +
-        'generated prose carrying escape debris or our own prompt scaffolding is a defect, not content; refusing to persist. Retry the part.';
-      await setPart({
-        planIndex,
-        markdown: '',
+        `Level text is not persistable (${hygieneIssues.join('; ')}) — ` +
+        'generated prose carrying escape debris or our own prompt scaffolding is a defect, not content; refusing to persist. Retry the level.';
+      await writeLevel('', {
         status: 'failed',
         errorMessage: hygieneMessage,
         edited: false,
@@ -1819,25 +1875,21 @@ export async function generatePart(
       });
       throw new Error(hygieneMessage);
     }
-    await setPart({
-      planIndex,
-      markdown,
+    await writeLevel(markdown, {
       status: 'ready',
       errorMessage: '',
       edited: false,
       writerModel: partWriterModelFor(called.modelUsed, previousWriterModel),
       origin: 'model',
     });
-    // LINKS hook: generated part prose reuses established names exactly —
+    // LINKS hook: generated level prose reuses established names exactly —
     // second-module wikilink uses promote to shared campaign ownership.
     await promoteSecondModuleUses(moduleId, [markdown]);
     return markdown;
   } catch (error) {
     if (isCancel(error, options.signal)) {
-      // Cancelled mid-part: leave the slot pending so Retry can pick it up.
-      await setPart({
-        planIndex,
-        markdown: '',
+      // Cancelled mid-level: leave the slot pending so Retry can pick it up.
+      await writeLevel('', {
         status: 'pending',
         errorMessage: 'Cancelled',
         edited: false,
@@ -1847,9 +1899,7 @@ export async function generatePart(
       throw error;
     }
     const message = errorMessage(error);
-    await setPart({
-      planIndex,
-      markdown: '',
+    await writeLevel('', {
       status: 'failed',
       errorMessage: message,
       edited: false,
@@ -1880,33 +1930,67 @@ interface PartCallOptions {
   onEmbeddingProgress?: ((done: number, total: number) => void) | undefined;
 }
 
-/** One part generation recipe: context assembly + call + validation. */
-async function partCall(
+/**
+ * One level's own text as a single prompt line — its first non-empty line,
+ * whitespace-collapsed and capped. THE MATERIAL IS THE LEVEL'S OWN PROSE
+ * (docs/17 row 391): this is a READING of the section text, never a title
+ * extracted from it (docs/23 §2 keeps the line under a separator as prose), and
+ * it is only ever shown to the model as context.
+ */
+function levelExcerpt(text: string): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  if (collapsed === '') return '(no text yet)';
+  return truncate(collapsed, 160);
+}
+
+/** One level generation recipe: context assembly + call + validation. */
+async function levelCall(
   module: Module,
-  spine: ModuleSpine,
-  plan: PartPlan,
-  planIndex: number,
+  level: number,
   campaign: Campaign,
   model: string,
   options: PartCallOptions,
 ): Promise<{ markdown: string; modelUsed: string }> {
-  const previousPart =
-    planIndex === 0
-      ? null
-      : (module.parts.find((entry) => entry.planIndex === planIndex - 1) ?? null);
-  // Continuity = the CURRENT text of part i−1 (hand edits included); a
-  // failed/missing predecessor is omitted rather than feeding garbage.
+  const spine = module.spine;
+  if (spine === null) throw new Error('Cannot generate a level without a document');
+  // THE DOCUMENT'S LEVEL SECTIONS ARE THE MATERIAL (docs/23 §4, docs/17 row
+  // 391): the level being written, its predecessor, and the level list the
+  // prompt foreshadows with all come from ONE parse of the ONE document. The
+  // stored plan records are NOT read: a chat-authored level has no title, no
+  // synopsis and no levelUpTrigger (docs/17 row 390), so a prompt built from
+  // them would carry empty strings where the level's own prose belongs.
+  const sections = moduleLevelSectionsFromView(module);
+  // The predecessor by DOCUMENT ORDER — an array step, never the level↔planIndex
+  // conversion, which lives only in the ONE pair.
+  const at = sections.findIndex((entry) => entry.number === level);
+  const section = at === -1 ? undefined : sections[at];
+  if (section === undefined) {
+    throw new Error(
+      `The document carries no level ${String(level)} section to write about`,
+    );
+  }
+  const previous = at > 0 ? sections[at - 1] : undefined;
+  // Continuity = the CURRENT text of the previous LEVEL (hand edits included);
+  // a failed/empty predecessor is omitted rather than feeding garbage. Its run
+  // state comes from the derived view through the ONE conversion.
+  const previousState =
+    previous === undefined
+      ? undefined
+      : module.parts.find((part) => part.planIndex === planIndexForLevel(previous.number));
   const continuity =
-    previousPart?.status !== 'ready' || previousPart.markdown === ''
+    previous === undefined || previous.text === '' || previousState?.status !== 'ready'
       ? null
-      : previousPart.markdown;
+      : previous.text;
 
-  const synopses = spine.partPlan
-    .map((entry, index) => `${index + 1}. [${entry.levelBand}] ${entry.title} — ${entry.synopsis}`)
+  const levelList = sections
+    .map((entry) => `Level ${String(entry.number)} — ${levelExcerpt(entry.text)}`)
     .join('\n');
 
+  // The level's OWN TEXT is the retrieval query: an empty level searches on
+  // nothing (the excerpt paragraph is dropped), which is honest — there is no
+  // material yet.
   const ruleExcerpts = await ruleExcerptSection(
-    plan.synopsis,
+    section.text,
     campaign.system,
     options.onEmbeddingProgress,
   );
@@ -1930,19 +2014,23 @@ async function partCall(
     campaignNames.length === 0
       ? null
       : `Existing campaign entities (reuse by exact name where they fit):\n${campaignNames.join('\n')}`;
-  const isFinale = planIndex === spine.partPlan.length - 1;
+  const isFinale = sections[sections.length - 1]?.number === level;
   const priorContext = priorModulesContext(
     await priorModulesOf(module, options.includePriorModules),
     campaignCastContext(artifacts),
   );
 
-  // This part's floor share, rendered from the MODULE's own guardrail: the
-  // number of encounters the part must name, and the instruction asking for
+  // This level's floor share, rendered from the MODULE's own guardrail: the
+  // number of encounters the level must name, and the instruction asking for
   // them. A disabled floor drops the instruction (and the gate above drops the
   // repair), so the two can never disagree.
-  const bandLevels = levelsInLevelBand(plan.levelBand);
+  //
+  // The BAND IS THE LEVEL'S OWN NUMBER (docs/23 §4): one section per level, so
+  // the band is exactly this level and `levelsInLevelBand` is 1 by construction.
+  const levelBand = String(level);
+  const bandLevels = levelsInLevelBand(levelBand);
   const partFloorRequirement = perPartFloorClause(
-    plan.levelBand,
+    levelBand,
     bandLevels,
     encounterFloorPerPart(encounterFloorGuardrailFor(module), bandLevels),
   );
@@ -1954,7 +2042,7 @@ async function partCall(
   // layer (reply format, GM address, wiki-link rules, length target, floor,
   // artifact rules) is injected into its required slots. A module reads the
   // style it RECORDED — never today's settings — so a resume, a repair or a
-  // per-part regeneration keeps writing in the voice the module started in.
+  // per-level regeneration keeps writing in the voice the module started in.
   const style = promptStyleForModule(module);
   const composed = composePromptFromTemplate({
     templateText: style.style.templateText,
@@ -1963,14 +2051,22 @@ async function partCall(
       campaign: `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
       modulePremise: `Module premise:\n${spine.premise}`,
       themes: spine.themes.length > 0 ? `Themes: ${spine.themes.join('; ')}` : null,
-      allParts: `All parts of this module (one-line synopses, so later parts can foreshadow):\n${synopses}`,
-      partHeading: `Write part ${String(planIndex + 1)}: "${plan.title}" (levels ${plan.levelBand}).`,
-      partSynopsis: `Part synopsis: ${plan.synopsis}`,
-      partEndCondition: `Part ends when: ${plan.levelUpTrigger}`,
+      // The list item and slot names are the TEMPLATE's (a saved style's
+      // placeholders must keep working); their VALUES are the levels' own text.
+      allParts: `All levels of this module (each one's own text, so later levels can foreshadow):\n${levelList}`,
+      partHeading: `Write level ${String(level)}.`,
+      partSynopsis:
+        section.text.trim() === ''
+          ? null
+          : `Level ${String(level)}'s current text (this is the material you are writing):\n${section.text}`,
+      // `levelUpTrigger` is DELETED by the arc (docs/23 §1 decision 4, §5):
+      // the chat writes an ending in prose, so there is no value to inject and
+      // the slot's paragraph disappears.
+      partEndCondition: null,
       previousPart:
         continuity === null
           ? null
-          : `Full markdown of the previous part (continue seamlessly from it):\n\n${continuity}`,
+          : `Full markdown of the previous level (continue seamlessly from it):\n\n${continuity}`,
       ruleExcerpts,
       glossary,
       campaignIndex,
@@ -1998,7 +2094,7 @@ async function partCall(
   ];
 
   // Output is plain markdown — no JSON, no zod. Empty or <100-char output is
-  // a failure (retry once, then the part fails); network errors fail
+  // a failure (retry once, then the level fails); network errors fail
   // directly.
   const settings = await getSettings();
   const first = await chat(messages, {
@@ -2015,7 +2111,7 @@ async function partCall(
   } catch {
     // Contract repair escalates to the fallback model: a too-short reply is
     // usually a capability weakness of the first-try model. It WROTE the
-    // markdown that lands, so its own `modelUsed` is the part's provenance.
+    // markdown that lands, so its own `modelUsed` is the level's provenance.
     const retry = await chat(
       [
         ...messages,
@@ -2038,24 +2134,21 @@ async function partCall(
 const NORMALIZE_CONTEXT_CAP = 400;
 
 /**
- * The module's normalization documents (fix-01): the premise plus every part
- * in plan order — the ONE derivation the full pass and the incremental
- * classification run share, so both classify the same text the entity panel
- * observes (`useModuleEntities` derives its names from exactly these
- * documents).
+ * The module's normalization TEXT (fix-01): the premise (level 0) plus every
+ * LEVEL SECTION's text in document order — the ONE derivation the full pass and
+ * the incremental classification run share, so both classify the same text the
+ * entity panel observes (`useModuleEntities` derives its names from exactly this
+ * text).
+ *
+ * IT IS THE DOCUMENT's OWN LEVEL LIST (docs/23 §4, docs/17 row 391), read
+ * through the ONE accessor: no per-part labels, no `planIndex` — a level is its
+ * number.
  */
-function moduleNormalizationDocument(module: Module): {
-  documents: { where: string; markdown: string }[];
-  text: string;
-} {
-  const documents = [
-    { where: 'premise', markdown: module.spine?.premise ?? '' },
-    ...module.parts
-      .slice()
-      .sort((a, b) => a.planIndex - b.planIndex)
-      .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
-  ];
-  return { documents, text: documents.map((document) => document.markdown).join('\n\n') };
+function moduleNormalizationText(module: Module): string {
+  return [
+    module.spine?.premise ?? '',
+    ...moduleLevelSectionsFromView(module).map((section) => section.text),
+  ].join('\n\n');
 }
 
 /**
@@ -2218,7 +2311,7 @@ export async function normalizeModuleEntityNames(
   // application below).
   const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
   const artifactNames = artifacts.map((artifact) => artifact.name);
-  const { text } = moduleNormalizationDocument(module);
+  const text = moduleNormalizationText(module);
   const names = extractWikiLinks(text).map((link) => link.name);
 
   // Pass start: the previous state is invalid for the current text — batch
@@ -2369,7 +2462,7 @@ export async function classifyNewModuleEntityNames(
   // never quietly binds itself to a party member.
   const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
   const artifactNames = artifacts.map((artifact) => artifact.name);
-  const { text } = moduleNormalizationDocument(module);
+  const text = moduleNormalizationText(module);
   const targets = unclassifiedModuleNames(module, artifacts);
   // Nothing observed that lacks a record: no call, no write, no toast — the
   // idempotent no-op a repeated click (or a second observation) must be.
@@ -2700,32 +2793,33 @@ function adversarialReviewDetail(where: string): string {
 }
 
 /**
- * Marks ONE part failed after its adversarial review failed, KEEPING its text
+ * Marks ONE LEVEL failed after its adversarial review failed, KEEPING its text
  * (docs/17 row 358; the owner's hard constraint: a critique/editor failure must
- * never cost content). The existing failed-part shape is what the parts chain
+ * never cost content). The existing failed-level shape is what the level chain
  * already understands — `generatePart`'s failure arm writes `status: 'failed'`
  * + `errorMessage`, the reader shows the failure card with Retry, the chain
- * continues, and `generateMissingParts`/the floor repair can pick the part up.
- * The ONE difference here is that `markdown` is NOT cleared: the prose the
+ * continues, and `generateMissingParts`/the floor repair can pick the level up.
+ * The ONE difference here is that the level's TEXT is NOT cleared: the prose the
  * module writer produced is good, only its review failed, and throwing it away
  * to report a failed critic is exactly the content loss this slice forbids.
  *
- * KNOWN CONSEQUENCE, named for the next reader: a failed predecessor feeds no
- * continuity to the next part (`partCall` reads only a `'ready'` predecessor),
- * which is the same rule a generation failure follows. A review failure on part
- * i therefore costs part i+1 its continuity context until the owner retries
- * part i — the failure card names it, so the state is visible and recoverable.
+ * THAT IS WHY THE WRITE CARRIES NO `text` (docs/17 row 391): a state-only level
+ * write leaves the document BYTE-IDENTICAL and stamps the run state at the
+ * level's planIndex slot through the ONE conversion.
  *
- * The write is the module-row patch the generator's own slot writes use; the
- * row is re-read first, and the pass holds the generation lease, so no
- * competing writer can be overwritten here.
+ * KNOWN CONSEQUENCE, named for the next reader: a failed predecessor feeds no
+ * continuity to the next level (`levelCall` reads only a `'ready'` predecessor),
+ * which is the same rule a generation failure follows. A review failure on level
+ * i therefore costs level i+1 its continuity context until the owner retries
+ * level i — the failure card names it, so the state is visible and recoverable.
+ *
+ * The write re-reads the row inside its transaction, and the pass holds the
+ * generation lease, so no competing writer can be overwritten here.
  */
-async function failPartReview(moduleId: Id, planIndex: number, message: string): Promise<void> {
-  const current = await requireModule(moduleId);
-  const parts = current.parts.map((part): ModulePart =>
-    part.planIndex === planIndex ? { ...part, status: 'failed', errorMessage: message } : part,
-  );
-  await patchModule(moduleId, { parts });
+async function failLevelReview(moduleId: Id, level: number, message: string): Promise<void> {
+  await saveModuleLevels(moduleId, [
+    { level, state: { status: 'failed', errorMessage: message } },
+  ]);
 }
 
 /**
@@ -2808,55 +2902,58 @@ async function reviewPremiseInGeneration(input: {
 }
 
 /**
- * Runs the adversarial pass over ONE just-written part and applies its edit
- * through THE one part-text save path (`features/modules/partText`,
- * `saveModulePartText` → `db/moduleRepo.patchModulePartText`), the same seam
- * the canvas rewrite's Apply rides: one transaction, the whole replacement
- * applied or nothing, the row re-read inside the transaction, and the
- * second-module promote scan after it. The replacement is the COMPLETE new
- * markdown of that LEVEL SECTION, so the module document's scaffolding
- * (`=====Level N=====` separators) is never touched — the section's text is
- * spliced into the ONE document by `domain/moduleDocument`, and there is no
- * second document format to hand-assemble.
+ * Runs the adversarial pass over ONE just-written LEVEL and applies its edit
+ * through THE one level-text write (the SAME document seam the board's Apply
+ * rides): one transaction, the whole replacement applied or nothing, the row
+ * re-read inside the transaction, and the second-module promote scan after it.
+ * The replacement is the COMPLETE new markdown of that LEVEL SECTION, so the
+ * module document's scaffolding (`=====Level N=====` separators) is never
+ * touched — the section's text is spliced into the ONE document by
+ * `domain/moduleDocument`, and there is no second document format to
+ * hand-assemble.
  *
- * THE FAILURE CONTAINMENT: a failed critique or a failed editor marks THIS part
- * failed with its text preserved (`failPartReview`) and returns — the module
+ * THE FAILURE CONTAINMENT: a failed critique or a failed editor marks THIS level
+ * failed with its text preserved (`failLevelReview`) and returns — the module
  * run CONTINUES. Nothing is thrown but a stop, and no half-applied replacement
  * can exist: `runAdversarialPass` returns a complete validated replacement or
  * throws before any write.
  *
  * The text reviewed is the markdown `generatePart` just wrote, in the same
- * generation lease, so it is the part's current text; the next part's
- * continuity context is read from the row after this write, i.e. the REVIEWED
- * text.
+ * generation lease, so it is the level's current text; the next level's
+ * continuity context is read from the document after this write, i.e. the
+ * REVIEWED text.
  */
-async function reviewPartInGeneration(input: {
+async function reviewLevelInGeneration(input: {
   moduleId: Id;
-  planIndex: number;
-  title: string;
+  level: number;
   ordinal: number;
   total: number;
   text: string;
   signal: AbortSignal;
   jobId: string;
 }): Promise<void> {
-  const where = `part ${String(input.ordinal)} of ${String(input.total)}: ${input.title}`;
+  const where = `level ${String(input.level)} (${String(input.ordinal)} of ${String(input.total)})`;
   const progress = useProgressStore.getState();
   progress.update(input.jobId, { detail: adversarialReviewDetail(where) });
+  // The adversarial pass's own target vocabulary is still part-shaped (the
+  // canvas chat's persisted command carries a `planIndex`; docs/17 row 388
+  // keeps that keying for its own slice) — so this call converts through the
+  // ONE pair, never a mapping of its own.
+  const planIndex = planIndexForLevel(input.level);
   let report: AdversarialPassReport;
   try {
     report = await runAdversarialPass({
       moduleId: input.moduleId,
-      target: { kind: 'part', planIndex: input.planIndex },
+      target: { kind: 'part', planIndex },
       text: input.text,
       signal: input.signal,
     });
   } catch (error) {
     if (isCancel(error, input.signal)) throw error;
-    await failPartReview(
+    await failLevelReview(
       input.moduleId,
-      input.planIndex,
-      `The adversarial review failed: ${errorMessage(error)} The generated text was left unchanged — retry the part to review it again.`,
+      input.level,
+      `The adversarial review failed: ${errorMessage(error)} The generated text was left unchanged — retry the level to review it again.`,
     );
     return;
   }
@@ -2868,17 +2965,32 @@ async function reviewPartInGeneration(input: {
   }
   progress.update(input.jobId, { detail: `Applying the adversarial edit to ${where}…` });
   try {
-    await saveModulePartText(
-      input.moduleId,
-      input.planIndex,
-      report.edit.replacement,
-      report.edit.modelUsed,
-    );
+    // AUTHORSHIP: `edited: true` + `origin: 'model'` is EXACTLY what this write
+    // landed before the engine was re-keyed (it rode `saveModulePartText`, the
+    // canvas Apply's own seam) and it is deliberately preserved: the replacement
+    // is the EDITOR model's rewrite of the level's text, not the module writer's
+    // bytes, and the floor-repair scope reads `edited` to decide what the
+    // generator may still rewrite. Changing that reading is its own decision,
+    // not a side effect of moving the write onto the document seam.
+    await saveModuleLevels(input.moduleId, [
+      {
+        level: input.level,
+        text: report.edit.replacement,
+        state: {
+          status: 'ready',
+          errorMessage: '',
+          edited: true,
+          writerModel: report.edit.modelUsed,
+          origin: 'model',
+        },
+      },
+    ]);
+    await promoteSecondModuleUses(input.moduleId, [report.edit.replacement]);
   } catch (error) {
     if (isCancel(error, input.signal)) throw error;
-    await failPartReview(
+    await failLevelReview(
       input.moduleId,
-      input.planIndex,
+      input.level,
       `The adversarial edit could not be applied: ${errorMessage(error)} The generated text was left unchanged.`,
     );
   }
@@ -2953,42 +3065,44 @@ export async function approveSpineAndRun(
 }
 
 /**
- * Per-part "Rewrite…" (also the failed-part Retry): regenerates just that
- * part with the same context recipe (prior part = its CURRENT text) and an
- * optional user instruction. Overwrites the part's markdown — the reader
- * confirms when the part was hand-edited.
+ * Per-LEVEL "Rewrite…" (also the failed-level Retry): regenerates just that
+ * LEVEL SECTION with the same context recipe (its own current text is the
+ * material, the prior level = its CURRENT text) and an optional user
+ * instruction. Overwrites the level's section text in the ONE document — the
+ * reader confirms when the level was hand-edited.
  */
 export async function rewritePart(
   moduleId: Id,
   campaign: Campaign,
-  planIndex: number,
+  level: number,
   extraInstruction = '',
 ): Promise<void> {
   await runParts(moduleId, campaign, {
-    planIndexes: [planIndex],
+    levels: [level],
     extraInstruction,
   }).catch(() => undefined);
 }
 
 /**
- * Header action after pass 1 completed with holes: writes every part that is
- * not `ready` yet (pending/failed slots), leaving successful ones untouched.
+ * Header action after pass 1 completed with holes: writes every LEVEL SECTION
+ * that is not `ready` yet (pending/failed slots), leaving successful ones
+ * untouched.
  */
 export async function generateMissingParts(moduleId: Id, campaign: Campaign): Promise<void> {
   const module = await getModule(moduleId);
   if (module === undefined) throw new Error('Module no longer exists');
-  if (module.spine === null) throw new Error('Cannot generate parts without an approved spine');
-  const indexes = module.spine.partPlan
-    .map((_, index) => index)
-    .filter((index) => {
-      const part = module.parts.find((entry) => entry.planIndex === index);
+  if (module.spine === null) throw new Error('Cannot generate levels without an approved document');
+  const levels = moduleLevelSectionsFromView(module)
+    .filter((section) => {
+      const part = module.parts.find(
+        (entry) => entry.planIndex === planIndexForLevel(section.number),
+      );
       return part?.status !== 'ready';
-    });
-  if (indexes.length === 0) return;
+    })
+    .map((section) => section.number);
+  if (levels.length === 0) return;
   const epoch = getStopEpoch();
-  const finished = await runPartsPass(moduleId, campaign, { planIndexes: indexes }).catch(
-    () => undefined,
-  );
+  const finished = await runPartsPass(moduleId, campaign, { levels }).catch(() => undefined);
   // A floor-gated pass is not ready and a CANCELLED one is `aborted` (its
   // row still says 'ready' so Retry stays available) — automation follows a
   // COMPLETED pass, and never follows a stop.
@@ -3006,20 +3120,20 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
  * text untouched), and what is still short.
  */
 export interface FloorRepairOutcome {
-  /** Parts the rewrite was attempted for, in the order attempted. */
-  attempted: { planIndex: number; title: string }[];
-  /** Parts whose text the model rewrote (the durable snapshot precedes them). */
-  rewritten: { planIndex: number; title: string }[];
+  /** Levels the rewrite was attempted for, in the order attempted. */
+  attempted: { level: number; title: string }[];
+  /** Levels whose text the model rewrote (the durable snapshot precedes them). */
+  rewritten: { level: number; title: string }[];
   /** Attempts that threw: the pre-repair text was restored (nothing written). */
-  failed: { planIndex: number; title: string; message: string }[];
-  /** Requested parts that were no longer short when the repair re-derived the
+  failed: { level: number; title: string; message: string }[];
+  /** Requested levels that were no longer short when the repair re-derived the
    * scope (the text changed while the confirmation was open) — never rewritten. */
-  skipped: { planIndex: number; title: string }[];
+  skipped: { level: number; title: string }[];
   /** Still short after the attempt (empty = the floor is met). */
   remaining: PartEncounterCount[];
   /** The module's floor is met after this run. */
   met: boolean;
-  /** A Stop all / cancel landed before the next part: nothing more started. */
+  /** A Stop all / cancel landed before the next level: nothing more started. */
   stopped: boolean;
 }
 
@@ -3057,7 +3171,7 @@ export interface FloorRepairOutcome {
 export async function repairModuleEncounterFloor(
   moduleId: Id,
   campaign: Campaign,
-  planIndexes: readonly number[],
+  levels: readonly number[],
 ): Promise<FloorRepairOutcome> {
   const entry = await requireModule(moduleId);
   const floor = encounterFloorGuardrailFor(entry);
@@ -3073,27 +3187,25 @@ export async function repairModuleEncounterFloor(
     met: false,
     stopped: false,
   };
-  if (planIndexes.length === 0) return outcome;
-  // The requested parts are intersected with the scope the LIVE row actually
+  if (levels.length === 0) return outcome;
+  // The requested LEVELS are intersected with the scope the LIVE row actually
   // needs BEFORE anything is written: a confirmation opened against text that
   // has since been fixed must produce no snapshot, no status change and no call
   // — the repair can only ever rewrite LESS than it promised.
-  const requested = new Set(planIndexes);
+  //
+  // The FLOOR REPORT speaks the derived view's `planIndex` (its `PartEncounterCount`
+  // is the shape the canvas's problem list consumes), so this seam converts
+  // through the ONE pair and never counts on arithmetic of its own.
+  const requested = new Set(levels.map((level) => planIndexForLevel(level)));
   const titles = new Map(
-    (entry.spine?.partPlan ?? []).map((plan, planIndex) => [
-      planIndex,
-      plan.title.trim() === '' ? `Part ${String(planIndex + 1)}` : plan.title,
-    ]),
+    moduleLevelSectionsFromView(entry).map((section) => [section.number, section.title]),
   );
   const liveTargets = floorRepairTargets(entry, floor)
     .map((target) => target.planIndex)
     .filter((planIndex) => requested.has(planIndex));
-  for (const planIndex of planIndexes) {
-    if (liveTargets.includes(planIndex)) continue;
-    outcome.skipped.push({
-      planIndex,
-      title: titles.get(planIndex) ?? `Part ${String(planIndex + 1)}`,
-    });
+  for (const level of levels) {
+    if (liveTargets.includes(planIndexForLevel(level))) continue;
+    outcome.skipped.push({ level, title: titles.get(level) ?? `Level ${String(level)}` });
   }
   const liveReport = countModuleEncounters(entry, floor);
   outcome.met = liveReport.found >= liveReport.required && liveReport.deficient.length === 0;
@@ -3107,70 +3219,74 @@ export async function repairModuleEncounterFloor(
     const settings = await getSettings();
     const repairModelName = repairModel(settings.defaultChatModel, settings);
     // Durable pre-change snapshot (docs/18 §2.3 simple undo) BEFORE the first
-    // write: the whole parts document as it stands now, so every part this run
+    // write: the whole module document as it stands now, so every level this run
     // rewrites can be undone as one change. Throws loud if it cannot be
     // recorded — no rewrite lands without a restorable pre-state.
     await snapshotModuleVersion(
       moduleId,
       'generation',
-      `Fix module problems — encounter floor (${String(planIndexes.length)} part${planIndexes.length === 1 ? '' : 's'})`,
+      `Fix module problems — encounter floor (${String(levels.length)} level${levels.length === 1 ? '' : 's'})`,
     );
     // The row says 'generating' for the run's duration: that is what the canvas
     // busy badge reads and what Stop all's module sweep keys the abort on.
     await patchModule(moduleId, { status: 'generating' });
     statusSet = true;
 
-    for (const planIndex of planIndexes) {
+    for (const level of levels) {
       // "A stopped orchestration must not start its next unit" (lib/stopEpoch):
-      // a stop landing while the previous part was being rewritten ends the run
+      // a stop landing while the previous level was being rewritten ends the run
       // here rather than firing one more doomed call.
       if (stoppedSince(epoch) || controller.signal.aborted) {
         outcome.stopped = true;
         break;
       }
       const current = await requireModule(moduleId);
-      if (current.spine === null) throw new Error('The spine was removed mid-repair');
-      // The scope is re-derived from the LIVE row: a part the owner already
-      // fixed (or a plan that changed) while the confirmation was open is
+      if (current.spine === null) throw new Error('The document was removed mid-repair');
+      // The scope is re-derived from the LIVE row: a level the owner already
+      // fixed (or a document that changed) while the confirmation was open is
       // skipped, so the repair can only ever rewrite LESS than it promised.
+      const planIndex = planIndexForLevel(level);
       const target = floorRepairTargets(current, floor).find(
         (entryTarget) => entryTarget.planIndex === planIndex,
       );
-      const title = current.spine.partPlan[planIndex]?.title ?? `Part ${String(planIndex + 1)}`;
+      const title = titles.get(level) ?? `Level ${String(level)}`;
       if (target === undefined) {
-        outcome.skipped.push({ planIndex, title });
+        outcome.skipped.push({ level, title });
         continue;
       }
-      outcome.attempted.push({ planIndex, title: target.title });
+      outcome.attempted.push({ level, title: target.title });
       const before = current.parts.find((part) => part.planIndex === planIndex);
       try {
-        await generatePart(moduleId, current, planIndex, campaign, repairModelName, {
+        await generatePart(moduleId, current, level, campaign, repairModelName, {
           signal: controller.signal,
-          extraInstruction: floorRepairRewriteInstruction(target, current.spine.partPlan.length),
+          extraInstruction: floorRepairRewriteInstruction(
+            target,
+            runLevelSections(current).length,
+          ),
           onToken: undefined,
           onReasoning: undefined,
           onActivity: undefined,
           onEmbeddingProgress: undefined,
         });
-        outcome.rewritten.push({ planIndex, title: target.title });
+        outcome.rewritten.push({ level, title: target.title });
       } catch (error) {
         // A cancel is not a failure (the stop's own surface owns it) — but the
         // pre-repair prose still comes back: a stop must never cost text.
-        await restorePartAfterFailedRepair(moduleId, before);
+        await restoreLevelAfterFailedRepair(moduleId, level, before);
         if (isCancel(error, controller.signal)) {
           outcome.stopped = true;
           break;
         }
-        outcome.failed.push({ planIndex, title: target.title, message: errorMessage(error) });
+        outcome.failed.push({ level, title: target.title, message: errorMessage(error) });
       }
     }
 
     if (!outcome.stopped && outcome.rewritten.length > 0) {
-      // The rewritten parts name NEW encounters, and the floor counter only
+      // The rewritten levels name NEW encounters, and the floor counter only
       // counts links whose recorded kind is `encounter` — so the pass that
-      // records kinds runs here, exactly as the parts pass's repair runs it.
+      // records kinds runs here, exactly as the level pass's repair runs it.
       // It is the existing pass (its own snapshot, its consent rule for
-      // hand-edited parts), never a second classifier.
+      // hand-edited levels), never a second classifier.
       await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
         if (isCancel(error, controller.signal)) throw error;
         recordNormalizationFailure(error);
@@ -3195,8 +3311,8 @@ export async function repairModuleEncounterFloor(
         }
         await patchModule(moduleId, { status: 'failed', errorMessage: message });
         stillShort =
-          `${message} One rewrite attempt per part was made, so nothing more was tried — ` +
-          `check the ${String(outcome.remaining.length)} part${outcome.remaining.length === 1 ? '' : 's'} named above, or add the missing [[encounter]] links by hand.`;
+          `${message} One rewrite attempt per level was made, so nothing more was tried — ` +
+          `check the ${String(outcome.remaining.length)} level${outcome.remaining.length === 1 ? '' : 's'} named above, or add the missing [[encounter]] links by hand.`;
       }
     }
   } catch (error) {
@@ -3219,7 +3335,7 @@ export async function repairModuleEncounterFloor(
 
   if (outcome.failed.length > 0) {
     toastError(
-      `${String(outcome.failed.length)} of ${String(outcome.attempted.length)} parts could not be rewritten — ` +
+      `${String(outcome.failed.length)} of ${String(outcome.attempted.length)} levels could not be rewritten — ` +
         `their text was left as it was (${outcome.failed
           .map((failure) => `"${failure.title}" — ${failure.message}`)
           .join('; ')})`,
@@ -3232,8 +3348,8 @@ export async function repairModuleEncounterFloor(
   }
   if (outcome.rewritten.length > 0) {
     toastSuccess(
-      `Fixed the encounter floor: rewrote ${String(outcome.rewritten.length)} part${outcome.rewritten.length === 1 ? '' : 's'} ` +
-        `(${outcome.rewritten.map((part) => `"${part.title}"`).join(', ')}) — the pre-repair text is in Versions.`,
+      `Fixed the encounter floor: rewrote ${String(outcome.rewritten.length)} level${outcome.rewritten.length === 1 ? '' : 's'} ` +
+        `(${outcome.rewritten.map((entry) => `"${entry.title}"`).join(', ')}) — the pre-repair text is in Versions.`,
     );
   }
   return outcome;

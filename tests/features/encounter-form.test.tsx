@@ -875,7 +875,7 @@ function mentionModule(): Module {
 describe('encounter form party level — the mentioning part decides, rendered (docs/17 row 299)', () => {
   beforeEach(clearDatabase);
 
-  it("shows the mentioning part's EXACT level read-only, NAMES the part, and offers NO owner-set input", () => {
+  it("shows the mentioning LEVEL's exact number read-only, NAMES the level, and offers NO owner-set input", () => {
     render(
       <EncounterForm
         data={partyLevelEncounterData}
@@ -892,14 +892,16 @@ describe('encounter form party level — the mentioning part decides, rendered (
     const derived = screen.getByTestId('encounter-party-level-readonly');
     expect(derived).toHaveValue('2');
     expect(derived).toHaveAttribute('readonly');
-    // …and the part is NAMED, so the source of the number is visible.
-    expect(screen.getByText(/mentions this encounter — its exact level is the party level\./)).toHaveTextContent(
-      'Ember Halls',
-    );
-    // THE ABSENCE ASSERTION (the regression this row pins): a part decides, so
+    // …and the LEVEL is NAMED, so the source of the number is visible. It is
+    // named by its NUMBER (docs/23 §2, docs/17 row 391): a chat-authored level
+    // has no stored title, and the plan record is not a second source of truth.
+    expect(
+      screen.getByText(/of the module document mentions this encounter — that exact level is the party level\./),
+    ).toHaveTextContent('Level 2');
+    // THE ABSENCE ASSERTION (the regression this row pins): a level decides, so
     // the owner-set structured input must NOT render, in any form.
     expect(screen.queryByTestId('encounter-party-level')).not.toBeInTheDocument();
-    expect(screen.queryByText(/No module part mentions this encounter/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No level of the module document mentions this encounter/)).not.toBeInTheDocument();
   });
 
   it('shows the structured owner-set input, and NO read-only part line, when no part mentions it', () => {
@@ -918,11 +920,13 @@ describe('encounter form party level — the mentioning part decides, rendered (
     // number (AGENTS rule 5), with the no-mention reason stated.
     expect(screen.getByTestId('encounter-party-level')).toBeInTheDocument();
     expect(
-      screen.getByText(/No module part mentions this encounter — set the exact party level the fight is made for\./),
+      screen.getByText(/No level of the module document mentions this encounter — set the exact party level the fight is made for\./),
     ).toBeInTheDocument();
     // The other direction, asserted as an ABSENCE too: no part-derived field
     // and no read-only line anywhere.
     expect(screen.queryByTestId('encounter-party-level-readonly')).not.toBeInTheDocument();
-    expect(screen.queryByText(/mentions this encounter — its exact level is the party level/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/mentions this encounter — that exact level is the party level/),
+    ).not.toBeInTheDocument();
   });
 });

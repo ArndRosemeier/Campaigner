@@ -44,7 +44,6 @@ import {
   getModule,
   patchModule,
   saveModule,
-  patchModulePartText,
   createModule as createModuleRow,
 } from '@/db/moduleRepo';
 import {
@@ -78,7 +77,7 @@ import {
 } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import { updateSettings } from '@/db/settingsRepo';
-import { saveModulePartText } from '@/features/modules/partText';
+import { saveModuleLevelText } from '@/features/modules/levelText';
 import type { ChatResult } from '@/llm/openrouter';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
@@ -127,6 +126,7 @@ import {
   findScaffoldingEcho,
 } from '@/llm/promptScaffolding';
 
+import { partCallText } from '../helpers/generationChat';
 const { chat } = await import('@/llm/openrouter');
 const { toastError, toastSuccess } = await import('@/lib/toast');
 
@@ -382,7 +382,7 @@ describe('escapeDebris.test.ts', () => {
         })
         .mockResolvedValueOnce(encounterVerdict); // re-normalization
 
-      const finished = await runParts(saved.id, campaign, { planIndexes: [0, 1] });
+      const finished = await runParts(saved.id, campaign, { levels: [1, 2] });
 
       // The encounter floor cannot pass with the debris part missing — the
       // module fails LOUDLY naming the part instead of shipping ready.
@@ -560,11 +560,18 @@ describe('module-edit-origin.test.ts', () => {
     vi.restoreAllMocks();
   });
 
-  describe('the one part-text save seam records the ORIGIN, not just `edited`', () => {
+  describe('the one LEVEL-text save seam records the ORIGIN, not just `edited`', () => {
     it('a write that supplies a writerModel is a MODEL write (edited stays true)', async () => {
       const { moduleId } = await seedModule();
+      // The document must CARRY the level a text write names (docs/17 row 391):
+      // the level-addressed seam refuses loudly where the old planIndex-keyed
+      // part save silently created a slot — the app only ever writes a level the
+      // chat created, so the refusal is the honest boundary.
+      await seedSpine(moduleId, 'The bell rings.', null);
 
-      await patchModulePartText(moduleId, 0, 'Model-written prose.', 'staged/canvas-model');
+      await saveModuleLevelText(moduleId, 1, 'Model-written prose.', {
+        writerModel: 'staged/canvas-model',
+      });
 
       const part = (await getModule(moduleId))?.parts[0];
       expect(part?.origin).toBe('model');
@@ -578,10 +585,13 @@ describe('module-edit-origin.test.ts', () => {
 
     it('a write that omits it is a HUMAN write, and carries the recorded model id forward', async () => {
       const { moduleId } = await seedModule();
-      await patchModulePartText(moduleId, 0, 'Model-written prose.', 'staged/canvas-model');
+      await seedSpine(moduleId, 'The bell rings.', null);
+      await saveModuleLevelText(moduleId, 1, 'Model-written prose.', {
+        writerModel: 'staged/canvas-model',
+      });
 
       // The owner's hand edit through the sanctioned feature seam: no id.
-      await saveModulePartText(moduleId, 0, 'The owner rewrote this passage by hand.');
+      await saveModuleLevelText(moduleId, 1, 'The owner rewrote this passage by hand.');
 
       const part = (await getModule(moduleId))?.parts[0];
       expect(part?.origin).toBe('human');
@@ -591,10 +601,11 @@ describe('module-edit-origin.test.ts', () => {
       expect(textOriginIsMachineWritten(part?.origin)).toBe(false);
     });
 
-    it('a first human write on a part with no recorded id stays empty and reads as human', async () => {
+    it('a first human write on a level with no recorded id stays empty and reads as human', async () => {
       const { moduleId } = await seedModule();
+      await seedSpine(moduleId, 'The bell rings.', null);
 
-      await saveModulePartText(moduleId, 0, 'Typed straight into the reader.');
+      await saveModuleLevelText(moduleId, 1, 'Typed straight into the reader.');
 
       const part = (await getModule(moduleId))?.parts[0];
       expect(part?.writerModel).toBe('');
@@ -1058,10 +1069,10 @@ describe('moduleGen-floor-repair.test.ts', () => {
         .mockResolvedValueOnce(prose('PART-TWO-REPAIRED', ['Flood Trial']))
         .mockResolvedValueOnce(encounterReply('Bell Trial', 'Flood Trial'));
 
-      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [1]);
+      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [2]);
 
-      expect(outcome.attempted.map((entry) => entry.planIndex)).toEqual([1]);
-      expect(outcome.rewritten.map((entry) => entry.planIndex)).toEqual([1]);
+      expect(outcome.attempted.map((entry) => entry.level)).toEqual([2]);
+      expect(outcome.rewritten.map((entry) => entry.level)).toEqual([2]);
       expect(outcome.failed).toEqual([]);
       expect(outcome.skipped).toEqual([]);
       expect(outcome.met).toBe(true);
@@ -1099,7 +1110,7 @@ describe('moduleGen-floor-repair.test.ts', () => {
         .mockResolvedValueOnce(prose('PART-TWO-REPAIRED', ['Flood Trial']))
         .mockResolvedValueOnce(encounterReply('Bell Trial', 'Flood Trial'));
 
-      await repairModuleEncounterFloor(moduleId, campaign, [1]);
+      await repairModuleEncounterFloor(moduleId, campaign, [2]);
 
       const versions = await listModuleVersions(moduleId);
       const repairVersion = versions.find((version) =>
@@ -1123,9 +1134,9 @@ describe('moduleGen-floor-repair.test.ts', () => {
       const preRepair = before?.parts.find((part) => part.planIndex === 1);
       chatMock.mockRejectedValueOnce(new Error('provider exploded mid-rewrite'));
 
-      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [1]);
+      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [2]);
 
-      expect(outcome.failed.map((entry) => entry.planIndex)).toEqual([1]);
+      expect(outcome.failed.map((entry) => entry.level)).toEqual([2]);
       expect(outcome.rewritten).toEqual([]);
       expect(outcome.met).toBe(false);
       expect(outcome.remaining.map((entry) => entry.planIndex)).toEqual([1]);
@@ -1162,10 +1173,10 @@ describe('moduleGen-floor-repair.test.ts', () => {
         })
         .mockResolvedValueOnce(encounterReply('Bell Trial'));
 
-      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [1]);
+      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [2]);
 
       expect(outcome.met).toBe(false);
-      expect(outcome.rewritten.map((entry) => entry.planIndex)).toEqual([1]);
+      expect(outcome.rewritten.map((entry) => entry.level)).toEqual([2]);
       expect(outcome.remaining.map((entry) => entry.planIndex)).toEqual([1]);
       const after = await getModule(moduleId);
       expect(after?.status).toBe('failed');
@@ -1179,7 +1190,7 @@ describe('moduleGen-floor-repair.test.ts', () => {
         (call) => call[0] === 'The module still falls short of its encounter floor',
       );
       expect(loud).toBeDefined();
-      expect((loud?.[1] as Error).message).toContain('One rewrite attempt per part was made');
+      expect((loud?.[1] as Error).message).toContain('One rewrite attempt per level was made');
       expect(toastSuccessMock).not.toHaveBeenCalled();
     }, 30_000);
 
@@ -1213,10 +1224,10 @@ describe('moduleGen-floor-repair.test.ts', () => {
       });
 
       const beforeCall = await getModule(moduleId);
-      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [1]);
+      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [2]);
 
       expect(outcome.attempted).toEqual([]);
-      expect(outcome.skipped.map((entry) => entry.planIndex)).toEqual([1]);
+      expect(outcome.skipped.map((entry) => entry.level)).toEqual([2]);
       expect(outcome.met).toBe(true);
       // No model call, no rewrite, no snapshot of a change that never happened,
       // and not one byte written to the row.
@@ -1249,10 +1260,10 @@ describe('moduleGen-floor-repair.test.ts', () => {
         }),
       });
 
-      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [1, 2]);
+      const outcome = await repairModuleEncounterFloor(moduleId, campaign, [2, 3]);
 
       expect(outcome.stopped).toBe(true);
-      expect(outcome.attempted.map((entry) => entry.planIndex)).toEqual([1]);
+      expect(outcome.attempted.map((entry) => entry.level)).toEqual([2]);
       expect(chatMock).toHaveBeenCalledTimes(1);
       // A stopped run reaches no verdict about the text: the row keeps the status
       // it had at entry.
@@ -1275,12 +1286,12 @@ describe('moduleGen-floor-repair.test.ts', () => {
       );
       chatMock.mockResolvedValueOnce(encounterReply('Bell Trial', 'Flood Trial'));
 
-      const first = repairModuleEncounterFloor(moduleId, campaign, [1]);
+      const first = repairModuleEncounterFloor(moduleId, campaign, [2]);
       await waitFor(() => {
         expect(chatMock).toHaveBeenCalledTimes(1);
       });
 
-      await expect(repairModuleEncounterFloor(moduleId, campaign, [1])).rejects.toBeInstanceOf(
+      await expect(repairModuleEncounterFloor(moduleId, campaign, [2])).rejects.toBeInstanceOf(
         ModuleBusyError,
       );
 
@@ -1560,7 +1571,7 @@ describe('moduleGen-party-exclusion.test.ts', () => {
       await runSpine(moduleId, campaign);
       await runParts(moduleId, campaign);
 
-      const part = promptContaining('Write part 1');
+      const part = promptContaining('Write level 1.');
       expect(part).toContain('Existing campaign entities');
       expect(part).toContain(`${SHARED_NPC} (npc)`);
       expect(part).toContain('Shared campaign cast');
@@ -1876,20 +1887,6 @@ describe('moduleGen-rewrite-context.test.ts', () => {
     });
   }
 
-  function partCallText(): string {
-    const call = chatMock.mock.calls.find((messages) =>
-      messages[0].some(
-        (message) =>
-          message.role === 'user' &&
-          typeof message.content === 'string' &&
-          message.content.includes('Write part'),
-      ),
-    );
-    if (call === undefined) throw new Error('no part call made');
-    const user = call[0].find((message) => message.role === 'user');
-    return typeof user?.content === 'string' ? user.content : '';
-  }
-
   beforeEach(async () => {
     await clearDatabase();
     chatMock.mockReset();
@@ -1901,9 +1898,9 @@ describe('moduleGen-rewrite-context.test.ts', () => {
       await seedReadyPart(targetId);
       chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(normReply());
 
-      await runParts(targetId, campaign, { planIndexes: [0], includePriorModules: true });
+      await runParts(targetId, campaign, { levels: [1], includePriorModules: true });
 
-      expect(partCallText()).toContain('Previous modules of this campaign');
+      expect(partCallText(chatMock.mock.calls)).toContain('Previous modules of this campaign');
       // The run lands ready: the subset owns its band only (part 1 is out of
       // scope), and the declared encounter satisfies band 1.
       const row = await getModule(targetId);
@@ -1921,9 +1918,9 @@ describe('moduleGen-rewrite-context.test.ts', () => {
       await seedReadyPart(targetId);
       chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(normReply());
 
-      await runParts(targetId, campaign, { planIndexes: [0], includePriorModules: false });
+      await runParts(targetId, campaign, { levels: [1], includePriorModules: false });
 
-      expect(partCallText()).not.toContain('Previous modules of this campaign');
+      expect(partCallText(chatMock.mock.calls)).not.toContain('Previous modules of this campaign');
       expect((await getModule(targetId))?.includePriorModules).toBe(true);
     }, 30000);
 
@@ -1933,9 +1930,9 @@ describe('moduleGen-rewrite-context.test.ts', () => {
       await seedReadyPart(targetId);
       chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(normReply());
 
-      await runParts(targetId, campaign, { planIndexes: [0] });
+      await runParts(targetId, campaign, { levels: [1] });
 
-      expect(partCallText()).toContain('Previous modules of this campaign');
+      expect(partCallText(chatMock.mock.calls)).toContain('Previous modules of this campaign');
     }, 30000);
   });
 });
@@ -2069,7 +2066,7 @@ describe('moduleGenReconcile.test.ts', () => {
       chatMock.mockImplementation(holdUntilAborted);
       // A REAL held pass: `runParts` registers the controller, marks the module
       // 'generating' and parks in the model call.
-      void runParts(moduleId, campaign, { planIndexes: [1] }).catch(() => undefined);
+      void runParts(moduleId, campaign, { levels: [2] }).catch(() => undefined);
       await vi.waitFor(() => {
         expect(hasLiveModuleGen(moduleId)).toBe(true);
       });
@@ -2427,8 +2424,8 @@ describe('provenance-recording.test.ts', () => {
         parts: [{ ...planned, writerModel: CONFIGURED_MODEL }],
       });
 
-      // The reader's hand edit: `saveModulePartText` with NO writerModel.
-      await saveModulePartText(module.id, 0, 'The owner rewrote this passage by hand.');
+      // The reader's hand edit: `saveModuleLevelText` with NO writerModel.
+      await saveModuleLevelText(module.id, 1, 'The owner rewrote this passage by hand.');
       const after = await getModule(module.id);
       expect(after?.parts[0]?.markdown).toBe('The owner rewrote this passage by hand.');
       expect(after?.parts[0]?.edited).toBe(true);
@@ -3136,7 +3133,7 @@ describe('scaffoldingEcho.test.ts', () => {
         })
         .mockResolvedValueOnce(encounterVerdict); // re-normalization
 
-      await runParts(saved.id, campaign, { planIndexes: [0] });
+      await runParts(saved.id, campaign, { levels: [1] });
 
       const stored = await getModule(saved.id);
       const part = stored?.parts.find((entry) => entry.planIndex === 0);

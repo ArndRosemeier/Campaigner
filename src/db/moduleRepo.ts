@@ -6,14 +6,14 @@ import type {
   ModuleRow,
   ModuleSpine,
   PartPlan,
-  TextOrigin,
 } from '@/domain';
 import {
   moduleRowFromDocument,
+  moduleRowFromLevelWrites,
   moduleRowFromView,
   moduleRowSchema,
   moduleViewFromRow,
-  recordedWritingModel,
+  type ModuleLevelWrite,
 } from '@/domain';
 import { db } from '@/db/db';
 import {
@@ -216,77 +216,48 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
 }
 
 /**
- * THE one part-text save path (18-ARCHITECTURE §2.3): writes ONE part's
- * markdown onto the module row with `status: 'ready'` + `edited: true`.
- * The row is re-read INSIDE the transaction, so a parts write that landed
- * concurrently (another part's save, a generation finishing) can never be
- * lost to a stale snapshot — the patch carries only the changed part.
- * Every part-text write funnels through this (reader hand edits, canvas
- * rewrite Apply/Discard); part bodies live on the MODULE ROW — there is no
- * artifact revision for part markdown.
+ * THE one LEVEL-ADDRESSED document write (docs/23 §4, docs/17 row 391): writes
+ * one or more LEVELS' section texts and/or recorded run states through the ONE
+ * document seam, never a `parts` array keyed by `planIndex`.
  *
- * PROVENANCE (docs/17 row 93): `writerModel` is optional and its ABSENCE is
- * the load-bearing default.
- *   - a HAND EDIT (the reader's PartTextEditor, the canvas' manual Save) does
- *     not pass it, and the part KEEPS the id already recorded on the row: the
- *     field answers "which model WROTE this", so the owner's edits must never
- *     erase the provenance of the text they edited (owner decision);
- *   - a chat-applied rewrite passes the CHAT model — the model that wrote the
- *     text now on the row, i.e. the LAST writer;
- *   - a part with no recorded id that a hand edit touches stays `''` (not
- *     recorded → the reader displays nothing), never a settings-derived guess.
+ * THE ROW IS RE-READ INSIDE THE TRANSACTION, so a write that landed
+ * concurrently (another level's generation, the canvas save, a chat apply) can
+ * never be lost to a stale snapshot. The document is spliced by
+ * `moduleRowFromLevelWrites` over the row's OWN parsed text, so every byte the
+ * write does not name is preserved.
  *
- * AUTHORSHIP (docs/17 row 113): this function is ALSO the one place a part's
- * `origin` is stamped, and the rule is the same argument the line above makes
- * — the origin is knowable HERE and thrown away nowhere else. Handing it a
- * `writerModel` records `origin: 'model'` (a model wrote the text now on the
- * row: a canvas chat apply, an accepted AI proposal, an auto-accepted one);
- * omitting it records `origin: 'human'`. `edited` deliberately stays `true`
- * for BOTH — it means "written outside the generator", which is what its
- * readers assume — so the two fields are recorded side by side rather than
- * one being overloaded into a lie. A generator write sets `edited: false` and
- * `origin: 'model'` itself (it is the generator's own text by construction).
+ * THE CALLERS ARE TWO KINDS, and the write says which it is rather than letting
+ * a reader guess:
+ *   - the GENERATOR (`llm/moduleGen`) states the level's own run state —
+ *     `generating` while the call is in flight, then `ready` with the serving
+ *     model and `edited: false` (it is the generator's text by construction), or
+ *     `failed`/`pending` with the error and the text the attempt did not
+ *     replace. A state-only write (no `text`) is how a failed review marks a
+ *     level without losing the prose it reviewed.
+ *   - a HAND EDIT (the reader's editor) and the board's Apply/Discard state
+ *     `status: 'ready'`, `edited: true` and their own `origin`; an OMITTED
+ *     `writerModel` CARRIES the id already recorded — the owner's edits must
+ *     never erase which model wrote the text they edited (docs/17 row 93).
  *
- * `authorship` is for the one caller shape the writer-model signal cannot
- * express — a write that does not CHANGE who wrote the text: the board's
- * Apply re-lands the text the engine just wrote (so the model's origin must
- * survive it) and the board's Discard puts the PREVIOUS text back together
- * with the authorship that text had (`stagedRewrites` captures it before the
- * rewrite overwrites the row). It states the origin the caller holds; it is
- * not a second record of authorship — nothing else derives or stores one, and
- * `undefined` keeps the writer-model rule above as the single default.
+ * PROVENANCE/AUTHORSHIP ride the same `state` (`docs/17` rows 93/113), and the
+ * PREMISE's own provenance (`premiseWriterModel`/`premiseOrigin`) is named
+ * separately by a caller that rewrote level 0 — the text is a level like any
+ * other, but the premise records no run state.
  */
-export async function patchModulePartText(
+export async function saveModuleLevels(
   id: Id,
-  planIndex: number,
-  markdown: string,
-  writerModel?: string,
-  authorship?: TextOrigin | null,
+  writes: readonly ModuleLevelWrite[],
+  premise?: { writerModel: string; origin: ModulePart['origin'] },
 ): Promise<Module> {
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) throw new NotFoundError('Module', id);
-    const module = parseModuleRow(current);
-    const existing = module.parts.find((part) => part.planIndex === planIndex);
-    const nextPart: ModulePart = {
-      planIndex,
-      markdown,
-      status: 'ready',
-      errorMessage: '',
-      edited: true,
-      // Omitted `writerModel` = this write cannot name a model (a hand edit),
-      // so the recorded id is CARRIED — never blanked.
-      writerModel: writerModel ?? recordedWritingModel(existing?.writerModel) ?? '',
-      // The author of the text this write just landed. A write that named a
-      // model is machine-written; one that could not is the owner's; and a
-      // caller that KNOWS the authorship (a write that did not change it)
-      // states it.
-      origin: authorship !== undefined ? authorship : writerModel === undefined ? 'human' : 'model',
-    };
-    const parts = existing === undefined
-      ? [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex)
-      : module.parts.map((part) => (part.planIndex === planIndex ? nextPart : part));
-    return saveModule({ ...module, parts });
+    const next = moduleRowSchema.parse({
+      ...moduleRowFromLevelWrites(moduleRowSchema.parse(current), writes, premise),
+      updatedAt: Date.now(),
+    });
+    await db.modules.put(next);
+    return moduleViewFromRow(next);
   });
 }
 

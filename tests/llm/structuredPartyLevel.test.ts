@@ -559,12 +559,13 @@ describe('Cartographer brief structured level', () => {
   it('the mentioning part is NAMED with its exact level — the read-only source the editor shows', async () => {
     const { id: campaignId } = await createCampaign({ name: 'C', system: 'dnd5e' });
     const module = await seedModule(campaignId);
-    // ONE read carries BOTH facts the form needs, and it is the SAME pick the
-    // run sizes the fight from: the level half is `partLevelForMention`.
-    expect(partLevelMentionFor(module, 'Undercroft Feast')).toEqual({
-      partTitle: 'Ember Halls',
-      level: 2,
-    });
+    // ONE read answers it, and it is the SAME pick the run sizes the fight
+    // from: `partLevelForMention` is `partLevelMentionFor`'s level.
+    //
+    // IT NO LONGER READS THE PLAN TITLE (docs/17 row 391): a chat-authored level
+    // has none, the level's identity is its NUMBER (docs/23 §2), and the form
+    // names the LEVEL — the stored plan record is not a second source of truth.
+    expect(partLevelMentionFor(module, 'Undercroft Feast')).toEqual({ level: 2 });
     expect(partLevelMentionFor(module, 'Unmentioned Lair')).toBeUndefined();
   });
 

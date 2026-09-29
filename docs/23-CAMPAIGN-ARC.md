@@ -106,6 +106,35 @@ the ONE document and orders the extras (and the artifact-scope pickers), and the
 
 **BUILD STATE (2026-09-28, docs/17 row 390). PHASE 3a IS LANDED — THE CHAT AUTHORS FROM NOTHING, AND PASS 0 IS NO LONGER THE PREMISE'S AUTHOR.** The entry that was missing is real: `llm/moduleGen.startCampaignDocument` is the APP's creation seam (the create dialog calls it and lands on `canvasChatPath` with the chat open) and it writes an **EMPTY** document through the ONE refusing `createCampaignDocument` seam, running NO pass 0 — the generator's entry (`createModuleAndRun`) shares the SAME private row-creation body and keeps pass 0 as the generation path the phase-4 generation dialog will drive. The chat's empty-document pre-flight is **DELETED** (`NO_DOCUMENT_MESSAGE` and its two guards), the `hasDocument` option is gone from `chatTurn`/`chatController`/`snapshotChat`/`ChatSidebar`, and `CanvasPage` opens on an empty document instead of the "no document yet" panel. **A chat-created level's plan metadata is DECIDED AND PINNED: it is NONE** — `moduleRowFromDocument` stores empty `levelPlans` entries, the derived display title is the `Level N` label (never the prose caption line, §2), and a missing title is **not a failure**; `tests/features/canvas-chat-from-nothing.test.ts` pins both directions and the whole flow (the premise lands as level 0, `append_level` makes the app write `=====Level 1=====`, and the document round-trips through save/reload). **The pass-0 spine checkpoint is NARROWED to a row that HAS a pass-0 plan** (`showSpineCheckpoint` now requires `spine.partPlan.length > 0`): a chat-authored premise-only document is the reader, because the checkpoint's "Discard" would otherwise delete the premise the chat just wrote (pinned in `tests/features/module-reader.test.tsx`). The system prompt gained the authoring rule, so `tests/fixtures/gmAssistFraming/module-chat-golden.json` was recaptured through the project's own render path (**32659 → 34543 bytes, +1884**; `system` 9346 → 9955, `payload` 10335 → 10951, `followUp` 12395 → 13011; cause: ONE added prompt line, and the file's three JSON lines are the only changes). **THE FRONTIER IS NAMED, NOT ENTERED:** the generation engine is NOT re-keyed (it still addresses parts by `planIndex` through the derived view) and the dialog's generation-only controls still exist (recorded on the row, used by the generation step); moving them into the phase-4 generation dialog and re-keying the engine to levels are those slices'.
 
+**BUILD STATE (2026-09-28, docs/17 row 391). PHASE 1f IS LANDED — THE GENERATION ENGINE'S UNIT IS THE LEVEL, AND
+THE PLANINDEX-KEYED PART SAVE IS DELETED.** The last surface still keyed by `planIndex` on the INSIDE now
+addresses a level by its NUMBER through the ONE `levelForPlanIndex`/`planIndexForLevel` pair (never a third
+mapping, never arithmetic beside it): `PartsRunOptions.levels`, the `part-token`/`part-thinking` events,
+`generatePart`/`rewritePart`/`generateMissingParts`/`repairModuleEncounterFloor` and `FloorRepairOutcome` all
+speak levels, and `generateMissingParts` derives its scope from the DOCUMENT. **ITS PROMPTS READ THE LEVEL'S OWN
+TEXT**: `levelCall` parses the document once (`moduleLevelSectionsFromView`) and takes the material, the
+continuity and the level list from it — the stored `levelPlans` `title`/`synopsis`/`levelUpTrigger` are NO LONGER
+READ, because a chat-authored level has none (row 390) and the level's prose is what a generation step is about;
+the rules retrieval now searches with the level's own text, and `{{partEndCondition}}` is passed `null` (decision 4
+deleted `levelUpTrigger`). **ITS WRITES GO THROUGH THE DOCUMENT SEAM**: `db/moduleRepo.saveModuleLevels` +
+`domain/moduleDocument.moduleRowFromLevelWrites` is THE level-addressed write (re-read in the tx, spliced over the
+row's own bytes by `replaceLevelText`, run state merged), `db/moduleRepo.patchModulePartText` and
+`features/modules/partText.ts` are DELETED, and the reader's hand edit and the board's Apply/Discard write through
+`features/modules/levelText.saveModuleLevelText`. **PASS 0 IS NARROWED, NOT DELETED, AND THE CALLER IS NAMED**:
+`runSpine`'s only STARTER is `createModuleAndRun`, which no app surface calls (the app's door is
+`startCampaignDocument`), while the checkpoint and the reader's retry are RECOVERY for a row that already carries a
+pass-0 plan (the checkpoint stays narrowed to `partPlan.length > 0`, row 390) — pinned by
+`tests/architecture/pass0-is-narrowed.test.ts`, with the deletion's full pin list named in row 391 as the
+remainder. **THE DERIVED `spine`/`parts` VIEW STAYS**: it still has readers everywhere (the reader, the PDF, the
+board's card join, the entity panel and batch), so its deletion remains 1g's. **NO FORMAT MOVED** — no `version`
+bump, no storage change; the planIndex keys that remain (the stored `entityRewriteProposals`/`targetParts`/
+`documentPlan` fields, the mention convention, the canvas `?part=` address, the adversarial pass's target) are
+inventoried in `docs/18` §5 and left to their own slices. **THE GOLDENS MOVED, THROUGH THE PROJECT'S OWN RENDER
+PATH** (a `CAPTURE_PROMPT_GOLDENS=1` run of the real `runSpine`/`generatePart` against the mocked chat): the seven
+`tests/fixtures/promptStyles/*.txt` prompt goldens and
+`tests/fixtures/adversarialGeneration/flag-off-transcript.json` — each byte delta and its cause in row 391. Phase
+4 (the level-scoped generation dialog and automation off) is untouched and NOT started.
+
  (1) **A part
 does not cover a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
 1 and "this part covers levels 2–3" is expressed as TWO sections — the 16 behaviour pins that asserted the

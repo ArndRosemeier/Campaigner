@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { partCallText } from '../helpers/generationChat';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -635,20 +636,6 @@ describe('partCall constants-only sentence', () => {
     };
   }
 
-  function partCallText(): string {
-    const call = chatMock.mock.calls.find((messages) =>
-      messages[0].some(
-        (message) =>
-          message.role === 'user' &&
-          typeof message.content === 'string' &&
-          message.content.includes('Write part'),
-      ),
-    );
-    if (call === undefined) throw new Error('no part call made');
-    const user = call[0].find((message) => message.role === 'user');
-    return typeof user?.content === 'string' ? user.content : '';
-  }
-
   it('the part prompt carries the assertion rule for encounter scenes', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const targetDraft = createModule({
@@ -678,15 +665,15 @@ describe('partCall constants-only sentence', () => {
     await updateSettings({ defaultChatModel: TEST_MODEL });
     chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(normReply());
 
-    await runParts(target.id, campaign, { planIndexes: [0] });
+    await runParts(target.id, campaign, { levels: [1] });
 
     // The rewritten casting clause (docs/17 row 89): the writer asserts the
     // fiction — a stated count is binding — and keeps personal names off the
     // rank and file. This test used to pin the OLD clause ("name only the
     // fixed participants" / "rank-and-file"); it is the one existing pin on
     // that contract text outside the byte-identity fixtures.
-    expect(partCallText()).toContain('state what the fight IS and where it happens');
-    expect(partCallText()).toContain('A count you state is binding');
-    expect(partCallText()).toContain('A rank-and-file fighter never gets a personal name');
+    expect(partCallText(chatMock.mock.calls)).toContain('state what the fight IS and where it happens');
+    expect(partCallText(chatMock.mock.calls)).toContain('A count you state is binding');
+    expect(partCallText(chatMock.mock.calls)).toContain('A rank-and-file fighter never gets a personal name');
   }, 30_000);
 });

@@ -558,12 +558,13 @@ describe('ModuleReaderPage', () => {
     });
     expect(rewriteMock).not.toHaveBeenCalled();
 
-    // Confirming calls the generator for exactly this part (planIndex 0).
+    // Confirming calls the generator for exactly this LEVEL (docs/17 row 391:
+    // the engine's unit is the level NUMBER — this reader card is level 1).
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog2 = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
     await user.click(within(dialog2).getByRole('button', { name: 'Rewrite part' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
-    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
+    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 1, '');
     await flushAsyncUpdates();
   }, 20_000);
 
@@ -727,7 +728,7 @@ describe('ModuleReaderPage', () => {
     expect(within(dialog).getByRole('alert')).toHaveTextContent('You wrote this part.');
     await user.click(within(dialog).getByRole('button', { name: 'Rewrite part' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
-    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
+    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 1, '');
     await flushAsyncUpdates();
   }, 20_000);
 

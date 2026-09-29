@@ -31,7 +31,7 @@ import {
   useCanvasLedgerStore,
 } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
-import type * as PartTextModule from '@/features/modules/partText';
+import type * as LevelTextModule from '@/features/modules/levelText';
 import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
@@ -71,11 +71,11 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   promoteSecondModuleUses: vi.fn(),
 }));
 
-vi.mock('@/features/modules/partText', async (importOriginal) => {
-  const original = await importOriginal<typeof PartTextModule>();
+vi.mock('@/features/modules/levelText', async (importOriginal) => {
+  const original = await importOriginal<typeof LevelTextModule>();
   return {
     ...original,
-    saveModulePartText: vi.fn(original.saveModulePartText),
+    saveModuleLevelText: vi.fn(original.saveModuleLevelText),
   };
 });
 

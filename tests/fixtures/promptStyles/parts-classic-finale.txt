@@ -5,18 +5,17 @@ A harbor town raised its bell to warn of the drownings; now the bell rings by it
 
 Themes: duty; decay
 
-All parts of this module (one-line synopses, so later parts can foreshadow):
-1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.
-2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.
-3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.
+All levels of this module (each one's own text, so later levels can foreshadow):
+Level 1 — PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: th…[truncated]
+Level 2 — PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets …[truncated]
+Level 3 — Final confrontation at the top of the leaning tower.
 
-Write part 3: "The Bell Tower" (levels 3).
+Write level 3.
 
-Part synopsis: Final confrontation at the top of the leaning tower.
+Level 3's current text (this is the material you are writing):
+Final confrontation at the top of the leaning tower.
 
-Part ends when: The cult is broken.
-
-Full markdown of the previous part (continue seamlessly from it):
+Full markdown of the previous level (continue seamlessly from it):
 
 PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun.
 

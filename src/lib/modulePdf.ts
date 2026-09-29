@@ -15,7 +15,6 @@ import type {
   StatBlock,
 } from '@/domain';
 import {
-  MODULE_PREMISE_LEVEL,
   abilityModifier,
   casterStatLine,
   documentPlanIssues,
@@ -24,7 +23,7 @@ import {
   mobCasterLevel,
   mobSpellChipDetail,
   mobSpellChips,
-  moduleDocumentSectionsFromView,
+  moduleLevelSectionsFromView,
   printsAbilityModifiers,
   readStoredDocumentPlan,
   statBlockStatesNoSpellDc,
@@ -888,15 +887,14 @@ function renderedParts(module: Module, problems: ModulePdfProblem[]): RenderedPa
     return [];
   }
   try {
-    // THE LEVELS, read through the ONE document seam (docs/23 §4, docs/17 row
-    // 386). There is no parts-document to assemble and split back any more: the
-    // module's own level sections — the section's NUMBER, the stored plan title
-    // and the section's TEXT — come from the same parse the canvas edits and
-    // the reader lists, so the three surfaces cannot disagree about what a
+    // THE LEVELS, read through the ONE document seam (docs/23 §4, docs/17 rows
+    // 386 and 391). There is no parts-document to assemble and split back any
+    // more: the module's own LEVEL SECTIONS — the section's NUMBER, its display
+    // title and the section's TEXT — come from the same accessor the reader and
+    // the generation engine use, so the surfaces cannot disagree about what a
     // level is called or which text belongs to it. Level 0 (the premise) is not
-    // a part and is printed by the premise branch instead.
-    return moduleDocumentSectionsFromView(module)
-      .filter((section) => section.number !== MODULE_PREMISE_LEVEL)
+    // a level section and is printed by the premise branch instead.
+    return moduleLevelSectionsFromView(module)
       .map((section) => ({
         planIndex: section.planIndex,
         title: section.title,

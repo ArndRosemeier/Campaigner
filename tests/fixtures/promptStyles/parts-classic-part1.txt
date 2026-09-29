@@ -5,18 +5,17 @@ A harbor town raised its bell to warn of the drownings; now the bell rings by it
 
 Themes: duty; decay
 
-All parts of this module (one-line synopses, so later parts can foreshadow):
-1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.
-2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.
-3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.
+All levels of this module (each one's own text, so later levels can foreshadow):
+Level 1 — PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: th…[truncated]
+Level 2 — Descent beneath the harbor to the flooded nave.
+Level 3 — Final confrontation at the top of the leaning tower.
 
-Write part 2: "The Drowned Cathedral" (levels 2).
+Write level 2.
 
-Part synopsis: Descent beneath the harbor to the flooded nave.
+Level 2's current text (this is the material you are writing):
+Descent beneath the harbor to the flooded nave.
 
-Part ends when: The warden falls.
-
-Full markdown of the previous part (continue seamlessly from it):
+Full markdown of the previous level (continue seamlessly from it):
 
 PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang. PRIOR-PART-0: the water rose and the bell rang.
 

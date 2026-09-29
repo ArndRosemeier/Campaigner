@@ -38,11 +38,11 @@
  */
 
 import 'fake-indexeddb/auto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCampaign } from '@/db/campaignRepo';
-import { patchModule, saveModule, getModule } from '@/db/moduleRepo';
+import { patchModule, saveModule, saveModuleLevels, getModule } from '@/db/moduleRepo';
 import { updateSettings, getSettings, readSettings } from '@/db/settingsRepo';
 import {
   createModule,
@@ -62,6 +62,7 @@ import {
   composePromptFromTemplate,
   PROMPT_STYLE_SECTION_MARKERS,
   defaultEncounterBudgetPolicy,
+  levelForPlanIndex,
   resolveEncounterBudgetPolicy,
 } from '@/domain';
 import type {
@@ -153,6 +154,26 @@ vi.mock('@/features/modules/post-generation', () => ({
 beforeEach(() => {
   vi.resetAllMocks();
 });
+
+/**
+ * THE prompt-golden seam (docs/17 rows 383/391): every style/engine prompt
+ * fixture is compared HERE, and `CAPTURE_PROMPT_GOLDENS=1` REWRITES it from the
+ * value under test. The bytes come from the project's OWN render path — the real
+ * `runSpine`/`generatePart` against the mocked chat, through the real composer —
+ * so a recapture is never a hand edit: run the suite with the variable set and
+ * the goldens move, then run it again without it and they must hold.
+ */
+const PROMPT_GOLDENS_DIR = join(process.cwd(), 'tests', 'fixtures', 'promptStyles');
+
+function expectGolden(name: string, actual: string): void {
+  const path = join(PROMPT_GOLDENS_DIR, name);
+  const expected = readFileSync(path, 'utf8');
+  if (process.env.CAPTURE_PROMPT_GOLDENS === '1') {
+    if (actual !== expected) writeFileSync(path, actual);
+    return;
+  }
+  expect(actual).toBe(expected);
+}
 
 describe('moduleGen-conflict-structure.test.ts', () => {
   /**
@@ -549,14 +570,14 @@ describe('moduleGen-conflict-structure.test.ts', () => {
       await twoPartSpine(moduleId);
 
       chatMock.mockResolvedValue(prose('PART', 'Ember Trial'));
-      await runParts(moduleId, campaign, { planIndexes: [0] });
+      await runParts(moduleId, campaign, { levels: [1] });
       const first = userPromptOf(0);
       expect(first).toContain('End this part with a cost, a revelation, or a new pressure');
       expect(first).not.toContain('FINALE');
 
       chatMock.mockClear();
       chatMock.mockResolvedValue(prose('FINALE-PART', 'Flood Trial'));
-      await runParts(moduleId, campaign, { planIndexes: [1] });
+      await runParts(moduleId, campaign, { levels: [2] });
       const finale = userPromptOf(0);
       expect(finale).toContain('FINALE');
       expect(finale).toContain('full price');
@@ -761,7 +782,11 @@ describe('moduleGen-encounter-floor.test.ts', () => {
       }).not.toThrow();
     });
 
-    it('flags per-band shortfalls with required/found per part', () => {
+    it('flags per-level shortfalls with required/found per level', () => {
+      // A LEVEL RANGE HAS NO REPRESENTATION (docs/23 §1 decision 4, §4, docs/17
+      // row 391): the per-level figures come from the DOCUMENT's own level
+      // sections, so a stored plan band of `2-3` is not read as a range any more
+      // — the section's number IS its band, and one section covers one level.
       const module = floorModule({
         bands: [
           { title: 'Alpha', levelBand: '1' },
@@ -775,12 +800,12 @@ describe('moduleGen-encounter-floor.test.ts', () => {
       const report = countModuleEncounters(module);
       expect(report.perPart).toEqual([
         { planIndex: 0, title: 'Alpha', levelBand: '1', required: 1, found: 1 },
-        { planIndex: 1, title: 'Beta', levelBand: '2-3', required: 2, found: 0 },
+        { planIndex: 1, title: 'Beta', levelBand: '2', required: 1, found: 0 },
       ]);
       expect(report.deficient.map((entry) => entry.title)).toEqual(['Beta']);
       expect(() => {
         assertEncounterFloor(module);
-      }).toThrow(/Beta.*band 2-3.*needs 2, names 0/);
+      }).toThrow(/Beta.*band 2.*needs 1, names 0/);
     });
 
     it('counts reuse once toward the total but satisfies every band that names it', () => {
@@ -1716,7 +1741,6 @@ describe('promptStyles-classic-identity.test.ts', () => {
 
   const chatMock = vi.mocked(chat);
 
-  const FIXTURE_DIR = join(process.cwd(), 'tests', 'fixtures', 'promptStyles');
 
   const PREMISE =
     'A harbor town raised its bell to warn of the drownings; now the bell rings by itself.';
@@ -1762,10 +1786,6 @@ describe('promptStyles-classic-identity.test.ts', () => {
       kind: entry.kind,
     })),
   });
-
-  function fixture(name: string): string {
-    return readFileSync(join(FIXTURE_DIR, name), 'utf8');
-  }
 
   /** The whole user message of the n-th chat call. */
   function userPrompt(callIndex: number): string {
@@ -1912,18 +1932,41 @@ describe('promptStyles-classic-identity.test.ts', () => {
             ),
           }),
     });
+
+    // THE PROMPT'S MATERIAL IS THE LEVEL'S OWN TEXT (docs/17 row 391): seed each
+    // level from its plan synopsis, so the prompt carries the same words the
+    // pre-level engine read out of the plan record — and let `priorParts` keep
+    // the levels it already wrote, whose text IS the prior markdown.
+    for (const [index, plan] of PLAN.entries()) {
+      if (options.priorParts?.includes(index) === true) continue;
+      await saveModuleLevels(moduleId, [
+        {
+          level: levelForPlanIndex(index),
+          text: plan.synopsis,
+          state: {
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+            writerModel: '',
+            origin: 'model',
+          },
+        },
+      ]);
+    }
     return { campaign, moduleId };
   }
 
   async function renderPartPrompt(
     moduleId: Id,
-    planIndex: number,
+    level: number,
     campaign: Campaign,
   ): Promise<string> {
-    chatMock.mockResolvedValue(prose(`PART-${String(planIndex)} [[The Bells Below]]`));
+    chatMock.mockResolvedValue(prose(`PART-${String(level)} [[The Bells Below]]`));
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('missing module');
-    await generatePart(moduleId, module, planIndex, campaign, 'test-model', {
+    // THE ENGINE'S UNIT IS THE LEVEL (docs/17 row 391): the recipe takes the
+    // level's NUMBER, which is what the document carries.
+    await generatePart(moduleId, module, level, campaign, 'test-model', {
       signal: new AbortController().signal,
       extraInstruction: '',
       onToken: undefined,
@@ -1950,7 +1993,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-default.txt'));
+      expectGolden('spine-classic-default.txt', userPrompt(0));
     }, 20000);
 
     it('spine: disabled floor (the clause and its bullet tail)', async () => {
@@ -1959,7 +2002,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-floor-off.txt'));
+      expectGolden('spine-classic-floor-off.txt', userPrompt(0));
     }, 20000);
 
     it('spine: prior modules + shared cast', async () => {
@@ -1970,7 +2013,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-priors.txt'));
+      expectGolden('spine-classic-priors.txt', userPrompt(0));
     }, 20000);
 
     it('spine: an extra (retry) instruction', async () => {
@@ -1979,7 +2022,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign, { extraInstruction: 'Tighten the middle part.' });
-      expect(userPrompt(0)).toBe(fixture('spine-classic-extra-instruction.txt'));
+      expectGolden('spine-classic-extra-instruction.txt', userPrompt(0));
     }, 20000);
 
     it('spine: tone bans + campaign description', async () => {
@@ -1991,21 +2034,17 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-tone-bans.txt'));
+      expectGolden('spine-classic-tone-bans.txt', userPrompt(0));
     }, 20000);
 
     it('parts: part 0 with the glossary and the campaign index', async () => {
       const { campaign, moduleId } = await seedPartModule();
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-part0.txt'),
-      );
+      expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
 
     it('parts: continuity from the previous part', async () => {
       const { campaign, moduleId } = await seedPartModule({ priorParts: [0] });
-      expect(await renderPartPrompt(moduleId, 1, campaign)).toBe(
-        fixture('parts-classic-part1.txt'),
-      );
+      expectGolden('parts-classic-part1.txt', await renderPartPrompt(moduleId, 2, campaign));
     }, 20000);
 
     it('parts: the finale wording of a closing part', async () => {
@@ -2019,26 +2058,20 @@ describe('promptStyles-classic-identity.test.ts', () => {
             ? prose('PART-TWO [[The Flooded Nave]]').text.trim()
             : `PRIOR-PART-0: the water rose and the bell rang. `.repeat(6),
       });
-      expect(await renderPartPrompt(moduleId, 2, campaign)).toBe(
-        fixture('parts-classic-finale.txt'),
-      );
+      expectGolden('parts-classic-finale.txt', await renderPartPrompt(moduleId, 3, campaign));
     }, 20000);
 
     it('parts: disabled floor drops the whole requirement line', async () => {
       const { campaign, moduleId } = await seedPartModule({
         floor: { enabled: false, perLevel: 0 },
       });
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-floor-off.txt'),
-      );
+      expectGolden('parts-classic-floor-off.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
 
     it('parts: prior modules in context', async () => {
       const { campaign, moduleId } = await seedPartModule({ includePriorModules: true });
       await seedPriorModule(campaign.id);
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-priors.txt'),
-      );
+      expectGolden('parts-classic-priors.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
 
     it('parts: every optional block absent (bare prompt)', async () => {
@@ -2049,7 +2082,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
       await patchModule(moduleId, {
         spine: moduleSpineSchema.parse({ premise: PREMISE, themes: THEMES, partPlan: PLAN }),
       });
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(fixture('parts-classic-bare.txt'));
+      expectGolden('parts-classic-bare.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
   });
 
@@ -2075,14 +2108,12 @@ describe('promptStyles-classic-identity.test.ts', () => {
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-default.txt'));
+      expectGolden('spine-classic-default.txt', userPrompt(0));
     }, 20000);
 
     it('a legacy module composes the byte-identical classic part prompt', async () => {
       const { campaign, moduleId } = await seedPartModule({ legacyRow: true });
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-part0.txt'),
-      );
+      expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
 
     it('a module that RECORDED Classic composes the same bytes as a legacy one', async () => {
@@ -2100,9 +2131,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
                 templateText: classic.templateText,
               },
       });
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-part0.txt'),
-      );
+      expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
     }, 20000);
   });
 });
@@ -2422,7 +2451,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock.mockResolvedValue(prose('PART'));
       const module = await getModule(moduleId);
       if (module === undefined) throw new Error('missing module');
-      await generatePart(moduleId, module, 0, campaign, 'm', {
+      await generatePart(moduleId, module, 1, campaign, 'm', {
         signal: new AbortController().signal,
         extraInstruction: '',
         onToken: undefined,
@@ -2446,7 +2475,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock.mockResolvedValue(prose('PART'));
       const module = await getModule(moduleId);
       if (module === undefined) throw new Error('missing module');
-      await generatePart(moduleId, module, 0, campaign, 'm', {
+      await generatePart(moduleId, module, 1, campaign, 'm', {
         signal: new AbortController().signal,
         extraInstruction: '',
         onToken: undefined,
@@ -2470,7 +2499,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock.mockResolvedValue(prose('PART'));
       const module = await getModule(moduleId);
       if (module === undefined) throw new Error('missing module');
-      await generatePart(moduleId, module, 0, campaign, 'm', {
+      await generatePart(moduleId, module, 1, campaign, 'm', {
         signal: new AbortController().signal,
         extraInstruction: '',
         onToken: undefined,
@@ -2679,7 +2708,7 @@ describe('promptStyles-default-style.test.ts', () => {
    * criterion — and not merely against another composition of this test's own.
    */
   async function seedPartModule(
-    options: { legacyRow?: boolean; withArtifacts?: boolean } = {},
+    options: { legacyRow?: boolean; withArtifacts?: boolean; seedLevelTexts?: boolean } = {},
   ): Promise<{
     campaign: Campaign;
     moduleId: Id;
@@ -2717,18 +2746,41 @@ describe('promptStyles-default-style.test.ts', () => {
       spine: moduleSpineSchema.parse({ premise: PREMISE, themes: THEMES, partPlan: PLAN }),
       entityKinds: ENTITIES.map((entry) => ({ ...entry, absorbed: [] })),
     });
+
+    // THE PROMPT'S MATERIAL IS THE LEVEL'S OWN TEXT (docs/17 row 391): seed each
+    // level from its plan synopsis, so the prompt carries the same words the
+    // pre-level engine read out of the plan record. A SPINE test turns this OFF:
+    // a seeded level is a written level, and pass 0 refuses to run for a module
+    // whose parts are not untouched.
+    for (const [index, plan] of (options.seedLevelTexts === false ? [] : PLAN).entries()) {
+      await saveModuleLevels(saved.id, [
+        {
+          level: levelForPlanIndex(index),
+          text: plan.synopsis,
+          state: {
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+            writerModel: '',
+            origin: 'model',
+          },
+        },
+      ]);
+    }
     return { campaign, moduleId: saved.id };
   }
 
   async function renderPartPrompt(
     moduleId: Id,
-    planIndex: number,
+    level: number,
     campaign: Campaign,
   ): Promise<string> {
-    chatMock.mockResolvedValue(prose(`PART-${String(planIndex)} [[The Bells Below]]`));
+    chatMock.mockResolvedValue(prose(`PART-${String(level)} [[The Bells Below]]`));
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('missing module');
-    await generatePart(moduleId, module, planIndex, campaign, 'test-model', {
+    // THE ENGINE'S UNIT IS THE LEVEL (docs/17 row 391): the recipe takes the
+    // level's NUMBER, which is what the document carries.
+    await generatePart(moduleId, module, level, campaign, 'test-model', {
       signal: new AbortController().signal,
       extraInstruction: '',
       onToken: undefined,
@@ -2856,9 +2908,7 @@ describe('promptStyles-default-style.test.ts', () => {
       // repo's parse-on-read materializes it as null, and the key is NOT in Dexie.
       expect((await db.modules.get(moduleId))?.promptStyle ?? null).toBeNull();
       expect(row?.promptStyle ?? null).toBeNull();
-      expect(await renderPartPrompt(moduleId, 0, campaign)).toBe(
-        fixture('parts-classic-part0.txt'),
-      );
+      expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
     });
 
     it('a legacy module (no recorded style) composes the byte-identical classic spine prompt', async () => {
@@ -2868,12 +2918,13 @@ describe('promptStyles-default-style.test.ts', () => {
       const { campaign, moduleId } = await seedPartModule({
         legacyRow: true,
         withArtifacts: false,
+        seedLevelTexts: false,
       });
       chatMock
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
       await runSpine(moduleId, campaign);
-      expect(userPrompt(0)).toBe(fixture('spine-classic-default.txt'));
+      expectGolden('spine-classic-default.txt', userPrompt(0));
     });
 
     it('a module that RECORDED Classic still composes Classic', async () => {
@@ -2889,8 +2940,8 @@ describe('promptStyles-default-style.test.ts', () => {
           templateText: classic.templateText,
         },
       });
-      const text = await renderPartPrompt(moduleId, 0, campaign);
-      expect(text).toBe(fixture('parts-classic-part0.txt'));
+      const text = await renderPartPrompt(moduleId, 1, campaign);
+      expectGolden('parts-classic-part0.txt', text);
       // …and the recorded copy is what a later generation reads, not the default.
       expect(promptStyleForModule((await getModule(moduleId)) ?? {}).source).toBe('recorded');
     });
@@ -2907,18 +2958,18 @@ describe('promptStyles-default-style.test.ts', () => {
           templateText: freestyle.templateText,
         },
       });
-      const text = await renderPartPrompt(moduleId, 0, campaign);
+      const text = await renderPartPrompt(moduleId, 1, campaign);
       expect(text).toContain('make this a noteworthy and fun module to play');
       expect(text).not.toBe(fixture('parts-classic-part0.txt'));
     });
 
     it('changing the app default does not change a module that already exists', async () => {
       const { campaign, moduleId } = await seedPartModule({ legacyRow: true });
-      const before = await renderPartPrompt(moduleId, 0, campaign);
+      const before = await renderPartPrompt(moduleId, 1, campaign);
       await updateSettings({ defaultPromptStyleId: PROMPT_STYLE_FREESTYLE_ID });
-      const after = await renderPartPrompt(moduleId, 0, campaign);
+      const after = await renderPartPrompt(moduleId, 1, campaign);
       expect(after).toBe(before);
-      expect(after).toBe(fixture('parts-classic-part0.txt'));
+      expectGolden('parts-classic-part0.txt', after);
     });
   });
 });
@@ -3307,6 +3358,21 @@ describe('promptStyles-freestyle.test.ts', () => {
           templateText: `${freestyle.templateText}\n\nROW-ONLY-MARKER`,
         },
       });
+      // THE PROMPT'S MATERIAL IS THE LEVEL'S OWN TEXT (docs/17 row 391): give
+      // level 1 its prose, so the recipe's material paragraph is exercised.
+      await saveModuleLevels(saved.id, [
+        {
+          level: 1,
+          text: 'The party arrives with the low tide.',
+          state: {
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+            writerModel: '',
+            origin: 'model',
+          },
+        },
+      ]);
       const generated = await getModule(saved.id);
       if (generated?.spine == null) throw new Error('the spine pass stored no spine');
       chatMock.mockReset();
@@ -3315,7 +3381,7 @@ describe('promptStyles-freestyle.test.ts', () => {
         modelUsed: 'm',
         fallback: null,
       });
-      await generatePart(saved.id, generated, 0, campaign, 'm', {
+      await generatePart(saved.id, generated, 1, campaign, 'm', {
         signal: new AbortController().signal,
         extraInstruction: '',
         onToken: undefined,
@@ -3325,8 +3391,12 @@ describe('promptStyles-freestyle.test.ts', () => {
       // …the setting the run provides…
       expect(prompt).toContain('Campaign: Emberfall');
       expect(prompt).toContain(PREMISE);
-      expect(prompt).toContain('Part synopsis: The party arrives with the low tide.');
-      expect(prompt).toContain('Part ends when: The bell is found.');
+      // The level's own prose IS the material (docs/17 row 391)…
+      expect(prompt).toContain("Level 1's current text (this is the material you are writing):");
+      expect(prompt).toContain('The party arrives with the low tide.');
+      // …and `partEndCondition` carries NO value at all any more: docs/23 §1
+      // decision 4 deleted `levelUpTrigger`, so the slot's paragraph is gone.
+      expect(prompt).not.toContain('Part ends when:');
       expect(prompt).toContain(
         'Module entities — wiki-link these ONLY by these exact canonical spellings:',
       );

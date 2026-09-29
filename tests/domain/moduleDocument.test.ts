@@ -409,11 +409,23 @@ describe('level-addressed edits (the seam the phase-3 chat commands ride)', () =
     expect(firstLevel.parsed.levels.map((level) => level.number)).toEqual([0, 1]);
   });
 
-  it('adds an EMPTY next level when the append carries no text', () => {
+  it('adds an EMPTY next level when the append carries no text, with its separator line TERMINATED', () => {
+    // THE TERMINATION IS PART OF THE EDIT (docs/17 row 391). A document whose
+    // LAST section is empty ends on its own newline — the rule the formatter
+    // already applied (`assembleModuleDocument`) and which the engine's first
+    // write into an empty trailing level proved is needed on EVERY write path:
+    // without it the empty section's range collapses onto the very end of the
+    // text and a body written there GLUES onto the separator, making the
+    // document unreadable. The empty level's BYTES gain one newline; nothing
+    // else moves.
     const grown = appendLevelText(splitModuleDocument('A premise.'), 1, '');
-    expect(grown.document).toBe('A premise.\n\n=====Level 1=====');
+    expect(grown.document).toBe('A premise.\n\n=====Level 1=====\n');
     expect(grown.parsed.levels).toHaveLength(2);
     expect(grown.parsed.levels[1]?.text).toBe('');
+    // The invariant the byte buys: a body written into that empty level lands on
+    // its own line instead of on the separator.
+    const filled = replaceLevelText(grown.parsed, 1, 'The watch begins.');
+    expect(filled.document).toBe('A premise.\n\n=====Level 1=====\nThe watch begins.');
   });
 
   it('refuses to skip a level, because the gap would be unreadable', () => {

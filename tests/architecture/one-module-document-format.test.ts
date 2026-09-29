@@ -38,6 +38,7 @@ const SELF = 'tests/architecture/one-module-document-format.test.ts';
 const DOCUMENT_SEAM = 'src/domain/moduleDocument.ts';
 const MODULE_PDF = 'src/lib/modulePdf.ts';
 const READER = 'src/features/modules/ModuleReaderPage.tsx';
+const ENGINE = 'src/llm/moduleGen.ts';
 
 /** The DELETED module-parts document's exported vocabulary. */
 const LEGACY_IDENTIFIERS = [
@@ -101,22 +102,34 @@ describe('ONE module document format (SOURCE SCAN, docs/17 row 386)', () => {
       'export function moduleDocumentSections(',
       'export function moduleDocumentSectionsFromView(',
       'export function moduleDocumentFromView(',
+      'export function moduleLevelSectionsFromView(',
     ]) {
       expect(countsIn(raw, 'src/', definition), definition).toEqual([[DOCUMENT_SEAM, 1]]);
     }
   });
 
-  it('reads the stored module through the ONE accessor, from the reader and the PDF only', async () => {
+  it('reads the stored module through the ONE accessor, and its LEVEL SECTIONS through the ONE level accessor', async () => {
     const raw = await rawSourceText();
-    // The two surfaces that hold a module ROW's derived view (the reader and
-    // the PDF lanes) read its level sections through the ONE accessor, so
-    // neither can invent its own level list. The canvas parses the document it
-    // EDITS (`moduleDocumentSections` over the live text), which is the same
-    // parser; anything else reaching for a level list would be a third path.
+    // Every surface that holds a module ROW's derived view reads its level
+    // sections through the ONE accessor (`moduleLevelSectionsFromView`: the
+    // derived list with level 0 dropped), so none of them can invent its own
+    // level list — the reader's ToC, the PDF's per-level chapters and the
+    // generation ENGINE's unit (docs/17 row 391). The canvas parses the document
+    // it EDITS (`moduleDocumentSections` over the live text), which is the same
+    // parser; anything else reaching for a level list would be another path.
+    //
+    // `moduleDocumentSectionsFromView` is then reached only through the level
+    // accessor, whose definition lives in the seam — so the level-dropping rule
+    // itself exists in exactly one place, and a fourth surface cannot grow its
+    // own level list without this scan naming the file.
     expect(countsIn(raw, 'src/', 'moduleDocumentSectionsFromView(').map(([path]) => path)).toEqual([
+      DOCUMENT_SEAM,
+    ]);
+    expect(countsIn(raw, 'src/', 'moduleLevelSectionsFromView(').map(([path]) => path)).toEqual([
       DOCUMENT_SEAM,
       READER,
       MODULE_PDF,
+      ENGINE,
     ]);
   });
 });

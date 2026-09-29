@@ -13,7 +13,7 @@ import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { runSnapshotChatTurn } from '@/features/modules/canvas/snapshotChat';
-import { saveModulePartText } from '@/features/modules/partText';
+import { saveModuleLevelText } from '@/features/modules/levelText';
 import { cancelModuleGen, runParts } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import { expectBlockedReason } from '../helpers/blocked-reason';
@@ -251,9 +251,9 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
 
   it('a MANUAL part edit (the one part-text save path) is observed the same way — no chat involved', async () => {
     const user = userEvent.setup();
-    await saveModulePartText(
+    await saveModuleLevelText(
       world.moduleId,
-      0,
+      1,
       `${PART_0_TEXT} [[Harbormaster Vex]] waits by the winch.`,
     );
     const row = await getModule(world.moduleId);
@@ -337,7 +337,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
 
   it('a failing classification is loud, records nothing and closes the batch gate', async () => {
     const user = userEvent.setup();
-    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await saveModuleLevelText(world.moduleId, 1, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
     const panel = await renderFreshPanel();
     // The reply never answers for the listed name — invalid after the retry.
     chatMock.mockResolvedValue({
@@ -392,7 +392,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     // A live generation owns the module while the text carries a name no pass
     // has recorded: the control is dead and its own label says nothing about
     // why (it still reads "Classify N new names").
-    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await saveModuleLevelText(world.moduleId, 1, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
     await patchModule(world.moduleId, { status: 'generating' });
     await renderFreshPanel();
 
@@ -412,7 +412,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
   }, 30_000);
 
   it('offers the classification DESCRIPTION only while the control can act', async () => {
-    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await saveModuleLevelText(world.moduleId, 1, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
     await renderFreshPanel();
 
     const button = screen.getByTestId('entity-classify-new');
@@ -425,7 +425,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
 
   it('is idempotent: a repeated click classifies nothing twice and a re-render never calls the model', async () => {
     const user = userEvent.setup();
-    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
+    await saveModuleLevelText(world.moduleId, 1, `${PART_0_TEXT} [[Harbormaster Vex]] waits.`);
     const panel = await renderFreshPanel();
 
     // A plain re-render observes the same text and dispatches nothing.
@@ -516,9 +516,9 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     // The owner's own edit through THE one part-text save path (no writer
     // model): the origin is recorded as human, so the variant rewrite waits —
     // the protection this arc must not touch.
-    await saveModulePartText(
+    await saveModuleLevelText(
       world.moduleId,
-      0,
+      1,
       'Rain hammers the stones. [[Kael]] watches the gate and [[Warden Kael]] counts the boats.',
     );
     const saved = await getModule(world.moduleId);
@@ -566,7 +566,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     const user = userEvent.setup();
     // 'The Tide Bell' is typed in the text with no record — the invariant the
     // fix-01 work pinned, now paired with the visible way out.
-    await saveModulePartText(world.moduleId, 0, `${PART_0_TEXT} [[The Tide Bell]] tolls.`);
+    await saveModuleLevelText(world.moduleId, 1, `${PART_0_TEXT} [[The Tide Bell]] tolls.`);
     const panel = await renderFreshPanel();
 
     expect(screen.queryByTestId('batch-note')).not.toBeInTheDocument();

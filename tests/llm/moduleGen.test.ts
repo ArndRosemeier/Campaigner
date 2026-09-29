@@ -11,7 +11,7 @@ import { createArtifact } from '@/db/artifactRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
-import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
+import { getModule, patchModule, saveModule, saveModuleLevels } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { createModule, moduleDocumentFromView, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
@@ -187,6 +187,27 @@ async function seedSpine(moduleId: Id): Promise<void> {
   await patchModule(moduleId, { spine: moduleSpineSchema.parse(VALID_SPINE) });
 }
 
+/** ONE level section's own text, written through the level-addressed document
+ *  seam (the engine's own shape: `edited: false`, `origin: 'model'`). */
+async function seedLevelText(moduleId: Id, level: number, text: string): Promise<void> {
+  await saveModuleLevels(moduleId, [
+    {
+      level,
+      text,
+      state: {
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+        writerModel: '',
+        origin: 'model',
+      },
+    },
+  ]);
+}
+
+/** The sentence the plan synopsis carries for level 1 — the fixture's material. */
+const LEVEL_ONE_MATERIAL = VALID_SPINE.partPlan[0]?.synopsis ?? '';
+
 /**
  * One READY rules book of `system` whose single section chunk shares the part
  * synopsis's own tokens (`low tide`) and carries a system-distinct marker
@@ -215,13 +236,13 @@ async function seedReadyRulesBook(
   await putChunks([chunk]);
 }
 
-/** The part-0 prompt sent since `startIndex` — found by its own heading rather
+/** The LEVEL 1 prompt sent since `startIndex` — found by its own heading rather
  *  than a fixed call index, so the normalization call after each pass cannot
- *  shift it. */
+ *  shift it. The heading names the LEVEL, its number (docs/17 row 391). */
 function partPromptSince(startIndex: number): string {
   for (let index = startIndex; index < chatMock.mock.calls.length; index += 1) {
     const prompt = userPromptOf(index);
-    if (prompt.includes('Write part 1:')) return prompt;
+    if (prompt.includes('Write level 1.')) return prompt;
   }
   throw new Error('no part prompt was sent since the given call index');
 }
@@ -658,6 +679,11 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
  * half is a PROMPT BYTE COMPARISON: the identical campaign and module built
  * against the own-system-only library must produce the same prompt bytes as
  * one built after the foreign book is installed (no behaviour change).
+ *
+ * THE QUERY IS THE LEVEL'S OWN TEXT (docs/17 row 391): the rules retrieval reads
+ * the level's section text, never a plan synopsis — so the fixture seeds the
+ * LEVEL with the sentence the synopsis used to carry, which is exactly the
+ * material a generation step is about.
  */
 describe('the parts prompt grounds in the campaign’s own game system (docs/17 row 207)', () => {
   const PF2E_MARKER = 'PF2E-ONLY-RULE';
@@ -670,7 +696,7 @@ describe('the parts prompt grounds in the campaign’s own game system (docs/17 
       const user = messages.find((message) => message.role === 'user')?.content;
       const prompt = user === undefined ? '' : messageText(user);
       return Promise.resolve(
-        prompt.includes('Write part 1:')
+        prompt.includes('Write level 1.')
           ? partWithNames('PART-ONE', ['Ember Trial'])
           : encounterReply('Ember Trial'),
       );
@@ -681,17 +707,18 @@ describe('the parts prompt grounds in the campaign’s own game system (docs/17 
     await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
     const ownSystemOnly = await seedModule('pathfinder2e');
     await seedSpine(ownSystemOnly.moduleId);
+    await seedLevelText(ownSystemOnly.moduleId, 1, LEVEL_ONE_MATERIAL);
     answerCalls();
-    await runParts(ownSystemOnly.moduleId, ownSystemOnly.campaign, { planIndexes: [0] });
+    await runParts(ownSystemOnly.moduleId, ownSystemOnly.campaign, { levels: [1] });
     const promptOwnSystemOnly = partPromptSince(0);
     expect(promptOwnSystemOnly).toContain(PF2E_MARKER);
     expect(promptOwnSystemOnly).not.toContain(DND5E_MARKER);
 
     // Install the other system's book AFTER that prompt was captured.
     await seedReadyRulesBook('dnd5e', 'D&D 5e SRD', DND5E_MARKER);
-    // Non-vacuity: the UNSCOPED read retrieves BOTH books for the same query.
-    const synopsis = VALID_SPINE.partPlan[0]?.synopsis ?? '';
-    const unscopedText = (await searchRules(synopsis, { limit: 4 }))
+    // Non-vacuity: the UNSCOPED read retrieves BOTH books for the same query
+    // (the level's own material, which is what the prompt searches with).
+    const unscopedText = (await searchRules(LEVEL_ONE_MATERIAL, { limit: 4 }))
       .map((hit) => hit.chunk.text)
       .join('\n');
     expect(unscopedText).toContain(PF2E_MARKER);
@@ -701,8 +728,9 @@ describe('the parts prompt grounds in the campaign’s own game system (docs/17 
     // campaign and module, so the ONLY difference is what the library holds.
     const withForeignBook = await seedModule('pathfinder2e');
     await seedSpine(withForeignBook.moduleId);
+    await seedLevelText(withForeignBook.moduleId, 1, LEVEL_ONE_MATERIAL);
     const callsBefore = chatMock.mock.calls.length;
-    await runParts(withForeignBook.moduleId, withForeignBook.campaign, { planIndexes: [0] });
+    await runParts(withForeignBook.moduleId, withForeignBook.campaign, { levels: [1] });
     const promptWithForeignBook = partPromptSince(callsBefore);
     expect(promptWithForeignBook).toBe(promptOwnSystemOnly);
     expect(promptWithForeignBook).not.toContain(DND5E_MARKER);
@@ -713,8 +741,9 @@ describe('the parts prompt grounds in the campaign’s own game system (docs/17 
     await seedReadyRulesBook('pathfinder2e', 'Pathfinder GM Core', PF2E_MARKER);
     const { campaign, moduleId } = await seedModule('dnd5e');
     await seedSpine(moduleId);
+    await seedLevelText(moduleId, 1, LEVEL_ONE_MATERIAL);
     answerCalls();
-    await runParts(moduleId, campaign, { planIndexes: [0] });
+    await runParts(moduleId, campaign, { levels: [1] });
     const prompt = partPromptSince(0);
     expect(prompt).toContain(DND5E_MARKER);
     expect(prompt).not.toContain(PF2E_MARKER);
@@ -773,7 +802,7 @@ describe('runParts', () => {
       })
       .mockResolvedValueOnce(encounterReply('Ember Trial'));
 
-    const finished = await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    const finished = await runParts(moduleId, campaign, { levels: [1, 2] });
 
     const first = finished.parts.find((part) => part.planIndex === 0);
     const second = finished.parts.find((part) => part.planIndex === 1);
@@ -810,16 +839,16 @@ describe('runParts', () => {
 
     expect(chatMock).toHaveBeenCalledTimes(4);
     // Calls happen in plan order, one per part.
-    expect(userPromptOf(0)).toContain('Write part 1: "The Sunken Quarter"');
-    expect(userPromptOf(1)).toContain('Write part 2: "The Drowned Cathedral"');
-    expect(userPromptOf(2)).toContain('Write part 3: "The Bell Tower"');
+    expect(userPromptOf(0)).toContain('Write level 1.');
+    expect(userPromptOf(1)).toContain('Write level 2.');
+    expect(userPromptOf(2)).toContain('Write level 3.');
     // Part 0 has no predecessor; the word target comes from the size dial.
-    expect(userPromptOf(0)).not.toContain('Full markdown of the previous part');
+    expect(userPromptOf(0)).not.toContain('Full markdown of the previous level');
     expect(userPromptOf(0)).toContain('800–1500 words');
     // Every part prompt states its encounter share (08 §M4-B REQUIREMENT).
     expect(userPromptOf(0)).toContain('encounter floor for this part');
     // Continuity = the FINAL markdown of the previous part.
-    expect(userPromptOf(1)).toContain('Full markdown of the previous part');
+    expect(userPromptOf(1)).toContain('Full markdown of the previous level');
     expect(userPromptOf(1)).toContain('PART-ONE');
     expect(userPromptOf(2)).toContain('PART-TWO');
   }, 20000);
@@ -921,7 +950,7 @@ describe('runParts', () => {
     expect(userMessagesOf(4)).toContain('Encounter floor repair');
     // The immediate predecessor of part 3 is failed, so its prompt carries no
     // continuity section at all (the impl never falls back to an earlier part).
-    expect(userPromptOf(2)).not.toContain('Full markdown of the previous part');
+    expect(userPromptOf(2)).not.toContain('Full markdown of the previous level');
     // Part-level failures surface on the part row, not as a module toast.
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 20000);
@@ -934,7 +963,7 @@ describe('runParts', () => {
       .mockResolvedValueOnce(partWithNames('PART-ONE-RETRY', ['Ember Trial']))
       .mockResolvedValueOnce(encounterReply('Ember Trial'));
 
-    const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
+    const finished = await runParts(moduleId, campaign, { levels: [1] });
 
     expect(chatMock).toHaveBeenCalledTimes(3);
     expect(userMessagesOf(1)).toContain('Your previous reply was too short');
@@ -950,7 +979,7 @@ describe('runParts', () => {
     // Every prose call is too short: the initial write AND the floor repair.
     chatMock.mockResolvedValue({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null });
 
-    const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
+    const finished = await runParts(moduleId, campaign, { levels: [1] });
 
     // 2 initial (short + short retry → part failed, no names → no
     // normalization call) + 2 repair (short + short retry → still failed).
@@ -984,9 +1013,9 @@ describe('generateMissingParts', () => {
 
     // Part 0 was ready and is never re-called.
     expect(chatMock).toHaveBeenCalledTimes(3);
-    expect(userPromptOf(0)).toContain('Write part 2:');
-    expect(userPromptOf(0)).not.toContain('Write part 1:');
-    expect(userPromptOf(1)).toContain('Write part 3:');
+    expect(userPromptOf(0)).toContain('Write level 2.');
+    expect(userPromptOf(0)).not.toContain('Write level 1.');
+    expect(userPromptOf(1)).toContain('Write level 3.');
     const after = await getModule(moduleId);
     expect(after?.status).toBe('ready');
     expect(after?.parts.map((part) => part.status)).toEqual(['ready', 'ready', 'ready']);
@@ -1020,7 +1049,7 @@ describe('rewritePart', () => {
       .mockResolvedValueOnce(partWithNames('PART-TWO-NEW', ['Flood Trial']))
       .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
 
-    await rewritePart(moduleId, campaign, 1, 'Foreshadow the bell tower more heavily.');
+    await rewritePart(moduleId, campaign, 2, 'Foreshadow the bell tower more heavily.');
 
     expect(chatMock).toHaveBeenCalledTimes(2);
     const prompt = userPromptOf(0);
@@ -1062,7 +1091,7 @@ describe('cancelModuleGen', () => {
     await seedSpine(moduleId);
     await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE-ORIGINAL'));
     chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
-    const pending = guard(runParts(moduleId, campaign, { planIndexes: [1] }));
+    const pending = guard(runParts(moduleId, campaign, { levels: [2] }));
     await waitFor(async () => {
       const module = await getModule(moduleId);
       expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
@@ -1761,7 +1790,7 @@ describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
     await seedPriorModule(campaign.id);
     chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
 
-    await runParts(moduleId, campaign, { planIndexes: [0] });
+    await runParts(moduleId, campaign, { levels: [1] });
 
     const prompt = userPromptOf(0);
     expect(prompt).toContain('Previous modules of this campaign');
@@ -1958,15 +1987,15 @@ describe('progress dock reporting', () => {
       expect(useProgressStore.getState().jobs).toHaveLength(1);
     });
     expect(useProgressStore.getState().jobs[0]).toMatchObject({
-      label: 'Writing 3 module parts',
-      detail: 'Writing part 1 of 3: The Sunken Quarter',
+      label: 'Writing 3 module levels',
+      detail: 'Writing level 1 of 3: level 1',
       progress: 0,
     });
 
     first.resolve(partMarkdown('PART-ONE').text);
     await waitFor(() => {
       expect(useProgressStore.getState().jobs[0]).toMatchObject({
-        detail: 'Writing part 2 of 3: The Drowned Cathedral',
+        detail: 'Writing level 2 of 3: level 2',
         progress: 1 / 3,
       });
     });
@@ -2212,7 +2241,7 @@ describe('durable versions — the parts passes snapshot before they write', () 
     const pass = versions.filter((entry) => entry.source === 'generation');
     // ONE snapshot for the pass (not one per part, not one after the write).
     expect(pass).toHaveLength(1);
-    expect(pass[0]?.label).toBe('Generate parts');
+    expect(pass[0]?.label).toBe('Generate levels');
     // BYTE-EXACT pre-change text: the document as it stood before the first
     // part write (the seeded part still carries its own prose there).
     expect(pass[0]?.docText).toBe(before);
@@ -2234,11 +2263,11 @@ describe('durable versions — the parts passes snapshot before they write', () 
       .mockResolvedValueOnce(partWithNames('NEW-TWO', ['Flood Trial']))
       .mockResolvedValueOnce(encounterReply('Flood Trial'));
 
-    await rewritePart(moduleId, campaign, 1, 'make the flood louder');
+    await rewritePart(moduleId, campaign, 2, 'make the flood louder');
 
     const versions = await listModuleVersions(moduleId);
     const pass = versions.find((entry) => entry.source === 'generation');
-    expect(pass?.label).toBe('Rewrite part 2 — The Drowned Cathedral: make the flood louder');
+    expect(pass?.label).toBe('Rewrite level 2: make the flood louder');
     expect(pass?.docText).toBe(before);
     expect(pass?.docText).toContain('OLD-TWO');
     expect((await getModule(moduleId))?.parts.find((part) => part.planIndex === 1)?.markdown).toContain(
@@ -2313,7 +2342,7 @@ describe('recently used global chat model at the module-generation entry points 
       .mockResolvedValueOnce(partMarkdown('PART-ONE'))
       .mockResolvedValueOnce(encounterReply('Ember Trial'));
 
-    await runParts(moduleId, campaign, { planIndexes: [0] });
+    await runParts(moduleId, campaign, { levels: [1] });
 
     expect((await getSettings()).recentChatModels).toEqual(['global/parts']);
   }, 20000);
@@ -2480,8 +2509,8 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       const names = ['Ember Trial', 'Flood Trial'].filter((name) => prompt.includes(name));
       return names.length > 0 ? encounterReply(...names) : selfNormalization();
     }
-    if (prompt.includes('Write part 1:')) return PART_ONE;
-    if (prompt.includes('Write part 2:')) return PART_TWO;
+    if (prompt.includes('Write level 1.')) return PART_ONE;
+    if (prompt.includes('Write level 2.')) return PART_TWO;
     throw new Error(`unscripted generation prompt: ${prompt.slice(0, 120)}`);
   }
 
@@ -2530,7 +2559,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       throw new Error('a FLAG-OFF run issued an adversarial call');
     });
     await runSpine(moduleId, campaign);
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
     const row = await requireRow(moduleId);
     const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
     return {
@@ -2601,7 +2630,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return edited(`${reviewKey(prompt).toUpperCase()} REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
     });
 
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
 
     // The pass's own call count, asserted explicitly: one critique per part,
     // plus one editor per part because every critique DID find something.
@@ -2634,7 +2663,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return edited(`PART-ONE REWRITTEN — ${'the bell tolls. '.repeat(8)}`);
     });
 
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
 
     expect(phases).toEqual(['critique:part0', 'critique:part1', 'edit:part1']);
     // part0, critique0, part1, critique1, edit1, normalization.
@@ -2664,10 +2693,10 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     expect(drafted.spine?.writerModel).toBe('editor/model');
     expect(drafted.spine?.origin).toBe('model');
     expect(
-      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write part 1:')),
+      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write level 1.')),
     ).toBe(false);
 
-    await runParts(moduleId, campaign, { planIndexes: [0] });
+    await runParts(moduleId, campaign, { levels: [1] });
 
     // THE ORDER PIN: the premise critique's call index precedes the first part
     // prompt's, and the premise edit precedes it too.
@@ -2678,7 +2707,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     const premiseEditAt = indexes.findIndex(
       (prompt) => isEditor(prompt) && reviewKey(prompt) === 'premise',
     );
-    const firstPartAt = indexes.findIndex((prompt) => prompt.includes('Write part 1:'));
+    const firstPartAt = indexes.findIndex((prompt) => prompt.includes('Write level 1.'));
     expect(premiseCritiqueAt).toBeGreaterThanOrEqual(0);
     expect(premiseEditAt).toBeGreaterThan(premiseCritiqueAt);
     expect(firstPartAt).toBeGreaterThan(premiseEditAt);
@@ -2695,7 +2724,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return edited(REPLACEMENT);
     });
 
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
 
     const row = await requireRow(moduleId);
     const editedPart = row.parts.find((part) => part.planIndex === 0);
@@ -2735,7 +2764,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return edited('SHOULD NEVER LAND');
     });
 
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
 
     const row = await requireRow(moduleId);
     const first = row.parts.find((part) => part.planIndex === 0);
@@ -2748,7 +2777,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     // critique (a critique failure can never reach the editor).
     expect(second?.markdown).toBe(PART_TWO.text);
     expect(
-      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write part 2:')),
+      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write level 2.')),
     ).toBe(true);
     expect(editorCalls).toEqual([]);
   }, 20000);
@@ -2763,7 +2792,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return malformed();
     });
 
-    await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+    await runParts(moduleId, campaign, { levels: [1, 2] });
 
     const row = await requireRow(moduleId);
     const first = row.parts.find((part) => part.planIndex === 0);
@@ -2811,7 +2840,7 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return Promise.resolve(generationReply(prompt));
     });
 
-    const pending = guard(runParts(moduleId, campaign, { planIndexes: [0] }));
+    const pending = guard(runParts(moduleId, campaign, { levels: [1] }));
     await waitFor(() => {
       expect(reviewSignal).toBeDefined();
     });
@@ -2846,10 +2875,10 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
       return Promise.resolve(generationReply(prompt));
     });
 
-    const pending = guard(runParts(moduleId, campaign, { planIndexes: [0] }));
+    const pending = guard(runParts(moduleId, campaign, { levels: [1] }));
     await waitFor(() => {
       const detail = useProgressStore.getState().jobs[0]?.detail ?? '';
-      expect(detail).toContain('Reviewing part 1 of 1: The Sunken Quarter');
+      expect(detail).toContain('Reviewing level 1 (1 of 1)');
       expect(detail).toContain('critique');
       expect(detail).toContain('edit');
     });

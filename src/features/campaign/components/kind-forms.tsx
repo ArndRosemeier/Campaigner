@@ -633,7 +633,7 @@ export function EncounterForm({
                 }}
               />
               <span className="text-[11px] font-normal text-muted-foreground">
-                No module part mentions this encounter — set the exact party level the fight is made for.
+                No level of the module document mentions this encounter — set the exact party level the fight is made for.
               </span>
             </>
           ) : (
@@ -647,7 +647,7 @@ export function EncounterForm({
                 data-testid="encounter-party-level-readonly"
               />
               <span className="text-[11px] font-normal text-muted-foreground">
-                Part “{partMention.partTitle}” mentions this encounter — its exact level is the party level.
+                Level {partMention.level} of the module document mentions this encounter — that exact level is the party level.
               </span>
             </>
           )}

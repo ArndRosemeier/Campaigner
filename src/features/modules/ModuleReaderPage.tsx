@@ -38,12 +38,12 @@ import type {
   ModulePart,
 } from '@/domain';
 import {
-  MODULE_PREMISE_LEVEL,
   MODULE_SIZE_LABELS,
   aliasCollisionSentence,
   entityKindFor,
-  moduleDocumentSectionsFromView,
+  levelForPlanIndex,
   moduleDocumentText,
+  moduleLevelSectionsFromView,
   modulePartsUntouched,
   moduleTagFor,
 } from '@/domain';
@@ -51,7 +51,7 @@ import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
-import { saveModulePartText } from '@/features/modules/partText';
+import { saveModuleLevelText } from '@/features/modules/levelText';
 import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
@@ -185,7 +185,10 @@ export function ModuleReaderPage(): JSX.Element {
         try {
           const camp = await getCampaign(campaignId);
           if (camp === undefined) throw new Error('Campaign no longer exists');
-          await rewritePart(moduleId, camp, planIndex);
+          // The card addresses its section by the derived view's planIndex (the
+          // reader's own DOM/scroll address, docs/17 row 388 defers re-keying
+          // it); the ENGINE takes the LEVEL, converted through the ONE pair.
+          await rewritePart(moduleId, camp, levelForPlanIndex(planIndex));
         } catch (error) {
           toastError('Could not retry the part', error);
         }
@@ -194,18 +197,14 @@ export function ModuleReaderPage(): JSX.Element {
     [campaignId, moduleId],
   );
 
-  // THE DERIVED LEVEL LIST (docs/23 §4, docs/17 row 386): the reader lists the
-  // module document's OWN level sections — the same parse the canvas edits and
-  // the PDF prints (`moduleDocumentSectionsFromView`) — so the three surfaces
-  // cannot disagree about a level's number, its title or its text. Level 0 is
-  // the premise and is rendered by `IntroBlock`, never as a part section.
+  // THE DERIVED LEVEL LIST (docs/23 §4, docs/17 rows 386/391): the reader lists
+  // the module document's OWN level sections — the same parse the canvas edits
+  // and the PDF prints (`moduleLevelSectionsFromView`, the ONE accessor that
+  // drops level 0) — so the three surfaces cannot disagree about a level's
+  // number, its title or its text. Level 0 is the premise and is rendered by
+  // `IntroBlock`, never as a part section.
   const sections = useMemo<readonly ModuleDocumentSection[]>(
-    () =>
-      module === undefined || module === null
-        ? []
-        : moduleDocumentSectionsFromView(module).filter(
-            (section) => section.number !== MODULE_PREMISE_LEVEL,
-          ),
+    () => (module === undefined || module === null ? [] : moduleLevelSectionsFromView(module)),
     [module],
   );
 
@@ -402,7 +401,7 @@ export function ModuleReaderPage(): JSX.Element {
     const index = rewriteTarget;
     if (index === null) return;
     setRewriteTarget(null);
-    await rewritePart(moduleId, currentCampaign, index, rewriteInstruction.trim());
+    await rewritePart(moduleId, currentCampaign, levelForPlanIndex(index), rewriteInstruction.trim());
   }
 
   async function linkExisting(artifact: AnyArtifact): Promise<void> {
@@ -636,7 +635,7 @@ export function ModuleReaderPage(): JSX.Element {
 
           {module.spine === null ? (
             busy ? (
-              <StreamingTail label="Drafting the spine…" moduleId={module.id} planIndex={null} />
+              <StreamingTail label="Drafting the spine…" moduleId={module.id} level={null} />
             ) : module.status === 'failed' ? (
               // A failed first spine is actionable, not a dead end: the
               // generator recorded the error on the row (AGENTS rule 2) and
@@ -773,6 +772,7 @@ export function ModuleReaderPage(): JSX.Element {
                     <PartBody
                       part={part}
                       planIndex={planIndex}
+                      level={number}
                       planTitle={title}
                       artifacts={readerArtifacts}
                       moduleId={module.id}
@@ -1050,20 +1050,21 @@ function PartActions({
 /**
  * The streaming stream itself, in its OWN component: this is the only reader
  * subscriber to `moduleGenEvents` (through `streamTails`), so a token tick
- * re-renders this card and nothing else. `planIndex` is null for the spine.
- * Every prop is stable for the life of the stream, so a tick that belongs to
- * another part never touches this card.
+ * re-renders this card and nothing else. `level` is null for the pass-0 spine
+ * (docs/17 row 391: the stream store's unit is the LEVEL). Every prop is stable
+ * for the life of the stream, so a tick that belongs to another level never
+ * touches this card.
  */
 const StreamingTail = memo(function StreamingTail({
   label,
   moduleId,
-  planIndex,
+  level,
 }: {
   label: string;
   moduleId: Id;
-  planIndex: number | null;
+  level: number | null;
 }): JSX.Element {
-  const { tail, thinkingTail } = useStreamTail(moduleId, planIndex);
+  const { tail, thinkingTail } = useStreamTail(moduleId, level);
   return <StreamingCard label={label} tail={tail} thinkingTail={thinkingTail} />;
 });
 
@@ -1078,6 +1079,7 @@ const StreamingTail = memo(function StreamingTail({
 const PartBody = memo(function PartBody({
   part,
   planIndex,
+  level,
   planTitle,
   artifacts,
   moduleId,
@@ -1093,6 +1095,8 @@ const PartBody = memo(function PartBody({
 }: {
   part: ModulePart | undefined;
   planIndex: number;
+  /** The section's LEVEL — what the streaming store is keyed by. */
+  level: number;
   planTitle: string;
   artifacts: readonly AnyArtifact[];
   moduleId: Id;
@@ -1128,7 +1132,7 @@ const PartBody = memo(function PartBody({
     );
   }
   if (part.status === 'generating') {
-    return <StreamingTail label={`Writing “${planTitle}”…`} moduleId={moduleId} planIndex={planIndex} />;
+    return <StreamingTail label={`Writing “${planTitle}”…`} moduleId={moduleId} level={level} />;
   }
   if (part.status === 'failed') {
     return (
@@ -1276,9 +1280,11 @@ function LinkExistingPicker(props: {
   );
 }
 
-/** Persists one part's hand edit through the ONE part-text save path
- * (features/modules/partText → patchModulePartText inside a re-read tx,
- * `edited: true`, post-save auto-promote scan — LINKS hook). */
+/** Persists one LEVEL's hand edit through the ONE level-text save path
+ * (features/modules/levelText → the level-addressed DOCUMENT write inside a
+ * re-read tx, `edited: true` + `origin: 'human'`, post-save auto-promote scan —
+ * LINKS hook). The reader's editor still addresses the section it opened by the
+ * derived view's `planIndex`; the LEVEL is converted through the ONE pair. */
 async function patchModuleTextPart(module: Module, planIndex: number, markdown: string): Promise<Module> {
-  return saveModulePartText(module.id, planIndex, markdown);
+  return saveModuleLevelText(module.id, levelForPlanIndex(planIndex), markdown);
 }

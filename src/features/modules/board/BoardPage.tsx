@@ -29,7 +29,7 @@ import {
   type ModuleCanvas,
 } from '@/domain';
 import { getModule, patchModule } from '@/db/moduleRepo';
-import { saveModulePartText } from '@/features/modules/partText';
+import { saveModuleLevelText } from '@/features/modules/levelText';
 import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
 import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
@@ -68,13 +68,14 @@ import { useBoardStore, type PartCardSlice } from '@/features/modules/board/boar
  * current card sharing a canonical wiki-name) are derived, capped, and the
  * cap is surfaced — never a silent drop.
  *
- * THE BOARD ADDRESSES LEVELS (docs/23 §2.1, docs/17 row 388), and this page
- * owns the WRITE half of the storage boundary: `persistLayout` translates the
- * board's level keys into the row's frozen stored spelling through the ONE
- * `storedCanvasNodeKeyForLevel`. The seams that are still planIndex-keyed — the
- * derived `spine`/`parts` view, `runParts`' subset option and the ONE
- * part-text save — are reached through the ONE `planIndexForLevel`, at the
- * call, so no second arithmetic exists between the board and them.
+ * THE BOARD ADDRESSES LEVELS (docs/23 §2.1, docs/17 rows 388/391), and this
+ * page owns the WRITE half of the storage boundary: `persistLayout` translates
+ * the board's level keys into the row's frozen stored spelling through the ONE
+ * `storedCanvasNodeKeyForLevel`. The ENGINE is level-addressed too now — its
+ * scope option takes LEVEL NUMBERS, its stream event carries a level, and the
+ * ONE level-text save takes a level — so the board hands it `level` directly.
+ * The derived `spine`/`parts` view remains the board's own card join, reached
+ * through the ONE `planIndexForLevel` at that call.
  */
 
 const BOARD_PERSIST_DEBOUNCE_MS = 600;
@@ -122,7 +123,7 @@ export function BoardPage(): JSX.Element {
   const [rewriteTarget, setRewriteTarget] = useState<{ level: number; nodeKey: string } | null>(
     null,
   );
-  /** Ghost buffers: moduleGenEvents part-token deltas land here and flush to
+  /** Ghost buffers: moduleGenEvents level-token deltas land here and flush to
    * the staging store once per animation frame (rAF-throttle — partial text
    * never touches the module row, and the store only sees per-frame batches). */
   const ghostBuffers = useRef<Map<string, string>>(new Map());
@@ -138,9 +139,9 @@ export function BoardPage(): JSX.Element {
   useEffect(() => {
     return moduleGenEvents.on((event) => {
       if (event.moduleId !== moduleId || event.kind !== 'part-token') return;
-      // The engine's stream event carries the PLAN index (moduleGen is phase
-      // 1f); the board's key is the LEVEL — the ONE conversion, at the edge.
-      const nodeKey = boardLevelNodeKey(levelForPlanIndex(event.planIndex));
+      // The engine's stream event carries the LEVEL (docs/17 row 391), which is
+      // exactly what the board's node key is built from — no conversion here.
+      const nodeKey = boardLevelNodeKey(event.level);
       if (useStagedRewritesStore.getState().byNodeKey[nodeKey] === undefined) return;
       const buffer = ghostBuffers.current.get(nodeKey);
       ghostBuffers.current.set(nodeKey, (buffer ?? '') + event.delta);
@@ -178,8 +179,9 @@ export function BoardPage(): JSX.Element {
     ): Promise<void> => {
       const current = await getModule(moduleId);
       if (current === undefined) throw new Error('Module no longer exists');
-      // The engine and the derived view are still planIndex-keyed (phase 1f):
-      // ONE conversion, here, for the whole flow.
+      // The engine is LEVEL-addressed, so it takes `level` directly; the
+      // derived view this page stages from is planIndex-keyed, and the ONE
+      // conversion bridges the two at this call.
       const planIndex = planIndexForLevel(level);
       const previous = current.parts.find((part) => part.planIndex === planIndex);
       useStagedRewritesStore.getState().stageProposal({
@@ -194,7 +196,7 @@ export function BoardPage(): JSX.Element {
       });
       try {
         await runParts(moduleId, campaign, {
-          planIndexes: [planIndex],
+          levels: [level],
           extraInstruction: instruction,
           includePriorModules,
         });
@@ -230,13 +232,7 @@ export function BoardPage(): JSX.Element {
         // `origin: 'model'` with the serving model); Apply adopts it, so the
         // authorship must survive this write rather than being re-derived from
         // an omitted writer model (docs/17 row 113).
-        await saveModulePartText(
-          moduleId,
-          planIndexForLevel(entry.level),
-          entry.newMarkdown,
-          undefined,
-          'model',
-        );
+        await saveModuleLevelText(moduleId, entry.level, entry.newMarkdown, { origin: 'model' });
         useStagedRewritesStore.getState().drop(nodeKey);
         toastSuccess('Rewrite applied');
       } catch (error) {
@@ -257,13 +253,10 @@ export function BoardPage(): JSX.Element {
         // and the recorded model those bytes had before the rewrite (docs/17
         // row 113), so a restored machine-written part is never relabelled as
         // the owner's.
-        await saveModulePartText(
-          moduleId,
-          planIndexForLevel(entry.level),
-          entry.oldMarkdown,
-          entry.oldWriterModel,
-          entry.oldOrigin,
-        );
+        await saveModuleLevelText(moduleId, entry.level, entry.oldMarkdown, {
+          writerModel: entry.oldWriterModel,
+          origin: entry.oldOrigin,
+        });
         useStagedRewritesStore.getState().drop(nodeKey);
       } catch (error) {
         toastError('Could not restore the previous part text', error);

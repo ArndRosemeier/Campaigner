@@ -5,16 +5,15 @@ A harbor town raised its bell to warn of the drownings; now the bell rings by it
 
 Themes: duty; decay
 
-All parts of this module (one-line synopses, so later parts can foreshadow):
-1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.
-2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.
-3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.
+All levels of this module (each one's own text, so later levels can foreshadow):
+Level 1 — The party arrives with the low tide and finds the first bodies.
+Level 2 — Descent beneath the harbor to the flooded nave.
+Level 3 — Final confrontation at the top of the leaning tower.
 
-Write part 1: "The Sunken Quarter" (levels 1).
+Write level 1.
 
-Part synopsis: The party arrives with the low tide and finds the first bodies.
-
-Part ends when: The bell is found.
+Level 1's current text (this is the material you are writing):
+The party arrives with the low tide and finds the first bodies.
 
 Module entities — wiki-link these ONLY by these exact canonical spellings:
 - Warden Bellamy (npc)

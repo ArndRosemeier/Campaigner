@@ -69,7 +69,7 @@ worth stating because they are easy to break:
 - **Each part carries its OWN id**, never the module's or a neighbour's — the
   id answers "which model wrote this passage", which is why it lives on the
   part rather than on the module.
-- **A hand edit KEEPS the id**: `saveModulePartText` / `patchModulePartText`
+- **A hand edit KEEPS the id**: `saveModuleLevelText` / `saveModuleLevels`
   treat an omitted `writerModel` as "carry", so editing a passage in the
   reader does not erase which model wrote it (owner decision). A `generating`
   /`failed`/`pending` slot carries the PREVIOUS part's id forward for the same
@@ -941,8 +941,10 @@ counts both the call sites and the guard:
 
 **The edit rides the existing write seams, and it is never a second document
 format.** A part's replacement goes through THE one part-text save path
-(`features/modules/partText.saveModulePartText` →
-`db/moduleRepo.patchModulePartText`, the same seam the canvas rewrite's Apply
+(`db/moduleRepo.saveModuleLevels` — the level-addressed DOCUMENT write, the
+same seam the reader's hand edit and the board's Apply/Discard ride, docs/17
+row 391; its predecessor `features/modules/partText.saveModulePartText` →
+`db/moduleRepo.patchModulePartText` is DELETED, and the canvas rewrite's Apply
 uses): one transaction, the whole replacement applied or nothing,
 `status:'ready'` + `edited:true`, the editor's own `modelUsed` recorded as the
 part's `writerModel`, and the second-module promote scan after it. The module
@@ -1981,9 +1983,11 @@ own group.
   exactly as it was left and its bytes round-trip UNCHANGED (no `version` bump).
   Level 0 is present as the premise CARD and deliberately NOT a part: the
   `parts` slices, the per-part rewrite and the staging hold levels 1..N only.
-  The board's own rewrite/engine seams that still speak `planIndex` (`runParts`'
-  `planIndexes`, the `part-token` event, the ONE part-text save) are converted at
-  the call through the SAME pair — never a third mapping.
+  The ENGINE is level-ADDRESSED (docs/17 row 391): `runParts` takes
+  `levels: [level]`, its `part-token` event carries a `level`, and the ONE
+  level-text save takes a level — so the board hands it the number it already
+  carries, and the board's own view→card join is the only place the ONE
+  `planIndexForLevel`/`levelForPlanIndex` pair is applied.
 - **Layout persistence**: the module row's `canvas` field (`nodes/zoom/pan`,
   additive nullable — docs/01) holds dragged positions and the viewport;
   writes go through `patchModule` debounced at 600ms (one rw transaction;
@@ -2009,7 +2013,8 @@ own group.
   per-run override (`PartsRunOptions.includePriorModules`), the row is
   untouched; the prior-modules context itself is the engine's verbatim
   `priorModulesContext` (4k/8k/24k caps are load-bearing).
-- **The rewrite runs THE engine**: `runParts` with `planIndexes: [i]` — the
+- **The rewrite runs THE engine**: `runParts` with `levels: [level]` (the
+  engine's unit is the LEVEL NUMBER, docs/17 row 391) — the
   same subset semantics as the reader's `rewritePart` (floor gates own their
   bands, name normalization included) — minus its swallow-all catch, so
   `ModuleBusyError` surfaces LOUDLY (one generation per module; the board
@@ -2021,11 +2026,12 @@ own group.
   text as-is framed as a proposal — never a diff view (the owner expects
   huge diffs); a streaming ghost preview (rAF-throttled tokens into the
   store) shows partial text while the engine writes, and partial text never
-  touches the module row. **Show previous** flips the card to the old text
-  on demand. **Apply** lands the new text through THE one part-text save
-  path (`saveModulePartText` → `patchModulePartText`: row re-read inside the
-  transaction, `status: 'ready'`, `edited: true`, post-save
-  `promoteSecondModuleUses`) — after apply, the old text is gone.
+  touches the document. **Show previous** flips the card to the old text
+  on demand. **Apply** lands the new text through THE one level-text save
+  (`features/modules/levelText.saveModuleLevelText` → `moduleRepo.saveModuleLevels`
+  → the level-addressed DOCUMENT write: row re-read inside the transaction,
+  `status: 'ready'`, `edited: true`, post-save `promoteSecondModuleUses`,
+  docs/17 row 391) — after apply, the old text is gone.
   **Discard** restores the old text through the same save path (the engine
   had already written its text to the row). A failed apply reverts the
   staging to proposed with a loud toast.
@@ -2040,11 +2046,18 @@ own group.
   this, both gestures would fall back to the save path's writer-model default
   and relabel a model's text as the owner's — which is exactly what makes the
   normalization pass ask him about a rewrite he never typed.
-- **One part-text save path (seam)**: `features/modules/partText.ts` — the
-  reader's hand edit, the board rewrite's Apply and Discard all funnel
-  through `saveModulePartText`; the row re-read inside the write makes a
-  concurrent parts write (another save, a finishing generation) loss-free.
-  Never route a part-text write anywhere else.
+- **One LEVEL-text save path (seam)**: `features/modules/levelText.ts` —
+  the reader's hand edit, the board rewrite's Apply and Discard all funnel
+  through `saveModuleLevelText(moduleId, LEVEL, markdown, { writerModel?,
+  origin? })`, which is `moduleRepo.saveModuleLevels` plus the promote scan;
+  the row re-read inside the write makes a concurrent write (another save, a
+  finishing generation) loss-free, and the document is spliced over the
+  row's OWN bytes so nothing the write does not name moves. Never route a
+  level-text write anywhere else, and never write a `parts` array through
+  plain `patchModule` (that is a lost-update). The planIndex-keyed
+  `features/modules/partText.ts` / `moduleRepo.patchModulePartText` are
+  DELETED (docs/17 row 391); the CANVAS writes a whole document instead
+  (`moduleRepo.saveModuleDocument`, row 384).
 
 ---
 
@@ -2203,7 +2216,7 @@ implementation in
   lands the result through `saveWholeModuleDocument`
   (`canvas/saveDoc.ts`) — the doc is split and ONLY the parts whose text
   changed vs the module row land through THE one part-text save path
-  (`saveModulePartText` → `edited: true`, promote scan), each with its
+  (`saveModuleLevelText` → `edited: true`, promote scan), each with its
   per-part session-ledger entry (`canvas/canvasStore.ts` — zustand,
   SESSION-ONLY, dies on reload; resets when the canvas's module changes).
   Manual **Save** is the same one action (origin-'user' entries per changed
