@@ -134,6 +134,7 @@ describe('the scope statement', () => {
       kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
       imageKinds: [],
       levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
     });
     expect(expected.totalCount).toBe(5);
 
@@ -162,6 +163,7 @@ describe('the scope statement', () => {
       refused: null,
       classified: [],
       stopped: false,
+      notes: [],
     });
 
     await user.click(screen.getByTestId('generation-run'));
@@ -180,6 +182,7 @@ describe('the scope statement', () => {
         kinds: input?.kinds ?? [],
         imageKinds: input?.imageKinds ?? [],
         levelRange: input?.levelRange ?? { min: 1, max: 1 },
+        encounterExtras: input?.encounterExtras ?? { battlemaps: false, mobPortraits: false },
       }).totalCount,
     ).toBe(5);
     await waitFor(() => {
@@ -290,6 +293,7 @@ describe('a wide selection asks first', () => {
         kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
         imageKinds: [],
         levelRange: { min: 1, max: 4 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
       }),
       generated: 0,
       imageJobs: 0,
@@ -298,6 +302,7 @@ describe('a wide selection asks first', () => {
       refused: null,
       classified: [],
       stopped: false,
+      notes: [],
     });
     await user.click(screen.getByTestId('generation-wide-confirm-run'));
     await waitFor(() => {
@@ -316,10 +321,19 @@ describe('per-kind images (docs/17 row 397)', () => {
     expect(screen.getByTestId('generation-scope-count').textContent).toContain('0 images');
     const before = selectGenerationTargets({
       module, artifacts: ARTIFACTS, kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
     });
     await user.click(screen.getByTestId('generation-image-npc'));
     await waitFor(() => {
-      expect(screen.getByTestId('generation-scope-count').textContent).toContain(`${String(before.images.length)} image`);
+      // MIGRATED (docs/17 row 406): the printed plan count is the existing
+      // images PLUS the pending ones the run's detail pass will unlock. The
+      // fixture has no artifacts yet, so this is purely the pending half — two
+      // npcs this run creates (Kael, Mira), each of which then gets an image.
+      const planned = before.images.length + before.pendingImages.length;
+      expect(planned).toBe(2);
+      expect(screen.getByTestId('generation-scope-count').textContent).toContain(
+        `${String(planned)} image`,
+      );
     });
     // The dialog reads the preference through a live query: a bare await here
     // lets its update land outside act() (docs/08-TESTING.md 1a, row 393).
@@ -345,8 +359,8 @@ describe('per-kind images (docs/17 row 397)', () => {
       expect(screen.getByTestId('generation-image-npc').getAttribute('aria-checked')).toBe('true');
     });
     runGenerationSelection.mockResolvedValue({
-      selection: selectGenerationTargets({ module, artifacts: ARTIFACTS, kinds: ['npc'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 } }),
-      generated: 0, imageJobs: 0, mapJobs: 0, portraitJobs: 0, refused: null, classified: [], stopped: false,
+      selection: selectGenerationTargets({ module, artifacts: ARTIFACTS, kinds: ['npc'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 }, encounterExtras: { battlemaps: false, mobPortraits: false } }),
+      generated: 0, imageJobs: 0, mapJobs: 0, portraitJobs: 0, refused: null, classified: [], stopped: false, notes: [],
     });
     await user.click(screen.getByTestId('generation-run'));
     await waitFor(() => {
@@ -372,6 +386,7 @@ describe('strict levels and the per-level encounter minimum (docs/17 row 401)', 
       kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
       imageKinds: [],
       levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
     });
     expect(seam.needsLevel.map((target) => target.name)).toEqual(['Kael']);
     expect(seam.detail.map((target) => target.name)).not.toContain('Kael');
@@ -421,5 +436,62 @@ describe('the dialog counts equal the floor seam (docs/17 rows 394/401)', () => 
     const seam = countModuleEncounters(module);
     expect(report.encounterCounts.map((entry) => entry.found)).toEqual(seam.perPart.map((entry) => entry.found));
     expect(report.encounterCounts.map((entry) => entry.found)).toEqual([0, 1, 0]);
+  });
+});
+
+/**
+ * A TICKED KIND THAT PRODUCED NOTHING IS NAMED (docs/17 row 406). The run owns
+ * the reason; the dialog's old fallback sentence ("every selected entity already
+ * has its detail, image and map") must never contradict a run that just said a
+ * ticked kind was skipped for a specific reason.
+ */
+describe('a ticked kind that produced nothing is NAMED, never a silent finish (docs/17 row 406)', () => {
+  async function runWith(notes: string[]): Promise<void> {
+    const { toastInfo } = await import('@/lib/toast');
+    vi.mocked(toastInfo).mockReset();
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    renderDialog(module);
+    runGenerationSelection.mockResolvedValue({
+      selection: selectGenerationTargets({
+        module,
+        artifacts: ARTIFACTS,
+        kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+      }),
+      generated: 0,
+      imageJobs: 0,
+      mapJobs: 0,
+      portraitJobs: 0,
+      refused: null,
+      classified: [],
+      stopped: false,
+      notes,
+    });
+    await user.click(screen.getByTestId('generation-run'));
+    await waitFor(() => {
+      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    });
+    return;
+  }
+
+  it('does not print "everything already has its image" over a run that named its reasons', async () => {
+    const { toastInfo } = await import('@/lib/toast');
+    await runWith([
+      'images were NOT queued — no selected entity without an image exists after this run',
+    ]);
+    expect(vi.mocked(toastInfo)).not.toHaveBeenCalled();
+  });
+
+  it('keeps the honest fallback when the run reported no reason at all', async () => {
+    const { toastInfo } = await import('@/lib/toast');
+    await runWith([]);
+    await waitFor(() => {
+      expect(vi.mocked(toastInfo)).toHaveBeenCalledWith(
+        'Nothing to generate — every selected entity already has its detail, image and map.',
+      );
+    });
   });
 });

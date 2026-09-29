@@ -148,7 +148,7 @@ beforeEach(async () => {
   // ONE entity in flight at a time: the kind sweep and the pool's "next unit"
   // boundary are then observable one target at a time (the batch fixtures
   // below raise this again where they need a real pool).
-  await updateSettings({ imagesEnabled: true, maxParallelRequests: 1 });
+  await updateSettings({ maxParallelRequests: 1 });
 });
 
 describe('post-generation automation stops with the user', () => {

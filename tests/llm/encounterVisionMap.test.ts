@@ -169,7 +169,6 @@ async function setup(settingsPath: 'classic' | 'vision' = 'classic') {
   await saveSettings({
     ...defaultSettings(),
     openRouterApiKey: 'test-key',
-    imagesEnabled: true,
     dungeonMapPath: settingsPath,
   });
   return { campaign, cartographer };

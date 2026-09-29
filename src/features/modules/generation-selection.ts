@@ -74,6 +74,19 @@ export type GenerationKind = EntityKind;
 export const GENERATION_KINDS: readonly GenerationKind[] = ENTITY_KINDS;
 
 /**
+ * The explicit encounter extras a run was asked for — OFF unless the dialog's
+ * checkboxes say so. Declared HERE, beside the selection, rather than in the
+ * dispatcher: `totalCount` is the run's PLAN, and a plan that ignored the
+ * ticked extras would announce a battlemap for an existing encounter the run
+ * never starts (and, with the pending projection below, the same for created
+ * ones).
+ */
+export interface GenerationEncounterExtras {
+  battlemaps: boolean;
+  mobPortraits: boolean;
+}
+
+/**
  * A level RANGE, read the way docs/23 §2.1 says: "levels 1–3" means the level
  * SECTIONS 1, 2 and 3, so it excludes the premise by construction; a low bound of
  * `MODULE_PREMISE_LEVEL` (0) is the named "no level yet" bucket, which is the
@@ -243,6 +256,8 @@ export interface GenerationSelectionInput {
   /** Selected kinds that ALSO get an image (a kind not in `kinds` has no names to illustrate). */
   imageKinds: readonly EntityKind[];
   levelRange: GenerationLevelRange;
+  /** The encounter extras the run was asked for (see `GenerationEncounterExtras`). */
+  encounterExtras: GenerationEncounterExtras;
 }
 
 /**
@@ -263,14 +278,34 @@ export interface GenerationSelection extends LevelNameSelection {
   needsLevel: GenerationTarget[];
   /** Resolved entities without a cover image (the image queue's own verdict). */
   images: GenerationTarget[];
+  /**
+   * THE PENDING HALF OF `images` (docs/17 row 406): selected names of a ticked
+   * image kind that have NO artifact yet, so THIS run's detail pass will create
+   * them and they then need a cover. Counted in `totalCount` (the dialog
+   * announces the work the run will start) but never enqueued FROM HERE — the
+   * dispatcher re-reads the pool after the pass and enqueues only what EXISTS,
+   * so a name whose detail FAILED is reported by the batch and never
+   * re-reported by the image queue's loud missing-artifact failure.
+   */
+  pendingImages: GenerationTarget[];
   /** Selected encounters without a battlemap. */
   maps: GenerationEncounterTarget[];
   /** Selected encounters whose roster still holds portrait work. */
   mobPortraits: GenerationEncounterTarget[];
   /**
+   * Selected encounters this run will CREATE (no artifact yet). Each one needs
+   * a battlemap once it exists, and its portrait work is decided by the roster
+   * the pass writes — so this list is the plan's pending encounter work for
+   * BOTH extras, counted once per ticked extra. Like `pendingImages`, it is
+   * never enqueued from the plan: the dispatcher re-reads after the pass.
+   */
+  pendingEncounters: GenerationTarget[];
+  /**
    * THE SCOPE STATEMENT'S NUMBER: every job the selection would start —
-   * details + images + maps + mob portraits. The dialog prints THIS field, so
-   * what it announces and what it runs cannot drift.
+   * details + the images (existing + pending) + the ticked encounters' maps and
+   * mob portraits (existing + pending). The dialog prints THIS field, so what
+   * it announces and what it runs cannot drift; an extra the dialog did not
+   * tick contributes nothing.
    */
   totalCount: number;
 }
@@ -293,20 +328,13 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
   for (const target of names.targets) selected.set(`${target.kind}:${nameKey(target.name)}`, target);
 
   const detail: GenerationTarget[] = [];
-  const images: GenerationTarget[] = [];
   for (const kind of entityKinds) {
     for (const name of batchTargets(module, artifacts, kind)) {
       const target = selected.get(`${kind}:${nameKey(name)}`);
       if (target !== undefined) detail.push(target);
     }
-    if (!input.imageKinds.includes(kind)) continue;
-    for (const name of imageTargets(module, artifacts, kind)) {
-      const target = selected.get(`${kind}:${nameKey(name)}`);
-      if (target !== undefined) images.push(target);
-    }
   }
   detail.sort(compareTargets);
-  images.sort(compareTargets);
   // STRICT LEVELS (docs/17 row 401): an NPC or encounter whose record states no
   // level is held out of the detail work and named, never generated with a guess.
   const levelless = (target: GenerationTarget): boolean =>
@@ -316,6 +344,35 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
     bestiarySlotForEntity(module.entityKinds, target.name) === null;
   const needsLevel = detail.filter(levelless);
   const detailReady = detail.filter((target) => !levelless(target));
+
+  const images: GenerationTarget[] = [];
+  for (const kind of entityKinds) {
+    if (!input.imageKinds.includes(kind)) continue;
+    for (const name of imageTargets(module, artifacts, kind)) {
+      const target = selected.get(`${kind}:${nameKey(name)}`);
+      if (target !== undefined) images.push(target);
+    }
+  }
+  images.sort(compareTargets);
+
+  // THE PENDING HALF (docs/17 row 406): the detail pass runs BEFORE the
+  // image/map/portrait steps, so a name this run will CREATE becomes work for
+  // those steps even though nothing resolves yet. Without this the announced
+  // count on a first run said "0 images" while the run would (from row 406 on)
+  // queue one per created entity — the owner-visible lie this fixes.
+  //
+  // The exclusion is what keeps the plan exactly the run's set with no double
+  // count: a detail target whose name ALREADY resolves is counted in the
+  // existing-work list above (the run's post-pass re-read resolves the same
+  // name once, whether the batch created a fresh row or updated one).
+  const imageKeys = new Set(images.map((target) => `${target.kind}:${nameKey(target.name)}`));
+  const pendingImages = detailReady
+    .filter(
+      (target) =>
+        input.imageKinds.includes(target.kind) &&
+        !imageKeys.has(`${target.kind}:${nameKey(target.name)}`),
+    )
+    .sort(compareTargets);
 
   // Maps and mob portraits are encounter work: a selected encounter NAME is the
   // scope, and the sweep's own detectors say whether it still needs anything.
@@ -337,14 +394,35 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
   const maps = withId(encountersNeedingMaps(module, artifacts)).sort(compareTargets);
   const mobPortraits = withId(encountersNeedingMobPortraits(module, artifacts)).sort(compareTargets);
 
+  // A detail encounter with no artifact yet (one the run will create). Its
+  // battlemap is certain once the row exists; its portrait work is decided by
+  // the roster the pass writes, so the plan counts the encounter once. Excluded
+  // when it is already counted in `maps`/`mobPortraits` above.
+  const encounterKeys = new Set(
+    [...maps, ...mobPortraits].map((target) => nameKey(target.name)),
+  );
+  const pendingEncounters = detailReady
+    .filter((target) => target.kind === 'encounter' && !encounterKeys.has(nameKey(target.name)))
+    .sort(compareTargets);
+
+  const extras = input.encounterExtras;
+  const totalCount =
+    detailReady.length +
+    images.length +
+    pendingImages.length +
+    (extras.battlemaps ? maps.length + pendingEncounters.length : 0) +
+    (extras.mobPortraits ? mobPortraits.length + pendingEncounters.length : 0);
+
   return {
     ...names,
     detail: detailReady,
     needsLevel,
     images,
+    pendingImages,
     maps,
     mobPortraits,
-    totalCount: detailReady.length + images.length + maps.length + mobPortraits.length,
+    pendingEncounters,
+    totalCount,
   };
 }
 

@@ -302,7 +302,7 @@ beforeEach(async () => {
   enqueueInventedPortraits.mockReset();
   enqueueMobPortraits.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   enqueueInventedPortraits.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
-  await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+  await saveSettings({ ...defaultSettings() });
 });
 
 afterEach(() => {
@@ -505,26 +505,6 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
     expect(failureToast).toContain('Ghost Lumberjack');
     expect(toastSuccessMock).toHaveBeenCalledWith(
       expect.stringContaining('1 mob portrait queued'),
-    );
-  }, 30_000);
-
-  it('keeps the loud one-toast skip when image generation is disabled, in both lanes', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await seedModule(campaign.id);
-    const mob = await seedMobArtifact(campaign.id, { name: 'Gelatinous Cube' });
-    await seedEncounter(campaign.id, module.id, ownerRoster(mob.id));
-    await saveSettings({ ...defaultSettings(), imagesEnabled: false });
-
-    // The portrait-only target: with battlemaps in the target too, the map
-    // block's own loud skip toast would be the first one (both are correct;
-    // this case is about the portrait half).
-    await runModulePostGeneration(module.id, campaign, PORTRAIT_ONLY);
-
-    expect(enqueueMobPortraits).not.toHaveBeenCalled();
-    expect(enqueueInventedPortraits).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      'Auto mob portrait generation skipped — image generation is disabled in Settings',
     );
   }, 30_000);
 });

@@ -500,7 +500,8 @@ interface Settings {
   embeddingsEnabled: boolean;   // default false until API key present
   imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
   fallbackImageModel: string;   // '' = no fallback; escalation tier for image transport failures
-  imagesEnabled: boolean;       // default false — image generation is opt-in (M3-A)
+  // NO imagesEnabled: the global image on/off switch was DELETED at docs/17 row 406
+  // (owner: "if the user does not want images he just does not need to query it").
   language: 'en'|'de'|'fr'|'es'|'it'|'pt'|'nl'|'pl'|'ru'|'ja'|'zh';
   artifactScopes: {
     workspace: { global: boolean; campaign: boolean; module: boolean };

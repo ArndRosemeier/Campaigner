@@ -171,7 +171,7 @@ beforeEach(async () => {
   });
   campaignId = (await createCampaign({ name: 'Token portrait', system: 'dnd5e' })).id;
   await seedBuiltInPersonas();
-  await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+  await updateSettings({ imageModel: 'test-image-model' });
   // Pass-through spies keep their real implementations — clear calls only.
   enqueueSingleMock.mockClear();
   regenerateSingleMock.mockClear();

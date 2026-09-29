@@ -166,10 +166,6 @@ interface CanonicalInputs {
  * budget spent). Loud on every failure (AGENTS rule 1): regen validates
  * BEFORE enqueueing, so a throw here leaves the old covers intact. */
 async function loadCanonicalInputs(options: EnsureCanonicalPortrait): Promise<CanonicalInputs> {
-  const settings = await getSettings();
-  if (!settings.imagesEnabled) {
-    throw new Error('Image generation is disabled — enable it in Settings');
-  }
   const chunk = (await getChunksByIds([options.chunkId]))[0];
   if (chunk === undefined) {
     throw new Error('the creature\u2019s stat-block chunk no longer exists');

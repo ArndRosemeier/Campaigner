@@ -29,7 +29,6 @@ const SETTINGS = {
   hiddenAdvisors: [],
   strictOutputs: true,
   imageModel: 'google/gemini-2.5-flash-image',
-  imagesEnabled: false,
   fallbackChatModel: '',
   fallbackImageModel: '',
   artifactScopes: {

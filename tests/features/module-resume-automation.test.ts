@@ -191,7 +191,7 @@ describe('resumeModuleAutomation', () => {
       'Ember Crypt',
       '00000000-0000-4000-8000-00000000b001',
     );
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockResolvedValueOnce({
       text: JSON.stringify(npcDraft),
       modelUsed: 'test-model',
@@ -239,7 +239,7 @@ describe('resumeModuleAutomation', () => {
         }),
       ],
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: false });
+    await saveSettings({ ...defaultSettings() });
     // The classification pass (real) records the kind, then the entity chain
     // details it.
     chatMock
@@ -282,7 +282,7 @@ describe('resumeModuleAutomation', () => {
       '00000000-0000-4000-8000-00000000b004',
     );
     const before = await getModule(module.id);
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     const report = await resumeModuleAutomation(module.id, campaign);
 
@@ -320,7 +320,7 @@ describe('resumeModuleAutomation', () => {
         }),
       ],
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     // The stop lands WHILE the classification unit runs (the owner pressing
     // Stop all during the resume): no normalization, no sweep, no job.
     chatMock.mockImplementationOnce(() => {
@@ -354,7 +354,7 @@ describe('resumeModuleAutomation', () => {
       status: 'failed',
       errorMessage: 'Encounter floor not met: …',
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     const report = await resumeModuleAutomation(module.id, campaign);
 
@@ -373,7 +373,7 @@ describe('resumeModuleAutomation', () => {
       // the gate is closed, so the full pass owns that state.
       entityKinds: [{ name: 'Ember Crypt', kind: 'location', absorbed: [] }],
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     // The full normalization pass fails again (an invalid reply).
     chatMock.mockResolvedValueOnce({ text: 'not json at all', modelUsed: 'test-model', fallback: null });
 
@@ -395,7 +395,7 @@ describe('resumeModuleAutomation', () => {
   it('refuses a row whose automation fields no longer match the recorded intent', async () => {
     const { campaign, module } = await seedModule();
     const drifted = await saveModule({ ...module, autoGenerateKinds: [] });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     const report = await resumeModuleAutomation(drifted.id, campaign);
 
@@ -440,7 +440,7 @@ describe('resumeModuleAutomation', () => {
       'Ember Crypt',
       '00000000-0000-4000-8000-00000000b006',
     );
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     // The owner deletes ONE image by hand (their delete is its own revision).
     await updateArtifact(kael.id, { coverImageId: null });
     const afterDelete = (await listArtifactsByCampaign(campaign.id)).find(

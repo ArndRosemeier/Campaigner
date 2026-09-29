@@ -333,7 +333,7 @@ describe('resumeEverything on a legacy row', () => {
   it('fills every gap of a module with no recorded intent — the case the intent-bound resume refuses', async () => {
     const { campaign, module } = await seedModule({ automationIntent: null });
     // The row itself asks for npc entities only; the FULL target goes further.
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
     const before = await getModule(module.id);
 
@@ -375,7 +375,7 @@ describe('resumeEverything on a legacy row', () => {
       'Ember Crypt',
       '00000000-0000-4000-8000-00000000c001',
     );
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
 
     const report = await resumeEverything(module.id, campaign);
@@ -403,7 +403,7 @@ describe('resumeEverything on a legacy row', () => {
       'Ember Crypt',
       '00000000-0000-4000-8000-00000000c003',
     );
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     const before = await getModule(module.id);
 
     const report = await resumeEverything(module.id, campaign);
@@ -432,7 +432,7 @@ describe('resumeEverything on a legacy row', () => {
       status: 'failed',
       errorMessage: 'Encounter floor not met: …',
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     const report = await resumeEverything(module.id, campaign);
 
@@ -608,7 +608,7 @@ describe('the entity sidebar control', () => {
 
   it('fills the gaps the confirmation listed, through the same run', async () => {
     const { campaign, module } = await seedModule({ automationIntent: null });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
     renderPanel({ campaign, module }, await panelArtifacts({ campaign, module }));
 
@@ -698,7 +698,7 @@ describe('the entity sidebar control', () => {
 
   it('reports a finished run in the sidebar, not only in the dock', async () => {
     const { campaign, module } = await seedModule({ automationIntent: null });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
     renderPanel({ campaign, module }, await panelArtifacts({ campaign, module }));
 
@@ -717,7 +717,7 @@ describe('the entity sidebar control', () => {
 describe('the recorded-intent resume is unchanged', () => {
   it('still refuses a drifted row instead of filling it with the full target', async () => {
     const { campaign, module } = await seedModule({ autoGenerateKinds: [] });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     const report = await resumeModuleAutomation(module.id, campaign);
 
@@ -741,7 +741,7 @@ describe('the recorded-intent resume is unchanged', () => {
 
   it('never writes the row automation fields, even when the sweep runs for an explicit target', async () => {
     const { campaign, module } = await seedModule();
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
     const before = await getModule(module.id);
 
@@ -769,7 +769,7 @@ describe('the recorded-intent resume is unchanged', () => {
     const { campaign, module } = await seedModule();
     // [[Ember Crypt]] is a location the RECORDED intent never asked for: the
     // intent-bound resume must leave it alone while the full target fills it.
-    await saveSettings({ ...defaultSettings(), imagesEnabled: false });
+    await saveSettings({ ...defaultSettings() });
     chatMock.mockImplementation((messages) => Promise.resolve(draftedReply(messages)));
 
     const report = await resumeModuleAutomation(module.id, campaign);

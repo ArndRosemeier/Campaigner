@@ -6082,7 +6082,6 @@ export class RunEngine {
     signal: AbortSignal,
   ): Promise<{ step: RunStep }> {
     const settings = await getSettings();
-    if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const { parsed, aspect, preset } = this.effectiveEncounterBrief(steps);
     if (parsed.rooms.length <= 1) {
       throw new Error('Vision-located mapping needs a multi-room brief — single arenas map classic');
@@ -6306,7 +6305,6 @@ export class RunEngine {
     signal: AbortSignal,
   ): Promise<{ step: RunStep }> {
     const settings = await getSettings();
-    if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
     const { parsed, mapMode } = this.effectiveEncounterBrief(steps);
     const natural = mapMode === 'natural';
@@ -7088,9 +7086,6 @@ export class RunEngine {
     signal: AbortSignal,
   ): Promise<{ step: RunStep }> {
     const settings = await getSettings();
-    if (!settings.imagesEnabled) {
-      throw new Error('Image generation is disabled — enable it in Settings');
-    }
     const draft = this.effectivePromptDraft(steps);
     if (draft === null) throw new Error('no prompt draft available to generate from');
     const finalPrompt = assembleImagePrompt(draft);

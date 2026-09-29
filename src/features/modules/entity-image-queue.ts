@@ -61,9 +61,6 @@ async function processJob(
   ctx: { signal: AbortSignal },
 ): Promise<'done' | 'skipped'> {
   const settings = await getSettings();
-  if (!settings.imagesEnabled) {
-    throw new Error('Image generation is disabled — enable it in Settings');
-  }
   // Module creation never references the Party (docs/17 row 69): a job name
   // that matches only a `pc` row has no module entity to illustrate — it fails
   // loudly below instead of attaching a generated cover to a player character.

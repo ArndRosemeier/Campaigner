@@ -679,7 +679,7 @@ function cartographerInput(campaign: Campaign, targetArtifactId: Id): StartRunIn
 
 async function cartographerSetup(): Promise<Campaign> {
   const campaign = await createCampaign({ name: 'Map Assertions', system: 'dnd5e' });
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   drawFillGradeMock.mockReturnValue(70);
   return campaign;
 }

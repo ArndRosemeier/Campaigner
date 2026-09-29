@@ -136,7 +136,7 @@ async function setup(
   const { db } = await import('@/db');
   await db.personas.put(cartographerPersona());
   await db.personas.put(smithPersona());
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   return { campaign };
 }
 

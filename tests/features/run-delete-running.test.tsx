@@ -141,7 +141,7 @@ async function seedParkedEncounterRun(campaignName: string): Promise<{
 }> {
   const campaign = await createCampaign({ name: campaignName, system: 'dnd5e' });
   const persona = await seedPersona();
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
   const encounter = await createArtifact({
     campaignId: campaign.id,
     kind: 'encounter',

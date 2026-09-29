@@ -447,8 +447,9 @@ use rule excerpts).
    `{ model: settings.imageModel, prompt, n: RUN_IMAGE_CANDIDATES, output_format: 'webp' }`
    — ONE since docs/17 row 307 (re-illustrating is the correction path, and two
    candidates doubled wait and cost for a choice the owner did not need)
-   (negative/styleNotes folded into the prompt text). Requires
-   `settings.imagesEnabled`; fails with a clear message otherwise. Each
+   (negative/styleNotes folded into the prompt text). There is NO image on/off
+   switch any more (docs/17 row 406 — the owner deleted it: asking for an image
+   IS the intent), so the step always runs. Each
    returned image is stored through the intake pipeline (M3-A §Storage) with
    `source:'generated'`, prompt and model recorded. No pause.
 3. **pick** — ALWAYS pauses (`awaiting_user`) on every autonomy level. The UI

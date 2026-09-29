@@ -305,10 +305,12 @@ export const settingsSchema = z.object({
    * backups written before the field parse (the post-M3 field convention).
    */
   wikiGroundingEnabled: z.boolean().default(true),
-  /** Image generation model (M3-A). */
+  /**
+   * Image generation model (M3-A). There is deliberately NO on/off switch
+   * beside it (docs/17 row 406, owner-directed): requesting an image IS the
+   * intent, so a global switch only produced silent no-ops when it was off.
+   */
   imageModel: z.string().min(1),
-  /** Image generation off until the user opts in (M3-A). */
-  imagesEnabled: z.boolean(),
   /**
    * Escalation-tier chat model (model fallback feature). '' = disabled.
    * Defining it activates it: it is the second, more potent brain used when
@@ -466,7 +468,6 @@ export function defaultSettings(): Settings {
     embeddingsEnabled: false,
     wikiGroundingEnabled: true,
     imageModel: DEFAULT_IMAGE_MODEL,
-    imagesEnabled: false,
     fallbackChatModel: '',
     fallbackImageModel: '',
     strictOutputs: true,

@@ -123,7 +123,7 @@ async function setup(system: 'dnd5e' | 'pathfinder2e' = 'dnd5e') {
   const cartographer = persona();
   const { db } = await import('@/db');
   await db.personas.put(cartographer);
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   return { campaign, cartographer };
 }
 

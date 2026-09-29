@@ -80,7 +80,7 @@ function blobOf(text: string): Blob {
 beforeEach(async () => {
   await clearDatabase();
   await seedBuiltInPersonas();
-  await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+  await updateSettings({ imageModel: 'test-image-model' });
   chatMock.mockReset();
   // The classic stylize step's figure check (docs/17 row 341) is a chat call
   // on the shared vision contract; answer it unless a test queues its own.
@@ -224,7 +224,7 @@ async function captureClassicStylizePrompt(brief: {
   });
   const { db } = await import('@/db');
   await db.personas.put(cartographer);
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   // The brief carries NO negative (empty string): the stylize step must still
   // guard — only an explicit custom list overrides. (A custom brief negative is
   // pinned by the existing cartographer contract tests.)

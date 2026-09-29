@@ -158,7 +158,7 @@ describe('cover-image-queue.test.ts', () => {
   beforeEach(async () => {
     await clearDatabase();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -372,22 +372,6 @@ describe('cover-image-queue.test.ts', () => {
       expect((await getModule(empty.id))?.coverImageId).toBeNull();
     });
 
-    it('fails loud when image generation is disabled', async () => {
-      await updateSettings({ imagesEnabled: false });
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'A city of ash.',
-        system: 'dnd5e',
-      });
-      enqueueCampaignCover(campaign.id, campaign.name);
-
-      await waitFor(() => {
-        expect(useCoverImageQueue.getState().failed).toHaveLength(1);
-      });
-      expect(generateImagesMock).not.toHaveBeenCalled();
-      expect(toastErrorMock).toHaveBeenCalledTimes(1);
-    });
-
     it('campaign regen replaces the slot and prunes the old blob', async () => {
       const campaign = await createCampaign({
         name: 'Ember',
@@ -532,7 +516,6 @@ describe('post-run-extras.test.ts', () => {
     intakeImageMock.mockReset();
     useMobPortraitQueue.getState().reset();
     useEncounterMapQueue.getState().reset();
-    await updateSettings({ imagesEnabled: true });
     // Green-path map runs: the unattended Cartographer's image step runs on
     // adapters, spied exactly like tests/features/encounter-map-queue.
     vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({
@@ -1116,7 +1099,7 @@ describe('invented-creature-portraits.test.ts', () => {
     await clearDatabase();
     await db.mobPortraits.clear();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -1444,7 +1427,7 @@ describe('entity-image-queue.test.ts', () => {
   beforeEach(async () => {
     await clearDatabase();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -1919,7 +1902,7 @@ describe('mob-portrait-npc-ref.test.ts', () => {
     await clearDatabase();
     await db.mobPortraits.clear();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -2417,7 +2400,7 @@ describe('mob-portrait-queue.test.ts', () => {
   beforeEach(async () => {
     await clearDatabase();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -2580,9 +2563,12 @@ describe('mob-portrait-queue.test.ts', () => {
     it('records failures on the retry list and retryFailed re-enqueues them (createJobQueue invariant)', async () => {
       const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
       const creatureKey = libraryCreatureKey(chunkId);
-      // Generation disabled: the job fails loud per creature AND lands on the
-      // retry list (the pre-factory queue only toasted and dropped it).
-      await updateSettings({ imagesEnabled: false });
+      // A real loud failure: the image call refuses once. The job lands on the
+      // retry list (the pre-factory queue only toasted and dropped it). This
+      // used the deleted image on/off switch as its failure mechanism until
+      // docs/17 row 406 removed that setting; the invariant it pins is the
+      // queue's, so the mechanism moves to the image call itself.
+      generateImagesMock.mockRejectedValueOnce(new Error('the image API refused this prompt'));
       useMobPortraitQueue
         .getState()
         .enqueue([{ campaignId, encounterId, creatureKey, name: 'Goblin Boss', chunkId }]);
@@ -2593,15 +2579,14 @@ describe('mob-portrait-queue.test.ts', () => {
       expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
       expect(useMobPortraitQueue.getState().active).toEqual([]);
 
-      // The explicit retry re-runs the same job once the setting heals.
-      await updateSettings({ imagesEnabled: true });
+      // The explicit retry re-runs the same job, and the image call now answers.
       useMobPortraitQueue.getState().retryFailed();
       expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
       expect(useMobPortraitQueue.getState().failed).toHaveLength(0);
       await waitFor(async () => {
         expect(await creaturePortraitArt(campaignId, creatureKey)).toBe('cover');
       });
-      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+      expect(generateImagesMock).toHaveBeenCalledTimes(2);
     });
 
     it('cancelAll aborts the in-flight image job and withdraws the queued one silently (stop-all seam)', async () => {
@@ -3138,7 +3123,7 @@ describe('single-mob-portrait-queue.test.ts', () => {
   beforeEach(async () => {
     await clearDatabase();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -3667,7 +3652,7 @@ describe('mob-portrait-regen.test.ts', () => {
   beforeEach(async () => {
     await clearDatabase();
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+    await updateSettings({ imageModel: 'test-image-model' });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();

@@ -313,7 +313,7 @@ describe('runModulePostGeneration', () => {
       body: '',
       data: npcData,
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 
@@ -341,37 +341,12 @@ describe('runModulePostGeneration', () => {
       coverImageId: imageId,
       data: npcData,
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 
     expect(enqueueImageJobs).not.toHaveBeenCalled();
     expect(toastSuccessMock).not.toHaveBeenCalled();
-  }, 30_000);
-
-  it('skips image automation loudly when image generation is disabled', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await seedModule(campaign.id, {
-      autoGenerateKinds: [],
-      autoImageKinds: ['npc'],
-    });
-    await createArtifact({
-      campaignId: campaign.id,
-      moduleId: module.id,
-      kind: 'npc',
-      name: 'Kael',
-      summary: '',
-      body: '',
-      data: npcData,
-    });
-    // defaultSettings has imagesEnabled: false.
-
-    await runModulePostGeneration(module.id, campaign);
-
-    expect(enqueueImageJobs).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      'Auto image generation skipped — image generation is disabled in Settings',
-    );
   }, 30_000);
 
   it('enqueues battlemap jobs for module encounters without a map', async () => {
@@ -402,7 +377,7 @@ describe('runModulePostGeneration', () => {
         budgetAdvisory: '',
       },
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 
@@ -418,7 +393,7 @@ describe('runModulePostGeneration', () => {
       autoGenerateMobImages: true,
     });
     const encounter = await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     enqueueMobPortraits.mockResolvedValue({ enqueued: 2, alreadyImaged: [] });
 
     await runModulePostGeneration(module.id, campaign);
@@ -466,7 +441,7 @@ describe('runModulePostGeneration', () => {
       [rulebookEntry('00000000-0000-4000-8000-00000000c002')],
       'Flooded Stair',
     );
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     enqueueMobPortraits.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
 
     await runModulePostGeneration(module.id, campaign);
@@ -474,23 +449,6 @@ describe('runModulePostGeneration', () => {
     expect(enqueueMobPortraits).toHaveBeenCalledTimes(1);
     expect(enqueueMobPortraits.mock.calls[0]?.[0]).toMatchObject({ name: 'Flooded Stair' });
     expect(toastErrorMock).not.toHaveBeenCalled();
-  }, 30_000);
-
-  it('skips mob portrait automation loudly when image generation is disabled', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await seedModule(campaign.id, {
-      autoGenerateKinds: [],
-      autoGenerateMobImages: true,
-    });
-    await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
-    // defaultSettings has imagesEnabled: false.
-
-    await runModulePostGeneration(module.id, campaign);
-
-    expect(enqueueMobPortraits).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      'Auto mob portrait generation skipped — image generation is disabled in Settings',
-    );
   }, 30_000);
 
   it('keeps enqueueing portraits when one encounter fails loudly', async () => {
@@ -501,7 +459,7 @@ describe('runModulePostGeneration', () => {
     });
     await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
     await seedEncounter(campaign.id, module.id, [rulebookEntry()], 'Flooded Stair');
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
     // Sync implementation: the throw still rejects the awaited call, the
     // plain return still satisfies it — no fake await needed.
     enqueueMobPortraits.mockImplementation((encounter: { name: string }) => {
@@ -535,7 +493,7 @@ describe('runModulePostGeneration', () => {
       autoGenerateMobImages: true,
     });
     await seedEncounter(campaign.id, module.id, []);
-    await saveSettings({ ...defaultSettings(), imagesEnabled: false });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 
@@ -662,7 +620,7 @@ describe('an event is not an encounter (08 §M4-B, superseded: only a fight is a
       battlemaps: true,
       mobImages: false,
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 
@@ -689,7 +647,7 @@ describe('an event is not an encounter (08 §M4-B, superseded: only a fight is a
       battlemaps: false,
       mobImages: true,
     });
-    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    await saveSettings({ ...defaultSettings() });
 
     await runModulePostGeneration(module.id, campaign);
 

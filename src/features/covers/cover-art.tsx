@@ -4,7 +4,6 @@ import { RefreshCwIcon, SparklesIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { WriterModelId } from '@/components/writer-model-id';
 import type { Campaign, Id, Module } from '@/domain';
-import { getSettings } from '@/db/settingsRepo';
 import { useImageModel } from '@/features/images/use-image-model';
 import { useImageUrl } from '@/features/images/use-image-url';
 import {
@@ -96,7 +95,7 @@ export function GenerateModuleCoverButton({
         aria-label={regenerating ? `Regenerate cover for ${module.title}` : `Generate cover for ${module.title}`}
         title={regenerating ? 'Regenerate cover' : 'Generate cover'}
         onClick={() => {
-          void queueModuleCover(module);
+          queueModuleCover(module);
         }}
       >
         {regenerating ? <RefreshCwIcon aria-hidden /> : <SparklesIcon aria-hidden />}
@@ -110,7 +109,7 @@ export function GenerateModuleCoverButton({
       data-testid="module-cover-generate"
       aria-label={regenerating ? `Regenerate cover for ${module.title}` : `Generate cover for ${module.title}`}
       onClick={() => {
-        void queueModuleCover(module);
+        queueModuleCover(module);
       }}
     >
       {regenerating ? (
@@ -143,7 +142,7 @@ export function GenerateCampaignCoverButton({
         aria-label={regenerating ? `Regenerate cover for ${campaign.name}` : `Generate cover for ${campaign.name}`}
         title={regenerating ? 'Regenerate cover' : 'Generate cover'}
         onClick={() => {
-          void queueCampaignCover(campaign);
+          queueCampaignCover(campaign);
         }}
       >
         {regenerating ? <RefreshCwIcon aria-hidden /> : <SparklesIcon aria-hidden />}
@@ -157,7 +156,7 @@ export function GenerateCampaignCoverButton({
       data-testid="campaign-cover-generate"
       aria-label={regenerating ? `Regenerate cover for ${campaign.name}` : `Generate cover for ${campaign.name}`}
       onClick={() => {
-        void queueCampaignCover(campaign);
+        queueCampaignCover(campaign);
       }}
     >
       {regenerating ? (
@@ -170,8 +169,8 @@ export function GenerateCampaignCoverButton({
   );
 }
 
-async function queueModuleCover(module: Module): Promise<void> {
-  await queueCoverGuard(() => {
+function queueModuleCover(module: Module): void {
+  queueCoverGuard(() => {
     if (module.coverImageId === null) {
       enqueueModuleCover(module.id, module.campaignId, module.title);
     } else {
@@ -180,8 +179,8 @@ async function queueModuleCover(module: Module): Promise<void> {
   }, 'Could not queue the module cover');
 }
 
-async function queueCampaignCover(campaign: Campaign): Promise<void> {
-  await queueCoverGuard(() => {
+function queueCampaignCover(campaign: Campaign): void {
+  queueCoverGuard(() => {
     if (campaign.coverImageId === null) {
       enqueueCampaignCover(campaign.id, campaign.name);
     } else {
@@ -190,15 +189,10 @@ async function queueCampaignCover(campaign: Campaign): Promise<void> {
   }, 'Could not queue the campaign cover');
 }
 
-/** Loud when image generation is disabled or the enqueue itself throws —
- * silent otherwise (the app-wide progress dock carries the feedback, the
- * mob-queue entry-point precedent). */
-async function queueCoverGuard(work: () => void, title: string): Promise<void> {
+/** Loud when the enqueue itself throws — silent otherwise (the app-wide
+ * progress dock carries the feedback, the mob-queue entry-point precedent). */
+function queueCoverGuard(work: () => void, title: string): void {
   try {
-    const settings = await getSettings();
-    if (!settings.imagesEnabled) {
-      throw new Error('Image generation is disabled — enable it in Settings');
-    }
     work();
   } catch (error) {
     toastError(title, error);

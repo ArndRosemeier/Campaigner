@@ -232,7 +232,7 @@ beforeEach(async () => {
   useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
   useCanvasPreviewStore.setState({ ownerModuleId: null, openByModule: {} });
   await flushChatPersist();
-  await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+  await saveSettings({ ...defaultSettings() });
 });
 
 describe('"Fix module problems" on the canvas', () => {

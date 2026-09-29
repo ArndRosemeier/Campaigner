@@ -256,7 +256,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     slug: 'illustrator',
     name: 'Illustrator',
     description:
-      'Illustrates an existing artifact: the image prompt is assembled directly from its appearance/description (no LLM draft call) and candidate images are generated (needs image generation enabled in Settings).',
+      'Illustrates an existing artifact: the image prompt is assembled directly from its appearance/description (no LLM draft call) and candidate images are generated.',
     systemPrompt: [
       'You are the Illustrator, an art director for tabletop-RPG campaign material.',
       'You receive one artifact (name, kind, summary, description) and illustrate it.',

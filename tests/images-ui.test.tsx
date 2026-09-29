@@ -10,7 +10,7 @@ import { createArtifact, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage } from '@/db/imageRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
-import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
+import { saveSettings } from '@/db/settingsRepo';
 import { defaultSettings } from '@/domain';
 import { db } from '@/db/db';
 import { toastSuccess } from '@/lib/toast';
@@ -443,20 +443,14 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   }, 20000);
 
-  it('settings expose the image generation toggle and model', async () => {
+  it('settings expose the image model and NO image on/off switch (docs/17 row 406)', async () => {
     renderAppAt('/settings');
-    const toggle = await screen.findByTestId('images-enabled');
-    expect(toggle).not.toBeChecked();
-    expect(screen.getByLabelText('First-try image model')).toHaveValue('google/gemini-2.5-flash-image');
-
-    const user = userEvent.setup();
-    await user.click(toggle);
-    await waitFor(() => {
-      void expect(readSettings()).resolves.toMatchObject({ imagesEnabled: true });
-    });
-    // The write re-fires the settings live query — keep it inside act.
-    await act(async () => {
-      await updateSettings({ imagesEnabled: false });
-    });
+    expect(await screen.findByLabelText('First-try image model')).toHaveValue(
+      'google/gemini-2.5-flash-image',
+    );
+    // The switch is DELETED, not merely unrendered: requesting an image IS the
+    // intent, so a checked-and-off global switch only produced silent no-ops.
+    expect(screen.queryByTestId('images-enabled')).toBeNull();
+    expect(screen.queryByLabelText('Image generation')).toBeNull();
     await flushAsyncUpdates();
   });});

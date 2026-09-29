@@ -55,7 +55,7 @@ beforeEach(async () => {
   await clearDatabase();
   chatMock.mockReset();
   toastErrorMock.mockReset();
-  await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+  await updateSettings({ imageModel: 'test-image-model' });
 });
 
 describe('the canvas abort registry', () => {

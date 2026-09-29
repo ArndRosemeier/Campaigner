@@ -146,9 +146,32 @@ export function GenerationDialog({
   );
   const imageKinds: readonly EntityKind[] = storedImageKinds ?? [];
   const selection = useMemo(
-    () => selectGenerationTargets({ module, artifacts, kinds, imageKinds, levelRange: range }),
-    [module, artifacts, kinds, imageKinds, range],
+    () =>
+      selectGenerationTargets({
+        module,
+        artifacts,
+        kinds,
+        imageKinds,
+        levelRange: range,
+        // The ticked extras ride the seam so `totalCount` is the run's own
+        // plan: an extra the owner did not tick contributes nothing (docs/17
+        // row 406 — a printed count the run would not honour was the defect).
+        encounterExtras: { battlemaps, mobPortraits },
+      }),
+    [module, artifacts, kinds, imageKinds, range, battlemaps, mobPortraits],
   );
+
+  // The PLAN the scope statement prints, per kind: the work that exists now
+  // PLUS the work this run's own detail pass will unlock (docs/17 row 406).
+  // The dispatcher re-reads the pool after the pass and enqueues exactly that
+  // union, so the printed number is the number that runs.
+  const plannedImages = selection.images.length + selection.pendingImages.length;
+  const plannedMaps = battlemaps
+    ? selection.maps.length + selection.pendingEncounters.length
+    : 0;
+  const plannedPortraits = mobPortraits
+    ? selection.mobPortraits.length + selection.pendingEncounters.length
+    : 0;
 
   // THE PER-LEVEL ENCOUNTER MINIMUM (docs/17 row 401). It lives on the module row
   // (`encounterFloorGuardrail`) because it is a rule OF THIS DOCUMENT read by the
@@ -208,7 +231,11 @@ export function GenerationDialog({
       }
       const started =
         report.generated + report.imageJobs + report.mapJobs + report.portraitJobs;
-      if (started === 0) {
+      // The run's own summary already NAMED every ticked kind that produced
+      // nothing, with its reason (docs/17 row 406) — this fallback only covers
+      // the genuinely-nothing case, so it can never claim "everything already
+      // has its image" while a ticked kind went unexplained.
+      if (started === 0 && report.notes.length === 0) {
         toastInfo(
           'Nothing to generate — every selected entity already has its detail, image and map.',
         );
@@ -276,7 +303,7 @@ export function GenerationDialog({
               </div>
               <p className="text-xs text-muted-foreground">
                 Images are only made as part of the run you confirm here, and only for entities
-                that have no image yet.
+                that have no image yet — including the entities this run's details create.
               </p>
             </fieldset>
 
@@ -435,7 +462,7 @@ export function GenerationDialog({
                 }`}
               </p>
               <p className="mt-1" data-testid="generation-scope-count">
-                {`${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'} — ${String(selection.detail.length)} detail${selection.detail.length === 1 ? '' : 's'}, ${String(selection.images.length)} image${selection.images.length === 1 ? '' : 's'}, ${String(battlemaps ? selection.maps.length : 0)} battlemap${(battlemaps ? selection.maps.length : 0) === 1 ? '' : 's'}, ${String(mobPortraits ? selection.mobPortraits.length : 0)} mob portrait${(mobPortraits ? selection.mobPortraits.length : 0) === 1 ? '' : 's'}`}
+                {`${String(selection.totalCount)} job${selection.totalCount === 1 ? '' : 's'} — ${String(selection.detail.length)} detail${selection.detail.length === 1 ? '' : 's'}, ${String(plannedImages)} image${plannedImages === 1 ? '' : 's'}, ${String(plannedMaps)} battlemap${plannedMaps === 1 ? '' : 's'}, ${String(plannedPortraits)} mob portrait${plannedPortraits === 1 ? '' : 's'}`}
               </p>
               {selection.levels.length > 0 && (
                 <p className="mt-1 text-muted-foreground" data-testid="generation-scope-levels">
@@ -522,7 +549,7 @@ export function GenerationDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Start {selection.totalCount} generation jobs?</AlertDialogTitle>
             <AlertDialogDescription>
-              {`This is a wide selection: ${rangeLabel(range)}, ${kinds.map(generationKindLabel).join(', ')} — ${String(selection.detail.length)} details, ${String(selection.images.length)} images, ${String(battlemaps ? selection.maps.length : 0)} battlemaps and ${String(mobPortraits ? selection.mobPortraits.length : 0)} mob portraits. Every job is additive: nothing already generated is replaced.`}
+              {`This is a wide selection: ${rangeLabel(range)}, ${kinds.map(generationKindLabel).join(', ')} — ${String(selection.detail.length)} details, ${String(plannedImages)} images, ${String(plannedMaps)} battlemaps and ${String(plannedPortraits)} mob portraits. Every job is additive: nothing already generated is replaced.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

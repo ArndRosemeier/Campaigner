@@ -81,7 +81,6 @@ async function seed(): Promise<{ campaignId: Id; persona: Persona; targetId: Id 
   await saveSettings({
     ...defaultSettings(),
     openRouterApiKey: 'test-key',
-    imagesEnabled: true,
   });
   return { campaignId: campaign.id, persona, targetId: target.id };
 }
@@ -441,27 +440,6 @@ describe('illustrator run (image persona)', () => {
     expect((supersededFailure as Error).message).toContain(supersededId);
   });
 
-  it('fails with a clear message when image generation is disabled in Settings', async () => {
-    const { campaignId, persona, targetId } = await seed();
-    await saveSettings({
-      ...defaultSettings(),
-      openRouterApiKey: 'test-key',
-      imagesEnabled: false,
-    });
-
-    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
-    await waitFor(async () => {
-      const run = await getRun(runId);
-      expect(run?.status).toBe('awaiting_user');
-    });
-    await runEngine.editStep(runId, 0, { parsed: VALID_PROMPT_DRAFT }, input(campaignId, persona, targetId));
-    await waitFor(async () => {
-      const run = await getRun(runId);
-      expect(run?.status).toBe('failed');
-    });
-    expect((await getRun(runId))?.errorMessage).toContain('disabled');
-  });
-
   it('presents ONE candidate with NO cap or partial notice (docs/17 row 307)', async () => {
     // Before row 307 the illustrate step asked for two candidates, so a
     // single-candidate answer was a DEGRADATION (x-ai/grok-imagine-image-2.0
@@ -591,7 +569,6 @@ describe('image persona validation', () => {
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const campaign = await createCampaign({ name: 'PF2e Campaign', system: 'pathfinder2e' });
     const persona = createPersona({
@@ -726,7 +703,6 @@ describe('image persona validation', () => {
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const campaign = await createCampaign({ name: 'PF Campaign', system: 'pathfinder2e' });
     const persona = createPersona({
@@ -825,7 +801,6 @@ describe('the illustrator reads the direct instruction (docs/17 row 346)', () =>
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const runId = await runEngine.startRun({
       ...input(campaign.id, persona, target.id),
@@ -886,7 +861,6 @@ describe('the illustrator reads the direct instruction (docs/17 row 346)', () =>
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const runId = await runEngine.startRun({
       ...input(campaign.id, persona, target.id),

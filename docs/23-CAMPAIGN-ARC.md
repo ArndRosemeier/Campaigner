@@ -1,3 +1,5 @@
+**BUILD STATE (docs/17 row 406).** THE GLOBAL IMAGE SWITCH IS DELETED and the generation run's image/battlemap/portrait work is RE-DERIVED AFTER the detail pass. Owner (verbatim): *"I found out why images are not generated, it was not switched on in settings. That setting needs to go… No need to have a global setting."* `Settings.imagesEnabled` is gone from the schema, the defaults, all fourteen gate sites, the Settings UI and the copy (an existing row carrying the key still parses — `settingsSchema` is a plain `z.object`, so zod STRIPS it: no DB bump, no migration, pinned in `tests/db/settingsRepo.test.ts`). The dispatcher (`features/modules/generation-run`) now derives the selection TWICE: the PLAN at the top (what the dialog announces, `pendingImages`/`pendingEncounters` projecting what this run's own detail pass unlocks) and the ACTUAL work from a FRESH artifact read after the batches — the actual is what is enqueued and what `imageJobs`/`mapJobs`/`portraitJobs` count. A ticked kind that enqueues nothing is NAMED in the run's summary with its reason (`report.notes`, docs/17 row 406 — never again "the dialog just finished"). The scope statement prints the PLAN per kind (`images + pendingImages`, ticked extras' existing + pending encounters) and `totalCount` now excludes unticked extras.
+
 **BUILD STATE (docs/17 row 402).** The document is titled with the campaign name (follows a campaign rename until the owner types a title of their own); the canvas/reader header shows a status badge only for generating/failed; user-visible wording says campaign/document/level.
 
 **BUILD STATE (docs/17 row 401).** LEVELS ARE STATED, NEVER INFERRED: the chat states each NPC's/encounter's level with `<state_level>` (written to the entity record's `levelHint`); the Smith reads ONLY that (no section, prose or band fallback — a levelless NPC is listed under 'needs a level' and asked about in ONE consolidated message from ONE explicit button, `domain/levelProblems`). The PARTY level of an encounter is still the first mentioning section's number (a later mention is a recap of the past); a premise-only encounter has none and is asked to be placed in a level. The Generate dialog carries the per-level encounter minimum and the same list.
@@ -300,6 +302,22 @@ encounter / images) plus a level range — the owner's own example: *"generate e
 and images for levels 1-3, although 6 levels are already defined"*. It **states its own scope before it
 runs** (levels, kinds, target count) so an empty or surprising selection is visible before any work
 starts, and an entity named in several levels is generated ONCE, at its first mention (or at its hint).
+
+**THE SCOPE STATEMENT IS THE RUN'S PLAN, AND THE WORK IS DERIVED TWICE (docs/17 row 406).** The seam now
+takes the ticked `encounterExtras` too, so `totalCount` excludes an extra the owner did not tick, and it
+returns the **pending** halves — `pendingImages` (selected names of a ticked image kind that have no
+artifact yet) and `pendingEncounters` (encounters this run will create). The dialog prints
+`images + pendingImages` and, per ticked extra, the existing plus pending encounters: a first run with
+images ticked announces the images its own detail pass will unlock, instead of the zero that used to be
+printed and then executed. The dispatcher then re-reads the artifact pool **after** the detail batches and
+enqueues the ACTUAL, existing targets only — the queues resolve by name at run time and fail loudly on a
+missing artifact, so a name whose detail failed is reported by the batch and never re-reported by a queue.
+`imageJobs` / `mapJobs` / `portraitJobs` are those actual counts. A ticked kind that enqueued NOTHING is
+NAMED in the run's summary with its reason.
+
+**THERE IS NO GLOBAL IMAGE SWITCH (docs/17 row 406).** `Settings.imagesEnabled` is deleted — asking for
+an image IS the intent, and a switch that was off by default is what made the owner's "generate
+everything, including images" silently do nothing. The image MODEL choice stays (`Settings.imageModel`).
 
 ## 8. Automation GOES (owner: "No automatism", "I do not need the old generation mechanism")
 

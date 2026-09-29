@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, PROMPT_STYLE_FREESTYLE_ID, RECENT_CHAT_MODELS_CAP } from '@/domain';
+import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, DEFAULT_IMAGE_MODEL, PROMPT_STYLE_FREESTYLE_ID, RECENT_CHAT_MODELS_CAP } from '@/domain';
 import { getSettings, readSettings, recordRecentChatModel, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import { clearDatabase } from './helpers';
@@ -91,6 +91,30 @@ describe('settingsRepo', () => {
     // Simulate a row written before the model-fallback feature.
     await db.settings.put(legacy as unknown as Parameters<typeof db.settings.put>[0]);
     expect(await readSettings()).toMatchObject({ fallbackChatModel: '', fallbackImageModel: '' });
+  });
+
+  it('STRIPS the removed imagesEnabled key from an existing row (docs/17 row 406)', async () => {
+    // A row written before the image on/off switch was deleted. `settingsSchema`
+    // is a plain `z.object`, so zod STRIPS the unknown key and the row still
+    // parses — no DB version bump and no migration (the parent brief's safety
+    // claim, proved here through the real repo path).
+    const current = await getSettings();
+    await db.settings.put({
+      ...current,
+      imagesEnabled: true,
+    } as unknown as Parameters<typeof db.settings.put>[0]);
+
+    const read = await getSettings();
+    expect(read).not.toHaveProperty('imagesEnabled');
+    expect(read.imageModel).toBe(DEFAULT_IMAGE_MODEL);
+
+    // A full-row write round-trips the stripped row, and the stale key is gone
+    // from the STORED bytes too — a later read cannot resurrect it.
+    const saved = await saveSettings({ ...read, openRouterApiKey: 'sk-or-strip' });
+    expect(saved).not.toHaveProperty('imagesEnabled');
+    const raw = await db.settings.get('settings');
+    expect(raw).not.toHaveProperty('imagesEnabled');
+    expect(raw?.openRouterApiKey).toBe('sk-or-strip');
   });
 
   // --- Recently used chat models (docs/17 row 193) -------------------------

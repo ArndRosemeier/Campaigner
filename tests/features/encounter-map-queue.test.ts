@@ -242,7 +242,7 @@ async function withdrawnRunFixture(
     producesKind: 'encounter',
     builtIn: true,
   });
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
   const encounter = await createArtifact({
     campaignId: campaign.id, kind: 'encounter', name: encounterName,
     data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -313,7 +313,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const first = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'First',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -376,7 +376,7 @@ describe('module encounter map queue', () => {
       builtIn: true,
     });
     // Settings stay Auto (null) — the encounter's own classification decides.
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '' },
@@ -432,7 +432,7 @@ describe('module encounter map queue', () => {
     });
     // The unattended queue makes no explicit per-run choice — the Settings
     // default governs (docs/11 vision path).
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true, dungeonMapPath: 'vision' });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', dungeonMapPath: 'vision' });
     vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,bWFw');
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
@@ -476,7 +476,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     // Pinned single (standard preset, single shape): the roster pin resolves
     // the ogre's level from the TARGET's own inline source, so the room
     // ships over its band whatever the mock carries — attempt 1 is
@@ -554,7 +554,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Withdrawn',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -606,7 +606,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const activeEncounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Mapping now',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -664,7 +664,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Stopped mid-brief',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -726,7 +726,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Row gone',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -770,7 +770,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Stopped then died',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
@@ -820,7 +820,7 @@ describe('module encounter map queue', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Provider died',
       data: { difficulty: '', levelHint: '', partyLevel: 4, monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' as const } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },

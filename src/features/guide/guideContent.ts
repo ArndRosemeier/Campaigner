@@ -203,7 +203,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Portraits',
         markdown:
-          'Any artifact can carry an image (the image icon on the entity, or the persona\'s illustration run). Image generation is off until you enable it in Settings — it costs per image and is purely optional.',
+          'Any artifact can carry an image (the image icon on the entity, or the persona\'s illustration run). Asking for an image generates one — it costs per image and is purely optional, so there is no global switch to turn on first.',
       },
     ],
     appLink: openModules,

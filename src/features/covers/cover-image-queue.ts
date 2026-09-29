@@ -73,9 +73,6 @@ async function processJob(
   ctx: { signal: AbortSignal },
 ): Promise<'done' | 'skipped'> {
   const settings = await getSettings();
-  if (!settings.imagesEnabled) {
-    throw new Error('Image generation is disabled — enable it in Settings');
-  }
   // Resolve + validate with NO side effects: a slot deleted while its job
   // sat in the queue fails loudly here, never with a dangling reference.
   const target = await resolveTarget(job);

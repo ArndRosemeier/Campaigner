@@ -42,7 +42,6 @@ const SETTINGS_BASE = {
   hiddenAdvisors: [],
   strictOutputs: true,
   imageModel: 'img',
-  imagesEnabled: false,
   fallbackChatModel: '',
   fallbackImageModel: '',
   artifactScopes: {

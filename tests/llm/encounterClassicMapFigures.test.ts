@@ -119,7 +119,6 @@ async function prepareClassicRun() {
   await saveSettings({
     ...defaultSettings(),
     openRouterApiKey: 'test-key',
-    imagesEnabled: true,
     dungeonMapPath: 'classic',
   });
   return { campaign, cartographer };

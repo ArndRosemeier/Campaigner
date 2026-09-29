@@ -223,7 +223,7 @@ beforeEach(async () => {
   await clearDatabase();
   await db.mobPortraits.clear();
   await seedBuiltInPersonas();
-  await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+  await updateSettings({ imageModel: 'test-image-model' });
   chatMock.mockReset();
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();

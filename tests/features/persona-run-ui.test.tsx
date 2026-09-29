@@ -484,7 +484,6 @@ describe('PersonaPanel run lifecycle', () => {
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const cartographer = await createPersona({
       slug: 'encounter-cartographer-ui',
@@ -618,7 +617,6 @@ describe('PersonaPanel run lifecycle', () => {
     await saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
     });
     const cartographer = await createPersona({
       slug: 'encounter-cartographer-auto',
@@ -710,7 +708,6 @@ describe('PersonaPanel run lifecycle', () => {
     await settings.saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
       imageModel: 'cap-test/panel-model',
     });
     const illustrator = await createPersona({
@@ -827,7 +824,6 @@ describe('PersonaPanel run lifecycle', () => {
     await settings.saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
       imageModel: 'cap-test/panel-model',
     });
     const illustrator = await createPersona({
@@ -953,7 +949,6 @@ describe('PersonaPanel run lifecycle', () => {
     await settings.saveSettings({
       ...defaultSettings(),
       openRouterApiKey: 'test-key',
-      imagesEnabled: true,
       imageModel: 'cap-test/cap-model',
     });
     const illustrator = await createPersona({

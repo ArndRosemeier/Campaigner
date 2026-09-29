@@ -202,6 +202,7 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
       kinds: ['npc', 'location'],
       imageKinds: [],
       levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
     });
 
     // Ordered by level, then the domain's kind order (npc before location),
@@ -245,6 +246,7 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
       kinds: ['npc', 'location'],
       imageKinds: ['npc'],
       levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
     });
 
     expect(selection.detail.map((target) => target.name)).toEqual([
@@ -254,7 +256,11 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
       'High Hall',
     ]);
     expect(selection.images.map((target) => target.name)).toEqual(['Kael']);
-    expect(selection.totalCount).toBe(5);
+    // MIGRATED (docs/17 row 406): the plan also counts the image Mira's own
+    // detail pass will unlock — 4 details + Kael's image + Mira's pending image.
+    // `images` keeps its existing-work meaning; the pending half is its own list.
+    expect(selection.pendingImages.map((target) => target.name)).toEqual(['Mira']);
+    expect(selection.totalCount).toBe(6);
   });
 });
 
@@ -272,11 +278,118 @@ describe('per-kind images (docs/17 row 397)', () => {
       }),
     );
     const pick = (imageKinds: ('npc' | 'location')[]) =>
-      selectGenerationTargets({ module, artifacts, kinds: ['npc', 'location'], imageKinds, levelRange: { min: 1, max: 3 } });
+      selectGenerationTargets({
+        module,
+        artifacts,
+        kinds: ['npc', 'location'],
+        imageKinds,
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps: false, mobPortraits: false },
+      });
     expect(pick([]).images).toEqual([]);
     expect(pick(['npc']).images.map((t) => t.name)).toEqual(['Kael']);
     expect(pick(['location']).images.map((t) => t.name)).toEqual(['Ash Gate']);
-    expect(pick(['npc', 'location']).totalCount - pick([]).totalCount).toBe(2);
+    // MIGRATED (docs/17 row 406): toggling a kind now also counts the pending
+    // image for each entity this run's detail pass creates (npc: Mira;
+    // location: Old Keep + High Hall). 5 = 1 existing + 1 pending for npc, 2 + 3
+    // for both kinds.
+    expect(pick(['npc', 'location']).totalCount - pick([]).totalCount).toBe(5);
+  });
+});
+
+describe('the pending projection (docs/17 row 406)', () => {
+  it('counts an image for each entity the run will create, and stops counting once it exists', () => {
+    const module = moduleFixture();
+    const plan = selectGenerationTargets({
+      module,
+      artifacts: [],
+      kinds: ['npc', 'location'],
+      imageKinds: ['location'],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
+    });
+    // Nothing exists yet: all 5 names are details, and the 3 locations are the
+    // images the detail pass will unlock.
+    expect(plan.detail).toHaveLength(5);
+    expect(plan.images).toEqual([]);
+    expect(plan.pendingImages.map((target) => target.name)).toEqual([
+      'Ash Gate',
+      'Old Keep',
+      'High Hall',
+    ]);
+    expect(plan.totalCount).toBe(8);
+
+    // The SAME derivation run again after a successful detail pass: the pending
+    // half is empty and `images` is exactly the work the run enqueues — the
+    // announced count and the actual count are the same number.
+    const after = moduleFixture();
+    const artifacts: AnyArtifact[] = ['Kael', 'Mira'].map((name) =>
+      createArtifact({
+        campaignId: after.campaignId,
+        moduleId: after.id,
+        kind: 'npc',
+        name,
+        summary: '',
+        body: '',
+      }),
+    );
+    artifacts.push(
+      ...['Ash Gate', 'Old Keep', 'High Hall'].map((name) =>
+        createArtifact({
+          campaignId: after.campaignId,
+          moduleId: after.id,
+          kind: 'location',
+          name,
+          summary: '',
+          body: '',
+        }),
+      ),
+    );
+    const actual = selectGenerationTargets({
+      module: after,
+      artifacts,
+      kinds: ['npc', 'location'],
+      imageKinds: ['location'],
+      levelRange: { min: 1, max: 3 },
+      encounterExtras: { battlemaps: false, mobPortraits: false },
+    });
+    expect(actual.detail).toEqual([]);
+    expect(actual.pendingImages).toEqual([]);
+    expect(actual.images.map((target) => target.name)).toEqual([
+      'Ash Gate',
+      'Old Keep',
+      'High Hall',
+    ]);
+    expect(actual.totalCount).toBe(plan.totalCount - 5);
+  });
+
+  it('counts a battlemap and a portrait for an encounter the run will create ONLY when ticked', () => {
+    const base = moduleFixture();
+    const module: Module = {
+      ...base,
+      entityKinds: [
+        ...base.entityKinds,
+        { name: 'Ash Fight', kind: 'encounter', absorbed: [], levelHint: 3 },
+      ],
+      parts: base.parts.map((part, index) =>
+        index === 0 ? { ...part, markdown: `${part.markdown} [[Ash Fight]]` } : part,
+      ),
+    };
+    const pick = (battlemaps: boolean, mobPortraits: boolean) =>
+      selectGenerationTargets({
+        module,
+        artifacts: [],
+        kinds: ['encounter'],
+        imageKinds: [],
+        levelRange: { min: 1, max: 3 },
+        encounterExtras: { battlemaps, mobPortraits },
+      });
+    // The encounter does not exist yet: the plan counts it once per ticked extra.
+    expect(pick(false, false).totalCount).toBe(1);
+    expect(pick(false, false).pendingEncounters.map((target) => target.name)).toEqual(['Ash Fight']);
+    expect(pick(true, false).totalCount).toBe(2);
+    expect(pick(false, true).totalCount).toBe(2);
+    expect(pick(true, true).totalCount).toBe(3);
   });
 });
 

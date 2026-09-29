@@ -81,7 +81,9 @@ Add `imageModel: string` (default `'google/gemini-2.5-flash-image'`) and
 a new "Images" section, with a model combobox fetched from
 `/models?output_modalities=image` (server-side filter; client-side filtering
 on `architecture.output_modalities` remains the fallback for the shared
-`listModels` response). A `fallbackImageModel: string` ('' = no fallback)
+`listModels` response). **SUPERSEDED (docs/17 row 406): `imagesEnabled` was
+DELETED — there is no global image on/off switch; the image model choice stays.**
+A `fallbackImageModel: string` ('' = no fallback)
 adds the escalation tier: `generateImages` walks
 `[primary, fallbackImageModel]` on ANY failure of the first-try model (owner
 2026-09-07: "ANY ERROR, ANY AT ALL should lead to the fallback" — content

@@ -403,7 +403,7 @@ async function setupRun() {
   const cartographer = cartographerPersona();
   const { db } = await import('@/db');
   await db.personas.put(cartographer);
-  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
   return { campaign, cartographer };
 }
 

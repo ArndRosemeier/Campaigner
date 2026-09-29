@@ -288,9 +288,6 @@ async function processJob(
   ctx: { signal: AbortSignal },
 ): Promise<'done' | 'skipped'> {
   const settings = await getSettings();
-  if (!settings.imagesEnabled) {
-    throw new Error('Image generation is disabled — enable it in Settings');
-  }
   // A portrait may have appeared while the job sat in the queue (an upload,
   // another queue run) — no re-generation of imaged creatures. Regen jobs
   // (`regen: true`) flow past this branch: they generate FRESH bytes and swap

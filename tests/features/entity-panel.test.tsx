@@ -617,7 +617,6 @@ describe('EntityPanel', () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
-    await updateSettings({ imagesEnabled: true });
     // The prompt draft is deterministic (buildImagePrompt) — the queue never
     // calls chat; no chat mock is queued for the image path.
     generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });

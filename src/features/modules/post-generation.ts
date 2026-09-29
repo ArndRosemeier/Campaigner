@@ -10,7 +10,6 @@ import type {
 import { ENTITY_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
-import { getSettings } from '@/db/settingsRepo';
 import { enqueueEncounterPortraitFill } from '@/features/campaign/mob-portrait-queue';
 import {
   encounterNeedsMobPortraitWork,
@@ -342,7 +341,6 @@ async function runModulePostGenerationUnlocked(
     // produced some. The module-creation pool (docs/17 row 69): image targets
     // are module entities, never the Party.
     const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
-    const settings = await getSettings();
 
     // The enqueue half of the sweep is one unit too: a stop is not a reason
     // to hand the queues fresh work (they would start a fresh pump for it —
@@ -352,8 +350,8 @@ async function runModulePostGenerationUnlocked(
     // enqueueing.
     if (stoppedSince(epoch)) return;
 
-    // 2) Images — one loud skip when the image API is off (never a silent
-    // drop of the configured automation, never a wall of per-entity errors).
+    // 2) Images — every resolved entity of a configured kind without a cover
+    // is enqueued. There is no image on/off switch any more (docs/17 row 406).
     const imageJobs = orderedKinds(autoImageKinds).flatMap((kind) =>
       imageTargets(module, artifacts, kind).map((name) => ({
         campaignId: module.campaignId,
@@ -361,11 +359,7 @@ async function runModulePostGenerationUnlocked(
         name,
       })),
     );
-    if (imageJobs.length > 0 && !settings.imagesEnabled) {
-      toastError(
-        'Auto image generation skipped — image generation is disabled in Settings',
-      );
-    } else if (imageJobs.length > 0) {
+    if (imageJobs.length > 0) {
       useEntityImageQueue.getState().enqueue(imageJobs);
     }
 
@@ -378,11 +372,7 @@ async function runModulePostGenerationUnlocked(
           name: encounter.name,
         }))
       : [];
-    if (mapJobs.length > 0 && !settings.imagesEnabled) {
-      toastError(
-        'Auto battlemap generation skipped — image generation is disabled in Settings',
-      );
-    } else if (mapJobs.length > 0) {
+    if (mapJobs.length > 0) {
       useEncounterMapQueue.getState().enqueue(mapJobs);
     }
 
@@ -422,57 +412,48 @@ async function runModulePostGenerationUnlocked(
         )
       : [];
     let portraitJobs = 0;
-    if (portraitTargets.length > 0 && !settings.imagesEnabled) {
-      // One loud skip for the configured automation (never a silent drop,
-      // never a wall of per-encounter errors) — same pattern as images
-      // and battlemaps above.
+    // One encounter's failure never kills the sweep: the rest still
+    // enqueue, and the failures aggregate into ONE loud toast. ONE try per
+    // encounter (both lanes inside it), so the aggregation counts
+    // encounters and never lanes; a failure in the first lane therefore
+    // ends that encounter's portrait work with its own loud reason, and a
+    // dangling `npc-ref` is exactly such a failure (`enumerateBatchKinds`
+    // throws with the citing name — never a silent skip). Both lanes run
+    // through ONE seam (`enqueueEncounterPortraitFill`), the same call the
+    // editor's fill press and the run-completion trigger make — the
+    // invented lane always follows because every encounter in
+    // `portraitTargets` has a non-empty roster by construction (the
+    // predicate walks roster rows), which IS the editor's `hasParticipants`
+    // gate — stated here instead of as an unreachable branch. It enumerates
+    // nothing when every participant is chunk-backed, and creates/enqueues
+    // nothing that exists.
+    const failedPortraits: string[] = [];
+    for (const encounter of portraitTargets) {
+      // The portrait batch awaits per encounter (it reads the roster), so a
+      // stop landing mid-loop must end it here, not after the last one.
+      if (stoppedSince(epoch)) break;
+      try {
+        portraitJobs += (await enqueueEncounterPortraitFill(encounter, module.campaignId))
+          .enqueued;
+      } catch (error) {
+        failedPortraits.push(`"${encounter.name}" — ${errorMessage(error)}`);
+      }
+    }
+    if (failedPortraits.length > 0) {
       toastError(
-        'Auto mob portrait generation skipped — image generation is disabled in Settings',
+        `${String(failedPortraits.length)} of ${String(portraitTargets.length)} encounters ` +
+          `failed to enqueue mob portraits (${failedPortraits.join('; ')})`,
       );
-    } else {
-      // One encounter's failure never kills the sweep: the rest still
-      // enqueue, and the failures aggregate into ONE loud toast. ONE try per
-      // encounter (both lanes inside it), so the aggregation counts
-      // encounters and never lanes; a failure in the first lane therefore
-      // ends that encounter's portrait work with its own loud reason, and a
-      // dangling `npc-ref` is exactly such a failure (`enumerateBatchKinds`
-      // throws with the citing name — never a silent skip). Both lanes run
-      // through ONE seam (`enqueueEncounterPortraitFill`), the same call the
-      // editor's fill press and the run-completion trigger make — the
-      // invented lane always follows because every encounter in
-      // `portraitTargets` has a non-empty roster by construction (the
-      // predicate walks roster rows), which IS the editor's `hasParticipants`
-      // gate — stated here instead of as an unreachable branch. It enumerates
-      // nothing when every participant is chunk-backed, and creates/enqueues
-      // nothing that exists.
-      const failedPortraits: string[] = [];
-      for (const encounter of portraitTargets) {
-        // The portrait batch awaits per encounter (it reads the roster), so a
-        // stop landing mid-loop must end it here, not after the last one.
-        if (stoppedSince(epoch)) break;
-        try {
-          portraitJobs += (await enqueueEncounterPortraitFill(encounter, module.campaignId))
-            .enqueued;
-        } catch (error) {
-          failedPortraits.push(`"${encounter.name}" — ${errorMessage(error)}`);
-        }
-      }
-      if (failedPortraits.length > 0) {
-        toastError(
-          `${String(failedPortraits.length)} of ${String(portraitTargets.length)} encounters ` +
-            `failed to enqueue mob portraits (${failedPortraits.join('; ')})`,
-        );
-      }
     }
 
     // One honest completion signal for work that lands minutes after the
     // parts finished (the docks carry the live progress of each queue).
     const parts = [
       generatedCount > 0 ? `${String(generatedCount)} artifact${generatedCount === 1 ? '' : 's'} generated` : null,
-      imageJobs.length > 0 && settings.imagesEnabled
+      imageJobs.length > 0
         ? `${String(imageJobs.length)} image${imageJobs.length === 1 ? '' : 's'} queued`
         : null,
-      mapJobs.length > 0 && settings.imagesEnabled
+      mapJobs.length > 0
         ? `${String(mapJobs.length)} battlemap${mapJobs.length === 1 ? '' : 's'} queued`
         : null,
       portraitJobs > 0

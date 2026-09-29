@@ -85,7 +85,7 @@ function holdUntilAborted(_args: unknown, opts: unknown): Promise<never> {
 beforeEach(async () => {
   await clearDatabase();
   await seedBuiltInPersonas();
-  await updateSettings({ imagesEnabled: true, imageModel: 'test-image-model' });
+  await updateSettings({ imageModel: 'test-image-model' });
   chatMock.mockReset();
   generateImagesMock.mockReset();
   cancelModuleGenMock.mockReset();
