@@ -1353,7 +1353,7 @@ describe('guide.test.tsx', () => {
         'campaign',
         'rules',
         'create-module',
-        'spine',
+        'premise',
         'parts',
         'cast',
         'battlemaps',
@@ -1389,8 +1389,10 @@ describe('guide.test.tsx', () => {
     }, 20000);
 
     it('navigates to a chapter by route and offers prev/next', async () => {
-      renderAppAt(guidePath('spine'));
-      expect(await screen.findByRole('heading', { name: 'Approve the spine' })).toBeInTheDocument();
+      renderAppAt(guidePath('premise'));
+      expect(
+        await screen.findByRole('heading', { name: 'Write the premise and the levels in the chat' }),
+      ).toBeInTheDocument();
       expect(screen.getByTestId('guide-prev')).toHaveTextContent('Create the module');
       expect(screen.getByTestId('guide-next')).toHaveTextContent('Read, edit, rewrite');
 
@@ -1409,7 +1411,7 @@ describe('guide.test.tsx', () => {
 
     it('resolves campaign-scoped CTAs against the most recent campaign', async () => {
       const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-      renderAppAt(guidePath('spine'));
+      renderAppAt(guidePath('premise'));
       await flushAsyncUpdates();
       const link = await screen.findByTestId('guide-app-link');
       expect(link).toHaveAttribute('href', documentPath(campaign.id));
@@ -1417,7 +1419,7 @@ describe('guide.test.tsx', () => {
     }, 20000);
 
     it('renders a disabled hint for campaign-scoped CTAs without a campaign', async () => {
-      renderAppAt(guidePath('spine'));
+      renderAppAt(guidePath('premise'));
       await flushAsyncUpdates();
       expect(await screen.findByTestId('guide-app-link-disabled')).toHaveTextContent(
         'create a campaign first',

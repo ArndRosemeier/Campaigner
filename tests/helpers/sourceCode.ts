@@ -67,3 +67,25 @@ export async function rawSourceText(): Promise<Record<string, string>> {
   rawCache = Object.fromEntries(entries);
   return rawCache;
 }
+
+/**
+ * `[path, hits]` per file under `prefix` whose RAW text carries `needle`
+ * (docs/17 row 392).
+ *
+ * ONE definition: the format pin and the pass-0 deletion scan both ask "how
+ * many times does this needle appear in the raw tree, and in WHICH files", and
+ * a second copy of that little loop is exactly the drift AGENTS rule 4 forbids
+ * — the duplication tripwire reddened the first draft of the deletion pin for
+ * it, which is how the fold happened.
+ */
+export function countsIn(
+  raw: Record<string, string>,
+  prefix: string,
+  needle: string,
+): [string, number][] {
+  return Object.entries(raw)
+    .filter(([path]) => path.startsWith(prefix))
+    .map(([path, text]): [string, number] => [path, text.split(needle).length - 1])
+    .filter(([, hits]) => hits > 0)
+    .sort(([a], [b]) => (a < b ? -1 : 1));
+}

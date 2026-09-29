@@ -128,7 +128,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     summary:
       'A Module is a markdown adventure document with [[wiki-links]]; structured artifacts (NPCs, locations, encounters…) are annotations that hang off the prose — not a pile of forms.',
     tips: [
-      'New Module (top bar or the Modules page) drafts a spine first: premise + part plan, each part with a level band. Approve it, then parts generate one by one, each seeing the previous parts for continuity.',
+      'New Module (top bar or the Document page) starts an EMPTY campaign document and opens its canvas chat. Describe the campaign there and the chat writes the premise; ask for levels and it writes the =====Level N===== sections. Then write each level\'s prose from the reader, one level at a time, each seeing the previous one for continuity.',
       'The reader shows the module as one document: a table of contents on the left, the prose in the middle, and an entity panel on the right listing every mentioned character, place, faction or item.',
       '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or use an existing entity.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',

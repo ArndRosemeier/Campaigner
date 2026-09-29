@@ -11,7 +11,7 @@ import {
   createModule,
   getModule,
   listModulesByCampaign,
-  saveSpine,
+  saveModule,
 } from '@/db/moduleRepo';
 import { saveModuleLevelText } from '@/features/modules/levelText';
 import { evaluateOrphanGuards, sweepOrphanedArtifacts } from '@/db/orphanSweep';
@@ -79,7 +79,7 @@ async function fixture(where: string): Promise<{ campaignId: Id; moduleId: Id }>
   // part save silently created one). One plan entry per level, so the plan is as
   // long as the addressed label needs.
   const labelledPlanIndex = where === 'premise' ? -1 : Number(where.slice('part-'.length));
-  await saveSpine(module.id, {
+  await saveModule({ ...module, spine: {
     premise: where === 'premise' ? `[[${NAME}]].` : 'Nothing here.',
     themes: [],
     writerModel: '',
@@ -90,7 +90,7 @@ async function fixture(where: string): Promise<{ campaignId: Id; moduleId: Id }>
       synopsis: 'Reach the forge.',
       levelUpTrigger: 'The forge goes cold.',
     })),
-  });
+  } });
   if (where !== 'premise') {
     // The level that `part-N` names: the ONE conversion.
     await saveModuleLevelText(

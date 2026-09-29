@@ -440,13 +440,14 @@ describe('the pass is imported by exactly its CALLERS, and its trigger sites are
       'src/features/modules/canvas/chatChanges.ts',
       'src/llm/moduleGen.ts',
     ]);
-    // The TRIGGERS are exactly two in moduleGen — the premise in pass 0 and each
-    // part in pass 1 — and the flag guard that gates them is read three times in
-    // the file (its own definition plus the two trigger sites). A third trigger,
-    // or one that skipped the guard, moves a count and reds here.
+    // The TRIGGER in moduleGen is ONE — each part in the level pass. The
+    // PREMISE trigger lived in pass 0 and is DELETED with pass 0 (docs/17 row
+    // 392), which is why the flag guard is read twice in the file now (its own
+    // definition plus the one trigger site). A second trigger, or one that
+    // skipped the guard, moves a count and reds here.
     const moduleGen = CODE['src/llm/moduleGen.ts'] ?? '';
-    expect(moduleGen.match(/runAdversarialPass\(/g)).toHaveLength(2);
-    expect(moduleGen.match(/adversarialReviewEnabled\(/g)).toHaveLength(3);
+    expect(moduleGen.match(/runAdversarialPass\(/g)).toHaveLength(1);
+    expect(moduleGen.match(/adversarialReviewEnabled\(/g)).toHaveLength(2);
     // The CHAT's trigger is the one call site in the change executor: it runs
     // the SAME pass for the premise or a part, and no other module in `src/`
     // calls it.

@@ -54,7 +54,7 @@ const DECISIONS: Record<string, SiteDecision> = {
   'src/llm/moduleGen.ts': {
     decision: 'record',
     reason:
-      'module generation runs on the global model OUTSIDE the run funnel: the spine pass, the parts pass (which covers rewritePart / generateMissingParts / approveSpineAndRun / createModuleAndRun) and the three normalization entry points (full pass, incremental classify, one-name classify) each record the global model they are about to call. The four repairModel(...) sites are the escalation tier by construction and are EXCLUDED',
+      'module generation runs on the global model OUTSIDE the run funnel: the level pass (rewritePart / generateMissingParts / repairModuleEncounterFloor) and the three normalization entry points (full pass, incremental classify, one-name classify) each record the global model they are about to call. The four repairModel(...) sites are the escalation tier by construction and are EXCLUDED',
   },
   'src/llm/modulePlan.ts': {
     decision: 'record',
@@ -136,7 +136,7 @@ const RESOLUTION_POPULATION: Record<string, { resolveChatModel: number; defaultC
   'src/llm/adversarialPass.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/ideaBoard.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/modelFallback.ts': { resolveChatModel: 1, defaultChatModel: 2 },
-  'src/llm/moduleGen.ts': { resolveChatModel: 0, defaultChatModel: 15 },
+  'src/llm/moduleGen.ts': { resolveChatModel: 0, defaultChatModel: 10 },
   'src/llm/modulePlan.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/llm/runEngine.ts': { resolveChatModel: 8, defaultChatModel: 1 },
 };
@@ -147,7 +147,7 @@ const IN_USE_RECORDERS: Record<string, number> = {
   'src/llm/canvasChat.ts': 1,
   'src/llm/canvasRefine.ts': 1,
   'src/llm/ideaBoard.ts': 1,
-  'src/llm/moduleGen.ts': 5,
+  'src/llm/moduleGen.ts': 4,
   'src/llm/modulePlan.ts': 1,
   'src/llm/recentChatModel.ts': 1,
   'src/llm/runEngine.ts': 1,
@@ -219,11 +219,12 @@ describe('every global-chat-model resolution site and its recording decision (SO
   });
 
   it('keeps the non-global tiers out: no fallback, image, persona, board or session site records', () => {
-    // The escalation tier is never recorded: the four moduleGen repairModel( sites
-    // must not have grown an in-use call beside them. The parts pass records the
-    // GLOBAL model once; a fallback-model floor repair replaces it per part and
-    // is deliberately silent.
-    expect(countsOf('recordGlobalChatModelInUse(')['src/llm/moduleGen.ts']).toBe(5);
+    // The escalation tier is never recorded: the moduleGen repairModel( sites
+    // must not have grown an in-use call beside them. The parts pass and the
+    // three normalization entry points each record the GLOBAL model once; a
+    // fallback-model floor repair replaces it per part and is deliberately
+    // silent. The deleted pass-0 spine was the fifth recorder (docs/17 row 392).
+    expect(countsOf('recordGlobalChatModelInUse(')['src/llm/moduleGen.ts']).toBe(4);
     // The lab's global-model vision probe stays out (see DECISIONS).
     expect(countsOf('recordGlobalChatModelInUse(')['src/features/lab/labClients.ts']).toBeUndefined();
     // The canvas-chat session selection and the Idea Board's per-board model are

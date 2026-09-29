@@ -25,8 +25,7 @@ import {
  *
  * The audit found the condition written out SEVEN times as a toast literal
  * (ChatSidebar ×2, CanvasPage ×4, BoardPage ×1) and THREE times as a private
- * `MODULE_GENERATING_REASON` constant (CanvasPage, spine-checkpoint,
- * boardNodes). They are fold sites now: the sentences live in
+ * `MODULE_GENERATING_REASON` constant (CanvasPage, boardNodes). They are fold sites now: the sentences live in
  * `src/features/modules/module-busy.ts`, and the pins below hold the fold
  * closed from three directions —
  *
@@ -44,7 +43,7 @@ import {
  *    (`llm/canvasBusy`'s second claim) to prove the sentence the owner meets;
  * 3. every folded CALL SITE still routes through the helper. Only the board
  *    site is reachable behaviourally (`module-board-rewrite.test.tsx` pins the
- *    mocked `toastError` call), so the other six are held by the SOURCE SCAN
+ *    mocked `toastError` call), so the others are held by the SOURCE SCAN
  *    below — named as such rather than pretended into a behavioural pin.
  *
  * docs/17 row 123 folded the FOURTH copy of the blocked-control sentence
@@ -64,13 +63,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** The five source files this slice folded (the seventh site lives in BoardPage). */
+/** The source files this slice folded (further sites live in BoardPage and the board node). */
 const FOLDED_FILES = [
   'features/modules/canvas/ChatSidebar.tsx',
   'features/modules/canvas/CanvasPage.tsx',
   'features/modules/board/BoardPage.tsx',
   'features/modules/board/boardNodes.tsx',
-  'features/modules/spine-checkpoint.tsx',
 ];
 
 /** How many `instanceof ModuleBusyError` branches each folded file must route
@@ -82,7 +80,6 @@ const ROUTED_SITES_PER_FILE: Record<(typeof FOLDED_FILES)[number], number> = {
   'features/modules/canvas/CanvasPage.tsx': 4,
   'features/modules/board/BoardPage.tsx': 1,
   'features/modules/board/boardNodes.tsx': 0,
-  'features/modules/spine-checkpoint.tsx': 0,
 };
 
 function srcFilesContaining(snippet: string): string[] {

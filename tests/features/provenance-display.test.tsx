@@ -53,15 +53,10 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as object),
-    runSpine: vi.fn(),
     runParts: vi.fn(),
-    approveSpineAndRun: vi.fn(),
-    retrySpine: vi.fn(),
-    discardSpine: vi.fn(),
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
-    createModuleAndRun: vi.fn(),
     classifyEntityName: vi.fn(),
   };
 });
@@ -93,9 +88,8 @@ function renderAppAt(path: string): void {
 async function seedReaderModule(
   options: {
     legacy?: boolean;
-    /** The spine-checkpoint state: a spine and NO parts yet (the reader's
-     * second premise branch — the one whose `IntroBlock` call site omitted the
-     * prop until `pnpm typecheck` caught it). */
+    /** A premise and NO level sections yet (the chat-authored premise-only
+     * state, docs/17 row 390). */
     noParts?: boolean;
   } = {},
 ): Promise<{ campaign: Campaign; campaignId: Id; moduleId: Id }> {
@@ -176,19 +170,17 @@ describe('the module reader shows the writing model', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
-  it('prints the premise model in the spine-checkpoint branch too (no parts yet)', async () => {
-    // The reader has TWO premise branches — the generated reader and the
-    // spine checkpoint — and each mounts its own `IntroBlock`. Only the first
-    // was pinned, so the second shipped WITHOUT the id while `pnpm lint`
-    // stayed green; `tsc -b` (the real gate) caught the missing prop. This is
-    // the pin for that branch, and it is the reason the coverage gap is
-    // closed rather than just the type error.
+  it('prints the premise model when the document has a premise and no levels yet', async () => {
+    // The reader has ONE premise branch since pass 0 was deleted (docs/17 row
+    // 392): a document with a premise and zero level sections (a chat-authored
+    // premise-only campaign, docs/17 row 390) renders the same `IntroBlock` the
+    // generated reader mounts, so the recorded id shows here too. Zero level
+    // sections is NOT the empty-document state.
     const { campaignId, moduleId } = await seedReaderModule({ noParts: true });
     renderAppAt(modulePath(campaignId, moduleId));
     await findReader();
 
-    expect(await screen.findByTestId('spine-checkpoint')).toBeInTheDocument();
-    // The premise card is on screen in this branch…
+    // The premise card is on screen…
     expect(await screen.findByRole('heading', { name: 'Premise' })).toBeInTheDocument();
     // …and it carries the same recorded id the generated reader shows.
     expect(await screen.findByTestId('premise-writer-model')).toHaveTextContent(SPINE_MODEL);

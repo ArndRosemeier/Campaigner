@@ -4,12 +4,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule, saveSpine } from '@/db/moduleRepo';
 import { sweepOrphanedArtifacts, type OrphanSweepOutcome } from '@/db/orphanSweep';
 import { db } from '@/db/db';
 import {
   battleSchema,
-  createModule as createModuleSchema,
   newId,
   stampNewEntity,
   type Battle,
@@ -28,6 +26,7 @@ import {
   type OrphanOfferView,
 } from '@/features/modules/entity-orphans';
 import { clearDatabase } from '../db/helpers';
+import { proseModuleFixture } from '../helpers/moduleSeed';
 
 /**
  * THE OFFER IS TRUTHFUL — the AGREEMENT PIN (08-MODULE-DESIGNER §M4-C
@@ -54,34 +53,6 @@ import { clearDatabase } from '../db/helpers';
  * assert the strong property BY CONSTRUCTION — the group's names equal the
  * sweep's `deleted` names, and the IN USE bucket's names equal its `kept`.
  */
-
-/** A module with one premise line (prose is where mentions live). */
-async function proseModule(campaignId: Id, title: string, premise: string): Promise<Module> {
-  const module = await createModule(
-    createModuleSchema({
-      campaignId,
-      title,
-      concept: '',
-      levelMin: 1,
-      levelMax: 3,
-      sizeDial: 'sketch',
-    }),
-  );
-  return saveSpine(module.id, {
-    premise,
-    themes: [],
-    writerModel: '',
-    origin: null,
-    partPlan: [
-      {
-        title: 'The Seal',
-        levelBand: '1–2',
-        synopsis: 'Reach the seal.',
-        levelUpTrigger: 'The seal breaks.',
-      },
-    ],
-  });
-}
 
 /** A live battle row carrying the given board/seed fighters (write-normalized). */
 async function putBattle(
@@ -184,7 +155,7 @@ describe("the owner's exact shape, end to end", () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     // The encounter is staged by the prose ([[Bog Ambush]]), so it survives
     // the sweep and its roster citations keep guarding.
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'Fight the [[Bog Ambush]].');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Bog Ambush]].');
     const risen = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -261,8 +232,8 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     ids: { first: Id; second: Id; free: Id };
   }> {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
-    const other = await proseModule(campaign.id, 'Tide Gate', 'The [[Echo]] returns at dusk.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
+    const other = await proseModuleFixture(campaign.id, 'Tide Gate', 'The [[Echo]] returns at dusk.');
 
     // Mentioned only by module B's prose — the panel's props cannot see it.
     await createArtifact({

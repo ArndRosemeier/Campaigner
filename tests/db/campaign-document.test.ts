@@ -12,7 +12,7 @@ import { clearDatabase } from './helpers';
  * ONE DOCUMENT PER CAMPAIGN at the WRITE boundary (docs/23 §10 phase 2,
  * docs/17 row 389).
  *
- * The app's creation path (`llm/moduleGen.createModuleAndRun`) goes through
+ * The app's creation path (`llm/moduleGen.startCampaignDocument`) goes through
  * `createCampaignDocument`, and this file pins its contract: a campaign that
  * already owns a module row REFUSES a second one with the existing document
  * NAMED, and NO row is written. That is AGENTS rules 1/2 at the seam that

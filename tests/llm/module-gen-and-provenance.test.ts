@@ -56,6 +56,7 @@ import {
   moduleCreationPool,
   MODULE_CREATION_EXCLUDED_KINDS,
   visibleToModuleCreation,
+  moduleEntityKindSchema,
   moduleSchema,
   recordedWritingModel,
 } from '@/domain';
@@ -64,16 +65,13 @@ import { runEngine } from '@/llm/runEngine';
 import type { StartRunInput } from '@/llm/runEngine';
 import {
   runParts,
-  approveSpineAndRun,
   normalizeModuleEntityNames,
-  runSpine,
   floorRepairTargets,
   ModuleBusyError,
   repairModuleEncounterFloor,
   campaignCastContext,
   classifyNewModuleEntityNames,
   hasLiveModuleGen,
-  parseSpine,
 } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import { updateSettings } from '@/db/settingsRepo';
@@ -701,75 +699,6 @@ describe('module-edit-origin.test.ts', () => {
       ]);
     });
 
-    it('the GENERATOR writes `origin: model` on the spine it generates, so its own premise never asks', async () => {
-      const { campaign, moduleId } = await seedModule();
-      // The spine pass: the model reply, then the pass's own normalization call.
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify({
-            premise: `The bell tolls for [[${VARIANT}]] and [[${CANONICAL}]].`,
-            themes: ['duty'],
-            partPlan: [
-              {
-                title: 'The Sunken Quarter',
-                levelBand: '1',
-                synopsis: '',
-                levelUpTrigger: 'The bell is found.',
-              },
-            ],
-            entities: [
-              { name: VARIANT, kind: 'npc' },
-              { name: CANONICAL, kind: 'npc' },
-              // The pass-0 spine gate reads the DECLARED kinds: one named
-              // encounter record keeps it quiet (08 §M4-B).
-              { name: 'The Bells Below', kind: 'encounter' },
-            ],
-          }),
-          modelUsed: 'staged/spine-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify({
-            entities: [
-              { name: VARIANT, canonical: VARIANT, kind: 'npc' },
-              { name: CANONICAL, canonical: CANONICAL, kind: 'npc' },
-              // The pass's own normalizer answers the DECLARED records too.
-              { name: 'The Bells Below', canonical: 'The Bells Below', kind: 'encounter' },
-            ],
-          }),
-          modelUsed: TEST_MODEL,
-          fallback: null,
-        });
-
-      await runSpine(moduleId, campaign);
-
-      const generated = await getModule(moduleId);
-      // The generator's own premise is the MODEL's text, recorded as such — not
-      // a `null` that would read as the owner's and make the pass ask him about
-      // a premise he never saw (the owner's report, exactly).
-      expect(generated?.spine?.origin).toBe('model');
-      expect(generated?.spine?.writerModel).toBe('staged/spine-model');
-
-      // …and the NEXT normalization pass rewrites that premise in place: no
-      // proposal, no banner.
-      await patchModule(moduleId, {
-        entityKinds: [
-          { name: VARIANT, kind: 'npc', absorbed: [] },
-          { name: CANONICAL, kind: 'npc', absorbed: [] },
-        ],
-      });
-      chatMock.mockReset();
-      chatMock.mockResolvedValueOnce(foldVerdict());
-
-      await normalizeModuleEntityNames(moduleId);
-
-      const after = await getModule(moduleId);
-      expect(after?.spine?.premise).toBe(
-        `The bell tolls for [[${CANONICAL}|${VARIANT}]] and [[${CANONICAL}]].`,
-      );
-      expect(after?.entityRewriteProposals).toBeNull();
-    }, 20000);
-
     it('the GENERATOR writes `origin: model` and `edited: false` on a part it generates', async () => {
       const { campaign, moduleId } = await seedModule();
       await seedSpine(moduleId, 'A quiet harbor town.', 'model');
@@ -840,61 +769,6 @@ describe('module-edit-origin.test.ts', () => {
       expect(after?.entityRewriteProposals).toEqual([
         { planIndex: -1, replacements: [{ from: VARIANT, to: CANONICAL }] },
       ]);
-    });
-
-    it('an UNCHANGED approved premise keeps the model origin (clicking through the checkpoint claims nothing)', async () => {
-      const { campaign, moduleId } = await seedModule();
-      await seedSpine(moduleId, 'A quiet harbor town.', 'model');
-      const stored = await getModule(moduleId);
-      if (stored?.spine === null || stored?.spine === undefined) {
-        throw new Error('seed spine missing');
-      }
-      await patchModule(moduleId, {
-        entityKinds: [{ name: CANONICAL, kind: 'npc', absorbed: [] }],
-      });
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify({ entities: [] }),
-          modelUsed: TEST_MODEL,
-          fallback: null,
-        })
-        .mockResolvedValue(partReply([CANONICAL]));
-
-      await approveSpineAndRun(moduleId, campaign, stored.spine);
-
-      const after = await getModule(moduleId);
-      expect(after?.spine?.origin).toBe('model');
-      expect(after?.spine?.writerModel).toBe(TEST_MODEL);
-    });
-
-    it('a premise the owner REWROTE at the checkpoint is stamped human', async () => {
-      const { campaign, moduleId } = await seedModule();
-      await seedSpine(moduleId, 'A quiet harbor town.', 'model');
-      const stored = await getModule(moduleId);
-      if (stored?.spine === null || stored?.spine === undefined) {
-        throw new Error('seed spine missing');
-      }
-      await patchModule(moduleId, {
-        entityKinds: [{ name: CANONICAL, kind: 'npc', absorbed: [] }],
-      });
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify({ entities: [] }),
-          modelUsed: TEST_MODEL,
-          fallback: null,
-        })
-        .mockResolvedValue(partReply([CANONICAL]));
-
-      await approveSpineAndRun(moduleId, campaign, {
-        ...stored.spine,
-        premise: 'The owner rewrote the premise himself before generating.',
-      });
-
-      const after = await getModule(moduleId);
-      expect(after?.spine?.origin).toBe('human');
-      // The recorded writing model is untouched: it still answers "which model
-      // wrote this", and it does NOT make the text machine-written.
-      expect(after?.spine?.writerModel).toBe(TEST_MODEL);
     });
   });
 
@@ -1385,13 +1259,6 @@ describe('moduleGen-party-exclusion.test.ts', () => {
     entities: SPINE_ENTITIES,
   };
 
-  const SELF_NORMALIZATION = {
-    entities: SPINE_ENTITIES.map((entity) => ({
-      name: entity.name,
-      canonical: entity.name,
-      kind: entity.kind,
-    })),
-  };
 
   const PART_TEXT =
     'The tide pulls back and the bell answers. [[The Ringing Below]] waits under the nave. ' +
@@ -1524,51 +1391,27 @@ describe('moduleGen-party-exclusion.test.ts', () => {
   });
 
   describe('rendered module-creation prompts', () => {
-    it('the spine request carries no party member, and still reuses shared campaign names', async () => {
-      const { campaign, moduleId } = await seedWorld();
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(SPINE_REPLY),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(SELF_NORMALIZATION),
-          modelUsed: 'test-model',
-          fallback: null,
-        });
-
-      await runSpine(moduleId, campaign);
-
-      const spine = promptContaining('Design the module spine');
-      // The Party is invisible in BOTH lists the spine request carries.
-      expect(spine).toContain('Existing campaign entities');
-      expect(spine).toContain(`${SHARED_NPC} (npc)`);
-      expect(spine).toContain('Shared campaign cast');
-      expect(spine).not.toContain(PC_NAME);
-      expect(spine).not.toContain(SECOND_PC_NAME);
-      expect(spine).not.toContain('(pc)');
-      // Boundary: the owner's own setting prose is untouched — it MAY name the party.
-      expect(spine).toContain(CAMPAIGN_DESCRIPTION);
-    }, 30000);
-
     it('the parts request carries no party member, and still reuses shared campaign names', async () => {
       const { campaign, moduleId } = await seedWorld();
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(SPINE_REPLY),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce({
-          text: JSON.stringify(SELF_NORMALIZATION),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce(partReply())
-        .mockResolvedValueOnce(partNormalizationReply());
+      // The DOCUMENT the parts pass writes into: a premise plus ONE level
+      // section. The deleted pass-0 spine used to author this (docs/17 row
+      // 392), so the row is seeded DIRECTLY — the claim under test is the
+      // parts prompt's party exclusion, not how the section got there.
+      const draft = await getModule(moduleId);
+      if (draft === undefined) throw new Error('seed module missing');
+      await saveModule({
+        ...draft,
+        spine: moduleSpineSchema.parse({
+          premise: SPINE_REPLY.premise,
+          themes: SPINE_REPLY.themes,
+          partPlan: SPINE_REPLY.partPlan,
+        }),
+        entityKinds: SPINE_ENTITIES.map((entity) =>
+          moduleEntityKindSchema.parse({ name: entity.name, kind: entity.kind, absorbed: [] }),
+        ),
+      });
+      chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(partNormalizationReply());
 
-      await runSpine(moduleId, campaign);
       await runParts(moduleId, campaign);
 
       const part = promptContaining('Write level 1.');
@@ -2891,8 +2734,9 @@ describe('scaffoldingEcho.test.ts', () => {
     });
 
     it('a named-text NAME carrying escape debris is named too (both halves, the spine pattern)', () => {
-      // `parseSpine` feeds the DOCUMENT set to both halves, so a name the
-      // document filter drops was invisible to the debris half there as well.
+      // The MODULE boundary's document parser fed the DOCUMENT set to both
+      // halves, so a name the document filter drops was invisible to the debris
+      // half there as well — the SAME field-owner rule applies to a stat block.
       const fields = documentTextFields(
         { traits: [{ name: 'Flussm?fcndung', text: 'The tide turns.' }] },
         'statBlock',
@@ -3086,18 +2930,6 @@ describe('scaffoldingEcho.test.ts', () => {
   });
 
   describe('the MODULE path reaches the SAME seam', () => {
-    it('the SPINE boundary refuses a premise that echoes the scaffolding (parseSpine, called by runSpine at 3 sites)', () => {
-      const echoed = JSON.stringify({
-        ...VALID_SPINE,
-        premise: `The bell rings.\n\n${ENTITY_SERVE_MODULE_TEXT}`,
-      });
-      expect(() => parseSpine(echoed)).toThrow(/prompt scaffolding/);
-      expect(() => parseSpine(echoed)).toThrow(/spine\.premise/);
-      expect(() => parseSpine(echoed)).toThrow(new RegExp('do not invent unrelated sub-plots'));
-      // A CLEAN spine is untouched — parsed, premise byte-identical.
-      expect(parseSpine(JSON.stringify(VALID_SPINE)).premise).toBe(VALID_SPINE.premise);
-    });
-
     it('a PART whose prose echoes the scaffolding fails the part, named, and is never persisted', async () => {
       const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
       const saved = await saveModule(

@@ -79,14 +79,11 @@ import type {
 import { normalizationReplySchema } from '@/domain/entityNormalization';
 import {
   MODULE_TONE_BANS,
-  parseSpineEntities,
   runParts,
-  runSpine,
   toneBansFor,
   assertEncounterFloor,
-  approveSpineAndRun,
   countModuleEncounters,
-  createModuleAndRun,
+  startCampaignDocument,
   encounterFloorMessage,
   generateMissingParts,
   levelsInLevelBand,
@@ -94,7 +91,6 @@ import {
 } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import type { ChatResult } from '@/llm/openrouter';
-import { waitFor } from '@testing-library/react';
 import { createArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import {
@@ -159,7 +155,7 @@ beforeEach(() => {
  * THE prompt-golden seam (docs/17 rows 383/391): every style/engine prompt
  * fixture is compared HERE, and `CAPTURE_PROMPT_GOLDENS=1` REWRITES it from the
  * value under test. The bytes come from the project's OWN render path — the real
- * `runSpine`/`generatePart` against the mocked chat, through the real composer —
+ * `generatePart` against the mocked chat, through the real composer —
  * so a recapture is never a hand edit: run the suite with the variable set and
  * the goldens move, then run it again without it and they must hold.
  */
@@ -198,27 +194,6 @@ describe('moduleGen-conflict-structure.test.ts', () => {
 
   const TEST_MODEL = 'test/fixture-model';
 
-  function spineRaw(entities: unknown[]): string {
-    return JSON.stringify({
-      premise: 'A harbor town raised its bell to warn of the drownings.',
-      themes: ['duty'],
-      partPlan: [
-        {
-          title: 'The Sunken Quarter',
-          levelBand: '1',
-          synopsis: 'Arrival.',
-          levelUpTrigger: 'Found.',
-        },
-        {
-          title: 'The Drowned Cathedral',
-          levelBand: '2',
-          synopsis: 'Descent.',
-          levelUpTrigger: 'Falls.',
-        },
-      ],
-      entities,
-    });
-  }
 
   /** A normalization reply mapping every listed name to itself. */
   function normReply(entries: { name: string; kind: string }[]): ChatResult {
@@ -234,13 +209,6 @@ describe('moduleGen-conflict-structure.test.ts', () => {
       fallback: null,
     };
   }
-
-  /** The entity list of a plan that declares KINDS ONLY — no wants, no conflict
-   * kind (the shape the retired declaration validation used to reject loudly). */
-  const PLAIN_ENTITIES = [
-    { name: 'Warden Bellamy', kind: 'npc' },
-    { name: 'Ember Trial', kind: 'encounter' },
-  ];
 
   describe('the retired mix machinery is unreachable', () => {
     /** The generation path that used to carry the vocabulary, the declaration
@@ -368,10 +336,6 @@ describe('moduleGen-conflict-structure.test.ts', () => {
       return { campaign, moduleId: saved.id };
     }
 
-    function spineReply(entities: unknown[]): ChatResult {
-      return { text: spineRaw(entities), modelUsed: 'test-model', fallback: null };
-    }
-
     function userPromptOf(callIndex: number): string {
       const messages = chatMock.mock.calls[callIndex]?.[0] ?? [];
       const content = messages.find((message) => message.role === 'user')?.content;
@@ -415,111 +379,6 @@ describe('moduleGen-conflict-structure.test.ts', () => {
         ],
       });
     }
-
-    it('spine: an encounter record with no wants and no kind passes the gate untouched', async () => {
-      const { campaign, moduleId } = await seedModule();
-      chatMock.mockResolvedValueOnce(spineReply(PLAIN_ENTITIES)).mockResolvedValueOnce(
-        normReply([
-          { name: 'Warden Bellamy', kind: 'npc' },
-          { name: 'Ember Trial', kind: 'encounter' },
-        ]),
-      );
-
-      const finished = await runSpine(moduleId, campaign);
-
-      // Two calls: the spine and its name normalization. No repair retry — the
-      // records declare nothing and nothing is missing.
-      expect(chatMock).toHaveBeenCalledTimes(2);
-      expect(finished.status).toBe('draft');
-      expect(finished.errorMessage).toBe('');
-      expect(finished.entityKinds).toEqual([
-        { name: 'Warden Bellamy', kind: 'npc', absorbed: [] },
-        { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
-      ]);
-
-      // The prompt asks for kinds and the floor, and for no declarations.
-      const prompt = userPromptOf(0);
-      expect(prompt).toContain('encounter floor');
-      expect(prompt).not.toContain('mutually exclusive wants');
-      expect(prompt).not.toContain('conflict kind');
-      expect(prompt).not.toContain('declared mix');
-      expect(prompt).not.toContain('"wants"');
-      expect(prompt).not.toContain('"conflictKind"');
-
-      // The encounter/event boundary (08 §M4-B, superseded): an encounter IS a
-      // fight — battle map + monster roster — and everything else is an event.
-      expect(prompt).toContain('locations, NPCs, factions, notes, events and encounters');
-      expect(prompt).toContain('An "encounter" is a FIGHT');
-      expect(prompt).toContain('battle map with terrain, and a monster roster with images');
-      expect(prompt).toContain('is an "event" instead');
-      expect(prompt).toContain('no battle map, no monsters, no roster');
-
-      // The normalization call carries the same boundary: classify by what the
-      // party DOES, never by how dangerous the scene sounds.
-      const normalizationPrompt = userPromptOf(1);
-      expect(normalizationPrompt).toContain('"encounter" = a FIGHT');
-      expect(normalizationPrompt).toContain('"event" = a non-combat scene the party plays through');
-      expect(normalizationPrompt).toContain('if no fight happens, it is an event');
-
-      // The conflict contract (Slice 3, AMENDMENT 1): a live situation with
-      // visible approaches, not a plot the party watches.
-      expect(prompt).toContain('every module has a conflict');
-      expect(prompt).toContain(
-        'at least two VISIBLE approaches that differ in cost or consequence',
-      );
-      expect(prompt).toContain('State in the premise how the situation can resolve');
-      expect(prompt).toContain('Give each faction an order of battle');
-      expect(prompt).toContain('never a villain held back for the finale');
-      expect(prompt).toContain('one concrete particular that could not be swapped out unchanged');
-      expect(prompt).toContain('no NPC ally is more intimately bound to the plot than they are');
-      expect(prompt).toContain('Exploring is never punished as such');
-      expect(prompt).toContain('one concrete scene the part contains');
-
-      // The resolution contract is stated POSITIVELY, never as a ban list…
-      expect(prompt).toContain(
-        'Every conflict ends with someone worse off, a cost paid, or a new problem opened',
-      );
-      expect(prompt).toContain('that change persists and is visible when they return');
-      expect(prompt).not.toContain('banned resolution');
-      // …and an untoned module carries no outcome ban at all (the universal
-      // demand already names every frictionless resolution).
-      expect(prompt).not.toContain('rules out these outcomes');
-
-      // The three non-negotiables are restated LAST, immediately before the
-      // reply format (which must stay last for structured output), and the
-      // user's premise is pinned as fixed input.
-      const restatement = prompt.indexOf('Before you answer, the three things that do not bend:');
-      expect(restatement).toBeGreaterThan(
-        prompt.indexOf('Every conflict ends with someone worse off'),
-      );
-      expect(restatement).toBeGreaterThan(prompt.indexOf('An "encounter" is a FIGHT'));
-      expect(prompt.indexOf('Reply with ONLY a JSON object')).toBeGreaterThan(restatement);
-      expect(prompt).toContain(
-        "The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. " +
-          "If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, " +
-          'which faction carries the conflict, where the conflict starts) — never the premise. ' +
-          'If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.',
-      );
-    }, 20000);
-
-    it('spine: a matching tone renders its 2-3 outcome limits after the positive demand', async () => {
-      const { campaign, moduleId } = await seedModule(1, 2, 'horror');
-      chatMock.mockResolvedValueOnce(spineReply(PLAIN_ENTITIES)).mockResolvedValueOnce(
-        normReply([
-          { name: 'Warden Bellamy', kind: 'npc' },
-          { name: 'Ember Trial', kind: 'encounter' },
-        ]),
-      );
-
-      await runSpine(moduleId, campaign);
-
-      const prompt = userPromptOf(0);
-      const shape = prompt.indexOf('Every conflict ends with someone worse off');
-      const limits = prompt.indexOf('This module’s tone rules out these outcomes');
-      expect(shape).toBeGreaterThan(-1);
-      expect(limits).toBeGreaterThan(shape);
-      for (const ban of MODULE_TONE_BANS.horror ?? []) expect(prompt).toContain(ban);
-    }, 20000);
 
     it('parts: a full run over such a plan ships ready with no repair', async () => {
       const { campaign, moduleId } = await seedModule();
@@ -583,50 +442,6 @@ describe('moduleGen-conflict-structure.test.ts', () => {
       expect(finale).toContain('full price');
       expect(finale).not.toContain('End this part with a cost, a revelation, or a new pressure');
     }, 20000);
-
-    it('spine repair names the floor only (no wants, no kinds, no mix)', async () => {
-      const { campaign, moduleId } = await seedModule();
-      chatMock
-        .mockResolvedValueOnce(spineReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
-        .mockResolvedValueOnce(normReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
-        // The repair retry, whose reply finally declares an encounter.
-        .mockResolvedValueOnce(spineReply(PLAIN_ENTITIES))
-        .mockResolvedValueOnce(
-          normReply([
-            { name: 'Warden Bellamy', kind: 'npc' },
-            { name: 'Ember Trial', kind: 'encounter' },
-          ]),
-        );
-
-      const finished = await runSpine(moduleId, campaign);
-
-      expect(chatMock).toHaveBeenCalledTimes(4);
-      expect(finished.status).toBe('draft');
-      expect(finished.entityKinds.map((entry) => entry.kind)).toEqual(['npc', 'encounter']);
-      const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content;
-      const repairText = typeof repair === 'string' ? repair : '';
-      expect(repairText).toContain('declares no encounters');
-      // The repair nudge asks for a named encounter, never for a declaration.
-      expect(repairText).not.toContain('conflict kind');
-      expect(repairText).not.toContain('wants');
-    }, 20000);
-
-    it('parseSpineEntities accepts any declared kind list and adds no declaration rule', () => {
-      expect(parseSpineEntities(spineRaw(PLAIN_ENTITIES))).toEqual([
-        { name: 'Warden Bellamy', kind: 'npc', absorbed: [] },
-        { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
-      ]);
-      // A declaration that used to be REQUIRED is now ordinary input, ignored.
-      expect(
-        parseSpineEntities(
-          spineRaw([
-            { name: 'Ember Trial', kind: 'encounter', wants: ['a', 'b'], conflictKind: 'combat' },
-          ]),
-        ),
-      ).toEqual([{ name: 'Ember Trial', kind: 'encounter', absorbed: [] }]);
-      // A foreign kind is still a loud boundary failure (zod, not a gate).
-      expect(() => parseSpineEntities(spineRaw([{ name: 'X', kind: 'plotarc' }]))).toThrow();
-    });
   });
 });
 
@@ -956,103 +771,6 @@ describe('moduleGen-encounter-floor.test.ts', () => {
       },
     ];
 
-    function spineWith(entities: { name: string; kind: string }[]): object {
-      return {
-        premise: 'A harbor town raised its bell to warn of the drownings.',
-        themes: ['duty'],
-        partPlan: SPINE_PLAN,
-        entities,
-      };
-    }
-
-    /** Three named encounters (the floor's own requirement; the retired mix
-     * vocabulary and its gate are gone — 08 §M4-B, superseded). */
-    const MIX_SPINE = [
-      { name: 'Ember Trial', kind: 'encounter' },
-      { name: 'Flood Trial', kind: 'encounter' },
-      { name: 'Bell Trial', kind: 'encounter' },
-    ];
-
-    it('spine prompt states the REQUIREMENT (never "advice, not a requirement")', async () => {
-      const { campaign, moduleId } = await seedModule(1, 2);
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(spineWith(MIX_SPINE)),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce(
-          normReply([
-            { name: 'Ember Trial', kind: 'encounter' },
-            { name: 'Flood Trial', kind: 'encounter' },
-            { name: 'Bell Trial', kind: 'encounter' },
-          ]),
-        );
-
-      await runSpine(moduleId, campaign);
-
-      const prompt = chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user');
-      const text = typeof prompt?.content === 'string' ? prompt.content : '';
-      expect(text).toContain('REQUIREMENT — encounter floor');
-      expect(text).not.toContain('advice, not a requirement');
-      expect((await getModule(moduleId))?.status).toBe('draft');
-    }, 20000);
-
-    it('spine gate: zero encounter records → one escalated repair retry, then draft', async () => {
-      const { campaign, moduleId } = await seedModule(1, 2);
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(spineWith([{ name: 'Warden Bellamy', kind: 'npc' }])),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce(normReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
-        // The repair retry declares the named encounters the floor asked for.
-        .mockResolvedValueOnce({
-          text: JSON.stringify(spineWith([{ name: 'Warden Bellamy', kind: 'npc' }, ...MIX_SPINE])),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce(
-          normReply([
-            { name: 'Warden Bellamy', kind: 'npc' },
-            { name: 'Ember Trial', kind: 'encounter' },
-            { name: 'Flood Trial', kind: 'encounter' },
-            { name: 'Bell Trial', kind: 'encounter' },
-          ]),
-        );
-
-      const finished = await runSpine(moduleId, campaign);
-
-      expect(chatMock).toHaveBeenCalledTimes(4);
-      expect(finished.status).toBe('draft');
-      expect(finished.entityKinds.some((entry) => entry.kind === 'encounter')).toBe(true);
-      expect(toastErrorMock).not.toHaveBeenCalled();
-    }, 20000);
-
-    it('spine gate: still zero after the repair → loud spine failure', async () => {
-      const { campaign, moduleId } = await seedModule(1, 2);
-      const barren = {
-        text: JSON.stringify(spineWith([{ name: 'Warden Bellamy', kind: 'npc' }])),
-        modelUsed: 'test-model',
-        fallback: null,
-      };
-      const barrenNorm = normReply([{ name: 'Warden Bellamy', kind: 'npc' }]);
-      chatMock
-        .mockResolvedValueOnce(barren)
-        .mockResolvedValueOnce(barrenNorm)
-        .mockResolvedValueOnce(barren)
-        .mockResolvedValueOnce(barrenNorm);
-
-      await expect(runSpine(moduleId, campaign)).rejects.toThrow('declares no encounters');
-
-      const after = await getModule(moduleId);
-      expect(after?.status).toBe('failed');
-      expect(after?.errorMessage).toContain('declares no encounters');
-      expect(chatMock).toHaveBeenCalledTimes(4); // exactly one repair retry
-      expect(toastErrorMock).toHaveBeenCalledWith('Module generation failed', expect.any(Error));
-    }, 20000);
-
     it('parts gate: a 0-encounter module fails with named parts and never ships ready', async () => {
       const { campaign, moduleId } = await seedModule(1, 2);
       await patchModule(moduleId, {
@@ -1158,25 +876,6 @@ describe('moduleGen-encounter-floor.test.ts', () => {
       expect(finished.errorMessage).toContain('Encounter floor not met');
     }, 20000);
 
-    it('approveSpineAndRun skips post-generation automation on gate failure', async () => {
-      const { campaign, moduleId } = await seedModule(1, 2);
-      chatMock.mockResolvedValue(partReply('PART'));
-      await patchModule(moduleId, { status: 'draft', errorMessage: '' });
-
-      await approveSpineAndRun(
-        moduleId,
-        campaign,
-        moduleSpineSchema.parse({
-          premise: 'A harbor town raised its bell.',
-          themes: [],
-          partPlan: SPINE_PLAN,
-        }),
-      );
-
-      expect((await getModule(moduleId))?.status).toBe('failed');
-      expect(runModulePostGenerationMock).not.toHaveBeenCalled();
-    }, 20000);
-
     it('generateMissingParts skips post-generation automation on gate failure', async () => {
       const { campaign, moduleId } = await seedModule(1, 2);
       await patchModule(moduleId, {
@@ -1204,46 +903,6 @@ describe('moduleGen-encounter-floor.test.ts', () => {
       expect((await getModule(moduleId))?.status).toBe('failed');
       expect(runModulePostGenerationMock).not.toHaveBeenCalled();
     }, 20000);
-
-    it('createModuleAndRun skips post-generation automation on gate failure', async () => {
-      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-      const spine = spineWith([{ name: 'Warden Bellamy', kind: 'npc' }, ...MIX_SPINE]);
-      chatMock
-        .mockResolvedValueOnce({
-          text: JSON.stringify(spine),
-          modelUsed: 'test-model',
-          fallback: null,
-        })
-        .mockResolvedValueOnce(
-          normReply([
-            { name: 'Warden Bellamy', kind: 'npc' },
-            { name: 'Ember Trial', kind: 'encounter' },
-            { name: 'Flood Trial', kind: 'encounter' },
-            { name: 'Bell Trial', kind: 'encounter' },
-          ]),
-        )
-        .mockResolvedValue(partReply('PART')); // parts + repairs: no encounters
-
-      const moduleId = await createModuleAndRun(campaign, {
-        campaignId: campaign.id,
-        title: 'The Midnight Tower',
-        concept: 'A tower that answers questions for a price.',
-        levelMin: 1,
-        levelMax: 2,
-        tone: '',
-        sizeDial: 'sketch',
-        autoApproveSpine: true,
-      });
-
-      await waitFor(
-        async () => {
-          expect((await getModule(moduleId))?.status).toBe('failed');
-        },
-        { timeout: 15_000 },
-      );
-      expect((await getModule(moduleId))?.errorMessage).toContain('Encounter floor not met');
-      expect(runModulePostGenerationMock).not.toHaveBeenCalled();
-    }, 20000);
   });
 });
 
@@ -1255,7 +914,7 @@ describe('moduleGen-guardrails.test.ts', () => {
    * The GOLDEN half is the regression contract: the fixture files under
    * `tests/fixtures/encounterGuardrails/` were captured by RENDERING the
    * pre-change prompt builders at commit 89e5d71 (a temporary worktree at HEAD,
-   * driving the real `runSpine` + `runParts` against mocked chat replies) — not
+   * driving the real `runParts` against mocked chat replies) — not
    * transcribed by hand. Under the default floor every rendered string and every
    * failure message must stay byte-identical to those files.
    *
@@ -1298,29 +957,6 @@ describe('moduleGen-guardrails.test.ts', () => {
     },
   ];
 
-  /** The spine's entity list. Name + kind only: the retired wants/conflict-kind
-   * declarations and the mix gate they fed are gone (08 §M4-B, superseded). */
-  const SPINE_ENTITIES = [
-    { name: 'Ember Trial', kind: 'encounter' },
-    { name: 'Flood Trial', kind: 'encounter' },
-    { name: 'Bell Trial', kind: 'encounter' },
-  ];
-
-  function spineReply(entities: unknown[]): string {
-    return JSON.stringify({
-      premise: 'A harbor town raised its bell to warn of the drownings.',
-      themes: ['duty'],
-      partPlan: SPINE_PLAN,
-      entities,
-    });
-  }
-
-  function normReply(entities: { name: string; kind: string }[]): string {
-    return JSON.stringify({
-      entities: entities.map((entry) => ({ ...entry, canonical: entry.name })),
-    });
-  }
-
   /** The campaign + module the golden capture used (levels 1-2, tone eerie). */
   async function seedModule(
     options: { floor?: EncounterFloorGuardrail } = {},
@@ -1338,29 +974,6 @@ describe('moduleGen-guardrails.test.ts', () => {
     });
     const saved = await saveModule(draft);
     return { campaign, moduleId: saved.id };
-  }
-
-  /** The spine reply the mocked chat returns first, then the normalization reply. */
-  function queueSpineReplies(): void {
-    chatMock
-      .mockResolvedValueOnce({
-        text: spineReply(SPINE_ENTITIES),
-        modelUsed: 'test-model',
-        fallback: null,
-      })
-      .mockResolvedValueOnce({
-        text: normReply(SPINE_ENTITIES.map((entry) => ({ name: entry.name, kind: entry.kind }))),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
-  }
-
-  /** The first user message of the nth chat call (the rendered prompt). */
-  function promptText(call = 0): string {
-    const messages = chatMock.mock.calls[call]?.[0] as
-      { role: string; content: unknown }[] | undefined;
-    const user = messages?.find((message) => message.role === 'user');
-    return typeof user?.content === 'string' ? user.content : '';
   }
 
   /** Prompt text of a call whose content contains an anchor. */
@@ -1452,15 +1065,6 @@ describe('moduleGen-guardrails.test.ts', () => {
   });
 
   describe('golden: the default floor renders today, byte for byte', () => {
-    it('spine prompt keeps the exact pre-change wording', async () => {
-      const { campaign, moduleId } = await seedModule();
-      queueSpineReplies();
-
-      await runSpine(moduleId, campaign);
-
-      expectEmbedded(promptText(0), golden('spine-guardrail-default.txt'));
-    }, 20_000);
-
     it('parts prompt keeps the exact pre-change wording', async () => {
       const { campaign, moduleId } = await seedModule();
       await patchModule(moduleId, {
@@ -1496,17 +1100,10 @@ describe('moduleGen-guardrails.test.ts', () => {
   });
 
   describe('custom floor: the number drives the prompt AND the gate', () => {
-    it('perLevel 2 doubles the requirement and says so in the prompt and the message', async () => {
-      const { campaign, moduleId } = await seedModule({ floor: { enabled: true, perLevel: 2 } });
-      queueSpineReplies();
-
-      await runSpine(moduleId, campaign);
-
-      const prompt = promptText(0);
-      expect(prompt).toContain('name at least two distinct encounters per level');
-      expect(prompt).toContain('at least 4 distinct encounters across the module');
-
-      // The counter: 2 levels x 2 = 4 total, and each band needs 2.
+    it('perLevel 2 doubles the requirement, and the gate says so', () => {
+      // The COUNTER half: 2 levels x 2 = 4 total, and each band needs 2. The
+      // PROMPT half of this pin lived in the deleted pass-0 spine prompt
+      // (docs/17 row 392).
       const module = floorModule({
         floor: { enabled: true, perLevel: 2 },
         parts: [{ planIndex: 0, names: ['Ember Trial'] }],
@@ -1544,19 +1141,10 @@ describe('moduleGen-guardrails.test.ts', () => {
       );
     }, 20_000);
 
-    it('a disabled floor removes the clause from the prompt and the gate from the count', async () => {
-      const { campaign, moduleId } = await seedModule({ floor: { enabled: false, perLevel: 0 } });
-      queueSpineReplies();
-
-      await runSpine(moduleId, campaign);
-
-      const prompt = promptText(0);
-      expect(prompt).not.toContain('REQUIREMENT — encounter floor');
-      // The placement rules that shared the bullet survive a disabled floor.
-      expect(prompt).toContain('Place encounters deliberately');
-      // The retired declaration rules are gone from every floor setting.
-      expect(prompt).not.toContain('Every planned encounter declares its conflict STRUCTURALLY');
-
+    it('a disabled floor removes the gate from the count', () => {
+      // The PROMPT half of this pin lived in the deleted pass-0 spine prompt
+      // (docs/17 row 392); the counter/gate half is the survivor.
+      //
       // The gate: no required total, no deficient band, and the assertion passes
       // for an encounter-free module.
       const module = floorModule({
@@ -1721,7 +1309,7 @@ describe('promptStyles-classic-identity.test.ts', () => {
    * stay coherent and the owner's live campaigns are untouched.
    *
    * The fixtures under `tests/fixtures/promptStyles/` were captured by RENDERING
-   * the pre-refactor builders (a temporary harness driving the real `runSpine` +
+   * the pre-refactor builders (a temporary harness driving the real part +
    * `generatePart` against mocked chat replies, at the commit before the composer
    * landed) — not transcribed by hand, the 89e5d71 method. Each case renders
    * through the real seam and must match its fixture character for character.
@@ -1773,20 +1361,6 @@ describe('promptStyles-classic-identity.test.ts', () => {
     { name: 'The Flooded Nave', kind: 'encounter' },
     { name: 'The Wardens Confession', kind: 'encounter' },
   ];
-  const SPINE_REPLY = JSON.stringify({
-    premise: PREMISE,
-    themes: THEMES,
-    partPlan: PLAN,
-    entities: ENTITIES,
-  });
-  const NORM_REPLY = JSON.stringify({
-    entities: ENTITIES.map((entry) => ({
-      name: entry.name,
-      canonical: entry.name,
-      kind: entry.kind,
-    })),
-  });
-
   /** The whole user message of the n-th chat call. */
   function userPrompt(callIndex: number): string {
     const messages = chatMock.mock.calls[callIndex]?.[0] as
@@ -1987,56 +1561,6 @@ describe('promptStyles-classic-identity.test.ts', () => {
       expect(classic?.templateText).toContain('--- PARTS ---');
     });
 
-    it('spine: default floor', async () => {
-      const { campaign, moduleId } = await seed();
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-default.txt', userPrompt(0));
-    }, 20000);
-
-    it('spine: disabled floor (the clause and its bullet tail)', async () => {
-      const { campaign, moduleId } = await seed({ floor: { enabled: false, perLevel: 0 } });
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-floor-off.txt', userPrompt(0));
-    }, 20000);
-
-    it('spine: prior modules + shared cast', async () => {
-      const { campaign, moduleId } = await seed({ includePriorModules: true });
-      await seedArtifacts(campaign.id);
-      await seedPriorModule(campaign.id);
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-priors.txt', userPrompt(0));
-    }, 20000);
-
-    it('spine: an extra (retry) instruction', async () => {
-      const { campaign, moduleId } = await seed();
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign, { extraInstruction: 'Tighten the middle part.' });
-      expectGolden('spine-classic-extra-instruction.txt', userPrompt(0));
-    }, 20000);
-
-    it('spine: tone bans + campaign description', async () => {
-      const { campaign, moduleId } = await seed({
-        description: 'A dying harbor town and the bell that will not stop.',
-        tone: 'horror',
-      });
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-tone-bans.txt', userPrompt(0));
-    }, 20000);
-
     it('parts: part 0 with the glossary and the campaign index', async () => {
       const { campaign, moduleId } = await seedPartModule();
       expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
@@ -2101,15 +1625,6 @@ describe('promptStyles-classic-identity.test.ts', () => {
         BUILTIN_PROMPT_STYLES.find((style) => style.id === 'classic')?.templateText,
       );
     });
-
-    it('a legacy module composes the byte-identical classic spine prompt', async () => {
-      const { campaign, moduleId } = await seed({ legacyRow: true });
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-default.txt', userPrompt(0));
-    }, 20000);
 
     it('a legacy module composes the byte-identical classic part prompt', async () => {
       const { campaign, moduleId } = await seedPartModule({ legacyRow: true });
@@ -2324,7 +1839,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock.mockResolvedValue({ text: SPINE_REPLY, modelUsed: 'm', fallback: null });
       // pf2e with no explicit choice → the sensible numeric default, on the row.
       const pf2e = await createCampaign({ name: 'Golarion', system: 'pathfinder2e' });
-      const freshId = await createModuleAndRun(pf2e, {
+      const freshId = await startCampaignDocument(pf2e, {
         campaignId: pf2e.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2341,7 +1856,7 @@ describe('promptStyles-composition.test.ts', () => {
       // An explicit choice wins over the default — its OWN campaign, because a
       // campaign owns exactly ONE document (docs/17 row 389).
       const pf2eChosen = await createCampaign({ name: 'Golarion Chosen', system: 'pathfinder2e' });
-      const chosenId = await createModuleAndRun(pf2eChosen, {
+      const chosenId = await startCampaignDocument(pf2eChosen, {
         campaignId: pf2eChosen.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2355,7 +1870,7 @@ describe('promptStyles-composition.test.ts', () => {
 
       // Every other system keeps today's behaviour (the dnd5e band).
       const dnd = await createCampaign({ name: 'Faerun', system: 'dnd5e' });
-      const dndId = await createModuleAndRun(dnd, {
+      const dndId = await startCampaignDocument(dnd, {
         campaignId: dnd.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2372,7 +1887,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      const moduleId = await createModuleAndRun(campaign, {
+      const moduleId = await startCampaignDocument(campaign, {
         campaignId: campaign.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2402,7 +1917,7 @@ describe('promptStyles-composition.test.ts', () => {
       chatMock
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      const moduleId = await createModuleAndRun(campaign, {
+      const moduleId = await startCampaignDocument(campaign, {
         campaignId: campaign.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2419,7 +1934,7 @@ describe('promptStyles-composition.test.ts', () => {
     it('an id that resolves to nothing fails LOUDLY and creates no module', async () => {
       const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
       await expect(
-        createModuleAndRun(campaign, {
+        startCampaignDocument(campaign, {
           campaignId: campaign.id,
           title: 'New Module',
           concept: 'A harbor bell.',
@@ -2521,10 +2036,6 @@ describe('promptStyles-composition.test.ts', () => {
         }),
       );
       const moduleId = saved.id;
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      await runSpine(moduleId, campaign);
       const row = await getModule(moduleId);
       expect(row?.promptStyle ?? null).toBeNull();
       expect(promptStyleForModule(row ?? {}).style.templateText).toBe(
@@ -2667,20 +2178,6 @@ describe('promptStyles-default-style.test.ts', () => {
     { name: 'The Flooded Nave', kind: 'encounter' },
     { name: 'The Wardens Confession', kind: 'encounter' },
   ];
-  const SPINE_REPLY = JSON.stringify({
-    premise: PREMISE,
-    themes: THEMES,
-    partPlan: PLAN,
-    entities: ENTITIES,
-  });
-  const NORM_REPLY = JSON.stringify({
-    entities: ENTITIES.map((entry) => ({
-      name: entry.name,
-      canonical: entry.name,
-      kind: entry.kind,
-    })),
-  });
-
   /** The whole user message of the n-th chat call. */
   function userPrompt(callIndex: number): string {
     const messages = chatMock.mock.calls[callIndex]?.[0] as
@@ -2830,10 +2327,7 @@ describe('promptStyles-default-style.test.ts', () => {
       // The app default is NOT set by this test: whatever a fresh app resolves to
       // is what creation must record, which is the point of the pin.
       expect((await getSettings()).defaultPromptStyleId).toBe('freestyle');
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      const moduleId = await createModuleAndRun(campaign, {
+      const moduleId = await startCampaignDocument(campaign, {
         campaignId: campaign.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -2856,15 +2350,6 @@ describe('promptStyles-default-style.test.ts', () => {
       expect(row?.promptStyle?.name).toBe('Freestyle');
       expect(row?.promptStyle?.version).toBe(1);
       expect(BUILTIN_PROMPT_STYLES.some((style) => style.id === row?.promptStyle?.id)).toBe(true);
-      // `createModuleAndRun` fires the spine pass DETACHED (`moduleGen.ts`), so
-      // drain it here: a spine call still in flight when this test ends would land
-      // inside the NEXT test's mocked transport.
-      await vi.waitFor(
-        async () => {
-          expect((await getModule(moduleId))?.spine).not.toBeNull();
-        },
-        { timeout: 5_000 },
-      );
     });
   });
 
@@ -2883,7 +2368,7 @@ describe('promptStyles-default-style.test.ts', () => {
    * REVERT-PROOF: making the resolution consult `settings.defaultPromptStyleId`
    * when a module recorded nothing — the "obvious" simplification — turns the
    * legacy rows below into Freestyle parts and fails these tests. Both layers are
-   * pinned: the pure resolver, and the REAL `generatePart` / `runSpine` seam over
+   * pinned: the pure resolver, and the REAL `generatePart` seam over
    * a legacy row put into Dexie with the key ABSENT (the true pre-arc shape), so
    * the guarantee is proved on the path a resume, a repair and a per-part
    * regeneration actually take. Classic's own fixture is the acceptance
@@ -2909,22 +2394,6 @@ describe('promptStyles-default-style.test.ts', () => {
       expect((await db.modules.get(moduleId))?.promptStyle ?? null).toBeNull();
       expect(row?.promptStyle ?? null).toBeNull();
       expectGolden('parts-classic-part0.txt', await renderPartPrompt(moduleId, 1, campaign));
-    });
-
-    it('a legacy module (no recorded style) composes the byte-identical classic spine prompt', async () => {
-      expect((await getSettings()).defaultPromptStyleId).toBe('freestyle');
-      // The spine fixture's own shape: a campaign with NO artifacts yet (the
-      // campaign index and the shared cast blocks are absent from it).
-      const { campaign, moduleId } = await seedPartModule({
-        legacyRow: true,
-        withArtifacts: false,
-        seedLevelTexts: false,
-      });
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'test-model', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'test-model', fallback: null });
-      await runSpine(moduleId, campaign);
-      expectGolden('spine-classic-default.txt', userPrompt(0));
     });
 
     it('a module that RECORDED Classic still composes Classic', async () => {
@@ -3297,7 +2766,7 @@ describe('promptStyles-freestyle.test.ts', () => {
       chatMock
         .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
         .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      const moduleId = await createModuleAndRun(campaign, {
+      const moduleId = await startCampaignDocument(campaign, {
         campaignId: campaign.id,
         title: 'New Module',
         concept: 'A harbor bell.',
@@ -3318,15 +2787,6 @@ describe('promptStyles-freestyle.test.ts', () => {
         templateText: freestyle?.templateText,
       });
       expect(promptStyleForModule(row ?? {}).source).toBe('recorded');
-      // `createModuleAndRun` fires the spine pass DETACHED (`moduleGen.ts`), so
-      // drain it here: a spine call still in flight when this test ends would
-      // land inside the NEXT test's mocked transport.
-      await vi.waitFor(
-        async () => {
-          expect((await getModule(moduleId))?.spine).not.toBeNull();
-        },
-        { timeout: 5_000 },
-      );
     });
 
     it('composes a real part from the RECORDED freestyle text', async () => {
@@ -3345,10 +2805,18 @@ describe('promptStyles-freestyle.test.ts', () => {
       const freestyle = builtinPromptStyle('freestyle');
       if (freestyle === undefined) throw new Error('missing freestyle');
       await patchModule(saved.id, { promptStyle: modulePromptStyleOf(freestyle) });
-      chatMock
-        .mockResolvedValueOnce({ text: SPINE_REPLY, modelUsed: 'm', fallback: null })
-        .mockResolvedValueOnce({ text: NORM_REPLY, modelUsed: 'm', fallback: null });
-      await runSpine(saved.id, campaign);
+      // The document the part prompt writes into: a premise plus one level
+      // section. The deleted pass-0 spine used to author it (docs/17 row 392),
+      // so the row is seeded DIRECTLY.
+      await patchModule(saved.id, {
+        spine: moduleSpineSchema.parse({ premise: PREMISE, themes: ['duty'], partPlan: PLAN }),
+        // The entity RECORDS the deleted pass-0 spine used to leave behind: the
+        // part prompt's glossary block reads them (docs/17 row 392).
+        entityKinds: [
+          { name: 'Warden Bellamy', kind: 'npc', absorbed: [] },
+          { name: 'The Bells Below', kind: 'encounter', absorbed: [] },
+        ],
+      });
       // The module's RECORDED text is what composes — not the current built-in
       // (the recording contract, docs/17 row 86): stamp the row's copy and prove
       // the stamp reaches the model.

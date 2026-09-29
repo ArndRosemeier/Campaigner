@@ -10,7 +10,6 @@ import {
   NetworkIcon,
   PencilIcon,
   PlayIcon,
-  RefreshCwIcon,
   RotateCcwIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
@@ -44,7 +43,6 @@ import {
   levelForPlanIndex,
   moduleDocumentText,
   moduleLevelSectionsFromView,
-  modulePartsUntouched,
   moduleTagFor,
 } from '@/domain';
 import { artifactRepo } from '@/db';
@@ -69,16 +67,10 @@ import { PeekModal } from '@/features/modules/peek-modal';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
-import { SpineCheckpoint } from '@/features/modules/spine-checkpoint';
 import { StubPopover, type StubPopoverState } from '@/features/modules/stub-popover';
 import { streamTails, useStreamTail } from '@/features/modules/streamTails';
 import { sentenceAround, surroundingParagraphs } from '@/lib/wikilinks';
-import {
-  generateMissingParts,
-  moduleGenEvents,
-  rewritePart,
-  retrySpine,
-} from '@/llm/moduleGen';
+import { generateMissingParts, moduleGenEvents, rewritePart } from '@/llm/moduleGen';
 import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -86,7 +78,7 @@ import { cn } from '@/lib/utils';
 /**
  * Module reader (08-MODULE-DESIGNER M4-A): the module front and center — one
  * full-width scrollable document, large type, parts as chapters
- * (H1 = part title with level-band badge), spine premise as the intro.
+ * (H1 = level title with level-band badge), the premise (level 0) as the intro.
  * Sticky mini-ToC on the left, entity panel on the right, per-part ✎ editing
  * (save on blur), wiki-link chips everywhere through the shared WikiMarkdown.
  */
@@ -344,26 +336,6 @@ export function ModuleReaderPage(): JSX.Element {
   const currentCampaign: Campaign = campaign;
 
   const busy = module.status === 'generating';
-  // ONE definition of "the reader is at the spine checkpoint" — the pre-cut
-  // `spine !== null && parts.length === 0` (docs/17 row 382): the plan is
-  // approved and NO part has been started or written. A FAILED module is never
-  // at the checkpoint (it owes the failure banner), and a rewind inside
-  // `failInterruptedModuleGen` leaves no text but IS a started run, which is
-  // why the predicate reads status as well as text.
-  //
-  // THE CHECKPOINT IS A PASS-0 SURFACE, so it also requires a PASS-0 PLAN
-  // (docs/23 §10 phase 3, docs/17 row 390): `partPlan.length > 0`. A document
-  // the CHAT authored has no pass-0 plan (a chat-created level's plan metadata
-  // is empty by decision), and a premise-only chat document would otherwise
-  // land here — offering "Discard", which drops the spine and therefore the
-  // document the owner just wrote. The reader's own "open the canvas chat"
-  // hint is the surface for that state instead.
-  const showSpineCheckpoint =
-    module.spine !== null &&
-    module.spine.partPlan.length > 0 &&
-    modulePartsUntouched(module) &&
-    !busy &&
-    module.status !== 'failed';
   const hasMissingParts = plans.some(({ planIndex }) => {
     const part = module.parts.find((entry) => entry.planIndex === planIndex);
     return part?.status !== 'ready';
@@ -560,7 +532,7 @@ export function ModuleReaderPage(): JSX.Element {
                   Stop
                 </Button>
               )}
-              {!busy && hasMissingParts && !showSpineCheckpoint && (
+              {!busy && hasMissingParts && (
                   <MissingPartsButton
                     moduleId={module.id}
                     campaignId={campaignId}
@@ -634,38 +606,34 @@ export function ModuleReaderPage(): JSX.Element {
           </header>
 
           {module.spine === null ? (
-            busy ? (
-              <StreamingTail label="Drafting the spine…" moduleId={module.id} level={null} />
-            ) : module.status === 'failed' ? (
-              // A failed first spine is actionable, not a dead end: the
-              // generator recorded the error on the row (AGENTS rule 2) and
-              // Retry re-runs pass 0 in place.
-              <section
-                className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
-                data-testid="spine-failed"
-              >
-                <p className="font-medium">The spine draft failed.</p>
-                {module.errorMessage !== '' && (
-                  <p className="mt-1 text-muted-foreground" data-testid="spine-failed-error">
-                    {module.errorMessage}
-                  </p>
-                )}
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="mt-3"
-                  data-testid="retry-spine"
-                  onClick={() => {
-                    void retrySpine(currentModule.id, currentCampaign).catch((error: unknown) => {
-                      toastError('Could not retry the spine draft', error);
-                    });
-                  }}
+            // An EMPTY document is LEGAL and it is the chat's own starting
+            // state (docs/23 §10 phase 3, docs/17 row 390): the chat authors
+            // the premise with `replace_level level="0"`. The pass-0 "drafting
+            // the spine…" tail and its failed/Retry card are DELETED with pass
+            // 0 itself (docs/17 row 392) — a row with no premise owes the chat,
+            // not a retry button for a pass that no longer exists.
+            <>
+              {module.status === 'failed' && (
+                // A LEGACY row whose deleted pass-0 spine FAILED still carries
+                // its error on the row, and AGENTS rule 2 keeps it visible: the
+                // banner stays, without the removed Retry (the chat is the
+                // authoring path now, so no button pretends otherwise).
+                <section
+                  className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
+                  data-testid="module-failed-banner"
+                  role="alert"
                 >
-                  <RefreshCwIcon aria-hidden data-icon="inline-start" />
-                  Retry spine draft
-                </Button>
-              </section>
-            ) : (
+                  <div className="flex items-center gap-2 font-medium text-destructive">
+                    <TriangleAlertIcon className="size-4 shrink-0" aria-hidden />
+                    <span>Module generation encountered an error.</span>
+                  </div>
+                  {module.errorMessage !== '' && (
+                    <p className="mt-1 text-xs text-muted-foreground" data-testid="empty-document-error">
+                      {module.errorMessage}
+                    </p>
+                  )}
+                </section>
+              )}
               <section className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 This document has no premise yet — open the{' '}
                 <Link className="underline" to={canvasChatPath(campaignId, moduleId)}>
@@ -673,31 +641,6 @@ export function ModuleReaderPage(): JSX.Element {
                 </Link>{' '}
                 and write one, or delete the document and create it again.
               </section>
-            )
-          ) : showSpineCheckpoint ? (
-            <>
-              <section id="module-intro" className="mb-8">
-                <IntroBlock
-                  premise={module.spine.premise}
-                  // PROVENANCE (docs/17 row 93): the spine-checkpoint branch
-                  // shows the SAME premise card as the generated reader, so it
-                  // carries the same id. This call site omitted the prop when
-                  // the field landed (the card silently had no caption here
-                  // and `tsc -b` caught it, not the test suite).
-                  writerModel={module.spine.writerModel}
-                  artifacts={readerArtifacts}
-                  moduleId={module.id}
-                  onOpenArtifact={openArtifact}
-                  onStub={openStub}
-                />
-              </section>
-              <SpineCheckpoint
-                moduleId={module.id}
-                campaign={campaign}
-                spine={module.spine}
-                busy={busy}
-                entityKinds={module.entityKinds}
-              />
             </>
           ) : (
             <>
@@ -1050,10 +993,10 @@ function PartActions({
 /**
  * The streaming stream itself, in its OWN component: this is the only reader
  * subscriber to `moduleGenEvents` (through `streamTails`), so a token tick
- * re-renders this card and nothing else. `level` is null for the pass-0 spine
- * (docs/17 row 391: the stream store's unit is the LEVEL). Every prop is stable
- * for the life of the stream, so a tick that belongs to another level never
- * touches this card.
+ * re-renders this card and nothing else. `level` is the LEVEL the stream store
+ * is keyed by (docs/17 row 391; the pass-0 null key died with pass 0, row 392).
+ * Every prop is stable for the life of the stream, so a tick that belongs to
+ * another level never touches this card.
  */
 const StreamingTail = memo(function StreamingTail({
   label,
@@ -1062,7 +1005,7 @@ const StreamingTail = memo(function StreamingTail({
 }: {
   label: string;
   moduleId: Id;
-  level: number | null;
+  level: number;
 }): JSX.Element {
   const { tail, thinkingTail } = useStreamTail(moduleId, level);
   return <StreamingCard label={label} tail={tail} thinkingTail={thinkingTail} />;

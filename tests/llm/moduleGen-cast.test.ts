@@ -14,10 +14,8 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { batchTargets } from '@/features/modules/post-generation';
 import type * as runEngineModule from '@/llm/runEngine';
-import { runSpine, spineReplySchema } from '@/llm/moduleGen';
 import { sha256Hex } from '@/lib/hash';
 import { CREATOR_ROSTER_TITLE_SEPARATOR, collectCreatorRoster } from '@/llm/creatorRoster';
-import { bestiaryVocabularyBlock, spineEntityKindsClause } from '@/llm/promptStyles';
 import { strictJsonSchema } from '@/llm/strictSchema';
 import {
   createModule,
@@ -109,44 +107,9 @@ const SPINE_ENTITIES = [
   { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
 ];
 
-/** The spine the planner answers with: one memorable character who is really a
- * common creature, plus one named encounter so the pass-0 floor gate is quiet. */
-function spineReply(entities: unknown[] = SPINE_ENTITIES, premise = PREMISE): string {
-  return JSON.stringify({
-    premise,
-    themes: ['grief', 'small-town silence'],
-    partPlan: [
-      {
-        title: 'The Walking Mill',
-        levelBand: '1',
-        synopsis: 'The party arrives as the first of the risen is recognized.',
-        levelUpTrigger: 'The party learns whose grave was opened first.',
-      },
-    ],
-    entities,
-  });
-}
-
 const PREMISE =
   'The graveyard behind the mill has begun to walk. The villagers bar their doors at dusk and ' +
   'count the shapes that shuffle between the stones.';
-
-/** A normalization reply that maps every listed name to itself. */
-function selfNormalization(
-  entities: { name: string; kind: string }[] = [
-    { name: AGATHA, kind: 'npc' },
-    { name: 'The Walking Mill', kind: 'location' },
-    { name: 'The Graves Walk', kind: 'encounter' },
-  ],
-): string {
-  return JSON.stringify({
-    entities: entities.map((entry) => ({
-      name: entry.name,
-      canonical: entry.name,
-      kind: entry.kind,
-    })),
-  });
-}
 
 /** One stat-block chunk in a book, seeded exactly the way the creature tier
  * seeds one (the shape `db/creatureRepo` resolves and `listLibraryCreatures`
@@ -220,51 +183,41 @@ async function seedModule(levels: { min: number; max: number } = { min: 1, max: 
   return { campaign, moduleId: saved.id };
 }
 
-/** The module row the byte-identity golden was captured against (see
- * `tests/llm/promptStyles-classic-identity.test.ts`): a workspace with NO
- * bestiary is the only variable this file adds to that case. */
-const FIXTURE_PREMISE =
-  'A harbor town raised its bell to warn of the drownings; now the bell rings by itself.';
-const FIXTURE_ENTITIES = [
-  { name: 'Warden Bellamy', kind: 'npc' },
-  { name: 'The Drowned Cathedral', kind: 'location' },
-  { name: 'The Tide Cult', kind: 'faction' },
-  { name: 'The Bells Below', kind: 'encounter' },
-  { name: 'The Flooded Nave', kind: 'encounter' },
-  { name: 'The Wardens Confession', kind: 'encounter' },
-];
-
-async function seedFixtureModule(): Promise<{ campaign: Campaign; moduleId: string }> {
-  const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-  const saved = await saveModule(
-    createModule({
-      campaignId: campaign.id,
-      title: 'The Drowned Bell',
-      concept: 'A harbor bell that rings by itself beneath the water.',
-      levelMin: 1,
-      levelMax: 3,
-      tone: 'eerie',
-      sizeDial: 'standard',
-    }),
-  );
-  return { campaign, moduleId: saved.id };
-}
-
-/** Runs the spine pass over `entities` and answers the normalization call. */
-async function runSpineWith(
+/**
+ * SEEDS the module row with the premise, the plan and the entity RECORDS the
+ * (now DELETED) pass-0 spine used to produce (docs/17 row 392). The cast path
+ * reads the STORED records (`module.entityKinds`), so how a record got onto the
+ * row is not the claim under test — and with pass 0 gone the only producer left
+ * is the app's own creation/normalization path, which is not what this file
+ * measures.
+ */
+async function seedSpineWith(
   moduleId: string,
-  campaign: Campaign,
   entities: unknown[] = SPINE_ENTITIES,
   premise = PREMISE,
 ): Promise<Module> {
-  const kinds = entities.map((entity) => {
-    const record = entity as { name: string; kind: string };
-    return { name: record.name, kind: record.kind };
+  const current = await getModule(moduleId);
+  if (current === undefined) throw new Error('the seeded module is missing');
+  return saveModule({
+    ...current,
+    status: 'draft',
+    errorMessage: '',
+    spine: moduleSpineSchema.parse({
+      premise,
+      themes: ['grief', 'small-town silence'],
+      partPlan: [
+        {
+          title: 'The Walking Mill',
+          levelBand: '1',
+          synopsis: 'The party arrives as the first of the risen is recognized.',
+          levelUpTrigger: 'The party learns whose grave was opened first.',
+        },
+      ],
+    }),
+    entityKinds: entities.map((entity) =>
+      moduleEntityKindSchema.parse({ absorbed: [], ...(entity as Record<string, unknown>) }),
+    ),
   });
-  chatMock
-    .mockResolvedValueOnce({ text: spineReply(entities, premise), modelUsed: TEST_MODEL, fallback: null })
-    .mockResolvedValueOnce({ text: selfNormalization(kinds), modelUsed: TEST_MODEL, fallback: null });
-  return runSpine(moduleId, campaign);
 }
 
 /** Gives the approved spine a finished part whose text mentions the entity. */
@@ -352,34 +305,6 @@ describe('the request is expressible in the module-generation contract', () => {
       moduleEntityKindSchema.safeParse({ name: AGATHA, kind: 'npc', bestiary: { book: 'Bestiary' } })
         .success,
     ).toBe(false);
-  });
-
-  it('the spine reply contract EMITS the slot as a required nullable property', () => {
-    // The strict subset has no "optional": the model must answer the key, and
-    // `null` is how it says "no cast" — asserted off the SHIPPED emitted schema.
-    const emitted = strictJsonSchema('probe-cast', spineReplySchema).schema;
-    const properties = emitted.properties as Record<string, Record<string, unknown>>;
-    const entities = properties.entities ?? {};
-    const items = entities.items as Record<string, unknown>;
-    const itemProperties = items.properties as Record<string, Record<string, unknown>>;
-
-    expect(items.required).toContain('bestiary');
-    expect(items.required).toContain('name');
-    expect(items.required).toContain('kind');
-    const bestiary = itemProperties.bestiary ?? {};
-    // The key is REQUIRED of the decoder (strict) and NULLABLE in its type:
-    // `null` is how a reply that wants no cast answers it.
-    expect(bestiary.type).toContain('null');
-    expect(bestiary.type).toContain('object');
-    expect(bestiary.required).toContain('creature');
-    expect(Object.keys((bestiary.properties ?? {}) as Record<string, unknown>)).toEqual([
-      'creature',
-      'book',
-    ]);
-    // The disambiguator is optional, so the decoder may answer it null.
-    expect(((bestiary.properties ?? {}) as Record<string, Record<string, unknown>>).book?.type).toContain(
-      'null',
-    );
   });
 
   it('survives name normalization by carrying the request onto the canonical record', () => {
@@ -490,7 +415,7 @@ describe('finalize: the cast path', () => {
   it('ONE npc artifact carries the entity’s prose and a COPY of the creature’s stats, and no pointer', async () => {
     const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    const saved = await runSpineWith(moduleId, campaign);
+    const saved = await seedSpineWith(moduleId);
 
     // The slot the model asked for RODE the pass AND the normalization call.
     expect(saved.entityKinds.find((entry) => entry.name === AGATHA)?.bestiary).toEqual({
@@ -541,9 +466,10 @@ describe('finalize: the cast path', () => {
     };
     expect(runInput.targetArtifactId).toBeDefined();
     expect(runInput.placementModuleId).toBeUndefined();
-    // …and the faked engine reaches no transport at all: the two calls above are
-    // the spine pass's own.
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    // …and the faked engine reaches no transport at all: the cast path makes no
+    // model call of its own, and the pass-0 spine's two calls are DELETED
+    // (docs/17 row 392), so the whole run is silent on the transport.
+    expect(chatMock).toHaveBeenCalledTimes(0);
 
     const npcs = (await listArtifactsByCampaign(campaign.id)).filter((row) => row.name === AGATHA);
     expect(npcs).toHaveLength(1);
@@ -568,7 +494,7 @@ describe('finalize: the cast path', () => {
   it('a SECOND run reuses that row — never a twin', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
     // Each batch's description run answers with a completed refill of the row it
@@ -625,14 +551,13 @@ describe('finalize: the cast path', () => {
 
   it('an unresolvable creature name fails LOUDLY, naming the entity and the creature, and finalizes nothing', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
-    // A RANGE band, deliberately: `moduleStatedLevel` stamps a level only for an
-    // EXACT band, so this module records NO level for the entity and the
-    // resolution keeps its pre-302 loud refusal. WITH a recorded level the same
-    // slot is AUTHORED at that level instead (docs/17 row 302) — the fallback
-    // arm, pinned in `tests/features/entity-batch-cast-description.test.ts` and
-    // beside this file's level-preference arm.
+    // NO recorded level on the entity, deliberately: the resolution keeps its
+    // pre-302 loud refusal. WITH a recorded level the same slot is AUTHORED at
+    // that level instead (docs/17 row 302) — the fallback arm, pinned in
+    // `tests/features/entity-batch-cast-description.test.ts` and beside this
+    // file's level-preference arm.
     const { campaign, moduleId } = await seedModule({ min: 1, max: 3 });
-    await runSpineWith(moduleId, campaign, [
+    await seedSpineWith(moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'Bog Shambler' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -676,7 +601,7 @@ describe('finalize: the cast path', () => {
     await seedCreature({ bookTitle: 'Tome of Horrors', name: ZOMBIE, hp: 40, page: 12 });
 
     const ambiguous = await seedModule();
-    await runSpineWith(ambiguous.moduleId, ambiguous.campaign);
+    await seedSpineWith(ambiguous.moduleId);
     await seedPart(ambiguous.moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
     const ambiguousRow = await getModule(ambiguous.moduleId);
@@ -692,7 +617,7 @@ describe('finalize: the cast path', () => {
     expect(refused.failed[0]?.message).toContain('name the book');
 
     const named = await seedModule();
-    await runSpineWith(named.moduleId, named.campaign, [
+    await seedSpineWith(named.moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Tome of Horrors' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -725,7 +650,7 @@ describe('finalize: the cast path', () => {
       hp: 22,
     });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign, [
+    await seedSpineWith(moduleId, [
       // The slot a GERMAN module's spine really wrote, from the owner's own
       // report: the creature's name as the library spells it, and the pack title
       // LOCALISED — "Monsterkern" is Monster Core, which is not a book that
@@ -768,7 +693,7 @@ describe('finalize: the cast path', () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22, page: 316 });
     await seedCreature({ bookTitle: 'Tome of Horrors', name: ZOMBIE, hp: 40, page: 12 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign, [
+    await seedSpineWith(moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: ZOMBIE, book: 'Monsterkern' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -799,7 +724,7 @@ describe('finalize: the cast path', () => {
   it('a module with NO slot is untouched: the entity goes down the persona path', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign, [
+    await seedSpineWith(moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: null },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -832,244 +757,11 @@ describe('finalize: the cast path', () => {
   });
 });
 
-describe('the additive prompt discipline (docs/18 §4)', () => {
-  /** The user message of the first (spine) chat call. */
-  function spinePrompt(): string {
-    const messages = chatMock.mock.calls[0]?.[0] ?? [];
-    const content = messages.find((message) => message.role === 'user')?.content;
-    return typeof content === 'string' ? content : '';
-  }
-
-  it('a run with an EMPTY library composes the pre-change prompt, byte for byte', async () => {
-    const { campaign, moduleId } = await seedFixtureModule();
-    // The SAME reply the golden fixture was captured from, over the SAME module
-    // row, in a workspace that holds no bestiary at all — so the only thing
-    // under measurement is the prompt builder itself.
-    chatMock
-      .mockResolvedValueOnce({
-        text: JSON.stringify({
-          premise: FIXTURE_PREMISE,
-          themes: ['duty', 'decay'],
-          partPlan: [
-            {
-              title: 'The Sunken Quarter',
-              levelBand: '1',
-              synopsis: 'The party arrives with the low tide and finds the first bodies.',
-              levelUpTrigger: 'The bell is found.',
-            },
-            {
-              title: 'The Drowned Cathedral',
-              levelBand: '2',
-              synopsis: 'Descent beneath the harbor to the flooded nave.',
-              levelUpTrigger: 'The warden falls.',
-            },
-            {
-              title: 'The Bell Tower',
-              levelBand: '3',
-              synopsis: 'Final confrontation at the top of the leaning tower.',
-              levelUpTrigger: 'The cult is broken.',
-            },
-          ],
-          entities: FIXTURE_ENTITIES,
-        }),
-        modelUsed: TEST_MODEL,
-        fallback: null,
-      })
-      .mockResolvedValueOnce({
-        text: selfNormalization(FIXTURE_ENTITIES),
-        modelUsed: TEST_MODEL,
-        fallback: null,
-      });
-    await runSpine(moduleId, campaign);
-
-    const prompt = spinePrompt();
-    const golden = await import('node:fs/promises').then((fs) =>
-      fs.readFile('tests/fixtures/promptStyles/spine-classic-default.txt', 'utf8'),
-    );
-    expect(prompt.trimEnd()).toBe(golden.trimEnd());
-    // No library ⇒ no bestiary clause AND no vocabulary: not the field, not the
-    // rule, not the listing (docs/17 rows 107/114 — the additive discipline).
-    expect(prompt).not.toContain('bestiary');
-    expect(prompt).not.toContain('library list below');
-    expect(prompt).not.toContain('Creatures this workspace');
-  });
-
-  it('the delta with a library is the bestiary clause PLUS its vocabulary block', async () => {
-    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
-    const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
-
-    const prompt = spinePrompt();
-    const withoutLibrary = spineEntityKindsClause(false);
-    const withLibrary = spineEntityKindsClause(await collectCreatorRoster(1));
-    expect(prompt).toContain(withLibrary);
-    // The vocabulary itself is byte-identical with and without a library: the
-    // delta is exactly the appended clause plus the vocabulary it governs.
-    expect(withLibrary.startsWith(withoutLibrary)).toBe(true);
-    const clause = withLibrary.slice(withoutLibrary.length);
-    expect(clause).toContain('bestiary');
-    expect(clause).toContain('Aunt Agatha');
-    expect(clause).toContain('generic mob that is not a character');
-    expect(clause).toContain(ZOMBIE);
-    expect(prompt.split('bestiary').length - 1).toBe(clause.split('bestiary').length - 1);
-  });
-
-  it('the clause is offered only when the workspace HAS a creature to name', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
-    expect(spinePrompt()).not.toContain('"bestiary"');
-    // …and the slot still parses on such a run: the field is additive, not
-    // conditional on the library the prompt saw.
-    expect(moduleSpineSchema.safeParse(JSON.parse(spineReply())).success).toBe(true);
-  });
-});
-
-describe('the creator is shown the library it may name (docs/17 row 114)', () => {
-  /** The user message of the first (spine) chat call. */
-  function spinePrompt(): string {
-    const messages = chatMock.mock.calls[0]?.[0] ?? [];
-    const content = messages.find((message) => message.role === 'user')?.content;
-    return typeof content === 'string' ? content : '';
-  }
-
-  it('carries the ACTUAL creature names, the rule that governs them and the truncation note', async () => {
-    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
-    await seedCreature({ bookTitle: 'Tome of Horrors', name: 'Ghoul', hp: 22 });
-    const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
-
-    // The window the prompt carried is the SAME window `collectCreatorRoster`
-    // builds for this module — the module's own band midpoint (levels 1–1 ⇒
-    // 1) is the ordering target.
-    const roster = await collectCreatorRoster(1);
-    expect(roster.lines).toEqual([`Ghoul \u2014 Tome of Horrors`, `${ZOMBIE} \u2014 Bestiary`]);
-    const vocabulary = bestiaryVocabularyBlock(roster);
-    if (vocabulary === null) throw new Error('the vocabulary block is missing');
-
-    const prompt = spinePrompt();
-    expect(prompt).toContain(vocabulary);
-    // Both real names, each on its own line WITH the pack title the library
-    // really holds for it (docs/17 row 163), copied exactly as the library
-    // spells them — this is the whole defect: before row 114 the prompt named
-    // ONE example creature and nothing this workspace actually holds, and before
-    // row 163 it named no book the model could copy.
-    expect(prompt).toContain(`\n${ZOMBIE} \u2014 Bestiary\n`);
-    expect(prompt).toContain('\nGhoul \u2014 Tome of Horrors\n');
-    // The rule half: copy from the list, borrow the numbers as they are, and
-    // leave the slot OFF rather than invent a name.
-    expect(prompt).toContain('copied exactly as it is written there');
-    expect(prompt).toContain('NO bestiary slot and write the mob into the scene instead');
-    expect(prompt).toContain('never given a level-adapted, renamed or otherwise decorated variant');
-    // The advisory block rides INSIDE the entity-kind clause — no new
-    // placeholder, no new template line, so the built-in styles are untouched.
-    expect(prompt).toContain(spineEntityKindsClause(roster));
-  });
-
-  it('the emitted clause and the window it governs agree about the pack-title shape', async () => {
-    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
-    const roster = await collectCreatorRoster(1);
-    const clause = spineEntityKindsClause(roster);
-
-    // A pin over the CLAUSE TEXT (docs/17 row 163): it must say where a real
-    // title comes from and that it is copied — the model-facing half of the
-    // decision, read from the clause a run composes rather than restated here.
-    expect(clause).toContain(
-      '"book" (the pack title the library list below gives for that creature, copied exactly)',
-    );
-    expect(clause).toContain('"creature" takes the name exactly as it stands before the \u2014');
-    expect(clause).toContain(
-      '"book" the pack title after it, copied as written rather than translated or remembered',
-    );
-    expect(clause).toContain('never invent one');
-    // The prose quotes the SAME shape the window renders — the window's own
-    // separator constant — so a header that stops describing the lines, or a
-    // window whose shape drifts away from the prose, goes red here.
-    expect(clause).toContain(`name${CREATOR_ROSTER_TITLE_SEPARATOR}pack title`);
-    expect(clause).toContain(`\n${ZOMBIE}${CREATOR_ROSTER_TITLE_SEPARATOR}Bestiary`);
-  });
-
-  it('notices a TRUNCATED window instead of silently listing 300 of 305 creatures', async () => {
-    for (let index = 0; index < 305; index += 1) {
-      await seedCreature({
-        bookTitle: 'Bestiary',
-        name: `Creature ${String(index).padStart(3, '0')}`,
-        hp: 22,
-      });
-    }
-    const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
-
-    const roster = await collectCreatorRoster(1);
-    expect(roster.lines).toHaveLength(300);
-    expect(roster.truncated).toBe(5);
-    const prompt = spinePrompt();
-    expect(prompt).toContain('(roster truncated; 5 more)');
-  });
-
-  it('targets the module’s OWN band MIDPOINT, not one of its edges', async () => {
-    await seedCreature({ bookTitle: 'Bestiary', name: 'Low Thing', hp: 22, level: '1' });
-    await seedCreature({ bookTitle: 'Bestiary', name: 'Mid Thing', hp: 22, level: '4' });
-    await seedCreature({ bookTitle: 'Bestiary', name: 'High Thing', hp: 22, level: '7' });
-    // Levels 1–6 ⇒ target 3.5: level 4 (0.5), level 1 (2.5), level 7 (3.5).
-    // An edge (1 or 6) would order them 1, 4, 7 or 7, 4, 1 — so this pin fails
-    // if the chain's spine step is ever replaced by levelMin or levelMax.
-    const { campaign, moduleId } = await seedModule({ min: 1, max: 6 });
-    await runSpineWith(moduleId, campaign);
-
-    const prompt = spinePrompt();
-    const header = `Creatures this workspace\u2019s library holds, one per line as \u201Cname${CREATOR_ROSTER_TITLE_SEPARATOR}pack title\u201D (copy the name exactly; a line with no pack title means this library records none for that creature):`;
-    const listed = prompt.slice(prompt.indexOf(header)).split('\n').slice(1, 4);
-    expect(listed).toEqual([
-      `Mid Thing \u2014 Bestiary`,
-      `Low Thing \u2014 Bestiary`,
-      `High Thing \u2014 Bestiary`,
-    ]);
-  });
-
-  it('offers NO slot and composes the pre-change prompt when the window is EMPTY', async () => {
-    // The library holds nothing castable: a statblock chunk whose own stat
-    // block was never validated. The slot must be left off — a slot with no
-    // vocabulary is uncastable by construction — and the clause must be the
-    // pre-change constant, byte for byte.
-    const book = await createRulebook({
-      title: 'Broken Import',
-      system: 'dnd5e',
-      filename: 'broken.pdf',
-    });
-    const text = 'Not a creature';
-    await putChunks([
-      ruleChunkSchema.parse({
-        ...stampNewEntity(),
-        bookId: book.id,
-        pageStart: 1,
-        pageEnd: 1,
-        chunkType: 'statblock',
-        headingPath: ['Not a creature'],
-        text,
-        contentHash: await sha256Hex(text),
-        statBlock: null,
-      }),
-    ]);
-    const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
-
-    const prompt = spinePrompt();
-    // The window is empty ⇒ the clause is the pre-change constant, byte for
-    // byte, and the slot is not offered anywhere in the prompt.
-    expect(spineEntityKindsClause(await collectCreatorRoster(1))).toBe(
-      spineEntityKindsClause(false),
-    );
-    expect(prompt).toContain(spineEntityKindsClause(false));
-    expect(prompt).not.toContain('library list below');
-    expect(prompt).not.toContain('roster truncated');
-  });
-});
-
 describe('the cast path names real creatures (docs/17 row 114 regression)', () => {
   it('casts the creature the WINDOW listed, by the name the window printed', async () => {
     const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
 
     // What the prompt showed is what the slot answers with: the NAME half of the
     // line the model copies IS a resolvable name. Since docs/17 row 163 the line
@@ -1114,7 +806,7 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     // miss is authored at that level and the same nearest-creature list rides
     // the notice's `reason` — see row 302's own arms below.
     const near = await seedModule({ min: 1, max: 3 });
-    await runSpineWith(near.moduleId, near.campaign, [
+    await seedSpineWith(near.moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'zombie schlager' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -1146,7 +838,7 @@ describe('the cast path names real creatures (docs/17 row 114 regression)', () =
     // A query with nothing close keeps the pre-114 sentence: the suggestion is
     // appended only when there is something worth naming.
     const far = await seedModule({ min: 1, max: 3 });
-    await runSpineWith(far.moduleId, far.campaign, [
+    await seedSpineWith(far.moduleId, [
       { name: AGATHA, kind: 'npc', bestiary: { creature: 'Ancient Red Dragon' } },
       { name: 'The Walking Mill', kind: 'location', bestiary: null },
       { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
@@ -1193,10 +885,18 @@ describe("the cast honours the entity's recorded level (docs/17 row 302)", () =>
       hp: 40,
       level: '3',
     });
-    // An EXACT band: the module's own level is stamped onto the npc record
-    // (docs/17 row 247), so the cast has a level to honour.
+    // The npc record carries the LEVEL the module author fixed for her — the
+    // stored structured hint the cast honours (docs/17 row 302). The pass-0
+    // spine used to stamp an exact band onto the record (row 247); that
+    // stamping's only caller is DELETED with pass 0 (docs/17 row 392), so the
+    // record is seeded with the hint it would have carried.
     const { campaign, moduleId } = await seedModule({ min: 3, max: 3 });
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(
+      moduleId,
+      SPINE_ENTITIES.map((entity) =>
+        entity.name === AGATHA ? { ...entity, levelHint: 3 } : entity,
+      ),
+    );
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
     startRunMock.mockResolvedValue('run-1');
@@ -1260,7 +960,7 @@ describe('a cast row the module text only NAMES is given an authored description
   it('aims the entity’s own run AT THE CAST ROW: a refill, never a new artifact and never a placement', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     await seedPart(moduleId, NAMED_ONLY_PROSE);
     await seedBuiltInPersonas();
     // The refill answers with the row it filled — the shape `runFinalize` has
@@ -1321,7 +1021,7 @@ describe('a cast row the module text only NAMES is given an authored description
   it('a run the OWNER stopped writes no failure: the cast stands, silently (row 117)', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     await seedPart(moduleId, NAMED_ONLY_PROSE);
     await seedBuiltInPersonas();
     startRunMock.mockResolvedValue('run-1');
@@ -1359,7 +1059,7 @@ describe('a cast row the module text only NAMES is given an authored description
   it('a row an EARLIER cast made is the row this run refills — the module’s own prose does not stand in for the description', async () => {
     const chunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     // The text DESCRIBES her — under row 133 that alone meant "no run".
     await seedPart(moduleId, LONG_ENOUGH_PROSE);
     await seedBuiltInPersonas();
@@ -1421,7 +1121,7 @@ describe('a cast row the module text only NAMES is given an authored description
   it('a description run the PAGE ate is its own class: `interrupted`, never "the generator refused"', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     await seedPart(moduleId, NAMED_ONLY_PROSE);
     await seedBuiltInPersonas();
     startRunMock.mockResolvedValue('run-1');
@@ -1455,7 +1155,7 @@ describe('a cast row the module text only NAMES is given an authored description
   it('a run that completes without writing anything is its OWN sentence, not the artifact one', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
-    await runSpineWith(moduleId, campaign);
+    await seedSpineWith(moduleId);
     await seedPart(moduleId, NAMED_ONLY_PROSE);
     await seedBuiltInPersonas();
     startRunMock.mockResolvedValue('run-1');

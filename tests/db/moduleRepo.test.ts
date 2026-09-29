@@ -7,7 +7,6 @@ import {
   createModule as buildModule,
   newId,
   type ModuleSpine,
-  type PartPlan,
 } from '@/domain';
 import {
   createModule,
@@ -17,8 +16,6 @@ import {
   patchModule,
   patchModuleSpine,
   saveModule,
-  savePartPlan,
-  saveSpine,
 } from '@/db/moduleRepo';
 import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
@@ -134,47 +131,6 @@ describe('moduleRepo', () => {
     await expectNotFound(patchModule(newId(), { title: 'Ghost' }));
   });
 
-  it('saveSpine replaces the spine and savePartPlan replaces only the plan', async () => {
-    const created = await createModule(
-      buildModule({ campaignId: newId(), title: 'Spined', concept: '', levelMin: 1, levelMax: 4, sizeDial: 'standard' }),
-    );
-
-    const spine: ModuleSpine = {
-      premise: 'A vault that floods at high tide.',
-      themes: ['drowning', 'greed'],
-      writerModel: '',
-      origin: null,
-      partPlan: [
-        { title: 'Approach', levelBand: '1', synopsis: 'Reach the sea gate.', levelUpTrigger: 'The tide turns.' },
-        { title: 'Descent', levelBand: '2', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
-      ],
-    };
-    const spined = await saveSpine(created.id, spine);
-    // The stored spine carries the provenance field too (docs/17 row 93): a
-    // spine handed in without an id reads back with the additive default `''`
-    // = NOT RECORDED (which displays as nothing), never an invented model.
-    expect(spined.spine).toEqual({ ...spine, writerModel: '' });
-    expect((await getModule(created.id))?.spine).toEqual({ ...spine, writerModel: '' });
-
-    const nextPlan: PartPlan[] = [
-      { title: 'One long act', levelBand: '1', synopsis: 'Everything in a single part.', levelUpTrigger: 'Escape at dawn.' },
-    ];
-    const replanned = await savePartPlan(created.id, nextPlan);
-    // The PLAN is metadata and is replaced entry-for-entry; the level COUNT is
-    // the DOCUMENT's (docs/17 row 382), so a plan write cannot delete a level
-    // section that already exists — the surviving section reads an empty plan.
-    expect(replanned.spine?.partPlan[0]).toEqual(nextPlan[0]);
-    expect(replanned.spine?.partPlan).toHaveLength(2);
-    expect(replanned.spine?.partPlan[1]?.levelBand).toBe('2');
-    expect(replanned.spine?.partPlan[1]?.synopsis).toBe('');
-    expect(replanned.spine?.premise).toBe(spine.premise);
-    expect(replanned.spine?.themes).toEqual(spine.themes);
-
-    const row = await getModule(created.id);
-    expect(row?.spine?.partPlan[0]).toEqual(nextPlan[0]);
-    expect(row?.spine?.partPlan).toHaveLength(2);
-  });
-
   it('patchModuleSpine merges ONE spine subfield and leaves the rest byte-identical', async () => {
     const created = await createModule(
       buildModule({ campaignId: newId(), title: 'Subfield', concept: '', levelMin: 1, levelMax: 4, sizeDial: 'standard' }),
@@ -189,7 +145,7 @@ describe('moduleRepo', () => {
         { title: 'Descent', levelBand: '2', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
       ],
     };
-    await saveSpine(created.id, spine);
+    await saveModule({ ...created, spine });
     const before = await getModule(created.id);
 
     // The version restore's premise write rides this seam (docs/17 row 357):
@@ -214,17 +170,6 @@ describe('moduleRepo', () => {
     expect((await getModule(created.id))?.spine).toBeNull();
   });
 
-  it('refuses a part plan on a module that has no spine', async () => {
-    const created = await createModule(
-      buildModule({ campaignId: newId(), title: 'Spineless', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
-    );
-
-    const plan: PartPlan[] = [{ title: 'Solo', levelBand: '1–3', synopsis: '', levelUpTrigger: '' }];
-    await expect(savePartPlan(created.id, plan)).rejects.toThrow();
-
-    expect((await getModule(created.id))?.spine).toBeNull();
-  });
-
   it('saveModule rejects an invalid row with a ZodError and writes nothing', async () => {
     const built = buildModule({
       campaignId: newId(),
@@ -239,7 +184,7 @@ describe('moduleRepo', () => {
     expect(await getModule(built.id)).toBeUndefined();
   });
 
-  it('saveSpine ACCEPTS a part plan above the old 20-entry ceiling — a long document must read (docs/17 row 382)', async () => {
+  it('a part plan above the old 20-entry ceiling READS — a long document must read (docs/17 row 382)', async () => {
     // The plan-era `.max(20)` is gone: the level COUNT is the document's, so a
     // hand-authored document with 21+ sections must be readable. This pin still
     // holds the boundary, in the direction the new model declares.
@@ -259,7 +204,7 @@ describe('moduleRepo', () => {
         levelUpTrigger: '',
       })),
     };
-    const saved = await saveSpine(module.id, long);
+    const saved = await saveModule({ ...module, spine: long });
     expect(saved.spine?.partPlan).toHaveLength(21);
     expect(saved.spine?.partPlan[20]?.levelBand).toBe('21');
     const row = await getModule(module.id);

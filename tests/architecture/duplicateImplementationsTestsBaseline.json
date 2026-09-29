@@ -32,14 +32,6 @@
       ]
     },
     {
-      "hash": "0a3d935c37b6a74a",
-      "reason": "Two `spinePrompt` extractors inside moduleGen-cast.test.ts (different describes) reading the first chat call's user content; one local helper is a real fold candidate.",
-      "sites": [
-        "tests/llm/moduleGen-cast.test.ts:spinePrompt",
-        "tests/llm/moduleGen-cast.test.ts:spinePrompt"
-      ]
-    },
-    {
       "hash": "0b70084b64fc9c2f",
       "reason": "Two `openSidebar` canvas-chat drivers (canvas-chat-thread, canvas-chat) that click the toggle and await the panel; foldable onto a shared canvas-chat test helper.",
       "sites": [
@@ -195,14 +187,6 @@
       "sites": [
         "tests/llm/fixedCast.test.ts:partReply",
         "tests/llm/module-gen-and-provenance.test.ts:partReply"
-      ]
-    },
-    {
-      "hash": "353970ba22b66d20",
-      "reason": "Two `reply` entity-JSON mock replies (entity-intent, entity-level-hint); legitimate per-test reply bodies, foldable onto a shared reply factory if the entity sets diverge.",
-      "sites": [
-        "tests/domain/entity-intent.test.ts:reply",
-        "tests/domain/entity-level-hint.test.ts:reply"
       ]
     },
     {
@@ -463,14 +447,6 @@
       ]
     },
     {
-      "hash": "6bea4648b0eb3a07",
-      "reason": "Two `proseModule` seeds (orphanSweep, orphan-offer-agreement) building a module plus a spine; a shared module-seed helper is a fold candidate.",
-      "sites": [
-        "tests/db/orphanSweep.test.ts:proseModule",
-        "tests/features/orphan-offer-agreement.test.ts:proseModule"
-      ]
-    },
-    {
       "hash": "6bf9c10ef609fbae",
       "reason": "Two `seedOneModule` canvas seeds (canvas-chat-clear, canvas-versions); foldable onto the shared canvas test-world helper.",
       "sites": [
@@ -488,9 +464,8 @@
     },
     {
       "hash": "6ef5125f116e39cd",
-      "reason": "Five `promptText`/`userPrompt` extractors inside module-gen-spine-and-styles.test.ts; one local mock-call extractor is a real fold candidate.",
+      "reason": "Four `userPrompt` extractors inside module-gen-spine-and-styles.test.ts reading the first chat call's user content; one local mock-call extractor is a real fold candidate. The fifth site (`promptText`) was DELETED with pass 0 (docs/17 row 392), so the group's site list shrank; the entry is UPDATED, not re-blessed.",
       "sites": [
-        "tests/llm/module-gen-spine-and-styles.test.ts:promptText",
         "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
         "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
         "tests/llm/module-gen-spine-and-styles.test.ts:userPrompt",
@@ -854,11 +829,10 @@
     },
     {
       "hash": "c3443366b6235ab5",
-      "reason": "Three encounter-reply mock builders (canvas-module-actions, module-gen-and-provenance, moduleGen-auto-spine); legitimate per-scenario reply bodies, foldable onto a shared reply factory.",
+      "reason": "Two identical `encounterReply` normalization-reply builders (canvas-module-actions, module-gen-and-provenance); foldable onto a shared reply factory. The third site (moduleGen-auto-spine) was DELETED with pass 0 (docs/17 row 392), so the entry is UPDATED, not re-blessed.",
       "sites": [
         "tests/features/canvas-module-actions.test.tsx:encounterReply",
-        "tests/llm/module-gen-and-provenance.test.ts:encounterReply",
-        "tests/llm/moduleGen-auto-spine.test.ts:encounterNormalization"
+        "tests/llm/module-gen-and-provenance.test.ts:encounterReply"
       ]
     },
     {

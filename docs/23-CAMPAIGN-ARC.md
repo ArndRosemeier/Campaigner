@@ -126,7 +126,9 @@ row's own bytes by `replaceLevelText`, run state merged), `db/moduleRepo.patchMo
 pass-0 plan (the checkpoint stays narrowed to `partPlan.length > 0`, row 390) — pinned by
 `tests/architecture/pass0-is-narrowed.test.ts`, with the deletion's full pin list named in row 391 as the
 remainder. **THE DERIVED `spine`/`parts` VIEW STAYS**: it still has readers everywhere (the reader, the PDF, the
-board's card join, the entity panel and batch), so its deletion remains 1g's. **NO FORMAT MOVED** — no `version`
+board's card join, the entity panel and batch), so its deletion was 1g's — and row 392 MEASURED it as a second
+1b-sized cut (~40 reader sites in ~25 `src/` files) and NAMED it as the remainder instead (the row-392 BUILD STATE
+below; the per-file verdicts are in docs/18 §5). **NO FORMAT MOVED** — no `version`
 bump, no storage change; the planIndex keys that remain (the stored `entityRewriteProposals`/`targetParts`/
 `documentPlan` fields, the mention convention, the canvas `?part=` address, the adversarial pass's target) are
 inventoried in `docs/18` §5 and left to their own slices. **THE GOLDENS MOVED, THROUGH THE PROJECT'S OWN RENDER
@@ -134,7 +136,6 @@ PATH** (a `CAPTURE_PROMPT_GOLDENS=1` run of the real `runSpine`/`generatePart` a
 `tests/fixtures/promptStyles/*.txt` prompt goldens and
 `tests/fixtures/adversarialGeneration/flag-off-transcript.json` — each byte delta and its cause in row 391. Phase
 4 (the level-scoped generation dialog and automation off) is untouched and NOT started.
-
  (1) **A part
 does not cover a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
 1 and "this part covers levels 2–3" is expressed as TWO sections — the 16 behaviour pins that asserted the
@@ -143,6 +144,25 @@ document format TRIMS a level body**, so a part's trailing whitespace is not con
 goldens that differed by one trailing space are recaptured. `levelMin`/`levelMax` stay STORED and are NOT
 derived: they are the module's DECLARED range and pass 0's own spine prompt reads them BEFORE any section
 exists.
+
+**BUILD STATE (2026-09-28, docs/17 row 392). PHASE 1g LANDED — PASS 0 IS DELETED.** The temporary
+compatibility layer the storage cut built in 1b is gone from the CODE: the pass-0 entry points
+(`runSpine`/`retrySpine`/`approveSpineAndRun`/`discardSpine`/`createModuleAndRun`), the spine prompt
+builder and its JSON reply boundary (`spineMessages`, `parseSpine`, `parseSpineEntities`,
+`spineReplySchema`), the pass-0-only adversarial premise review, the whole-spine and plan-only row
+writes (`saveSpine`/`savePartPlan`), the checkpoint component and the reader's spine
+stream/Retry card, and the level-scoped stream store's `null` (spine) key. **THE STORED PLAN
+METADATA IS KEPT** (`levelPlans`/`levelStates`), because the inventory shows live readers: display
+titles, the PDF's plan appendix, the module plan and the per-level run state/provenance — so there
+is NO `version(33)`, and §5's deletion of `synopsis`/`levelUpTrigger`/`themes` stays deferred by
+sequencing. **THE DERIVED `spine`/`parts` VIEW STAYS TOO**, and that is a measured verdict: ~40
+reader sites in ~25 `src/` files still speak it (the PDF, the wiki graph, the module plan, the
+engine, the room budget, the groundings, the entity panel/batch, the reader, the canvas/chat, the
+board, quickfind and the module-plan dialog), so its deletion is a second 1b-sized cut, NAMED as the
+remainder with the per-file verdicts in docs/18 §5. The surviving app model is the row-390/391 one:
+the CHAT authors the document, the engine writes LEVELS, and a legacy row that carries a pass-0 plan
+is read (and its missing levels written) rather than approved at a checkpoint.
+
 
 ## 1. The owner's decisions (verbatim substance)
 

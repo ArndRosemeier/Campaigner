@@ -5,7 +5,6 @@ import type {
   ModulePatch,
   ModuleRow,
   ModuleSpine,
-  PartPlan,
 } from '@/domain';
 import {
   moduleRowFromDocument,
@@ -157,7 +156,7 @@ export const createModule = saveModule;
  * the general validated upsert — `patchModule` and its siblings write through
  * them, and a test or an IMPORT that must reproduce a LEGACY multi-module
  * campaign seeds rows directly — but the APP's creation path
- * (`llm/moduleGen.createModuleAndRun`, pinned by
+ * (`llm/moduleGen.startCampaignDocument`, pinned by
  * `tests/architecture/one-document-per-campaign.test.ts`) goes through HERE.
  */
 export async function createCampaignDocument(module: Module): Promise<Module> {
@@ -179,21 +178,15 @@ export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {
   });
 }
 
-/** Replaces the approved spine (checkpoint edits) without touching parts. */
-export async function saveSpine(id: Id, spine: ModuleSpine): Promise<Module> {
-  return patchModule(id, { spine });
-}
-
 /**
  * THE one atomic SPINE-SUBFIELD patch (docs/17 row 357): re-reads the row
  * INSIDE the transaction (a stale snapshot can never drop a concurrent write)
  * and merges the named fields into the spine, leaving every other spine field
- * — and every part — BYTE-IDENTICAL. Two callers, ONE body: `savePartPlan`
- * (the plan-only checkpoint write) and the version restore's premise write
- * (`features/modules/canvas/saveDoc.restorePremise`). `saveSpine` beside it
- * stays the WHOLE-spine REPLACEMENT, which is the checkpoint's contract — do
- * not route a subfield write through it, because it would overwrite the fields
- * the caller did not read.
+ * — and every part — BYTE-IDENTICAL. The callers are the version restore's
+ * premise write (`features/modules/canvas/saveDoc.restorePremise`) and the
+ * chat's premise edit (`features/modules/canvas/chatChanges`). The
+ * whole-spine replacement and the plan-only replacement were the pass-0
+ * checkpoint's writes and are DELETED with pass 0 itself (docs/17 row 392).
  *
  * A module with no spine has no subfield to patch: LOUD, never a silent no-op
  * (AGENTS rule 1) — the caller is asking to change a spine that is not there.
@@ -208,11 +201,6 @@ export async function patchModuleSpine(id: Id, patch: Partial<ModuleSpine>): Pro
     }
     return saveModule({ ...module, spine: { ...module.spine, ...patch } });
   });
-}
-
-/** Replaces the part plan only (spine premise/themes kept). */
-export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module> {
-  return patchModuleSpine(id, { partPlan });
 }
 
 /**

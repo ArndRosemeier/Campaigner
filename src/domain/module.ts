@@ -120,11 +120,11 @@ export const moduleSpineSchema = z.object({
   themes: z.array(z.string()).default([]),
   /**
    * The per-level plan, DERIVED from the document's level sections (docs/23
-   * §4): plan entry i is level section i+1. The generator's pass-0 authoring
-   * still WRITES this through `saveSpine`, which composes the document — but a
-   * read NEVER gets a plan it did not first put into the text, which is why
-   * pass-0 titles/synopses do not survive a round trip (recorded in the row-382
-   * report; phase 1f deletes the authoring).
+   * §4): plan entry i is level section i+1. The pass-0 plan authoring is
+   * DELETED (docs/17 row 392), so this array now only ever carries what an
+   * EXISTING row already stored; a read NEVER gets a plan it did not first put
+   * into the text, which is why pass-0 titles/synopses do not survive a round
+   * trip (recorded in the row-382 report).
    *
    * EMPTY IS LEGAL: a document with no separators is the level-0-only state, so
    * `.min(1)` is gone with the old model (docs/23 §2.1).
@@ -155,13 +155,8 @@ export const moduleSpineSchema = z.object({
    * `writerModel` beside it.
    *
    * Stamped by the premise writers, and by no one else:
-   *   - the spine pass records `'model'` with the premise it just wrote;
-   *   - `moduleGen.approveSpineAndRun` — the "Generate parts" click, whose
-   *     draft the checkpoint let the owner edit — records `'human'` ONLY when
-   *     the approved premise's TEXT differs from the premise already on the
-   *     row (an untouched draft is the model's own text, so clicking through
-   *     the always-on checkpoint must not claim authorship of it), and
-   *     carries the recorded origin forward when it does not differ;
+   *   - the canvas chat's premise edit, and any restored version, record the
+   *     origin they wrote;
    *   - `moduleGen.applyNormalizationVerdict` records `'model'` after it
    *     rewrites the premise's link targets, because the document it wrote is
    *     no longer the one the owner typed.

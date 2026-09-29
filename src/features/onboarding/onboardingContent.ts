@@ -147,7 +147,7 @@ export const WIZARD_STEPS: readonly WizardStep[] = [
     sections: [
       {
         heading: '',
-        text: 'The campaign holds your artifacts and its game system (used by stat blocks and battles). Then press “Module” in the top bar: Campaigner drafts a premise + part plan — the spine — for your approval, then writes the parts one by one.',
+        text: 'The campaign holds your artifacts and its game system (used by stat blocks and battles). Then press “Module” in the top bar: it starts an empty document and opens its canvas chat, where you describe the campaign — the chat writes the premise and the level sections, and the reader writes each level’s prose on demand.',
       },
     ],
     bullets: ['New to module authoring? Open the guide — it walks the whole path, end to end.'],

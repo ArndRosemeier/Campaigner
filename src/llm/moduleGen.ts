@@ -6,29 +6,20 @@ import {
   createModule,
   DEFAULT_MODULE_DIFFICULTY,
   defaultEncounterBudgetPolicy,
-  encounterCountWord,
   encounterFloorGuardrailFor,
   encounterFloorPerPart,
   encounterFloorTotal,
-  ENTITY_KINDS,
-  ENTITY_INTENT_MAX_LENGTH,
-  ENTITY_LEVEL_HINT_MAX,
-  ENTITY_LEVEL_HINT_MIN,
-  entityBestiarySlotSchema,
   entityKindFor,
   levelForPlanIndex,
   moduleCreationPool,
   moduleDocumentText,
-  moduleEntityKindSchema,
   moduleLevelSectionsFromView,
   modulePartsUntouched,
-  moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
   planIndexForLevel,
   sameAliasName,
   textOriginIsMachineWritten,
-  withCombatEntityLevelHints,
   withEntityBestiarySlots,
   type EncounterBudgetPolicy,
   type EncounterFloorGuardrail,
@@ -47,23 +38,9 @@ import {
   PART_ENDING_LINES,
   partsContractValues,
   promptStyleForModule,
-  spineContractValues,
 } from '@/llm/promptStyles';
 import { Emitter } from '@/llm/emitter';
-import { createCampaignDocument, getModule, listModulesByCampaign, patchModule, patchModuleSpine, saveModuleLevels } from '@/db/moduleRepo';
-// The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
-// WHICH creatures may a module entity be cast from? The answer is the window
-// `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
-// the SAME pool the batch's cast resolves a requested name against, ordered by
-// level distance to the module's band and capped, so the prompt names real
-// creatures instead of offering a slot with no vocabulary. Both halves are
-// scoped to the campaign's game system (docs/17 row 207): the vocabulary and
-// the lookup it judges pass the SAME `system`. The cast itself is
-// not this module's — the entity batch resolves the requested name and casts
-// through `db/creatureRepo.castCreatureAsNpc`, the ONE cast function
-// (docs/18 §2.2).
-import { collectCreatorRoster } from '@/llm/creatorRoster';
-import { moduleStatedLevel } from '@/llm/roomBudget';
+import { createCampaignDocument, getModule, listModulesByCampaign, patchModule, saveModuleLevels } from '@/db/moduleRepo';
 import { addArtifactAliases, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 // The LINKS hook (10 D12): every write that puts new prose on the row promotes
@@ -78,15 +55,13 @@ import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } f
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
-import { absentable } from '@/llm/schemas';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, resolveWikiLink, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
-import { documentTextFields, generatedTextScanForFields } from '@/llm/generatedTextHygiene';
+import { generatedTextScanForFields } from '@/llm/generatedTextHygiene';
 import {
   MODULE_PREMISE_LABEL,
   PART_TOO_SHORT_REPAIR_SENTENCE,
-  SCHEMA_REPAIR_LEAD_IN,
 } from '@/llm/promptScaffolding';
 // The engine triggers the module's own post-generation automation (the
 // unattended paths have no UI to do it); the orchestrator never imports this
@@ -100,29 +75,24 @@ import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { modulePath } from '@/app/routes';
-import { z } from 'zod';
 
 /**
- * Module Designer generator (08-MODULE-DESIGNER M4-B): a two-pass flow —
- * pass 0 drafts the spine (premise + part plan, JSON), pass 1 writes the
- * parts one call per part, sequentially, markdown out. Progress/state lives
- * on the Module row itself (statuses in the domain), observed via
- * `useLiveQuery`; streaming tokens cross to the UI through this in-memory
- * emitter only.
+ * Module Designer generator (08-MODULE-DESIGNER M4-B): ONE pass — it writes the
+ * module document's LEVEL SECTIONS, one call per level, sequentially, markdown
+ * out (docs/23 §10 phase 3, docs/17 row 392: the pass-0 spine is DELETED and the
+ * CHAT authors the premise and the level list). Progress/state lives on the
+ * Module row itself (statuses in the domain), observed via `useLiveQuery`;
+ * streaming tokens cross to the UI through this in-memory emitter only.
  *
  * Deliberately NOT built on personas/runEngine: different flow, and the prose
  * pass has no JSON contract at all (empty/<100-char output is the failure
- * criterion, retried once). Failures are loud (AGENTS rule 1): a spine
- * failure marks the module `failed` with an `errorMessage`; a part failure
- * marks that part `failed` (visible error card + Retry in its slot) and the
- * chain CONTINUES — part i gets continuity from part i−1 only (no context
+ * criterion, retried once). Failures are loud (AGENTS rule 1): a level failure
+ * marks that level `failed` (visible error card + Retry in its slot) and the
+ * chain CONTINUES — level N gets continuity from level N−1 only (no context
  * when the predecessor failed).
  */
 
 export type ModuleGenEvent =
-  | { kind: 'spine-token'; moduleId: Id; delta: string }
-  /** Reasoning-delta stream (illustration only; never persisted). */
-  | { kind: 'spine-thinking'; moduleId: Id; delta: string }
   /**
    * A level's streaming text. THE UNIT IS THE LEVEL NUMBER (docs/23 §2.1,
    * docs/17 row 391): a subscriber addresses the level it is watching by its
@@ -329,401 +299,7 @@ function streamDetailReporter(
   };
 }
 
-// --- Pass 0 — spine ----------------------------------------------------------
 
-export interface SpineRunOptions {
-  /** Extra steering instruction from the "Retry spine…" affordance. */
-  extraInstruction?: string | undefined;
-}
-
-/**
- * Runs pass 0 for a module without a spine: one JSON call. The row moves to
- * `generating` while streaming; on success the spine is stored and the module
- * returns to `draft` — the ALWAYS-on spine approval checkpoint decides when
- * pass 1 starts. On failure the module is `failed` with a loud
- * `errorMessage`.
- */
-export async function runSpine(
-  moduleId: Id,
-  campaign: Campaign,
-  options: SpineRunOptions = {},
-): Promise<Module> {
-  return withForgePresentation(
-    moduleId,
-    () => runSpinePass(moduleId, campaign, options),
-    (module) => (module.status === 'failed' ? 'failed' : 'completed'),
-  );
-}
-
-/** The spine pass body (see `runSpine` for the public contract). */
-async function runSpinePass(
-  moduleId: Id,
-  campaign: Campaign,
-  options: SpineRunOptions = {},
-): Promise<Module> {
-  const controller = controllerFor(moduleId);
-  // App-wide progress dock (00-OVERVIEW): an outline pass has no measurable
-  // sub-steps, so the bar sweeps while the detail line says what is running.
-  const progress = useProgressStore.getState();
-  const jobId = `module-spine-${moduleId}`;
-  progress.start(
-    jobId,
-    'Designing the module outline',
-    // One big planning call — set the "this takes minutes" expectation up
-    // front so the quiet stretch before streaming is not read as a hang.
-    'Asking for premise, themes and part plan — one large design call; expect several minutes before streaming starts…',
-    // The dock label opens the module reader, wherever the user currently is.
-    modulePath(campaign.id, moduleId),
-  );
-  try {
-    const module = await getModule(moduleId);
-    if (module === undefined) throw new Error('Module to generate no longer exists');
-    // "Already has parts" means WRITTEN parts (docs/17 row 382): the derived
-    // view reserves one EMPTY part per planned level, which is exactly what
-    // pass 1 is about to write.
-    if (!modulePartsUntouched(module)) {
-      throw new Error('Refusing to regenerate a spine for a module that already has parts');
-    }
-    await patchModule(moduleId, { status: 'generating', errorMessage: '' });
-
-    const settings = await getSettings();
-    // The spine call runs on the GLOBAL first-try model, and it is not the run
-    // engine's funnel — so the model in play is recorded here (docs/17 row 198).
-    recordGlobalChatModelInUse(settings.defaultChatModel);
-    const messages = await spineMessages(module, campaign, options.extraInstruction ?? '');
-
-    // Live dock detail: the spine call can sit minutes on a queued provider or
-    // a reasoning model before the first delta — the reporter keeps the dock
-    // honest about what is happening (00-OVERVIEW).
-    const reporter = streamDetailReporter(
-      jobId,
-      'Asking for premise, themes and part plan…',
-    );
-    const streamHandlers = {
-      onToken: (delta: string): void => {
-        moduleGenEvents.emit({ kind: 'spine-token', moduleId, delta });
-        reporter.onToken(delta);
-      },
-      onReasoning: (delta: string): void => {
-        moduleGenEvents.emit({ kind: 'spine-thinking', moduleId, delta });
-      },
-      onActivity: reporter.onActivity,
-    };
-
-    // PROVENANCE (docs/17 row 93): the model that served the spine call is
-    // captured here and rides onto the saved spine's premise. Every repair
-    // retry below REPLACES it, so the recorded id is always the model whose
-    // text actually landed — never the configured one (docs/18 §2.2/§4).
-    const firstSpine = await chat(messages, {
-      model: settings.defaultChatModel,
-      temperature: 0.8,
-      reasoningEffort: settings.defaultReasoningEffort,
-      responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
-      signal: controller.signal,
-      ...streamHandlers,
-    });
-    let raw = firstSpine.text;
-    let spineWriterModel = firstSpine.modelUsed;
-
-    let spine: ModuleSpine;
-    let entityKinds: ModuleEntityKind[];
-    try {
-      spine = parseSpine(raw);
-      entityKinds = parseSpineEntities(raw);
-    } catch (error) {
-      // One automatic invalid-JSON retry (same policy as persona drafts); a
-      // second failure fails the module loudly.
-      const retryReply = await chat(
-        [
-          ...messages,
-          {
-            role: 'user',
-            content: `${SCHEMA_REPAIR_LEAD_IN} ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
-          },
-        ],
-        {
-          // Contract repair escalates to the fallback model: invalid spine
-          // JSON is usually a capability weakness of the first-try model.
-          model: repairModel(settings.defaultChatModel, settings),
-          temperature: 0.8,
-          reasoningEffort: settings.defaultReasoningEffort,
-          responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
-          signal: controller.signal,
-          ...streamHandlers,
-        },
-      );
-      raw = retryReply.text;
-      // The repair reply REPLACED the text — so it owns the provenance.
-      spineWriterModel = retryReply.modelUsed;
-      spine = parseSpine(raw);
-      entityKinds = parseSpineEntities(raw);
-    }
-
-    // Spine-level entities REPLACE the record: this pass invents the world
-    // (and only runs while the module has no parts, so nothing is lost).
-    // fix-01: the entity list is normalized against the existing campaign
-    // artifacts BEFORE storage — the glossary the checkpoint approves is
-    // canonical from the start. A normalization failure fails the spine
-    // loudly (same policy as the spine reply itself).
-    const normalizeAndSave = async (
-      nextSpine: ModuleSpine,
-      nextKinds: ModuleEntityKind[],
-      writerModel: string,
-    ): Promise<Module> => {
-      // Name normalization is a module-creation pass: its artifact index is
-      // the module-creation pool (docs/17 row 69), so a name that happens to
-      // match a player character can never be resolved onto the Party — it
-      // becomes a NEW module-owned entity instead.
-      const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
-      const artifactNames = artifacts.map((artifact) => artifact.name);
-      const spineNames = nextKinds.map((entry) => entry.name);
-      let normalizedKinds: ModuleEntityKind[] = [];
-      if (spineNames.length > 0) {
-        const verdicts = await normalizationCall(
-          normalizationMessages(
-            spineNames.map((name) => ({
-              name,
-              context: surroundingParagraphs(nextSpine.premise, name, NORMALIZE_CONTEXT_CAP),
-            })),
-            artifactNames,
-            nextSpine.premise,
-          ),
-          settings.defaultChatModel,
-          spineNames,
-          artifactNames,
-        );
-        // Spine-time verdicts map names only — the records are the canonical
-        // form of the planner's own entity list. The planner's BESTIARY slots
-        // (docs/17 row 107), its entity INTENT notes (docs/17 row 141) and its
-        // entity LEVEL hints (docs/17 row 197) are carried onto them by name:
-        // the normalization reply answers which canonical name each listed name
-        // refers to and knows nothing about any of them, so what the model
-        // already recorded rides through the substitution rather than being
-        // dropped with the variant-keyed records it was written on.
-        //
-        // THE MODULE'S OWN STATED LEVEL IS RECORDED HERE, before the carry
-        // (docs/17 row 247). The planner is ASKED for a per-entity levelHint but
-        // is free to answer `null`, so a module-wide level from STRUCTURED data
-        // still rides onto the npc records that state none. THIS call passes NO
-        // name (and no parts), so `moduleStatedLevel` can only reach its EXACT
-        // band arm (`levelMin === levelMax`) — the name-scoped PROSE rungs
-        // (docs/17 row 285) genuinely do not exist at spine time, which is what
-        // keeps a premise sentence ("a level 7 gnome") from ever stamping ONE
-        // module-wide number on every npc of a levels-1–2 module while their
-        // minted blocks were level 1. A RANGE states no level, so it stamps
-        // nothing and the entity carries the module's band instead. The planner's
-        // own answer is never overwritten, and a module stating no exact level
-        // leaves every record byte-identical.
-        const statedLevel = moduleStatedLevel({
-          spine: nextSpine,
-          parts: [],
-          levelMin: module.levelMin,
-          levelMax: module.levelMax,
-        });
-        normalizedKinds = withEntityBestiarySlots(
-          canonicalEntityRecords(verdicts),
-          withCombatEntityLevelHints(nextKinds, statedLevel),
-        );
-      }
-      const saved = await patchModule(moduleId, {
-        // PROVENANCE (docs/17 row 93): the premise's writing model, recorded
-        // with the spine it belongs to. `''` stays `''` (not recorded →
-        // nothing displayed); nothing derives it from the settings.
-        // AUTHORSHIP (docs/17 row 113): this pass is the model writing the
-        // premise, so it records the origin as well — a model write by
-        // construction, never a `writerModel`-shaped guess.
-        spine: { ...nextSpine, writerModel, origin: 'model' },
-        entityKinds: normalizedKinds,
-        status: 'draft',
-        errorMessage: '',
-      });
-      // LINKS hook: the generated premise may reuse another module's entities
-      // by exact name — a second-module use promotes them to shared campaign
-      // ownership before the checkpoint approves the spine.
-      await promoteSecondModuleUses(moduleId, [nextSpine.premise]);
-      return saved;
-    };
-    let saved = await normalizeAndSave(spine, entityKinds, spineWriterModel);
-    // Encounter spine gate (08 §M4-B): zero encounter records gets ONE repair
-    // retry on the escalated model; a second encounter-free spine fails the
-    // spine loudly (never a silent draft). Floor guarding is read from the
-    // MODULE ROW here (its recorded floor, or today's default) — the same
-    // numbers that rendered the prompt this reply answered, so the gate can
-    // never judge a different rule than the one asked for. With the floor
-    // disabled, an encounter-free spine is legitimate.
-    const spineFloor = encounterFloorGuardrailFor(saved);
-    const spineEncounterDefect = (module: Module): string | null =>
-      spineFloor.enabled && !module.entityKinds.some((entry) => entry.kind === 'encounter')
-        ? 'declares no encounters'
-        : null;
-    const spineDefect = spineEncounterDefect(saved);
-    if (spineDefect !== null) {
-      // The requirement is rendered from the module's own numbers. A defect can
-      // only exist while the floor is enabled, so a null requirement here is a
-      // loud invariant, never a silently thinner sentence.
-      const floorHalf = floorRepairRequirement(spineFloor, saved);
-      if (floorHalf === null) {
-        throw new Error(
-          'The spine encounter gate fired while the module floor is disabled',
-        );
-      }
-      const floorRetry = await chat(
-        [
-          ...messages,
-          {
-            role: 'user',
-            content:
-              `Your spine ${spineDefect}, ${floorHalf}. ` +
-              `Reply with corrected JSON only (same schema): keep the premise, themes and part plan, and declare every planned encounter ` +
-              `in entities with kind "encounter", each under a distinctive, stable name.`,
-          },
-        ],
-        {
-          // Floor repair escalates to the fallback model: a missing encounter
-          // plan is usually a capability weakness of the first-try model.
-          model: repairModel(settings.defaultChatModel, settings),
-          temperature: 0.8,
-          reasoningEffort: settings.defaultReasoningEffort,
-          responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
-          signal: controller.signal,
-          ...streamHandlers,
-        },
-      );
-      const retrySpine = parseSpine(floorRetry.text);
-      const retryKinds = parseSpineEntities(floorRetry.text);
-      // The floor-repair reply REPLACED the premise — it owns the provenance.
-      saved = await normalizeAndSave(retrySpine, retryKinds, floorRetry.modelUsed);
-      const retryDefect = spineEncounterDefect(saved);
-      if (retryDefect !== null) {
-        throw new Error(
-          `The spine still ${retryDefect} after the repair retry — ` +
-            'the module needs named encounters (kind "encounter" in entities). Retry the spine draft.',
-        );
-      }
-    }
-    // ADVERSARIAL PREMISE REVIEW (docs/17 row 358): with the module's flag ON,
-    // the premise is reviewed FIRST — right after the spine produced it (the
-    // floor gate above may have replaced it, so this is the text that will
-    // actually drive the parts) and BEFORE any part is written from it. The
-    // review is contained: a failed critique/editor leaves the premise
-    // byte-unchanged and the spine still lands at its checkpoint.
-    if (adversarialReviewEnabled(saved)) {
-      saved = await reviewPremiseInGeneration({
-        module: saved,
-        signal: controller.signal,
-        jobId,
-      });
-    }
-    return saved;
-  } catch (error) {
-    await failModule(moduleId, error, controller.signal);
-    throw error;
-  } finally {
-    progress.finish(jobId);
-    controllers.delete(moduleId);
-    moduleGenEvents.emit({ kind: 'done', moduleId });
-  }
-}
-
-/** Parses + validates the spine from model output (shared JSON-reply boundary).
- *
- * The reply is DOCUMENT text — `premise`, `themes` and every `partPlan` entry
- * are printed for the reader — so it passes the SAME generated-text hygiene
- * scan every other persisting boundary runs (docs/17 row 142): escape debris
- * and OUR OWN prompt scaffolding echoed back (a spine prompt's section label or
- * rule sentence arriving as premise prose). A hit THROWS here, which is the
- * spine's own existing bound: `runSpine`'s one invalid-JSON repair turn names
- * the issue back to the model, and a second reply that still carries it fails
- * the module LOUDLY (never a silently persisted premise). */
-export function parseSpine(raw: string): ModuleSpine {
-  const spine = moduleSpineSchema.parse(parseJsonReply(raw));
-  const fields = documentTextFields(spine, 'spine');
-  const { issues } = generatedTextScanForFields(fields, fields);
-  if (issues.length > 0) {
-    throw new Error(`the spine reply was rejected — ${issues.join('; ')}`);
-  }
-  return spine;
-}
-
-/** The pass-0 entity record schema ({ entities: [{ name, kind }] }). */
-const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSchema) });
-
-/**
- * The entity record as a MODEL answers it (the spine's and the entity list's
- * emitted contract, docs/17 row 107).
- *
- * `absorbed` is the normalization pass's record, not a model-authored field:
- * `.default([])` keeps its emitted shape exactly as it was before this field
- * existed (a defaulted field comes out REQUIRED in the strict subset, which is
- * what the decoder has always been asked for).
- *
- * `bestiary` is the one field a reply may genuinely omit, and the strict JSON
- * schema re-emits a `.optional()` property as required+NULLABLE
- * (strictSchema.ts) — so `absentable` is what lets a reply that asks for NO
- * cast answer `"bestiary": null` and still land on the stored `T | undefined`
- * shape. Both spellings read the same: no cast.
- *
- * `intent` (docs/17 row 141) is spelled the same way for the same reason: the
- * strict subset cannot express an ABSENT key, so a planner with nothing to say
- * about an entity answers `"intent": null`, which lands on the record's
- * `undefined` — one meaning ("no note"), one spelling in the contract. The
- * LENGTH cap is the record schema's (`ENTITY_INTENT_MAX_LENGTH`), because the
- * strict subset strips `maxLength`; the spine clause states the same number to
- * the model, so the prompt and the boundary cannot disagree.
- *
- * `levelHint` (docs/17 row 197) is the additive structured LEVEL the module
- * author fixes for an entity, spelled exactly like `intent`: `null` is the
- * planner's "the prose states no level". Its RANGE bound lives on the record
- * schema (`ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX`) for the same reason
- * the intent cap does — the strict subset strips numeric bounds — and the
- * spine clause states the same range to the model. A reply outside it fails the
- * spine parse LOUDLY, never a clamp.
- */
-const modelEntityKindSchema = z.object({
-  name: z.string().trim().min(1),
-  kind: z.enum(ENTITY_KINDS),
-  absorbed: z.array(z.string()).default([]),
-  bestiary: absentable(entityBestiarySlotSchema),
-  intent: absentable(z.string()),
-  levelHint: absentable(
-    z.number().int().min(ENTITY_LEVEL_HINT_MIN).max(ENTITY_LEVEL_HINT_MAX),
-  ),
-});
-
-/**
- * The STRICT structured-output contract for the spine pass: one reply carries
- * the spine AND the entity list (both parse from the same JSON), so the
- * emitted schema is their composition. Runtime parsing keeps the two separate
- * schemas — this is emission-only.
- *
- * PROVENANCE (docs/17 row 93): the spine's `writerModel` is OMITTED from the
- * emitted contract. It is a RECORDED field, not a model-authored one — and
- * because `writerModel` carries `.default('')`, the strict-subset converter
- * marks it REQUIRED, so keeping it would force the decoder to emit an id the
- * model can only invent (which the run then overwrites anyway). The model is
- * asked for the prose; the run records which model served it, after the fact.
- *
- * AUTHORSHIP (docs/17 row 113): `origin` is omitted for exactly the same
- * reason — it is the app's record of who wrote the premise, never a value the
- * model may answer, and its presence in the emitted schema would add a
- * required field to the contract for no prompt-side gain.
- */
-export const spineReplySchema = z
-  .object({
-    ...moduleSpineSchema.shape,
-    entities: z.array(modelEntityKindSchema),
-  })
-  .omit({ writerModel: true, origin: true });
-
-/**
- * Parses the entity list the spine pass records alongside the spine (08
- * §M4-C): the model declares each entity's kind when it invents the name —
- * a missing/incomplete list is a validation error (retry-once, then the
- * spine fails loudly; never a silent default).
- */
-export function parseSpineEntities(raw: string): ModuleEntityKind[] {
-  return entityKindsReplySchema.parse(parseJsonReply(raw)).entities;
-}
 
 /**
  * Outcome limits per module tone (08 §M4-B tone dial): what a matching tone
@@ -765,28 +341,6 @@ export const MODULE_TONE_BANS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
-/** The tone entry's bans for a free-text module tone (exact match, case-insensitive). */
-/**
- * The encounter-floor clause for the spine prompt, or `null` when the module's
- * floor is disabled (then the prompt carries no floor requirement at all).
- *
- * The ONE source of truth for the wording: the numbers the owner set in the New
- * Module dialog flow straight into this sentence, and the gate that judges the
- * reply reads the same numbers (`countModuleEncounters`). At the default
- * (`enabled: true, perLevel: 1`) this renders byte-for-byte the pre-config copy.
- */
-function floorClause(floor: EncounterFloorGuardrail, module: Module): string | null {
-  if (!floor.enabled) return null;
-  const levelCount = module.levelMax - module.levelMin + 1;
-  const total = encounterFloorTotal(floor, levelCount);
-  return (
-    `REQUIREMENT — encounter floor: name at least ${encounterCountWord(floor.perLevel)} distinct ` +
-    `encounter${floor.perLevel === 1 ? '' : 's'} per level of this module's range ` +
-    `(levels ${String(module.levelMin)}–${String(module.levelMax)} → at least ${String(total)} distinct encounters across the module), ` +
-    'with each part naming at least as many encounters as the levels its band covers. An encounter is a fight — a battle map and a monster roster — so a negotiation, hazard, puzzle, investigation or chase is an event instead and does not count.'
-  );
-}
-
 /** The per-part floor instruction, or `null` when the floor is disabled. */
 function perPartFloorClause(levelBand: string, levels: number, required: number): string | null {
   if (required <= 0) return null;
@@ -799,17 +353,6 @@ function perPartFloorClause(levelBand: string, levels: number, required: number)
   );
 }
 
-/** The spine repair-retry requirement for a short floor, or `null` when the
- * floor is disabled (a disabled floor is never a spine defect). */
-function floorRepairRequirement(floor: EncounterFloorGuardrail, module: Module): string | null {
-  if (!floor.enabled) return null;
-  const levelCount = module.levelMax - module.levelMin + 1;
-  return (
-    `but the module requires at least ${encounterCountWord(floor.perLevel)} distinct ` +
-    `encounter${floor.perLevel === 1 ? '' : 's'} per level ` +
-    `(levels ${String(module.levelMin)}–${String(module.levelMax)} → at least ${String(encounterFloorTotal(floor, levelCount))} encounters)`
-  );
-}
 
 /** The floor repair instruction for one short part, or `null` when the floor is
  * disabled (there is nothing to repair). */
@@ -850,6 +393,7 @@ function floorRepairRewriteInstruction(target: PartEncounterCount, levelCount: n
   );
 }
 
+/** The tone entry's bans for a free-text module tone (exact match, case-insensitive). */
 export function toneBansFor(tone: string): readonly string[] | null {
   return MODULE_TONE_BANS[tone.trim().toLowerCase()] ?? null;
 }
@@ -978,187 +522,6 @@ async function priorModulesOf(module: Module, override?: boolean): Promise<Modul
   return modules.filter((candidate) => candidate.id !== module.id);
 }
 
-/**
- * The spine call's own request for the entity INTENT note (08 §M4-C "Entity
- * intent", docs/17 row 141): the author's hint about what an entity he invents
- * is FOR, which the detail worker that fills the name in could not otherwise
- * know. It is asked for the names the planner INVENTS, only where there is
- * something to say, and `null` everywhere else.
- *
- * WHY IT RIDES THE SPINE CALL'S SYSTEM MESSAGE AND NOT THE STYLE-COMPOSED
- * PROMPT. The composed prompt is the STYLE layer: its contract values are
- * injected into the owner's editable template, and every byte of the classic
- * composition is pinned against fixtures captured from the PRE-STYLES builders
- * (`tests/llm/promptStyles-classic-identity.test.ts`, docs/18 §4) — a clause
- * added to a contract value would break that provenance for every existing
- * module, and it would also be editable away by a user style, which an app
- * contract must not be. The system message is the app's own voice ("Always
- * answer in the exact JSON format requested") and carries the reply-format
- * addition the strict decoder requires: `intent` is a REQUIRED-nullable property
- * in the emitted schema, so the model must be told the key exists.
- *
- * The number comes from `ENTITY_INTENT_MAX_LENGTH` — the SAME constant the
- * record schema enforces — so the prompt can never ask for a note the boundary
- * then refuses.
- */
-const SPINE_ENTITY_INTENT =
-  ` Every entity entry ALSO carries "intent": a short note of your OWN intent for a name you invent — ` +
-  `what this place, person, faction or fight is FOR, and which reading of the name you meant — where a ` +
-  `detail writer could not tell it from the text alone (at most ${String(ENTITY_INTENT_MAX_LENGTH)} ` +
-  `characters, one or two sentences). Write it only where you have something to say beyond the name and its ` +
-  `kind, and answer "intent": null for every other entity. It is your AUTHORING note, not a summary of the ` +
-  `entity, not a substitute for the module text and never a description of what the artifact should contain ` +
-  `in place of the story; it steers emphasis, it does not overrule the text. It is never shown to a reader.`;
-
-/**
- * The spine call's own request for the entity LEVEL hint (owner request,
- * docs/17 row 197): the level the planner fixes for a figure in the prose,
- * asked for so the entity generator that builds that figure BUILDS IT AT THAT
- * LEVEL instead of inventing one.
- *
- * WHY IT IS ASKED FOR IN THIS PASS, AND IN THE SYSTEM MESSAGE. It rides the
- * SAME spine call as `SPINE_ENTITY_INTENT` above — the pass that writes the
- * PREMISE, which is where a level stated in the prose appears, and the pass that
- * emits the entity RECORD the hint is stored on. It rides the same SYSTEM
- * MESSAGE for the identical reasons recorded on that constant: the
- * style-composed prompt is the owner's editable layer and its classic bytes are
- * pinned against pre-styles fixtures, so an app contract must not live in a
- * style value. The strict emitted schema makes `levelHint` REQUIRED-nullable,
- * so the model must be told the key exists.
- *
- * WHAT IT SAYS IT IS FOR — the owner's own framing, and the reason the model is
- * asked to bother: what the writer states about a figure is how that figure
- * survives into the entity the generators build; a level stated only in prose is
- * lost at the entity boundary, and the generator then picks a level of its own.
- *
- * The RANGE comes from `ENTITY_LEVEL_HINT_MIN`..`ENTITY_LEVEL_HINT_MAX` — the
- * SAME constants the record schema enforces — so the prompt can never offer a
- * level the boundary then rejects (AGENTS rule 4).
- *
- * TWO CASES, AND A REALISM ALLOWANCE (docs/17 row 283). The hint is a
- * GENERATION TARGET, so the model has to be TOLD how to aim it, and the two
- * kinds of figure aim at DIFFERENT things: a figure the party might FIGHT is a
- * BALANCE question and aims inside the module's own band, while a figure the
- * party NEVER fights is a REALISM question — what the figure IS in the world —
- * and may legitimately sit FAR ABOVE the band. The owner's correction, verbatim
- * (*"If the guard captain is not hostile, he can be level 12 in a level 1
- * module. Not just high end for the module level. It should stay realistic."*),
- * is why the clause names the module's own range for case (1) and explicitly
- * denies it any capping power in case (2); the owner's two examples calibrate
- * it (a non-hostile level-12 captain in a level-1 module is CORRECT, a
- * fourteen-year-old is never level 10). This is a FUNCTION of the band rather
- * than a constant because the band's own numbers are what case (1) aims at.
- */
-function spineEntityLevelHint(levelMin: number, levelMax: number): string {
-  return (
-    ` Every entity entry ALSO carries "levelHint": the LEVEL this figure is at in your story, ` +
-    `a whole number from ${String(ENTITY_LEVEL_HINT_MIN)} to ${String(ENTITY_LEVEL_HINT_MAX)}, ` +
-    `when you fix one in the prose — an ally's, a rival's or a villain's class or character level. ` +
-    `AIM IT BY WHAT THE FIGURE IS FOR, and the two cases are different. ` +
-    `(1) A figure the party might FIGHT — anyone who takes part in this module's encounters — is a ` +
-    `BALANCE question: aim it inside this module's own range of levels ` +
-    `${String(levelMin)}–${String(levelMax)}, the levels this module is built for, so the encounter ` +
-    `stays survivable. ` +
-    `(2) A figure the party does NOT fight — a bystander, an official, a shopkeeper, a child — is a ` +
-    `REALISM question: aim it at what the figure IS in the world, by standing, role and age, and this ` +
-    `module's range NEITHER CAPS IT NOR PULLS IT DOWN. A non-hostile captain of the guard may be level 12 ` +
-    `in a level-1 module and that is CORRECT, because the party never fights him; a fourteen-year-old is ` +
-    `NEVER level 10. ` +
-    `State it so the figure SURVIVES into the entity the generators build: what you write about a figure ` +
-    `is how that figure is generated later, and a level stated only in your prose is otherwise LOST at the ` +
-    `entity boundary — the entity generator would pick a level of its own. Answer "levelHint": null for every ` +
-    `entity whose level your prose does not fix (places, factions, notes, generic opposition), and never ` +
-    `guess: the hint must agree with what your own text states. It is a generation hint, never shown to a reader.`
-  );
-}
-
-async function spineMessages(
-  module: Module,
-  campaign: Campaign,
-  extraInstruction: string,
-): Promise<ChatMessage[]> {
-  // The module-creation pool (08 §M4-B, docs/17 row 69): the Party is
-  // invisible to generation — a `pc` row is the players' own character, never
-  // campaign setting content to reuse (see `MODULE_CREATION_EXCLUDED_KINDS`).
-  const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
-  const index =
-    artifacts.length === 0
-      ? null
-      : `Existing campaign entities (reuse the ones that fit, by their exact names):\n${artifacts
-          .slice(0, 60)
-          .map((artifact) => `- ${artifact.name} (${artifact.kind})${artifact.summary === '' ? '' : ` — ${artifact.summary}`}`)
-          .join('\n')}`;
-  const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
-  // The bestiary slot AND its vocabulary (docs/17 rows 107/114): the spine
-  // prompt offers casting only with the actual list of creatures this
-  // workspace holds — built from the SAME pool the cast will resolve the
-  // requested name against (`collectCreatorRoster` →
-  // `db/creatureRepo.listLibraryCreatures`), ordered by level
-  // distance to this module's band midpoint (the docs/12 §7 chain's spine
-  // step) and capped like the encounter roster. **Scoped to the campaign's own
-  // game system since docs/17 row 207** — the window and the cast resolve
-  // through the SAME `system` seam, so a Pathfinder module is never offered a
-  // dnd5e stat block to borrow. An empty window composes the
-  // pre-change prompt byte for byte AND leaves the slot off, because a slot
-  // with no vocabulary is uncastable by construction (docs/18 §4). Read here,
-  // like every other prompt input, so the clause, the list and the lookup that
-  // judges the model's answer all describe the same library.
-  const bestiaryRoster = await collectCreatorRoster(
-    (module.levelMin + module.levelMax) / 2,
-    campaign.system,
-  );
-
-  const levelCount = module.levelMax - module.levelMin + 1;
-  // Tone dial teeth (08 §M4-B): the module's tone rules out a few OUTCOMES,
-  // never a register or a mood — the prose palette stays fully open. The
-  // universal demand (a cost, a loss, or a new problem) is stated positively
-  // in the prompt itself, so these are the only hard bans it carries.
-  const toneBans = toneBansFor(module.tone) ?? [];
-  // The module's OWN floor drives this clause (its recorded value, or today's
-  // default) — the same numbers the gate below judges the reply against.
-  const spineFloor = encounterFloorGuardrailFor(module);
-  const floorRequirement = floorClause(spineFloor, module);
-  // The two-layer prompt (08 §M4-B-3, docs/17 row 86): the module's style
-  // supplies the editable instruction text and the read-only contract layer is
-  // injected into its required slots. Classic (the default, and the honest
-  // reading of every module created before styles existed) renders these bytes
-  // exactly as the pre-style builder did.
-  const style = promptStyleForModule(module);
-  const composed = composePromptFromTemplate({
-    templateText: style.style.templateText,
-    surface: 'spine',
-    values: {
-      campaign: `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
-      moduleConcept: `Module concept: ${module.concept}`,
-      partyLevels: `Party levels ${module.levelMin}–${module.levelMax}${module.tone === '' ? '' : `; tone: ${module.tone}`}`,
-      campaignIndex: index,
-      priorModules: priorContext,
-      additionalInstruction:
-        extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-      levelMin: String(module.levelMin),
-      levelMax: String(module.levelMax),
-      levelCount: String(levelCount),
-      toneBans:
-        toneBans.length === 0
-          ? ''
-          : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
-      ...spineContractValues({ floorClause: floorRequirement, bestiaryAvailable: bestiaryRoster }),
-    },
-  });
-
-  return [
-    {
-      role: 'system',
-      content:
-        'You are the Module Architect, an expert adventure designer for tabletop RPGs. ' +
-        'You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. ' +
-        'Always answer in the exact JSON format requested. Never include commentary outside the JSON.' +
-        SPINE_ENTITY_INTENT +
-        spineEntityLevelHint(module.levelMin, module.levelMax),
-    },
-    { role: 'user', content: composed.text },
-  ];
-}
 
 async function failModule(moduleId: Id, error: unknown, signal: AbortSignal): Promise<void> {
   if (isCancel(error, signal)) {
@@ -2822,84 +2185,6 @@ async function failLevelReview(moduleId: Id, level: number, message: string): Pr
   ]);
 }
 
-/**
- * Runs the adversarial pass over the PREMISE (docs/17 rows 353/358), right
- * after the spine pass produced it and BEFORE any part is written from it: the
- * premise drives every part, so it is reviewed first. Returns the module row
- * after the write (or the input row when nothing was applied).
- *
- * THE EDIT is a SPINE-SUBFIELD write and rides the ONE atomic subfield seam
- * (`db/moduleRepo.patchModuleSpine`, docs/17 row 357): it re-reads the row
- * inside its transaction and merges `premise` + the EDITOR's own provenance and
- * `'model'` authorship, leaving every other spine field and every part
- * byte-identical. It is deliberately NOT `saveSpine` — that stays the
- * WHOLE-spine replacement (the checkpoint's contract) and would overwrite the
- * fields this caller did not read. The promote scan follows, because a rewritten
- * premise may link another module's entities (the same duty `normalizeAndSave`
- * and `approveSpineAndRun` already carry).
- *
- * THE FAILURE CONTAINMENT is the deliberate difference from the parts: the
- * spine has no per-part error slot, and a module must not lose a usable spine
- * because a critic or an editor call failed. The premise is left BYTE-UNCHANGED
- * on every failure path (a write that throws rolls back, so a half-applied
- * premise cannot exist), the failure is toasted, and the spine pass continues
- * to its normal `draft` checkpoint exactly as it would have without the review.
- * A STOP is not a failure: it propagates through the signal to the caller's own
- * cancel path.
- */
-async function reviewPremiseInGeneration(input: {
-  module: Module;
-  signal: AbortSignal;
-  jobId: string;
-}): Promise<Module> {
-  const spine = input.module.spine;
-  if (spine === null) return input.module;
-  const progress = useProgressStore.getState();
-  progress.update(input.jobId, { detail: adversarialReviewDetail('the premise') });
-  let report: AdversarialPassReport;
-  try {
-    report = await runAdversarialPass({
-      moduleId: input.module.id,
-      target: { kind: 'premise' },
-      text: spine.premise,
-      signal: input.signal,
-    });
-  } catch (error) {
-    if (isCancel(error, input.signal)) throw error;
-    toastError(
-      'Adversarial review of the premise failed',
-      new Error(`${errorMessage(error)} The premise was left unchanged.`),
-    );
-    return input.module;
-  }
-  if (report.edit === null) {
-    progress.update(input.jobId, {
-      detail: 'Reviewing the premise — the adversarial critique found nothing to fix.',
-    });
-    return input.module;
-  }
-  progress.update(input.jobId, { detail: 'Applying the adversarial edit to the premise…' });
-  try {
-    const saved = await patchModuleSpine(input.module.id, {
-      premise: report.edit.replacement,
-      // PROVENANCE (docs/17 row 93): the model that WROTE the text now on the
-      // row is the editor, never a settings lookup — and the authorship is the
-      // model's, so the normalization pass may rewrite its link targets
-      // directly (docs/17 row 113).
-      writerModel: report.edit.modelUsed,
-      origin: 'model',
-    });
-    await promoteSecondModuleUses(input.module.id, [report.edit.replacement]);
-    return saved;
-  } catch (error) {
-    if (isCancel(error, input.signal)) throw error;
-    toastError(
-      'Adversarial edit of the premise failed',
-      new Error(`${errorMessage(error)} The premise was left unchanged.`),
-    );
-    return input.module;
-  }
-}
 
 /**
  * Runs the adversarial pass over ONE just-written LEVEL and applies its edit
@@ -2998,71 +2283,6 @@ async function reviewLevelInGeneration(input: {
 
 // --- Orchestration wrappers used by the UI -----------------------------------
 
-/**
- * Pass 1 plus the post-generation automation for modules that skipped the
- * spine checkpoint (`autoApproveSpine`) — the unattended tail of the flow.
- */
-async function runAutomatedParts(moduleId: Id, campaign: Campaign): Promise<void> {
-  // The stop epoch of the pass that ran BEFORE any automation could fire:
-  // a stop landing during the pass must not be turned into a fresh sweep by
-  // this tail (~1s later, and the pass waited on a long generation itself).
-  const epoch = getStopEpoch();
-  const finished = await runPartsPass(moduleId, campaign).catch(() => undefined);
-  // Automation follows a COMPLETED parts pass: a floor-gated pass is not
-  // ready, a CANCELLED pass is `aborted` (its row stays 'ready' with parts
-  // present, so the status alone cannot tell the two apart), and a stop that
-  // landed mid-pass disqualifies the tail outright.
-  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
-  if (finished.module.status !== 'ready') return;
-  // Post-generation automation (opt-in, module row) — fired by the engine
-  // because this path has no user interaction to trigger it. The
-  // orchestrator is idempotent, loud on its own, and never imports this
-  // module (no cycle).
-  void runModulePostGeneration(moduleId, campaign);
-}
-
-/**
- * "Generate parts" from the spine checkpoint: stores the (user-edited) spine,
- * then runs pass 1. Failures land on the module/parts rows and surface there;
- * the caller navigates to the reader either way.
- *
- * AUTHORSHIP (docs/17 row 113), and why the comparison below exists rather
- * than a flag on the caller: the checkpoint is ALWAYS on, so this call happens
- * whether or not the owner touched the premise — and the draft it hands in is
- * the model's own text when he did not touch it. A blanket `'human'` here
- * would claim the owner wrote prose he never typed (the exact class of lie
- * this arc removes); a blanket carry-forward would MISS the premise he did
- * rewrite, silently auto-normalizing his own text later. The row cannot be
- * asked either, because the incoming `spine` is the whole patch. So the
- * decision is made on the TEXT: a premise that differs from the one already
- * on the row was written by the owner; one that does not differ is the
- * model's, and keeps the origin already recorded (or `null` — not recorded —
- * for a row written before the field, which reads as human-authored).
- */
-export async function approveSpineAndRun(
-  moduleId: Id,
-  campaign: Campaign,
-  spine: ModuleSpine,
-): Promise<void> {
-  const stored = await getModule(moduleId);
-  const editedByHand = stored !== undefined && (stored.spine?.premise ?? '') !== spine.premise;
-  await patchModule(moduleId, {
-    spine: {
-      ...spine,
-      origin: editedByHand ? 'human' : carriedTextOrigin(stored?.spine?.origin),
-    },
-  });
-  // LINKS hook: a user-edited spine may link another module's entities.
-  await promoteSecondModuleUses(moduleId, [spine.premise]);
-  const epoch = getStopEpoch();
-  const finished = await runPartsPass(moduleId, campaign).catch(() => undefined);
-  // A floor-gated pass is not ready and a CANCELLED one is `aborted` (its
-  // row still says 'ready' so Retry stays available) — automation follows a
-  // COMPLETED pass, and never follows a stop.
-  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
-  if (finished.module.status !== 'ready') return;
-  void runModulePostGeneration(moduleId, campaign);
-}
 
 /**
  * Per-LEVEL "Rewrite…" (also the failed-level Retry): regenerates just that
@@ -3355,30 +2575,6 @@ export async function repairModuleEncounterFloor(
   return outcome;
 }
 
-/** Re-runs pass 0 with an optional extra steering instruction. */
-export async function retrySpine(
-  moduleId: Id,
-  campaign: Campaign,
-  extraInstruction = '',
-): Promise<void> {
-  const drafted = await runSpine(moduleId, campaign, { extraInstruction }).catch(
-    () => undefined,
-  );
-  // A failed re-draft is owned by runSpine (failed row + toast).
-  if (drafted === undefined) return;
-  // Modules that skipped the checkpoint continue unattended after a retry
-  // too — the flow never parks on the generated spine.
-  if (!drafted.autoApproveSpine) return;
-  await runAutomatedParts(moduleId, campaign);
-}
-
-/** Checkpoint "Discard": drops the spine, back to a draft module. */
-export async function discardSpine(moduleId: Id): Promise<void> {
-  const module = await getModule(moduleId);
-  if (module === undefined) return;
-  await patchModule(moduleId, { spine: null, status: 'draft', errorMessage: '' });
-}
-
 /**
  * The style a NEW module is written in (docs/17 row 86): the explicitly chosen
  * id, or the app default from Settings, resolved against the built-ins and the
@@ -3486,10 +2682,9 @@ export interface NewModuleCreationInput {
  * premise with `replace_level level="0"` and creates each level section with
  * `append_level`, the app writing every separator and level number.
  *
- * `runSpine` is NOT deleted by this — it remains the generator's own structure
- * pass (the reader's Retry and the phase-4 generation dialog); what retires
- * here is its role as the APP'S PREMISE AUTHOR, because no app entry reaches
- * it any more (docs/17 row 390 names the remainder).
+ * The pass-0 spine that used to be this seam's other half is DELETED
+ * (docs/17 row 392): the chat is the premise's author, and the level-scoped
+ * generation pass is driven from the reader/board/canvas.
  */
 export async function startCampaignDocument(
   campaign: Campaign,
@@ -3532,34 +2727,3 @@ async function createDocumentRow(
   return createCampaignDocument(created);
 }
 
-/**
- * The GENERATOR'S creation entry — the row PLUS pass 0 started detached (the
- * old app entry; docs/23 §10 phase 3 moved the app onto
- * `startCampaignDocument`, so the premise is authored by the CHAT).
- *
- * Creates the module row from the input and STARTS pass 0 without waiting for
- * it: the reader is the spine's live progress surface (streaming card, Stop
- * button), so a caller navigates immediately instead of blocking for minutes
- * on a slow provider or a thinking model. Spine failures are owned by
- * `runSpine` itself — status `failed` + `errorMessage` on the row and a toast
- * (AGENTS rule 2) — and surface in the reader with a Retry affordance.
- *
- * With `autoApproveSpine` the flow never stops after pass 0: the generated
- * spine is approved as-is and pass 1 (plus any configured post-generation
- * automation) runs unattended.
- */
-export async function createModuleAndRun(
-  campaign: Campaign,
-  input: NewModuleCreationInput,
-): Promise<Id> {
-  const saved = await createDocumentRow(campaign, input);
-  void (async () => {
-    const drafted = await runSpine(saved.id, campaign).catch(() => undefined);
-    // A failed spine is owned by runSpine (failed row + toast) — nothing to
-    // continue; the reader offers its Retry, which keeps auto-approving.
-    if (drafted === undefined) return;
-    if (!drafted.autoApproveSpine) return; // waits at the spine checkpoint
-    await runAutomatedParts(saved.id, campaign);
-  })();
-  return saved.id;
-}

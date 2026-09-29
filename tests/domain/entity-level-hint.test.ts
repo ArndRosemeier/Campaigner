@@ -15,7 +15,6 @@ import {
   withEntityBestiarySlots,
   type ModuleEntityKind,
 } from '@/domain';
-import { parseSpineEntities } from '@/llm/moduleGen';
 
 /**
  * The entity LEVEL-HINT record field (owner request, docs/17 row 197): the
@@ -93,37 +92,6 @@ describe('moduleEntityKindSchema.levelHint — additive, optional, one spelling 
       const issues = (thrown as z.ZodError).issues;
       expect(issues.some((issue) => issue.path.join('.') === 'levelHint')).toBe(true);
     }
-  });
-});
-
-describe('the spine reply may spell absence as null (the strict subset cannot omit a key)', () => {
-  const PLAN = [{ title: 'One', levelBand: '1', synopsis: '', levelUpTrigger: '' }];
-  function reply(entities: unknown[]): string {
-    return JSON.stringify({ premise: 'P', themes: [], partPlan: PLAN, entities });
-  }
-
-  it('a reply with no levelHint key and a reply with "levelHint": null both read as no level', () => {
-    expect(parseSpineEntities(reply([{ name: 'Kael', kind: 'npc' }]))[0]?.levelHint).toBeUndefined();
-    expect(
-      parseSpineEntities(reply([{ name: 'Kael', kind: 'npc', levelHint: null }]))[0]?.levelHint,
-    ).toBeUndefined();
-  });
-
-  it('a present level round-trips through the spine parse', () => {
-    const parsed = parseSpineEntities(reply([{ name: 'Kael', kind: 'npc', levelHint: 7 }]));
-    expect(parsed[0]?.levelHint).toBe(7);
-  });
-
-  it('a MALFORMED level in a reply fails the spine parse LOUDLY, by field (never a partial apply)', () => {
-    let thrown: unknown;
-    try {
-      parseSpineEntities(reply([{ name: 'Kael', kind: 'npc', levelHint: 99 }]));
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(z.ZodError);
-    const issues = (thrown as z.ZodError).issues;
-    expect(issues.some((issue) => issue.path.join('.') === 'entities.0.levelHint')).toBe(true);
   });
 });
 

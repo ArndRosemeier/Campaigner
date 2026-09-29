@@ -14,7 +14,7 @@ import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule, saveModuleLevels } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { createModule, moduleDocumentFromView, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
+import { createModule, moduleDocumentFromView, moduleEntityKindSchema, modulePartSchema, moduleSpineSchema, newId, ruleChunkSchema, stampNewEntity, type Campaign, type Id, type Module, type ModulePart, type NewModule } from '@/domain';
 import { moduleDocumentSections } from '@/domain/moduleDocument';
 import type { GameSystem } from '@/domain/gameSystem';
 import { sha256Hex } from '@/lib/hash';
@@ -25,22 +25,17 @@ import {
   CAMPAIGN_CAST_NAME_CAP,
   classifyEntityName,
   classifyNewModuleEntityNames,
-  createModuleAndRun,
+  startCampaignDocument,
   generateMissingParts,
-  moduleGenEvents,
-  ModuleBusyError,
   NORMALIZATION_FAILURE_MESSAGE,
   normalizeModuleEntityNames,
   normalizePartMarkdown,
-  parseSpine,
-  parseSpineEntities,
   PRIOR_MODULE_CHAR_CAP,
   PRIOR_MODULES_TOTAL_CAP,
   PRIOR_PART_CHAR_CAP,
   priorModulesContext,
   rewritePart,
   runParts,
-  runSpine,
 } from '@/llm/moduleGen';
 import { PART_SCENE_FIELD_LABELS, PART_SCENE_VARIATION_DEMANDS } from '@/llm/promptStyles';
 import { clearDatabase } from '../db/helpers';
@@ -350,20 +345,6 @@ afterEach(() => {
 });
 
 describe('moduleGen pure helpers', () => {
-  it('parseSpine slices the JSON object out of surrounding prose', () => {
-    const spine = parseSpine(
-      `Here is the spine you asked for:\n${JSON.stringify(VALID_SPINE)}\nLet me know if you want changes.`,
-    );
-    // The spine schema strips the sibling `entities` record (08 §M4-C).
-    expect(spine.premise).toBe(VALID_SPINE.premise);
-    expect(spine.themes).toEqual(VALID_SPINE.themes);
-    expect(spine.partPlan).toEqual(VALID_SPINE.partPlan);
-  });
-
-  it('parseSpine throws loudly when the reply contains no JSON object', () => {
-    expect(() => parseSpine('The bell tolls for thee.')).toThrow('no JSON object');
-  });
-
   it('normalizePartMarkdown strips one leading H1 and keeps prose of 100+ chars', () => {
     const body = 'The tide retreats down the spiral stair, leaving salt on every stone. '.repeat(3);
     const stripped = normalizePartMarkdown(`# The Sunken Quarter\n\n${body}`);
@@ -378,313 +359,6 @@ describe('moduleGen pure helpers', () => {
   });
 });
 
-describe('runSpine', () => {
-  it('moves generating → parses the spine → draft with spine saved and error cleared', async () => {
-    const { campaign, moduleId } = await seedModule();
-    // Start from a failed row to prove the run resets status and message.
-    await patchModule(moduleId, { status: 'failed', errorMessage: 'stale error' });
-    const deferred = deferredChat();
-    chatMock.mockImplementationOnce(() => deferred.promise);
-    // fix-01: the spine's entity list is normalized before storage.
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('generating');
-    });
-
-    deferred.resolve(JSON.stringify(VALID_SPINE));
-    const finished = await pending;
-
-    expect(finished.status).toBe('draft');
-    expect(finished.errorMessage).toBe('');
-    expect(finished.spine?.premise).toBe(VALID_SPINE.premise);
-    expect(finished.spine?.partPlan).toHaveLength(3);
-    // The normalized, canonical entity kinds land on the module row (fix-01).
-    expect(finished.entityKinds).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
-    );
-
-    expect(chatMock).toHaveBeenCalledTimes(2);
-    const firstCall = chatMock.mock.calls[0];
-    if (firstCall === undefined) throw new Error('chat was not called');
-    const [messages, options] = firstCall;
-    // The call used the seeded settings.defaultChatModel and the strict
-    // structured-output schema (spine + entity list, one reply).
-    expect(options.model).toBe(TEST_MODEL);
-    expect(options.responseFormat).toMatchObject({ kind: 'schema', name: 'module-spine' });
-    const spineSchema = (options.responseFormat as { jsonSchema?: { properties?: Record<string, unknown> } })
-      .jsonSchema;
-    expect(Object.keys(spineSchema?.properties ?? {})).toEqual([
-      'premise',
-      'themes',
-      'partPlan',
-      'entities',
-    ]);
-    // PROVENANCE (docs/17 row 93): `writerModel` is RECORDED by the run, never
-    // requested from the model — and because it carries `.default('')` the
-    // strict converter would make it REQUIRED, forcing the decoder to emit an
-    // invented id. It must stay out of the emitted contract (the run fills it
-    // in from `modelUsed` after the reply).
-    expect(Object.keys(spineSchema?.properties ?? {})).not.toContain('writerModel');
-    expect(messages[0]?.role).toBe('system');
-    expect(messages[0]?.content).toContain('Module Architect');
-    // The entity INTENT note (docs/17 row 141): the emitted strict contract must
-    // let a planner EXPRESS it, and since the strict subset has no "optional" the
-    // property is REQUIRED and NULLABLE — `null` is the planner's "nothing to say
-    // about this one".
-    const entitiesSchema = (
-      spineSchema?.properties as
-        | { entities?: { items?: { properties?: Record<string, unknown>; required?: string[] } } }
-        | undefined
-    )?.entities?.items;
-    expect(Object.keys(entitiesSchema?.properties ?? {})).toContain('intent');
-    expect(entitiesSchema?.required).toContain('intent');
-    expect(entitiesSchema?.properties?.intent).toMatchObject({ type: ['string', 'null'] });
-    // The REQUIREMENT is asked for in the app's own voice — the spine call's
-    // system message — and NOT in the style-composed prompt, whose classic bytes
-    // stay pinned against fixtures captured from the PRE-STYLES builders
-    // (tests/llm/promptStyles-classic-identity.test.ts, docs/18 §4). The bound is
-    // the record schema's own constant (ENTITY_INTENT_MAX_LENGTH), so the prompt
-    // cannot ask for a note the boundary then refuses.
-    expect(messages[0]?.content).toContain('"intent"');
-    expect(messages[0]?.content).toContain('400 characters');
-    expect(messages[0]?.content).toContain('"intent": null');
-    // The entity LEVEL hint (owner request, docs/17 row 197) rides the SAME
-    // strict contract and the SAME app-voice system clause: the emitted schema
-    // must let a planner express it (REQUIRED-nullable, like `intent`), and the
-    // model must be TOLD what a hint is FOR — what you write about a figure is
-    // how that figure survives into the entity the generators build.
-    expect(Object.keys(entitiesSchema?.properties ?? {})).toContain('levelHint');
-    expect(entitiesSchema?.required).toContain('levelHint');
-    expect(entitiesSchema?.properties?.levelHint).toMatchObject({ type: ['integer', 'null'] });
-    expect(messages[0]?.content).toContain('"levelHint"');
-    expect(messages[0]?.content).toContain('from 1 to 20');
-    expect(messages[0]?.content).toContain('SURVIVES into the entity the generators build');
-    expect(messages[0]?.content).toContain('"levelHint": null');
-    // THE TWO AIMING CASES AND THE REALISM ALLOWANCE (docs/17 row 283). The
-    // hint is a GENERATION TARGET, so the model must be told HOW to aim it, and
-    // the two cases aim at DIFFERENT things: a figure the party might FIGHT is
-    // balance and aims at THIS module's own band (whose numbers are stated); a
-    // figure the party NEVER fights is realism and the band "NEITHER CAPS IT NOR
-    // PULLS IT DOWN" — the owner's correction, calibrated by his own two
-    // examples (a non-hostile level-12 captain in a level-1 module is CORRECT; a
-    // fourteen-year-old is never level 10). This seeded module's band is 1–3,
-    // and the clause must name THAT band rather than a fixed string.
-    const systemContent = messages[0]?.content ?? '';
-    expect(systemContent).toContain('AIM IT BY WHAT THE FIGURE IS FOR');
-    expect(systemContent).toContain('(1) A figure the party might FIGHT');
-    expect(systemContent).toContain("inside this module's own range of levels 1–3");
-    expect(systemContent).toContain('(2) A figure the party does NOT fight');
-    expect(systemContent).toContain('NEITHER CAPS IT NOR PULLS IT DOWN');
-    expect(systemContent).toContain('A non-hostile captain of the guard may be level 12 in a level-1 module');
-    expect(systemContent).toContain('that is CORRECT');
-    expect(systemContent).toContain('a fourteen-year-old is NEVER level 10');
-    const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
-    expect(userContent).not.toContain('"intent"');
-    expect(userContent).not.toContain('"levelHint"');
-    expect(userContent).toContain('Module concept: A harbor bell that rings by itself beneath the water.');
-    expect(userContent).toContain('Party levels 1–3');
-  }, 20000);
-
-  /**
-   * The aiming clause names the MODULE'S OWN band, not a fixed one (docs/17 row
-   * 283). Case (1) of the two-case rule tells the model to aim a figure the
-   * party might fight INSIDE this module's range, which is only truthful if the
-   * range in the sentence is the module row's own numbers — a constant here
-   * would aim every module at one band. This module is patched to 5–8 before the
-   * spine call, so the clause must state THAT range.
-   */
-  it('states the module’s OWN band in the aiming clause (docs/17 row 283)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await patchModule(moduleId, { levelMin: 5, levelMax: 8 });
-    chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    await guard(runSpine(moduleId, campaign));
-
-    const systemContent = chatMock.mock.calls[0]?.[0]?.[0]?.content ?? '';
-    expect(systemContent).toContain("inside this module's own range of levels 5–8");
-    expect(systemContent).not.toContain('levels 1–3, the levels this module is built for');
-  }, 20000);
-
-  /**
-   * THE PREMISE IS NOT A LEVEL SOURCE (docs/17 row 282, REVERSING row 247's
-   * stamping half). The planner is ASKED for a per-entity `levelHint` but answers
-   * `null` here — the shape the owner's module had — while its PREMISE states a
-   * level, and this module's band is a RANGE (1–3). That premise sentence was
-   * ONE npc's description ("a level 7 gnome … this was about 1 NPC"), and a
-   * narrative premise is a campaign story introduction, not a module level
-   * instruction: stamping it on every npc made a levels-1–2 module display
-   * `level 7` beside minted level-1 blocks. So a RANGE module now records NO
-   * module-wide level, and the per-entity channels carry the honest ones.
-   */
-  it('records NO levelHint from the PREMISE on a RANGE-band module (docs/17 row 282)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const premiseStated = {
-      ...VALID_SPINE,
-      premise: 'The harbor smith [[Marten Graubruch]] is a level 5 veteran of the guild war.',
-      entities: [
-        { name: 'Marten Graubruch', kind: 'npc' },
-        { name: 'The Drowned Cathedral', kind: 'location' },
-        { name: 'The Bells Below', kind: 'encounter' },
-      ],
-    };
-    chatMock
-      .mockResolvedValueOnce({
-        text: JSON.stringify(premiseStated),
-        modelUsed: 'test-model',
-        fallback: null,
-      })
-      .mockResolvedValueOnce(
-        normalizationReply([
-          { name: 'Marten Graubruch', kind: 'npc' },
-          { name: 'The Drowned Cathedral', kind: 'location' },
-          { name: 'The Bells Below', kind: 'encounter' },
-        ]),
-      );
-
-    await runSpine(moduleId, campaign);
-
-    const saved = await getModule(moduleId);
-    const byName = new Map((saved?.entityKinds ?? []).map((entry) => [entry.name, entry]));
-    // The premise SAYS 5; the band is 1–3 (a RANGE, which states no single
-    // level); no record gets a module-wide level from prose.
-    expect(saved?.spine?.premise).toContain('level 5');
-    expect(byName.get('Marten Graubruch')?.levelHint).toBeUndefined();
-    // ONLY the npc lane was ever a candidate: a location authors no stat block
-    // and an encounter carries its own level chain.
-    expect(byName.get('The Drowned Cathedral')?.levelHint).toBeUndefined();
-    expect(byName.get('The Bells Below')?.levelHint).toBeUndefined();
-  }, 20000);
-
-  /**
-   * …AND AN EXACT BAND IS STILL RECORDED (docs/17 row 282): structure IS a
-   * level source. A `levelMin === levelMax` module states that level, and the
-   * npc records that state none inherit it — the half of row 247 that survived.
-   * The planner's own structured per-entity `levelHint` still wins over it (a
-   * NAME-SCOPED statement is more specific than the module's).
-   */
-  it('records an EXACT band as a levelHint, and never overwrites the planner’s own', async () => {
-    const { campaign, moduleId } = await seedModule();
-    // The seeded module's band is 1–3 (a RANGE); make it EXACT at 1.
-    await patchModule(moduleId, { levelMax: 1 });
-    const exactBand = {
-      ...VALID_SPINE,
-      entities: [
-        { name: 'Marten Graubruch', kind: 'npc' },
-        { name: 'Alte Schmiedin', kind: 'npc', levelHint: 9 },
-        { name: 'The Bells Below', kind: 'encounter' },
-      ],
-    };
-    chatMock
-      .mockResolvedValueOnce({
-        text: JSON.stringify(exactBand),
-        modelUsed: 'test-model',
-        fallback: null,
-      })
-      .mockResolvedValueOnce(
-        normalizationReply([
-          { name: 'Marten Graubruch', kind: 'npc' },
-          { name: 'Alte Schmiedin', kind: 'npc' },
-          { name: 'The Bells Below', kind: 'encounter' },
-        ]),
-      );
-
-    await runSpine(moduleId, campaign);
-
-    const saved = await getModule(moduleId);
-    const byName = new Map((saved?.entityKinds ?? []).map((entry) => [entry.name, entry]));
-    expect(byName.get('Marten Graubruch')?.levelHint).toBe(1);
-    // The model's own answer is never overwritten by the module's own band.
-    expect(byName.get('Alte Schmiedin')?.levelHint).toBe(9);
-  }, 20000);
-
-  it('retries invalid JSON once, then fails the module loudly (row + toast)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    chatMock.mockResolvedValue({ text: 'not json at all', modelUsed: 'test-model', fallback: null });
-
-    await expect(runSpine(moduleId, campaign)).rejects.toThrow('no JSON object');
-
-    const after = await getModule(moduleId);
-    expect(after?.status).toBe('failed');
-    expect(after?.errorMessage).toContain('no JSON object');
-    expect(after?.spine).toBeNull();
-    expect(chatMock).toHaveBeenCalledTimes(2); // one automatic JSON-fix retry
-    expect(userMessagesOf(1)).toContain('Your previous reply was invalid JSON');
-    expect(toastErrorMock).toHaveBeenCalledWith('Module generation failed', expect.any(Error));
-  }, 20000);
-
-  it('refuses pass 0 for a module that already has parts, without calling chat', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await seedSpine(moduleId);
-    await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE'));
-
-    await expect(runSpine(moduleId, campaign)).rejects.toThrow('Refusing to regenerate a spine');
-
-    expect(chatMock).not.toHaveBeenCalled();
-  }, 20000);
-});
-
-describe('entity kinds — spine record (08 §M4-C)', () => {
-  it('parseSpineEntities reads the model-declared entity list', () => {
-    const raw = JSON.stringify(VALID_SPINE);
-    expect(parseSpineEntities(raw)).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
-    );
-  });
-
-  it('parseSpineEntities rejects a reply without entities or with a foreign kind', () => {
-    const { entities: _entities, ...spineOnly } = VALID_SPINE;
-    expect(() => parseSpineEntities(JSON.stringify(spineOnly))).toThrow();
-    const foreignKind = JSON.stringify({
-      ...VALID_SPINE,
-      entities: [{ name: 'The Barque', kind: 'vehicle' }],
-    });
-    expect(() => parseSpineEntities(foreignKind)).toThrow();
-  });
-
-  it('runSpine retries once when the entities list is missing, then succeeds', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const { entities: _entities, ...spineOnly } = VALID_SPINE;
-    chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(spineOnly), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
-      // fix-01: the normalization call that follows the parsed spine.
-      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    const finished = await runSpine(moduleId, campaign);
-
-    expect(chatMock).toHaveBeenCalledTimes(3);
-    expect(userMessagesOf(1)).toContain('Your previous reply was invalid JSON');
-    expect(finished.status).toBe('draft');
-    expect(finished.entityKinds).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
-    );
-  }, 20000);
-});
-
-/**
- * docs/17 row 207 — the PARTS prompt's rule excerpts are scoped to the
- * campaign's own game system. `ruleExcerptSection` used to call
- * `searchRules(query, { limit: 4 })` with no system, and `searchRules` reads
- * EVERY ready book when the system is unset — so a Pathfinder 2e campaign with
- * a dnd5e pack installed grounded its module prose in dnd5e rules text.
- *
- * The pins below seed TWO ready rules books whose section chunks carry the
- * part synopsis's own tokens (`low tide`) plus a system-distinct marker
- * sentence, so an UNSCOPED retrieval really would return both: the marker's
- * absence is then the scope at work, never a retrieval miss. The same-system
- * half is a PROMPT BYTE COMPARISON: the identical campaign and module built
- * against the own-system-only library must produce the same prompt bytes as
- * one built after the foreign book is installed (no behaviour change).
- *
- * THE QUERY IS THE LEVEL'S OWN TEXT (docs/17 row 391): the rules retrieval reads
- * the level's section text, never a plan synopsis — so the fixture seeds the
- * LEVEL with the sentence the synopsis used to carry, which is exactly the
- * material a generation step is about.
- */
 describe('the parts prompt grounds in the campaign’s own game system (docs/17 row 207)', () => {
   const PF2E_MARKER = 'PF2E-ONLY-RULE';
   const DND5E_MARKER = 'DND5E-ONLY-RULE';
@@ -751,40 +425,6 @@ describe('the parts prompt grounds in the campaign’s own game system (docs/17 
 });
 
 describe('runParts', () => {
-  it('records the serving model on the spine, using the REPAIR turn\u2019s model when it escalated', async () => {
-    const { campaign, moduleId } = await seedModule();
-    // First reply is prose without JSON, so the repair turn is the one whose
-    // text is parsed — the saved spine belongs to THAT model.
-    chatMock
-      .mockResolvedValueOnce({ text: 'no json here', modelUsed: 'primary/model', fallback: null })
-      .mockResolvedValueOnce({
-        text: JSON.stringify(VALID_SPINE),
-        modelUsed: 'escalated/model',
-        fallback: null,
-      })
-      // fix-01: the normalization call that follows the parsed spine.
-      .mockResolvedValueOnce({
-        text: JSON.stringify(SELF_NORMALIZATION),
-        modelUsed: 'normalizer/model',
-        fallback: null,
-      });
-
-    const saved = await runSpine(moduleId, campaign);
-
-    const models = chatMock.mock.calls.map(([, opts]) => (opts as { model: string }).model);
-    // The REQUEST went out on the configured model both turns; what differs is
-    // the model the server reports it SERVED the reply with (`modelUsed`). That
-    // gap is the whole reason the id must come from the reply — a settings (or
-    // `opts.model`) lookup would name the model we asked, not the writer.
-    expect(models).toEqual([TEST_MODEL, TEST_MODEL, TEST_MODEL]);
-    // PROVENANCE (docs/17 row 93): the recorded id is the model that actually
-    // wrote the premise — never the requested/configured model, and never the
-    // later normalization turn's model either.
-    expect(saved.spine?.writerModel).toBe('escalated/model');
-    expect(saved.spine?.writerModel).not.toBe(TEST_MODEL);
-    expect((await getModule(moduleId))?.spine?.writerModel).toBe('escalated/model');
-  }, 20000);
-
   it('records each part\u2019s own serving model, including a too-short repair turn', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
@@ -1070,22 +710,6 @@ describe('rewritePart', () => {
 });
 
 describe('cancelModuleGen', () => {
-  it('rewinds a spine-only module to draft and rejects with AbortError', async () => {
-    const { campaign, moduleId } = await seedModule();
-    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('generating');
-    });
-
-    cancelModuleGen(moduleId);
-
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
-    expect((await getModule(moduleId))?.status).toBe('draft');
-    // Cancellation is not an error surface: no toast.
-    expect(toastErrorMock).not.toHaveBeenCalled();
-  }, 20000);
-
   it('with existing ready parts: module back to ready, in-flight part parked as pending', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
@@ -1251,52 +875,6 @@ describe('stop-all aborts the parts chain (signal.aborted is the source of truth
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 20000);
 
-  it('runSpine treats a non-AbortError rejection after abort as cancellation', async () => {
-    const { campaign, moduleId } = await seedModule();
-    chatMock.mockImplementationOnce((_messages, options) =>
-      chatUntilAbortedWith(options.signal, () => new Error('connection reset mid-stream')),
-    );
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('generating');
-    });
-
-    cancelModuleGen(moduleId);
-
-    await expect(pending).rejects.toThrow('connection reset mid-stream');
-    // Quiet rewind to draft — not a failed row, not a toast.
-    expect((await getModule(moduleId))?.status).toBe('draft');
-    expect(toastErrorMock).not.toHaveBeenCalled();
-  }, 20000);
-});
-
-describe('ModuleBusyError', () => {
-  it('rejects a second spine run on the same module while one is in flight', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const deferred = deferredChat();
-    chatMock.mockImplementationOnce(() => deferred.promise);
-    // fix-01: once the spine lands, the entity normalization call follows.
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-    const first = guard(runSpine(moduleId, campaign));
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('generating');
-    });
-
-    await expect(runSpine(moduleId, campaign)).rejects.toThrow(ModuleBusyError);
-
-    // The rejected start touched nothing: no extra chat call, the in-flight
-    // row is still generating, and there is no failure toast.
-    expect(chatMock).toHaveBeenCalledTimes(1);
-    expect((await getModule(moduleId))?.status).toBe('generating');
-    expect(toastErrorMock).not.toHaveBeenCalled();
-
-    // The first run completes normally once its chat resolves.
-    deferred.resolve(JSON.stringify(VALID_SPINE));
-    const finished = await first;
-    expect(finished.status).toBe('draft');
-    expect(finished.spine).not.toBeNull();
-  }, 20000);
 });
 
 describe('entity name normalization (fix-01)', () => {
@@ -1751,38 +1329,6 @@ describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
     return saved.id;
   }
 
-  it('includes prior modules in the spine prompt when opted in, excluding the module itself', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await patchModule(moduleId, { includePriorModules: true });
-    await seedPriorModule(campaign.id);
-    chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    await runSpine(moduleId, campaign);
-
-    const prompt = userPromptOf(0);
-    expect(prompt).toContain('Previous modules of this campaign');
-    expect(prompt).toContain('The Salt Ward');
-    expect(prompt).toContain('The Salt Ward burned on the first night of the tide.');
-    expect(prompt).toContain('PRIOR-PART-MARKER');
-    // The module itself is never part of its own prior context.
-    expect(prompt).not.toContain('## The Drowned Bell');
-  }, 20000);
-
-  it('omits the section when the flag is off (default)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await patchModule(moduleId, { includePriorModules: false });
-    await seedPriorModule(campaign.id);
-    chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    await runSpine(moduleId, campaign);
-
-    expect(userPromptOf(0)).not.toContain('Previous modules of this campaign');
-  }, 20000);
-
   it('parts prompts include prior modules when opted in', async () => {
     const { campaign, moduleId } = await seedModule();
     await patchModule(moduleId, { includePriorModules: true });
@@ -1951,27 +1497,6 @@ describe('progress dock reporting', () => {
     useProgressStore.getState().reset();
   });
 
-  it('runSpine reports an indeterminate outline job and drains it on finish', async () => {    const { campaign, moduleId } = await seedModule();
-    const deferred = deferredChat();
-    chatMock.mockImplementationOnce(() => deferred.promise);
-    // fix-01: the entity normalization call follows the parsed spine.
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(() => {
-      expect(useProgressStore.getState().jobs).toHaveLength(1);
-    });
-    // No measurable sub-steps in the outline pass → indeterminate sweep.
-    const job = useProgressStore.getState().jobs[0];
-    expect(job?.label).toBe('Designing the module outline');
-    expect(job?.detail).toContain('premise');
-    expect(job?.progress).toBeNull();
-
-    deferred.resolve(JSON.stringify(VALID_SPINE));
-    await pending;
-    expect(useProgressStore.getState().jobs).toEqual([]);
-  }, 20000);
-
   it('runParts reports per-part progress and drains it on finish', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
@@ -2005,116 +1530,8 @@ describe('progress dock reporting', () => {
     expect(useProgressStore.getState().jobs).toEqual([]);
   }, 20000);
 
-  it('runSpine keeps the dock alive while the model only thinks (reasoning deltas)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    // Reasoning deltas never reach onToken — the liveness probe is the only
-    // signal while the model works; the dock detail must reflect it.
-    const deferred = deferredChat();
-    chatMock.mockImplementationOnce((_messages, options) => {
-      options.onActivity?.({ elapsedMs: 5000, receivedChars: 0, phase: 'thinking' });
-      return deferred.promise;
-    });
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(() => {
-      expect(useProgressStore.getState().jobs).toHaveLength(1);
-    });
-    await waitFor(() => {
-      expect(useProgressStore.getState().jobs[0]?.detail).toContain('the model is thinking');
-    });
-
-    deferred.resolve(JSON.stringify(VALID_SPINE));
-    await pending;
-    expect(useProgressStore.getState().jobs).toEqual([]);
-  }, 20000);
-
-  it('runSpine forwards reasoning deltas to the reader as spine-thinking events', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const seen: string[] = [];
-    const unsubscribe = moduleGenEvents.on((event) => {
-      if (event.kind === 'spine-thinking') seen.push(event.delta);
-    });
-    try {
-      const deferred = deferredChat();
-      chatMock.mockImplementationOnce((_messages, options) => {
-        options.onReasoning?.('planning the premise');
-        options.onReasoning?.(', sketching parts');
-        return deferred.promise;
-      });
-      chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-      const pending = guard(runSpine(moduleId, campaign));
-      await vi.waitFor(() => {
-        expect(seen.join('')).toBe('planning the premise, sketching parts');
-      });
-      deferred.resolve(JSON.stringify(VALID_SPINE));
-      await pending;
-    } finally {
-      unsubscribe();
-    }
-  }, 20000);
-
-  it('runSpine counts received chars on the dock while the answer streams', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const deferred = deferredChat();
-    chatMock.mockImplementationOnce((_messages, options) => {
-      options.onToken?.('{"premise"');
-      return deferred.promise;
-    });
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(() => {
-      expect(useProgressStore.getState().jobs[0]?.detail).toContain('10 chars received');
-    });
-
-    deferred.resolve(JSON.stringify(VALID_SPINE));
-    await pending;
-  }, 20000);
 });
 
-describe('createModuleAndRun (non-blocking creation)', () => {
-  it('creates the row and starts pass 0 without waiting for the spine', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    // The spine call hangs until cancelled — createModuleAndRun must still
-    // resolve so the dialog can navigate to the reader (the live surface).
-    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
-
-    const moduleId = await createModuleAndRun(campaign, {
-      campaignId: campaign.id,
-      title: 'Started, Not Awaited',
-      concept: 'A module whose spine runs in the background.',
-      levelMin: 1,
-      levelMax: 2,
-      tone: '',
-      sizeDial: 'sketch',
-    });
-
-    const created = await getModule(moduleId);
-    expect(created?.title).toBe('Started, Not Awaited');
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('generating');
-    });
-
-    // Cleanup: abort the in-flight spine; the run rewinds the row to draft.
-    cancelModuleGen(moduleId);
-    await waitFor(async () => {
-      expect((await getModule(moduleId))?.status).toBe('draft');
-    });
-    expect(chatMock).toHaveBeenCalledTimes(1);
-  }, 20000);
-});
-
-/**
- * Adversarial generation — SLICE 1 IS THE FLAG AND ITS DATA PATH ONLY
- * (docs/17 rows 352–354): the choice rides the module ROW through
- * `createModuleAndRun` → `createModule`, exactly like `includePriorModules` /
- * `autoApproveSpine`. No pass, no critique, no editor and no model call exists
- * yet, so the load-bearing pin is that the flag changes NOTHING the generator
- * receives: the spine prompt bytes are identical with the flag off, unset and
- * even on.
- */
 describe('adversarialGeneration — the creation data path (docs/17 row 354, slice 1)', () => {
   /** The creation input the two modules below share; ONLY the flag differs. */
   function creationInput(
@@ -2133,84 +1550,26 @@ describe('adversarialGeneration — the creation data path (docs/17 row 354, sli
     };
   }
 
-  it('createModuleAndRun records the flag on the created row, BOTH values', async () => {
+  it('startCampaignDocument records the flag on the created row, BOTH values', async () => {
     // ONE document per campaign (docs/17 row 389): each arm gets its OWN
     // campaign, because a second create in the same campaign is refused.
     const onCampaign = await createCampaign({ name: 'Ember ON', system: 'dnd5e' });
     const offCampaign = await createCampaign({ name: 'Ember OFF', system: 'dnd5e' });
-    // The spine call hangs until cancelled: creation is what is measured here.
-    chatMock.mockImplementation((_messages, options) => chatUntilAborted(options.signal));
 
-    const onId = await createModuleAndRun(
+    const onId = await startCampaignDocument(
       onCampaign,
       creationInput(onCampaign.id, { adversarialGeneration: true }),
     );
-    const offId = await createModuleAndRun(
+    const offId = await startCampaignDocument(
       offCampaign,
       creationInput(offCampaign.id, { adversarialGeneration: false }),
     );
 
     expect((await getModule(onId))?.adversarialGeneration).toBe(true);
     expect((await getModule(offId))?.adversarialGeneration).toBe(false);
-
-    // Cleanup: abort the in-flight spines; the runs rewind their rows to draft.
-    cancelModuleGen(onId);
-    cancelModuleGen(offId);
-    await waitFor(async () => {
-      expect((await getModule(onId))?.status).toBe('draft');
-      expect((await getModule(offId))?.status).toBe('draft');
-    });
-  }, 20000);
-
-  it('the generation input is BYTE-IDENTICAL with the flag unset and with it ON — nothing reads it yet', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    // Two module rows with identical fields in the same campaign; one was
-    // created with no flag at all (the pre-slice row shape, defaulted to false
-    // by the schema), the other with the flag explicitly ON.
-    const untouched = await saveModule(createModule(creationInput(campaign.id)));
-    const flagged = await saveModule(
-      createModule(creationInput(campaign.id, { adversarialGeneration: true })),
-    );
-    expect(untouched.adversarialGeneration).toBe(false);
-    expect(flagged.adversarialGeneration).toBe(true);
-
-    const spineReply = (): ChatResult => ({
-      text: JSON.stringify(VALID_SPINE),
-      modelUsed: TEST_MODEL,
-      fallback: null,
-    });
-    const normalization = (): ChatResult => ({
-      text: JSON.stringify(SELF_NORMALIZATION),
-      modelUsed: TEST_MODEL,
-      fallback: null,
-    });
-
-    // The spine pass is one spine call + one self-normalization call.
-    chatMock.mockResolvedValueOnce(spineReply()).mockResolvedValueOnce(normalization());
-    await runSpine(untouched.id, campaign);
-    const promptUnset = userPromptOf(0);
-
-    chatMock.mockResolvedValueOnce(spineReply()).mockResolvedValueOnce(normalization());
-    await runSpine(flagged.id, campaign);
-    const promptFlagged = userPromptOf(2);
-
-    // BYTE-IDENTICAL: the exact prompt bytes the model receives do not move.
-    // (The row half of the guarantee — omitted vs explicit-false serialize to
-    // the same bytes — is pinned in tests/domain/module.test.ts.)
-    expect(promptUnset.length).toBeGreaterThan(0);
-    expect(promptFlagged).toBe(promptUnset);
   }, 20000);
 });
 
-/**
- * Durable versions (owner-directed simple undo, docs/18 §2.3, docs/17 ledger
- * row 63): EVERY AI pass that can rewrite part text snapshots the whole
- * module document BEFORE it writes — the parts pass at entry (generation,
- * missing-part fill, single-part rewrite/regenerate, the board's staged
- * rewrite, floor repairs) and each entity-name-normalization pass (they are
- * separate AI passes over the text). Byte-exact pre-change text, honest
- * labels; the canvas/chat paths are pinned in canvas-versions.test.tsx.
- */
 describe('durable versions — the parts passes snapshot before they write', () => {
   /** The module row's whole document right now (the pre-change expectation)
    * — composed through the ONE view→document seam (docs/17 row 384). */
@@ -2318,22 +1677,6 @@ describe('durable versions — the parts passes snapshot before they write', () 
  * REAL settings row; the model is moved to the FRONT with no duplicate.
  */
 describe('recently used global chat model at the module-generation entry points (docs/17 row 198)', () => {
-  it('records the global model when the spine pass starts', async () => {
-    const { campaign, moduleId } = await seedModule();
-    await updateSettings({ defaultChatModel: 'global/spine', recentChatModels: ['older/model'] });
-    chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({
-        text: JSON.stringify(SELF_NORMALIZATION),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
-
-    await runSpine(moduleId, campaign);
-
-    expect((await getSettings()).recentChatModels).toEqual(['global/spine', 'older/model']);
-  }, 20000);
-
   it('records the global model when a parts pass starts', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
@@ -2402,7 +1745,7 @@ describe('recently used global chat model at the module-generation entry points 
  * THE LOAD-BEARING PIN IS THE FLAG-OFF GOLDEN:
  * `tests/fixtures/adversarialGeneration/flag-off-transcript.json` was captured
  * from the tree BEFORE the trigger landed (the 89e5d71 method: the REAL
- * `runSpine` + `runParts` against mocked chat replies) and holds every chat
+ * `runParts` against mocked chat replies) and holds every chat
  * call's full messages, its option set, model, temperature and response format,
  * plus the final parts document and the per-part rows. A flag-off run at this
  * commit must reproduce it character for character — that is what makes wiring
@@ -2558,7 +1901,14 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     installChat(() => {
       throw new Error('a FLAG-OFF run issued an adversarial call');
     });
-    await runSpine(moduleId, campaign);
+    // The deleted pass-0 spine, seeded DIRECTLY (docs/17 row 392): the premise,
+    // the plan and the entity RECORDS the spine reply used to leave on the row.
+    await patchModule(moduleId, {
+      spine: moduleSpineSchema.parse(VALID_SPINE),
+      entityKinds: VALID_SPINE.entities.map((entity) =>
+        moduleEntityKindSchema.parse({ name: entity.name, kind: entity.kind, absorbed: [] }),
+      ),
+    });
     await runParts(moduleId, campaign, { levels: [1, 2] });
     const row = await requireRow(moduleId);
     const document = moduleDocumentFromView({ spine: row.spine, parts: row.parts });
@@ -2670,49 +2020,6 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     expect(chatMock.mock.calls).toHaveLength(6);
   }, 20000);
 
-  it('reviews the PREMISE first — inside pass 0, before the first part is written', async () => {
-    const { campaign, moduleId } = await seedFlaggedModule();
-    const PREMISE_EDIT = `THE BELL AND THE DROWNED — ${'a reviewed premise. '.repeat(8)}`.trim();
-    const phases: string[] = [];
-    installChat((prompt) => {
-      if (isCritique(prompt)) {
-        phases.push(`critique:${reviewKey(prompt)}`);
-        return reviewKey(prompt) === 'premise' ? finding() : cleanCritique();
-      }
-      phases.push(`edit:${reviewKey(prompt)}`);
-      return edited(PREMISE_EDIT);
-    });
-
-    const drafted = await runSpine(moduleId, campaign);
-
-    // Pass 0 is DONE: the premise was critiqued AND edited before it returned,
-    // and no part prompt has gone out yet.
-    expect(phases).toEqual(['critique:premise', 'edit:premise']);
-    expect(drafted.status).toBe('draft');
-    expect(drafted.spine?.premise).toBe(PREMISE_EDIT);
-    expect(drafted.spine?.writerModel).toBe('editor/model');
-    expect(drafted.spine?.origin).toBe('model');
-    expect(
-      chatMock.mock.calls.some(([messages]) => promptOf(messages).includes('Write level 1.')),
-    ).toBe(false);
-
-    await runParts(moduleId, campaign, { levels: [1] });
-
-    // THE ORDER PIN: the premise critique's call index precedes the first part
-    // prompt's, and the premise edit precedes it too.
-    const indexes = chatMock.mock.calls.map(([messages]) => promptOf(messages));
-    const premiseCritiqueAt = indexes.findIndex(
-      (prompt) => isCritique(prompt) && reviewKey(prompt) === 'premise',
-    );
-    const premiseEditAt = indexes.findIndex(
-      (prompt) => isEditor(prompt) && reviewKey(prompt) === 'premise',
-    );
-    const firstPartAt = indexes.findIndex((prompt) => prompt.includes('Write level 1.'));
-    expect(premiseCritiqueAt).toBeGreaterThanOrEqual(0);
-    expect(premiseEditAt).toBeGreaterThan(premiseCritiqueAt);
-    expect(firstPartAt).toBeGreaterThan(premiseEditAt);
-  }, 20000);
-
   it('an accepted edit lands as the part text with the parts-document scaffolding INTACT', async () => {
     const { campaign, moduleId } = await seedFlaggedModule();
     await seedSpine(moduleId);
@@ -2808,25 +2115,6 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     expect(second?.errorMessage).toContain('The adversarial review failed');
   }, 20000);
 
-  it('a FAILED premise review is contained: the premise is UNCHANGED and the spine still lands', async () => {
-    const { campaign, moduleId } = await seedFlaggedModule();
-    installChat((prompt) => (isCritique(prompt) ? malformed() : edited('SHOULD NEVER LAND')));
-
-    const finished = await runSpine(moduleId, campaign);
-
-    // The spine pass completed at its normal checkpoint; the premise on the row
-    // is the model's own text, untouched.
-    expect(finished.status).toBe('draft');
-    expect(finished.spine?.premise).toBe(VALID_SPINE.premise);
-    expect((await getModule(moduleId))?.spine?.premise).toBe(VALID_SPINE.premise);
-    // Visible (AGENTS rule 2): the failure has no per-part slot to land in, so
-    // it is named with a toast.
-    expect(toastErrorMock).toHaveBeenCalledWith(
-      'Adversarial review of the premise failed',
-      expect.anything(),
-    );
-  }, 20000);
-
   it('the generation Stop reaches the pass: the review call is aborted, never left running', async () => {
     const { campaign, moduleId } = await seedFlaggedModule();
     await seedSpine(moduleId);
@@ -2887,28 +2175,4 @@ describe('adversarialGeneration — the trigger (docs/17 row 358)', () => {
     expect(useProgressStore.getState().jobs).toEqual([]);
   }, 20000);
 
-  it('the dock detail names the sub-phases of the premise review', async () => {
-    const { campaign, moduleId } = await seedFlaggedModule();
-    useProgressStore.getState().reset();
-    let critique: ReturnType<typeof deferredChat> | undefined;
-    chatMock.mockImplementation((messages) => {
-      const prompt = promptOf(messages);
-      if (isCritique(prompt)) {
-        critique = deferredChat();
-        return critique.promise;
-      }
-      return Promise.resolve(generationReply(prompt));
-    });
-
-    const pending = guard(runSpine(moduleId, campaign));
-    await waitFor(() => {
-      const detail = useProgressStore.getState().jobs[0]?.detail ?? '';
-      expect(detail).toContain('Reviewing the premise');
-      expect(detail).toContain('critique');
-      expect(detail).toContain('edit');
-    });
-    critique?.resolve(JSON.stringify({ issues: [] }));
-    await pending;
-    expect(useProgressStore.getState().jobs).toEqual([]);
-  }, 20000);
 });

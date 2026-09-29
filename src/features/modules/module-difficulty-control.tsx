@@ -23,8 +23,8 @@ import {
  * reports the pressed step. WHERE the choice is persisted is the caller's
  * question and the two answers genuinely differ — the dialog records it in the
  * New Module draft and stamps it on the module row at creation
- * (`createModuleAndRun`), while the editor writes the owning module row
- * directly through `db/moduleRepo.patchModule`. Both write the SAME
+ * (`moduleGen.startCampaignDocument`), while the editor writes the owning
+ * module row directly through `db/moduleRepo.patchModule`. Both write the SAME
  * `module.difficulty` field through the module repo's own path; the shared
  * thing is the control, not the write.
  *

@@ -10028,3 +10028,52 @@ the surviving surfaces, and the delete inventory is now the reader's `delete-mod
 - **NO duplication-baseline entry was added**, and none was needed: the delete dialog's body MOVED from
   `ModulesListPage` to `module-delete-dialog.tsx` (its only site), `ModuleCoverThumb` was DELETED with its only
   caller, and `tests/architecture/no-duplicate-implementations.test.ts` stayed green untouched.
+
+## Pass 0 is DELETED: the pin files that died, the scan that proves it, and the ONE golden recaptured (docs/17 row 392, docs/23 BUILD STATE, docs/18 §2/§5)
+
+The pass-0 stack (the spine draft, its approval checkpoint, the whole-spine and plan-only row writes and the
+reader's spine stream/Retry card) is DELETED. What this section records is the TEST consequence, because the
+deletion's failure mode is a revived helper or a stale comment — both invisible to behaviour tests.
+
+- **THE NEW PIN IS A SOURCE SCAN AND IT NAMES ITSELF AS THE ONLY CARRIER.**
+  `tests/architecture/pass0-is-deleted.test.ts` reads RAW text over BOTH trees through the ONE helper
+  (`tests/helpers/sourceCode.rawSourceText`, the row-386 view) and requires each of 21 deleted identifiers
+  (`runSpine`, `retrySpine`, `approveSpineAndRun`, `discardSpine`, `createModuleAndRun`, `runAutomatedParts`,
+  `spineMessages`, `spineEntityLevelHint`, `SPINE_ENTITY_INTENT`, `spineReplySchema`, `parseSpine`,
+  `parseSpineEntities`, `entityKindsReplySchema`, `modelEntityKindSchema`, `reviewPremiseInGeneration`,
+  `SpineCheckpoint`, `spine-checkpoint`, `saveSpine`, `savePartPlan`, `spine-token`, `spine-thinking`) to appear
+  in EXACTLY ONE FILE — the pin itself — and asserts `features/modules/spine-checkpoint.tsx` is gone from disk.
+  It stays non-vacuous by construction (the needle is proven greppable in this tree) and it REDDENED on real
+  residue while landing: two stale comments and the folded helper's own doc comment.
+- **PIN FILES DELETED BY NAME:** `tests/llm/moduleGen-auto-spine.test.ts` (whole file, 4 tests),
+  `tests/features/spine-checkpoint.test.tsx` (whole file, 4 tests), `tests/architecture/pass0-is-narrowed.test.ts`
+  (REPLACED by the scan above), and the five `tests/fixtures/promptStyles/spine-classic-*.txt` prompt goldens with
+  the five byte-identity tests that read them. Inside surviving files the pass-0 tests/setups were deleted or
+  migrated onto DIRECT row seeds: `moduleGen.test.ts`, `module-gen-spine-and-styles.test.ts`,
+  `module-gen-and-provenance.test.ts`, `moduleGen-cast.test.ts`, `module-reader.test.tsx`, `module-ui-toast.test.tsx`,
+  `new-module-draft.test.tsx`, `provenance-display.test.tsx`, `module-reader-stream-churn.test.tsx`,
+  `ipad-overscroll.test.tsx`, `db/moduleRepo.test.ts`, the four architecture pins and the two entity-schema pins.
+- **COUNT-ASSERTING SCANS WERE UPDATED, NOT WEAKENED.** `tests/architecture/global-chat-model-recording.test.ts`
+  (moduleGen `defaultChatModel` 15 → 10, in-use recorders 5 → 4), `tests/architecture/one-level-resolution.test.ts`
+  (`moduleStatedLevel` consumer list `[MODULE_GEN, ENGINE]` → `[ENGINE]`), `tests/llm/adversarialPass.test.ts`
+  (`runAdversarialPass(` in moduleGen 2 → 1, the flag guard 3 → 2), `tests/features/module-busy.test.ts` (the
+  blocked-control reader list loses `spine-checkpoint`), and `tests/features/feature-shell-and-editor.test.tsx`
+  (the guide chapter id `spine` → `premise`, with its heading). Each was a measurement of the deleted call sites,
+  not a relaxed expectation.
+- **ONE GOLDEN MOVED, THROUGH THE PROJECT'S OWN RENDER PATH.** `tests/fixtures/adversarialGeneration/flag-off-transcript.json`
+  **44314 → 27317 bytes (−16997)**: the flag-off sequence's 5 chat calls become 3 because the pass-0 spine call and
+  its own normalization call are deleted, and `calls[2:]`, `premise`, `document` and `parts` are BYTE-IDENTICAL to
+  the pre-slice fixture (measured). The recapture was driven by a temporary env-guarded write inside the test and
+  the hook was removed before the commit — the file is render output, never a transcription. No other golden moved:
+  `promptStyles/*.txt` (parts goldens), `pdfLayoutBaseline.json` and the encounter-floor fixtures are untouched.
+- **THE ONE NEW BEHAVIOUR PIN.** `tests/features/module-reader.test.tsx` gains "a LEGACY row whose pass-0 spine
+  failed keeps its error visible": an EMPTY document with `status: 'failed'` renders `module-failed-banner` with the
+  recorded error AND the chat hint, and no `retry-spine` — the removed Retry must not take the error with it
+  (AGENTS rule 2). The premise-only pin beside it was rewritten to the surviving claim (the reader renders a
+  premise with no level sections).
+- **COPIES: three duplicate populations resolved, NONE blessed.** `countsIn` (two copies the new scan would have
+  created) is FOLDED onto `tests/helpers/sourceCode.countsIn`; the `proseModule` module seed (two identical copies
+  whose re-hashed body the tripwire named) is FOLDED onto `tests/helpers/moduleSeed.proseModuleFixture`; the
+  moduleGen-cast `spinePrompt`/`entity-intent reply` pairs were DELETED with their tests. Their baseline lines are
+  DELETED. Two shrunken site lists (`6ef5125f116e39cd`, `c3443366b6235ab5`) are UPDATED to the files that remain —
+  no new duplicate and NO entry added.

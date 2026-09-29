@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createArtifact, getArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage } from '@/db/imageRepo';
-import { getModule, saveModule, saveSpine } from '@/db/moduleRepo';
+import { getModule, saveModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { listRunsByCampaign } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -1663,22 +1663,23 @@ describe('EntityPanel — orphaned entities', () => {
       levelMax: 3,
       sizeDial: 'sketch',
     });
-    await saveModule(base);
-    const saved = await saveSpine(base.id, {
-      premise,
-      themes: [],
-      writerModel: '',
-      origin: null,
-      partPlan: [
-        {
-          title: 'The Shore',
-          levelBand: '1–2',
-          synopsis: 'Walk the shore.',
-          levelUpTrigger: 'The tide turns.',
-        },
-      ],
+    return saveModule({
+      ...base,
+      spine: {
+        premise,
+        themes: [],
+        writerModel: '',
+        origin: null,
+        partPlan: [
+          {
+            title: 'The Shore',
+            levelBand: '1–2',
+            synopsis: 'Walk the shore.',
+            levelUpTrigger: 'The tide turns.',
+          },
+        ],
+      },
     });
-    return saveModule(saved);
   }
 
   function orphanPanel(

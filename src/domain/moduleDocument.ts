@@ -1013,9 +1013,9 @@ export function moduleViewFromRow(row: ModuleRow): Module {
 /**
  * The in-memory view AS A STORED ROW (PURE) — the write half of the cut: the
  * TEXT is composed into the ONE document and `spine`/`parts` are dropped, while
- * the generator's plan/state metadata is carried onto the row. A legacy write
- * (`saveSpine`, `savePartPlan`, a part-text save) is therefore TRANSLATED, never
- * re-shaped into a parallel structure.
+ * the generator's plan/state metadata is carried onto the row. A legacy
+ * whole-view write is therefore TRANSLATED, never re-shaped into a parallel
+ * structure.
  *
  * The level COUNT is the larger of the plan's and the written parts' — a plan
  * authored before its parts exist still reserves its sections (pass 0 → pass 1).

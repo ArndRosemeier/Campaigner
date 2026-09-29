@@ -85,7 +85,6 @@ import { describe, expect, it } from 'vitest';
 const SRC_DIR = join(process.cwd(), 'src');
 const ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
-const MODULE_GEN = 'src/llm/moduleGen.ts';
 const LANGUAGE = 'src/llm/language.ts';
 const ROSTER = 'src/llm/encounterRoster.ts';
 const WIKILINKS = 'src/lib/wikilinks.ts';
@@ -208,15 +207,16 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     expect(englishOnly).toEqual([]);
   });
 
-  it('derives the module’s own stated level once, for the spine recording and the engine resolution', () => {
+  it('derives the module’s own stated level once, for the engine resolution', () => {
     expect(filesContaining('export function moduleStatedLevel')).toEqual([ROOM_BUDGET]);
-    // TWO consumers, both named: the spine records the level onto the entity
-    // records it saves, the engine resolves it for a module-created run.
+    // ONE consumer survives, named: the engine resolves the level for a
+    // module-created run. The other consumer was the pass-0 spine's entity
+    // recording, DELETED with pass 0 (docs/17 row 392).
     expect(
       filesContaining('moduleStatedLevel(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
-    ).toEqual([MODULE_GEN, ENGINE]);
+    ).toEqual([ENGINE]);
   });
 
   it('reads a NAMED figure’s prose through ONE name-scoped seam, ABOVE either band (docs/17 row 285)', () => {
@@ -366,23 +366,15 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     ).toEqual([ENTITY_BATCH]);
   });
 
-  it('aims the hint by TWO cases and judges an out-of-band target for participants only (docs/17 row 283)', () => {
-    // THE AIMING CLAUSE IS A FUNCTION OF THE MODULE'S OWN BAND. Case (1) tells
-    // the model to aim a figure the party might fight INSIDE this module's range,
-    // which is only truthful when the numbers come from the module row; a
-    // constant here would aim every module at one band.
-    expect(filesContaining('function spineEntityLevelHint(')).toEqual([MODULE_GEN]);
-    expect(filesContaining('spineEntityLevelHint(module.levelMin, module.levelMax)')).toEqual([
-      MODULE_GEN,
-    ]);
-    // The pre-283 constant is GONE rather than renamed-and-left: a second aiming
-    // clause reachable from anywhere else would be a second answer to "how do I
-    // aim this figure's level", which is the defect class this whole file guards.
-    expect(filesContaining('SPINE_ENTITY_LEVEL_HINT')).toEqual([]);
-    // THE OUT-OF-BAND CHECK: ONE context type, ONE advisory sentence, both in the
-    // ONE advisory home (`roomBudget`), with the engine as its only production
-    // caller. The target reaches it through `entityLevelHintFor`, the ONE reader
-    // of the module record's hint, rather than a second name-keyed copy.
+  it('judges an out-of-band target for participants only (docs/17 row 283)', () => {
+    // THE AIMING CLAUSE for the stored entity level hint lived in the pass-0
+    // spine prompt and is DELETED with pass 0 (docs/17 row 392), together with
+    // the pre-283 constant it replaced.
+    // THE OUT-OF-BAND CHECK survives: ONE context type, ONE advisory sentence,
+    // both in the ONE advisory home (`roomBudget`), with the engine as its only
+    // production caller. The target reaches it through `entityLevelHintFor`, the
+    // ONE reader of the module record's hint, rather than a second name-keyed
+    // copy.
     expect(filesContaining('export interface EncounterTargetContext')).toEqual([ROOM_BUDGET]);
     expect(filesContaining('The module targets level')).toEqual([ROOM_BUDGET]);
     expect(

@@ -10,7 +10,6 @@ import {
   withEntityBestiarySlots,
   type ModuleEntityKind,
 } from '@/domain';
-import { parseSpineEntities } from '@/llm/moduleGen';
 
 /**
  * The entity INTENT record field (08-MODULE-DESIGNER §M4-C "Entity intent",
@@ -78,37 +77,6 @@ describe('moduleEntityKindSchema.intent — additive, optional, one spelling of 
     const message = issues.map((issue) => issue.message).join(' | ');
     expect(message).toContain('intent');
     expect(message).toContain(String(ENTITY_INTENT_MAX_LENGTH));
-  });
-});
-
-describe('the spine reply may spell absence as null (the strict subset cannot omit a key)', () => {
-  const PLAN = [{ title: 'One', levelBand: '1', synopsis: '', levelUpTrigger: '' }];
-  function reply(entities: unknown[]): string {
-    return JSON.stringify({ premise: 'P', themes: [], partPlan: PLAN, entities });
-  }
-
-  it('a reply with no intent key and a reply with "intent": null both read as no intent', () => {
-    expect(parseSpineEntities(reply([{ name: 'Kael', kind: 'npc' }]))[0]?.intent).toBeUndefined();
-    expect(parseSpineEntities(reply([{ name: 'Kael', kind: 'npc', intent: null }]))[0]?.intent).toBeUndefined();
-  });
-
-  it('a present intent round-trips through the spine parse', () => {
-    const parsed = parseSpineEntities(reply([{ name: 'The Salt Market', kind: 'location', intent: SENTINEL }]));
-    expect(parsed[0]?.intent).toBe(SENTINEL);
-  });
-
-  it('an over-long intent in a reply fails the spine parse LOUDLY, by field and limit', () => {
-    const long = 'z'.repeat(ENTITY_INTENT_MAX_LENGTH + 5);
-    let thrown: unknown;
-    try {
-      parseSpineEntities(reply([{ name: 'Kael', kind: 'npc', intent: long }]));
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(z.ZodError);
-    const issues = (thrown as z.ZodError).issues;
-    expect(issues.some((issue) => issue.path.join('.') === 'entities.0.intent')).toBe(true);
-    expect(issues.map((issue) => issue.message).join(' ')).toContain(String(ENTITY_INTENT_MAX_LENGTH));
   });
 });
 

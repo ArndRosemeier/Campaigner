@@ -59,11 +59,7 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as object),
-    runSpine: vi.fn(),
     runParts: vi.fn(),
-    approveSpineAndRun: vi.fn(),
-    retrySpine: vi.fn(),
-    discardSpine: vi.fn(),
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),

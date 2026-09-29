@@ -11,19 +11,17 @@ import {
   publishToLibrary,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule, saveSpine } from '@/db/moduleRepo';
 import { AMBIGUITY_KEEP_REASON, sweepOrphanedArtifacts } from '@/db/orphanSweep';
 import { clearDatabase } from './helpers';
+import { proseModuleFixture } from '../helpers/moduleSeed';
 import {
   battleSchema,
-  createModule as createModuleSchema,
   newId,
   stampNewEntity,
   type Battle,
   type BattleBoard,
   type EncounterArtifactData,
   type Id,
-  type Module,
   type MonsterEntry,
 } from '@/domain';
 import { emptyBoard } from '@/domain/battle/board';
@@ -56,38 +54,6 @@ beforeEach(async () => {
   await clearDatabase();
   deleteArtifactMock.mockImplementation(realDeleteArtifact);
 });
-
-/** A module with one premise line (prose is where mentions live). */
-async function proseModule(
-  campaignId: Id,
-  title: string,
-  premise: string,
-): Promise<Module> {
-  const module = await createModule(
-    createModuleSchema({
-      campaignId,
-      title,
-      concept: '',
-      levelMin: 1,
-      levelMax: 3,
-      sizeDial: 'sketch',
-    }),
-  );
-  return saveSpine(module.id, {
-    premise,
-    themes: [],
-    writerModel: '',
-    origin: null,
-    partPlan: [
-      {
-        title: 'The Seal',
-        levelBand: '1–2',
-        synopsis: 'Reach the seal.',
-        levelUpTrigger: 'The seal breaks.',
-      },
-    ],
-  });
-}
 
 /** A live battle row carrying the given board/seed fighters (write-normalized). */
 async function putBattle(
@@ -149,7 +115,7 @@ function encounterDataWith(monsters: MonsterEntry[]): EncounterArtifactData {
 describe('sweepOrphanedArtifacts — deletion set & outcomes', () => {
   it('deletes exactly the module-owned unmentioned orphans and reports the outcome', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'The crypt of [[Mira]] looms.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'The crypt of [[Mira]] looms.');
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
     const wraith = await createArtifact({
       campaignId: campaign.id,
@@ -179,7 +145,7 @@ describe('sweepOrphanedArtifacts — deletion set & outcomes', () => {
 
   it('does not report module-mentioned rows it never offered', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', '[[Echo]] calls back.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', '[[Echo]] calls back.');
     await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -197,8 +163,8 @@ describe('sweepOrphanedArtifacts — deletion set & outcomes', () => {
 
   it('keeps a module-zero orphan another module mentions (campaign-wide gate), loudly', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const first = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
-    await proseModule(campaign.id, 'Tide Gate', '[[Echo]] returns at dusk.');
+    const first = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    await proseModuleFixture(campaign.id, 'Tide Gate', '[[Echo]] returns at dusk.');
     const echo = await createArtifact({
       campaignId: campaign.id,
       moduleId: first.id,
@@ -220,7 +186,7 @@ describe('sweepOrphanedArtifacts — deletion set & outcomes', () => {
 
   it('excludes pc, promoted and library rows from the candidate set', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
     await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -246,8 +212,8 @@ describe('sweepOrphanedArtifacts — deletion set & outcomes', () => {
 describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
   it('keeps an artifact tokened on ANY campaign battle board (other module counts)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const first = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
-    const second = await proseModule(campaign.id, 'Tide Gate', 'The fight begins.');
+    const first = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const second = await proseModuleFixture(campaign.id, 'Tide Gate', 'The fight begins.');
     const wraith = await createArtifact({
       campaignId: campaign.id,
       moduleId: first.id,
@@ -266,7 +232,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
 
   it('keeps a mob artifact frozen as a battle seed fighter', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
     const goblin = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -288,7 +254,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
     // The module's prose mentions the ENCOUNTER, so the encounter survives
     // and its roster citations still guard (the module survives the sweep —
     // deleteModule's cascade exclusion does not apply here).
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
     const guard = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -328,7 +294,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
     // `missing ref` when the artifact was deleted. A same-named authored npc
     // is now an ordinary orphan.
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
     const mob = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -358,7 +324,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
 
   it('deletes an orphan cited only by an encounter the sweep also deletes', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
     const guard = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -394,7 +360,7 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
 
   it('excludes ambiguity-shadowed rows from delete-all and refuses them loudly when attempted', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
     const first = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
@@ -422,8 +388,8 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
 describe('sweepOrphanedArtifacts — boundaries & atomicity', () => {
   it('fails loudly on a vanished module, a foreign id, and a non-orphan kind', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
-    const other = await proseModule(campaign.id, 'Tide Gate', 'Also quiet.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const other = await proseModuleFixture(campaign.id, 'Tide Gate', 'Also quiet.');
     const foreign = await createArtifact({
       campaignId: campaign.id,
       moduleId: other.id,
@@ -451,7 +417,7 @@ describe('sweepOrphanedArtifacts — boundaries & atomicity', () => {
 
   it('a mid-sweep failure rolls the whole sweep back (no half-applied delete)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
+    const module = await proseModuleFixture(campaign.id, 'Ember Crypt', 'A quiet shore.');
     // Alphabetical delete order is deterministic: 'Aaa' first, then 'Bbb'.
     const first = await createArtifact({
       campaignId: campaign.id,

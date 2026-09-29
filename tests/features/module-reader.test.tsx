@@ -56,27 +56,21 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...(actual as object),
-    runSpine: vi.fn(),
     runParts: vi.fn(),
-    approveSpineAndRun: vi.fn(),
-    retrySpine: vi.fn(),
-    discardSpine: vi.fn(),
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
-    createModuleAndRun: vi.fn(),
     // The stub popover classifies hand-typed names via a chat call — mocked
     // here (the seeded module's kinds are asserted explicitly).
     classifyEntityName: vi.fn(),
   };
 });
 
-const { rewritePart, classifyEntityName, retrySpine, generateMissingParts, runParts } = await import('@/llm/moduleGen');
+const { rewritePart, classifyEntityName, generateMissingParts, runParts } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
 const generateMissingPartsMock = vi.mocked(generateMissingParts);
 const runPartsMock = vi.mocked(runParts);
 const classifyEntityNameMock = vi.mocked(classifyEntityName);
-const retrySpineMock = vi.mocked(retrySpine);
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { toastSuccess } = await import('@/lib/toast');
@@ -259,12 +253,12 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
-  it('a chat-authored PREMISE-ONLY document is the reader, never the pass-0 spine checkpoint (docs/17 row 390)', async () => {
-    // The chat authors the premise now, so a plan-LESS document is a normal
-    // state — and the pass-0 checkpoint's "Discard" drops the spine, which
-    // (the document carrying the premise) would delete the text the owner just
-    // wrote in the chat. The checkpoint is therefore offered only while a
-    // PASS-0 PLAN exists.
+  it('a chat-authored PREMISE-ONLY document is the reader (docs/17 rows 390/392)', async () => {
+    // The chat authors the premise now, so a premise with NO level sections is
+    // a normal state and it renders the reader: the premise and no level
+    // headings. The pass-0 checkpoint (and its "Discard", which dropped the
+    // spine and therefore the premise) is DELETED with pass 0 (docs/17 row
+    // 392).
     await seedBuiltInPersonas();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const saved = await saveModule({
@@ -288,7 +282,36 @@ describe('ModuleReaderPage', () => {
     renderAppAt(modulePath(campaign.id, saved.id));
     await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
     expect(screen.getByText('The kingdom of Vess is drowning.')).toBeInTheDocument();
-    expect(screen.queryByTestId('spine-checkpoint')).toBeNull();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('a LEGACY row whose pass-0 spine failed keeps its error visible (docs/17 row 392)', async () => {
+    // The deleted pass-0 spine left `status: 'failed'` + `errorMessage` on an
+    // EMPTY document. The Retry card is gone with the pass, but the error must
+    // not vanish with it (AGENTS rule 2): the banner still names it, and the
+    // chat - not a retry button - is the surface the owner is sent to.
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const failed = await saveModule({
+      ...createModule({
+        campaignId: campaign.id,
+        title: 'Doomed Draft',
+        concept: '',
+        levelMin: 1,
+        levelMax: 2,
+        tone: '',
+        sizeDial: 'sketch',
+      }),
+      status: 'failed',
+      errorMessage: 'the provider exploded mid-draft',
+    });
+    renderAppAt(modulePath(campaign.id, failed.id));
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+
+    expect(screen.getByTestId('module-failed-banner')).toHaveTextContent(
+      'the provider exploded mid-draft',
+    );
+    expect(screen.getByText(/This document has no premise yet/)).toBeInTheDocument();
     expect(screen.queryByTestId('retry-spine')).toBeNull();
     await flushAsyncUpdates();
   }, 20_000);
@@ -1375,38 +1398,6 @@ describe('ModuleReaderPage', () => {
     await user.click(screen.getByTestId('reader-search-clear'));
     expect(screen.getByTestId('reader-search-count')).toHaveTextContent('–');
     expect(document.querySelector('.search-hit')).toBeNull();
-    await flushAsyncUpdates();
-  }, 20_000);
-
-  it('shows a failed first spine with its error and an in-place Retry', async () => {
-    const user = userEvent.setup();
-    await seedBuiltInPersonas();
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const draft = createModule({
-      campaignId: campaign.id,
-      title: 'Doomed Draft',
-      concept: 'A spine whose provider exploded.',
-      levelMin: 1,
-      levelMax: 2,
-      sizeDial: 'sketch',
-    });
-    const failed = await saveModule({
-      ...draft,
-      status: 'failed',
-      errorMessage: 'the provider exploded mid-draft',
-    });
-    renderAppAt(modulePath(campaign.id, failed.id));
-
-    // The mocked retrySpine resolves; the component attaches .catch to it.
-    retrySpineMock.mockResolvedValue(undefined);
-    expect(await screen.findByTestId('spine-failed', {}, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByTestId('spine-failed-error')).toHaveTextContent(
-      'the provider exploded mid-draft',
-    );
-
-    await user.click(screen.getByTestId('retry-spine'));
-    expect(retrySpineMock).toHaveBeenCalledTimes(1);
-    expect(retrySpineMock).toHaveBeenCalledWith(failed.id, expect.anything());
     await flushAsyncUpdates();
   }, 20_000);
 

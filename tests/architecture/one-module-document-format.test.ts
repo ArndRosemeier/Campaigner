@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { rawSourceText } from '../helpers/sourceCode';
+import { countsIn, rawSourceText } from '../helpers/sourceCode';
 
 /**
  * ONE module document format, and only ONE (docs/23 §2–§4, docs/17 row 386).
@@ -56,19 +56,6 @@ const LEGACY_IDENTIFIERS = [
 // rule). The five identifiers above are the brief's own scan and they are the
 // format's whole vocabulary; the stale comment is REPORTED to the dispatcher as
 // a named remainder rather than swept from another writer's file.
-
-/** `[path, hits]` per file under `prefix` whose raw text carries `needle`. */
-function countsIn(
-  raw: Record<string, string>,
-  prefix: string,
-  needle: string,
-): [string, number][] {
-  return Object.entries(raw)
-    .filter(([path]) => path.startsWith(prefix))
-    .map(([path, text]): [string, number] => [path, text.split(needle).length - 1])
-    .filter(([, hits]) => hits > 0)
-    .sort(([a], [b]) => (a < b ? -1 : 1));
-}
 
 describe('ONE module document format (SOURCE SCAN, docs/17 row 386)', () => {
   it('sees a real tree, and the legacy format file is GONE', async () => {

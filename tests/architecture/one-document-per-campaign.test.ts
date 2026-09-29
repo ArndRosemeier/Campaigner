@@ -48,22 +48,18 @@ describe('ONE document per campaign — the list is deleted, the row survives (S
     expect(filesWith('export async function createCampaignDocument')).toEqual([
       'src/db/moduleRepo.ts',
     ]);
-    // `llm/moduleGen.startCampaignDocument` is the APP's only creation path
-    // (docs/17 row 390 — the chat authors the premise, so the app entry no
-    // longer runs pass 0) and it writes through the refusing seam — a second
-    // row can never be minted by the dialogs. The generator's own entry
-    // (`createModuleAndRun`) shares the SAME private row-creation body, so
-    // there is still exactly ONE place a document row is created. The general
-    // upsert (`saveModule`/`createModule`) stays for updates and for
-    // tests/imports reproducing a LEGACY multi-module campaign.
+    // `llm/moduleGen.startCampaignDocument` is the APP's ONLY creation path
+    // (docs/17 rows 390/392 — the chat authors the premise, and the generator's
+    // own pass-0 entry is DELETED) and it writes through the refusing seam — a
+    // second row can never be minted. The general upsert
+    // (`saveModule`/`createModule`) stays for updates and for tests/imports
+    // reproducing a LEGACY multi-module campaign.
     const gen = CODE['src/llm/moduleGen.ts'] ?? '';
     expect(gen.includes('return createCampaignDocument(created)')).toBe(true);
     expect(gen.includes('saveModule(created)')).toBe(false);
-    // …and the app's create dialog uses the chat-first entry, never the
-    // generator's.
+    // …and the app's create dialog uses the chat-first entry.
     const dialog = CODE['src/features/modules/new-module-dialog.tsx'] ?? '';
     expect(dialog.includes('startCampaignDocument(campaign, input)')).toBe(true);
-    expect(dialog.includes('createModuleAndRun')).toBe(false);
   });
 
   it('the legacy multi-module notice is mounted ONCE — in the campaign bar, on every campaign route', () => {

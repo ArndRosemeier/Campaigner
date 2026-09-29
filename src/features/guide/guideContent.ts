@@ -5,8 +5,8 @@ import { ROUTES } from '@/app/routes';
  * data, like /src/help/helpContent.ts — the GuidePage renders it and a test
  * guarantees completeness and that every app link points at a real route.
  * Opened in another tab (welcome wizard, help, empty states); the guide is
- * the authored path: campaign → module → spine → parts → cast → battlemaps →
- * table.
+ * the authored path: campaign → module → chat premise → levels → cast →
+ * battlemaps → table.
  */
 
 /** Where a chapter's "Do it now" button leads. */
@@ -125,37 +125,37 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Leave the pass automation off — the first time',
         markdown:
-          'The "After the parts are written" grid (auto-generate/auto-image per kind) runs unattended passes once the parts finish. For your first module leave it off: you will run each pass manually, learn what it does, and automate later. Battlemaps are the exception — every encounter a module creates is mapped automatically with the campaign\'s defaults (untick "Generate encounter battlemaps" to keep maps manual for that module). "Generate parts without review" (skip the spine checkpoint) should also stay off.',
+          'The "After the parts are written" grid (auto-generate/auto-image per kind) runs unattended passes once the parts finish. For your first module leave it off: you will run each pass manually, learn what it does, and automate later. Battlemaps are the exception — every encounter a module creates is mapped automatically with the campaign\'s defaults (untick "Generate encounter battlemaps" to keep maps manual for that module). Leave the review-skipping control off too until you know what the passes cost.',
       },
     ],
     appLink: openModules,
-    checkpoint: 'You are done when the module reader opens and the spine draft starts streaming.',
+    checkpoint: 'You are done when the campaign document opens on its canvas chat.',
   },
   {
-    id: 'spine',
-    title: 'Approve the spine',
-    minutes: 5,
+    id: 'premise',
+    title: 'Write the premise and the levels in the chat',
+    minutes: 8,
     intro:
-      'The spine is the module\'s premise plus its part plan — always shown for approval before any part is written. It is the cheapest place to reshape the adventure.',
+      'The campaign document starts EMPTY, and the canvas chat is what fills it. The premise is level 0; every =====Level N===== section is a level, and the app writes those separator lines for you.',
     sections: [
       {
-        heading: 'Read it as an editor',
+        heading: 'Say what the campaign is',
         markdown:
-          'The premise and every planned part are fully editable: fix names, reorder parts, delete or add rows, adjust level bands. The normalized entity glossary under the plan is read-only — renaming a character there is an ordinary plan edit on the part rows.',
+          'Open the document\'s canvas chat and describe the campaign in your own words — the place, the people, the trouble. Ask it to write the premise, and refine it by asking for changes; the premise is level 0 of the document.',
       },
       {
-        heading: 'Retry with a steering instruction',
+        heading: 'Ask for levels',
         markdown:
-          'Not the story you want? "Retry spine…" re-runs the draft with an optional instruction ("more political, less combat", "the villain should be the harbormaster"). Retry as often as you like — nothing is spent on parts until you press "Generate parts".',
+          'Then ask for the levels you want ("add a level where the party reaches the drowned cathedral"). The app writes the separator and the level number, so a broken format is impossible on this path; the chat writes the prose under it.',
       },
       {
         heading: 'Then let it write',
         markdown:
-          '"Generate parts" approves the spine and writes the parts one by one, each seeing the previous parts for continuity. You can keep reading while it streams; a failed part retries alone without touching the rest.',
+          'Open the reader and press the button that writes the missing levels: each level\'s prose is generated one call at a time, and each one sees the previous level for continuity. You can keep reading while it streams; a failed level retries on its own without touching the rest.',
       },
     ],
     appLink: openModules,
-    checkpoint: 'You are done when every part of the plan has prose and the reader shows the whole document.',
+    checkpoint: 'You are done when the reader shows the premise and the level sections you want.',
   },
   {
     id: 'parts',

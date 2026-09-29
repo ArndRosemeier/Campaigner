@@ -585,7 +585,7 @@ function NewModuleDialogContent({
       // reload, and the deleted-module retry later finds these exact values.
       flush();
       // Fully-specified creation input (the dialog always sends a tone).
-      // `createModuleAndRun` forwards this object verbatim to `createModule`,
+      // `startCampaignDocument` forwards this object verbatim to `createModule`,
       // so the additive automation fields and the guardrails ride along.
       const input: NewModule & { tone: string; promptStyleId: string } = {
         campaignId: campaign.id,
@@ -821,9 +821,9 @@ function NewModuleDialogContent({
             <div className="flex flex-col gap-0.5">
               <Label htmlFor="module-auto-spine">Generate parts without review</Label>
               <p className="text-xs text-muted-foreground">
-                Recorded on the module for the generation step: skips the spine checkpoint, so the
-                generated premise and part plan are approved as-is and the parts are written
-                immediately. Nothing runs at creation — the canvas chat authors the document first.
+                Recorded on the module for the generation step. Nothing runs at creation — the
+                canvas chat authors the document first, and a level’s prose is written from the
+                reader when you ask for it.
               </p>
             </div>
           </div>
@@ -976,7 +976,7 @@ function NewModuleDialogContent({
                 component the artifact editor mounts, so the five steps and
                 their labels exist in exactly one source. The dialog's own
                 half of the write stays here — the choice rides the persisted
-                draft and reaches `createModuleAndRun`'s input, which stamps
+                draft and reaches the creation input, which stamps
                 `module.difficulty` at creation.
               */}
               <ModuleDifficultyControl

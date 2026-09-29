@@ -47,9 +47,9 @@ describe('one module-title creation seam (SOURCE SCAN)', () => {
     }
     expect([...definitions.entries()]).toEqual([[MODULE_DOMAIN, 1]]);
     // The dialog calls it from EXACTLY the two places that turn the field into
-    // a title: the persisted draft's saved value, and the `NewModule` input
-    // `createModuleAndRun` receives. A third caller would mean a new mechanism;
-    // a dropped one means the two values can disagree.
+    // a title: the persisted draft's saved value, and the `NewModule` input the
+    // creation seam receives. A third caller would mean a new mechanism; a
+    // dropped one means the two values can disagree.
     expect([...calls.entries()]).toEqual([
       [MODULE_DOMAIN, 1],
       [NEW_MODULE_DIALOG, 2],

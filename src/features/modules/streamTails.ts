@@ -6,8 +6,8 @@ import type { ModuleGenEvent } from '@/llm/moduleGen';
 /**
  * Module reader stream tails (08-MODULE-DESIGNER M4-B): the in-memory
  * per-LEVEL streaming tail, held in an EXTERNAL store instead of page state.
- * THE UNIT IS THE LEVEL NUMBER (docs/23 §2.1, docs/17 row 391); `null` is the
- * pass-0 spine tail, which no entry starts any more (docs/17 row 390).
+ * THE UNIT IS THE LEVEL NUMBER (docs/23 §2.1, docs/17 row 391); the pass-0
+ * spine tail is DELETED with pass 0 itself (docs/17 row 392).
  *
  * ONE way to consume streaming tails: the ONLY subscription to
  * `moduleGenEvents` for reader tails lives here, and the ONLY consumers are
@@ -47,17 +47,17 @@ function append(current: string, delta: string): string {
 }
 
 class StreamTailStore {
-  /** Keyed `<moduleId>\u0000<level>`; `null` level = the pass-0 spine. */
+  /** Keyed `<moduleId>\u0000<level>` — a LEVEL number, never a planIndex. */
   private readonly tails = new Map<string, StreamTail>();
   private readonly listeners = new Set<() => void>();
 
-  readonly getSnapshot = (moduleId: Id, level: number | null): StreamTail => {
+  readonly getSnapshot = (moduleId: Id, level: number): StreamTail => {
     return this.tails.get(key(moduleId, level)) ?? EMPTY_TAIL;
   };
 
   readonly subscribe = (
     moduleId: Id,
-    level: number | null,
+    level: number,
     onStoreChange: () => void,
   ): (() => void) => {
     const entryKey = key(moduleId, level);
@@ -75,7 +75,7 @@ class StreamTailStore {
    * subscribers wake.
    *
    * `done` is deliberately a NO-OP. The generator emits it in a `finally`
-   * AFTER the row writes (`moduleGen.ts` runSpine/runParts), so by then every
+   * AFTER the row writes (`moduleGen.ts` runParts), so by then every
    * level is settled: the streaming cards are already unmounted by the row's
    * own status, and a clear here would repaint the streaming card's empty
    * placeholder for one frame on the way out — churn the store exists to
@@ -84,11 +84,9 @@ class StreamTailStore {
    */
   apply(event: ModuleGenEvent): void {
     if (event.kind === 'done') return;
-    const level =
-      event.kind === 'spine-token' || event.kind === 'spine-thinking' ? null : event.level;
-    const entryKey = key(event.moduleId, level);
+    const entryKey = key(event.moduleId, event.level);
     const previous = this.tails.get(entryKey) ?? EMPTY_TAIL;
-    const isThinking = event.kind === 'spine-thinking' || event.kind === 'part-thinking';
+    const isThinking = event.kind === 'part-thinking';
     this.publish(
       entryKey,
       isThinking
@@ -126,15 +124,15 @@ class StreamTailStore {
   }
 }
 
-function key(moduleId: Id, level: number | null): string {
-  return `${moduleId}\u0000${level === null ? 'spine' : String(level)}`;
+function key(moduleId: Id, level: number): string {
+  return `${moduleId}\u0000${String(level)}`;
 }
 
 /** The ONE reader-tail store. */
 export const streamTails = new StreamTailStore();
 
-/** Snapshot of one level's stream (`level` null = the pass-0 spine). */
-export function useStreamTail(moduleId: Id, level: number | null): StreamTail {
+/** Snapshot of one LEVEL's stream. */
+export function useStreamTail(moduleId: Id, level: number): StreamTail {
   // Both functions are identity-stable per (module, level): a fresh closure per
   // render would make `useSyncExternalStore` re-subscribe the store on every
   // token — re-render churn moved one level down instead of removed.
