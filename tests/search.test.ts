@@ -84,6 +84,7 @@ async function enableEmbeddings(): Promise<void> {
     embeddingModel: 'openai/text-embedding-3-small',
     embeddingsEnabled: true,
     wikiGroundingEnabled: true,
+    generationImageKinds: [],
     strictOutputs: true,
     imageModel: 'google/gemini-2.5-flash-image',
     imagesEnabled: false,

@@ -1,3 +1,4 @@
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { SparklesIcon } from 'lucide-react';
@@ -25,7 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { AnyArtifact, Campaign, Module } from '@/domain';
+import type { AnyArtifact, Campaign, EntityKind, Module } from '@/domain';
 import { ENTITY_KINDS, MODULE_PREMISE_LEVEL, moduleDocumentFromView, moduleLevelList } from '@/domain';
 import {
   GENERATION_KINDS,
@@ -35,7 +36,8 @@ import {
   type GenerationLevelRange,
 } from '@/features/modules/generation-selection';
 import { runGenerationSelection, type GenerationRunReport } from '@/features/modules/generation-run';
-import { toastInfo } from '@/lib/toast';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { toastError, toastInfo } from '@/lib/toast';
 
 /**
  * ============================================================================
@@ -60,7 +62,7 @@ import { toastInfo } from '@/lib/toast';
  *
  * EVERY CHOICE IS EXPLICIT AND OFF UNLESS TICKED: entity kinds default to all
  * six (the owner's "generate everything but encounters and images" is two
- * untickings away), images/ battlemaps/ mob portraits default to OFF, and
+ * untickings away), per-kind images/ battlemaps/ mob portraits default to OFF (the image kinds are a remembered preference), and
  * nothing in this app generates on its own any more.
  * ============================================================================
  */
@@ -125,10 +127,25 @@ export function GenerationDialog({
 
   // The ONE selection seam, re-derived on every choice: the scope statement and
   // the run read the SAME value.
-  const selection = useMemo(
-    () => selectGenerationTargets({ module, artifacts, kinds, levelRange: range }),
-    [module, artifacts, kinds, range],
+  // The per-kind image choice is a USER PREFERENCE (Settings.generationImageKinds,
+  // row 397): absent = none. It is read live, so the scope statement and the run
+  // see the value the store holds.
+  const storedImageKinds = useLiveQuery(
+    async () => (await readSettings()).generationImageKinds,
+    [],
   );
+  const imageKinds: readonly EntityKind[] = storedImageKinds ?? [];
+  const selection = useMemo(
+    () => selectGenerationTargets({ module, artifacts, kinds, imageKinds, levelRange: range }),
+    [module, artifacts, kinds, imageKinds, range],
+  );
+
+  function toggleImageKind(kind: EntityKind, checked: boolean): void {
+    const next = checked ? [...imageKinds, kind] : imageKinds.filter((entry) => entry !== kind);
+    void updateSettings({ generationImageKinds: next }).catch((error: unknown) => {
+      toastError('Could not save the image preference', error);
+    });
+  }
 
   const blocked = blockedReason !== null;
   const empty = selection.totalCount === 0;
@@ -149,6 +166,7 @@ export function GenerationDialog({
         campaign,
         artifacts,
         kinds,
+        imageKinds,
         levelRange: range,
         encounterExtras: { battlemaps, mobPortraits },
       });
@@ -202,6 +220,33 @@ export function GenerationDialog({
                   </div>
                 ))}
               </div>
+            </fieldset>
+
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="pb-1 text-sm font-medium">
+                Also generate an image for (default: none; remembered)
+              </legend>
+              <div className="grid grid-cols-2 gap-1.5">
+                {GENERATION_KINDS.map((kind) => (
+                  <div key={kind} className="flex items-center gap-2">
+                    <Checkbox
+                      id={`generation-image-${kind}`}
+                      data-testid={`generation-image-${kind}`}
+                      checked={imageKinds.includes(kind)}
+                      onCheckedChange={(checked) => {
+                        toggleImageKind(kind, checked);
+                      }}
+                    />
+                    <Label htmlFor={`generation-image-${kind}`} className="text-sm">
+                      {generationKindLabel(kind)}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Images are only made as part of the run you confirm here, and only for entities
+                that have no image yet.
+              </p>
             </fieldset>
 
             <div className="flex flex-wrap items-end gap-3">

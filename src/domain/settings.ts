@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
+import { ENTITY_KINDS } from '@/domain/module';
 import {
   dungeonMapPathSchema,
   encounterMapAspectSchema,
@@ -386,6 +387,13 @@ export const settingsSchema = z.object({
     })
     .default({ image: false, statBlock: false, mobPortraits: false }),
   /**
+   * The generation dialog's remembered choice (docs/17 row 397): which entity
+   * kinds ALSO get an image when the owner confirms a run. A genuine user
+   * preference; absent = [] = no images (the pre-row-397 behaviour). It only
+   * pre-ticks the dialog - nothing generates without the confirm click.
+   */
+  generationImageKinds: z.array(z.enum(ENTITY_KINDS)).default([]),
+  /**
    * Parallelization (optimization feature): how many OpenRouter requests may
    * run at once when independent work is generated (entity batches, queued
    * entity images). 1 = the old sequential behavior. Dependent chains
@@ -462,6 +470,7 @@ export function defaultSettings(): Settings {
     encounterPreset: null,
     dungeonMapPath: 'classic',
     runExtras: { image: false, statBlock: false, mobPortraits: false },
+    generationImageKinds: [],
     maxParallelRequests: 2,
     cleanCut: null,
     onboarding: { status: 'fresh', stepState: [] },

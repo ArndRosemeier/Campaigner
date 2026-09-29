@@ -10183,3 +10183,7 @@ been the wrong instrument for a row that changed no prompt byte.
 
 - `tests/features/campaign-entry.test.tsx` (6): New campaign lands on `/c/<id>/m/<id>/canvas?chat=open` over an EMPTY document with no dialog and no fetch; an existing campaign without a document lands in the chat; `StubCreateDialog` asks first (nothing generated/classified on open), confirm calls `generateSingleEntity` once, decline calls nothing; the deleted dialog's identifiers appear in no file but this pin (the scan is non-vacuous because this file carries them). The live-query reads are wrapped in `actDrained` (section 1a).
 - Migrated, not weakened: the create-state/Writing-style describes of `module-ui-toast.test.tsx` and `new-module-draft.test.tsx` died with their surface; the four architecture scans were re-pointed at the new seam.
+
+### Row 397 - per-kind generation images
+
+- `tests/features/generation-selection.test.ts` (per-kind images): image targets only for toggled kinds, count follows. `tests/features/generation-dialog.test.tsx` (2 added): default none + toggle moves the printed count + preference round-trips into a fresh dialog; run dispatched with the same `imageKinds`. The dialog test now clears the DB per test (live settings query).

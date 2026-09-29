@@ -11,6 +11,8 @@ import {
   type Campaign,
   type Module,
 } from '@/domain';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { clearDatabase } from '../db/helpers';
 import { GenerationDialog } from '@/features/modules/generation-dialog';
 import { selectGenerationTargets } from '@/features/modules/generation-selection';
 import type { GenerationRunInput, GenerationRunReport } from '@/features/modules/generation-run';
@@ -112,8 +114,9 @@ function renderDialog(module: Module) {
   return { onOpenChange };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   runGenerationSelection.mockReset();
+  await clearDatabase();
 });
 
 describe('the scope statement', () => {
@@ -123,6 +126,7 @@ describe('the scope statement', () => {
       module,
       artifacts: ARTIFACTS,
       kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+      imageKinds: [],
       levelRange: { min: 1, max: 3 },
     });
     expect(expected.totalCount).toBe(5);
@@ -168,6 +172,7 @@ describe('the scope statement', () => {
         module,
         artifacts: ARTIFACTS,
         kinds: input?.kinds ?? [],
+        imageKinds: input?.imageKinds ?? [],
         levelRange: input?.levelRange ?? { min: 1, max: 1 },
       }).totalCount,
     ).toBe(5);
@@ -277,6 +282,7 @@ describe('a wide selection asks first', () => {
         module: widened,
         artifacts: ARTIFACTS,
         kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+        imageKinds: [],
         levelRange: { min: 1, max: 4 },
       }),
       generated: 0,
@@ -291,5 +297,53 @@ describe('a wide selection asks first', () => {
     await waitFor(() => {
       expect(runGenerationSelection).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('per-kind images (docs/17 row 397)', () => {
+  it('is none by default, toggling a kind changes the printed count, and the preference round-trips', async () => {
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    const first = render(
+      <GenerationDialog module={module} campaign={CAMPAIGN} artifacts={ARTIFACTS} open onOpenChange={vi.fn()} blockedReason={null} />,
+    );
+    expect(screen.getByTestId('generation-scope-count').textContent).toContain('0 images');
+    const before = selectGenerationTargets({
+      module, artifacts: ARTIFACTS, kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 },
+    });
+    await user.click(screen.getByTestId('generation-image-npc'));
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-scope-count').textContent).toContain(`${String(before.images.length)} image`);
+    });
+    expect((await readSettings()).generationImageKinds).toEqual(['npc']);
+    first.unmount();
+    // A fresh dialog opens with the stored choice.
+    render(
+      <GenerationDialog module={module} campaign={CAMPAIGN} artifacts={ARTIFACTS} open onOpenChange={vi.fn()} blockedReason={null} />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-image-npc').getAttribute('aria-checked')).toBe('true');
+    });
+    expect(screen.getByTestId('generation-image-location').getAttribute('aria-checked')).toBe('false');
+    expect(runGenerationSelection).not.toHaveBeenCalled();
+  });
+
+  it('runs with exactly the imageKinds the count was printed for', async () => {
+    await updateSettings({ generationImageKinds: ['npc'] });
+    const user = userEvent.setup();
+    const module = moduleFixture();
+    renderDialog(module);
+    await waitFor(() => {
+      expect(screen.getByTestId('generation-image-npc').getAttribute('aria-checked')).toBe('true');
+    });
+    runGenerationSelection.mockResolvedValue({
+      selection: selectGenerationTargets({ module, artifacts: ARTIFACTS, kinds: ['npc'], imageKinds: ['npc'], levelRange: { min: 1, max: 3 } }),
+      generated: 0, imageJobs: 0, mapJobs: 0, portraitJobs: 0, refused: null, classified: [], stopped: false,
+    });
+    await user.click(screen.getByTestId('generation-run'));
+    await waitFor(() => {
+      expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    });
+    expect(runGenerationSelection.mock.calls[0]?.[0].imageKinds).toEqual(['npc']);
   });
 });

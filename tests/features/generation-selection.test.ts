@@ -195,6 +195,7 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
       module,
       artifacts: [],
       kinds: ['npc', 'location'],
+      imageKinds: [],
       levelRange: { min: 1, max: 3 },
     });
 
@@ -236,7 +237,8 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
     const selection = selectGenerationTargets({
       module,
       artifacts,
-      kinds: ['npc', 'location', 'image'],
+      kinds: ['npc', 'location'],
+      imageKinds: ['npc'],
       levelRange: { min: 1, max: 3 },
     });
 
@@ -251,17 +253,31 @@ describe('selectGenerationTargets — the work sets and the announced count', ()
   });
 });
 
+describe('per-kind images (docs/17 row 397)', () => {
+  it('returns image targets only for kinds whose toggle is on, and the count follows', () => {
+    const module = moduleFixture();
+    const artifacts: AnyArtifact[] = ['npc', 'location'].map((kind, index) =>
+      createArtifact({
+        campaignId: module.campaignId,
+        moduleId: module.id,
+        kind: kind as 'npc' | 'location',
+        name: ['Kael', 'Ash Gate'][index] ?? '',
+        summary: '',
+        body: '',
+      }),
+    );
+    const pick = (imageKinds: ('npc' | 'location')[]) =>
+      selectGenerationTargets({ module, artifacts, kinds: ['npc', 'location'], imageKinds, levelRange: { min: 1, max: 3 } });
+    expect(pick([]).images).toEqual([]);
+    expect(pick(['npc']).images.map((t) => t.name)).toEqual(['Kael']);
+    expect(pick(['location']).images.map((t) => t.name)).toEqual(['Ash Gate']);
+    expect(pick(['npc', 'location']).totalCount - pick([]).totalCount).toBe(2);
+  });
+});
+
 describe('the dialog vocabulary', () => {
-  it('has the owner’s seven kinds, in the domain order, images last', () => {
-    expect(GENERATION_KINDS).toEqual([
-      'npc',
-      'location',
-      'event',
-      'faction',
-      'note',
-      'encounter',
-      'image',
-    ]);
+  it('has the six entity kinds, in the domain order (images are per kind, row 397)', () => {
+    expect(GENERATION_KINDS).toEqual(['npc', 'location', 'event', 'faction', 'note', 'encounter']);
     expect(GENERATION_KINDS.map(generationKindLabel)).toEqual([
       'NPC',
       'Location',
@@ -269,7 +285,6 @@ describe('the dialog vocabulary', () => {
       'Faction',
       'Note',
       'Encounter',
-      'Images',
     ]);
   });
 });

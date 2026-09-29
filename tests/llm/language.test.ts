@@ -37,6 +37,7 @@ const SETTINGS_BASE = {
   embeddingModel: 'e',
   embeddingsEnabled: false,
   wikiGroundingEnabled: true,
+  generationImageKinds: [],
   strictOutputs: true,
   imageModel: 'img',
   imagesEnabled: false,

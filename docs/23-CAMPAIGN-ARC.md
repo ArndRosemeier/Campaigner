@@ -1,3 +1,5 @@
+**BUILD STATE (2026-09-29, docs/17 row 397).** The generation dialog's images are PER KIND: `Settings.generationImageKinds` (remembered preference, default none) feeds `selectGenerationTargets({..., imageKinds})`; the `image` pseudo-kind is gone.
+
 # 23 — The campaign arc: ONE document, levels found by the separator
 
 **Status: OWNER-RATIFIED 2026-09-28.** This spec is the contract the arc's slices are briefed from.

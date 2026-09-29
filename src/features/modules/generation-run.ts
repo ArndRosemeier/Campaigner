@@ -71,6 +71,8 @@ export interface GenerationRunInput {
   campaign: Campaign;
   artifacts: readonly AnyArtifact[];
   kinds: readonly GenerationKind[];
+  /** Selected kinds that ALSO get an image (row 397). */
+  imageKinds: readonly EntityKind[];
   levelRange: GenerationLevelRange;
   encounterExtras: EncounterExtras;
 }
@@ -114,8 +116,8 @@ function targetsOfKind(selection: GenerationSelection, kind: EntityKind): Genera
 export async function runGenerationSelection(
   input: GenerationRunInput,
 ): Promise<GenerationRunReport> {
-  const { module, artifacts, kinds, levelRange } = input;
-  const selection = selectGenerationTargets({ module, artifacts, kinds, levelRange });
+  const { module, artifacts, kinds, imageKinds, levelRange } = input;
+  const selection = selectGenerationTargets({ module, artifacts, kinds, imageKinds, levelRange });
   const report: GenerationRunReport = {
     selection,
     generated: 0,

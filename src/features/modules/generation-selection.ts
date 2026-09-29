@@ -60,12 +60,16 @@ import { resolveWikiLink } from '@/lib/wikilinks';
  * ============================================================================
  */
 
-/** The generation dialog's kinds: the six entity kinds plus the image pass. */
-export const GENERATION_IMAGE_KIND = 'image' as const;
-export type GenerationKind = EntityKind | typeof GENERATION_IMAGE_KIND;
+/**
+ * The generation dialog's kinds: the six entity kinds. Images are PER KIND
+ * (docs/17 row 397): `imageKinds` names which of the selected kinds also get an
+ * image. Every entity kind is an artifact with a cover-image path
+ * (`imageTargets` answers for all six), so every kind offers the toggle.
+ */
+export type GenerationKind = EntityKind;
 
-/** The dialog's selectable kinds in the domain's own order, images last. */
-export const GENERATION_KINDS: readonly GenerationKind[] = [...ENTITY_KINDS, GENERATION_IMAGE_KIND];
+/** The dialog's selectable kinds in the domain's own order. */
+export const GENERATION_KINDS: readonly GenerationKind[] = ENTITY_KINDS;
 
 /**
  * A level RANGE, read the way docs/23 §2.1 says: "levels 1–3" means the level
@@ -234,6 +238,8 @@ export interface GenerationSelectionInput {
   module: Module;
   artifacts: readonly AnyArtifact[];
   kinds: readonly GenerationKind[];
+  /** Selected kinds that ALSO get an image (a kind not in `kinds` has no names to illustrate). */
+  imageKinds: readonly EntityKind[];
   levelRange: GenerationLevelRange;
 }
 
@@ -267,7 +273,7 @@ export interface GenerationSelection extends LevelNameSelection {
  */
 export function selectGenerationTargets(input: GenerationSelectionInput): GenerationSelection {
   const { module, kinds, levelRange } = input;
-  const entityKinds = kinds.filter((kind): kind is EntityKind => kind !== GENERATION_IMAGE_KIND);
+  const entityKinds = kinds;
   const list = moduleLevelList(moduleDocumentFromView(module), module.entityKinds);
   const names = selectLevelNames(list, entityKinds, levelRange);
 
@@ -285,6 +291,7 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
       const target = selected.get(`${kind}:${nameKey(name)}`);
       if (target !== undefined) detail.push(target);
     }
+    if (!input.imageKinds.includes(kind)) continue;
     for (const name of imageTargets(module, artifacts, kind)) {
       const target = selected.get(`${kind}:${nameKey(name)}`);
       if (target !== undefined) images.push(target);
@@ -325,7 +332,7 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
 
 /** The dialog's human label for a kind (the domain's own singular labels). */
 export function generationKindLabel(kind: GenerationKind): string {
-  return kind === GENERATION_IMAGE_KIND ? 'Images' : ARTIFACT_KIND_SINGULAR[kind];
+  return ARTIFACT_KIND_SINGULAR[kind];
 }
 
 /** Does this name have an authored, detailed entity of its own? (The panel's verdict.) */
