@@ -3,12 +3,10 @@ import 'fake-indexeddb/auto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -22,6 +20,7 @@ import { CROSS_PART_SELECTION_REASON } from '@/features/modules/canvas/CanvasPre
 import { SOURCE_MAP_REFUSALS } from '@/features/campaign/components/wiki-markdown';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt } from '../helpers/canvasPage';
 
 /**
  * The canvas AI actions IN THE PREVIEW (docs/17 row 102).
@@ -91,11 +90,6 @@ const WHOLE_DOC = assembleModuleDocument({
 const PART0_FROM = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.textFrom ?? 0;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });

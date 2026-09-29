@@ -1,11 +1,9 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { boardPath, canvasChatPath, canvasPath, documentPath, modulePath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
@@ -31,6 +29,7 @@ import type * as ChatPersistModule from '@/features/modules/canvas/chatPersist';
 import { assembleModuleDocument } from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt, openSidebar, sendChat } from '../helpers/canvasPage';
 
 /**
  * Canvas chat thread persistence (08-MODULE-DESIGNER §Module canvas chat,
@@ -159,11 +158,6 @@ const WHOLE_DOC = assembleModuleDocument({
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
-
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({
     name: 'Ember',
@@ -225,32 +219,7 @@ function mockChatReply(raw: string): void {
   chatMock.mockImplementation(() => Promise.resolve({ text: raw, modelUsed: 'test-model', fallback: null }));
 }
 
-async function openSidebar(
-  user: ReturnType<typeof userEvent.setup>,
-): Promise<void> {
-  // Front door: the sidebar is OPEN by default — only toggle when closed.
-  if (screen.queryByTestId('canvas-chat') === null) {
-    await user.click(await screen.findByTestId('canvas-chat-toggle'));
-  }
-  expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
-  // The canvas opens in preview by default — these flows drive the editor.
-  if (screen.queryByTestId('canvas-preview') !== null) {
-    await user.click(screen.getByTestId('canvas-preview-toggle'));
-  }
-  await screen.findByTestId('canvas-editor');
-}
-
 /** Types an instruction and sends it; drains the detached chat chain. */
-async function sendChat(
-  user: ReturnType<typeof userEvent.setup>,
-  text: string,
-): Promise<void> {
-  const input = screen.getByTestId('canvas-chat-input');
-  await user.type(input, text);
-  await user.click(screen.getByTestId('canvas-chat-send'));
-  await flushAsyncUpdates();
-}
-
 describe('canvas chat thread persistence', () => {
   it('writes the thread after each settled turn (debounced) and restores messages + outcomes as history on reload — never auto-applied', async () => {
     const user = userEvent.setup();

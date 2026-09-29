@@ -9,6 +9,7 @@ import {
   EraserIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
+  RotateCcwIcon,
   SendHorizonalIcon,
 } from 'lucide-react';
 
@@ -42,6 +43,15 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
+import {
+  ChatRetryRefusedError,
+  RETRY_UNAVAILABLE_REASON,
+  chatRetryLabel,
+  chatRetryPlan,
+  chatRetryTarget,
+  type ChatRetryPlan,
+  type ChatRetryTarget,
+} from '@/features/modules/canvas/chatRetry';
 import {
   ADVISOR_SCOPE_LABELS,
   advisorApprovalText,
@@ -112,9 +122,15 @@ export interface ChatSidebarProps {
   aiBusyReason: string | null;
   /** Preview mode: the editor is unmounted, so sends + reports ride the
    * preview snapshot through the page's snapshot turn runner (the chat is
-   * fully live in preview — same protocol, same outcome cards). */
+   * fully live in preview — same protocol, same outcome cards). The optional
+   * `doc` names the snapshot the send must run over when the CALLER has just
+   * produced it — the RETRY, whose undo wrote a restored document inside the
+   * same click (docs/17 row 408). Reading the page's own state there would hand
+   * the turn the text from BEFORE the undo, because a React callback keeps the
+   * render it was created in. Omitted by every other caller, which then reads
+   * the live preview. */
   previewOpen: boolean;
-  onPreviewSend: ((text: string) => Promise<void>) | undefined;
+  onPreviewSend: ((text: string, doc?: string) => Promise<void>) | undefined;
   onPreviewReportOutcome:
     | ((messageId: string, outcome: CanvasChatOutcome) => void)
     | undefined;
@@ -128,6 +144,18 @@ export interface ChatSidebarProps {
     | undefined;
   /** Preview-mode Stop: aborts the page-owned snapshot turn. */
   onPreviewStop: (() => void) | undefined;
+  /**
+   * RETRY (docs/17 row 408): undoes the target answer's DOCUMENT changes
+   * through the page's restore write — the page owns the live document (the
+   * editor view or the preview snapshot) and the row write; the sidebar owns
+   * the re-send that follows. It RESOLVES with the restored document text, so
+   * the re-send over the preview surface runs on exactly the text the undo
+   * wrote instead of on the page state this click's render captured.
+   * REQUIRED for the Retry control to exist: a surface that cannot name its
+   * undo has no honest retry, and the control is then gated off with that
+   * reason rather than offered.
+   */
+  onRetryUndo: ((target: ChatRetryTarget) => Promise<string>) | undefined;
   /**
    * The chat was cleared (all three store/row slices are already pristine):
    * the page drops its `lastReplacement` state, which is what removes the
@@ -155,6 +183,7 @@ export function ChatSidebar({
   onPreviewReportMessage,
   onEditorTurnApplied,
   onPreviewStop,
+  onRetryUndo,
   onChatCleared,
   levelProblems = [],
 }: ChatSidebarProps): JSX.Element {
@@ -185,6 +214,10 @@ export function ChatSidebar({
   const messages = state?.messages ?? [];
   const modelSelection = state?.modelSelection ?? null;
   const inFlight = state?.inFlight ?? false;
+  // The answer a Retry control would replace (docs/17 row 408) — recomputed on
+  // every render from the live thread, so the control's label and the act
+  // behind it are the same decision.
+  const retryTarget = chatRetryTarget(chatKey);
   const effectiveModel = modelSelection ?? settings?.defaultChatModel ?? '';
   const sendDisabled = aiBusy || inFlight || input.trim() === '';
   // WHY a chat control cannot act (null = it can), stated through the shared
@@ -197,9 +230,10 @@ export function ChatSidebar({
   const reportBlockedReason = chatBlockedReason(aiBusyReason, inFlight);
   const sendBlockedReason = chatBlockedReason(aiBusyReason, false);
 
-  async function send(text: string): Promise<void> {
+  async function send(text: string, doc?: string): Promise<void> {
     // Preview mode: the editor is unmounted — the turn runs against the
-    // preview snapshot through the page (no view needed).
+    // preview snapshot through the page (no view needed). `doc` is the retry's
+    // just-restored snapshot; every other caller lets the page read its own.
     if (previewOpen) {
       if (onPreviewSend === undefined) {
         toastError('The editor is not ready — try again', new Error('canvas chat needs a preview snapshot'));
@@ -207,7 +241,7 @@ export function ChatSidebar({
       }
       setInput('');
       try {
-        await onPreviewSend(text);
+        await onPreviewSend(text, doc);
       } catch (error) {
         if (error instanceof ModuleBusyError) {
           toastModuleBusy(error);
@@ -302,6 +336,70 @@ export function ChatSidebar({
         toastError('Chat failed', error);
       }
     }
+  }
+
+  /** The retry plan the control renders — and, when this surface has no undo
+   * seam at all, the plan that gates the control OFF with the reason rather
+   * than offering a control that could only refuse (docs/17 row 408). */
+  function retryPlanFor(target: ChatRetryTarget): ChatRetryPlan {
+    const plan = chatRetryPlan(target);
+    if (onRetryUndo !== undefined) return plan;
+    return { ...plan, refusal: RETRY_UNAVAILABLE_REASON, undoesDocument: false };
+  }
+
+  /**
+   * RETRY the last answer (docs/17 row 408), in the order the honesty requires:
+   * the undo FIRST (the page writes the durable restore through the existing
+   * restore seam, which snapshots the pre-restore text), and only then the
+   * exchange is dropped and re-sent — so a refused or failed undo leaves the
+   * thread and the document exactly as they were.
+   *
+   * The re-send goes through the SIDEBAR'S OWN `send` — the same surface, model
+   * selection, framing and pipeline as a first send — with the instruction
+   * taken verbatim from the user message. The draft in the input box is
+   * preserved (the `approveAdvisor` precedent): a retry must never eat what the
+   * owner was typing.
+   */
+  async function retry(): Promise<void> {
+    const target = chatRetryTarget(chatKey);
+    if (target === null) {
+      toastError(
+        'There is no answer to retry — send a message first.',
+        new Error('canvas chat retry found no settled answer'),
+      );
+      return;
+    }
+    const plan = chatRetryPlan(target);
+    if (plan.refusal !== null) {
+      toastError(plan.refusal, new Error('canvas chat retry refused: the answer changed more than the document'));
+      return;
+    }
+    if (onRetryUndo === undefined) {
+      toastError(
+        'Retry is not available here — the canvas cannot undo the answer on this surface.',
+        new Error('canvas chat retry needs the page undo seam'),
+      );
+      return;
+    }
+    let restored: string;
+    try {
+      restored = await onRetryUndo(target);
+    } catch (error) {
+      toastError(
+        error instanceof ChatRetryRefusedError
+          ? error.message
+          : 'Retry could not undo that answer — nothing was re-asked; the thread and the document are unchanged.',
+        error,
+      );
+      return;
+    }
+    // The answer is undone: the exchange goes (the send re-adds the instruction
+    // verbatim), and the SAME instruction runs again through the same path —
+    // over the text the undo just restored.
+    useCanvasChatStore.getState().removeMessages(chatKey, target.messageIds);
+    const draft = input;
+    await send(target.instruction, previewOpen ? restored : undefined);
+    setInput(draft);
   }
 
   /** Caret / selection right now: the editor's in Edit, the preview capture in Preview. */
@@ -506,6 +604,18 @@ export function ChatSidebar({
                 moduleId={moduleId}
                 disabled={inFlight || aiBusy}
                 disabledReason={reportBlockedReason}
+                // The Retry control exists on the LAST answer of the exchange
+                // and nowhere else (docs/17 row 408): it re-runs THAT exchange,
+                // so offering it on an older answer would offer to undo work a
+                // later answer already built on.
+                retry={
+                  retryTarget !== null && retryTarget.lastAnswer.id === message.id
+                    ? retryPlanFor(retryTarget)
+                    : null
+                }
+                onRetry={() => {
+                  void retry();
+                }}
                 onReportOutcome={(outcome) => {
                   onReportOutcome(message.id, outcome);
                 }}
@@ -773,6 +883,8 @@ function ChatBubble({
   moduleId,
   disabled,
   disabledReason,
+  retry,
+  onRetry,
   onReportOutcome,
   onReportMessage,
   onApproveAdvisor,
@@ -786,6 +898,10 @@ function ChatBubble({
   disabled: boolean;
   /** Why the Report buttons are held (null = they are live). */
   disabledReason: string | null;
+  /** What a retry of THIS message would do — non-null only on the last answer
+   * (docs/17 row 408). */
+  retry: ChatRetryPlan | null;
+  onRetry: () => void;
   onReportOutcome: (outcome: CanvasChatOutcome) => void;
   onReportMessage: () => void;
 }): JSX.Element {
@@ -912,6 +1028,32 @@ function ChatBubble({
           onReport={onReportOutcome}
         />
       ))}
+      {retry !== null && (
+        // THE RETRY CONTROL (docs/17 row 408). Its label says what the click
+        // does — that it UNDOES the document changes this answer made, and
+        // which record-level statements stay applied — because a retry that
+        // re-asked while the old edits stayed put would double-apply, and one
+        // that promised an undo it did not perform would lie. An answer whose
+        // changes a retry CANNOT undo is gated off here with the named reason.
+        <BlockedControl
+          testId="canvas-chat-retry"
+          reason={retry.refusal ?? (disabled ? disabledReason : null)}
+          side="top"
+          className="self-start"
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-11 self-start"
+            data-testid="canvas-chat-retry"
+            disabled={retry.refusal !== null || disabled}
+            onClick={onRetry}
+          >
+            <RotateCcwIcon aria-hidden data-icon="inline-start" />
+            {retry.refusal === null ? chatRetryLabel(retry) : 'Retry'}
+          </Button>
+        </BlockedControl>
+      )}
     </div>
   );
 }

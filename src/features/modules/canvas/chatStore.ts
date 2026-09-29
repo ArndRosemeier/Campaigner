@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { AdvisorCard } from '@/domain/advisors';
+import type { ModuleChatRetryUndo } from '@/domain';
 import type { CanvasChatFraming, CanvasEditCommand } from '@/llm/canvasChat';
 
 /**
@@ -94,6 +95,15 @@ export interface CanvasChatMessage {
   /** Present only on an ADVISOR card (docs/17 row 396): the lens, the model and
    * the pending/approved/dismissed state. The message `text` is the critique. */
   advisor?: AdvisorCard | null | undefined;
+  /**
+   * Present only on the LAST assistant message of a turn that changed
+   * something (docs/17 row 408): what a retry of that answer must undo (the
+   * durable pre-answer snapshot + the document the answer left + any changes a
+   * retry cannot undo). Absent = the answer changed nothing, so a retry is a
+   * plain re-ask. The shape is the domain's own (`ModuleChatRetryUndo`), so the
+   * persisted row and the live store cannot drift.
+   */
+  retryUndo?: ModuleChatRetryUndo | null | undefined;
 }
 
 export interface CanvasChatModuleState {
@@ -150,6 +160,13 @@ interface CanvasChatStoreState {
   clearModule: (key: string) => void;
   addMessage: (key: string, message: CanvasChatMessage) => void;
   updateMessage: (key: string, messageId: string, patch: Partial<CanvasChatMessage>) => void;
+  /**
+   * Drops the named messages from ONE conversation, in order — the chat RETRY's
+   * own store half (docs/17 row 408): the answer being replaced goes, the user
+   * instruction it answered is re-sent through the EXISTING send path (which
+   * re-adds it), so no answer accumulates and no question is left orphaned.
+   */
+  removeMessages: (key: string, messageIds: readonly string[]) => void;
   markOutcomeReported: (key: string, messageId: string, outcomeId: string) => void;
 }
 
@@ -240,6 +257,21 @@ export const useCanvasChatStore = create<CanvasChatStoreState>((set, get) => ({
             messages: moduleState.messages.map((message) =>
               message.id === messageId ? { ...message, ...patch } : message,
             ),
+          },
+        },
+      };
+    });
+  },
+  removeMessages: (key, messageIds) => {
+    const doomed = new Set(messageIds);
+    set((state) => {
+      const moduleState = state.byModule[key] ?? EMPTY_STATE;
+      return {
+        byModule: {
+          ...state.byModule,
+          [key]: {
+            ...moduleState,
+            messages: moduleState.messages.filter((message) => !doomed.has(message.id)),
           },
         },
       };

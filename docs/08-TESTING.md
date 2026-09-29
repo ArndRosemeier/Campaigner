@@ -4287,13 +4287,21 @@ scopes and the inventory declares them instead. **Nothing was folded in this
 slice.**
 
 **The inventory, classified.** The dominant FOLD candidates (each naming a
-seam in its reason): `renderAppAt` ×20 jsdom tests, `sourceFiles` ×12 plus its
-synchronous `walk`/`srcFiles` twins ×8/×8 (source-scan helpers),
-`stripComments` ×8, an identical dnd5e level-1 `statBlock` fixture ×6,
-`sendChat` ×5, `briefs` ×5, the `mockChatReply` families ×4, and the
-`textOf`/`deferred`/pack-dependency/canvas-seed families. The LEGITIMATE
-family is per-test inline scenario data (campaign/module/persona seeds and mock
-LLM reply strings) where each test deliberately owns its numbers.
+seam in its reason): `sourceFiles` ×12 plus its synchronous `walk`/`srcFiles`
+twins ×8/×8 (source-scan helpers), `stripComments` ×8, an identical dnd5e
+level-1 `statBlock` fixture ×6, `briefs` ×5, the `mockChatReply` families ×4,
+and the `textOf`/`deferred`/pack-dependency/canvas-seed families. The
+LEGITIMATE family is per-test inline scenario data (campaign/module/persona
+seeds and mock LLM reply strings) where each test deliberately owns its
+numbers. **THREE of the families this list used to open with are GONE,
+folded at docs/17 row 408:** `renderAppAt` (the body pasted into TEN canvas
+suites plus `board-page-flush`'s `renderBoardAt`, the same body under another
+name), `sendChat` (five canvas drivers plus `canvas-coauthor`'s inline
+variant) and `openSidebar` (×2). They now live ONCE in
+`tests/helpers/canvasPage.tsx`, and their three inventory entries were
+DELETED rather than re-blessed. The measured capture above (136 groups / 390
+sites at `b712e8e`) stays as the record of why the floor did not move; the
+test-tree inventory is 119 groups at row 408.
 
 | fact pinned | where |
 |---|---|
@@ -4301,7 +4309,7 @@ LLM reply strings) where each test deliberately owns its numbers.
 | **The test-tree population equals the NEW inventory exactly** — a NEW copy in a test reds `NEW DUPLICATE` naming every `file:function:line` and the shared hash | same (the new `src/`-style pin over `TESTS_SCOPE`) |
 | **The shared comparison's three arms** — `NEW DUPLICATE`, `BASELINE SITE MISMATCH`, `STALE BASELINE ENTRY` (naming the inventory line to delete) are pinned on synthetic inputs, so the test-tree inventory has the SAME stale-entry behaviour as the `src/` one | same (the shared-helper `describe`) |
 | **`tests/fixtures/**` is excluded, everything else under `tests/` is not** — the scanned file list contains `tests/setup.ts`, `tests/helpers/**` and the detector, and a temp-seeded three-copy tree reports 2 sites with the exclusion and 3 WITHOUT it (the arms differ) | same (the scope pins) |
-| **Non-vacuity** — a renamed pair under a `tests/`-shaped temp root is detected, and the landed inventory is non-empty (136 groups) | same |
+| **Non-vacuity** — a renamed pair under a `tests/`-shaped temp root is detected, and the landed inventory is non-empty (`groups.length > 0`, never a frozen count — a fold deletes entries) | same |
 | **The scope and the exclusion are asserted from the test-tree inventory header as data**, never left to prose in a comment | same (the header pin reading the JSON) |
 | **`NORMALIZED_FLOOR` is still exactly ONE declaration, at 75** | same (a source scan of the detector file) |
 

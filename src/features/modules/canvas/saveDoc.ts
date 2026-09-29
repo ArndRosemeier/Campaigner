@@ -56,6 +56,14 @@ export interface SaveWholeDocResult {
   /** The `planIndex`es whose text changed and were persisted (level − 1; the
    * premise is `-1`). */
   savedPlanIndexes: number[];
+  /**
+   * The durable pre-change snapshot this save took (docs/18 §2.3), or `null`
+   * for a `'user'` save and for an `'ai'` save whose pre-change document was
+   * EMPTY (the snapshot seam records nothing to lose). The chat turn keeps the
+   * FIRST id it sees for the answer's RETRY record (docs/17 row 408): the first
+   * snapshot of a turn is the document as it stood before the answer.
+   */
+  snapshotId: string | null;
 }
 
 export async function saveWholeModuleDocument(input: {
@@ -89,13 +97,19 @@ export async function saveWholeModuleDocument(input: {
    */
   restorePremise?: string | undefined;
 }): Promise<SaveWholeDocResult> {
+  let snapshotId: string | null = null;
   if (input.origin === 'ai') {
     if (input.version === undefined) {
       throw new Error(
         'an AI document save must name its version snapshot — the durable pre-change capture is required (docs/18 §2.3)',
       );
     }
-    await snapshotModuleVersion(input.moduleId, input.version.source, input.version.label);
+    const snapshot = await snapshotModuleVersion(
+      input.moduleId,
+      input.version.source,
+      input.version.label,
+    );
+    snapshotId = snapshot?.id ?? null;
   }
   // THE ONE parse of what is about to be written: a malformed document is
   // refused HERE, by line, before any row write and before any ledger entry —
@@ -149,5 +163,5 @@ export async function saveWholeModuleDocument(input: {
       label: input.label,
     });
   }
-  return { savedPlanIndexes: changedPlanIndexes };
+  return { savedPlanIndexes: changedPlanIndexes, snapshotId };
 }

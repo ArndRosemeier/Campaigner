@@ -1,11 +1,9 @@
 import 'fake-indexeddb/auto';
 
-import { act, render, screen, within } from '@testing-library/react';
+import { type render, act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
@@ -29,6 +27,7 @@ import type * as LevelTextModule from '@/features/modules/levelText';
 import type * as ModuleRepoModule from '@/db/moduleRepo';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt, sendChat } from '../helpers/canvasPage';
 
 /**
  * The canvas Versions menu (08-MODULE-DESIGNER §Module canvas versions, docs/18
@@ -124,11 +123,6 @@ let world: { campaignId: Id; moduleId: Id; otherModuleId: Id } = {
   moduleId: '',
   otherModuleId: '',
 };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedOneModule(campaignId: Id, title: string, createdAt: number): Promise<Id> {
   const draft = createModule({
@@ -247,13 +241,6 @@ async function runInstruction(
   const dialog = await screen.findByTestId('canvas-instruction-dialog');
   await user.type(within(dialog).getByTestId('canvas-instruction-input'), text);
   await user.click(within(dialog).getByTestId('canvas-instruction-confirm'));
-  await flushAsyncUpdates();
-}
-
-async function sendChat(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
-  const input = screen.getByTestId('canvas-chat-input');
-  await user.type(input, text);
-  await user.click(screen.getByTestId('canvas-chat-send'));
   await flushAsyncUpdates();
 }
 

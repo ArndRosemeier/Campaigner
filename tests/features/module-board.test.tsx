@@ -1,10 +1,8 @@
 import 'fake-indexeddb/auto';
 
-import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { RouterProvider } from 'react-router-dom';
+import { act, createEvent, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { boardPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -33,6 +31,7 @@ import {
   resolveBoardNodePositions,
   seedBoardNodePositions,
 } from '@/features/modules/board/boardLayout';
+import { renderAppAt } from '../helpers/canvasPage';
 
 /**
  * Whole-module board — SUBSTRATE (08-MODULE-DESIGNER §Module board,
@@ -49,11 +48,6 @@ const PREMISE = 'The party is hired to recover a drowned relic from the [[Old To
 const PART_0_TEXT =
   'The party bargains with [[Keeper Ilse]] at the gate while the [[Ember Key]] glows.';
 const PART_1_TEXT = 'Below the tower, the [[Ember Key]] opens the flooded door.';
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 let seq = 0;
 

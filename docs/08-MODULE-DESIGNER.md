@@ -2763,6 +2763,60 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   preview turns need no editor).
 
 
+#### Retry the last answer — UNDO that answer, then ask again (docs/17 row 408)
+
+Owner request, verbatim: *"Ok, i would like to have a retry button in the AI
+chat for the last answer the LLM gave."* The felt problem is an answer that
+missed; the honest core of the fix is the UNDO, because re-asking over an
+answer whose edits are still applied would double-apply them.
+
+- **WHICH answer**: the LAST settled, non-advisor assistant message, with the
+  user instruction it answered and every message the retry drops
+  (`chatRetry.chatRetryTarget`). Never a user message, never an advisor card,
+  never a second-to-last answer — the control renders on the last answer only,
+  and the retry re-runs that whole exchange (a `<request>` turn's follow-up
+  answers included), so no work a later answer built on can be undone silently.
+- **WHAT the click does, said on the button**: `Retry (undoes the changes this
+  answer made)` when the answer changed the document; plain `Retry` when it
+  changed nothing (a failed or no-edit answer has nothing to undo); and, when
+  the answer also wrote LEVEL STATEMENTS into entity records, the label adds
+  that those stay applied (they are record writes with no snapshot — re-stating
+  a level is an idempotent overwrite, never a double-apply), with the names on
+  the control's tooltip. `chatRetryPlan`/`chatRetryLabel` decide both the label
+  and the act in ONE place, so they cannot disagree.
+- **THE UNDO**: the document is restored to the durable pre-answer snapshot
+  that turn itself took (`ChatSidebar` → `CanvasPage.handleRetryUndo` →
+  `chatRetry.performRetryUndo`), through the EXISTING restore write —
+  `saveWholeModuleDocument` with `source: 'restore'` — which snapshots the text
+  it is about to replace FIRST, so a retry is itself undoable from the Versions
+  menu. The live document is put back through the surface's own write (ONE
+  CodeMirror transaction in Edit; the preview snapshot state in Preview) only
+  AFTER the row write succeeded. The retry record rides the answer message
+  (`retryUndo`: which version, what the answer left, what cannot be undone) and
+  persists with the thread.
+- **REFUSED loudly, writing nothing**: the document is not exactly what the
+  answer left — the owner restored an older version, edited by hand, or a later
+  AI write moved it — with the same "the document changed since …" idiom the
+  canvas's stale-selection refusal uses; the durable version is gone (Clear all
+  versions); or the version is in the legacy parts-document format. An answer
+  that changed a STORED ARTIFACT ROW through `<change>` **gates the control off
+  with the reason** (naming the row): a retry can only undo the document, and
+  re-asking while a regeneration stands would be the double-apply this design
+  exists to prevent. A surface with no undo seam gates the control off too.
+- **THE RE-RUN** is the SAME send path — same surface, model selection, framing
+  and pipeline — with the instruction verbatim; the exchange is dropped first
+  and the send re-adds the instruction, so the thread ends with ONE instruction
+  and ONE answer. Both surfaces (Campaign chat and GM assist) and both views
+  (Edit and Preview) use this ONE code path; nothing fires automatically.
+- **Pins**: `tests/features/canvas-chat-retry.test.tsx` (11) — pre-answer bytes
+  asserted as TEXT, the old answer gone and the instruction kept, the
+  pre-restore snapshot still on the stack, a failed/no-edit answer writing
+  nothing, the last-answer-only control, the stale refusal, the gone-version
+  refusal, the artifact-change gate with its reason, the level-statement label,
+  two retries with one snapshot per write, the GM-assist surface and the
+  preview surface.
+
+
 #### GM assist — a SECOND chat surface on the ONE pipeline (docs/17 row 362)
 
 Owner request, verbatim: *"I want to have a new module chat, called GM assist.

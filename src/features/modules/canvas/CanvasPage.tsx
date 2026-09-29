@@ -116,6 +116,13 @@ import {
 } from '@/features/modules/canvas/canvasScope';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import {
+  ChatRetryRefusedError,
+  performRetryUndo,
+  type ChatRetrySurface,
+  type ChatRetryTarget,
+} from '@/features/modules/canvas/chatRetry';
+import { editorChatHandle } from '@/features/modules/canvas/chatApply';
+import {
   acceptSuggestion,
   canvasShowPreviousField,
   newSuggestionId,
@@ -1286,9 +1293,15 @@ export function CanvasPage(): JSX.Element {
    * preview. A malformed snapshot fails the send LOUDLY through the
    * existing `ModuleDocumentError` path (failed card). Busy
    * rethrows for the sidebar's toast (canvasRefine surface).
+   *
+   * `doc` names the snapshot the turn must run over when the CALLER has just
+   * produced it — the chat RETRY, whose undo restored the document in the same
+   * click (docs/17 row 408) — because this function's own `previewDoc` state is
+   * the one captured by the render the click started in, i.e. the text from
+   * BEFORE that undo. Every other caller omits it and reads the live preview.
    */
-  async function handlePreviewSend(text: string): Promise<void> {
-    const source = previewDoc ?? mountDoc ?? initialDoc;
+  async function handlePreviewSend(text: string, doc?: string): Promise<void> {
+    const source = doc ?? previewDoc ?? mountDoc ?? initialDoc;
     if (source === null) {
       toastError('The preview is not ready — try again', new Error('canvas preview snapshot missing'));
       return;
@@ -1400,6 +1413,66 @@ export function CanvasPage(): JSX.Element {
     if (lastApplied.length > 0) {
       setLastReplacement({ doc, ranges: lastApplied });
     }
+  }
+
+  /**
+   * The RETRY undo (docs/17 row 408), for whichever view is mounted. The page
+   * owns the live document — the CM6 view in Edit, the snapshot string in
+   * Preview (the editor is unmounted there by contract) — so it owns the ONE
+   * way the restored text is put back, and hands `chatRetry.performRetryUndo` a
+   * surface over it:
+   *
+   * - EDIT: the restored text is ONE CodeMirror transaction through the chat's
+   *   own `editorChatHandle` (one undo step, exactly like a chat apply), and the
+   *   page's baseline advances with it — the row was written by the SAME call,
+   *   so a "dirty" Save affordance right after a retry would be a lie;
+   * - PREVIEW: the snapshot the preview renders from advances, through the same
+   *   page state the preview turns already advance (`setPreviewDoc` /
+   *   `setBaselineDoc` / `setDocText`).
+   *
+   * The row write itself happens INSIDE `performRetryUndo` — through the
+   * existing restore seam, pre-restore snapshot included — so nothing here
+   * writes the campaign document. The highlight is dropped: it belonged to the
+   * answer being undone.
+   */
+  async function handleRetryUndo(target: ChatRetryTarget): Promise<string> {
+    const view = activeCanvasView.current;
+    let surface: ChatRetrySurface;
+    if (!previewOpen) {
+      if (view === null) {
+        throw new ChatRetryRefusedError(
+          'The editor is not ready — nothing was undone and nothing was asked again.',
+        );
+      }
+      surface = {
+        read: () => view.state.doc.toString(),
+        write: (text) => {
+          editorChatHandle(view).replaceRanges([{ from: 0, to: view.state.doc.length }], text);
+          setDocText(text);
+          setBaselineDoc(text);
+        },
+      };
+    } else {
+      const source = previewDoc ?? mountDoc ?? initialDoc;
+      if (source === null) {
+        throw new ChatRetryRefusedError(
+          'The preview is not ready — nothing was undone and nothing was asked again.',
+        );
+      }
+      surface = {
+        read: () => source,
+        write: (text) => {
+          setPreviewDoc(text);
+          setBaselineDoc(text);
+          setDocText(text);
+        },
+      };
+    }
+    const { restored } = await performRetryUndo({ moduleId, target, surface });
+    // The mark belonged to the answer that was just undone; the next turn sets
+    // its own.
+    setLastReplacement(null);
+    return restored;
   }
 
   /**
@@ -2072,7 +2145,7 @@ export function CanvasPage(): JSX.Element {
                   aiBusy={aiBlocked}
                   aiBusyReason={aiBlockedReason}
                   previewOpen={previewOpen}
-                  onPreviewSend={(text) => handlePreviewSend(text)}
+                  onPreviewSend={(text, doc) => handlePreviewSend(text, doc)}
                   onPreviewReportOutcome={(messageId, outcome) => {
                     handlePreviewReportOutcome(messageId, outcome);
                   }}
@@ -2082,6 +2155,7 @@ export function CanvasPage(): JSX.Element {
                   onPreviewStop={() => {
                     previewAbortRef.current?.abort();
                   }}
+                  onRetryUndo={(target) => handleRetryUndo(target)}
                   onEditorTurnApplied={(doc, applied) => {
                     handleEditorTurnApplied(doc, applied);
                   }}

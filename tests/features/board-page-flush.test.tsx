@@ -6,11 +6,9 @@ import { join } from 'node:path';
 import type * as ModuleRepo from '@/db/moduleRepo';
 import type * as Sonner from 'sonner';
 
-import { act, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { RouterProvider } from 'react-router-dom';
+import { act, createEvent, fireEvent, type render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { boardPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
@@ -26,6 +24,7 @@ import { useBoardStore } from '@/features/modules/board/boardStore';
 import { BOARD_PERSIST_DEBOUNCE_MS } from '@/features/modules/board/BoardPage';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt } from '../helpers/canvasPage';
 
 /**
  * THE BOARD'S PAGE-HIDE FLUSH (docs/17 row 111 + row 118, `lib/pageFlush`).
@@ -155,13 +154,8 @@ async function seedBoard(): Promise<World> {
   return { campaignId: campaign.id, moduleId: saved.id };
 }
 
-function renderBoardAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
-
 async function mountBoard(world: World): Promise<ReturnType<typeof render>> {
-  const view = renderBoardAt(boardPath(world.campaignId, world.moduleId));
+  const view = renderAppAt(boardPath(world.campaignId, world.moduleId));
   await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
   return view;
 }

@@ -32,14 +32,6 @@
       ]
     },
     {
-      "hash": "0b70084b64fc9c2f",
-      "reason": "Two `openSidebar` canvas-chat drivers (canvas-chat-thread, canvas-chat) that click the toggle and await the panel; foldable onto a shared canvas-chat test helper.",
-      "sites": [
-        "tests/features/canvas-chat-thread.test.tsx:openSidebar",
-        "tests/features/canvas-chat.test.tsx:openSidebar"
-      ]
-    },
-    {
       "hash": "0d6b98b88fe84e36",
       "reason": "Two `hangGeneration` deferred image-generation stubs inside portrait-queues.test.ts that hold the mock until an abort; one local helper is a real fold candidate.",
       "sites": [
@@ -63,22 +55,6 @@
       "sites": [
         "tests/lib/modulePdf.test.ts:owned",
         "tests/lib/pdfLayoutFixtures.ts:owned"
-      ]
-    },
-    {
-      "hash": "1b4231fcc2b5be7a",
-      "reason": "`renderAppAt` route-level render helper pasted into TEN jsdom tests (blocked-reasons, board-page-flush, four canvas-chat/preview tests, canvas-versions, module-board, module-canvas); ONE `tests/helpers/renderApp.ts` is the obvious seam.",
-      "sites": [
-        "tests/features/blocked-reasons.test.tsx:renderAppAt",
-        "tests/features/board-page-flush.test.tsx:renderBoardAt",
-        "tests/features/canvas-chat-clear.test.tsx:renderAppAt",
-        "tests/features/canvas-chat-thread.test.tsx:renderAppAt",
-        "tests/features/canvas-chat.test.tsx:renderAppAt",
-        "tests/features/canvas-preview-ai-actions.test.tsx:renderAppAt",
-        "tests/features/canvas-preview-default.test.tsx:renderAppAt",
-        "tests/features/canvas-versions.test.tsx:renderAppAt",
-        "tests/features/module-board.test.tsx:renderAppAt",
-        "tests/features/module-canvas.test.tsx:renderAppAt"
       ]
     },
     {
@@ -945,17 +921,6 @@
         "tests/features/entity-intent-batch.test.ts:briefs",
         "tests/features/entity-level-hint-batch.test.ts:briefs",
         "tests/llm/kindOwnershipBoundary.test.ts:briefs"
-      ]
-    },
-    {
-      "hash": "dffdfbcf260fbd15",
-      "reason": "Five `sendChat` canvas-chat drivers (canvas-chat-clear, canvas-chat-thread, canvas-chat, canvas-preview-default, canvas-versions); ONE shared canvas-chat driver carries them.",
-      "sites": [
-        "tests/features/canvas-chat-clear.test.tsx:sendChat",
-        "tests/features/canvas-chat-thread.test.tsx:sendChat",
-        "tests/features/canvas-chat.test.tsx:sendChat",
-        "tests/features/canvas-preview-default.test.tsx:sendChat",
-        "tests/features/canvas-versions.test.tsx:sendChat"
       ]
     },
     {

@@ -1,11 +1,9 @@
 import 'fake-indexeddb/auto';
 
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -30,6 +28,7 @@ import {
 } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { patchModule } from '@/db/moduleRepo';
+import { renderAppAt } from '../helpers/canvasPage';
 
 /**
  * Module canvas — page flows (08-MODULE-DESIGNER §Module canvas, canvas v3):
@@ -100,11 +99,6 @@ const WHOLE_DOC = assembleModuleDocument({
 const PART0_FROM = moduleDocumentSections(WHOLE_DOC, PART_PLAN)[1]?.textFrom ?? 0;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });

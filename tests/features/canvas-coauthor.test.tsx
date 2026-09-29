@@ -3,9 +3,9 @@ import 'fake-indexeddb/auto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { RouterProvider } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
@@ -30,6 +30,7 @@ import { previewScrollAnchor, scrollPreviewToPos } from '@/features/modules/canv
 import { useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import { useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
+import { sendChat } from '../helpers/canvasPage';
 
 /**
  * Co-authoring arc (docs/17 row 399, docs/23): click-to-edit with position
@@ -183,12 +184,6 @@ async function typeIntoEditor(from: number, insert: string): Promise<void> {
 
 function mockReply(raw: string): void {
   chatMock.mockResolvedValue({ text: raw, modelUsed: 'coauthor-model', fallback: null });
-}
-
-async function sendChat(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
-  await user.type(screen.getByTestId('canvas-chat-input'), text);
-  await user.click(screen.getByTestId('canvas-chat-send'));
-  await flushAsyncUpdates();
 }
 
 describe('click-to-edit: entering the editor from the rendered view', () => {

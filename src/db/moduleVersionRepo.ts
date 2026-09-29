@@ -217,6 +217,18 @@ export async function countModuleVersions(moduleId: Id): Promise<number> {
 }
 
 /**
+ * ONE durable version by id — the read the chat RETRY needs (docs/17 row 408):
+ * the turn records the id of the snapshot its own changes were taken against,
+ * and a retry resolves THAT row to restore the document. Undefined = the row is
+ * gone (the owner cleared the module's versions), which the caller refuses
+ * LOUDLY rather than writing a guess. Zod-parsed on read, like every read here.
+ */
+export async function getModuleVersion(id: string): Promise<ModuleDocumentVersion | undefined> {
+  const row = await db.moduleVersions.get(id);
+  return row === undefined ? undefined : moduleDocumentVersionSchema.parse(row);
+}
+
+/**
  * "Clear all previous versions" for ONE module: deletes exactly that module's
  * durable versions and returns how many went (the loud toast names the
  * number). Another module's stack is structurally untouched (the sweep is

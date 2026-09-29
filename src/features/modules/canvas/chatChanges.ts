@@ -392,6 +392,7 @@ async function executeAdversarialChange(
         kind: null,
         detail: cleanDetail(resolved.label, report.critique.modelUsed),
         findings,
+        snapshotId: report.snapshot?.id ?? null,
       };
     }
     if (resolved.target.kind === 'premise') {
@@ -411,6 +412,7 @@ async function executeAdversarialChange(
         kind: null,
         detail: appliedDetail(resolved.label, report),
         findings,
+        snapshotId: report.snapshot?.id ?? null,
         edit: {
         originalText: report.originalText,
         replacement: report.edit.replacement,
@@ -446,6 +448,7 @@ async function executeAdversarialChange(
         kind: null,
         detail: `${resolved.label} could not be replaced with the edit the adversarial pass produced: ${failure?.reason ?? 'the replacement matched nothing in the current document'}. Nothing was changed.`,
         findings,
+        snapshotId: report.snapshot?.id ?? null,
       };
     }
     progress.update(progressId, { detail: `Applied the adversarial edit to ${resolved.label}.` });
@@ -455,6 +458,7 @@ async function executeAdversarialChange(
       kind: null,
       detail: appliedDetail(resolved.label, report),
       findings,
+      snapshotId: report.snapshot?.id ?? null,
       edit: {
           originalText: report.originalText,
           replacement: report.edit.replacement,

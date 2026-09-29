@@ -2691,6 +2691,17 @@ export interface CanvasChatChangeOutcome {
    * Undefined for every artifact change and for a `clean` review.
    */
   edit?: { originalText: string; replacement: string; modelUsed: string } | undefined;
+  /**
+   * The durable whole-document version the ADVERSARIAL PASS captured before it
+   * looked at the target (`runAdversarialPass`'s own snapshot) — the value the
+   * chat turn records as the retry's undo target (docs/17 row 408), because a
+   * PREMISE review writes the module row's level 0 through the spine seam
+   * without touching the live document handle, so no later save of the turn
+   * can point at the pre-review text. Undefined for every artifact change
+   * (whose pre-state is its own row's business) and for an outcome produced
+   * before the pass ran.
+   */
+  snapshotId?: string | null | undefined;
 }
 
 /** The shape ONE critique finding must have to be rendered here — STRUCTURAL

@@ -64,6 +64,12 @@ export function serializeChatThread(
       })),
       createdAt: message.createdAt,
       ...(message.advisor == null ? {} : { advisor: message.advisor }),
+      // THE RETRY RECORD (docs/17 row 408) survives the round trip: a restored
+      // thread whose Retry control forgot what the answer changed would offer a
+      // retry that cannot undo anything — the lie this field exists to prevent.
+      // Absent (not `null`) for the answers that changed nothing, so an old
+      // thread and a no-change answer serialize identically.
+      ...(message.retryUndo == null ? {} : { retryUndo: message.retryUndo }),
     }));
 }
 
@@ -86,6 +92,7 @@ export function deserializeChatThread(
     })),
     createdAt: entry.createdAt === 0 ? Date.now() : entry.createdAt,
     ...(entry.advisor === undefined ? {} : { advisor: entry.advisor }),
+    ...(entry.retryUndo == null ? {} : { retryUndo: entry.retryUndo }),
   }));
 }
 

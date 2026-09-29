@@ -2,10 +2,8 @@ import 'fake-indexeddb/auto';
 
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -33,6 +31,7 @@ import {
   moduleLevelSeparator,
 } from '@/domain/moduleDocument';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
+import { renderAppAt, sendChat } from '../helpers/canvasPage';
 
 /**
  * Canvas preview-default arc (08-MODULE-DESIGNER §Module canvas): the canvas
@@ -91,11 +90,6 @@ const WHOLE_DOC = assembleModuleDocument({
 });
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
@@ -162,16 +156,6 @@ async function renderCanvas(): Promise<void> {
 }
 
 /** Types an instruction and sends it; drains the detached chat chain. */
-async function sendChat(
-  user: ReturnType<typeof userEvent.setup>,
-  text: string,
-): Promise<void> {
-  const input = screen.getByTestId('canvas-chat-input');
-  await user.type(input, text);
-  await user.click(screen.getByTestId('canvas-chat-send'));
-  await flushAsyncUpdates();
-}
-
 describe('preview default + full width + live chat', () => {
   it('opens as chat + rendered preview side by side, with a live send', async () => {
     const user = userEvent.setup();

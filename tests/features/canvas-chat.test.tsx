@@ -1,14 +1,12 @@
 import 'fake-indexeddb/auto';
 
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { history, undo } from '@codemirror/commands';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule, patchModule } from '@/db/moduleRepo';
@@ -47,6 +45,7 @@ import {
   type CanvasChatChangeCommand,
   type CanvasChatChangeContext,
 } from '@/llm/canvasChat';
+import { renderAppAt, openSidebar, sendChat } from '../helpers/canvasPage';
 
 /**
  * Canvas CHAT sidebar — page flows (08-MODULE-DESIGNER §Module canvas
@@ -103,11 +102,6 @@ const WHOLE_DOC = assembleModuleDocument({
 });
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedModule(): Promise<void> {
   const campaign = await createCampaign({
@@ -199,32 +193,7 @@ function mockChatReply(raw: string): void {
   });
 }
 
-async function openSidebar(
-  user: ReturnType<typeof userEvent.setup>,
-): Promise<void> {
-  // Front door: the sidebar is OPEN by default — only toggle when closed.
-  if (screen.queryByTestId('canvas-chat') === null) {
-    await user.click(await screen.findByTestId('canvas-chat-toggle'));
-  }
-  expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
-  // The canvas opens in preview by default — these flows drive the editor.
-  if (screen.queryByTestId('canvas-preview') !== null) {
-    await user.click(screen.getByTestId('canvas-preview-toggle'));
-  }
-  await screen.findByTestId('canvas-editor');
-}
-
 /** Types an instruction and sends it; drains the detached chat chain. */
-async function sendChat(
-  user: ReturnType<typeof userEvent.setup>,
-  text: string,
-): Promise<void> {
-  const input = screen.getByTestId('canvas-chat-input');
-  await user.type(input, text);
-  await user.click(screen.getByTestId('canvas-chat-send'));
-  await flushAsyncUpdates();
-}
-
 describe('canvas chat sidebar (page flows)', () => {
   it('applies a valid command to the OPEN part: doc edit (one undo step), outcome card, save seam + ledger', async () => {
     const user = userEvent.setup();

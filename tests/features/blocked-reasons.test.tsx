@@ -2,10 +2,8 @@ import 'fake-indexeddb/auto';
 
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -25,6 +23,7 @@ import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+import { renderAppAt } from '../helpers/canvasPage';
 
 /**
  * A blocked control's REASON, on the canvas and its chat sidebar (docs/18 §2.3,
@@ -85,11 +84,6 @@ const GENERATING_REASON = 'The module is generating right now — wait for it (o
 const STREAMING_REASON = 'The proposal is still streaming — wait for it, or press Stop proposal.';
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
-
-function renderAppAt(path: string): ReturnType<typeof render> {
-  window.history.replaceState(null, '', path);
-  return render(<RouterProvider router={createAppRouter()} />);
-}
 
 async function seedModule(status: 'ready' | 'generating' = 'ready'): Promise<void> {
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
@@ -339,6 +333,7 @@ describe('the canvas chat states why its controls cannot act', () => {
         onPreviewReportMessage={undefined}
         onEditorTurnApplied={undefined}
         onPreviewStop={undefined}
+        onRetryUndo={undefined}
         onChatCleared={undefined}
       />,
     );
