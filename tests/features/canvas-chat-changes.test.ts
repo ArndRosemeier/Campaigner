@@ -310,7 +310,11 @@ describe('the preview flow runs a change through the seam and tells the owner', 
     expect(repopulateMock).not.toHaveBeenCalled();
     const [artifactId, options_] = regenerateMock.mock.calls[0] ?? [];
     expect(artifactId).toBe(world.encounterId);
-    expect(options_).toEqual({ redesignProse: false, instruction: 'rebuild it entirely' });
+    // The turn's Stop rides along (docs/17 row 413), so the chat's Stop can
+    // cancel the encounter run instead of waiting it out.
+    const { signal, ...rest } = (options_ ?? {}) as { signal?: AbortSignal };
+    expect(rest).toEqual({ redesignProse: false, instruction: 'rebuild it entirely' });
+    expect(signal?.aborted).toBe(false);
     const [copy] = toastSuccessMock.mock.calls[0] ?? [];
     expect(copy).toContain('The chat changed «Salt Gate Ambush»');
     expect(copy).toContain('regenerate everything');
