@@ -395,7 +395,10 @@ interface SourceMdNode {
  * washed piece carries its own source range (a selection inside the wash maps
  * exactly like any other text).
  */
-type HighlightRange = { from: number; to: number };
+interface HighlightRange {
+  from: number;
+  to: number;
+}
 
 /** The wash ranges clamped to the value, empty ones dropped; null = no wash at all. */
 function clampHighlights(
