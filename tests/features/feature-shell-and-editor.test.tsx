@@ -1442,13 +1442,10 @@ describe('guide.test.tsx', () => {
       expect(link).toHaveAttribute('target', '_blank');
     }, 20000);
 
-    it('the campaign document empty state links to the guide', async () => {
-      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-      renderAppAt(documentPath(campaign.id));
-      const empty = await screen.findByTestId('campaign-document-guide');
-      expect(empty).toHaveAttribute('href', guidePath());
-      expect(empty).toHaveAttribute('target', '_blank');
-    }, 20000);
+    // DELETED with its surface (docs/17 row 395): the document route's empty
+    // state - and its guide link - no longer exists; a campaign without a
+    // document now lands in the chat (pinned by campaign-entry.test.tsx). The
+    // guide stays reachable through the setup wizard (test above).
   });
 });
 

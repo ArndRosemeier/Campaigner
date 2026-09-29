@@ -246,7 +246,9 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
     await waitFor(() => {
       expect(window.location.pathname).toBe(documentPath(campaign.id));
     });
-    expect(await screen.findByTestId('campaign-document-page', {}, { timeout: 10_000 })).toBeInTheDocument();
+    // Row 395: the document route has no page of its own any more - a campaign
+    // without a document lands in the empty chat (canvas), never a form.
+    expect(await screen.findByTestId('canvas-module-title', {}, { timeout: 10_000 })).toBeInTheDocument();
   });
 });
 
