@@ -1,3 +1,4 @@
+import { actDrained } from '../helpers/flush';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -315,7 +316,9 @@ describe('per-kind images (docs/17 row 397)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('generation-scope-count').textContent).toContain(`${String(before.images.length)} image`);
     });
-    expect((await readSettings()).generationImageKinds).toEqual(['npc']);
+    // The dialog reads the preference through a live query: a bare await here
+    // lets its update land outside act() (docs/08-TESTING.md 1a, row 393).
+    expect((await actDrained(() => readSettings())).generationImageKinds).toEqual(['npc']);
     first.unmount();
     // A fresh dialog opens with the stored choice.
     render(
