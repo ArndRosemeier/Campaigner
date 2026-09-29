@@ -15,7 +15,7 @@ import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Canvas PROVENANCE (owner decision, docs/17 row 93 amendment): "i do want to
@@ -296,7 +296,9 @@ describe('the ids never enter the module text', () => {
       { timeout: 10_000 },
     );
 
-    const row = await getModule(world.moduleId);
+    // The mounted canvas reads through live queries: a bare await lets their update
+    // land outside act() and the console guard fails the test (docs/08-TESTING.md 1a).
+    const row = await actDrained(() => getModule(world.moduleId));
     if (row === undefined) throw new Error('module row missing');
     // The edit landed…
     expect(row.parts[0]?.markdown).toContain('XXX');
