@@ -10,6 +10,7 @@ import { z } from 'zod';
 /**
  * Image generation client (07-MILESTONE-3 M3-A): OpenRouter's dedicated
  * Image API — `POST /api/v1/images` with `{ model, prompt, n, output_format }`
+ * plus optional `resolution` / `aspect_ratio` when the caller sets them,
  * returning `{ data: [{ b64_json, media_type }], usage: { cost, … } }`. No
  * streaming; same retry/error policy as the chat client.
  */
@@ -41,12 +42,28 @@ export interface GeneratedImages {
   filteredCount: number;
 }
 
+/** OpenRouter resolution tiers. Omitted on the wire = the provider default. */
+export const IMAGE_RESOLUTIONS = ['512', '1K', '2K', '4K'] as const;
+
+export type ImageResolution = (typeof IMAGE_RESOLUTIONS)[number];
+
 export interface GenerateImagesOptions {
   model: string;
   signal?: AbortSignal | undefined;
   retryBackoffs?: readonly number[];
   /** Structure-first image edits (encounter schematic → stylized map). */
   inputReferences?: readonly { dataUrl: string }[];
+  /**
+   * Optional output tier. Sent only when set — production callers omit it
+   * and keep the provider default. A model that rejects the tier fails
+   * loud; the rejection is never retried as an `n` cap and never dropped.
+   */
+  resolution?: ImageResolution | undefined;
+  /**
+   * Optional aspect ratio (`16:9`, `4:3`, …). Sent only when set. A
+   * rejection fails loud, same as `resolution`.
+   */
+  aspectRatio?: string | undefined;
 }
 
 /** POST /images/generations — validated at the boundary (AGENTS rule 3):
@@ -112,6 +129,8 @@ async function postImages(
       prompt,
       n,
       output_format: 'webp',
+      ...(opts.resolution === undefined ? {} : { resolution: opts.resolution }),
+      ...(opts.aspectRatio === undefined ? {} : { aspect_ratio: opts.aspectRatio }),
       ...(opts.inputReferences === undefined
         ? {}
         : {

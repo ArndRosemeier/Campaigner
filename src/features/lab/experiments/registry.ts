@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 
 import { LabeledDungeonView } from '@/features/lab/LabeledDungeonView';
+import { UnlabeledDungeonView } from '@/features/lab/UnlabeledDungeonView';
 
 /**
  * The experiment-lab registry (the reusable part of the lab): one entry per
@@ -36,7 +37,7 @@ export interface LabExperiment {
   readonly Body: ComponentType<LabExperimentBodyProps>;
 }
 
-/** The single shipped bench. The next experiment appends one entry here. */
+/** Shipped benches. The next experiment appends one entry here. */
 export const LAB_EXPERIMENTS: readonly LabExperiment[] = [
   {
     id: 'labeled-dungeon-maps',
@@ -46,6 +47,15 @@ export const LAB_EXPERIMENTS: readonly LabExperiment[] = [
     runLabel: 'Run labeled-dungeon bench',
     costNote: 'generates 4 images + 4 vision passes with your configured models',
     Body: LabeledDungeonView,
+  },
+  {
+    id: 'unlabeled-dungeon-rooms',
+    title: 'Unlabeled dungeon room finding',
+    description:
+      'Generates one high-resolution (2K, 16:9) battlemap of 15 interconnected rooms with no letters, numbers, or plaques, then asks the configured chat model to mark the center of each chamber it can see. Disks are the reported centers; your eye is the check. A count other than 15 is reported, not repaired.',
+    runLabel: 'Run unlabeled-dungeon bench',
+    costNote: 'generates 1 image at 2K 16:9 + 1 vision pass with your configured models',
+    Body: UnlabeledDungeonView,
   },
 ];
 

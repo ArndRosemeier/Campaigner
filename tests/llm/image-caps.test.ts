@@ -42,6 +42,8 @@ interface CapturedCall {
     prompt: string;
     n: number;
     output_format: string;
+    resolution?: string;
+    aspect_ratio?: string;
     input_references?: { type: string; image_url: { url: string } }[];
   };
 }
@@ -168,6 +170,25 @@ describe('image candidate-count caps', () => {
       /No provider for x-ai\/grok-imagine-image-2.0 supports the requested parameter\(s\).*no fallback image model is configured/s,
     );
     expect(calls).toHaveLength(1);
+  });
+
+  it('omits resolution unless the caller sets it, and then sends the tier and aspect', async () => {
+    responses.push(imageResponse());
+    const plain = captureFetch(responses);
+    await generateImages('plain map', 1, { model: 'resolution-test/plain' });
+    expect(plain[0]?.body.resolution).toBeUndefined();
+    expect(plain[0]?.body.aspect_ratio).toBeUndefined();
+
+    responses.length = 0;
+    responses.push(imageResponse());
+    const sized = captureFetch(responses);
+    await generateImages('wide map', 1, {
+      model: 'resolution-test/sized',
+      resolution: '2K',
+      aspectRatio: '16:9',
+    });
+    expect(sized[0]?.body.resolution).toBe('2K');
+    expect(sized[0]?.body.aspect_ratio).toBe('16:9');
   });
 
   it('does not treat a cap rejection of a DIFFERENT parameter as an n-cap', async () => {

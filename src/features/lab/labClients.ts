@@ -13,6 +13,16 @@ import {
   runLabeledDungeonExperiment,
   type LabeledDungeonMapResult,
 } from '@/features/lab/experiments/labeledDungeon';
+import {
+  UNLABELED_DUNGEON_ASPECT,
+  UNLABELED_DUNGEON_IMAGE_COUNT,
+  UNLABELED_DUNGEON_RESOLUTION,
+  buildUnlabeledDungeonPrompt,
+  buildUnlabeledVisionInstruction,
+  runUnlabeledDungeonExperiment,
+  unlabeledVisionReplySchema,
+  type UnlabeledDungeonMapResult,
+} from '@/features/lab/experiments/unlabeledDungeon';
 
 /**
  * The production transports for the labeled-dungeon bench: the app's
@@ -108,6 +118,83 @@ export async function runLabeledDungeonBench(
   } catch (error) {
     // Generation-level failure: loud, with the verbatim diagnosis.
     toastError('Labeled-dungeon bench run failed', error);
+    throw new Error(errorMessage(error), { cause: error });
+  }
+}
+
+/**
+ * Runs the unlabeled-room bench against the configured models: one 2K
+ * 16:9 map, then one vision pass that reports chamber centers. A model
+ * that rejects the resolution tier fails the run loud — the tier is the
+ * point of the bench, so it is never dropped. Per-image vision failures
+ * land as loud `failed` rows.
+ */
+export async function runUnlabeledDungeonBench(
+  notify: (notice: string) => void,
+): Promise<UnlabeledDungeonMapResult[]> {
+  const settings = await getSettings();
+  const imageModel = resolveImageModel(settings);
+  const chatModel = resolveChatModel(settings);
+  notify(
+    `Generating one ${UNLABELED_DUNGEON_RESOLUTION} ${UNLABELED_DUNGEON_ASPECT} map with image model "${imageModel}"; vision pass with chat model "${chatModel}".`,
+  );
+  try {
+    return await runUnlabeledDungeonExperiment({
+      generateMaps: async () => {
+        const generated = await generateImages(buildUnlabeledDungeonPrompt(), UNLABELED_DUNGEON_IMAGE_COUNT, {
+          model: imageModel,
+          resolution: UNLABELED_DUNGEON_RESOLUTION,
+          aspectRatio: UNLABELED_DUNGEON_ASPECT,
+        });
+        if (generated.cappedToOne) {
+          notify(
+            `The image model capped the request to 1 image (asked for ${String(UNLABELED_DUNGEON_IMAGE_COUNT)}) — model "${generated.modelUsed}" supports only one candidate per call.`,
+          );
+        }
+        if (generated.filteredCount > 0) {
+          notify(
+            `${String(generated.filteredCount)} generated candidate(s) came back filtered/empty and were dropped — model "${generated.modelUsed}".`,
+          );
+        }
+        if (generated.fallback !== null) {
+          notify(
+            `Image fallback fired: "${generated.fallback.from}" failed (${generated.fallback.reason}), "${generated.fallback.to}" produced the map.`,
+          );
+        }
+        return {
+          blobs: generated.images,
+          cappedToOne: generated.cappedToOne,
+          modelUsed: generated.modelUsed,
+        };
+      },
+      visionPass: async (imageUrl: string) => {
+        const reply = await chat(
+          [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: buildUnlabeledVisionInstruction() },
+                { type: 'image_url', image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+          {
+            model: chatModel,
+            temperature: 0,
+            responseFormat: schemaResponseFormat('unlabeled-dungeon-rooms', unlabeledVisionReplySchema),
+          },
+        );
+        if (reply.fallback !== null) {
+          notify(
+            `Chat fallback fired on a vision pass: "${reply.fallback.from}" failed (${reply.fallback.reason}), "${reply.fallback.to}" answered.`,
+          );
+        }
+        return { text: reply.text, modelUsed: reply.modelUsed };
+      },
+      blobToDataUrl,
+    });
+  } catch (error) {
+    toastError('Unlabeled-dungeon bench run failed', error);
     throw new Error(errorMessage(error), { cause: error });
   }
 }

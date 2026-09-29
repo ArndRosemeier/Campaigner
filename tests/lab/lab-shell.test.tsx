@@ -51,6 +51,8 @@ describe('lab shell', () => {
 
     expect(screen.getByTestId('lab-page')).toBeInTheDocument();
     expect(screen.getByTestId('lab-experiment-labeled-dungeon-maps')).toBeInTheDocument();
+    expect(screen.getByTestId('lab-experiment-unlabeled-dungeon-rooms')).toBeInTheDocument();
+    expect(screen.getByTestId('unlabeled-dungeon-run')).toHaveTextContent('2K');
     const runButton = screen.getByTestId('lab-run');
     expect(runButton).toHaveTextContent('Run labeled-dungeon bench');
     expect(runButton).toHaveTextContent('generates 4 images + 4 vision passes');
