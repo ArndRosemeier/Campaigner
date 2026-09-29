@@ -509,6 +509,25 @@ describe('canvas chat front door', () => {
       await flushAsyncUpdates();
     }
 
+    it('the panel closes without asking: by the toggle and by its Close button, and nothing runs', async () => {
+      const user = userEvent.setup();
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      const toggle = screen.getByTestId('canvas-advisors-toggle');
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      await user.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByTestId('canvas-advisors-ask')).toBeNull();
+      await user.click(toggle);
+      await user.click(screen.getByTestId('canvas-advisors-close'));
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByTestId('canvas-advisors-ask')).toBeNull();
+      expect(chatMock).not.toHaveBeenCalled();
+      await flushAsyncUpdates();
+    });
+
     it('nothing runs until the click; a card is separate, dismiss sends nothing and leaves the document byte-identical, state survives reload', async () => {
       const user = userEvent.setup();
       const { unmount } = renderAppAt(canvasPath(world.campaignId, world.moduleId));

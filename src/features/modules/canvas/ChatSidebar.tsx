@@ -4,6 +4,8 @@ import type { EditorView } from '@codemirror/view';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   BanIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   EraserIcon,
@@ -673,6 +675,11 @@ export function ChatSidebar({
             setAdvisorsOpen((open) => !open);
           }}
         >
+          {advisorsOpen ? (
+            <ChevronDownIcon aria-hidden className="size-3" />
+          ) : (
+            <ChevronRightIcon aria-hidden className="size-3" />
+          )}
           Advisors
         </Button>
         {advisorsOpen && (
@@ -737,17 +744,28 @@ export function ChatSidebar({
               triggerClassName="h-9 w-9"
               onChange={setAdvisorModel}
             />
-            <Button
-              size="sm"
-              className="self-start"
-              data-testid="canvas-advisors-ask"
-              disabled={lensTicks.length === 0 || blockedTicks.length > 0 || advisorsBusy || aiBusy}
-              onClick={() => {
-                void ask();
-              }}
-            >
-              {advisorsBusy ? 'Asking…' : 'Ask advisors'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                data-testid="canvas-advisors-ask"
+                disabled={lensTicks.length === 0 || blockedTicks.length > 0 || advisorsBusy || aiBusy}
+                onClick={() => {
+                  void ask();
+                }}
+              >
+                {advisorsBusy ? 'Asking…' : 'Ask advisors'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="canvas-advisors-close"
+                onClick={() => {
+                  setAdvisorsOpen(false);
+                }}
+              >
+                Close
+              </Button>
+            </div>
           </div>
         )}
       </div>
