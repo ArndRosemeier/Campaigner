@@ -771,7 +771,15 @@ describe('canvas AI actions (cursor plays no role)', () => {
     // which is the behavior pinned in tests/features/app-shell-boot-reconcile.
     // Here the busy gate itself is the subject; the forge's own stop path is
     // pinned in tests/features/module-board-rewrite.test.tsx.
-    await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
+    // actDrained (row 372's idiom, docs/08 §1a, docs/17 row 393): this write
+    // re-emits the live `useModules` query `CampaignBar`'s `LegacyModulesNotice`
+    // mounts, and a bare await here handed the delivery the event loop. Measured
+    // by delaying the notice's read: the bare form is RED with "An update to
+    // LegacyModulesNotice inside a test was not wrapped in act(...)", the drained
+    // form green across the same injection.
+    await actDrained(() =>
+      patchModule(world.moduleId, { status: 'generating', errorMessage: '' }),
+    );
     await waitFor(() => {
       expect(screen.getByTestId('canvas-refine-selection')).toBeDisabled();
     });

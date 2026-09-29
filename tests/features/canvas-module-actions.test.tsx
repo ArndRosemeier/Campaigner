@@ -540,17 +540,29 @@ describe('"Resume automatic module creation" on the canvas', () => {
     await mountCanvas();
     expect(screen.queryByTestId('canvas-resume-automation')).toBeNull();
 
-    // The owner hand-edits the text and links a name no pass has seen.
-    const row = await getModule(world.moduleId);
+    // The owner hand-edits the text and links a name no pass has seen. Every raw
+    // read/write between the mount and the assertions runs inside `actDrained`
+    // (row 372's idiom, docs/08 §1a, docs/17 row 393): `CampaignBar` mounts
+    // `LegacyModulesNotice`, whose live `useModules` read settles AFTER
+    // `mountCanvas()`'s drain once the box is loaded, so each bare await was a
+    // window it could land in. The integrated gate red-carded THIS test twice on
+    // "An update to LegacyModulesNotice inside a test was not wrapped in
+    // act(...)". Measured by DELAYING the notice's read (25 extra `setTimeout(0)`
+    // rounds): the un-cured form is RED 1/1 with exactly that entry, the cured
+    // form is green across 0…120 rounds, and draining only ONE of these awaits
+    // is NOT a cure — it moves the leak to the next bare await.
+    const row = await actDrained(() => getModule(world.moduleId));
     if (row === undefined) throw new Error('the module row is missing');
-    await saveModule({
-      ...row,
-      parts: row.parts.map((part) =>
-        part.planIndex === 1
-          ? { ...part, markdown: `${part.markdown}\n\n[[Mira]] sells the tide charts.` }
-          : part,
-      ),
-    });
+    await actDrained(() =>
+      saveModule({
+        ...row,
+        parts: row.parts.map((part) =>
+          part.planIndex === 1
+            ? { ...part, markdown: `${part.markdown}\n\n[[Mira]] sells the tide charts.` }
+            : part,
+        ),
+      }),
+    );
     await flushAsyncUpdates();
 
     const button = await screen.findByTestId('canvas-resume-automation');
@@ -560,13 +572,17 @@ describe('"Resume automatic module creation" on the canvas', () => {
 
     // The verdict is nowhere on the row: the state that turned the control on is
     // the text itself.
-    const persisted = await getModule(world.moduleId);
+    const persisted = await actDrained(() => getModule(world.moduleId));
     const keys = Object.keys(persisted ?? {});
     expect(keys).not.toContain('deviates');
     expect(keys).not.toContain('hasProblems');
     expect(keys).not.toContain('needsWork');
     expect(keys).not.toContain('automationDeviation');
-    expect((await listArtifactsByCampaign(world.campaignId)).find((a) => a.id === kael.id)).toBeDefined();
+    expect(
+      (await actDrained(() => listArtifactsByCampaign(world.campaignId))).find(
+        (a) => a.id === kael.id,
+      ),
+    ).toBeDefined();
   }, 30_000);
 
   it('is a no-op with an honest notice when the confirmation is stale', async () => {

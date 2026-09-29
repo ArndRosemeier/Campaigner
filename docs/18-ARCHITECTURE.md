@@ -4783,6 +4783,22 @@ known-debt item).
   `campaign-document-landing.test.tsx` in `tests/features/module-ui-toast.test.tsx` (three rows → the
   start-level-first one is the document and all extras are named + linked in arc order; two rows → the extra
   named; ONE row → no notice at all).
+  **THE ONE SHELL-WIDE LIVE READ IS ALSO A TEST-SIDE LEAK WINDOW, and that is
+  recorded here because adding a shell live read raises the hazard in EVERY suite
+  that mounts the shell (docs/17 row 393, docs/08 §1a).** The notice's
+  `useModules(campaignId)` query settles after the mount drain once the box is
+  loaded, so a bare `await` after a shell mount can receive its delivery outside
+  `act`: the integrated gate red-carded `canvas-module-actions.test.tsx > "Resume
+  automatic module creation" > turns on after a HAND EDIT with no stored flag on
+  the row` TWICE on exactly `An update to LegacyModulesNotice inside a test was
+  not wrapped in act(...)`. Measured blast radius, on the delayed-read injection
+  (N=25 extra `setTimeout(0)` rounds; the component is byte-equivalent at N=0):
+  all 44 shell-mounting suites run as one job → **two tests in two files** leaked
+  (`canvas-module-actions` above and `module-canvas.test.tsx > a busy module
+  disables the AI actions and keeps the forge Stop affordance`), the other 42
+  green; the cure is `actDrained` on each affected raw read/write (row 372's
+  idiom), NO product change, and the behaviour pins above (extras named and
+  linked, absent for one row) are untouched.
 - **THE DELETE AFFORDANCE MOVED WITH THE ROW, not away.** The list row's delete control and its three-branch
   dialog were extracted to `features/modules/module-delete-dialog.tsx` (`ModuleDeleteButton` +
   `ModuleDeleteDialog`) and now live in the reader header — ONE mount, reached from `deleteModule`'s only

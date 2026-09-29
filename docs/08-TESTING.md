@@ -395,6 +395,55 @@ neither is a green run produced by loading the machine.
   sampled: each renders its asserted value only once the async data is present
   (the closest, `tests/images-ui.test.tsx:232` persona/target selects, is protected
   by an always-mounted panel, an earlier wait and the preselect effect).
+- **THE SHELL'S OWN LIVE QUERY IS A LEAK WINDOW IN EVERY SUITE THAT MOUNTS IT —
+  `CampaignBar` mounts `LegacyModulesNotice`, whose `useModules(campaignId)` read
+  settles AFTER the mount drain once the box is loaded, so any bare `await` that
+  follows a shell mount can receive its delivery (docs/17 row 393).** The
+  integrated gate red-carded the SAME test twice, ~272 s into `tests_features_a`:
+  `canvas-module-actions.test.tsx > "Resume automatic module creation" on the
+  canvas > turns on after a HAND EDIT with no stored flag on the row`, with ONE
+  entry — `An update to LegacyModulesNotice ... was not wrapped in act(...)`
+  (`legacy-modules-notice.tsx:30`). The file passes 10/10 alone, and its whole
+  chunk passes (67 files / 914 tests) both alone AND as two parallel chunks, so
+  only the gate's own load produced it — which is why "it is green locally"
+  proved nothing about it.
+  **Reproduced by DELAYING THE CAUSE, never by loading the box** (the `89e5d71`
+  method): a temporary `useEffect` in the notice mirrors `useModules` into state
+  after N extra `setTimeout(0)` rounds, gated by `ARC_FLAKE_DELAY_ROUNDS` and
+  BYTE-EQUIVALENT to the committed component at N=0 (the probe patch and every
+  raw log are kept in `.gate-logs/arc-flake/`). At **N=25** the un-cured test is
+  **RED 1/1** (4 entries, 2× `LegacyModulesNotice`); at N≤24 it is green — the
+  mount drain's whole margin against a concurrent live query is ~5 macrotask
+  rounds. Wall-clock delays of the same read (5/25/100 ms) are GREEN on the same
+  tree: the ROUND structure decides which window the delivery lands in, exactly
+  as row 272 recorded.
+  **The blast radius was MEASURED, not guessed.** All **44** suites that mount
+  the shell (`createAppRouter` / `AppShell` / `CampaignBar`; the
+  `tests/helpers/` renderers deliberately do NOT mount it) ran as ONE 44-file
+  job under N=25, and exactly **two tests in two files** leaked that entry — the
+  victim above and `module-canvas.test.tsx > canvas AI actions (cursor plays no
+  role) > a busy module disables the AI actions and keeps the forge Stop
+  affordance`; the other 42 files were GREEN under the same injection.
+  **The cure is row 372's, at the sites the injection named:** every raw
+  read/write after a shell mount that the cascade can land in goes through
+  `actDrained` — in `canvas-module-actions` the pre-edit `getModule`, the
+  `saveModule` hand edit, the persisted `getModule` and the
+  `listArtifactsByCampaign` read; in `module-canvas` the post-mount
+  `patchModule` write. **Draining only ONE of the awaits is NOT a cure** —
+  measured: it moves the leak to the next bare await (red even at N=0).
+  Assertions are byte-identical and **no product file changed** (`git diff
+  --stat src/` is empty).
+  **Both directions, hashes printed, raw logs kept:** un-cured **RED 1/1** at
+  N=25 in both files; cured **GREEN** across **N = 0, 10, 20, 25, 30, 40, 50,
+  60, 80, 120** (victim 1) and **N = 0, 25, 40, 60, 100** (victim 2), GREEN as
+  full files (10/10 and 20/20 at N=0 and N=25), and the 44-file scan is **44
+  files / 636 tests passed, 0 act entries** with the cures in place. **Nothing
+  was widened to make it quiet:** no `ALLOWED_NOISE` entry, no `tests/setup.ts`
+  change, no increase of the drain's round count, no assertion weakened. The
+  general lesson is why this bullet exists: a live query mounted by the SHELL is
+  a window in EVERY test that mounts it — the moment a shell-wide live read is
+  added, the suites that already mount the shell inherit the hazard, and only
+  act-wrapping the affected raw awaits closes it.
 - **A test that starts REAL orchestration must SETTLE it before teardown — the
   pending continuation's next write otherwise lands on a wiped database and turns a
   green gate RED.** This is the `post-run-extras` gate flake (dispatcher report,
