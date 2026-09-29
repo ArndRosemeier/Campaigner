@@ -531,4 +531,93 @@ describe('canvas chat front door', () => {
     expect(priorModulesContext([threaded], null)).not.toContain(marker);
     await flushAsyncUpdates();
   });
+
+  describe('advisors (docs/17 row 396)', () => {
+    async function askLens(user: ReturnType<typeof userEvent.setup>, lensId: string): Promise<void> {
+      await user.click(screen.getByTestId('canvas-advisors-toggle'));
+      await user.click(screen.getByTestId(`canvas-advisor-lens-${lensId}`));
+      await user.click(screen.getByTestId('canvas-advisors-ask'));
+      await flushAsyncUpdates();
+    }
+
+    it('nothing runs until the click; a card is separate, dismiss sends nothing and leaves the document byte-identical, state survives reload', async () => {
+      const user = userEvent.setup();
+      const { unmount } = renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      expect(chatMock).not.toHaveBeenCalled();
+      mockChatReply('The middle drags.');
+      await askLens(user, 'tension-pacing');
+      expect(chatMock).toHaveBeenCalledTimes(1);
+      const [advisorMessages] = chatMock.mock.calls[0] ?? [];
+      const wire = JSON.stringify(advisorMessages);
+      expect(wire).toContain('drowned vault premise');
+      expect(wire).not.toContain('<edit');
+      expect(wire).not.toContain('<replace_level');
+      expect(wire).not.toContain('<request');
+      const card = await screen.findByTestId('canvas-advisor-card');
+      expect(card).toHaveAttribute('data-state', 'pending');
+      expect(card.textContent).toContain('The middle drags.');
+      expect(card.textContent).toContain('test-model');
+      expect(screen.queryByTestId('canvas-chat-assistant-message')).toBeNull();
+      await user.click(screen.getByTestId('canvas-advisor-dismiss'));
+      await flushAsyncUpdates();
+      expect(chatMock).toHaveBeenCalledTimes(1);
+      expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+      const row = await actDrained(async () => {
+        await flushChatPersist(canvasChatKey(world.moduleId));
+        return getModule(world.moduleId);
+      });
+      expect(row?.chatThread[0]?.advisor?.state).toBe('dismissed');
+      unmount();
+      useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      await waitFor(() => {
+        expect(screen.getByTestId('canvas-advisor-card')).toHaveAttribute('data-state', 'dismissed');
+      });
+      await flushAsyncUpdates();
+    });
+
+    it('approve sends exactly the attributed critique through the normal send path, then the writer alone changes the document', async () => {
+      const user = userEvent.setup();
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      mockChatReply('Rain is too gentle.');
+      await askLens(user, 'continuity');
+      expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+      mockChatReply(
+        'Sharpening.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
+      );
+      await user.click(await screen.findByTestId('canvas-advisor-approve'));
+      await flushAsyncUpdates();
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      const [writerMessages] = chatMock.mock.calls[1] ?? [];
+      const sent = JSON.stringify(writerMessages);
+      expect(sent).toContain('Continuity & consistency');
+      expect(sent).toContain('> Rain is too gentle.');
+      await waitFor(() => {
+        expect(activeCanvasView.current?.state.doc.toString()).toContain('Rain drowns every word.');
+      });
+      expect(screen.getByTestId('canvas-advisor-card')).toHaveAttribute('data-state', 'approved');
+      await flushAsyncUpdates();
+    });
+
+    it('a failed advisor call is a visible failed card with the error, and toasts', async () => {
+      const user = userEvent.setup();
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      chatMock.mockImplementation(() => Promise.reject(new Error('provider down')));
+      await askLens(user, 'agency-stakes');
+      const card = await screen.findByTestId('canvas-advisor-card');
+      expect(card).toHaveAttribute('data-status', 'failed');
+      expect(screen.getByTestId('canvas-advisor-error').textContent).toContain('provider down');
+      expect(screen.queryByTestId('canvas-advisor-approve')).toBeNull();
+      expect(toastErrorMock).toHaveBeenCalled();
+      await flushAsyncUpdates();
+    });
+  });
 });

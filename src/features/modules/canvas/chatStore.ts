@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import type { AdvisorCard } from '@/domain/advisors';
 import type { CanvasChatFraming, CanvasEditCommand } from '@/llm/canvasChat';
 
 /**
@@ -90,6 +91,9 @@ export interface CanvasChatMessage {
   /** assistant only: command outcomes in reply order. */
   outcomes: CanvasChatOutcome[];
   createdAt: number;
+  /** Present only on an ADVISOR card (docs/17 row 396): the lens, the model and
+   * the pending/approved/dismissed state. The message `text` is the critique. */
+  advisor?: AdvisorCard | null | undefined;
 }
 
 export interface CanvasChatModuleState {

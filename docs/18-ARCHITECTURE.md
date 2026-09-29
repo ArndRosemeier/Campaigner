@@ -258,6 +258,8 @@ only in WHICH set they name.
 
 | **Validate a pick's keep against the run's OWN candidates — ONE rule for the image pick and the battlemap pick** (docs/17 row 306, AGENTS rules 1/2/4) | `llm/runEngine.assertPickKeepsOwnCandidates(run, keep, pickLabel)` is THE membership rule BOTH pick paths call, and it RETURNS the run's own pick-step candidate list so each caller enforces membership AND prunes discards from ONE read. `pickImages` had NO check before it: a keep carrying the previous run's already-stored ids was written into the next artifact (`appendImageIds`) while that run's own candidates were pruned away, and a keep carrying a superseded attempt's ids on the same artifact failed identically. Both now THROW before any write, naming the run and every offending id (`The image pick was refused: these ids are not a candidate of run <runId> — <id1>, <id2>`; the battlemap arm, whose pre-existing inline check was FOLDED onto this seam, reads `The battlemap pick was refused: this id is not a candidate of run <runId> — <id>`). The `key={activeRunId}` lifetime boundary (`persona-panel.tsx:781`, §2.3) removes the CAUSE; this is the backstop that makes any future cross-run keep a visible error instead of corruption | a SECOND membership check at either pick path (the battlemap inline `candidates.includes(selected)` was exactly this and is GONE); pruning from a second read of the pick step's candidates (the seam's return value is the one read); guarding only one path (the image path's silence is what let the corruption through); a `catch`-and-continue or a filtered keep at a call site (a silently dropped selection is rule 1's forbidden fallback); repairing or migrating the already-corrupted rows (an owner decision, out of scope) |
 
+- **Advisors** (docs/17 row 396): `domain/advisors.ts` holds the ONE lens list (`ADVISOR_LENSES`) and the card schema; `llm/advisors.askAdvisor` is the one advisor call (separate context, no command vocabulary, free text untouched); `features/modules/canvas/advisorTurn.ts` fans lenses out into cards on the module thread. Approve reuses the sidebar's `send`; no second apply path.
+
 ### 2.3 App & UI
 
 | To do X | Use Y | NOT Z |
@@ -2525,6 +2527,8 @@ only in WHICH set they name.
   is enforced.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+
+- **Advisors (row 396):** the level range is two typed numbers in the sidebar (0 = premise), not the generation dialog's UI; advisor output quality is unmeasured; advisor cards are excluded from the writer's history by `historyFor` (`message.advisor == null`) — a new history reader must do the same.
 - **KNOWN DEBT (docs/17 rows 340 and 343) — the shared `DialogContent` cap wins the cascade over every
   caller's own plain `max-h-[…vh]`, because an `@supports` cap is invisible to `tailwind-merge`'s
   conflict resolution.** `cn`'s `twMerge` deletes a superseded class only when the two land in the

@@ -54,7 +54,7 @@ const LIST_MODELS_ALLOWLIST: Record<string, number> = {
 const WIDGET_MOUNTS: Record<string, number> = {
   'src/app/layout/TopBar.tsx': 1,
   'src/features/idea-board/IdeaBoardPage.tsx': 1,
-  'src/features/modules/canvas/ChatSidebar.tsx': 1,
+  'src/features/modules/canvas/ChatSidebar.tsx': 2,
   'src/features/onboarding/SetupWizardDialog.tsx': 1,
   'src/features/settings/persona-section.tsx': 1,
   'src/features/settings/settings-section.tsx': 5,

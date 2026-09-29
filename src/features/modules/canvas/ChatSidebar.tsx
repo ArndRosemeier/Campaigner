@@ -40,6 +40,8 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
+import { ADVISOR_LENSES, advisorApprovalText, type AdvisorCard } from '@/domain/advisors';
+import { askAdvisors, setAdvisorState } from '@/features/modules/canvas/advisorTurn';
 import { clearModuleChat } from '@/features/modules/canvas/clearChat';
 import { toastModuleBusy } from '@/features/modules/module-busy';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -142,6 +144,15 @@ export function ChatSidebar({
   const [input, setInput] = useState('');
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The ADVISORS control (docs/17 row 396): explicit ticks + optional range,
+  // nothing runs until Ask advisors is clicked.
+  const [advisorsOpen, setAdvisorsOpen] = useState(false);
+  const [lensTicks, setLensTicks] = useState<readonly string[]>([]);
+  const [rangeOn, setRangeOn] = useState(false);
+  const [rangeMin, setRangeMin] = useState('1');
+  const [rangeMax, setRangeMax] = useState('1');
+  const [advisorModel, setAdvisorModel] = useState('');
+  const [advisorsBusy, setAdvisorsBusy] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -269,6 +280,38 @@ export function ChatSidebar({
         toastError('Chat failed', error);
       }
     }
+  }
+
+  async function ask(): Promise<void> {
+    const min = Number(rangeMin);
+    const max = Number(rangeMax);
+    if (rangeOn && (!Number.isInteger(min) || !Number.isInteger(max) || min < 0 || max < min)) {
+      toastError('The level range is invalid', new Error(`levels ${rangeMin}–${rangeMax}`));
+      return;
+    }
+    setAdvisorsBusy(true);
+    try {
+      await askAdvisors({
+        moduleId,
+        key: chatKey,
+        lensIds: lensTicks,
+        range: rangeOn ? { min, max } : null,
+        liveDocument: activeCanvasView.current?.state.doc.toString() ?? null,
+        model: advisorModel !== '' ? advisorModel : modelSelection,
+      });
+    } catch (error) {
+      toastError('Advisors failed', error);
+    } finally {
+      setAdvisorsBusy(false);
+    }
+  }
+
+  /** APPROVE = the critique goes through the ONE existing send, as a user turn. */
+  async function approveAdvisor(message: CanvasChatMessage, card: AdvisorCard): Promise<void> {
+    setAdvisorState(moduleId, chatKey, message.id, card, 'approved');
+    const draft = input;
+    await send(advisorApprovalText(card, message.text));
+    setInput(draft);
   }
 
   function onReportOutcome(messageId: string, outcome: CanvasChatOutcome): void {
@@ -422,8 +465,101 @@ export function ChatSidebar({
                 onReportMessage={() => {
                   onReportMessage(message);
                 }}
+                onApproveAdvisor={(card) => {
+                  void approveAdvisor(message, card);
+                }}
+                onDismissAdvisor={(card) => {
+                  setAdvisorState(moduleId, chatKey, message.id, card, 'dismissed');
+                }}
               />
             ))}
+          </div>
+        )}
+      </div>
+      <div className="border-t px-3 py-2" data-testid="canvas-advisors">
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-expanded={advisorsOpen}
+          data-testid="canvas-advisors-toggle"
+          onClick={() => {
+            setAdvisorsOpen((open) => !open);
+          }}
+        >
+          Advisors
+        </Button>
+        {advisorsOpen && (
+          <div className="mt-2 flex flex-col gap-2 text-xs">
+            {ADVISOR_LENSES.map((lens) => (
+              <label key={lens.id} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  data-testid={`canvas-advisor-lens-${lens.id}`}
+                  checked={lensTicks.includes(lens.id)}
+                  onChange={(event) => {
+                    setLensTicks((ticks) =>
+                      event.target.checked ? [...ticks, lens.id] : ticks.filter((id) => id !== lens.id),
+                    );
+                  }}
+                />
+                {lens.name}
+              </label>
+            ))}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                data-testid="canvas-advisor-range-on"
+                checked={rangeOn}
+                onChange={(event) => {
+                  setRangeOn(event.target.checked);
+                }}
+              />
+              Only levels
+              <input
+                aria-label="Advisor first level"
+                data-testid="canvas-advisor-range-min"
+                className="w-12 rounded border px-1"
+                value={rangeMin}
+                disabled={!rangeOn}
+                onChange={(event) => {
+                  setRangeMin(event.target.value);
+                }}
+              />
+              to
+              <input
+                aria-label="Advisor last level"
+                data-testid="canvas-advisor-range-max"
+                className="w-12 rounded border px-1"
+                value={rangeMax}
+                disabled={!rangeOn}
+                onChange={(event) => {
+                  setRangeMax(event.target.value);
+                }}
+              />
+              <span className="text-muted-foreground">(0 = premise)</span>
+            </label>
+            <ModelWidget
+              variant="field"
+              id="canvas-advisor-model"
+              label="Advisor model"
+              value={advisorModel !== '' ? advisorModel : effectiveModel}
+              placeholder={effectiveModel}
+              canBrowse={(settings?.openRouterApiKey ?? '') !== ''}
+              inputClassName="h-9"
+              triggerClassName="h-9 w-9"
+              onChange={setAdvisorModel}
+            />
+            <Button
+              size="sm"
+              className="self-start"
+              data-testid="canvas-advisors-ask"
+              disabled={lensTicks.length === 0 || advisorsBusy || aiBusy}
+              onClick={() => {
+                void ask();
+              }}
+            >
+              {advisorsBusy ? 'Asking…' : 'Ask advisors'}
+            </Button>
           </div>
         )}
       </div>
@@ -561,7 +697,11 @@ function ChatBubble({
   disabledReason,
   onReportOutcome,
   onReportMessage,
+  onApproveAdvisor,
+  onDismissAdvisor,
 }: {
+  onApproveAdvisor: (card: AdvisorCard) => void;
+  onDismissAdvisor: (card: AdvisorCard) => void;
   message: CanvasChatMessage;
   pool: readonly AnyArtifact[];
   moduleId: Id;
@@ -571,6 +711,63 @@ function ChatBubble({
   onReportOutcome: (outcome: CanvasChatOutcome) => void;
   onReportMessage: () => void;
 }): JSX.Element {
+  const advisor = message.advisor;
+  if (advisor != null) {
+    return (
+      <div
+        className="flex flex-col gap-2 rounded-lg border-2 border-dashed border-violet-500/60 bg-violet-500/5 p-2.5"
+        data-testid="canvas-advisor-card"
+        data-state={advisor.state}
+        data-status={message.status}
+      >
+        <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+          Advisor — {advisor.lensName}
+          {advisor.model !== '' && <span className="font-normal text-muted-foreground"> · {advisor.model}</span>}
+        </div>
+        {message.status === 'failed' ? (
+          <div className="text-xs text-destructive" data-testid="canvas-advisor-error">
+            The advisor failed: {message.error}
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap text-sm" data-testid="canvas-advisor-text">
+            {message.text}
+          </div>
+        )}
+        {message.status !== 'failed' && advisor.state === 'pending' ? (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={disabled}
+              data-testid="canvas-advisor-approve"
+              onClick={() => {
+                onApproveAdvisor(advisor);
+              }}
+            >
+              Approve
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="canvas-advisor-dismiss"
+              onClick={() => {
+                onDismissAdvisor(advisor);
+              }}
+            >
+              Dismiss
+            </Button>
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground" data-testid="canvas-advisor-state">
+            {message.status === 'failed'
+              ? 'Failed'
+              : advisor.state === 'approved'
+                ? 'Approved — sent to the chat'
+                : 'Dismissed'}
+          </span>
+        )}
+      </div>
+    );
+  }
   if (message.role === 'user') {
     return (
       <div className="flex justify-end" data-testid="canvas-chat-user-message">

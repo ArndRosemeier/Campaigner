@@ -63,6 +63,7 @@ export function serializeChatThread(
         findings: [...(outcome.findings ?? [])],
       })),
       createdAt: message.createdAt,
+      ...(message.advisor == null ? {} : { advisor: message.advisor }),
     }));
 }
 
@@ -84,6 +85,7 @@ export function deserializeChatThread(
       id: newChatId('outcome'),
     })),
     createdAt: entry.createdAt === 0 ? Date.now() : entry.createdAt,
+    ...(entry.advisor === undefined ? {} : { advisor: entry.advisor }),
   }));
 }
 

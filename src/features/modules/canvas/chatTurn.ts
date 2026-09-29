@@ -165,7 +165,9 @@ function historyFor(key: string): { role: 'user' | 'assistant'; text: string }[]
   return useCanvasChatStore
     .getState()
     .module(key)
-    .messages.filter((message) => message.status !== 'streaming')
+    // Advisor cards (docs/17 row 396) are NOT the writer's history: only an
+    // approved critique reaches it, as the user turn the approval sends.
+    .messages.filter((message) => message.status !== 'streaming' && message.advisor == null)
     .map((message) => ({
       role: message.role,
       text: message.role === 'assistant' ? (message.raw ?? message.text) : message.text,

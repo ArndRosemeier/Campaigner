@@ -11,6 +11,7 @@ import {
   encounterBudgetPolicySchema,
   type EncounterBudgetPolicy,
 } from '@/domain/encounterBudget';
+import { advisorCardSchema } from '@/domain/advisors';
 import { moduleDifficultySchema, type ModuleDifficulty } from '@/domain/moduleDifficulty';
 import { modulePromptStyleSchema, type ModulePromptStyle } from '@/domain/promptStyle';
 
@@ -987,6 +988,10 @@ export const moduleChatMessageSchema = z.object({
   /** assistant only: command outcomes in reply order. */
   outcomes: z.array(moduleChatOutcomeSchema).default([]),
   createdAt: z.number().default(0),
+  /** An ADVISOR card (docs/17 row 396): present only on advisor critiques.
+   * Additive `.optional()` (absent, NOT defaulted) — an old thread parses
+   * byte-unchanged, no Dexie version. */
+  advisor: advisorCardSchema.optional(),
 });
 
 export type ModuleChatMessage = z.infer<typeof moduleChatMessageSchema>;
