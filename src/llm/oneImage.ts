@@ -41,12 +41,14 @@ import { intakeImage } from '@/lib/imageIntake';
  * THE BOUNDARY, NAMED SO THE NEXT READER DOES NOT HAVE TO RE-DERIVE IT:
  * `runEngine`'s vision-map step generates one map image through the
  * `encounterRunAdapters` indirection (the run engine's test-stubbing seam) from
- * a raw `buildLabeledMapPrompt` string — the documented text-render carve-out,
- * so there is no `assembleImagePrompt` draft to hand over — and intakes it with
- * `{ role: 'map' }`. It keeps its own sentence, which tells the owner what the
- * consequence was ("the vision-map step failed without saving partial results");
- * adopting this seam's message would drop that context for a phrase that says
- * less. That decision is recorded in docs/18 §4.
+ * a raw `buildLabeledMapPrompt` string — the boundary is the missing
+ * `ImagePromptDraft`, NOT a text-rule carve-out (the shared
+ * `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` rides that prompt through the builder since
+ * docs/17 row 407) — and intakes it with `{ role: 'map' }`. It keeps its own
+ * sentence, which tells the owner what the consequence was ("the vision-map
+ * step failed without saving partial results"); adopting this seam's message
+ * would drop that context for a phrase that says less. That decision is
+ * recorded in docs/18 §4.
  */
 
 /**

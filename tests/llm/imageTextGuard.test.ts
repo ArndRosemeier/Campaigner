@@ -29,6 +29,7 @@ import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { BATTLEMAP_EMPTY_TERRAIN_CLAUSE, buildLabeledMapPrompt } from '@/llm/visionDungeon';
+import { buildLabeledDungeonPrompt } from '@/features/lab/experiments/labeledDungeon';
 import { sha256Hex } from '@/lib/hash';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
@@ -41,12 +42,16 @@ import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureCh
  * default `negative` is `''`, so the default assembled prompt carries NO
  * `Avoid:` line at all, and ONE positive clause rides the composed prompt of
  * both `buildImagePrompt` branches and both classic-stylize battlemap modes.
- * The vision dungeon path's plaque rule and the classic battlemap's
- * owner-ratified usability hard-bans are CALLER-OWNED rules (declared
- * boundary) and stay untouched.
+ * Since docs/17 row 407 it rides the vision dungeon map prompt TOO — the
+ * row-319 carve-out is gone, and the dungeon's plaque rule is the caller-owned
+ * rule that follows the shared clause. The classic battlemap's owner-ratified
+ * usability hard-bans are the remaining CALLER-OWNED rule (declared boundary).
  *
- * A fail-closed registry keeps every caller known, and a source scan proves
- * the two deleted names never come back into `src/`.
+ * A fail-closed registry keeps every caller known, a DIFFERENTIAL composes one
+ * prompt per path and requires the clause VERBATIM on each (so a path that
+ * forgets it reds by name), a source scan proves the clause text has EXACTLY
+ * ONE carrier in `src/`, and a second source scan proves the two deleted names
+ * never come back.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -465,8 +470,8 @@ describe('guarded caller families (prompt capture)', () => {
   });
 });
 
-describe('vision carve-out (binding, caller-owned rule)', () => {
-  it('keeps the room plaques while no shared clause reaches the vision path', () => {
+describe('vision dungeon carries the shared clause AND its own plaque rule (docs/17 row 407)', () => {
+  it('keeps the room plaques AFTER the shared clause and never an Avoid line', () => {
     const prompt = buildLabeledMapPrompt(
       [
         { label: 'A', name: 'Entry', description: 'Broken doors', isEntry: true },
@@ -481,14 +486,99 @@ describe('vision carve-out (binding, caller-owned rule)', () => {
     // …and so is the POSITIVE emptiness frame (docs/17 row 337), the SAME
     // constant the classic modes import.
     expect(prompt).toContain(BATTLEMAP_EMPTY_TERRAIN_CLAUSE);
-    // …while no shared mechanism is added: no `Avoid:` line, and the owner's
-    // positive clause is deliberately absent too — this path's plaque
-    // clause is load-bearing for the locate pass (docs/17 rows 224/319).
+    // The row-319 carve-out is DELETED (docs/17 row 407): the shared clause now
+    // rides this prompt TOO, by IMPORT of the ONE constant (never a copy), and
+    // it reads BEFORE the caller's own, more specific plaque rule — so the
+    // locate pass's plaque contract still reads LAST.
+    expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(prompt.indexOf(IMAGE_TEXT_WHEN_NEEDED_CLAUSE)).toBeLessThan(
+      prompt.indexOf('no written text anywhere except the 2 letter plaques'),
+    );
+    // The shared clause cannot leak back into an `Avoid:` line either.
     expect(prompt).not.toContain('Avoid:');
-    expect(prompt).not.toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
     // The deleted shared list's items cannot leak back in either.
     for (const blanket of ['speech bubbles', 'watermark', 'signature', 'plot summary', 'explanatory text']) {
       expect(prompt, `blanket item leaked into the vision path: ${blanket}`).not.toContain(blanket);
+    }
+  });
+});
+
+/**
+ * THE ONE DIFFERENTIAL PIN (docs/17 row 407, AGENTS §Centralization obligation
+ * 2). "Everywhere" is a measurement, not a hope: one prompt is COMPOSED per
+ * path that reaches the image API and each must carry the clause VERBATIM,
+ * including the two sentences the owner added. A path that forgets it fails
+ * HERE by name, and the fail-closed registries below catch a NEW path that was
+ * never added to this list. The classic battlemap arms run the REAL engine
+ * (brief → layout → schematic → stylize) through `captureClassicStylizePrompt`,
+ * so the bytes asserted are the bytes the engine handed the image client.
+ */
+describe('the text clause rides EVERY image path (docs/17 row 407)', () => {
+  it('carries the shared clause VERBATIM on EVERY path that reaches the image API', async () => {
+    // The two appended sentences, asserted BY NAME so a "close enough" rewrite
+    // of the constant cannot satisfy the differential.
+    const mayNotSpoil = 'Text absolutely may not spoil story parts.';
+    const illustrationOnly = 'This is an illustration for a roleplaying game.';
+    const subjectOnly = 'The image you create should only illustrate the subject matter, not hint at anything else.';
+
+    const appearance = buildImagePrompt(
+      { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Small, soot-stained, goggles.' } },
+      { systemLabel: 'D&D 5e' },
+    ).prompt;
+    const grounded = buildImagePrompt(
+      { name: 'The Lighthouse', kind: 'location', summary: 'A storm-lashed beacon.', body: 'Black cliffs.', data: {} },
+      { systemLabel: 'D&D 5e' },
+    ).prompt;
+    const dungeon = buildLabeledMapPrompt(
+      [
+        { label: 'A', name: 'Entry', description: 'Broken doors', isEntry: true },
+        { label: 'B', name: 'Ossuary', description: 'Bone piles' },
+      ],
+      'ash-choked crypt dungeon',
+      'A ↔ B',
+    );
+    const bench = buildLabeledDungeonPrompt();
+
+    const classicArchitectural = await captureClassicStylizePrompt({
+      environment: 'dungeon',
+      theme: 'ash-choked temple',
+      terrain: 'broken pillars',
+      summary: 'Cultists guard a ruined gate.',
+      styleNotes: 'inked fantasy map, volcanic stone',
+    });
+    // A second capture in ONE test: the harness pins a fixed persona slug
+    // (`encounter-cartographer-guard`) against a UNIQUE index, so the database
+    // is reset between the two runs exactly as `beforeEach` does — and the
+    // generate mock's captured call is cleared, or the second arm would assert
+    // the FIRST run's bytes (a void differential arm).
+    await clearDatabase();
+    vi.mocked(encounterRunAdapters.generateImages).mockClear();
+    const classicNatural = await captureClassicStylizePrompt({
+      environment: 'outdoor',
+      theme: 'moonlit pinewood',
+      terrain: 'forest clearing',
+      summary: 'Bandits ambush the trade road through the pines.',
+      styleNotes: 'inked fantasy map, moonlit greens',
+    });
+
+    const paths: Record<string, string> = {
+      'buildImagePrompt appearance': appearance,
+      'buildImagePrompt grounded': grounded,
+      'vision dungeon buildLabeledMapPrompt': dungeon,
+      'lab bench buildLabeledDungeonPrompt': bench,
+      'classic battlemap architectural': classicArchitectural,
+      'classic battlemap natural': classicNatural,
+    };
+    for (const [path, prompt] of Object.entries(paths)) {
+      expect(prompt, `${path} is missing the shared clause`).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+      expect(prompt, `${path} is missing the amended sentence 1`).toContain(mayNotSpoil);
+      expect(prompt, `${path} is missing the amended sentence 2`).toContain(illustrationOnly);
+      expect(prompt, `${path} is missing the amended sentence 3`).toContain(subjectOnly);
+      // Exactly ONE copy per prompt: a double-inserted clause is a defect too.
+      expect(
+        prompt.split(IMAGE_TEXT_WHEN_NEEDED_CLAUSE).length - 1,
+        `${path} carries the clause more than once`,
+      ).toBe(1);
     }
   });
 });
@@ -542,11 +632,30 @@ describe('image-prompt caller registry (fail-closed)', () => {
     expect(srcFilesContaining('IMAGE_TEXT_WHEN_NEEDED_CLAUSE')).toContain('llm/imagePromptDraft.ts');
   });
 
+  it('the shared clause text has EXACTLY ONE carrier in src/ (docs/17 row 407)', () => {
+    // The owner's hard requirement, measured: the clause exists ONCE IN THE
+    // CODE. The needle is held CONSCIOUSLY here, on the assertion side — this
+    // file lives under `tests/`, so it is outside the scan — and every path
+    // must IMPORT the constant rather than paste the sentences.
+    const needle = 'Text absolutely may not spoil story parts. This is an illustration for a roleplaying game.';
+    expect(srcFilesContaining(needle)).toEqual(['llm/imagePromptDraft.ts']);
+    // The FIRST sentence's live spelling is the same one carrier; a second
+    // mention anywhere under src/ (a comment, a variant string, a second
+    // constant) would red here.
+    expect(srcFilesContaining('Text is welcome where the subject itself needs it')).toEqual([
+      'llm/imagePromptDraft.ts',
+    ]);
+    // Control: the walk distinguishes ABSENCE from a broken scan, so the
+    // single-carrier result above cannot be a failed walk that found nothing.
+    expect(srcFilesContaining('this sentence is deliberately nowhere in src')).toEqual([]);
+  });
+
   it('every direct image producer is known (no hand-rolled prompt bypasses the guard)', () => {
     // Fail-closed: routing a new prompt around the contract (a generateImages
     // call whose prompt never saw the guard) fails the test. The vision path
-    // and the lab bench are the documented carve-out family (their prompts
-    // carry the tailored plaque clause, pinned above).
+    // and the lab bench reach their prompt through the SHARED builder
+    // (`buildLabeledMapPrompt`), so they carry the clause too (docs/17 row
+    // 407) — asserted per path by the differential above.
     //
     // The four one-image queues LEFT this list in ledger 126: their
     // `generateImages(finalPrompt, 1, …)` tails are ONE seam now
@@ -564,7 +673,7 @@ describe('image-prompt caller registry (fail-closed)', () => {
     );
   });
 
-  it('every labeled-map prompt routes through the shared vision builder (the carve-out family)', () => {
+  it('every labeled-map prompt routes through the shared vision builder (the ONE text-clause carrier for that family)', () => {
     expect(srcFilesContaining('buildLabeledMapPrompt(')).toEqual(
       ['features/lab/experiments/labeledDungeon.ts', 'llm/runEngine.ts', 'llm/visionDungeon.ts'].sort(),
     );

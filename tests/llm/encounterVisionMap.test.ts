@@ -23,6 +23,7 @@ import {
   type Persona,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
+import { IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
 import {
@@ -488,6 +489,13 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
     expect(prompt).toContain('Room A: Entry — Broken doors.');
     expect(prompt).toContain('Room D: Sanctum — A dark altar.');
     expect(prompt).toContain('A ↔ B');
+    // The shared text clause rides the vision-map prompt TOO (docs/17 row 407):
+    // the builder IMPORTS the ONE constant (never a copy) and it reads BEFORE
+    // the caller's own plaque rule, so the locate contract still reads last.
+    expect(prompt).toContain(IMAGE_TEXT_WHEN_NEEDED_CLAUSE);
+    expect(prompt.indexOf(IMAGE_TEXT_WHEN_NEEDED_CLAUSE)).toBeLessThan(
+      prompt.indexOf('no written text anywhere except the 4 letter plaques'),
+    );
     // The sidecar carried the brief's entryRoomIndex (0 → A): the prompt
     // draws room A as the visual entrance, and no other room gets the clause.
     expect(prompt).toContain('Room A is the dungeon entrance');

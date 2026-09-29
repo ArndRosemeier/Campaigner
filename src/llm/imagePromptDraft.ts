@@ -19,9 +19,14 @@ import type { NamedText, StatBlock } from '@/domain/statblock';
  * default `negative` is `''` so a default draft carries NO `Avoid:` line at
  * all, and ONE positive clause — `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`, the owner's
  * own wording — rides the composed prompt of both branches instead: text the
- * subject itself needs is welcome and nothing is forbidden. The vision dungeon
- * path keeps its own plaque clause (documented carve-out, on the constant
- * below).
+ * subject itself needs is welcome and nothing is forbidden.
+ *
+ * Owner-directed amendment (docs/17 row 407): the clause now rides EVERY path
+ * that reaches the image API, the vision dungeon map included. The vision path
+ * keeps its own, shorter plaque rule as a SEPARATE line AFTER the shared clause
+ * — the shared permission first, the caller's more specific rule last, so the
+ * locate pass's plaque contract still reads last (never a second constant and
+ * never a per-branch variant; see the constant below).
  */
 
 /**
@@ -96,19 +101,24 @@ export interface BuildImagePromptOptions {
  * BELONGS and asks for it to be short, correctly spelled and readable. It
  * rides the COMPOSED PROMPT of both `buildImagePrompt` branches (BEFORE any
  * `extraInstruction`, so a request that asks for text follows this
- * permission) and of both classic-stylize battlemap modes (`runEngine`) —
- * never an `Avoid:` line, which is now only what an EXPLICIT caller
- * `negative` supplies.
+ * permission), of both classic-stylize battlemap modes (`runEngine`) and of the
+ * vision dungeon map prompt (`visionDungeon.buildLabeledMapPrompt`) — never an
+ * `Avoid:` line, which is now only what an EXPLICIT caller `negative` supplies.
  *
- * NOT wired into the vision dungeon path:
- * `visionDungeon.buildLabeledMapPrompt`'s "no written text anywhere except the
- * N letter plaques" clause is a CALLER-OWNED rule, LOAD-BEARING for its
- * locate pass (the vision camera reads exactly those plaques), so the owner's
- * "map with a legend" need is served by the generic illustration paths
- * instead — docs/17 rows 224/319.
+ * IT RIDES EVERY IMAGE PROMPT (owner-directed, docs/17 row 407). The owner's
+ * directive: *"please put the text clause everywhere, not just for the
+ * refinement"*, and the two sentences added to his wording exist because
+ * *"image models tend to spoil the action"*: *"Text absolutely may not spoil
+ * story parts."* and *"This is an illustration for a roleplaying game. The
+ * image you create should only illustrate the subject matter, not hint at
+ * anything else."* The vision dungeon path is therefore NO LONGER a carve-out
+ * (docs/17 rows 224/319 said it was): its OWN "no written text anywhere except
+ * the N letter plaques" rule is a caller-owned, MORE SPECIFIC statement and
+ * rides AFTER this clause, so the plaque contract its locate pass reads still
+ * reads last (docs/17 row 407).
  */
 export const IMAGE_TEXT_WHEN_NEEDED_CLAUSE =
-  "Text is welcome where the subject itself needs it — writing on a letter, a sign, a book or a map's own labels — and wherever the request asks for it; use it only where it is needed, and keep it short, correctly spelled and clearly readable.";
+  "Text is welcome where the subject itself needs it — writing on a letter, a sign, a book or a map's own labels — and wherever the request asks for it; use it only where it is needed, and keep it short, correctly spelled and clearly readable. Text absolutely may not spoil story parts. This is an illustration for a roleplaying game. The image you create should only illustrate the subject matter, not hint at anything else.";
 
 /**
  * The direct-instruction precedence rule (docs/17 row 346) — the OWNER's
@@ -237,8 +247,8 @@ export function portraitGroundingForStatBlock(statBlock: StatBlock): string {
 /**
  * Builds the image prompt for one artifact — a pure function, same input →
  * same prompt. Both branches carry the owner's `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`
- * (docs/17 row 319) between the grounding and any `extraInstruction`, so a
- * request that asks for text follows the permission that precedes it. When an
+ * (docs/17 rows 319, 407) between the grounding and any `extraInstruction`, so
+ * a request that asks for text follows the permission that precedes it. When an
  * instruction IS set, the precedence clause above rides it as ONE trailing
  * block (docs/17 row 346) — so the prompt ENDS with the rule and the words it
  * governs, and a 10,000-character grounding cannot bury them; with no

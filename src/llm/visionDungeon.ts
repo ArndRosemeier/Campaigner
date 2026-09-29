@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { IMAGE_TEXT_WHEN_NEEDED_CLAUSE } from '@/llm/imagePromptDraft';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { absentable } from '@/llm/schemas';
 
@@ -89,14 +90,16 @@ export function labelsForRoomCount(count: number): string[] {
  * organic — because the descriptions already carry shape language. There is
  * deliberately no global shape clause to argue with the rooms.
  *
- * TEXT-RENDER RULE (docs/11 D5, docs/17 row 319): there is no shared image
- * avoid list any more, so this builder is not an "exception" to one. It
- * carries its OWN caller-owned rule: the map NEEDS its carved letter plaques,
- * so its guard is the tailored clause in the Requirements line ("no written
- * text anywhere except the N letter plaques") — LOAD-BEARING for the locate
- * contract. The shared contract's positive `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` is
- * deliberately NOT added here either (a "text where needed" permission would
- * fight the plaque contract). The lab bench inherits this rule through this
+ * TEXT-RENDER RULE (docs/11 D5, docs/17 rows 319/407): there is no shared
+ * image avoid list any more, so this builder is not an "exception" to one. It
+ * carries the SAME positive `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` every other image
+ * prompt carries (by IMPORT, never a copy) AND its OWN caller-owned rule: the
+ * map NEEDS its carved letter plaques, so the tailored clause in the
+ * Requirements line ("no written text anywhere except the N letter plaques")
+ * is stated AFTER the shared clause as the MORE SPECIFIC, later statement —
+ * the locate contract reads the plaques, and a request for text follows the
+ * permission that precedes it. The shared clause goes FIRST for exactly that
+ * reason (docs/17 row 407). The lab bench inherits both rules through this
  * same builder — never a forked copy.
  *
  * The POSITIVE emptiness clause (`BATTLEMAP_EMPTY_TERRAIN_CLAUSE`, docs/17
@@ -136,6 +139,10 @@ export function buildLabeledMapPrompt(
       : [`Room ${entry.label} is the dungeon entrance — the party's way in: draw it AS a visual entrance (stairs descending, a cave mouth, a gate, or a portal to suit the ${concept}), plaque included.`]),
     ...(connectivity === undefined || connectivity.trim() === '' ? [] : [`Rooms connect: ${connectivity}.`]),
     BATTLEMAP_EMPTY_TERRAIN_CLAUSE,
+    // The shared positive text clause rides HERE TOO (docs/17 row 407): it is
+    // the general permission, and the caller's own plaque rule below is the
+    // more specific statement that still reads LAST.
+    IMAGE_TEXT_WHEN_NEEDED_CLAUSE,
     `Requirements: let each room's shape follow its description and the dungeon concept — worked, built rooms read architectural with walls and corners, natural spaces read organic; there is no single global shape rule. INSIDE each room, on the floor, a LARGE clearly-legible capital letter plaque (${first} through ${last}, one per room), engraved or carved into the floor, marking that room; top-down battlemap style with a subtle grid; no monsters, no creatures, no people, and no written text anywhere except the ${String(rooms.length)} letter plaques.`,
   ].join('\n');
 }

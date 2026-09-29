@@ -6127,15 +6127,15 @@ export class RunEngine {
     const concept = parsed.terrain === ''
       ? `${parsed.theme} dungeon`
       : `${parsed.theme} dungeon — ${parsed.terrain}`;
-    // TEXT-RENDER CARVE-OUT (docs/11 D5, docs/17 rows 224/319): there is no
-    // shared image avoid list any more, so this path's reason to diverge is
-    // simply its OWN rule — the builder's tailored "no written text anywhere
-    // except the N letter plaques" clause (see `buildLabeledMapPrompt`),
-    // which is LOAD-BEARING for the vision locate pass. The owner's positive
-    // `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` is deliberately NOT added here either: a
-    // "text where needed" permission would fight that plaque contract, so a
-    // "map with a legend" is served by the generic illustration paths
-    // instead of this one.
+    // TEXT-RENDER RULE (docs/11 D5, docs/17 rows 224/319/407): there is no
+    // shared image avoid list any more. The builder composes BOTH text rules:
+    // the owner's shared `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` (by IMPORT, never a
+    // copy — it rides EVERY image prompt since row 407) FIRST, and its OWN
+    // tailored "no written text anywhere except the N letter plaques" clause
+    // (LOAD-BEARING for the vision locate pass) AFTER it as the more specific,
+    // later statement. A "map with a legend" is now also served here rather
+    // than only by the generic illustration paths, because the owner directed
+    // the clause everywhere; the plaque contract still reads last.
     const prompt = buildLabeledMapPrompt(
       sidecarRooms,
       concept,
@@ -6341,8 +6341,8 @@ export class RunEngine {
     // shared text budget (docs/17 row 319 deleted that list). The brief's own
     // `negative` rides as the `Avoid:` line when the Cartographer wrote one,
     // and is OMITTED entirely when it is empty — there is no fallback to any
-    // shared list. The owner's positive text rule (docs/17 row 319) rides the
-    // COMPOSED prompt in both modes.
+    // shared list. The owner's positive text rule (docs/17 rows 319/407) rides
+    // the COMPOSED prompt in both modes.
     //
     // THE EMPTINESS RULE (docs/17 rows 337/341) rides both modes as ONE shared
     // POSITIVE clause (`BATTLEMAP_EMPTY_TERRAIN_CLAUSE`) beside the existing

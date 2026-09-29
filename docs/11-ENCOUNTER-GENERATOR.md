@@ -761,13 +761,18 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   `IMAGE_TEXT_NEGATIVE` and its `MOB_PORTRAIT_TEXT_NEGATIVE` alias are
   DELETED, and `buildImagePrompt`'s default `negative` is `''`, so a default
   prompt carries NO `Avoid:` line at all. What rides instead is ONE positive
-  clause, `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`: "Text is welcome where the subject
-  itself needs it — writing on a letter, a sign, a book or a map's own labels
-  — and wherever the request asks for it; use it only where it is needed, and
-  keep it short, correctly spelled and clearly readable." It rides the
-  COMPOSED prompt of both `buildImagePrompt` branches and of both classic
-  battlemap stylize modes, so a letter, a sign, a treasure map or a map with a
-  legend is drawn rather than refused. The owner's reason, verbatim: *"Any
+  clause, `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`, amended in place by docs/17 row 407
+  with two appended sentences: "Text is welcome where the subject itself needs
+  it — writing on a letter, a sign, a book or a map's own labels — and wherever
+  the request asks for it; use it only where it is needed, and keep it short,
+  correctly spelled and clearly readable. Text absolutely may not spoil story
+  parts. This is an illustration for a roleplaying game. The image you create
+  should only illustrate the subject matter, not hint at anything else." It
+  rides the COMPOSED prompt of both `buildImagePrompt` branches, of both classic
+  battlemap stylize modes, and — since row 407 — of the vision dungeon map
+  prompt (`visionDungeon.buildLabeledMapPrompt` IMPORTS the constant), so a
+  letter, a sign, a treasure map or a map with a legend is drawn rather than
+  refused on EVERY path. The owner's reason, verbatim: *"Any
   avoid list will capture things that will be important at some time, i just
   realized that."* The `negative` option survives as the explicit-override
   seam (a caller passing its own list still gets an `Avoid:` line; an explicit
@@ -791,16 +796,19 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   before this, the fresh path passed only the run's raw `extraInstruction`
   (`''` on a fresh run) and the brief's `Additional instruction:` paragraph was
   DROPPED IN SILENCE, which AGENTS rules 1-2 forbid.
-  **DECLARED BOUNDARY — two CALLER-OWNED rules that are NOT
-  the shared text budget and are both untouched:** (1) the classic battlemap's
+  **DECLARED BOUNDARY — one CALLER-OWNED rule that is NOT
+  the shared text budget and is untouched:** the classic battlemap's
   `usabilityBans` string ("No title banner, no compass rose, no map legend, no
   scale bar, no grid lines, no text labels, … no white or pale boxes …") — the
   owner-ratified VTT-usability rule about map FURNITURE and hallucinated
-  geometry (D17 below); and (2) the vision dungeon path's "no written text
-  anywhere except the N letter plaques" clause, which is LOAD-BEARING for the
-  vision locate pass — a "text where needed" permission would fight the
-  plaques the vision camera reads, so the shared clause is deliberately NOT
-  added there (a blanket no-letters Avoid would fight them too).
+  geometry (D17 below). The vision dungeon path's "no written text
+  anywhere except the N letter plaques" clause is ALSO caller-owned and
+  LOAD-BEARING for the vision locate pass, but it is NO LONGER a carve-out from
+  the shared clause: since docs/17 row 407 the shared clause rides the dungeon
+  prompt FIRST (through `visionDungeon`'s import of the ONE constant) and the
+  plaque rule follows as the more specific, later statement, because the owner
+  directed the clause everywhere. A blanket no-letters Avoid would still fight
+  the plaques and is still not used.
   **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
   deterministic — no LLM call ("I dont want that extra LLM call. Just use
   the appearance/body."). Failures report loud per mob (`{name, message}`

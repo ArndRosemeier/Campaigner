@@ -8344,7 +8344,7 @@ the `appearance` shortcut stays uncapped, and the non-image length budgets (`run
 encounter-pool 600, `wikilinks.surroundingParagraphs` 1200) were deliberately NOT touched — they are different
 seams with their own markers.
 
-### The image text rule is POSITIVE and the shared avoid list is DELETED (docs/17 row 319, docs/11 §D5)
+### The image text rule is POSITIVE, the avoid list is DELETED, and the clause rides EVERY image prompt (docs/17 rows 319 and 407, docs/11 §D5)
 
 The original incident stands — an image model "tends to render lots of text,
 explaining the whole plot in the image" — but every avoid list captured
@@ -8356,10 +8356,18 @@ that will be important at some time, i just realized that."* So
 `IMAGE_TEXT_NEGATIVE` and `MOB_PORTRAIT_TEXT_NEGATIVE` are DELETED, the default
 `negative` is `''`, and the default assembled prompt carries NO `Avoid:` line.
 ONE positive clause — `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` — rides the composed
-prompt of both `buildImagePrompt` branches and of both classic-stylize
-battlemap modes. The `negative` option stays the explicit-override seam. Two
-CALLER-OWNED rules are a declared boundary and stay untouched: the battlemap's
-`usabilityBans` string and `buildLabeledMapPrompt`'s room-plaque clause.
+prompt of both `buildImagePrompt` branches, of both classic-stylize
+battlemap modes, and (since docs/17 row 407) of the vision dungeon map prompt,
+which IMPORTS it through `visionDungeon.buildLabeledMapPrompt`. The `negative`
+option stays the explicit-override seam. ONE CALLER-OWNED rule is a declared
+boundary and stays untouched: the battlemap's `usabilityBans` string. The
+vision dungeon's room-plaque clause is ALSO caller-owned, but it is no longer a
+carve-out: it rides AFTER the shared clause as the more specific, later
+statement (docs/17 row 407), so the locate pass's plaque contract still reads
+last. The clause's own wording was amended in place by the same row (two
+appended sentences: "Text absolutely may not spoil story parts." and "This is
+an illustration for a roleplaying game. The image you create should only
+illustrate the subject matter, not hint at anything else.").
 
 | Pin | What it holds | What reds it |
 |---|---|---|
@@ -8369,7 +8377,9 @@ CALLER-OWNED rules are a declared boundary and stay untouched: the battlemap's
 | `keeps an explicit negative as the override (the option stays the seam)` (same file + `imagePromptDraft.test.ts`) | a caller's own `negative` still reaches the assembled `Avoid:` line; an explicit `''` emits none | closing the override seam |
 | `the deleted shared avoid list cannot come back into src/` (same file) | a source scan reports ZERO `src/` hits for both deleted names, with a non-vacuity assertion on the live clause constant so an empty result means ABSENCE | restoring either deleted name anywhere under `src/` |
 | `puts the positive text clause before the trailing instruction` (`tests/llm/imagePromptDraft.test.ts`) | the clause sits BETWEEN the grounding and `extraInstruction` | moving the clause after the instruction |
-| the vision carve-out (`imageTextGuard.test.ts`, `keeps the room plaques while no shared clause reaches the vision path`) | the vision map still carries `no written text anywhere except the 2 letter plaques` and neither `Avoid:` nor the positive clause | adding the shared clause or any `Avoid:` line to the vision path |
+| `carries the shared text clause VERBATIM on EVERY path that reaches the image API` (`tests/llm/imageTextGuard.test.ts`, docs/17 row 407; the ONE differential) | one prompt is COMPOSED per path — `buildImagePrompt`'s appearance branch and grounded branch, `buildLabeledMapPrompt` (vision dungeon + lab bench), `buildLabeledDungeonPrompt` (the bench's own caller), classic architectural and classic natural through `captureClassicStylizePrompt` — and each contains `IMAGE_TEXT_WHEN_NEEDED_CLAUSE` plus both appended sentences by name | dropping the clause from ANY path (arm B: removed from `buildLabeledMapPrompt`; arm A: removed from one classic arm) |
+| `keeps the room plaques AND carries the shared clause before them` (same file, the renamed row-319 carve-out pin) | the vision dungeon prompt carries `no written text anywhere except the 2 letter plaques` AND `IMAGE_TEXT_WHEN_NEEDED_CLAUSE`, with the shared clause EARLIER in the string than the plaque rule; still no `Avoid:` | adding an `Avoid:` line, or moving the plaque rule before the shared clause |
+| `the shared clause text has EXACTLY ONE carrier in src/` (same file, docs/17 row 407) | a source scan for the amended clause's own text returns exactly `llm/imagePromptDraft.ts`, with a control proving the walk distinguishes absence (the needle is held CONSCIOUSLY by the pin file, which is under `tests/`, never counted) | pasting the sentence into a second `src/` file, a second constant, or a per-branch variant (arm C) |
 
 **Moved prompt pins, named rather than blanket-re-baselined:** the prompt
 literals in `tests/llm/imageRun.test.ts` and `tests/llm/imagePromptDraft.test.ts`
@@ -8378,10 +8388,19 @@ substrings in `tests/db/mob-portrait-cache.test.ts` ×2 and
 `tests/features/portrait-queues.test.ts` ×4 became `not.toContain('Avoid:')`
 assertions. Each was re-derived from the composed prompt.
 
+**AMENDED, not re-baselined (docs/17 row 407):** the clause's own bytes moved
+in exactly ONE place (`IMAGE_TEXT_WHEN_NEEDED_CLAUSE`, two appended sentences),
+so every pin that interpolates the constant moved with it and NO literal prompt
+golden had to be re-baselined. The ONE test assertion that changed meaning is
+the row-319 vision carve-out pin, which now asserts the shared clause IS
+present and precedes the plaque rule; the vision-map engine capture in
+`tests/llm/encounterVisionMap.test.ts` gained a clause-presence assertion on
+the prompt the engine actually hands `encounterRunAdapters.generateImages`.
+
 **UNCHANGED and named:** the 10,000-character cap, the five-caller
 `buildImagePrompt` registry, the `negative` override seam, the vision plaque
-mechanism, and the classic battlemap's usability hard-bans (docs/11 D17). No
-PDF/layout dump moved (no PDF-rendering suite or baseline was touched).
+mechanism itself, and the classic battlemap's usability hard-bans (docs/11 D17).
+No PDF/layout dump moved (no PDF-rendering suite or baseline was touched).
 
 ### The natural-site classic-stylize arm is pinned (docs/17 row 225, docs/11 §D17)
 
