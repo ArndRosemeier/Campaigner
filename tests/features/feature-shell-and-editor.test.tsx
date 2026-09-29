@@ -654,8 +654,8 @@ describe('editor-run-battle.test.tsx', () => {
 
       await user.click(screen.getByTestId('run-battle-picker'));
       const empty = await screen.findByTestId('run-battle-picker-empty');
-      expect(empty).toHaveTextContent('No modules in this campaign yet.');
-      expect(empty).toHaveTextContent('Battles anchor to modules');
+      expect(empty).toHaveTextContent('No document in this campaign yet.');
+      expect(empty).toHaveTextContent('Battles anchor to the campaign document');
       expect(screen.queryByTestId('run-battle-module-list')).toBeNull();
       await flushAsyncUpdates();
     });

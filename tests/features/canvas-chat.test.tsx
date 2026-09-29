@@ -944,7 +944,7 @@ describe('GM assist (a second surface on the ONE chat, docs/17 row 362)', () => 
     await openSidebar(user);
     await switchSurface(user, 'gm-assist');
     const intro = await screen.findByTestId('canvas-chat-gm-assist-intro');
-    expect(intro.textContent).toContain('not saved with the module');
+    expect(intro.textContent).toContain('not saved with the campaign');
     expect(intro.textContent).toContain('gone after a reload');
   });
 

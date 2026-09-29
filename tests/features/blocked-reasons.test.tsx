@@ -237,7 +237,7 @@ describe('the canvas header states why its controls cannot act', () => {
     await user.click(screen.getByTestId('canvas-rewrite-part'));
     const dialog = await screen.findByTestId('canvas-instruction-dialog');
     await user.click(within(dialog).getByTestId('canvas-rewrite-part-select'));
-    await user.click(await screen.findByRole('option', { name: 'Part 1: The Gate Bargain' }));
+    await user.click(await screen.findByRole('option', { name: 'Level 1: The Gate Bargain' }));
     await user.type(within(dialog).getByTestId('canvas-instruction-input'), 'make it stormy');
     await user.click(within(dialog).getByTestId('canvas-instruction-confirm'));
     await flushAsyncUpdates();

@@ -401,11 +401,11 @@ describe('canvas chat clear (one module, pristine state)', () => {
     await user.click(screen.getByTestId('canvas-chat-clear'));
     const description = await screen.findByTestId('canvas-chat-clear-description');
     // The boundary is unmistakable in the copy: what goes, and what stays.
-    expect(description.textContent).toContain('NOT cleared: the module');
+    expect(description.textContent).toContain('NOT cleared: the campaign');
     expect(description.textContent).toContain('DOCUMENT TEXT');
     expect(description.textContent).toContain('not an undo');
     expect(description.textContent).toContain('Versions');
-    expect(description.textContent).toContain('saved thread on the module');
+    expect(description.textContent).toContain('saved thread on the campaign');
 
     await user.click(screen.getByTestId('canvas-chat-clear-confirm'));
     await flushAsyncUpdates();

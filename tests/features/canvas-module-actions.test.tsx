@@ -315,7 +315,7 @@ describe('"Fix module problems" on the canvas', () => {
     // Nothing entity-side is on this list, and the dialog says what it will not
     // touch rather than hiding it.
     expect(within(dialog).queryByTestId('canvas-fix-problems-reported')).toBeNull();
-    expect(within(dialog).getByText(/rewrites the module TEXT only/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/rewrites the document TEXT only/)).toBeInTheDocument();
   }, 30_000);
 
   it('rewrites the named part through the repair seam, snapshots first, and the control disappears', async () => {
@@ -634,7 +634,7 @@ describe('"Resume automatic module creation" on the canvas', () => {
     });
     await waitFor(() => {
       expect(toastInfoMock).toHaveBeenCalledWith(
-        'Nothing is missing any more — the module already has everything creation was asked to automate.',
+        'Nothing is missing any more — the document already has everything creation was asked to automate.',
       );
     });
 

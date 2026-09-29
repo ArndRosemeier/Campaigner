@@ -450,7 +450,7 @@ describe('canvas AI actions in the PREVIEW (docs/17 row 102)', () => {
       'Pick the part to rewrite first.',
     );
     await user.click(within(dialog).getByTestId('canvas-rewrite-part-select'));
-    await user.click(await screen.findByRole('option', { name: 'Part 2: The Flooded Nave' }));
+    await user.click(await screen.findByRole('option', { name: 'Level 2: The Flooded Nave' }));
     // The picked part's WHOLE source text, byte-exact, is the confirmation the
     // owner reads — no selection is involved anywhere in this action.
     expect(within(dialog).getByTestId('canvas-instruction-source').textContent).toBe(PART_1_TEXT);

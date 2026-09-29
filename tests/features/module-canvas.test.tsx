@@ -491,7 +491,7 @@ describe('canvas whole-document editor', () => {
     });
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        'Could not save the module document',
+        'Could not save the campaign document',
         expect.anything(),
       );
     });
@@ -607,7 +607,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     await renderCanvas();
     await enterEditMode(user);
 
-    await runInstruction(user, 'canvas-rewrite-part', 'make it stormy', 'Part 2: The Flooded Nave');
+    await runInstruction(user, 'canvas-rewrite-part', 'make it stormy', 'Level 2: The Flooded Nave');
 
     const preview = await screen.findByTestId('canvas-wholepart-preview', {}, { timeout: 5_000 });
     await waitFor(() => {
@@ -665,7 +665,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     mockChatReply('The watch begins in fog.');
     await renderCanvas();
     await enterEditMode(user);
-    await runInstruction(user, 'canvas-rewrite-part', 'write the watch', 'Part 3: The Long Watch');
+    await runInstruction(user, 'canvas-rewrite-part', 'write the watch', 'Level 3: The Long Watch');
     await screen.findByTestId('canvas-wholepart-preview', {}, { timeout: 5_000 });
     await user.click(screen.getByTestId('canvas-proposal-apply'));
     await flushAsyncUpdates();

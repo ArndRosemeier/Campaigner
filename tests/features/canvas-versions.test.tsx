@@ -728,7 +728,7 @@ describe('clear all previous versions', () => {
     const dialog = await screen.findByTestId('canvas-versions-clear-dialog');
     // Destructive-confirmed, and the copy says exactly what goes and what stays.
     const copy = screen.getByTestId('canvas-versions-clear-description').textContent;
-    expect(copy).toContain('all 2 saved versions of THIS module');
+    expect(copy).toContain('all 2 saved versions of THIS campaign\'s document');
     expect(copy).toContain('NOT cleared');
     expect(copy).toContain('DOCUMENT TEXT');
     expect(copy).toContain('no version is saved first');
