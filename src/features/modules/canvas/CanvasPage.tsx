@@ -277,13 +277,15 @@ export function CanvasPage(): JSX.Element {
   const [saving, setSaving] = useState(false);
   // Adjusting state during render (React's derive-state pattern): the module
   // document is composed the first time the module row is available, and
-  // never again while the same module stays mounted. `spine !== null` is the
-  // "the document is not empty" test (docs/23 §4: `spine` is null iff the
-  // document is empty), so a premise-only module opens here too.
+  // never again while the same module stays mounted. An EMPTY document is a
+  // legal starting state (docs/23 §2.1, docs/17 row 390): `moduleDocumentFromView`
+  // returns '' for a row with no premise and no levels, and the canvas opens on
+  // it so the chat can author the premise (level 0) and then its level
+  // sections. The old `spine !== null` requirement and the MissingEntityPanel
+  // it raised are DELETED — there is no "this module has no document yet" gate.
   if (
     module !== undefined &&
     module !== null &&
-    module.spine !== null &&
     mountedModuleId !== module.id
   ) {
     const assembled = moduleDocumentFromView(module);
@@ -501,10 +503,13 @@ export function CanvasPage(): JSX.Element {
   // Explicitly narrowed: the handlers below are hoisted function declarations,
   // for which TS's control-flow narrowing of `campaign` does not survive.
   const currentCampaign: Campaign = campaign;
-  if (currentModule.spine === null || initialDoc === null) {
+  // An EMPTY document is legal and authorable (docs/23 §2.1, docs/17 row 390):
+  // the page opens with `initialDoc === ''` and the chat authors the premise.
+  // The only remaining wait is the first composition of the row's document.
+  if (initialDoc === null) {
     return (
       <MissingEntityPanel
-        message="This module has no document yet — the canvas edits its premise and levels once there is text."
+        message="This module could not be loaded — its document is unavailable."
         campaignId={campaignId}
       />
     );
@@ -578,7 +583,7 @@ export function CanvasPage(): JSX.Element {
     try {
       const highlightSections = moduleDocumentSections(
         previewSource,
-        currentModule.spine.partPlan,
+        currentModule.spine?.partPlan ?? [],
       );
       const highlightSection = highlightSections.find(
         (section) => lastReplacement.from >= section.textFrom && lastReplacement.to <= section.textTo,
@@ -1237,14 +1242,12 @@ export function CanvasPage(): JSX.Element {
     key: string;
     framing: CanvasChatFraming;
     modelSelection: string | null;
-    hasDocument: boolean;
   } {
     const key = canvasChatKeyFor(moduleId, framing);
     return {
       key,
       framing,
       modelSelection: useCanvasChatStore.getState().module(key).modelSelection,
-      hasDocument: currentModule.spine !== null,
     };
   }
 
@@ -1271,7 +1274,6 @@ export function CanvasPage(): JSX.Element {
           moduleId,
           key: options.key,
           framing: options.framing,
-          hasDocument: options.hasDocument,
           doc: source,
           modelSelection: options.modelSelection,
           turn: controller,
@@ -1299,7 +1301,6 @@ export function CanvasPage(): JSX.Element {
         moduleId,
         key: options.key,
         framing: options.framing,
-        hasDocument: options.hasDocument,
         doc: source,
         modelSelection: options.modelSelection,
         turn: controller,
@@ -1339,7 +1340,6 @@ export function CanvasPage(): JSX.Element {
         moduleId,
         key: options.key,
         framing: options.framing,
-        hasDocument: options.hasDocument,
         doc: source,
         modelSelection: options.modelSelection,
         turn: controller,
@@ -1397,7 +1397,6 @@ export function CanvasPage(): JSX.Element {
    * the repair; the doc epoch remounts the editor from the fresh row.
    */
   function reseedFromRow(row: Module): void {
-    if (row.spine === null) return;
     const document = moduleDocumentFromView(row);
     setInitialDoc(document);
     setBaselineDoc(document);
@@ -1835,7 +1834,6 @@ export function CanvasPage(): JSX.Element {
             moduleId={currentModule.id}
             surface={chatSurface}
             onSurfaceChange={setChatSurface}
-            hasDocument={currentModule.spine.premise.trim() !== '' || currentModule.parts.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
             aiBusyReason={aiBlockedReason}

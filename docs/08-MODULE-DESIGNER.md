@@ -778,6 +778,12 @@ checkpoint. The declared mix is not checked: it does not exist any more
 textarea and part-plan table (edit titles/synopses/bands, add/remove/reorder
 parts). Buttons: "Generate parts" / "Retry spine…" (optional extra
 instruction) / "Discard". This is the highest-leverage steering moment.
+**IT SHOWS ONLY FOR A ROW THAT HAS A PASS-0 PLAN** (docs/17 row 390):
+`showSpineCheckpoint` requires `spine.partPlan.length > 0`, because a document
+the CHAT authored has no pass-0 plan and the checkpoint's "Discard" would drop
+the spine — and therefore, the document carrying the premise — deleting the
+text the owner just wrote in the chat. A chat-authored premise-only document is
+the ordinary reader instead.
 
 **Opt-in skip (`autoApproveSpine`, set at creation via "Generate parts
 without review"):** the generated spine is approved as-is and pass 1 starts
@@ -1086,33 +1092,31 @@ from the constant, this section documents it.
 
 ### Creation UI
 
-"New Module" (modules list page `/c/:campaignId/modules`, plus entry in the
-top bar next to Play): dialog with a **Name** input at the TOP of the form
-(docs/17 row 213 — pre-filled with the `defaultModuleTitle()` placeholder and
-resolved through the ONE `domain/module.resolveModuleTitle`, so a blank field
-creates the placeholder, never an empty title; editable at creation and still
-renameable in the reader), concept textarea, level range (two numeric
-steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), and the
-opt-in **"Continue from previous modules"** checkbox (disabled with a hint
-until some other module of the campaign has text; the flag persists on the
-module row, so later spine retries / part rewrites keep the continuity
-context), and the opt-in **"Adversarial generation"** checkbox beside it
-(docs/17 row 354: inside generation, a critique reviews each step's result —
-the premise first, then every part as it is written — and an editor improves
-it; OFF by default, and the choice is remembered in the draft and recorded on
-the module row through `createModuleAndRun` → `createModule`, exactly like the
-continuity flag). Creates the Module row and navigates to the reader **immediately** —
-pass 0 runs there, where the reader is its live progress surface: streaming
-card, Stop button, and a progress dock that reports what the stream is doing
-(char counts while the answer streams, "the model is thinking (Ns)" — with an
-explicit "can take several minutes, this is normal" hint — while a reasoning
-model works before its first delta, "no answer yet (Ns)" while the provider
-is silent). When the model streams its reasoning, the card shows it live as a
-dimmed "thinking" tail (illustration only — never persisted, cleared once the
-prose starts). The spine's opening detail names the stage as one large design
-call and sets the minutes-long expectation up front, so the quiet stretch is
-not read as a hang. The dialog never blocks on the LLM. A failed first spine
-shows its recorded error in the reader with an in-place **Retry spine draft**.
+"Start the campaign document" (the campaign landing's create state
+`/c/:campaignId/document`, docs/17 row 389): dialog with a **Name** input at the
+TOP of the form (docs/17 row 213 — pre-filled with the `defaultModuleTitle()`
+placeholder and resolved through the ONE `domain/module.resolveModuleTitle`, so
+a blank field creates the placeholder, never an empty title; editable at
+creation and still renameable in the reader), concept textarea, level range (two
+numeric steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), the
+generation settings the module records, the opt-in **"Continue from previous
+modules"** checkbox (disabled with a hint until some other module of the
+campaign has text; the flag persists on the module row, so a later generation
+keeps the continuity context), and the opt-in **"Adversarial generation"**
+checkbox beside it (docs/17 row 354: inside generation, a critique reviews each
+step's result — the premise first, then every part as it is written — and an
+editor improves it; OFF by default, and the choice is remembered in the draft
+and recorded on the module row through `startCampaignDocument` → `createModule`,
+exactly like the continuity flag). **IT STARTS AN EMPTY DOCUMENT AND NOTHING
+ELSE** (docs/23 §10 phase 3, docs/17 row 390): the row is created through the
+ONE `createCampaignDocument` seam with `document: ''` — the "level 0 only" state
+— and the dialog navigates straight to the canvas **with the chat open**, where
+the owner authors the premise (level 0) and the level sections in conversation.
+It does NOT run pass 0: the generator's structure pass is no longer the premise's
+author, and nothing blocks on an LLM here. The generation-only controls below
+(auto-spine, the automation grid, battlemaps, mob portraits, adversarial
+generation) are RECORDED ON THE ROW for the module's generation step, started
+later from the canvas; their own copy says so.
 
 **Persisted draft** (owner request, docs/17 row 70): every value the dialog
 holds — the name (docs/17 row 213) and the concept included — is saved to the
@@ -2487,10 +2491,15 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   separator line and the section text becomes the remainder (leading blank
   lines trimmed); anything else fails loudly. Level 0 has no separator and
   cannot be filled from empty (the level-addressed `append_level` commands are
-  docs/17 row 381's). A module whose document is EMPTY fails the pre-flight
-  (`NO_DOCUMENT_MESSAGE`); **a premise-only module — no level sections — IS
-  chattable**, since the premise is level 0 and is edited through the ordinary
-  `<edit>` path.
+  docs/17 row 381's). **AN EMPTY DOCUMENT IS AUTHORABLE** (docs/23 §10 phase 3,
+  docs/17 row 390): the former "empty document" pre-flight and its sentence are
+  DELETED, because an empty document (level 0 only, zero separators) is the
+  campaign's STARTING state. The chat writes the premise with
+  `<replace_level level="0">` and creates each level in order with
+  `<append_level level="N">` — the app writes every separator and level number,
+  and the system prompt carries the authoring rule by name. A premise-only
+  module was already chattable: the premise is level 0 and is edited through the
+  ordinary `<edit>` path.
 - **Read-only grounding (unconditional, UNCAPPED)**: every request carries a
   clearly-marked `<reference-only>` block, riding INSIDE the final user turn
   (outside the persisted conversation history — carried fresh every turn,
@@ -2726,10 +2735,12 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   survive the reload (docs/18 §2.3). The two groups are labelled so they can
   never be mistaken for each other; Clear chat is still the way back to a
   pristine conversation.
-- **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
-  LOUDLY before anything sends ("no parts to chat about — generate the
-  module first" — controller pre-flight toast + the engine's send-time
-  boundary check), never an empty-context send.
+- **Pre-flight**: there is NO document precondition any more (docs/23 §10
+  phase 3, docs/17 row 390): an EMPTY document is the state the chat AUTHORS,
+  so nothing refuses before the call for it. The two remaining loud failures
+  are a module that no longer exists and a document that no longer parses
+  (`ModuleDocumentError`, naming the line) — both engine-side, before any
+  model call.
 - **Serialization**: chat and refine share the `llm/canvasBusy` registry
   (extracted from canvasRefine) — ONE generation per module across every
   canvas surface; `ModuleBusyError` surfaces as a failed card AND the

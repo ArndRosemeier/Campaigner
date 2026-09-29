@@ -122,12 +122,12 @@ vi.mock('@/db/settingsRepo', async (importOriginal) => {
 
 // Creation must never start real LLM machinery here.
 vi.mock('@/llm/moduleGen', () => ({
-  createModuleAndRun: vi.fn(),
+  startCampaignDocument: vi.fn(),
   cancelModuleGen: vi.fn(),
 }));
 
-const { createModuleAndRun } = await import('@/llm/moduleGen');
-const createModuleAndRunMock = vi.mocked(createModuleAndRun);
+const { startCampaignDocument } = await import('@/llm/moduleGen');
+const startCampaignDocumentMock = vi.mocked(startCampaignDocument);
 
 /**
  * The app-level error boundary's stand-in: a rejected settings read must
@@ -199,7 +199,7 @@ beforeEach(async () => {
   settingsWrites = 0;
   await clearDatabase();
   vi.clearAllMocks();
-  createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+  startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -268,11 +268,11 @@ describe('the draft round-trips through the settings row', () => {
     await user.click(within(dialog).getByTestId('start-module'));
 
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
     // The harness intercepts the `NewModule` input the dialog hands
-    // `createModuleAndRun` (moduleGen is mocked): the typed name IS the title.
-    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+    // `startCampaignDocument` (moduleGen is mocked): the typed name IS the title.
+    expect(startCampaignDocumentMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ title: 'The Sunken Bell' }),
     );
@@ -295,9 +295,9 @@ describe('the draft round-trips through the settings row', () => {
 
     await user.click(within(dialog).getByTestId('start-module'));
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
-    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    const input = startCampaignDocumentMock.mock.calls[0]?.[1];
     // BOTH halves of pin 3 are asserted in ONE run (soft, so a broken resolver
     // shows the coupling): an empty title fails the assertion below AND makes
     // the draft write fail `title: min(1)`, which `persist` reports loudly.
@@ -584,14 +584,14 @@ describe('the draft round-trips through the settings row', () => {
     await user.click(within(dialog).getByTestId('start-module'));
 
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
     await flushAsyncUpdates();
     const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.concept).toBe('Started straight away.');
     expect(settings.newModuleDraft?.campaignId).toBe(campaign.id);
     // The floor the dialog held rides along on the creation input.
-    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+    expect(startCampaignDocumentMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ encounterFloorGuardrail: defaultEncounterFloorGuardrail() }),
     );
@@ -720,11 +720,11 @@ describe('the module difficulty control (docs/17 row 190)', () => {
     await user.click(within(dialog).getByTestId('start-module'));
 
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
     // The creation input carries the explicit choice; `createModule` stamps it
     // on the row (the row-level assertion runs the real seam, not the mock).
-    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    const input = startCampaignDocumentMock.mock.calls[0]?.[1];
     expect(input).toMatchObject({ difficulty: 'much-harder' });
     if (input === undefined) throw new Error('creation input missing');
     expect(createModule(input).difficulty).toBe('much-harder');
@@ -776,12 +776,12 @@ describe('the adversarial-generation checkbox (docs/17 row 354, slice 1: the fla
     await user.type(within(dialog).getByLabelText('Concept'), 'A quiet, ordinary module.');
     await user.click(within(dialog).getByTestId('start-module'));
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
 
     // Untouched: the creation input (the generation input this dialog builds)
     // carries the flag OFF, and the real `createModule` records exactly that.
-    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    const input = startCampaignDocumentMock.mock.calls[0]?.[1];
     expect(input).toMatchObject({ adversarialGeneration: false });
     if (input === undefined) throw new Error('creation input missing');
     expect(createModule(input).adversarialGeneration).toBe(false);
@@ -800,10 +800,10 @@ describe('the adversarial-generation checkbox (docs/17 row 354, slice 1: the fla
     await user.type(within(dialog).getByLabelText('Concept'), 'A critiqued module.');
     await user.click(within(dialog).getByTestId('start-module'));
     await waitFor(() => {
-      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+      expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
     });
 
-    const input = createModuleAndRunMock.mock.calls[0]?.[1];
+    const input = startCampaignDocumentMock.mock.calls[0]?.[1];
     expect(input).toMatchObject({ adversarialGeneration: true });
     if (input === undefined) throw new Error('creation input missing');
     // The value reaches the module ROW through the real creation seam.

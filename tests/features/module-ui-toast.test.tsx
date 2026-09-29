@@ -74,7 +74,7 @@ import { updateSettings } from '@/db/settingsRepo';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
 import { createImage } from '@/db/imageRepo';
 
-const { createModuleAndRun, normalizeModuleEntityNames } = await import('@/llm/moduleGen');
+const { startCampaignDocument, normalizeModuleEntityNames } = await import('@/llm/moduleGen');
 const { toastSuccess, toastError } = await import('@/lib/toast');
 
 vi.mock('@/lib/toast', () => ({
@@ -98,7 +98,7 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
-    createModuleAndRun: vi.fn(),
+    startCampaignDocument: vi.fn(),
     normalizeModuleEntityNames: vi.fn(),
   };
 });
@@ -128,7 +128,7 @@ describe('campaign-document-landing.test.tsx', () => {
    * surfaced by the campaign bar's `LegacyModulesNotice` — never hidden.
    */
 
-  const createModuleAndRunMock = vi.mocked(createModuleAndRun);
+  const startCampaignDocumentMock = vi.mocked(startCampaignDocument);
 
   const toastSuccessMock = vi.mocked(toastSuccess);
 
@@ -439,18 +439,18 @@ describe('campaign-document-landing.test.tsx', () => {
 
       await user.click(screen.getByTestId('new-module'));
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-      expect(within(dialog).getByRole('heading', { name: 'New Module' })).toBeInTheDocument();
+      expect(within(dialog).getByRole('heading', { name: 'Start the campaign document' })).toBeInTheDocument();
       // The Name field is visibly present and pre-filled (docs/17 row 213),
       // distinct from the reader's `module-title` testid.
       expect(within(dialog).getByTestId('new-module-title')).toHaveValue(defaultModuleTitle());
-      expect(createModuleAndRunMock).not.toHaveBeenCalled();
+      expect(startCampaignDocumentMock).not.toHaveBeenCalled();
 
       // Cancel closes the dialog; still no generator call.
       await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
       await waitFor(() => {
         expect(screen.queryByTestId('new-module-dialog')).not.toBeInTheDocument();
       });
-      expect(createModuleAndRunMock).not.toHaveBeenCalled();
+      expect(startCampaignDocumentMock).not.toHaveBeenCalled();
       await flushAsyncUpdates();
     }, 20_000);
 
@@ -500,12 +500,12 @@ describe('campaign-document-landing.test.tsx', () => {
       await user.click(checkbox);
       expect(checkbox).toBeChecked();
       await user.type(within(dialog).getByLabelText('Concept'), 'A new chapter of the story.');
-      createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
       await user.click(within(dialog).getByTestId('start-module'));
       await waitFor(() => {
-        expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
       });
-      expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ includePriorModules: true }),
       );
@@ -531,12 +531,12 @@ describe('campaign-document-landing.test.tsx', () => {
 
       // Creation still works, and the flag is passed as off.
       await user.type(within(dialog).getByLabelText('Concept'), 'The very first chapter.');
-      createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
       await user.click(within(dialog).getByTestId('start-module'));
       await waitFor(() => {
-        expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
       });
-      expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ includePriorModules: false }),
       );
@@ -571,12 +571,12 @@ describe('campaign-document-landing.test.tsx', () => {
       await user.click(within(dialog).getByTestId('auto-mob-images'));
 
       await user.type(within(dialog).getByLabelText('Concept'), 'Automated chapter.');
-      createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
       await user.click(within(dialog).getByTestId('start-module'));
       await waitFor(() => {
-        expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
       });
-      expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
           autoApproveSpine: true,

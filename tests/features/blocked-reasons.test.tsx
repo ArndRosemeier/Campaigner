@@ -330,9 +330,7 @@ describe('the canvas chat states why its controls cannot act', () => {
       <ChatSidebar
         moduleId={world.moduleId}
         surface="module"
-        onSurfaceChange={() => undefined}
-        hasDocument
-        pool={[]}
+        onSurfaceChange={() => undefined}        pool={[]}
         aiBusy={props.aiBusy}
         aiBusyReason={props.aiBusyReason}
         previewOpen

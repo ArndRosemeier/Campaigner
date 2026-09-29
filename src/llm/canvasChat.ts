@@ -50,6 +50,15 @@ import {
  * second implementation of the edit, the `max + 1` rule or the
  * separator-lookalike refusal.
  *
+ * THE CHAT AUTHORS FROM NOTHING (docs/23 §10 phase 3, docs/17 row 390). An
+ * EMPTY document is the campaign's starting state, not an error: `replace_level
+ * level="0"` writes the PREMISE (level 0 always exists, so no creation is
+ * needed) and `append_level level="1"` then creates level 1 with the app's own
+ * separator — the model never emits the scaffold. There is consequently no
+ * "no document" refusal anywhere on this path (the former empty-document
+ * sentence and its guards are DELETED, see below); the only pre-flight
+ * failures left are a vanished module and a malformed document.
+ *
  * Owner direction (docs/17 ledger row 51): no part selection — the model
  * sees the WHOLE module, which since docs/17 row 384 is THE module DOCUMENT
  * (docs/23 §2–§4): the PREMISE (level 0, everything before the first
@@ -370,24 +379,22 @@ export const MAX_DETAILS_BLOCK_CHARS = 12000;
 export const FAILURE_EXCERPT_RADIUS = 300;
 
 /**
- * THE sentence for "this module has no document to chat about" — the ONE
- * source (AGENTS rule 4). It is raised in three places and they must read
- * identically: this file's own pre-flight (`sendCanvasChatMessage`, which the
- * turn controllers reach through the engine) and the two turn controllers'
- * pre-flight guards (`chatController.runChatTurn` and
- * `snapshotChat.runSnapshotChatTurn`, which refuse BEFORE a message lands).
- * It used to be three separate literals — one exported constant plus two
- * inline copies — so a reword could leave two surfaces lying about the same
- * condition; `tests/llm/canvasChat.test.ts` pins the sentence's full text AND
- * that it is declared exactly once under `src/`.
+ * THERE IS DELIBERATELY NO "the document is empty" REFUSAL ANY MORE
+ * (docs/23 §10 phase 3, docs/17 row 390).
  *
- * THE CONDITION IS THE DOCUMENT'S, NOT A PLAN'S (docs/17 row 384): since the
- * premise IS level 0, a module with a premise and no level sections is
- * perfectly chattable — only an EMPTY document (no premise, no levels) has
- * nothing to say.
+ * The chat used to refuse an EMPTY document with ONE exported sentence,
+ * raised by this file's pre-flight and mirrored by the
+ * two turn controllers — because the generator's pass 0 was the premise's
+ * author and a chat with nothing to read had nothing to say. The owner's
+ * request is the opposite: *"One canvas chat that starts with nothing and ends
+ * with the campaign premise."* An empty document (level 0 only, zero
+ * separators) is therefore the chat's STARTING STATE, not a failure: the model
+ * is told to AUTHOR the premise through the same `replace_level level="0"` /
+ * `append_level level="N"` commands that edit any other level, and the app
+ * writes every separator and number. The refusal, its three call sites and its
+ * pins are DELETED; a module that no longer exists and a malformed document are
+ * still loud, and those are the only remaining pre-flight failures.
  */
-export const NO_DOCUMENT_MESSAGE =
-  'the module document is empty — write a premise or generate the module first';
 
 /** A malformed, unbalanced or over-cap reply — the whole reply fails. */
 export class CanvasChatParseError extends Error {
@@ -1502,6 +1509,7 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- append_level N adds your text at the END of level N. If N is exactly ONE MORE than the last level the document has, it CREATES that level (the app writes its separator); any other number is refused, because a level numbering with a gap makes the document unreadable. On a document with no level sections yet the last level is 0, so append_level level="1" creates level 1.',
     '- Both take exactly ONE <replace> body and NO <search>: the level number IS the target. The body is the text itself — never write a =====Level N===== line inside it (a line that looks like a level header is refused).',
     '- A refused level command changes NOTHING and comes back to you as a failed card naming the reason; the other commands in the same reply still apply.',
+    '- AUTHORING FROM NOTHING (an EMPTY document — no premise, no levels yet — is the campaign\u2019s starting state, not an error): YOU write the premise first with <replace_level level="0"><replace>THE PREMISE</replace></replace_level>, then create each level in order with <append_level level="1">, <append_level level="2">, … . Never write a =====Level N===== line yourself: the app writes the separator and the number when append_level creates the level. Build what the owner describes — the premise as level 0, then one section per level — and never reply that the document is empty or ask for one to be created.',
     'The document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
     'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s document only.',
     'You can also ASK for the STORED details of a named artifact you cannot see (an encounter\'s level, budget, rooms and roster; an NPC\'s stat block; a location\'s fields; any row\'s stored prose). Reply with a request block:',
@@ -2890,15 +2898,16 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     if (module.status === 'generating') {
       throw new ModuleBusyError(input.moduleId);
     }
-    if (module.spine === null) {
-      throw new Error(NO_DOCUMENT_MESSAGE);
-    }
     const settings = await getSettings();
     const grounding = await loadChatGrounding(module);
     // The per-level snapshot: the parse of the LIVE editor doc against the
     // row's plan (for the display titles only) — loud on a malformed document
     // (the same guard the save path uses), never a silent row re-assembly.
-    const parts = moduleDocumentSections(input.document, module.spine.partPlan);
+    // An EMPTY document is legal (docs/23 §2.1/§10 phase 3): it parses to level
+    // 0 alone, which is exactly the "starts with nothing" state the chat
+    // authors. A module with no spine has no stored plan titles, so the
+    // sections fall back to their own `Level N` / `Premise` labels.
+    const parts = moduleDocumentSections(input.document, module.spine?.partPlan ?? []);
     const model = input.model !== undefined && input.model !== '' ? input.model : settings.defaultChatModel;
     // Only the SESSION-UNSET turn rides the GLOBAL first-try model; a session
     // selection is a DIFFERENT tier (the sidebar writes `setModelSelection`,

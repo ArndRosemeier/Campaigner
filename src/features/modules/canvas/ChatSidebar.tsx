@@ -84,8 +84,6 @@ export interface ChatSidebarProps {
   surface: CanvasChatFraming;
   /** The user picked the other chat (switcher): the page holds the selection. */
   onSurfaceChange: (framing: CanvasChatFraming) => void;
-  /** Pre-flight: a module whose DOCUMENT is empty must not send. */
-  hasDocument: boolean;
   pool: readonly AnyArtifact[];
   /** Module generating / refine in flight / block proposal pending. */
   aiBusy: boolean;
@@ -126,7 +124,6 @@ export function ChatSidebar({
   moduleId,
   surface,
   onSurfaceChange,
-  hasDocument,
   pool,
   aiBusy,
   aiBusyReason,
@@ -196,7 +193,6 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasDocument,
           modelSelection,
           turn: controller,
           view,
@@ -290,7 +286,6 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasDocument,
           modelSelection,
           turn: controller,
           view,
@@ -315,7 +310,6 @@ export function ChatSidebar({
           moduleId,
           key: chatKey,
           framing: surface,
-          hasDocument,
           modelSelection,
           turn: controller,
           view,

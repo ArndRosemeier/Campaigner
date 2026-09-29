@@ -3300,70 +3300,99 @@ async function resolveCreationPromptStyle(
 }
 
 /**
- * Creates the module row from the dialog input and STARTS pass 0 without
- * waiting for it: the reader is the spine's live progress surface (streaming
- * card, Stop button), so the dialog navigates immediately instead of blocking
- * for minutes on a slow provider or a thinking model. Spine failures are owned
- * by `runSpine` itself — status `failed` + `errorMessage` on the row and a
- * toast (AGENTS rule 2) — and surface in the reader with a Retry affordance.
- *
- * With `autoApproveSpine` the flow never stops after pass 0: the generated
- * spine is approved as-is and pass 1 (plus any configured post-generation
- * automation) runs unattended.
+ * Everything the CREATION dialog hands in, for both creation entries below.
+ * `tone` is required here (the dialog always sends one) and the automation
+ * fields are recorded on the row — they are the module's generation settings,
+ * read by the generator whenever it is started.
  */
-export async function createModuleAndRun(
+export interface NewModuleCreationInput {
+  campaignId: Id;
+  title: string;
+  concept: string;
+  levelMin: number;
+  levelMax: number;
+  tone: string;
+  sizeDial: Module['sizeDial'];
+  /** Opt-in cross-module continuity (08 §M4-B): prior modules in context. */
+  includePriorModules?: boolean;
+  /** Post-generation automation (08 §M4-C): artifact kinds to batch-detail
+   * after the parts pass, kinds to auto-image, and unattended battlemaps. */
+  autoGenerateKinds?: EntityKind[];
+  autoImageKinds?: EntityKind[];
+  autoGenerateBattlemaps?: boolean;
+  /** Opt-in unattended mob portraits for the module's encounters (08). */
+  autoGenerateMobImages?: boolean;
+  /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
+  autoApproveSpine?: boolean;
+  /**
+   * Opt-in ADVERSARIAL GENERATION (docs/17 row 354): the critique-and-edit
+   * quality pass over the premise and each part. Forwarded verbatim to
+   * `createModule` (the spread below), so the created module row records the
+   * choice. This slice is the DATA PATH ONLY — nothing in generation reads
+   * the flag yet (slices 2–4 add the pass and its triggers).
+   */
+  adversarialGeneration?: boolean;
+  /**
+   * The module prompt style to write in (docs/17 row 86): a built-in id or a
+   * user style id. Omitted = the app default from Settings. An id that does
+   * not resolve, or a style whose template does not validate, throws BEFORE
+   * any row is created — the dialog names it and no half-made module is left
+   * behind (AGENTS rules 1/3).
+   */
+  promptStyleId?: string;
+  /**
+   * The encounter budget policy to record on the new module (docs/17 row
+   * 180). Omitted = no explicit choice = the per-system default for the
+   * campaign's system (`defaultEncounterBudgetPolicy`), stamped on the row so
+   * every later generation of this module reads the same policy.
+   */
+  encounterBudgetPolicy?: EncounterBudgetPolicy;
+  /**
+   * The module difficulty to record on the new module (docs/17 row 190), the
+   * sibling of the budget policy above. Omitted = no explicit choice = the
+   * middle step (`DEFAULT_MODULE_DIFFICULTY`, 'normal'), stamped on the row so
+   * every later generation of this module reads the same difficulty.
+   */
+  difficulty?: ModuleDifficulty;
+}
+
+/**
+ * THE APP'S ONE CREATION ENTRY: START THE CAMPAIGN DOCUMENT, and nothing else
+ * (docs/23 §10 phase 3, docs/17 row 390).
+ *
+ * The owner's request — *"One canvas chat that starts with nothing and ends
+ * with the campaign premise"* — makes the CHAT the premise's author, so this
+ * seam deliberately runs NO pass 0. It resolves the module's writing style,
+ * stamps the generation settings the row records (a generation started later
+ * reads them), and writes an EMPTY document through THE one campaign-document
+ * creation seam (`createCampaignDocument`). An empty document is LEGAL and
+ * chattable (level 0 only, zero separators): the canvas chat authors the
+ * premise with `replace_level level="0"` and creates each level section with
+ * `append_level`, the app writing every separator and level number.
+ *
+ * `runSpine` is NOT deleted by this — it remains the generator's own structure
+ * pass (the reader's Retry and the phase-4 generation dialog); what retires
+ * here is its role as the APP'S PREMISE AUTHOR, because no app entry reaches
+ * it any more (docs/17 row 390 names the remainder).
+ */
+export async function startCampaignDocument(
   campaign: Campaign,
-  input: {
-    campaignId: Id;
-    title: string;
-    concept: string;
-    levelMin: number;
-    levelMax: number;
-    tone: string;
-    sizeDial: Module['sizeDial'];
-    /** Opt-in cross-module continuity (08 §M4-B): prior modules in context. */
-    includePriorModules?: boolean;
-    /** Post-generation automation (08 §M4-C): artifact kinds to batch-detail
-     * after the parts pass, kinds to auto-image, and unattended battlemaps. */
-    autoGenerateKinds?: EntityKind[];
-    autoImageKinds?: EntityKind[];
-    autoGenerateBattlemaps?: boolean;
-    /** Opt-in unattended mob portraits for the module's encounters (08). */
-    autoGenerateMobImages?: boolean;
-    /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
-    autoApproveSpine?: boolean;
-    /**
-     * Opt-in ADVERSARIAL GENERATION (docs/17 row 354): the critique-and-edit
-     * quality pass over the premise and each part. Forwarded verbatim to
-     * `createModule` (the spread below), so the created module row records the
-     * choice. This slice is the DATA PATH ONLY — nothing in generation reads
-     * the flag yet (slices 2–4 add the pass and its triggers).
-     */
-    adversarialGeneration?: boolean;
-    /**
-     * The module prompt style to write in (docs/17 row 86): a built-in id or a
-     * user style id. Omitted = the app default from Settings. An id that does
-     * not resolve, or a style whose template does not validate, throws BEFORE
-     * any row is created — the dialog names it and no half-made module is left
-     * behind (AGENTS rules 1/3).
-     */
-    promptStyleId?: string;
-    /**
-     * The encounter budget policy to record on the new module (docs/17 row
-     * 180). Omitted = no explicit choice = the per-system default for the
-     * campaign's system (`defaultEncounterBudgetPolicy`), stamped on the row so
-     * every later generation of this module reads the same policy.
-     */
-    encounterBudgetPolicy?: EncounterBudgetPolicy;
-    /**
-     * The module difficulty to record on the new module (docs/17 row 190), the
-     * sibling of the budget policy above. Omitted = no explicit choice = the
-     * middle step (`DEFAULT_MODULE_DIFFICULTY`, 'normal'), stamped on the row so
-     * every later generation of this module reads the same difficulty.
-     */
-    difficulty?: ModuleDifficulty;
-  },
+  input: NewModuleCreationInput,
 ): Promise<Id> {
+  const saved = await createDocumentRow(campaign, input);
+  return saved.id;
+}
+
+/**
+ * THE one module-ROW creation body (AGENTS rule 4): the style resolution, the
+ * `createModule` factory call and the write through the refusing
+ * `createCampaignDocument` seam. Both creation entries below go through THIS,
+ * so a second row-creation path cannot appear beside them.
+ */
+async function createDocumentRow(
+  campaign: Campaign,
+  input: NewModuleCreationInput,
+): Promise<Module> {
   // Resolved and validated FIRST: a module row that cannot be written in a
   // valid voice must not exist at all.
   const promptStyle = await resolveCreationPromptStyle(input.promptStyleId);
@@ -3384,7 +3413,30 @@ export async function createModuleAndRun(
   // THE one campaign-document creation seam (docs/17 row 389): a campaign
   // owns exactly ONE document, so this refuses a second row LOUDLY, naming the
   // document that exists, before anything is written.
-  const saved = await createCampaignDocument(created);
+  return createCampaignDocument(created);
+}
+
+/**
+ * The GENERATOR'S creation entry — the row PLUS pass 0 started detached (the
+ * old app entry; docs/23 §10 phase 3 moved the app onto
+ * `startCampaignDocument`, so the premise is authored by the CHAT).
+ *
+ * Creates the module row from the input and STARTS pass 0 without waiting for
+ * it: the reader is the spine's live progress surface (streaming card, Stop
+ * button), so a caller navigates immediately instead of blocking for minutes
+ * on a slow provider or a thinking model. Spine failures are owned by
+ * `runSpine` itself — status `failed` + `errorMessage` on the row and a toast
+ * (AGENTS rule 2) — and surface in the reader with a Retry affordance.
+ *
+ * With `autoApproveSpine` the flow never stops after pass 0: the generated
+ * spine is approved as-is and pass 1 (plus any configured post-generation
+ * automation) runs unattended.
+ */
+export async function createModuleAndRun(
+  campaign: Campaign,
+  input: NewModuleCreationInput,
+): Promise<Id> {
+  const saved = await createDocumentRow(campaign, input);
   void (async () => {
     const drafted = await runSpine(saved.id, campaign).catch(() => undefined);
     // A failed spine is owned by runSpine (failed row + toast) — nothing to

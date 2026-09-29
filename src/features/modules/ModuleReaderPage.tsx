@@ -351,8 +351,20 @@ export function ModuleReaderPage(): JSX.Element {
   // at the checkpoint (it owes the failure banner), and a rewind inside
   // `failInterruptedModuleGen` leaves no text but IS a started run, which is
   // why the predicate reads status as well as text.
+  //
+  // THE CHECKPOINT IS A PASS-0 SURFACE, so it also requires a PASS-0 PLAN
+  // (docs/23 §10 phase 3, docs/17 row 390): `partPlan.length > 0`. A document
+  // the CHAT authored has no pass-0 plan (a chat-created level's plan metadata
+  // is empty by decision), and a premise-only chat document would otherwise
+  // land here — offering "Discard", which drops the spine and therefore the
+  // document the owner just wrote. The reader's own "open the canvas chat"
+  // hint is the surface for that state instead.
   const showSpineCheckpoint =
-    module.spine !== null && modulePartsUntouched(module) && !busy && module.status !== 'failed';
+    module.spine !== null &&
+    module.spine.partPlan.length > 0 &&
+    modulePartsUntouched(module) &&
+    !busy &&
+    module.status !== 'failed';
   const hasMissingParts = plans.some(({ planIndex }) => {
     const part = module.parts.find((entry) => entry.planIndex === planIndex);
     return part?.status !== 'ready';

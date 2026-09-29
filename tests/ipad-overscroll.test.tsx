@@ -67,7 +67,7 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
-    createModuleAndRun: vi.fn(),
+    startCampaignDocument: vi.fn(),
     classifyEntityName: vi.fn(),
   };
 });

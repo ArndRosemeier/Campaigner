@@ -1,6 +1,5 @@
 import type { Id } from '@/domain';
 import {
-  NO_DOCUMENT_MESSAGE,
   canvasChatChangeLabel,
   canvasChatThreadPersists,
   chatProseSoFar,
@@ -146,14 +145,12 @@ export interface CanvasChatTurnOptions {
    * the module's ONE `chatThread` field — over the module chat's own history.
    */
   framing: CanvasChatFraming;
-  /** Pre-flight: a module whose DOCUMENT is empty must not send an empty
-   * context (`llm/canvasChat.NO_DOCUMENT_MESSAGE` — the ONE sentence, declared
-   * beside the engine guard that raises it). A premise-only module HAS a
-   * document (the premise is level 0) and is chattable. */
-  hasDocument: boolean;
   /** THE document this turn works over: the live editor handle, or the
    * preview snapshot handle. Read at send time; applied through; the
-   * post-turn doc is its `read()`. */
+   * post-turn doc is its `read()`. An EMPTY document is a legal starting
+   * state (docs/23 §2.1): the chat authors the premise as level 0 and
+   * creates level sections with the app's own separators, so there is no
+   * `hasDocument` pre-flight any more (docs/17 row 390). */
   handle: ChatDocumentHandle;
   /** Where this surface's unsaved edits live (the two-surface data above). */
   surface: ChatTurnSurface;
@@ -232,12 +229,13 @@ function adversarialReviewCard(
 }
 
 /**
- * Runs one chat turn. Throws BEFORE any message lands for pre-flight
- * guards (empty instruction / no planned parts) — those are the caller's
- * toasts. Everything after the user message lands becomes a message-card
- * outcome (see the loudness map above). Resolves with the post-turn document,
- * whether it changed, and the last applied range (the last-replacement
- * highlight; null when nothing applied).
+ * Runs one chat turn. Throws BEFORE any message lands for the one remaining
+ * pre-flight guard (an empty instruction) — that is the caller's toast. An
+ * EMPTY document is a legal starting state the chat authors (docs/17 row 390),
+ * so there is no "no document" refusal any more. Everything after the user
+ * message lands becomes a message-card outcome (see the loudness map above).
+ * Resolves with the post-turn document, whether it changed, and the last
+ * applied range (the last-replacement highlight; null when nothing applied).
  */
 export async function runCanvasChatTurn(
   options: CanvasChatTurnOptions,
@@ -246,9 +244,6 @@ export async function runCanvasChatTurn(
   const text = instruction.trim();
   if (text === '') {
     throw new Error('the chat instruction is empty');
-  }
-  if (!options.hasDocument) {
-    throw new Error(NO_DOCUMENT_MESSAGE);
   }
   const store = useCanvasChatStore.getState();
   // The user turn + streaming placeholder land BEFORE the engine's

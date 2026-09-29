@@ -45,12 +45,10 @@ export interface ChatTurnOptions {
    * carries, so a caller that does not know about GM assist is byte-identical
    * to the pre-362 contract. The canvas surfaces always pass it. */
   framing?: CanvasChatFraming | undefined;
-  /** Pre-flight: a module whose DOCUMENT is empty must not send an empty
-   * context (`llm/canvasChat.NO_DOCUMENT_MESSAGE` — the ONE sentence, declared
-   * beside the engine guard that raises it). */
-  hasDocument: boolean;
   /** The live canvas editor view of the WHOLE module (the doc string is
-   * the truth for every level, the premise included). */
+   * the truth for every level, the premise included). An EMPTY document is a
+   * legal starting state — the chat authors the premise as level 0 — so there
+   * is no `hasDocument` pre-flight (docs/17 row 390). */
   view: EditorView;
   /** The session model selection; null = Settings defaultChatModel. */
   modelSelection: string | null;
@@ -73,7 +71,6 @@ export async function runChatTurn(
       moduleId: options.moduleId,
       key: options.key,
       framing: options.framing ?? 'module',
-      hasDocument: options.hasDocument,
       handle: editorChatHandle(options.view),
       surface: EDITOR_TURN_SURFACE,
       modelSelection: options.modelSelection,

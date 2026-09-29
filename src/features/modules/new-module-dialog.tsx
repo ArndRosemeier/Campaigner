@@ -41,7 +41,7 @@ import {
   resolveModuleTitle,
 } from '@/domain';
 import { ModuleDifficultyControl } from '@/features/modules/module-difficulty-control';
-import { modulePath } from '@/app/routes';
+import { canvasChatPath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
 import { readSettings, readStoredNewModuleDraft, updateSettings } from '@/db/settingsRepo';
 import { catalogStyles, readPromptStyleCatalog } from '@/db/promptStyleRepo';
@@ -52,16 +52,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { createModuleAndRun } from '@/llm/moduleGen';
+import { startCampaignDocument } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
 import { registerPageFlush } from '@/lib/pageFlush';
 
 /**
- * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): name, concept, level
- * range (two steppers, max ≥ min), tone, size dial, the opt-in cross-module
- * continuity checkbox. Creates the Module row and navigates to the reader
- * immediately — the spine draft runs there, with its live streaming card,
- * Stop button and progress dock; the dialog never blocks on the LLM.
+ * "Start the campaign document" dialog (08-MODULE-DESIGNER M4-B): name,
+ * concept, level range (two steppers, max ≥ min), tone, size dial, the
+ * generation settings the module records. It creates the campaign's ONE
+ * document, EMPTY, and navigates straight to the canvas with the chat open —
+ * the CHAT authors the premise (level 0) and the level sections (docs/23 §10
+ * phase 3, docs/17 row 390). It NEVER runs the generator's pass 0: that pass is
+ * no longer the premise's author, and nothing blocks on an LLM here.
+ *
+ * The generation-only controls below (auto-spine, the automation grid,
+ * battlemaps, mob portraits, adversarial generation) are RECORDED ON THE ROW
+ * for the module's generation step — started later from the canvas — and their
+ * copy says so. Their move into the phase-4 generation dialog is that slice's,
+ * not a silent removal here.
  *
  * The NAME field (owner report, docs/17 row 213) is pre-filled with the
  * placeholder `defaultModuleTitle()` and resolves through the ONE
@@ -611,14 +619,19 @@ function NewModuleDialogContent({
         // reads the same difficulty.
         difficulty: difficulty ?? DEFAULT_MODULE_DIFFICULTY,
       };
-      const moduleId = await createModuleAndRun(campaign, input);
+      const moduleId = await startCampaignDocument(campaign, input);
       onOpenChange(false);
-      navigate(modulePath(campaign.id, moduleId));
+      // THE CHAT IS THE AUTHOR (docs/23 §10 phase 3, docs/17 row 390): the
+      // document is created EMPTY and the owner lands on the canvas with the
+      // chat open, where the premise (level 0) and the level sections are
+      // written in conversation. The generator is NOT started here — its
+      // premise-authoring pass 0 is retired as the app's entry.
+      navigate(canvasChatPath(campaign.id, moduleId));
     } catch (error) {
       // Only creation-setup failures land here (e.g. the row could not be
-      // saved); the spine draft reports its own failures on the module row
-      // and via toast, and the reader shows them with a Retry.
-      toastError('The module could not be created', error);
+      // saved, or the writing style does not resolve); the chat reports its
+      // own failures on the canvas.
+      toastError('The campaign document could not be started', error);
     } finally {
       setStarting(false);
     }
@@ -628,10 +641,12 @@ function NewModuleDialogContent({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg" data-testid="new-module-dialog">
         <DialogHeader>
-          <DialogTitle>New Module</DialogTitle>
+          <DialogTitle>Start the campaign document</DialogTitle>
           <DialogDescription>
-            The spine (premise + part plan) is drafted first and shown for your approval; parts are
-            written afterwards, one per level band.
+            Creates the campaign&apos;s ONE document, empty, and opens the canvas chat. You author
+            it there: the chat writes the premise as level 0 and then each level section, and the
+            app writes the separators. The settings below are recorded on the module for when you
+            generate its artifacts from the canvas.
           </DialogDescription>
         </DialogHeader>
 
@@ -806,9 +821,9 @@ function NewModuleDialogContent({
             <div className="flex flex-col gap-0.5">
               <Label htmlFor="module-auto-spine">Generate parts without review</Label>
               <p className="text-xs text-muted-foreground">
-                Skip the spine checkpoint: the generated premise and part plan are approved as-is
-                and the parts are written immediately. The plan cannot be reshaped beforehand —
-                parts stay individually editable and rewritable afterwards.
+                Recorded on the module for the generation step: skips the spine checkpoint, so the
+                generated premise and part plan are approved as-is and the parts are written
+                immediately. Nothing runs at creation — the canvas chat authors the document first.
               </p>
             </div>
           </div>
@@ -833,7 +848,7 @@ function NewModuleDialogContent({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label>After the parts are written</Label>
+            <Label>When the module is generated from the canvas</Label>
             <div className="rounded-md border p-2" data-testid="module-automation-grid">
               <div className="flex items-center gap-2 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
                 <span className="flex-1">Artifact type</span>
@@ -909,10 +924,12 @@ function NewModuleDialogContent({
               </div>
             </div>
             <p className="text-xs text-muted-foreground">
-              Runs once the parts finish: unresolved wiki-links of the checked types are detailed,
-              images attach to their artifacts, every encounter gets its battlemap, and its
-              creatures queue for their portraits. Everything can also be run manually from the
-              entity panel.
+              Recorded on the module and used when you start generation from the canvas (the
+              &quot;Resume automatic module creation&quot; action): unresolved wiki-links of the
+              checked types are detailed, images attach to their artifacts, every encounter gets its
+              battlemap, and its creatures queue for their portraits. Nothing runs at creation — the
+              chat authors the document first. Everything can also be run manually from the entity
+              panel.
             </p>
           </div>
 
@@ -1055,7 +1072,7 @@ function NewModuleDialogContent({
             Cancel
           </Button>
           <Button disabled={!canStart} onClick={() => void start()} data-testid="start-module">
-            {starting ? 'Creating…' : 'Draft spine'}
+            {starting ? 'Starting…' : 'Start document'}
           </Button>
         </DialogFooter>
       </DialogContent>

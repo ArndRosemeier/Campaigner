@@ -27,7 +27,6 @@ export function previewOptionsFor(
   return (overrides = {}) => ({
     moduleId: currentModuleId(),
     key: canvasChatKey(currentModuleId()),
-    hasDocument: true,
     doc: chatDocument,
     modelSelection: null,
     turn: new AbortController(),
@@ -51,7 +50,6 @@ export function editorOptionsFor(
     return {
       moduleId: currentModuleId(),
       key: canvasChatKey(currentModuleId()),
-      hasDocument: true,
       modelSelection: null,
       turn: new AbortController(),
       ...overrides,

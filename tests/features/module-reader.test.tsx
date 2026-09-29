@@ -259,6 +259,40 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('a chat-authored PREMISE-ONLY document is the reader, never the pass-0 spine checkpoint (docs/17 row 390)', async () => {
+    // The chat authors the premise now, so a plan-LESS document is a normal
+    // state — and the pass-0 checkpoint's "Discard" drops the spine, which
+    // (the document carrying the premise) would delete the text the owner just
+    // wrote in the chat. The checkpoint is therefore offered only while a
+    // PASS-0 PLAN exists.
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const saved = await saveModule({
+      ...createModule({
+        campaignId: campaign.id,
+        title: 'Chat Authored',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+      status: 'draft',
+      spine: moduleSpineSchema.parse({
+        premise: 'The kingdom of Vess is drowning.',
+        themes: [],
+        partPlan: [],
+      }),
+      parts: [],
+    });
+    renderAppAt(modulePath(campaign.id, saved.id));
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+    expect(screen.getByText('The kingdom of Vess is drowning.')).toBeInTheDocument();
+    expect(screen.queryByTestId('spine-checkpoint')).toBeNull();
+    expect(screen.queryByTestId('retry-spine')).toBeNull();
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('names and orders its level sections through the ONE document seam (docs/17 row 386)', async () => {
     // The reader no longer builds its level list from the derived
     // `spine.partPlan`: it reads the DERIVED LEVEL LIST

@@ -713,18 +713,19 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(chatMock).not.toHaveBeenCalled();
   });
 
-  it('a module whose DOCUMENT is empty fails the pre-flight loudly', async () => {
+  it('a module whose DOCUMENT is EMPTY is chattable — the chat authors the premise (docs/23 §2.1, docs/17 row 390)', async () => {
     const module = await (await import('@/db/moduleRepo')).getModule(world.moduleId);
     if (module === undefined) throw new Error('seed missing');
     await saveModule({ ...module, spine: null, parts: [] });
-    // THE FULL SENTENCE, anchored (docs/17 row 150): this pin used to be the
-    // PREFIX regex `/no parts to chat about/`, so rewording the tail of a
-    // user-visible refusal could not fail anything. The sentence is now
-    // declared ONCE (`llm/canvasChat.NO_DOCUMENT_MESSAGE`) and pinned verbatim.
-    await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(
-      /^the module document is empty — write a premise or generate the module first$/,
-    );
-    expect(chatMock).not.toHaveBeenCalled();
+    // THE FORMER `NO_DOCUMENT_MESSAGE` REFUSAL IS GONE (docs/17 row 390): an
+    // empty document is the campaign's STARTING state, so the send reaches the
+    // model with a level-0-only context instead of refusing before the call.
+    chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
+    const result = await sendCanvasChatMessage(baseInput({ document: '' }));
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(result.parts.map((part) => part.planIndex)).toEqual([-1]);
+    expect(result.parts[0]?.text).toBe('');
+    expect(result.parts[0]?.title).toBe('Premise');
   });
 
   it('a PREMISE-only module (no level sections) IS chattable (docs/23 §2.1)', async () => {
@@ -810,31 +811,25 @@ describe('sendCanvasChatMessage (engine)', () => {
   });
 });
 
-// --- The ONE "empty document" sentence (docs/17 row 150) ---------------------
+// --- The "empty document" refusal is GONE (docs/17 row 390) ------------------
 
 /**
- * "a rule enforced at three call sites is a bug waiting at the fourth"
- * (AGENTS rule 4). The sentence was spelled THREE times: the exported
- * `chatController.NO_PARTS_MESSAGE`, an inline literal in `snapshotChat.ts`,
- * and a third inline literal in this module's own pre-flight. Only the two
- * inline copies were behaviourally identical by luck, and the only pin was a
- * PREFIX regex — so the tail of a user-visible refusal could be reworded with
- * every test still green.
+ * THE FORMER `NO_DOCUMENT_MESSAGE` IS DELETED, and this scan is its tombstone.
  *
- * The sentence now lives at `llm/canvasChat.NO_DOCUMENT_MESSAGE` (beside the
- * engine guard that raises it — a cycle-free home: the two turn controllers
- * already import from this module). docs/17 row 384 gave it its CURRENT text,
- * because the condition is the DOCUMENT's and not a plan's: the premise is
- * level 0, so only an empty document has nothing to chat about. The behaviour
- * above pins its bytes; the scan below is the "exactly ONE declarer" half.
+ * The sentence was declared ONCE (`llm/canvasChat.NO_DOCUMENT_MESSAGE`) and
+ * guarded a module whose document was empty — because the generator's pass 0
+ * was the premise's author. docs/23 §10 phase 3 / docs/17 row 390 reverse that:
+ * an empty document is the campaign's STARTING state and the chat authors the
+ * premise, so the refusal, its constant and its guards are gone. The behavioural
+ * pin above proves an empty document now reaches the model; this scan proves no
+ * path can resurrect the refusal by re-copying its sentence.
  *
- * WHAT A SOURCE SCAN CANNOT PROVE: it sees a literal, not a meaning. A fourth
- * call site that builds the same sentence from fragments, or a second one
- * written in another language, would slip through. It is a GUARD against the
- * cheap re-copy, not a proof of uniqueness.
+ * WHAT A SOURCE SCAN CANNOT PROVE: it sees a literal, not a meaning. A refusal
+ * written in different words, or in another language, would slip through — it is
+ * a guard against the cheap revival, not a proof of absence.
  */
-describe('the "empty document" sentence is declared EXACTLY once (SOURCE SCAN)', () => {
-  const SENTENCE = 'the module document is empty — write a premise or generate the module first';
+describe('the former "empty document" refusal appears NOWHERE (SOURCE SCAN, docs/17 row 390)', () => {
+  const DELETED_SENTENCE = 'the module document is empty — write a premise or generate the module first';
 
   function srcSources(dir = join(process.cwd(), 'src')): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -844,27 +839,20 @@ describe('the "empty document" sentence is declared EXACTLY once (SOURCE SCAN)',
     });
   }
 
-  it('carries the literal in ONE file under src/, and that file is the seam', () => {
+  it('is carried by NO file under src/ — the constant and every copy are deleted', () => {
     const all = srcSources();
     // Non-vacuity: a walk that saw nothing would make the count meaningless.
     expect(all.length).toBeGreaterThan(200);
-    const carriers = all.filter((file) => readFileSync(file, 'utf8').includes(SENTENCE));
-    expect(carriers.map((file) => relative(process.cwd(), file))).toEqual([
-      join('src', 'llm', 'canvasChat.ts'),
-    ]);
+    const carriers = all
+      .filter((file) => readFileSync(file, 'utf8').includes(DELETED_SENTENCE))
+      .map((file) => relative(process.cwd(), file));
+    expect(carriers).toEqual([]);
   });
 
-  it('leaves the TWO former copies free of it (chatController, snapshotChat)', () => {
-    for (const file of [
-      join(process.cwd(), 'src', 'features', 'modules', 'canvas', 'chatController.ts'),
-      join(process.cwd(), 'src', 'features', 'modules', 'canvas', 'snapshotChat.ts'),
-    ]) {
-      const text = readFileSync(file, 'utf8');
-      expect(text.includes(SENTENCE), `${relative(process.cwd(), file)} carries its own copy`).toBe(
-        false,
-      );
-      // Both surfaces READ the one constant instead.
-      expect(text).toContain('NO_DOCUMENT_MESSAGE');
-    }
+  it('leaves NO `NO_DOCUMENT_MESSAGE` identifier anywhere under src/', () => {
+    const carriers = srcSources()
+      .filter((file) => readFileSync(file, 'utf8').includes('NO_DOCUMENT_MESSAGE'))
+      .map((file) => relative(process.cwd(), file));
+    expect(carriers).toEqual([]);
   });
 });
