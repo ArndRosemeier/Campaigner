@@ -8,6 +8,7 @@ import { parseJsonReply } from '@/llm/jsonReply';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { schemaResponseFormat } from '@/llm/strictSchema';
+import { startStreamDetail, streamCallBase, type StreamDetailReporter } from '@/llm/streamProgress';
 
 /**
  * The ADVERSARIAL critique-and-edit pass (docs/17 rows 352/353, row 356): ONE
@@ -111,6 +112,12 @@ export interface AdversarialPassInput {
   text: string;
   /** The owning run's abort controller signal (a stop is not a failure). */
   signal?: AbortSignal | undefined;
+  /**
+   * The dock job this review reports on (docs/17 row 412): when set, the
+   * entry's detail names which of the pass's two calls is running (critique,
+   * then edit), the model serving it and its live phase (`llm/streamProgress`).
+   */
+  progressJobId?: string | undefined;
 }
 
 export interface AdversarialPassReport {
@@ -162,16 +169,23 @@ export async function runAdversarialPass(
   // The pass is one global-model chat call outside the run funnel, so the model
   // in play is recorded here (docs/17 row 198).
   recordGlobalChatModelInUse(settings.defaultChatModel);
+  // The first-try model both calls start on (the editor's transform core reads
+  // the same setting itself); named on the dock entry, never guessed.
+  const firstTryModel = settings.defaultChatModel;
+  const critiqueProgress = callProgress(input, `Critique of the ${label}`, firstTryModel);
   const { text: raw, modelUsed: critiqueModel } = await chat(
     critiqueMessages(input.target, input.text),
     {
-      model: settings.defaultChatModel,
+      model: firstTryModel,
       // A critic, not a writer: lower than the forge's creative 0.8 so the
       // findings stay close to what the text actually says.
       temperature: 0.3,
       reasoningEffort: settings.defaultReasoningEffort,
       responseFormat: schemaResponseFormat('adversarial-critique', adversarialCritiqueReplySchema),
       signal: input.signal,
+      onToken: critiqueProgress?.onToken,
+      onActivity: critiqueProgress?.onActivity,
+      onFallback: critiqueProgress?.onFallback,
     },
   );
   // Boundary validation: a malformed critique is a loud failure (AGENTS 3),
@@ -201,6 +215,9 @@ export async function runAdversarialPass(
     // enclosing block.
     enclosingBlock: '',
     signal: input.signal,
+    // The editor is the transform core's own call on the GLOBAL model, which
+    // the core reads itself — the same setting this pass read above.
+    progress: callProgress(input, `Edit of the ${label}`, firstTryModel),
   });
 
   return {
@@ -211,6 +228,17 @@ export async function runAdversarialPass(
     critique: { issues: critique.issues, modelUsed: critiqueModel },
     edit,
   };
+}
+
+/** Names ONE of the pass's calls on the caller's dock entry, or nothing when
+ * the caller keeps no entry (the module forge's review reports on its own job). */
+function callProgress(
+  input: AdversarialPassInput,
+  call: string,
+  model: string,
+): StreamDetailReporter | undefined {
+  if (input.progressJobId === undefined) return undefined;
+  return startStreamDetail(input.progressJobId, `${call} · ${streamCallBase(model)}`);
 }
 
 /** The editor's instruction: the findings, as a structured list — never parsed

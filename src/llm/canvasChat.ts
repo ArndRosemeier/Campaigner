@@ -16,7 +16,8 @@ import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo'
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { resolveWikiLink } from '@/lib/wikilinks';
-import { chat, type ChatMessage } from '@/llm/openrouter';
+import { chat, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
+import { withStreamProgress, type StreamDetailReporter } from '@/llm/streamProgress';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import {
@@ -2952,6 +2953,66 @@ function errorTextOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The dock entry id of one of a chat turn's model calls (one per module:
+ * the module's generation slot allows one turn at a time). */
+function chatCallJobId(moduleId: Id, call: 'reply' | 'follow-up'): string {
+  return `chat-call:${moduleId}:${call}`;
+}
+
+/** Names the follow-up call by what it carries back to the model. */
+export function followUpCallLabel(requests: number, changes: number): string {
+  const parts: string[] = [];
+  if (changes > 0) parts.push(`${String(changes)} change${changes === 1 ? '' : 's'}`);
+  if (requests > 0) parts.push(`${String(requests)} details request${requests === 1 ? '' : 's'}`);
+  return `Chat follow-up (after ${parts.join(' and ')})`;
+}
+
+/**
+ * A reply's CUMULATIVE text for its bubble (docs/17 row 412): the transport
+ * emits one delta per token, while the bubble callbacks promise text-so-far —
+ * forwarding the bare delta showed only the last chunk, and a failed follow-up
+ * kept only its last token. A fallback restart (`onReset`) clears the text so
+ * the retried stream never appends to the failed attempt's words.
+ */
+interface CumulativeStream {
+  push: (delta: string) => void;
+  reset: () => void;
+  text: () => string;
+}
+
+function cumulativeStream(onSoFar: ((textSoFar: string) => void) | undefined): CumulativeStream {
+  let soFar = '';
+  return {
+    push: (delta) => {
+      soFar += delta;
+      onSoFar?.(soFar);
+    },
+    reset: () => {
+      if (soFar === '') return;
+      soFar = '';
+      onSoFar?.('');
+    },
+    text: () => soFar,
+  };
+}
+
+/** The streaming hooks of one chat-turn call: the bubble's text-so-far and
+ * the call's dock entry, fed by the same transport events. */
+function streamOptions(
+  stream: CumulativeStream,
+  progress: StreamDetailReporter,
+): Pick<ChatOptions, 'onToken' | 'onActivity' | 'onFallback' | 'onReset'> {
+  return {
+    onToken: (delta) => {
+      stream.push(delta);
+      progress.onToken(delta);
+    },
+    onActivity: progress.onActivity,
+    onFallback: progress.onFallback,
+    onReset: stream.reset,
+  };
+}
+
 /**
  * Sends one chat turn (08 §Module canvas chat). Throws LOUDLY on busy
  * (`ModuleBusyError`, shared registry — chat + refine serialize), a
@@ -3058,19 +3119,25 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       history: input.history,
       framing: input.framing,
     });
-    const { text: raw, modelUsed } = await chat(messages, {
-      model,
-      // Same surgical temperature as canvasRefine: prose + targeted edits.
-      temperature: 0.4,
-      reasoningEffort: settings.defaultReasoningEffort,
-      // NO responseFormat: the reply is prose + XML blocks, deliberately
-      // not a JSON contract (docs/17 row 50). The strict extractor +
-      // zod boundary below are the validation.
-      signal: handle.signal,
-      onToken: (delta) => {
-        input.onDelta?.(delta);
-      },
-    });
+    // Each model call of the turn is its OWN dock entry (docs/17 row 412): the
+    // owner sees which call runs, on which model, and its live phase — a turn
+    // that waits minutes must never look like nothing is happening.
+    const reply = cumulativeStream(input.onDelta);
+    const { text: raw, modelUsed } = await withStreamProgress(
+      { jobId: chatCallJobId(input.moduleId, 'reply'), label: 'Chat reply', model },
+      (progress) =>
+        chat(messages, {
+          model,
+          // Same surgical temperature as canvasRefine: prose + targeted edits.
+          temperature: 0.4,
+          reasoningEffort: settings.defaultReasoningEffort,
+          // NO responseFormat: the reply is prose + XML blocks, deliberately
+          // not a JSON contract (docs/17 row 50). The strict extractor +
+          // zod boundary below are the validation.
+          signal: handle.signal,
+          ...streamOptions(reply, progress),
+        }),
+    );
     const parse = parseCanvasChatReply(raw);
     const wantsDetails = parse.requests.length > 0;
     const wantsChanges = parse.changes.length > 0;
@@ -3193,18 +3260,23 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       ...(wantsDetails ? { details: detailsBlock } : {}),
       ...(wantsChanges ? { changeResults: changeBlock } : {}),
     });
-    let followUpRaw = '';
+    const followUpStream = cumulativeStream(input.onFollowUpDelta);
     try {
-      const followUp = await chat(followUpMessages, {
-        model,
-        temperature: 0.4,
-        reasoningEffort: settings.defaultReasoningEffort,
-        signal: handle.signal,
-        onToken: (delta) => {
-          followUpRaw = delta;
-          input.onFollowUpDelta?.(delta);
+      const followUp = await withStreamProgress(
+        {
+          jobId: chatCallJobId(input.moduleId, 'follow-up'),
+          label: followUpCallLabel(parse.requests.length, parse.changes.length),
+          model,
         },
-      });
+        (progress) =>
+          chat(followUpMessages, {
+            model,
+            temperature: 0.4,
+            reasoningEffort: settings.defaultReasoningEffort,
+            signal: handle.signal,
+            ...streamOptions(followUpStream, progress),
+          }),
+      );
       const followUpParse = parseCanvasChatReply(followUp.text);
       return {
         raw,
@@ -3244,7 +3316,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
         parts,
         details: {
           status: 'failed',
-          raw: followUpRaw,
+          raw: followUpStream.text(),
           error: errorText,
           answers,
           block: detailsBlock,

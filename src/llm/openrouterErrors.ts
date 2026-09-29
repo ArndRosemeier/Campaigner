@@ -183,6 +183,16 @@ function reasonForErrorType(code: unknown): FallbackReason | null {
 export type FallbackReason = 'congestion' | 'filter' | 'other';
 
 /**
+ * THE words a fallback's reason reads as ("<model> <words>"): 'filter' refused,
+ * 'congestion' was unavailable, anything else just failed. One mapping for the
+ * run notice (`runEngine.escalationNotice`) and the dock's live stream entry
+ * (`llm/streamProgress`), so the two can never word one escalation differently.
+ */
+export function fallbackReasonWords(reason: FallbackReason): string {
+  return reason === 'filter' ? 'refused the content' : reason === 'congestion' ? 'was congested' : 'failed';
+}
+
+/**
  * The pure failure classifier: names the congestion/filter classes, or null
  * when the error belongs to no specific class. Null is NOT "do not
  * escalate" (escalation is unconditional) — it maps to the Details view's

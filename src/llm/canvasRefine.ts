@@ -4,6 +4,7 @@ import type { Id } from '@/domain';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import type { StreamDetailReporter } from '@/llm/streamProgress';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import {
@@ -105,6 +106,9 @@ export interface TextTransformInput {
   signal?: AbortSignal | undefined;
   /** Cumulative extracted replacement text so far (overlay streaming). */
   onDelta?: ((textSoFar: string) => void) | undefined;
+  /** The dock reporter for THIS call (`llm/streamProgress`, docs/17 row 412):
+   * the adversarial review names its editor call on its own dock entry. */
+  progress?: StreamDetailReporter | undefined;
 }
 
 export interface CanvasRefineInput {
@@ -268,9 +272,12 @@ export async function transformModuleText(
     responseFormat: schemaResponseFormat('canvas-refine', canvasRefineReplySchema),
     signal: input.signal,
     onToken: (delta) => {
+      input.progress?.onToken(delta);
       const soFar = extractor.push(delta);
       if (soFar !== '') input.onDelta?.(soFar);
     },
+    onActivity: input.progress?.onActivity,
+    onFallback: input.progress?.onFallback,
   });
 
   // Boundary validation: fail loud, never partial-apply (AGENTS 3).

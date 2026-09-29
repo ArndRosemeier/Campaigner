@@ -156,6 +156,7 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, z } from 'zod';
 import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
+import { fallbackReasonWords } from '@/llm/openrouterErrors';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
@@ -658,13 +659,7 @@ export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}):
  * just failed.
  */
 function escalationNotice(fallback: ChatFallback): string {
-  const why =
-    fallback.reason === 'filter'
-      ? 'refused the content'
-      : fallback.reason === 'congestion'
-        ? 'was congested'
-        : 'failed';
-  return `Primary model “${fallback.from}” ${why} — answered by fallback “${fallback.to}”.`;
+  return `Primary model “${fallback.from}” ${fallbackReasonWords(fallback.reason)} — answered by fallback “${fallback.to}”.`;
 }
 
 /** Step output plus the escalation notices (transport fallback inside chat()

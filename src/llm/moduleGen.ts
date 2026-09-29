@@ -69,6 +69,7 @@ import { runAdversarialPass, type AdversarialPassReport } from '@/llm/adversaria
 import { toastError, toastSuccess } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
+import { streamDetailReporter } from '@/llm/streamProgress';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { modulePath } from '@/app/routes';
 
@@ -245,57 +246,6 @@ function isCancel(error: unknown, signal: AbortSignal): boolean {
   if (signal.aborted) return true;
   return isAbort(error);
 }
-
-/**
- * Live dock detail for one streamed LLM call (00-OVERVIEW: multi-minute work
- * must never look like a hang). The spine and part passes feed the stream's
- * `onToken`/`onActivity` events through this reporter; it throttles dock
- * updates to ~3/s (deltas arrive in bursts) and renders either the received
- * char count or what the model is doing right now — reasoning deltas never
- * reach `onToken`, so a thinking model would otherwise look frozen for
- * minutes.
- */
-function streamDetailReporter(
-  jobId: string,
-  baseDetail: string,
-): {
-  onToken: (delta: string) => void;
-  onActivity: (activity: ChatStreamActivity) => void;
-} {
-  let chars = 0;
-  let lastAt = 0;
-  const report = (detail: string): void => {
-    const now = Date.now();
-    if (now - lastAt < 400) return;
-    lastAt = now;
-    useProgressStore.getState().update(jobId, { detail });
-  };
-  return {
-    onToken: (delta) => {
-      chars += delta.length;
-      report(`${baseDetail} — ${String(chars)} chars received`);
-    },
-    onActivity: (activity: ChatStreamActivity) => {
-      const seconds = Math.round(activity.elapsedMs / 1000);
-      if (activity.phase === 'thinking') {
-        // Set the expectation explicitly: reasoning models routinely think
-        // for minutes on design-sized prompts — without this users read the
-        // quiet dock as a hang and kill the run mid-think.
-        report(
-          `${baseDetail} — the model is thinking (${String(seconds)}s). ` +
-            'Big design asks routinely take several minutes of thinking before the first words arrive — this is normal, not a hang.',
-        );
-      } else if (activity.phase === 'waiting' && seconds >= 5) {
-        report(
-          `${baseDetail} — no answer yet (${String(seconds)}s). ` +
-            'The request may be queued at the provider; the first bytes can take minutes.',
-        );
-      }
-    },
-  };
-}
-
-
 
 /**
  * Outcome limits per module tone (08 §M4-B tone dial): what a matching tone
@@ -1275,7 +1225,7 @@ interface PartCallOptions {
   /** Per-run override of the row's includePriorModules flag (undefined = row). */
   includePriorModules?: boolean | undefined;
   onToken: ((delta: string) => void) | undefined;
-  /** Liveness probe from the chat stream (see streamDetailReporter). */
+  /** Liveness probe from the chat stream (see llm/streamProgress). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
   /**
    * Reasoning-delta stream (illustration only; never part of the part text).
@@ -2142,8 +2092,9 @@ function adversarialReviewEnabled(module: Module): boolean {
  * The dock detail for a review that is about to run. It NAMES BOTH SUB-PHASES
  * (docs/17 rows 352/358: the dock's bar advances per part, so a flag-on run
  * must not read as a stall) and it names them TOGETHER on purpose: the pass is
- * ONE seam with two internal model calls and no per-call hook, so a caller
- * cannot observe the critique→editor transition. A line that said only
+ * ONE seam with two internal model calls; its per-call dock hook
+ * (`progressJobId`, docs/17 row 412) is used by the canvas chat's review entry
+ * and deliberately NOT here, so this job keeps its level wording. A line that said only
  * "critique…" would be a lie for as long as the editor runs, and inventing a
  * phase the caller cannot see is worse than naming both.
  */

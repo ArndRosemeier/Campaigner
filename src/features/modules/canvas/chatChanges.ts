@@ -378,6 +378,9 @@ async function executeAdversarialChange(
       target: resolved.target,
       text: resolved.text,
       signal: context.signal,
+      // This entry names each of the pass's calls as it runs (critique, then
+      // edit), with its model and live phase (docs/17 row 412).
+      progressJobId: progressId,
     });
     const findings = adversarialFindingLines(report.critique.issues);
     if (report.edit === null) {
