@@ -1,3 +1,5 @@
+**BUILD STATE (2026-09-29, docs/17 row 398).** New campaign has an inline name field beside it (placeholder 'New campaign'; empty = placeholder); Enter submits; rename via EditCampaignDialog.
+
 **BUILD STATE (2026-09-29, docs/17 row 397).** The generation dialog's images are PER KIND: `Settings.generationImageKinds` (remembered preference, default none) feeds `selectGenerationTargets({..., imageKinds})`; the `image` pseudo-kind is gone.
 
 # 23 — The campaign arc: ONE document, levels found by the separator

@@ -15,9 +15,14 @@ export const DEFAULT_CAMPAIGN_SYSTEM = 'generic-d20' as const;
  * creation seam (`llm/moduleGen.startCampaignDocument`, no input) and returns
  * the canvas-chat path to navigate to. No model call happens here.
  */
-export async function createCampaignAndChatPath(): Promise<string> {
+export async function createCampaignAndChatPath(name?: string): Promise<string> {
+  // An empty / whitespace-only field means "the owner did not name it": the
+  // placeholder is a genuine user-preference default (docs/17 row 398), NOT a
+  // masked failure. A non-empty name that fails validation still throws in
+  // createCampaign and surfaces via the caller's toastError.
+  const typed = name?.trim() ?? '';
   const campaign = await campaignRepo.createCampaign({
-    name: NEW_CAMPAIGN_NAME,
+    name: typed === '' ? NEW_CAMPAIGN_NAME : typed,
     description: '',
     system: DEFAULT_CAMPAIGN_SYSTEM,
   });

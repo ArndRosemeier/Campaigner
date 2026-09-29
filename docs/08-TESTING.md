@@ -10187,3 +10187,7 @@ been the wrong instrument for a row that changed no prompt byte.
 ### Row 397 - per-kind generation images
 
 - `tests/features/generation-selection.test.ts` (per-kind images): image targets only for toggled kinds, count follows. `tests/features/generation-dialog.test.tsx` (2 added): default none + toggle moves the printed count + preference round-trips into a fresh dialog; run dispatched with the same `imageKinds`. The dialog test now clears the DB per test (live settings query).
+
+### Row 398 - campaign name field
+
+- `tests/features/campaign-entry.test.tsx` (3 added): typed name + Enter submits and names the campaign; whitespace-only creates 'New campaign'; name editable afterwards (repo update; the edit dialog itself is pinned by campaign-picker.test.tsx 'edits name and description from the card menu'). Row-395 pins unchanged, none moved.

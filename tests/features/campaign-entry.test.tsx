@@ -88,6 +88,52 @@ describe('New campaign lands in the chat', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  function mountPicker(): ReturnType<typeof userEvent.setup> {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={[ROUTES.campaignPicker]}>
+        <Routes>
+          <Route path={ROUTES.campaignPicker} element={<CampaignPickerPage />} />
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return user;
+  }
+
+  it('a typed name becomes the campaign name (Enter submits like the button)', async () => {
+    const user = mountPicker();
+    await user.type(await screen.findByTestId('new-campaign-name'), '  Ashen Crown {Enter}');
+    const where = await screen.findByTestId('where');
+    expect(where.textContent).toMatch(/^\/c\/[^/]+\/m\/[^/]+\/canvas\?chat=open$/);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const campaigns = await actDrained(() => listCampaigns());
+    expect(campaigns.map((c) => c.name)).toEqual(['Ashen Crown']);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('a whitespace-only field creates "New campaign"', async () => {
+    const user = mountPicker();
+    await user.type(await screen.findByTestId('new-campaign-name'), '   ');
+    await user.click(screen.getByTestId('new-campaign'));
+    await screen.findByTestId('where');
+    const campaigns = await actDrained(() => listCampaigns());
+    expect(campaigns.map((c) => c.name)).toEqual(['New campaign']);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('the name stays editable through the existing repo/edit path', async () => {
+    const user = mountPicker();
+    await user.type(await screen.findByTestId('new-campaign-name'), 'First{Enter}');
+    await screen.findByTestId('where');
+    const [created] = await actDrained(() => listCampaigns());
+    const { updateCampaign } = await import('@/db/campaignRepo');
+    await actDrained(() => updateCampaign(created?.id ?? '', { name: 'Second' }));
+    expect((await actDrained(() => listCampaigns()))[0]?.name).toBe('Second');
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('an EXISTING campaign with no document lands in the chat, not a form', async () => {
     const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
     render(

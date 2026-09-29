@@ -47,7 +47,8 @@ import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
-import { createCampaignAndChatPath } from '@/features/campaign/start-campaign-chat';
+import { Input } from '@/components/ui/input';
+import { createCampaignAndChatPath, NEW_CAMPAIGN_NAME } from '@/features/campaign/start-campaign-chat';
 
 /**
  * Campaign picker (05-UI §Campaign picker): card grid of campaigns (name,
@@ -73,9 +74,10 @@ export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
   const settings = useLiveQuery(() => readSettings(), []);
   const openWizard = useOnboardingStore((state) => state.openWizard);
+  const [newName, setNewName] = useState('');
   async function handleCreate(): Promise<void> {
     try {
-      navigate(await createCampaignAndChatPath());
+      navigate(await createCampaignAndChatPath(newName));
     } catch (error) {
       toastError('Could not create campaign', error);
     }
@@ -139,6 +141,19 @@ export function CampaignPickerPage(): JSX.Element {
               <FileUpIcon aria-hidden data-icon="inline-start" />
               Import
             </Button>
+            <Input
+              value={newName}
+              placeholder={NEW_CAMPAIGN_NAME}
+              aria-label="New campaign name"
+              data-testid="new-campaign-name"
+              className="h-8 w-40"
+              onChange={(event) => {
+                setNewName(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleCreate();
+              }}
+            />
             <Button
               onClick={() => {
                 void handleCreate();
