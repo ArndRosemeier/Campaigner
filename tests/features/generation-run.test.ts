@@ -17,6 +17,7 @@ import {
 } from '@/domain';
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
 import { runGenerationSelection } from '@/features/modules/generation-run';
+import type * as moduleGenModule from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -60,7 +61,7 @@ vi.mock('@/features/modules/entity-batch', () => ({
 // gate is what these pins observe (docs/17 row 414).
 const { normalizeMock } = vi.hoisted(() => ({ normalizeMock: vi.fn() }));
 vi.mock('@/llm/moduleGen', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/llm/moduleGen')>()),
+  ...(await importOriginal<typeof moduleGenModule>()),
   normalizeModuleEntityNames: normalizeMock,
 }));
 vi.mock('@/lib/toast', () => ({
