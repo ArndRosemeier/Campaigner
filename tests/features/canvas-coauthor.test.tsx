@@ -322,6 +322,40 @@ describe('the way back and edits that survive it', () => {
     await screen.findByTestId('canvas-preview');
   });
 
+  it('a pointerdown INSIDE the editor text (content, a line, a chip mark) keeps you editing; doc unchanged', async () => {
+    await renderCanvas();
+    await enterEditByClick();
+    const before = docOfEditor();
+    const view = liveView();
+    const line = need(view.contentDOM.querySelector('.cm-line'));
+    const chip = need(view.contentDOM.querySelector('.cm-wiki-link'));
+    for (const el of [view.contentDOM, line, chip]) {
+      await actDrained(async () => {
+        fireEvent.pointerDown(el, { bubbles: true });
+        await Promise.resolve();
+      });
+      expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
+      expect(screen.queryByTestId('canvas-preview')).toBeNull();
+    }
+    expect(docOfEditor()).toBe(before);
+  });
+
+  it('a click in the RENDERED view that is not on prose (pane padding, header) does not enter edit mode', async () => {
+    await renderCanvas();
+    // Pane whitespace: a collapsed selection OUTSIDE every part root.
+    const pane = screen.getByTestId('canvas-preview');
+    window.getSelection()?.removeAllRanges();
+    const outside = document.createRange();
+    outside.setStart(pane, 0);
+    outside.collapse(true);
+    window.getSelection()?.addRange(outside);
+    fireEvent.click(pane);
+    // Header chrome: title and the module header, with the selection parked in the pane.
+    fireEvent.click(screen.getByTestId('canvas-module-title'));
+    expect(screen.queryByTestId('canvas-editor')).toBeNull();
+    expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
+  });
+
   it('a pointerdown or focus in the CHAT, a dialog open/close and a window blur do NOT switch modes', async () => {
     const user = userEvent.setup();
     await renderCanvas();

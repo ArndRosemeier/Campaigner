@@ -1782,7 +1782,7 @@ export function CanvasPage(): JSX.Element {
               }}
             >
               {previewOpen ? <PencilIcon aria-hidden data-icon="inline-start" /> : <EyeIcon aria-hidden data-icon="inline-start" />}
-              {previewOpen ? 'Edit' : 'Preview'}
+              {previewOpen ? 'Edit' : 'View rendered'}
             </Button>
           </BlockedControl>
           <BlockedControl testId="canvas-refine-selection" reason={aiBlockedReason}>
