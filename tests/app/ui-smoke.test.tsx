@@ -362,7 +362,8 @@ describe('route smoke sweep', () => {
 
     // Exactly the six spec steps, in order.
     await user.click(screen.getByTestId('ui-scale'));
-    const options = await screen.findAllByRole('option');
+    // Scoped to the scale popup: the page also holds native <select>s (Advisors, row 400) whose <option>s share the role.
+    const options = within(await screen.findByRole('listbox')).getAllByRole('option');
     expect(options.map((option) => option.textContent)).toEqual(['90%', '100%', '110%', '125%', '150%', '200%']);
 
     // Selecting 200% applies the factor to the document root (useUiScaleSync).

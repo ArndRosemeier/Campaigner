@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { ENTITY_KINDS } from '@/domain/module';
+import { customAdvisorSchema } from '@/domain/advisors';
 import {
   dungeonMapPathSchema,
   encounterMapAspectSchema,
@@ -394,6 +395,14 @@ export const settingsSchema = z.object({
    */
   generationImageKinds: z.array(z.enum(ENTITY_KINDS)).default([]),
   /**
+   * Canvas ADVISORS (docs/17 row 400): the owner's own advisors (global, not per
+   * campaign; no DB bump - absent = []) and the ids of built-ins hidden from the
+   * sidebar. Built-ins live in `domain/advisors.ADVISOR_LENSES` and are never
+   * edited; a duplicate becomes a custom entry.
+   */
+  customAdvisors: z.array(customAdvisorSchema).default([]),
+  hiddenAdvisors: z.array(z.string()).default([]),
+  /**
    * Parallelization (optimization feature): how many OpenRouter requests may
    * run at once when independent work is generated (entity batches, queued
    * entity images). 1 = the old sequential behavior. Dependent chains
@@ -471,6 +480,8 @@ export function defaultSettings(): Settings {
     dungeonMapPath: 'classic',
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     generationImageKinds: [],
+    customAdvisors: [],
+    hiddenAdvisors: [],
     maxParallelRequests: 2,
     cleanCut: null,
     onboarding: { status: 'fresh', stepState: [] },

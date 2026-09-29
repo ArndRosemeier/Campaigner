@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import type { EditorView } from '@codemirror/view';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -40,7 +40,19 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
-import { ADVISOR_LENSES, advisorApprovalText, type AdvisorCard } from '@/domain/advisors';
+import {
+  ADVISOR_SCOPE_LABELS,
+  advisorApprovalText,
+  advisorScopeSchema,
+  visibleAdvisors,
+  type AdvisorCard,
+  type AdvisorScope,
+} from '@/domain/advisors';
+import {
+  advisorScopeUnavailableReason,
+  type AdvisorScopeSource,
+} from '@/features/modules/canvas/advisorScope';
+import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { askAdvisors, setAdvisorState } from '@/features/modules/canvas/advisorTurn';
 import { clearModuleChat } from '@/features/modules/canvas/clearChat';
 import { toastModuleBusy } from '@/features/modules/module-busy';
@@ -148,9 +160,10 @@ export function ChatSidebar({
   // nothing runs until Ask advisors is clicked.
   const [advisorsOpen, setAdvisorsOpen] = useState(false);
   const [lensTicks, setLensTicks] = useState<readonly string[]>([]);
-  const [rangeOn, setRangeOn] = useState(false);
-  const [rangeMin, setRangeMin] = useState('1');
-  const [rangeMax, setRangeMax] = useState('1');
+  const [scopeChoice, setScopeChoice] = useState<Readonly<Record<string, AdvisorScope>>>({});
+  // The caret/selection is read from CM6 / the preview store, neither of which
+  // re-renders this panel, so the panel re-reads it when the pointer enters it.
+  const [, refreshScopeSource] = useReducer((n: number) => n + 1, 0);
   const [advisorModel, setAdvisorModel] = useState('');
   const [advisorsBusy, setAdvisorsBusy] = useState(false);
 
@@ -282,21 +295,49 @@ export function ChatSidebar({
     }
   }
 
-  async function ask(): Promise<void> {
-    const min = Number(rangeMin);
-    const max = Number(rangeMax);
-    if (rangeOn && (!Number.isInteger(min) || !Number.isInteger(max) || min < 0 || max < min)) {
-      toastError('The level range is invalid', new Error(`levels ${rangeMin}–${rangeMax}`));
-      return;
+  /** Caret / selection right now: the editor's in Edit, the preview capture in Preview. */
+  function readScopeSource(): AdvisorScopeSource | null {
+    if (!previewOpen) {
+      const view = activeCanvasView.current;
+      if (view === null) return null;
+      const main = view.state.selection.main;
+      return {
+        doc: view.state.doc.toString(),
+        caret: main.head,
+        selection: main.from === main.to ? null : { from: main.from, to: main.to },
+      };
     }
+    const captured = useCanvasPreviewStore.getState().selectionByModule[moduleId] ?? null;
+    if (captured === null) return null;
+    return captured.kind === 'mapped'
+      ? { doc: captured.doc, caret: captured.from, selection: { from: captured.from, to: captured.to } }
+      : { doc: captured.doc, caret: null, selection: null };
+  }
+
+  const offered = visibleAdvisors(settings?.customAdvisors ?? [], settings?.hiddenAdvisors ?? []);
+  const scopeOf = (advisor: { id: string; defaultScope: AdvisorScope }): AdvisorScope =>
+    scopeChoice[advisor.id] ?? advisor.defaultScope;
+  const scopeSource = readScopeSource();
+  const scopeReasonFor = (advisor: { id: string; defaultScope: AdvisorScope }): string | null =>
+    advisorScopeUnavailableReason(scopeOf(advisor), scopeSource ?? { caret: null, selection: null });
+  const blockedTicks = lensTicks.filter((id) => {
+    const advisor = offered.find((entry) => entry.id === id);
+    return advisor !== undefined && scopeReasonFor(advisor) !== null;
+  });
+
+  async function ask(): Promise<void> {
+    const source = readScopeSource();
     setAdvisorsBusy(true);
     try {
       await askAdvisors({
         moduleId,
         key: chatKey,
-        lensIds: lensTicks,
-        range: rangeOn ? { min, max } : null,
-        liveDocument: activeCanvasView.current?.state.doc.toString() ?? null,
+        asks: lensTicks.flatMap((id) => {
+          const advisor = offered.find((entry) => entry.id === id);
+          return advisor === undefined ? [] : [{ lensId: id, scope: scopeOf(advisor) }];
+        }),
+        scopeSource: source,
+        liveDocument: source?.doc ?? null,
         model: advisorModel !== '' ? advisorModel : modelSelection,
       });
     } catch (error) {
@@ -486,55 +527,56 @@ export function ChatSidebar({
           Advisors
         </Button>
         {advisorsOpen && (
-          <div className="mt-2 flex flex-col gap-2 text-xs">
-            {ADVISOR_LENSES.map((lens) => (
-              <label key={lens.id} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  data-testid={`canvas-advisor-lens-${lens.id}`}
-                  checked={lensTicks.includes(lens.id)}
-                  onChange={(event) => {
-                    setLensTicks((ticks) =>
-                      event.target.checked ? [...ticks, lens.id] : ticks.filter((id) => id !== lens.id),
-                    );
-                  }}
-                />
-                {lens.name}
-              </label>
-            ))}
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                data-testid="canvas-advisor-range-on"
-                checked={rangeOn}
-                onChange={(event) => {
-                  setRangeOn(event.target.checked);
-                }}
-              />
-              Only levels
-              <input
-                aria-label="Advisor first level"
-                data-testid="canvas-advisor-range-min"
-                className="w-12 rounded border px-1"
-                value={rangeMin}
-                disabled={!rangeOn}
-                onChange={(event) => {
-                  setRangeMin(event.target.value);
-                }}
-              />
-              to
-              <input
-                aria-label="Advisor last level"
-                data-testid="canvas-advisor-range-max"
-                className="w-12 rounded border px-1"
-                value={rangeMax}
-                disabled={!rangeOn}
-                onChange={(event) => {
-                  setRangeMax(event.target.value);
-                }}
-              />
-              <span className="text-muted-foreground">(0 = premise)</span>
-            </label>
+          <div
+            className="mt-2 flex flex-col gap-2 text-xs"
+            onPointerOver={refreshScopeSource}
+            onPointerMove={refreshScopeSource}
+            onFocus={refreshScopeSource}
+          >
+            {offered.map((lens) => {
+              const reason = scopeReasonFor(lens);
+              const ticked = lensTicks.includes(lens.id);
+              return (
+                <div key={lens.id} className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <label className="flex flex-1 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        data-testid={`canvas-advisor-lens-${lens.id}`}
+                        checked={ticked}
+                        onChange={(event) => {
+                          setLensTicks((ticks) =>
+                            event.target.checked ? [...ticks, lens.id] : ticks.filter((id) => id !== lens.id),
+                          );
+                        }}
+                      />
+                      {lens.name}
+                    </label>
+                    <select
+                      aria-label={`${lens.name} scope`}
+                      data-testid={`canvas-advisor-scope-${lens.id}`}
+                      className="rounded border bg-background px-1"
+                      value={scopeOf(lens)}
+                      onChange={(event) => {
+                        const scope = advisorScopeSchema.parse(event.target.value);
+                        setScopeChoice((choice) => ({ ...choice, [lens.id]: scope }));
+                      }}
+                    >
+                      {advisorScopeSchema.options.map((scope) => (
+                        <option key={scope} value={scope}>
+                          {ADVISOR_SCOPE_LABELS[scope]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {reason !== null && ticked && (
+                    <span className="text-destructive" data-testid={`canvas-advisor-scope-reason-${lens.id}`}>
+                      {reason}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
             <ModelWidget
               variant="field"
               id="canvas-advisor-model"
@@ -550,7 +592,7 @@ export function ChatSidebar({
               size="sm"
               className="self-start"
               data-testid="canvas-advisors-ask"
-              disabled={lensTicks.length === 0 || advisorsBusy || aiBusy}
+              disabled={lensTicks.length === 0 || blockedTicks.length > 0 || advisorsBusy || aiBusy}
               onClick={() => {
                 void ask();
               }}
@@ -719,6 +761,11 @@ function ChatBubble({
       >
         <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">
           Advisor — {advisor.lensName}
+          {advisor.scope !== undefined && (
+            <span className="font-normal text-muted-foreground" data-testid="canvas-advisor-scope">
+              {' '}· {advisor.scope.scope === 'global' ? 'whole document' : `${advisor.scope.scope}: ${advisor.scope.title}`}
+            </span>
+          )}
           {advisor.model !== '' && <span className="font-normal text-muted-foreground"> · {advisor.model}</span>}
         </div>
         {message.status === 'failed' ? (

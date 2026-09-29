@@ -8,6 +8,7 @@ import { BackupSection } from '@/features/settings/backup-section';
 import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section';
 import { EncounterMapSection } from '@/features/settings/encounter-map-section';
 import { ExperimentsSection } from '@/features/settings/experiments-section';
+import { AdvisorsSection } from '@/features/settings/advisors-section';
 import { AppearanceSection } from '@/features/settings/appearance-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
@@ -53,6 +54,7 @@ export function SettingsPage(): JSX.Element {
       <AppearanceSection />
       <PersonaSection personas={personas ?? []} />
       <PromptStylesSection />
+      <AdvisorsSection />
       <ExperimentsSection />
       <BackupSection />
       <DangerZone />

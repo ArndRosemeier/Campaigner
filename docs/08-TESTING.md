@@ -10192,7 +10192,9 @@ been the wrong instrument for a row that changed no prompt byte.
 
 - `tests/features/campaign-entry.test.tsx` (3 added): typed name + Enter submits and names the campaign; whitespace-only creates 'New campaign'; name editable afterwards (repo update; the edit dialog itself is pinned by campaign-picker.test.tsx 'edits name and description from the card menu'). Row-395 pins unchanged, none moved.
 
-### Advisors (docs/17 row 396)
+### Advisors (docs/17 rows 396/400)
+
+Row 400 pins: `tests/llm/advisors.test.ts` (`advisor scopes`: whole document every scope, scope line, selection unavailable/throws, section resolves incl. premise, hide/duplicate/round-trip/empty refused), `canvas-chat-thread` (selection disabled then quoted through approve; tick order with a slow first advisor), `advisors-settings.test.tsx` (settings reads via `actDrained`, 1a).
 
 `tests/llm/advisors.test.ts` pins the outgoing advisor messages (document + lens + chat prose, none of the command tags), lens-list single source, approval attribution, additive schema. `tests/features/canvas-chat-thread.test.tsx` (advisors describe) drives the real sidebar: nothing runs before the click, dismiss sends nothing and leaves the document byte-identical, state survives reload, approve reaches the writer through the normal send, failure is a visible card. The live queries re-fire on row writes: read the row through `actDrained` (1a).
 

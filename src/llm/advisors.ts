@@ -1,10 +1,10 @@
 import { getSettings } from '@/db/settingsRepo';
-import { ADVISOR_LENSES, advisorLens, type AdvisorLens } from '@/domain/advisors';
+import { advisorScopeLines, type AdvisorLens, type AdvisorScopeTarget } from '@/domain/advisors';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { recordGlobalChatModelInUse } from '@/llm/recentChatModel';
 
 /**
- * ONE ADVISOR CALL (docs/17 row 396). A separate model call with its OWN
+ * ONE ADVISOR CALL (docs/17 rows 396/400). A separate model call with its OWN
  * context — never the writer's thread: the document (whole, or the caller's
  * already-selected level range), the recent chat PROSE for intent, and the
  * lens prompt from the ONE lens list (`domain/advisors.ADVISOR_LENSES`).
@@ -26,8 +26,10 @@ export interface AdvisorHistoryEntry {
 }
 
 export interface AdvisorCallInput {
-  lensId: string;
-  /** The document text the advisor reviews (whole, or the selected levels). */
+  lens: AdvisorLens;
+  /** What to concentrate on. CONTEXT is always the whole document (row 400). */
+  target: AdvisorScopeTarget;
+  /** The WHOLE document text, for every scope. */
   document: string;
   /** Recent chat prose, oldest first (assistant PROSE, never raw replies). */
   history: readonly AdvisorHistoryEntry[];
@@ -43,12 +45,13 @@ export interface AdvisorReply {
 }
 
 const ADVISOR_SYSTEM =
-  'You are an advisor reviewing a tabletop RPG campaign document for its author. You only critique: point out what is not good or could be better, concretely and with reference to the places you mean. You do not rewrite the text and you do not produce replacement text. Answer in plain prose, at most a few short paragraphs or a short list.';
+  'You are an advisor reviewing a tabletop RPG campaign document for its author. You only advise: point out what is not good or could be better, or offer ideas when your task asks for them, concretely and with reference to the places you mean. You always see the whole document; your task may ask you to concentrate on a part of it. You do not rewrite the text and you do not produce finished replacement text. Answer in plain prose, at most a few short paragraphs or a short list.';
 
 /** The outgoing messages — exported so the pin asserts on exactly what is sent. */
 export function buildAdvisorMessages(
   lens: AdvisorLens,
   document: string,
+  target: AdvisorScopeTarget,
   history: readonly AdvisorHistoryEntry[],
 ): ChatMessage[] {
   const recent = history.slice(-ADVISOR_HISTORY_TURNS);
@@ -59,26 +62,21 @@ export function buildAdvisorMessages(
           .map((entry) => `${entry.role === 'user' ? 'Author' : 'Assistant'}: ${entry.text}`)
           .join('\n')}`;
   return [
-    { role: 'system', content: `${ADVISOR_SYSTEM}\n\nYour lens — ${lens.name}: ${lens.prompt}` },
+    { role: 'system', content: `${ADVISOR_SYSTEM}\n\nYour task — ${lens.name}: ${lens.instruction}` },
     {
       role: 'user',
-      content: `The document under review:\n\n${document}${chatBlock}\n\nGive your critique through your lens.`,
+      content: `The document under review:\n\n${document}${chatBlock}\n\n${advisorScopeLines(target).join('\n')}\n\nGive your answer for your task.`,
     },
   ];
 }
 
 export async function askAdvisor(input: AdvisorCallInput): Promise<AdvisorReply> {
-  const lens = advisorLens(input.lensId);
-  if (lens === undefined) {
-    throw new Error(
-      `unknown advisor lens "${input.lensId}" (known: ${ADVISOR_LENSES.map((l) => l.id).join(', ')})`,
-    );
-  }
+  const { lens } = input;
   const settings = await getSettings();
   const explicit = input.model !== undefined && input.model !== '';
   const model = explicit ? input.model : settings.defaultChatModel;
   if (!explicit) recordGlobalChatModelInUse(settings.defaultChatModel);
-  const { text, modelUsed } = await chat(buildAdvisorMessages(lens, input.document, input.history), {
+  const { text, modelUsed } = await chat(buildAdvisorMessages(lens, input.document, input.target, input.history), {
     model: model ?? settings.defaultChatModel,
     temperature: 0.7,
     reasoningEffort: settings.defaultReasoningEffort,

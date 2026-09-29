@@ -38,6 +38,8 @@ const SETTINGS_BASE = {
   embeddingsEnabled: false,
   wikiGroundingEnabled: true,
   generationImageKinds: [],
+  customAdvisors: [],
+  hiddenAdvisors: [],
   strictOutputs: true,
   imageModel: 'img',
   imagesEnabled: false,

@@ -9,7 +9,7 @@
 **Status: OWNER-RATIFIED 2026-09-28.** This spec is the contract the arc's slices are briefed from.
 It replaces the "module = premise + parts" storage model and the many-modules-per-campaign rule.
 
-**BUILD STATE (docs/17 row 396). ADVISORS LANDED** — adversarial critique inside the canvas chat: lenses are data (`domain/advisors.ADVISOR_LENSES`), each advisor is a separate model call that sees the document (or a level range) and the chat prose but never the command syntax, its answer is a persisted ADVISOR CARD (`moduleChatMessage.advisor`, additive, no DB bump) with Approve (sends the attributed critique through the existing send) / Dismiss. Explicit trigger only.
+**BUILD STATE (docs/17 rows 396/400). ADVISORS LANDED** (row 400: standard advisors, per-advisor scope section/selection/global with the whole document ALWAYS as context, custom advisors in Settings; the level range below was retired for scopes) — adversarial critique inside the canvas chat: lenses are data (`domain/advisors.ADVISOR_LENSES`), each advisor is a separate model call that sees the document (or a level range) and the chat prose but never the command syntax, its answer is a persisted ADVISOR CARD (`moduleChatMessage.advisor`, additive, no DB bump) with Approve (sends the attributed critique through the existing send) / Dismiss. Explicit trigger only.
 
 **BUILD STATE (2026-09-28, docs/17 row 380).** **PHASE 1 IS SPLIT.** **Phase 1a — the FORMAT
 CONTRACT — is LANDED**: §2's level-0 model, §3's loud extraction, §4's derived level list and the

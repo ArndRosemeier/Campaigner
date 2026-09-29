@@ -605,6 +605,69 @@ describe('canvas chat front door', () => {
       await flushAsyncUpdates();
     });
 
+    it('row 400: selection scope is disabled with a reason and dispatches nothing until text is selected; then it quotes the selection and approve carries it', async () => {
+      const user = userEvent.setup();
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      await user.click(screen.getByTestId('canvas-advisors-toggle'));
+      await user.selectOptions(screen.getByTestId('canvas-advisor-scope-critique'), 'selection');
+      await user.click(screen.getByTestId('canvas-advisor-lens-critique'));
+      expect(screen.getByTestId('canvas-advisor-scope-reason-critique').textContent).toMatch(/Select some text/);
+      expect(screen.getByTestId('canvas-advisors-ask')).toBeDisabled();
+      await user.click(screen.getByTestId('canvas-advisors-ask'));
+      expect(chatMock).not.toHaveBeenCalled();
+      const needle = 'Rain hammers the stones.';
+      const from = WHOLE_DOC.indexOf(needle);
+      activeCanvasView.current?.dispatch({ selection: { anchor: from, head: from + needle.length } });
+      await user.hover(screen.getByTestId('canvas-advisor-lens-continuity'));
+      await flushAsyncUpdates();
+      expect(screen.queryByTestId('canvas-advisor-scope-reason-critique')).toBeNull();
+      mockChatReply('Too gentle.');
+      await user.click(screen.getByTestId('canvas-advisors-ask'));
+      await flushAsyncUpdates();
+      const [advisorMessages] = chatMock.mock.calls[0] ?? [];
+      const wire = JSON.stringify(advisorMessages);
+      expect(wire).toContain('drowned vault premise');
+      expect(wire).toContain(`> ${needle}`);
+      expect(wire).not.toContain('<edit');
+      expect((await screen.findByTestId('canvas-advisor-scope')).textContent).toMatch(/selection/);
+      expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
+      mockChatReply('Ok.');
+      await user.click(await screen.findByTestId('canvas-advisor-approve'));
+      await flushAsyncUpdates();
+      const sent = JSON.stringify(chatMock.mock.calls[1]?.[0]);
+      expect(sent).toContain(`> ${needle}`);
+      expect(sent).toContain('Scope of the advice');
+      expect(sent).toContain('> Too gentle.');
+    });
+
+    it('row 400: cards appear in TICK order even when the later advisor answers first', async () => {
+      const user = userEvent.setup();
+      renderAppAt(canvasPath(world.campaignId, world.moduleId));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await openSidebar(user);
+      await user.click(screen.getByTestId('canvas-advisors-toggle'));
+      await user.click(screen.getByTestId('canvas-advisor-lens-continuity'));
+      await user.click(screen.getByTestId('canvas-advisor-lens-critique'));
+      chatMock.mockImplementation((messages) => {
+        const first = JSON.stringify(messages).includes('Continuity & consistency');
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ text: first ? 'SLOW continuity' : 'FAST critique', modelUsed: 'test-model', fallback: null });
+          }, first ? 60 : 0);
+        });
+      });
+      await user.click(screen.getByTestId('canvas-advisors-ask'));
+      await waitFor(() => {
+        expect(screen.getAllByTestId('canvas-advisor-card')).toHaveLength(2);
+      });
+      const cards = screen.getAllByTestId('canvas-advisor-card').map((c) => c.textContent);
+      expect(cards[0]).toContain('SLOW continuity');
+      expect(cards[1]).toContain('FAST critique');
+      await flushAsyncUpdates();
+    });
+
     it('a failed advisor call is a visible failed card with the error, and toasts', async () => {
       const user = userEvent.setup();
       renderAppAt(canvasPath(world.campaignId, world.moduleId));

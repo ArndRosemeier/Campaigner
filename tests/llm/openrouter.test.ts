@@ -70,6 +70,8 @@ const SETTINGS = {
   embeddingsEnabled: false,
   wikiGroundingEnabled: true,
   generationImageKinds: [],
+  customAdvisors: [],
+  hiddenAdvisors: [],
   strictOutputs: true,
   imageModel: 'google/gemini-2.5-flash-image',
   imagesEnabled: false,
