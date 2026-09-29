@@ -242,7 +242,7 @@ export function QuickFindDialog({
               </CommandGroup>
             )}
             {moduleHits.length > 0 && (
-              <CommandGroup heading="Modules">
+              <CommandGroup heading="Document">
                 {moduleHits.map((hit, hitIndex) => (
                   <CommandItem
                     key={`${hit.module.id}-${String(hit.partIndex ?? 'm')}-${String(hitIndex)}`}

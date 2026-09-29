@@ -9977,3 +9977,54 @@ resolution.
 builders over the golden's OWN input table and was deleted before the commit. The delta is exactly the new
 level-command paragraph plus the extended "never write these literal strings" sentence (`system` 7594 → 9346
 characters); the `payload`/`followUp` arrays keep their 4/6 entries and only their system message moved.
+
+## One document per campaign (docs/17 row 389) — the list's pins MIGRATED, and the new claims
+
+The module LIST page is DELETED, so `tests/features/module-ui-toast.test.tsx`'s merged
+`modules-list.test.tsx` describe is now `campaign-document-landing.test.tsx` (30 tests in that file stay 30): the
+same fixtures and backgrounds, re-aimed at the campaign's ONE document. **Nothing is asserted less; three
+list-only claims died with their surface and are named here** — the row's `module-forge-detail` line, the row's
+`x/y parts` / level / size badges, and the row's five-control inventory (all three were properties of a `li` that
+no longer exists; the reader's status badge + streaming card, its `Levels a–b` badge and its header controls are
+the surviving surfaces, and the delete inventory is now the reader's `delete-module` control).
+
+- **The landing reaches the document, with no list in between.** `documentPath(campaignId)` renders
+  `module-reader` (whose ToC IS the derived level list) and NOT `modules-page`; the campaign's document is the
+  ARC-FIRST row (`useModules`/`compareModulesByStartLevel`), so a campaign whose recency order is the reverse of
+  its level order still lands on the start-level-first chapter.
+- **The legacy notice names and LINKS every extra row.** Three rows → the notice reads "3 module rows", names all
+  three, and each extra carries `legacy-extra-module-<id>` pointing at its reader; two rows → the extra named; one
+  row → NO notice. This is the both-directions pin: the extras are either named loudly or gone, never silently
+  unreachable.
+- **The create state is the ONE creation door.** A row-less campaign renders `campaign-document-empty` +
+  `new-module`; the dialog opens from there (continuity disabled with the "no previous modules" sentence, the
+  automation checkboxes passed through). The continuity-ON arm (`includePriorModules: true`) is driven through the
+  dialog DIRECTLY over a legacy row, because the app cannot mount a create dialog while a document exists.
+- **The delete dialog moved to the reader and is MOUNTED ONLY WHILE OPEN.** The three-branch blast-radius pins
+  (cited library creatures; promote-and-keep; force-delete-all) drive `modulePath(campaignId, id)` and the
+  header's `delete-module` control. Mounting only while open is what keeps the reader's every-document render from
+  running three live scans — the console guard caught exactly that act()-warning noise in
+  `module-reader.test.tsx` and here before the fix.
+- **The creation seam refuses a second document, NAMED, with no row written** —
+  `tests/db/campaign-document.test.ts` (4): the first write lands; the second throws
+  `CampaignDocumentExistsError` containing the existing title and the table still holds exactly one row; the rule is
+  per campaign; `saveModule` still updates an existing row (it is deliberately NOT the guarded seam).
+- **The source half, which behaviour cannot see** — `tests/architecture/one-document-per-campaign.test.ts` (5):
+  `ModulesListPage` / `ROUTES.modules` / `modulesPath` appear NOWHERE; `documentPath` is defined once; the route
+  renders `CampaignDocumentPage`; `<NewModuleDialog campaign=` has exactly ONE mount; `createCampaignDocument` is
+  defined once and `createModuleAndRun` calls it while calling `saveModule(created)` NOWHERE; `<LegacyModulesNotice
+  />` is mounted once (the campaign bar) and the notice links its extras; the module ROW (`moduleId`) survives.
+- **Migrated elsewhere, all mechanically:** `app-shell.test.tsx` (tab/breadcrumb labels → Document; the Document
+  tab link scoped to `campaign-bar` because the top bar carries a Document link too),
+  `quickfind-modules.test.tsx` (the Go-to label/path and the landing assertion),
+  `feature-shell-and-editor.test.tsx` (the guide CTA href; the empty state's
+  `campaign-document-guide`), `canvas-chat-thread.test.tsx` (the deleted list-row control-inventory pin becomes
+  "the document route lands on the READER"), `module-reader.test.tsx` (the scroll-memory pin leaves through "The
+  document" instead of the list), `ipad-hover-info.test.tsx` (the disabled tab's accessible name),
+  `module-ui-toast.test.tsx`'s cover set (the thumb is deleted with the list; the HERO is the pin, reached from
+  the landing), and two `tests/llm` creation arms each moved to their OWN campaign because a second create in one
+  campaign is now refused (`moduleGen.test.ts`'s adversarial-flag pair,
+  `module-gen-spine-and-styles.test.ts`'s explicit-budget arm).
+- **NO duplication-baseline entry was added**, and none was needed: the delete dialog's body MOVED from
+  `ModulesListPage` to `module-delete-dialog.tsx` (its only site), `ModuleCoverThumb` was DELETED with its only
+  caller, and `tests/architecture/no-duplicate-implementations.test.ts` stayed green untouched.

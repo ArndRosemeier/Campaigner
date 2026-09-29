@@ -5,7 +5,7 @@ import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PencilIcon, PlusIcon } 
 
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { modulesPath, workspacePath } from '@/app/routes';
+import { documentPath, workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
 import { GAME_SYSTEMS, GAME_SYSTEM_LABELS, type GameSystem } from '@/domain';
 import {
@@ -202,7 +202,7 @@ export function CampaignPickerPage(): JSX.Element {
                   onOpen={() => {
                     // Opening a campaign lands on its MODULES view — the
                     // central view the rest of the app feeds (owner-ratified).
-                    navigate(modulesPath(summary.campaign.id));
+                    navigate(documentPath(summary.campaign.id));
                   }}
                 />
               </li>

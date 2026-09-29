@@ -31,8 +31,15 @@ export function useModuleVersions(id: Id | undefined): ModuleDocumentVersion[] |
  * A campaign's modules for the UI, in ARC ORDER (docs/17 row 297): start level
  * ascending, then the narrower range, then `createdAt`, then `id` —
  * `domain/module.compareModulesByStartLevel`. THE display seam: every module
- * LIST a human reads (the modules page, the campaign tree, the pickers) sorts
- * here, so they cannot drift apart.
+ * LIST a human reads (the campaign landing's choice of THE document, the
+ * campaign tree's module groups, the legacy multi-module notice, the artifact
+ * scope pickers) sorts here, so they cannot drift apart.
+ *
+ * Since docs/17 row 389 a campaign owns exactly ONE document, so this list is
+ * normally ONE row long — and the FIRST row is the campaign's document (that
+ * is how `CampaignDocumentPage` picks it). The order still matters for a
+ * campaign that carries legacy extra rows (and for the pickers above), which
+ * is why the comparator is kept rather than folded into "the only element".
  *
  * The repo's own read (`listModulesByCampaign`) deliberately keeps its
  * "newest first" order for the SEMANTIC callers that depend on it; this hook

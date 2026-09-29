@@ -1,4 +1,4 @@
-import { ROUTES, graphPath, modulesPath, spellsPath, workspacePath } from '@/app/routes';
+import { ROUTES, graphPath, documentPath, spellsPath, workspacePath } from '@/app/routes';
 
 /** One "Go to" destination in the quick-find palette. */
 export interface GoToEntry {
@@ -24,7 +24,7 @@ export interface GoToEntry {
 export function quickFindGoToEntries(campaignId: string, _pathname: string): readonly GoToEntry[] {
   const entries: GoToEntry[] = [
     { label: 'Workspace', to: workspacePath(campaignId) },
-    { label: 'Modules', to: modulesPath(campaignId) },
+    { label: 'Document', to: documentPath(campaignId) },
     { label: 'Graph', to: graphPath(campaignId) },
     { label: 'Spells', to: spellsPath(campaignId) },
   ];

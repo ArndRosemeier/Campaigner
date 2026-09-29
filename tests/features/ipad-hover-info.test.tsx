@@ -233,9 +233,9 @@ describe('iPad batch E half 2: title-only info gains a touch/AT mirror', () => {
       </MemoryRouter>,
     );
 
-    const modules = screen.getByRole('button', { name: 'Modules — open a campaign first' });
-    expect(modules).toBeDisabled();
-    expect(modules).toHaveAttribute('title', 'Open a campaign first');
+    const document = screen.getByRole('button', { name: 'Document — open a campaign first' });
+    expect(document).toBeDisabled();
+    expect(document).toHaveAttribute('title', 'Open a campaign first');
   });
 });
 

@@ -46,7 +46,7 @@ import {
   spineContractValues,
 } from '@/llm/promptStyles';
 import { Emitter } from '@/llm/emitter';
-import { getModule, listModulesByCampaign, patchModule, patchModuleSpine, saveModule } from '@/db/moduleRepo';
+import { createCampaignDocument, getModule, listModulesByCampaign, patchModule, patchModuleSpine } from '@/db/moduleRepo';
 // The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
 // WHICH creatures may a module entity be cast from? The answer is the window
 // `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
@@ -3381,7 +3381,10 @@ export async function createModuleAndRun(
     // identical, and the row keeps the distinction.
     difficulty: input.difficulty ?? DEFAULT_MODULE_DIFFICULTY,
   });
-  const saved = await saveModule(created);
+  // THE one campaign-document creation seam (docs/17 row 389): a campaign
+  // owns exactly ONE document, so this refuses a second row LOUDLY, naming the
+  // document that exists, before anything is written.
+  const saved = await createCampaignDocument(created);
   void (async () => {
     const drafted = await runSpine(saved.id, campaign).catch(() => undefined);
     // A failed spine is owned by runSpine (failed row + toast) — nothing to

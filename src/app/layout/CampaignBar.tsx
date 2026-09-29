@@ -2,15 +2,17 @@ import type { JSX } from 'react';
 import { Link, NavLink, matchPath, useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { ROUTES, campaignIdFromPath, modulesPath } from '@/app/routes';
+import { ROUTES, campaignIdFromPath, documentPath } from '@/app/routes';
 import { campaignTabs } from '@/app/layout/nav';
 import { buttonVariants } from '@/components/ui/button';
 import { getModule } from '@/db/moduleRepo';
+import { LegacyModulesNotice } from '@/features/modules/legacy-modules-notice';
 import { cn } from '@/lib/utils';
 
 /**
- * Campaign bar (05-UI.md §Top bar): the campaign-level tabs — Modules /
- * Workspace / Graph, Modules first (the central view) —
+ * Campaign bar (05-UI.md §Top bar): the campaign-level tabs — Document /
+ * Workspace / Graph / Spells, Document first (the central view — the
+ * campaign's ONE document, docs/17 row 389) —
  * rendered on every route directly below the top bar so the app's structure
  * stays visible. Tabs are disabled (with a hint) while no campaign is open
  * instead of hidden.
@@ -18,6 +20,10 @@ import { cn } from '@/lib/utils';
  * The right side carries the breadcrumb for nested screens (a module in the
  * reader, the battle table), so deep screens always show where you are and
  * the way back is one visible click.
+ *
+ * Below the tabs sits the legacy multi-module notice (ONE mount for every
+ * campaign route): a database that still carries more than one module row is
+ * surfaced LOUDLY and its extra rows stay reachable, never silently hidden.
  */
 export function CampaignBar(): JSX.Element {
   const { pathname } = useLocation();
@@ -25,10 +31,11 @@ export function CampaignBar(): JSX.Element {
   const tabs = campaignTabs(campaignId);
 
   return (
-    <div
-      className="flex h-9 shrink-0 items-center gap-2 border-b bg-background px-4"
-      data-testid="campaign-bar"
-    >
+    <>
+      <div
+        className="flex h-9 shrink-0 items-center gap-2 border-b bg-background px-4"
+        data-testid="campaign-bar"
+      >
       <nav aria-label="Campaign" className="flex items-center gap-1">
         {tabs.map((tab) =>
           tab.disabled ? (
@@ -60,7 +67,11 @@ export function CampaignBar(): JSX.Element {
         )}
       </nav>
       <Breadcrumb pathname={pathname} />
-    </div>
+      </div>
+      {/* THE ONE legacy multi-module mount (docs/17 row 389) — every
+          campaign route, so extra rows are never silently hidden. */}
+      <LegacyModulesNotice />
+    </>
   );
 }
 
@@ -90,10 +101,10 @@ function Breadcrumb({ pathname }: { pathname: string }): JSX.Element | null {
       </Link>
       <span aria-hidden>/</span>
       <Link
-        to={modulesPath(campaignId)}
+        to={documentPath(campaignId)}
         className="shrink-0 hover:text-foreground hover:underline"
       >
-        Modules
+        Document
       </Link>
       <span aria-hidden>/</span>
       <span className="min-w-0 truncate" data-testid="crumb-module">

@@ -35,6 +35,42 @@ export function isNotFoundError(error: unknown): error is NotFoundError {
 }
 
 /**
+ * Thrown by the campaign-document creation seam when the campaign already owns
+ * a module row (docs/23 §10 phase 2, docs/17 row 389): a campaign owns exactly
+ * ONE document, so a second create is REFUSED by naming the document that
+ * exists — never silently, and never by minting an invisible second row.
+ *
+ * Like `NotFoundError`, Dexie re-wraps an error thrown inside a transaction
+ * (name preserved, original in `inner`), so match with
+ * `isCampaignDocumentExistsError`, not `instanceof`.
+ */
+export class CampaignDocumentExistsError extends Error {
+  readonly existingTitle: string;
+
+  constructor(existingTitle: string) {
+    super(
+      `This campaign already has a document — “${existingTitle}”. A campaign owns exactly ONE document.`,
+    );
+    this.name = 'CampaignDocumentExistsError';
+    this.existingTitle = existingTitle;
+  }
+}
+
+/** Type guard that also matches Dexie-wrapped `CampaignDocumentExistsError`s. */
+export function isCampaignDocumentExistsError(
+  error: unknown,
+): error is CampaignDocumentExistsError {
+  if (error instanceof CampaignDocumentExistsError) return true;
+
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'CampaignDocumentExistsError' &&
+    (error as { inner?: unknown }).inner instanceof CampaignDocumentExistsError
+  );
+}
+
+/**
  * True when a thrown value is the platform's out-of-storage refusal, whichever
  * spelling it arrived in (docs/17 row 265). ONE recognizer, because the
  * browsers disagree and the callers must not: the modern DOMException name is

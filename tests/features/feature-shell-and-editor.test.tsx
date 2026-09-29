@@ -37,7 +37,7 @@ import {
   modulePath,
   battlePath,
   guidePath,
-  modulesPath,
+  documentPath,
   workspacePath,
 } from '@/app/routes';
 import { DEFAULT_THEME, useThemeStore } from '@/app/theme/theme';
@@ -1412,7 +1412,7 @@ describe('guide.test.tsx', () => {
       renderAppAt(guidePath('spine'));
       await flushAsyncUpdates();
       const link = await screen.findByTestId('guide-app-link');
-      expect(link).toHaveAttribute('href', modulesPath(campaign.id));
+      expect(link).toHaveAttribute('href', documentPath(campaign.id));
       expect(link).toHaveAttribute('target', '_blank');
     }, 20000);
 
@@ -1440,10 +1440,10 @@ describe('guide.test.tsx', () => {
       expect(link).toHaveAttribute('target', '_blank');
     }, 20000);
 
-    it('the modules empty state links to the guide', async () => {
+    it('the campaign document empty state links to the guide', async () => {
       const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-      renderAppAt(modulesPath(campaign.id));
-      const empty = await screen.findByTestId('modules-empty-guide');
+      renderAppAt(documentPath(campaign.id));
+      const empty = await screen.findByTestId('campaign-document-guide');
       expect(empty).toHaveAttribute('href', guidePath());
       expect(empty).toHaveAttribute('target', '_blank');
     }, 20000);

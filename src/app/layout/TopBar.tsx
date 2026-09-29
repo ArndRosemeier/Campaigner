@@ -12,7 +12,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { ModelWidget } from '@/features/settings/model-widget';
-import { TopBarNewModuleButton } from '@/features/modules/top-bar-new-module';
+import { TopBarDocumentButton } from '@/features/modules/top-bar-document-button';
 import { QuickFindTopBarButton } from '@/features/quickfind/quickfind-topbar-button';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { cn } from '@/lib/utils';
@@ -110,7 +110,7 @@ export function TopBar(): JSX.Element {
             page's top bar and persisted in the settings row. */}
         <LanguageSelect compact />
         {campaignIdFromPath(pathname) !== undefined && (
-          <TopBarNewModuleButton campaignId={campaignIdFromPath(pathname) ?? ''} />
+          <TopBarDocumentButton campaignId={campaignIdFromPath(pathname) ?? ''} />
         )}
         <HelpButton label="Campaigner" />
         <ThemeToggle />

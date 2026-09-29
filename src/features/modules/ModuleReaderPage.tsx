@@ -15,7 +15,7 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { battlePath, boardPath, canvasChatPath, modulesPath } from '@/app/routes';
+import { battlePath, boardPath, canvasChatPath, documentPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { WriterModelId } from '@/components/writer-model-id';
@@ -64,6 +64,7 @@ import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
+import { ModuleDeleteButton } from '@/features/modules/module-delete-dialog';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
@@ -439,11 +440,11 @@ export function ModuleReaderPage(): JSX.Element {
             variant="ghost"
             size="xs"
             className="mb-2"
-            render={<Link to={modulesPath(campaignId)} />}
+            render={<Link to={documentPath(campaignId)} />}
             nativeButton={false}
           >
             <ArrowLeftIcon aria-hidden data-icon="inline-start" />
-            All modules
+            The document
           </Button>
           <p className="mb-1 px-1 text-xs tracking-wide text-muted-foreground uppercase">
             Contents
@@ -611,6 +612,13 @@ export function ModuleReaderPage(): JSX.Element {
                 <ListIcon aria-hidden data-icon="inline-start" />
                 {tocOpen ? 'Hide contents' : 'Contents'}
               </Button>
+              {/* THE document's delete control (docs/17 row 389): it was the
+                  module LIST row's, and the list is gone — the reader is the
+                  ONE surface this campaign's document has, so the control
+                  lives here (ONE mount, ONE dialog: `module-delete-dialog`).
+                  A legacy campaign's EXTRA rows are deleted through their own
+                  reader, reached from the `LegacyModulesNotice` links. */}
+              <ModuleDeleteButton module={module} />
             </div>
           </header>
 
@@ -648,11 +656,11 @@ export function ModuleReaderPage(): JSX.Element {
               </section>
             ) : (
               <section className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                This module has no spine yet — open the{' '}
-                <Link className="underline" to={modulesPath(campaignId)}>
-                  module list
+                This document has no premise yet — open the{' '}
+                <Link className="underline" to={canvasChatPath(campaignId, moduleId)}>
+                  canvas chat
                 </Link>{' '}
-                and re-run the spine draft, or delete and recreate the module.
+                and write one, or delete the document and create it again.
               </section>
             )
           ) : showSpineCheckpoint ? (

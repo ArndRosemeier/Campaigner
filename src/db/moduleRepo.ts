@@ -23,7 +23,7 @@ import {
 } from '@/db/artifactRepo';
 import { deleteImageIfUnreferenced } from '@/db/imageRepo';
 import { deleteModuleVersionsForModules } from '@/db/moduleVersionRepo';
-import { NotFoundError } from '@/lib/errors';
+import { CampaignDocumentExistsError, NotFoundError } from '@/lib/errors';
 import { deleteBattlesByModule } from '@/db/battleRepo';
 
 /**
@@ -144,6 +144,31 @@ export async function saveModule(module: Module): Promise<Module> {
  * An alias cannot drift from its target; a second `async function` body can.
  */
 export const createModule = saveModule;
+
+/**
+ * THE one campaign-DOCUMENT creation seam (docs/23 §10 phase 2, docs/17 row
+ * 389): a campaign owns exactly ONE module row — its one document — so a
+ * SECOND create is REFUSED LOUDLY, naming the document that already exists
+ * (`CampaignDocumentExistsError`), and NO row is written (AGENTS rules 1/2:
+ * never a silent no-op, never a hidden second row).
+ *
+ * The check runs INSIDE the same `rw` transaction as the write, so two
+ * concurrent creates cannot both pass it. `saveModule`/`createModule` remain
+ * the general validated upsert — `patchModule` and its siblings write through
+ * them, and a test or an IMPORT that must reproduce a LEGACY multi-module
+ * campaign seeds rows directly — but the APP's creation path
+ * (`llm/moduleGen.createModuleAndRun`, pinned by
+ * `tests/architecture/one-document-per-campaign.test.ts`) goes through HERE.
+ */
+export async function createCampaignDocument(module: Module): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const existing = await db.modules.where('campaignId').equals(module.campaignId).first();
+    if (existing !== undefined) {
+      throw new CampaignDocumentExistsError(parseModuleRow(existing).title);
+    }
+    return saveModule(module);
+  });
+}
 
 /** Race-safe read-modify-write patch (statuses, parts, spine…). */
 export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {

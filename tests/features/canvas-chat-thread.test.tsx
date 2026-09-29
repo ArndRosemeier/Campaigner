@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { boardPath, canvasChatPath, canvasPath, modulePath, modulesPath } from '@/app/routes';
+import { boardPath, canvasChatPath, canvasPath, documentPath, modulePath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -440,49 +440,19 @@ describe('canvas chat front door', () => {
     await flushAsyncUpdates();
   });
 
-  it('a modules-list row offers NO chat entry — one row icon per destination (owner decision, ledger 91)', async () => {
-    renderAppAt(modulesPath(world.campaignId));
-    const row = await screen.findByTestId(`module-board-link-${world.moduleId}`, {}, { timeout: 10_000 });
-    const listRow = row.closest('li');
-    if (listRow === null) throw new Error('module list row missing');
+  it('the campaign document route lands on the READER — no module list in between (docs/17 row 389)', async () => {
+    renderAppAt(documentPath(world.campaignId));
+    // The ONE document, reached directly: the reader (whose ToC is the level
+    // list) renders and the deleted module LIST does not.
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+    expect(screen.queryByTestId('modules-page')).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe(`/c/${world.campaignId}/m/${world.moduleId}`);
 
-    // The removed front door (ledger 57's second `canvasChatPath` entry) stays
-    // removed: re-adding the row button fails this pin.
-    expect(
-      screen.queryByTestId(`module-chat-link-${world.moduleId}`),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: `Chat: The Drowned Vault` }),
-    ).not.toBeInTheDocument();
-
-    // …and the row holds the canvas entry exactly ONCE (the row chat entry was
-    // literally this destination again, with `?chat=open`).
-    expect(within(listRow).getAllByTestId(`module-canvas-link-${world.moduleId}`)).toHaveLength(1);
-    expect(
-      screen.queryAllByTestId(new RegExp(`^module-canvas-link-`)),
-    ).toHaveLength(1);
-
-    // The row's whole control inventory: title → reader, cover (no
-    // navigation), board, canvas, delete — FIVE controls, no chat. Querying by
-    // REGEX matches the accessible NAME, so a re-added chat control fails here
-    // by name even if it were given a different test id.
-    const names = (pattern: RegExp): string[] =>
-      screen.getAllByRole('button', { name: pattern }).map((control) => control.getAttribute('aria-label') ?? 'title → reader');
-    expect(names(/Drowned Vault/)).toEqual([
-      'title → reader',
-      'Generate cover for The Drowned Vault',
-      `Board: The Drowned Vault`,
-      `Canvas: The Drowned Vault`,
-      'Delete The Drowned Vault',
-    ]);
-    // Scoped to the PAGE (not the top bar): since docs/17 row 193 the top bar
-    // carries the app-level GLOBAL chat-model picker, whose accessible name
-    // ("Chat model: …") legitimately matches /chat/i. This pin is about the
-    // modules-list front door, so it looks at `<main>` — the row inventory
-    // above already proves the row itself holds no chat entry.
-    expect(
-      within(screen.getByRole('main')).queryAllByRole('button', { name: /chat/i }),
-    ).toHaveLength(0);
+    // The removed list-row front door (ledger 57's second `canvasChatPath`
+    // entry) can never come back: the reader header's ONE canvas destination
+    // is its Chat entry, and no `module-chat-link` exists anywhere.
+    expect(screen.queryByTestId(`module-chat-link-${world.moduleId}`)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-chat')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   });
 

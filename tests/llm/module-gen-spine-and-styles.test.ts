@@ -2309,9 +2309,11 @@ describe('promptStyles-composition.test.ts', () => {
       expect(resolveEncounterBudgetPolicy(fresh)).toBe('pf2e-budget');
       expect(defaultEncounterBudgetPolicy('pathfinder2e')).toBe('pf2e-budget');
 
-      // An explicit choice wins over the default.
-      const chosenId = await createModuleAndRun(pf2e, {
-        campaignId: pf2e.id,
+      // An explicit choice wins over the default — its OWN campaign, because a
+      // campaign owns exactly ONE document (docs/17 row 389).
+      const pf2eChosen = await createCampaign({ name: 'Golarion Chosen', system: 'pathfinder2e' });
+      const chosenId = await createModuleAndRun(pf2eChosen, {
+        campaignId: pf2eChosen.id,
         title: 'New Module',
         concept: 'A harbor bell.',
         levelMin: 1,

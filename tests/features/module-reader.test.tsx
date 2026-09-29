@@ -1127,20 +1127,17 @@ describe('ModuleReaderPage', () => {
     const scroller = await screen.findByTestId('module-reader-scroll', {}, { timeout: 10_000 });
     scroller.scrollTop = 700;
 
-    // Leave through the modules list and open the OTHER module: a real user
-    // path, and it exercises the memory's keying rather than the return hash.
-    // (The ToC link renders as an anchor, but the Button primitive gives it
-    // `role="button"`.)
-    await user.click(screen.getByRole('button', { name: /all modules/i }));
-    await screen.findByTestId('modules-page', {}, { timeout: 10_000 });
-    // The row's own open button (its board/canvas affordances also name the
-    // module), so query the TITLE element and take its row button.
-    const rowTitle = await screen.findByText('The Second Vault');
-    const openRow = rowTitle.closest('button');
-    if (openRow === null) throw new Error('module row button not found');
-    await user.click(openRow);
+    // Leave through the campaign's ONE document route (docs/17 row 389 — the
+    // module LIST is deleted) and let it resolve the campaign's document: the
+    // second module sorts arc-first (same start level, narrower range), so the
+    // landing opens IT — a real user path, and it exercises the memory's
+    // keying rather than the return hash. (The ToC link renders as an anchor,
+    // but the Button primitive gives it `role="button"`.)
+    await user.click(screen.getByRole('button', { name: /the document/i }));
+    await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
 
     const other = await screen.findByTestId('module-reader-scroll', {}, { timeout: 10_000 });
+    expect(window.location.pathname).toBe(modulePath(campaignId, secondDraft.id));
     expect(other).not.toBe(scroller);
     // Module A's 700 must NOT be applied to module B: a memory that was not
     // keyed (one global slot) would red exactly here.

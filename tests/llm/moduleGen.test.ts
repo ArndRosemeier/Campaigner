@@ -2105,17 +2105,20 @@ describe('adversarialGeneration — the creation data path (docs/17 row 354, sli
   }
 
   it('createModuleAndRun records the flag on the created row, BOTH values', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // ONE document per campaign (docs/17 row 389): each arm gets its OWN
+    // campaign, because a second create in the same campaign is refused.
+    const onCampaign = await createCampaign({ name: 'Ember ON', system: 'dnd5e' });
+    const offCampaign = await createCampaign({ name: 'Ember OFF', system: 'dnd5e' });
     // The spine call hangs until cancelled: creation is what is measured here.
     chatMock.mockImplementation((_messages, options) => chatUntilAborted(options.signal));
 
     const onId = await createModuleAndRun(
-      campaign,
-      creationInput(campaign.id, { adversarialGeneration: true }),
+      onCampaign,
+      creationInput(onCampaign.id, { adversarialGeneration: true }),
     );
     const offId = await createModuleAndRun(
-      campaign,
-      creationInput(campaign.id, { adversarialGeneration: false }),
+      offCampaign,
+      creationInput(offCampaign.id, { adversarialGeneration: false }),
     );
 
     expect((await getModule(onId))?.adversarialGeneration).toBe(true);

@@ -30,8 +30,14 @@ export const ROUTES = {
   /** Document co-authoring canvas for ONE module (whole-module document,
    * 08 §Module canvas). */
   canvas: '/c/:campaignId/m/:moduleId/canvas',
-  /** Module list (M4). */
-  modules: '/c/:campaignId/modules',
+  /**
+   * THE CAMPAIGN'S ONE DOCUMENT (docs/23 §10 phase 2, docs/17 row 389): the
+   * campaign landing. There is no module LIST any more — this route resolves
+   * the campaign's single module row and lands on its document (the reader),
+   * or offers the create state when the campaign has none. It was
+   * `ROUTES.modules`; the plural concept is gone, the ROW survives.
+   */
+  document: '/c/:campaignId/document',
   /**
    * Spell list for a campaign (docs/17 row 182): the campaign's own system
    * decides which imported rules material is shown, because the library is
@@ -126,12 +132,12 @@ export function canvasPath(
  * module reader starts talking to the module. It is the reader header's ONLY
  * canvas-destination entry — the plain-canvas **Canvas** link that used to
  * stand beside it was retired by owner request (docs/17 row 138), and the
- * reader nav is Board + Chat + Contents. The plain `canvasPath` keeps its
- * other caller: the modules list row's canvas icon still navigates there.
- * The modules list row's own Chat entry to this same path was dropped by
- * owner decision 2026-09-10 (docs/17 row 91, AMENDS 57 — one row icon per
- * destination). The page reads `?chat=open` and opens the sidebar even when
- * the session toggle closed it.
+ * reader nav is Board + Chat + Contents. The modules list row's own Chat
+ * entry to this same path was dropped by owner decision 2026-09-10 (docs/17
+ * row 91, AMENDS 57 — one row icon per destination); the modules list row
+ * itself is DELETED (docs/17 row 389), and the plain `canvasPath`'s remaining
+ * caller is the campaign tree's module group. The page reads `?chat=open` and
+ * opens the sidebar even when the session toggle closed it.
  */
 export function canvasChatPath(
   campaignId: string,
@@ -140,9 +146,13 @@ export function canvasChatPath(
   return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas?chat=open`;
 }
 
-/** Path of the module list for a given campaign (M4). */
-export function modulesPath(campaignId: string): `/c/${string}/modules` {
-  return `/c/${encodeURIComponent(campaignId)}/modules`;
+/**
+ * Path of the campaign's ONE document (docs/17 row 389) — the campaign
+ * landing. It resolves the campaign's single module row and reaches its
+ * document; a campaign with no row shows the create state there.
+ */
+export function documentPath(campaignId: string): `/c/${string}/document` {
+  return `/c/${encodeURIComponent(campaignId)}/document`;
 }
 
 /** Path of the spell list for a given campaign (docs/17 row 182). */
@@ -196,7 +206,7 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.battle, pathname)?.params.campaignId ??
     matchPath(ROUTES.board, pathname)?.params.campaignId ??
     matchPath(ROUTES.canvas, pathname)?.params.campaignId ??
-    matchPath(ROUTES.modules, pathname)?.params.campaignId ??
+    matchPath(ROUTES.document, pathname)?.params.campaignId ??
     matchPath(ROUTES.spells, pathname)?.params.campaignId ??
     matchPath(ROUTES.module, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId

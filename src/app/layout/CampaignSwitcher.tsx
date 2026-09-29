@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ChevronDown, CheckIcon } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { campaignIdFromPath, modulesPath } from '@/app/routes';
+import { campaignIdFromPath, documentPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -54,7 +54,7 @@ export function CampaignSwitcher(): JSX.Element {
             <DropdownMenuItem
               key={campaign.id}
               onClick={() => {
-                navigate(modulesPath(campaign.id));
+                navigate(documentPath(campaign.id));
               }}
             >
               <CheckIcon

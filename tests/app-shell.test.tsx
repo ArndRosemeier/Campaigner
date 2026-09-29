@@ -8,9 +8,9 @@ import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
   campaignIdFromPath,
+  documentPath,
   graphPath,
   modulePath,
-  modulesPath,
   spellsPath,
   workspacePath,
 } from '@/app/routes';
@@ -81,7 +81,7 @@ describe('app shell', () => {
     // its reason (iPad batch E: the hover-only title is mirrored into the
     // accessible name so touch + screen-reader users get it too).
     expect(screen.getByTestId('campaign-bar')).toBeInTheDocument();
-    for (const label of ['Workspace', 'Modules', 'Graph']) {
+    for (const label of ['Workspace', 'Document', 'Graph']) {
       expect(
         screen.getByRole('button', { name: `${label} — open a campaign first` }),
       ).toBeDisabled();
@@ -151,11 +151,13 @@ describe('campaign switcher', () => {
       await screen.findByRole('menuitem', { name: 'The Sunless Sea' }),
     ).toBeInTheDocument();
 
-    // Selecting a campaign opens its modules view (the central view — same
-    // landing as the campaign picker) and updates the trigger.
+    // Selecting a campaign opens its DOCUMENT view (the central view — a
+    // campaign leads to its ONE document, docs/17 row 389) and updates the
+    // trigger. This campaign has no module row, so the landing renders its
+    // create state AT the document route (no redirect).
     await user.click(screen.getByRole('menuitem', { name: 'The Sunless Sea' }));
     expect(await screen.findByTestId('current-campaign')).toHaveTextContent('The Sunless Sea');
-    expect(window.location.pathname).toBe(modulesPath(campaign.id));
+    expect(window.location.pathname).toBe(documentPath(campaign.id));
   });
 
   it('shows the empty state before any campaign exists', async () => {
@@ -180,17 +182,17 @@ describe('campaign switcher', () => {
     });
   });
 
-  it('points the campaign tabs at the open campaign, Modules first', async () => {
+  it('points the campaign tabs at the open campaign, Document first', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
 
     renderAppAt(workspacePath(campaign.id));
     await waitFor(() => {
       expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
     });
-    // Modules is the FIRST tab (the central view the rest feeds).
+    // Document is the FIRST tab (the campaign's ONE document, docs/17 row 389).
     const tabs = within(screen.getByTestId('campaign-bar')).getAllByRole('link');
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'Modules',
+      'Document',
       'Workspace',
       'Graph',
       'Spells',
@@ -199,10 +201,11 @@ describe('campaign switcher', () => {
       'href',
       workspacePath(campaign.id),
     );
-    expect(screen.getByRole('link', { name: 'Modules' })).toHaveAttribute(
-      'href',
-      modulesPath(campaign.id),
-    );
+    // Scoped to the campaign bar: the top bar ALSO carries a "Document" link
+    // (the old New Module door, now a navigation entry — docs/17 row 389).
+    expect(
+      within(screen.getByTestId('campaign-bar')).getByRole('link', { name: 'Document' }),
+    ).toHaveAttribute('href', documentPath(campaign.id));
     expect(screen.getByRole('link', { name: 'Graph' })).toHaveAttribute(
       'href',
       graphPath(campaign.id),
@@ -273,7 +276,7 @@ describe('campaign bar breadcrumb', () => {
     await seedSettledOnboarding();
   });
 
-  it('shows Campaigns / Modules / title on the module reader route', async () => {
+  it('shows Campaigns / Document / title on the module reader route', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await saveModule(
       createModule({
@@ -290,9 +293,9 @@ describe('campaign bar breadcrumb', () => {
 
     const crumb = await screen.findByTestId('campaign-crumb', {}, { timeout: 10_000 });
     expect(crumb).toHaveTextContent('Campaigns');
-    expect(within(crumb).getByRole('link', { name: 'Modules' })).toHaveAttribute(
+    expect(within(crumb).getByRole('link', { name: 'Document' })).toHaveAttribute(
       'href',
-      modulesPath(campaign.id),
+      documentPath(campaign.id),
     );
     await waitFor(() => {
       expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');

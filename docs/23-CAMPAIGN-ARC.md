@@ -84,7 +84,27 @@ pair — a third mapping exists nowhere. The OTHER per-`planIndex` keys the tree
 convention and the canvas `?part=` scroll address) are INVENTORIED and NAMED as their own slices
 (docs/18 §5), never re-keyed here.
 
-**THE TWO COSTS OF THIS MODEL, AFTER ROW 383 (`docs/18` §5, `.gate-logs/row382-blocked.md`).** (1) **A part
+**BUILD STATE (2026-09-28, docs/17 row 389). PHASE 2 IS LANDED — THE MODULE LIST DIES; THE CAMPAIGN LEADS TO ITS ONE
+DOCUMENT, AND THE ROW SURVIVES.** The plural concept is gone from the SURFACES without a schema change (the phase-2 column
+says "none", and none was taken): `ModulesListPage` and `ROUTES.modules` are DELETED, replaced by `CampaignDocumentPage`
+at `/c/:campaignId/document`, which resolves the campaign's single module row (arc-first, `hooks.useModules`) and lands on
+its READER — whose table of contents IS the derived level list — or shows the create state when the campaign has no row.
+The module ROW survives untouched: artifact ownership by `moduleId`, the chat thread, the versions, and every
+module-scoped route (`/m/:moduleId`, `/canvas`, `/board`, `/battle`) are unchanged. **THE SECOND MODULE IS REFUSED
+LOUDLY, NOT SILENTLY:** `moduleRepo.createCampaignDocument` is the ONE creation seam (`db/moduleRepo.ts`) — it checks
+inside the write transaction and throws `CampaignDocumentExistsError` NAMING the existing document, writing NO row; the
+app's single creation path (`llm/moduleGen.createModuleAndRun`) goes through it, the landing is the ONLY mount of
+`NewModuleDialog`, and the top-bar "New Module" door became a "Document" LINK. `saveModule`/`createModule` stay the
+general upsert on purpose — updates use them, and a test or an IMPORT reproducing a LEGACY multi-module campaign seeds
+rows through them. **THE LEGACY MULTI-MODULE CAMPAIGN IS SURFACED, NEVER HIDDEN:** `LegacyModulesNotice` is mounted ONCE
+in the campaign bar (every campaign route), names every extra row and LINKS to it (its reader, where the ordinary delete
+control now lives — `ModuleDeleteButton`/`ModuleDeleteDialog`, moved from the list row to the reader header). The spec's
+route (a) was taken; the `version(33)` clean cut was NOT, because the phase-2 column takes no schema change and the
+existing rows are the owner's data. `compareModulesByStartLevel`/`useModules` survive as the display order that picks
+the ONE document and orders the extras (and the artifact-scope pickers), and the campaign EXPORT still carries
+`ModuleRow[]` (format v4 unchanged — with one row in practice, N for a legacy/imported campaign).
+
+ (1) **A part
 does not cover a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
 1 and "this part covers levels 2–3" is expressed as TWO sections — the 16 behaviour pins that asserted the
 deleted range are migrated to the new model, and no live code offers or parses a range any more. (2) **The

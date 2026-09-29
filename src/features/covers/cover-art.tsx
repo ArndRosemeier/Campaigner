@@ -30,22 +30,6 @@ import { toastError } from '@/lib/toast';
  * art, never secrets.
  */
 
-/** Small list-row thumb for a module (ModulesListPage). Null without art. */
-export function ModuleCoverThumb({ module }: { module: Module }): JSX.Element | null {
-  const url = useImageUrl(module.coverImageId);
-  if (url === null) return null;
-  // No caption here: a 40px row thumb cannot render a model id legibly, and
-  // the reader's hero shows the same cover with it (provenance arc decision).
-  return (
-    <img
-      src={url}
-      alt={`Cover art for ${module.title}`}
-      className="size-10 shrink-0 rounded-md object-cover"
-      data-testid="module-cover-thumb"
-    />
-  );
-}
-
 /**
  * PROVENANCE (docs/17 row 93): "a small id below images indicating the image
  * model" — the caption for a cover slot, resolved from the SAME

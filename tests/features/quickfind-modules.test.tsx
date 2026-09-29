@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { artifactPath, modulesPath } from '@/app/routes';
+import { artifactPath, documentPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
@@ -171,7 +171,7 @@ describe('QuickFindDialog modules group', () => {
     const artifactItem = await screen.findByTestId('quickfind-artifact');
     expect(artifactItem).toHaveTextContent('The Docks');
     expect(screen.queryByTestId('quickfind-module')).not.toBeInTheDocument();
-    expect(screen.queryByText('Modules')).not.toBeInTheDocument();
+    expect(screen.queryByText('Document')).not.toBeInTheDocument();
     expect(screen.getByText('Artifacts')).toBeInTheDocument();
   });
 });
@@ -184,7 +184,7 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
     const base = quickFindGoToEntries('c1', '/c/c1');
     expect(base.map((entry) => entry.label)).toEqual([
       'Workspace',
-      'Modules',
+      'Document',
       'Graph',
       'Spells',
       'Rules',
@@ -207,20 +207,20 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
     const user = userEvent.setup();
     const onGoTo = vi.fn();
     renderQuickFindDialog([], [], vi.fn(), [
-      { label: 'Modules', to: '/c/c1/modules' },
+      { label: 'Document', to: '/c/c1/document' },
       { label: 'Settings', to: '/settings' },
     ], onGoTo);
 
     const items = await screen.findAllByTestId('quickfind-go-to');
     expect(items).toHaveLength(2);
 
-    await user.click(screen.getByRole('option', { name: 'Modules' }));
-    expect(onGoTo).toHaveBeenCalledWith('/c/c1/modules');
+    await user.click(screen.getByRole('option', { name: 'Document' }));
+    expect(onGoTo).toHaveBeenCalledWith('/c/c1/document');
   });
 
   it('hides the Go-to group once a query is typed', async () => {
     const user = userEvent.setup();
-    renderQuickFindDialog([], [], vi.fn(), [{ label: 'Modules', to: '/c/c1/modules' }], vi.fn());
+    renderQuickFindDialog([], [], vi.fn(), [{ label: 'Document', to: '/c/c1/document' }], vi.fn());
 
     expect(await screen.findByTestId('quickfind-go-to')).toBeInTheDocument();
     await user.type(screen.getByTestId('quickfind-input'), 'drowned');
@@ -241,12 +241,12 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
 
     await user.keyboard('{Control>}k{/Control}');
     await screen.findByTestId('quickfind-dialog', {}, { timeout: 5_000 });
-    await user.click(await screen.findByRole('option', { name: 'Modules' }, { timeout: 5_000 }));
+    await user.click(await screen.findByRole('option', { name: 'Document' }, { timeout: 5_000 }));
 
     await waitFor(() => {
-      expect(window.location.pathname).toBe(modulesPath(campaign.id));
+      expect(window.location.pathname).toBe(documentPath(campaign.id));
     });
-    expect(await screen.findByTestId('modules-page', {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(await screen.findByTestId('campaign-document-page', {}, { timeout: 10_000 })).toBeInTheDocument();
   });
 });
 

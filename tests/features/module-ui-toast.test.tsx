@@ -9,7 +9,11 @@
  *
  * Merged from (one `describe` per original file, so each stays findable; test
  * names and every `expect` assertion site is byte-identical):
- *   - tests/features/modules-list.test.tsx (15)
+ *   - tests/features/modules-list.test.tsx (15) — now
+ *     `campaign-document-landing.test.tsx`: the module LIST is DELETED
+ *     (docs/17 row 389), so the same backgrounds pin the campaign's ONE
+ *     document, its create state, the moved delete dialog and the legacy
+ *     multi-module notice instead
  *   - tests/features/normalization-failure-wording.test.tsx (2)
  *   - tests/features/prompt-style-freestyle-ui.test.tsx (2)
  *   - tests/features/remove-all-generated.test.tsx (2)
@@ -24,7 +28,6 @@
 
 import 'fake-indexeddb/auto';
 import {
-  act,
   render,
   screen,
   waitFor,
@@ -36,7 +39,7 @@ import userEvent from '@testing-library/user-event';
 import { RouterProvider, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppRouter } from '@/app/router';
-import { modulesPath, modulePath, ROUTES } from '@/app/routes';
+import { documentPath, modulePath, ROUTES } from '@/app/routes';
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign, getCampaign, updateCampaign } from '@/db/campaignRepo';
 import {
@@ -112,16 +115,18 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 
-describe('modules-list.test.tsx', () => {
+describe('campaign-document-landing.test.tsx', () => {
   /**
-   * Module list (08-MODULE-DESIGNER M4-B): the campaign's modules with
-   * status/progress badges, the "New Module" entry point (dialog opens, no LLM
-   * path runs), and the confirmed delete flow (row gone from the DB).
+   * THE CAMPAIGN'S ONE DOCUMENT (docs/23 §10 phase 2, docs/17 row 389). This
+   * describe was `modules-list.test.tsx`, whose surface — the module LIST page
+   * — is DELETED: a campaign owns exactly ONE module row, so the campaign
+   * route lands on that document's reader (whose ToC is the level list), or
+   * shows the create state when the campaign has no row yet. The list row's
+   * own controls moved: the delete dialog now lives on the reader
+   * (`module-delete-dialog`), and creation lives on the landing's create
+   * state. A legacy campaign that still carries SEVERAL module rows is
+   * surfaced by the campaign bar's `LegacyModulesNotice` — never hidden.
    */
-
-  // The whole generator is mocked: opening the New Module dialog must never
-  // start an LLM run. `moduleGenEvents` (imported by the reader page in the
-  // router graph) stays real via the spread.
 
   const createModuleAndRunMock = vi.mocked(createModuleAndRun);
 
@@ -227,65 +232,26 @@ describe('modules-list.test.tsx', () => {
     vi.restoreAllMocks();
   });
 
-  describe('ModulesListPage', () => {
-    it('shows the live forge detail on the row of a module that is generating', async () => {
+  describe('the campaign leads to its ONE document', () => {
+    it('the document route lands on the campaign document — no module list in between', async () => {
       const { campaignId, draftId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      const draftTitle = await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
-      const draftRow = draftTitle.closest('li');
-      if (draftRow === null) throw new Error('draft module row missing');
-      expect(within(draftRow).queryByTestId('module-forge-detail')).not.toBeInTheDocument();
+      renderAppAt(documentPath(campaignId));
 
-      // The module-forge progress job (started by runParts) surfaces on the row.
-      act(() => {
-        useProgressStore
-          .getState()
-          .start(
-            `module-parts-${draftId}`,
-            'Writing 2 module parts',
-            'Writing part 1 of 2: The Mill',
-          );
-      });
-
-      await waitFor(() => {
-        expect(within(draftRow).getByTestId('module-forge-detail')).toHaveTextContent(
-          'Writing part 1 of 2: The Mill',
-        );
-      });
-      act(() => {
-        useProgressStore.getState().reset();
-      });
+      // The ONE document (arc-first = 'Vault of Whispers', levelMin 1) is
+      // reached directly; the deleted list page never renders.
+      await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+      expect(window.location.pathname).toBe(modulePath(campaignId, draftId));
+      expect(screen.queryByTestId('modules-page')).not.toBeInTheDocument();
+      // The reader's ToC IS the derived level list (§4): levels 1..3.
+      expect(await screen.findByText('The Mill', {}, { timeout: 10_000 })).toBeInTheDocument();
+      expect(screen.getByText('The Vault')).toBeInTheDocument();
       await flushAsyncUpdates();
     }, 20_000);
 
-    it('renders both modules with their level/size/status badges', async () => {
-      const { campaignId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-
-      const draftTitle = await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
-      const draftRow = draftTitle.closest('li');
-      if (draftRow === null) throw new Error('draft module row missing');
-      expect(within(draftRow).getByTestId('module-progress')).toHaveTextContent('2/3 parts');
-      expect(within(draftRow).getByText('1–3')).toBeInTheDocument();
-      expect(within(draftRow).getByText('Standard')).toBeInTheDocument();
-
-      const failedTitle = screen.getByText('Sunken Cult');
-      const failedRow = failedTitle.closest('li');
-      if (failedRow === null) throw new Error('failed module row missing');
-      expect(within(failedRow).getByText('failed')).toBeInTheDocument();
-      expect(within(failedRow).getByText('2–2')).toBeInTheDocument();
-      expect(within(failedRow).getByText('Sketch')).toBeInTheDocument();
-      // A failed module has no progress badge — the failed badge replaces it.
-      expect(within(failedRow).queryByTestId('module-progress')).not.toBeInTheDocument();
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('reads the module list in ARC order — start level first, NOT recency (docs/17 row 297)', async () => {
+    it('reads the documents in ARC order — the landing picks the start-level-first row', async () => {
       // THE RECENCY ORDER CONTRADICTS THE LEVEL ORDER ON PURPOSE: the level-5
-      // chapter was edited last and the level-1 chapter first, so a page still
-      // reading the repo's "newest first" order would render later → middle →
-      // early. `listModulesByCampaign` must KEEP that recency order for its
-      // semantic callers; only this DISPLAY order changes.
+      // chapter was edited last and the level-1 chapter first. The landing must
+      // still pick the ARC-FIRST row as THE document.
       await seedBuiltInPersonas();
       const campaign = await createCampaign({ name: 'The Arc', system: 'dnd5e' });
       const anchor = Date.now();
@@ -312,28 +278,164 @@ describe('modules-list.test.tsx', () => {
       const middle = await seedChapter('The Middle Chapter', 3, 4, anchor + 2000);
       const early = await seedChapter('The Early Chapter', 1, 2, anchor + 1000);
 
-      renderAppAt(modulesPath(campaign.id));
-      await screen.findAllByText('The Early Chapter', {}, { timeout: 10_000 });
-      await waitFor(() => {
-        expect(screen.getAllByTestId(/^module-board-link-/)).toHaveLength(3);
-      });
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
 
-      // Assert the RENDER ORDER, not merely presence: the board link each row
-      // carries is unique to that row, and the query returns DOM order.
-      const rows = screen.getAllByTestId(/^module-board-link-/);
-      expect(rows.map((row) => row.getAttribute('data-testid'))).toEqual([
-        `module-board-link-${early.id}`,
-        `module-board-link-${middle.id}`,
-        `module-board-link-${later.id}`,
-      ]);
+      // The ARC-FIRST chapter is the document, and it is REACHABLE despite the
+      // recency order — a page still reading the repo's "newest first" order
+      // would have landed on `later`.
+      expect(window.location.pathname).toBe(modulePath(campaign.id, early.id));
+
+      // The extras are NAMED and LINKED, in the same arc order (docs/17 row
+      // 389): never silently hidden.
+      const notice = await screen.findByTestId('legacy-extra-modules', {}, { timeout: 10_000 });
+      expect(notice).toHaveTextContent('3 module rows');
+      expect(notice).toHaveTextContent('The Early Chapter');
+      expect(notice).toHaveTextContent('The Middle Chapter');
+      expect(notice).toHaveTextContent('The Later Chapter');
+      expect(within(notice).getByTestId(`legacy-extra-module-${middle.id}`)).toHaveAttribute(
+        'href',
+        modulePath(campaign.id, middle.id),
+      );
+      expect(within(notice).getByTestId(`legacy-extra-module-${later.id}`)).toHaveAttribute(
+        'href',
+        modulePath(campaign.id, later.id),
+      );
       await flushAsyncUpdates();
+    }, 20_000);
+
+    it('the legacy notice names every extra row on the reader too, and stays silent for ONE row', async () => {
+      const { campaignId, draftId, failedId } = await seedModules();
+      renderAppAt(modulePath(campaignId, draftId));
+      await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+
+      const notice = await screen.findByTestId('legacy-extra-modules', {}, { timeout: 10_000 });
+      expect(notice).toHaveTextContent('2 module rows');
+      expect(notice).toHaveTextContent('Sunken Cult');
+      expect(within(notice).getByTestId(`legacy-extra-module-${failedId}`)).toHaveAttribute(
+        'href',
+        modulePath(campaignId, failedId),
+      );
+      await flushAsyncUpdates();
+    }, 20_000);
+
+    it('renders NO legacy notice for the ratified one-document shape', async () => {
+      await seedBuiltInPersonas();
+      const campaign = await createCampaign({ name: 'Single', system: 'dnd5e' });
+      await saveModule(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'The Only Chapter',
+          concept: '',
+          levelMin: 1,
+          levelMax: 1,
+          sizeDial: 'sketch',
+        }),
+      );
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+      expect(screen.queryByTestId('legacy-extra-modules')).not.toBeInTheDocument();
+      await flushAsyncUpdates();
+    }, 20_000);
+  });
+
+  describe('the create state (a campaign with no document yet)', () => {
+    it('shows the campaign name and description in the landing header', async () => {
+      const campaign = await createCampaign({
+        name: 'Ember',
+        description: 'A sunless sea beneath a dying star.',
+        system: 'dnd5e',
+      });
+      renderAppAt(documentPath(campaign.id));
+
+      const context = await screen.findByTestId(
+        'campaign-landing-context',
+        {},
+        { timeout: 10_000 },
+      );
+      expect(context).toHaveTextContent('Ember');
+      expect(context).toHaveTextContent('A sunless sea beneath a dying star.');
+      expect(screen.getByTestId('campaign-document-empty')).toBeInTheDocument();
+      await flushAsyncUpdates();
+    }, 20_000);
+
+    it('drops the description from the landing header when it is empty', async () => {
+      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
+      renderAppAt(documentPath(campaign.id));
+
+      const context = await screen.findByTestId(
+        'campaign-landing-context',
+        {},
+        { timeout: 10_000 },
+      );
+      // Name only — no stray separator for the missing description.
+      expect(context.textContent).toBe('Barren');
+      await flushAsyncUpdates();
+    }, 20_000);
+
+    it('edits the campaign from the landing and refreshes the header', async () => {
+      const user = userEvent.setup();
+      const campaign = await createCampaign({
+        name: 'Ember',
+        description: 'Old description.',
+        system: 'dnd5e',
+      });
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
+
+      await user.click(screen.getByTestId('edit-campaign'));
+      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
+      expect(within(dialog).getByLabelText('Campaign name')).toHaveValue('Ember');
+      expect(within(dialog).getByLabelText('Campaign description')).toHaveValue('Old description.');
+      // The system is fixed — shown disabled, not editable.
+      expect(within(dialog).getByLabelText('Game system (fixed)')).toBeDisabled();
+
+      await user.clear(within(dialog).getByLabelText('Campaign description'));
+      await user.type(within(dialog).getByLabelText('Campaign description'), 'A drowned city.');
+      await user.click(within(dialog).getByTestId('save-campaign'));
+
+      // Persisted through the repo…
+      await waitFor(async () => {
+        expect((await getCampaign(campaign.id))?.description).toBe('A drowned city.');
+      });
+      // …and the liveQuery header picked it up.
+      await waitFor(() => {
+        expect(screen.getByTestId('campaign-landing-context')).toHaveTextContent('A drowned city.');
+      });
+      await flushAsyncUpdates();
+    }, 20_000);
+
+    it('clears the description and removes it from the landing header', async () => {
+      const user = userEvent.setup();
+      const campaign = await createCampaign({
+        name: 'Ember',
+        description: 'Old description.',
+        system: 'dnd5e',
+      });
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
+
+      await user.click(screen.getByTestId('edit-campaign'));
+      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
+      await user.clear(within(dialog).getByLabelText('Campaign description'));
+      await user.click(within(dialog).getByTestId('save-campaign'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('campaign-landing-context').textContent).toBe('Ember');
+      });
+      // Raw awaited read while the page + closing dialog are mounted —
+      // actDrained closes the window the save write's liveQuery cascade and
+      // the dialog exit chain used to leak through (docs/08 §Console guard);
+      // the long trailing drain absorbs the exit transition's timed updates.
+      expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
+      await flushAsyncUpdates(60);
     }, 20_000);
 
     it('opens the New Module dialog without starting a generation run', async () => {
       const user = userEvent.setup();
-      const { campaignId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('new-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByTestId('new-module'));
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
@@ -354,13 +456,39 @@ describe('modules-list.test.tsx', () => {
 
     it('offers prior-module continuity and passes the opt-in to the generator', async () => {
       const user = userEvent.setup();
-      // 'Vault of Whispers' carries a premise + written parts, so the opt-in
-      // continuity checkbox is offered.
-      const { campaignId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      // THE LEGACY SHAPE, driven through the dialog DIRECTLY: the app no longer
+      // mounts a create dialog while a document exists (one document per
+      // campaign), but the dialog keeps its continuity option for a campaign
+      // whose row already carries text — a legacy multi-module database.
+      await seedBuiltInPersonas();
+      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+      await saveModule(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'Vault of Whispers',
+          concept: '',
+          levelMin: 1,
+          levelMax: 2,
+          sizeDial: 'sketch',
+        }),
+      );
+      await patchModule(
+        (await db.modules.where('campaignId').equals(campaign.id).first())?.id ?? '',
+        {
+          spine: moduleSpineSchema.parse({
+            premise: 'The old mill hides a vault of whispers.',
+            themes: [],
+            partPlan: [],
+          }),
+          parts: [],
+        },
+      );
 
-      await user.click(screen.getByTestId('new-module'));
+      rtlRender(
+        <MemoryRouter>
+          <NewModuleDialog campaign={campaign} open onOpenChange={() => undefined} />
+        </MemoryRouter>,
+      );
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
       const checkbox = within(dialog).getByRole('checkbox', {
         name: 'Continue from previous modules',
@@ -387,7 +515,7 @@ describe('modules-list.test.tsx', () => {
     it('starts with continuity off and disables it when no prior module has text', async () => {
       const user = userEvent.setup();
       const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(modulesPath(campaign.id));
+      renderAppAt(documentPath(campaign.id));
       await screen.findByTestId('new-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByTestId('new-module'));
@@ -417,9 +545,9 @@ describe('modules-list.test.tsx', () => {
 
     it('passes the post-generation automation checkboxes to the generator', async () => {
       const user = userEvent.setup();
-      const { campaignId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
+      renderAppAt(documentPath(campaign.id));
+      await screen.findByTestId('new-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByTestId('new-module'));
       const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
@@ -460,12 +588,14 @@ describe('modules-list.test.tsx', () => {
       );
       await flushAsyncUpdates();
     }, 20_000);
+  });
 
+  describe('the document delete dialog (moved from the list row to the reader)', () => {
     it('deletes a module after confirmation and removes the row from the DB', async () => {
       const user = userEvent.setup();
       const { campaignId, failedId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Sunken Cult', {}, { timeout: 10_000 });
+      renderAppAt(modulePath(campaignId, failedId));
+      await screen.findByTestId('delete-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByRole('button', { name: 'Delete Sunken Cult' }));
       const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
@@ -478,6 +608,8 @@ describe('modules-list.test.tsx', () => {
         },
         { timeout: 10_000 },
       );
+      // The deleted extra row is gone from the legacy notice, and the campaign
+      // route now reaches the surviving document.
       await waitFor(() => {
         expect(screen.queryByText('Sunken Cult')).not.toBeInTheDocument();
       });
@@ -492,8 +624,8 @@ describe('modules-list.test.tsx', () => {
     it('an artifact that lands after the dialog opened is cascaded, not released', async () => {
       const user = userEvent.setup();
       const { campaignId, failedId } = await seedModules();
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Sunken Cult', {}, { timeout: 10_000 });
+      renderAppAt(modulePath(campaignId, failedId));
+      await screen.findByTestId('delete-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByRole('button', { name: 'Delete Sunken Cult' }));
       await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
@@ -523,98 +655,6 @@ describe('modules-list.test.tsx', () => {
       await flushAsyncUpdates();
     }, 20_000);
 
-    it('shows the campaign name and description in the landing header', async () => {
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'A sunless sea beneath a dying star.',
-        system: 'dnd5e',
-      });
-      renderAppAt(modulesPath(campaign.id));
-
-      const context = await screen.findByTestId(
-        'campaign-landing-context',
-        {},
-        { timeout: 10_000 },
-      );
-      expect(context).toHaveTextContent('Ember');
-      expect(context).toHaveTextContent('A sunless sea beneath a dying star.');
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('drops the description from the landing header when it is empty', async () => {
-      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(modulesPath(campaign.id));
-
-      const context = await screen.findByTestId(
-        'campaign-landing-context',
-        {},
-        { timeout: 10_000 },
-      );
-      // Name only — no stray separator for the missing description.
-      expect(context.textContent).toBe('Barren');
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('edits the campaign from the landing and refreshes the header', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'Old description.',
-        system: 'dnd5e',
-      });
-      renderAppAt(modulesPath(campaign.id));
-      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('edit-campaign'));
-      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
-      expect(within(dialog).getByLabelText('Campaign name')).toHaveValue('Ember');
-      expect(within(dialog).getByLabelText('Campaign description')).toHaveValue('Old description.');
-      // The system is fixed — shown disabled, not editable.
-      expect(within(dialog).getByLabelText('Game system (fixed)')).toBeDisabled();
-
-      await user.clear(within(dialog).getByLabelText('Campaign description'));
-      await user.type(within(dialog).getByLabelText('Campaign description'), 'A drowned city.');
-      await user.click(within(dialog).getByTestId('save-campaign'));
-
-      // Persisted through the repo…
-      await waitFor(async () => {
-        expect((await getCampaign(campaign.id))?.description).toBe('A drowned city.');
-      });
-      // …and the liveQuery header picked it up.
-      await waitFor(() => {
-        expect(screen.getByTestId('campaign-landing-context')).toHaveTextContent('A drowned city.');
-      });
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('clears the description and removes it from the landing header', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'Old description.',
-        system: 'dnd5e',
-      });
-      renderAppAt(modulesPath(campaign.id));
-      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('edit-campaign'));
-      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
-      await user.clear(within(dialog).getByLabelText('Campaign description'));
-      await user.click(within(dialog).getByTestId('save-campaign'));
-
-      await waitFor(() => {
-        expect(screen.getByTestId('campaign-landing-context').textContent).toBe('Ember');
-      });
-      // Raw awaited read while the page + closing dialog are mounted —
-      // actDrained closes the window the save write's liveQuery cascade and
-      // the dialog exit chain used to leak through (docs/08 §Console guard);
-      // the long trailing drain absorbs the exit transition's timed updates.
-      expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
-      await flushAsyncUpdates(60);
-    }, 20_000);
-  });
-
-  describe('ModulesListPage delete dialog blast radius (cited creatures)', () => {
     it('names the LIBRARY creatures its encounters cite as a reference, never as owned', async () => {
       const user = userEvent.setup();
       const { campaignId, draftId } = await seedModules();
@@ -657,8 +697,8 @@ describe('modules-list.test.tsx', () => {
           budgetAdvisory: '',
         }),
       });
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      renderAppAt(modulePath(campaignId, draftId));
+      await screen.findByTestId('delete-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
       const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
@@ -672,14 +712,22 @@ describe('modules-list.test.tsx', () => {
       // Honest wording: a LIBRARY reference, not an owned artifact.
       expect(census).toHaveTextContent('Those are library references, not part of this module');
       // …and citing one created nothing: the only new row is the encounter.
-      const after = await listArtifactsByCampaign(campaignId);
+      // The read is act-wrapped: the open dialog's OWN live scans (owned
+      // count, cited creatures, outside references) settle while it is
+      // mounted, and a bare await would let one land outside act (docs/08
+      // §Console guard).
+      const after = await actDrained(() => listArtifactsByCampaign(campaignId));
       expect(after).toHaveLength(before.length + 1);
       expect(after.some((row) => row.kind === 'npc')).toBe(false);
+      // Close the dialog inside the test: it is MOUNTED only while open, so
+      // its live scans unmount here rather than settling after the test.
+      await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      });
       await flushAsyncUpdates();
     }, 20_000);
-  });
 
-  describe('ModulesListPage delete third state (referenced artifacts)', () => {
     it('lists outside-referenced artifacts and promotes them on "Promote & keep"', async () => {
       const user = userEvent.setup();
       const { campaignId, draftId, failedId } = await seedModules();
@@ -703,8 +751,8 @@ describe('modules-list.test.tsx', () => {
           },
         ],
       });
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      renderAppAt(modulePath(campaignId, draftId));
+      await screen.findByTestId('delete-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
       const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
@@ -753,8 +801,8 @@ describe('modules-list.test.tsx', () => {
           },
         ],
       });
-      renderAppAt(modulesPath(campaignId));
-      await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+      renderAppAt(modulePath(campaignId, draftId));
+      await screen.findByTestId('delete-module', {}, { timeout: 10_000 });
 
       await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
       const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
@@ -1289,22 +1337,25 @@ describe('cover-art.test.tsx', () => {
   }
 
   describe('cover art displays', () => {
-    it('the module list row mounts the thumb with the generate affordance', async () => {
+    it('the campaign document route reaches the reader, which mounts the hero with the generate affordance', async () => {
       const campaignId = await seedCampaignWithCover('Ember');
       await seedModuleWithCover(campaignId, 'Vault of Whispers');
-      renderAppAt(modulesPath(campaignId));
+      renderAppAt(documentPath(campaignId));
 
-      expect(await screen.findByTestId('module-cover-thumb')).toHaveAttribute(
+      // The landing resolves the campaign's ONE document (no list in between):
+      // the reader's cover hero carries the art and the affordance.
+      expect(await screen.findByTestId('module-cover-hero')).toHaveAttribute(
         'src',
         'blob:mock-cover',
       );
+      expect(screen.queryByTestId('module-cover-thumb')).not.toBeInTheDocument();
       expect(screen.getByAltText('Cover art for Vault of Whispers')).toBeInTheDocument();
       expect(
         screen.getByRole('button', { name: 'Regenerate cover for Vault of Whispers' }),
       ).toBeInTheDocument();
     });
 
-    it('a cover-less module row mounts no thumb but keeps its generate affordance', async () => {
+    it('a cover-less document mounts no thumb but keeps its generate affordance', async () => {
       const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
       await saveModuleRow(
         createModule({
@@ -1316,10 +1367,11 @@ describe('cover-art.test.tsx', () => {
           sizeDial: 'sketch',
         }),
       );
-      renderAppAt(modulesPath(campaign.id));
+      renderAppAt(documentPath(campaign.id));
 
-      expect(await screen.findByText('Bare Module')).toBeInTheDocument();
+      expect(await screen.findByTestId('module-reader')).toBeInTheDocument();
       expect(screen.queryByTestId('module-cover-thumb')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('module-cover-hero')).not.toBeInTheDocument();
       expect(
         screen.getByRole('button', { name: 'Generate cover for Bare Module' }),
       ).toBeInTheDocument();
