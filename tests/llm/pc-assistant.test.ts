@@ -163,6 +163,8 @@ function moduleRow(campaignId: Id, title: string): Module {
   });
   return moduleSchema.parse({
     ...draft,
+    // The NPC lane is bound by the level the story STATED on the record (docs/17 row 401).
+    entityKinds: [{ name: 'Grix', kind: 'npc', absorbed: [], levelHint: 3 }],
     spine: {
       premise: 'The Ashen Vault keeps its own counsel.',
       themes: [],

@@ -208,8 +208,8 @@ function moduleFixture(campaignId: Id): Module {
     parts: [],
     entityKinds: [
       { name: 'Undercroft', kind: 'location', absorbed: [] },
-      { name: 'Kael', kind: 'npc', absorbed: [] },
-      { name: 'Bram', kind: 'npc', absorbed: [] },
+      { name: 'Kael', kind: 'npc', absorbed: [], levelHint: 3 },
+      { name: 'Bram', kind: 'npc', absorbed: [], levelHint: 3 },
     ],
     entityNamesNormalized: true,
   });
@@ -892,7 +892,7 @@ describe('EntityPanel', () => {
         ...base.spine,
         premise: `${PREMISE} [[Cora]] tends the graves.`,
       },
-      entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc', absorbed: [] }],
+      entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc', absorbed: [], levelHint: 3 }],
     });
     // The batch writes module-owned artifacts — the module row must exist
     // (finalize re-checks it loudly, AGENTS rule 1).

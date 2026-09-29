@@ -171,7 +171,9 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
         // (`entityLevelHintFor`) and the unmatched-hint derivation
         // (`unmatchedEntityLevelHints`), both through THIS same seam — the count
         // is what reds a hand-rolled second comparison either of them could grow.
-        ['sameAliasName(', 5],
+        // 6: docs/17 row 401 added the ONE level-statement writer
+        // (`withEntityLevelStatement`), which finds its record through this seam.
+        ['sameAliasName(', 6],
         // 2 was row 166's creature half; row 167 folded the bestiary-slot
         // source map's three keys on the comparable form (+3 — sameSlot's
         // creature line carries two occurrences on one line).

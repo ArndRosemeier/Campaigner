@@ -1672,9 +1672,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     expect(run?.runExtras).toEqual({ image: false, statBlock: true, mobPortraits: false });
     // Drain the run pipeline fully — a still-running ActiveRun leaks state
     // updates (and its updateRun rejects once the next test clears the DB).
+    // STRICT LEVELS (docs/17 row 401): this panel has no level field and the
+    // module states none for a hand-started NPC, so the run REFUSES loudly
+    // (placement and extras above are still recorded on the row).
     await waitFor(async () => {
       const finished = await getRun(runs[0]?.id ?? '');
-      expect(finished?.status).toBe('completed');
+      expect(finished?.status).toBe('failed');
+      expect(finished?.errorMessage).toContain('states no level');
     });
     await flushAsyncUpdates();
   }, 30000);

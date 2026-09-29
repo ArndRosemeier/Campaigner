@@ -50,7 +50,12 @@ const ENTITY_KINDS = [
   { name: 'Mira', kind: 'npc' as const },
   { name: 'Old Keep', kind: 'location' as const },
   { name: 'High Hall', kind: 'location' as const },
-].map((entry) => ({ ...entry, absorbed: [] }));
+].map((entry) => ({
+  ...entry,
+  absorbed: [],
+  // STRICT LEVELS (docs/17 row 401): an NPC is generated only with a STATED level.
+  ...(entry.kind === 'npc' ? { levelHint: 3 } : {}),
+}));
 
 function list() {
   return moduleLevelList(DOC, ENTITY_KINDS);

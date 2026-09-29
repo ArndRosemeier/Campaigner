@@ -18,6 +18,7 @@ import {
   type CanvasChatOutcome,
   type CanvasChatOutcomePart,
 } from '@/features/modules/canvas/chatStore';
+import { applyLevelStatements } from '@/features/modules/canvas/levelStatements';
 import {
   applyChatCommands,
   MAX_CARD_SNIPPET,
@@ -417,16 +418,20 @@ export async function runCanvasChatTurn(
       });
       if (applied.docChanged) docChanged = true;
       if (applied.lastApplied !== null) lastApplied = applied.lastApplied;
+      // The document save comes FIRST; the level statements (docs/17 row 401)
+      // are RECORD writes that re-read the row inside their own transaction, so
+      // they land on top of whatever the save wrote.
+      if (applied.docChanged) await persistDoc(writerModel);
+      const statementOutcomes = await applyLevelStatements(options.moduleId, commands);
       useCanvasChatStore.getState().updateMessage(options.key, message.id, {
         outcomes: [
           ...(useCanvasChatStore.getState().module(options.key).messages.find(
             (candidate) => candidate.id === message.id,
           )?.outcomes ?? []),
           ...applied.outcomes,
+          ...statementOutcomes,
         ],
       });
-      if (!applied.docChanged) return;
-      await persistDoc(writerModel);
     };
     // --- the adversarial reviews (docs/17 row 360) ---------------------------
     // Each review's CRITIQUE rides the assistant message as its OWN outcome

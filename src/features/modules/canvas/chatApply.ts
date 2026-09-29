@@ -11,6 +11,7 @@ import {
 } from '@/domain/moduleDocument';
 import {
   isLevelEditCommand,
+  isLevelStatementCommand,
   resolveCanvasEditAcrossParts,
   type CanvasEditCommand,
   type CanvasLevelEditCommand,
@@ -73,7 +74,7 @@ import {
  * (`from`/`to`/`failureFrom`) are whole-document coordinates.
  */
 
-function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
+export function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
   closest?: string | null;
   failureFrom?: number | null;
   targetParts?: CanvasChatOutcomePart[];
@@ -94,7 +95,7 @@ function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
   };
 }
 
-function appliedOutcome(
+export function appliedOutcome(
   command: CanvasEditCommand,
   targetPart: CanvasChatOutcomePart,
   occurrences: number,
@@ -295,6 +296,10 @@ export function applyChatCommands(input: {
     moduleDocumentSections(handle.read(), input.partPlan);
 
   for (const command of input.commands) {
+    // A LEVEL STATEMENT (docs/17 row 401) edits no document text: it is a RECORD
+    // write, made by `levelStatements.applyLevelStatements` for the same batch.
+    // This applier never sees it as an edit, so the document stays byte-identical.
+    if (isLevelStatementCommand(command)) continue;
     // Generated-text hygiene scan (canvasRefine parity): escape debris OR our
     // own prompt scaffolding echoed back fails the command LOUDLY, named —
     // never silent repair (docs/17 row 142).

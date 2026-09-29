@@ -160,7 +160,7 @@ function creatureModule(campaignId: Id, overrides?: Partial<Module>): Module {
         },
       ],
     },
-    entityKinds: [{ name: 'Zombie', kind: 'npc', absorbed: [] }],
+    entityKinds: [{ name: 'Zombie', kind: 'npc', absorbed: [], levelHint: 1 }],
     entityNamesNormalized: true,
     ...overrides,
   });

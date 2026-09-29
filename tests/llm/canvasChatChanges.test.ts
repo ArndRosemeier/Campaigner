@@ -1296,7 +1296,9 @@ describe('the chat turn renders the critique and persists the edit (docs/17 row 
     // replacement.
     // part="1" is the FIRST part (1-based, as the plan labels it).
     expect(card?.before).toBe(PART_0);
-    expect(card?.command.replace).toBe('The reviewed text, rewritten.');
+    expect(card?.command !== undefined && 'replace' in card.command ? card.command.replace : undefined).toBe(
+      'The reviewed text, rewritten.',
+    );
   });
 
   it('THE ACCEPTED EDIT IS UNDOABLE: it persists through the EXISTING split-save, and the pre-change document is on the version stack', async () => {

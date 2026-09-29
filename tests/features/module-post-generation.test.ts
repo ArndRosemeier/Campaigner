@@ -191,7 +191,7 @@ async function seedModule(
   const module = moduleOverrides(base, {
     status: 'ready',
     entityNamesNormalized: true,
-    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [] }],
+    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 3 }],
     spine: moduleSpineSchema.parse({
       premise: 'The gate of [[Ember Crypt]] opens at dusk.',
       themes: [],
@@ -622,7 +622,7 @@ describe('an event is not an encounter (08 §M4-B, superseded: only a fight is a
       autoGenerateMobImages: options.mobImages,
       entityKinds: [
         { name: 'Ember Omen', kind: 'event', absorbed: [] },
-        { name: 'Ash Gate', kind: 'encounter', absorbed: [] },
+        { name: 'Ash Gate', kind: 'encounter', absorbed: [], levelHint: 3 },
       ],
       parts: [
         modulePartSchema.parse({
@@ -739,7 +739,7 @@ describe('batchTargets — a target IS a wiki-link of the module text', () => {
       }),
       {
         entityNamesNormalized: true,
-        entityKinds: recorded.map((entry) => ({ ...entry, absorbed: [] })),
+        entityKinds: recorded.map((entry) => ({ ...entry, absorbed: [], ...(entry.kind === 'npc' ? { levelHint: 3 } : {}) })),
         spine: moduleSpineSchema.parse({
           premise: wikiLinks,
           themes: [],

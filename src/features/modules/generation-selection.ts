@@ -3,6 +3,8 @@ import {
   ARTIFACT_KIND_SINGULAR,
   comparableName,
   ENTITY_KINDS,
+  bestiarySlotForEntity,
+  entityLevelHintFor,
   MODULE_PREMISE_LEVEL,
   moduleCreationPool,
   moduleDocumentFromView,
@@ -253,6 +255,12 @@ export interface GenerationSelectionInput {
 export interface GenerationSelection extends LevelNameSelection {
   /** Names that need an authored detail (the entity batch's own verdict). */
   detail: GenerationTarget[];
+  /**
+   * Selected NPCs/encounters with NO stated level (docs/17 row 401). They are
+   * NOT in `detail`: a level is stated by the chat and never invented here, so
+   * generating them is held back and the dialog lists them as 'needs a level'.
+   */
+  needsLevel: GenerationTarget[];
   /** Resolved entities without a cover image (the image queue's own verdict). */
   images: GenerationTarget[];
   /** Selected encounters without a battlemap. */
@@ -299,6 +307,15 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
   }
   detail.sort(compareTargets);
   images.sort(compareTargets);
+  // STRICT LEVELS (docs/17 row 401): an NPC or encounter whose record states no
+  // level is held out of the detail work and named, never generated with a guess.
+  const levelless = (target: GenerationTarget): boolean =>
+    (target.kind === 'npc' || target.kind === 'encounter') &&
+    entityLevelHintFor(module.entityKinds, target.name) === null &&
+    // A CAST npc takes its stats from a library creature, not from a level.
+    bestiarySlotForEntity(module.entityKinds, target.name) === null;
+  const needsLevel = detail.filter(levelless);
+  const detailReady = detail.filter((target) => !levelless(target));
 
   // Maps and mob portraits are encounter work: a selected encounter NAME is the
   // scope, and the sweep's own detectors say whether it still needs anything.
@@ -322,11 +339,12 @@ export function selectGenerationTargets(input: GenerationSelectionInput): Genera
 
   return {
     ...names,
-    detail,
+    detail: detailReady,
+    needsLevel,
     images,
     maps,
     mobPortraits,
-    totalCount: detail.length + images.length + maps.length + mobPortraits.length,
+    totalCount: detailReady.length + images.length + maps.length + mobPortraits.length,
   };
 }
 

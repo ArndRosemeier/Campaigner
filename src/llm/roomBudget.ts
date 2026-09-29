@@ -206,76 +206,23 @@ export function firstLevelInText(text: string): number | undefined {
 }
 
 /**
- * The level the MODULE ITSELF states for one entity, or `undefined` when it
- * states none (docs/17 rows 247, 282 and 285) — the ONE derivation, used by the
- * run engine's level resolution AND by the module spine's entity-level
- * recording (`moduleGen`), so the value a new module RECORDS and the value the
- * engine READS for an older module cannot disagree.
+ * ROW 401 — WHAT THE SECTION NUMBER MEANS, AND WHAT IT DOES NOT. Everything in
+ * this block (`firstPartMentioning`, `partLevelMentionFor`, `partLevelForMention`,
+ * `encounterPartyLevel`) answers "WHERE IN THE STORY IS THIS" — the PARTY level a
+ * fight is tuned against, the section's own number. It NEVER answers "HOW STRONG
+ * IS THIS ENTITY": an NPC's or an encounter's own level is STRICTLY what the chat
+ * STATED on its record (`levelHint`), with no fallback to the mentioning section,
+ * to prose or to the module's `levelMin`/`levelMax` (owner: the level strictly
+ * comes from the story LLM).
  *
- * STRUCTURE — PLUS A SENTENCE THAT NAMES THE FIGURE. THREE sources, all of them
- * NAME-SCOPED when a name is given (docs/17 row 285):
+ * THE FIRST MENTION WINS, AND THE REASON IS THE OWNER'S: a level-2 encounter
+ * that is mentioned again in level 4 is only mentioned as something that TOOK
+ * PLACE IN THE PAST — a recap, not a new placement. So the first (lowest) level
+ * that mentions it is its party level. Do NOT "improve" this to the last mention
+ * or the highest level. Sections ascend by construction (`splitModuleDocument`
+ * numbers them in document order), so first-in-document IS the lowest level.
+ * A name only the premise mentions has no section and therefore no party level.
  *
- * 1. **The module's own PROSE about THIS figure** (`entityProseLevel`): the
- *    sentence around the figure's NAME in the first part that names it, else
- *    the sentence around the name in the premise. This is the rung that was
- *    missing — the owner's level-3 mob whose own paragraph said `level 5`
- *    shipped at 3, because the part's STRUCTURED band outranked the figure's
- *    own sentence and specificity was inverted (entity > part > module).
- * 2. **The level of the part that mentions the entity** (`partLevelForMention`
- *    — the mentioning part's own level, which IS its section's number since
- *    docs/23 §4: `planIndex i ↔ level i + 1`), WHEN the caller names the entity.
- *    It is a statement about THIS entity, from STRUCTURED data and scoped BY
- *    NAME — which is the shape the owner's level-7 gnome needed (that gnome,
- *    not every mob). This is a MODULE statement read by NAME from the plan,
- *    never the rendered party-level line the brief carries; docs/17 row 206
- *    keeps the generated LINE out of the fallback regex, and this function
- *    never touches it.
- * 3. **An EXACT band** (`levelMin === levelMax`). A single-level band IS a
- *    stated level; a RANGE is not, and inventing a number from it (a midpoint,
- *    a maximum) is the guessing AGENTS rule 1 forbids. So a range `undefined`s
- *    here and the engine bounds the reply with the band (or refuses loudly)
- *    instead of letting the model pick.
- *
- * THE HONEST REVIVAL OF THE PREMISE — NAME-SCOPED, NEVER MODULE-WIDE. Row 282
- * removed the premise source after the owner's ruling (*"Its very sloppy to
- * infer all mobs levels from a CAMPAIGN premise, thats not even module
- * instructive. Its a premise for the whole CAMPAIGN. And this was about 1
- * NPC."*): one sentence about ONE npc ("a level 7 gnome") became ONE
- * module-wide number stamped on every npc record, and a levels-1–2 module then
- * displayed `level 7` on mobs whose minted blocks were level 1. The defect was
- * the module-wide INFERENCE, not the premise as a text. Row 285 reads the
- * premise sentence only when it NAMES the figure (`entityProseLevel`), so "my
- * premise says the gnome is level 7" is honoured FOR THAT GNOME while a premise
- * sentence about no figure — or about another one — still resolves NOTHING.
- * The MODULE-WIDE stamping half stays dead where it lived: the spine-time call
- * (`moduleGen.normalizeAndSave` passes `parts: []` and NO name) reaches source
- * 3 only, so no prose is ever stamped onto every npc record.
- *
- * The per-entity channels keep the rest of row 247's honest half: the model's
- * own structured `levelHint` on a record (which the spine prompt already asks
- * for, and which is NAME-SCOPED) and the part's exact level by name above —
- * plus the owner's explicit instruction, which since docs/17 row 289 is read by
- * the MODEL (`llm/instructionLevel.readInstructionLevel`), never by a pattern.
- *
- * `name` may be omitted for the SPINE-TIME call, where the module has no parts
- * yet: only source 3 applies, and sources 1–2 genuinely do not exist.
- */
-export function moduleStatedLevel(
-  module: Pick<Module, 'spine' | 'parts' | 'levelMin' | 'levelMax'>,
-  name = '',
-): number | undefined {
-  if (name.trim() !== '') {
-    // The module's PROSE about THIS figure outranks either band: the figure's
-    // own sentence is more specific than the part it sits in (docs/17 row 285).
-    const fromProse = entityProseLevel(module, name);
-    if (fromProse !== undefined) return fromProse;
-    const fromPart = partLevelForMention(module, name);
-    if (fromPart !== undefined) return fromPart;
-  }
-  return module.levelMin === module.levelMax ? module.levelMin : undefined;
-}
-
-/**
  * The FIRST part (plan order) whose markdown carries `[[name]]` — the ONE
  * "which part mentions this entity" rule that `partLevelMentionFor` and
  * `entityProseLevel` both ask (docs/17 row 285, AGENTS rule 4), so a figure's
@@ -387,44 +334,6 @@ export function nameScopedLevel(
   const sentence = sentenceAround(text, name);
   if (sentence !== '') return firstLevelInText(sentence);
   return whenUnnamed === 'whole-text' ? firstLevelInText(text) : undefined;
-}
-
-/**
- * The level the MODULE states for one entity IN PROSE — the sentence around the
- * figure's name in the FIRST part (plan order) that names it, else the sentence
- * around the name in the premise. `undefined` when no sentence that NAMES the
- * figure states a level (docs/17 row 285).
- *
- * THE RUNG THAT WAS MISSING. `partLevelForMention` reads the part's STRUCTURED
- * level (its SECTION'S number, docs/23 §4) and never the part's own sentence, so
- * a mob whose paragraph said `level 5` in a level-3 section shipped at 3 — the
- * structure outranked the figure's own prose, inverting specificity (entity >
- * part > module). `moduleStatedLevel` consults THIS before either band.
- *
- * NAME-SCOPED, ALWAYS (`nameScopedLevel` with `'nothing'`): the part is read
- * because it MENTIONS the name, and then only the sentence around that name is
- * read; the premise is read only through the same name-scoped reader. A premise
- * sentence about a DIFFERENT figure, or about no figure at all, resolves NOTHING
- * here — the module-wide premise inference the owner banned in docs/17 row 282
- * stays dead, while "my premise says the gnome is level 7" is honoured FOR THAT
- * GNOME.
- *
- * PART BEFORE PREMISE, and the FIRST mentioning part decides (the SAME
- * FIRST-mention rule `firstPartMentioning` gives the band): the part is where a
- * stat-block figure is actually written, and a deterministic pick cannot depend
- * on which paragraph a reader happens to scan first.
- */
-export function entityProseLevel(
-  module: Pick<Module, 'spine' | 'parts'>,
-  name: string,
-): number | undefined {
-  if (name.trim() === '') return undefined;
-  const part = firstPartMentioning(module, name);
-  if (part !== undefined) {
-    const fromPart = nameScopedLevel(part.markdown, name, 'nothing');
-    if (fromPart !== undefined) return fromPart;
-  }
-  return nameScopedLevel(module.spine?.premise ?? '', name, 'nothing');
 }
 
 /**

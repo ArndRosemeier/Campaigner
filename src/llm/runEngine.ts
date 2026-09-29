@@ -131,7 +131,6 @@ import {
   // site. Row 285 routes the brief fallback through `nameScopedLevel`, which is
   // itself the ONE caller of the reader. The OWNER'S INSTRUCTION is deliberately
   // NOT here: since docs/17 row 289 it is read by the MODEL, not a pattern.
-  moduleStatedLevel,
   // The ONE name-scoped prose read (docs/17 row 285): the legacy brief
   // fallback reads the sentence around the FIGURE'S NAME, so a level about
   // another figure can never win it.
@@ -299,19 +298,6 @@ const storedModuleGroundingSchema = z.object({
   // parses to `undefined` and behaves exactly as it did — the compatibility
   // promise a resume depends on.
   entityLevelHint: z.number().int().min(1).max(20).optional(),
-  // The MODULE's own stated level for the target's name (docs/17 row 247),
-  // additive and optional like `entityLevelHint`: derived from the module's
-  // premise, its mentioning part's band, or an exact band (`moduleStatedLevel`).
-  // A grounding stored before this field (or a module stating no level) parses
-  // to `undefined` and behaves as it did.
-  statedLevel: z.number().int().min(1).max(20).optional(),
-  // The module's OWN level band (docs/17 row 247), additive and optional like
-  // the two level fields above: with no EXACT statement anywhere, the band is
-  // what BOUNDS the reply (a range can never bind one value, and it can never
-  // cap a stated one). A grounding stored before this field parses to
-  // `undefined`, which is exactly the pre-247 no-band behaviour.
-  levelMin: z.number().int().min(1).max(20).optional(),
-  levelMax: z.number().int().min(1).max(20).optional(),
   // The target artifact's OWN name (docs/17 row 226), additive and optional:
   // the draft states it verbatim so the model answers as the artifact it is
   // regenerating. A grounding stored before this field parses to `undefined`
@@ -402,30 +388,6 @@ export interface TargetModuleGrounding {
    * `startRun` call site (AGENTS rule 4).
    */
   entityLevelHint?: number | undefined;
-  /**
-   * The level the MODULE ITSELF states for the target's name (docs/17 row
-   * 247) — `moduleStatedLevel`: the premise's own `level N`, else the level of
-   * the part that mentions the target, else an EXACT `levelMin === levelMax`
-   * band. `undefined` when the module states none: a multi-level band is a
-   * RANGE, not a level, and this seam never invents one from it (the engine
-   * refuses loudly instead).
-   *
-   * WHY A FIELD BESIDE `entityLevelHint`: the record's hint is the author's
-   * per-entity statement and this is the module's overall one; the owner's mob
-   * had the second and not the first, so without this the premise-stated level
-   * never reached the block. Additive and optional — a grounding stored before
-   * this field parses and behaves exactly as it did.
-   */
-  statedLevel?: number | undefined;
-  /**
-   * The module's `levelMin`/`levelMax` band (docs/17 row 247), present when the
-   * module row exists. Read only when NO exact level resolved: the band then
-   * BOUNDS the accepted reply instead of letting the model pick freely, and it
-   * is deliberately never folded into a single number (a range is not a level —
-   * inventing a midpoint or a maximum is the guessing this slice removes).
-   */
-  levelMin?: number | undefined;
-  levelMax?: number | undefined;
 }
 
 /** The grounding context one retrieve pass computes (and the retrieve step
@@ -742,12 +704,8 @@ function contractRepairNotice(firstTryModel: string, repairTarget: string): stri
  * the comparison cannot drift from what the rest of the app reads; a level it
  * cannot parse (a model slip) is refusable rather than silently accepted.
  */
-function statBlockLevelIssue(
-  level: number | undefined,
-  band: { min: number; max: number } | undefined,
-  printed: string,
-): string | null {
-  if (level === undefined && band === undefined) return null;
+function statBlockLevelIssue(level: number | undefined, printed: string): string | null {
+  if (level === undefined) return null;
   const shown = printed.trim() === '' ? '(empty)' : printed.trim();
   let value: number;
   try {
@@ -755,12 +713,8 @@ function statBlockLevelIssue(
   } catch {
     return `The stat block prints level "${shown}", which this app cannot compare with the level this run resolved for the entity.`;
   }
-  if (level !== undefined) {
-    if (value === level) return null;
-    return `The stat block was written at level "${shown}", not the ${String(level)} this run resolved for the entity.`;
-  }
-  if (band !== undefined && value >= band.min && value <= band.max) return null;
-  return `The stat block was written at level "${shown}", outside the ${String(band?.min)}–${String(band?.max)} this module covers.`;
+  if (value === level) return null;
+  return `The stat block was written at level "${shown}", not the ${String(level)} this run resolved for the entity.`;
 }
 
 /**
@@ -3441,13 +3395,6 @@ export class RunEngine {
       return { status: 'module-missing', moduleId: target.moduleId, targetName };
     }
     const recordedLevel = entityLevelHintFor(module.entityKinds, target.name);
-    // The module's OWN statement of this entity's level (docs/17 rows 247 and
-    // 285): the sentence that NAMES the figure (part, then premise), else the
-    // mentioning part's band by name, else an exact band — ONE derivation, the
-    // same one the spine uses to RECORD a hint for a new module (there it has no
-    // name, so only the exact band applies). The prose rung is name-scoped, so
-    // this reads the target's OWN sentence and never the module's in general.
-    const statedLevel = moduleStatedLevel(module, target.name);
     return {
       status: 'ok',
       targetName,
@@ -3460,11 +3407,6 @@ export class RunEngine {
       // comparison here. Omitted (not `null`) when the record fixes none, so an
       // old stored grounding and a hint-less record stay as they were.
       ...(recordedLevel === null ? {} : { entityLevelHint: recordedLevel }),
-      // ...and the module's own level, omitted the same way (docs/17 row 247).
-      ...(statedLevel === undefined ? {} : { statedLevel }),
-      // ...and the band that BOUNDS the reply when no exact statement exists.
-      levelMin: module.levelMin,
-      levelMax: module.levelMax,
     };
   }
 
@@ -4378,25 +4320,18 @@ export class RunEngine {
             signal,
           });
     const explicitLevel = instructionRead?.level ?? undefined;
-    const placementModule =
-      isPc || input.placementModuleId === undefined
-        ? undefined
-        : await getModule(input.placementModuleId);
-    const moduleLevel = isPc
-      ? undefined
-      : (context.moduleGrounding?.statedLevel ??
-        (placementModule === undefined
-          ? undefined
-          : moduleStatedLevel(placementModule, asString(draft?.name))));
     // A run whose entity belongs to a module: the grounding names the owning
     // module for a targeted refill, and a CREATE run carries the module it is
-    // being born into. Only such a run has a module whose BAND may bound the
-    // reply — and whose absence (the row is gone) refuses loudly (docs/17 row
-    // 247); a one-off campaign-level statblock run has no such author.
+    // being born into. Such a run must carry a level the chat STATED (docs/17 row 401)
+    // or it refuses loudly (rows 247/401); a one-off campaign-level statblock run has no such author.
     const moduleOwned =
       !isPc &&
       (context.moduleGrounding?.status === 'ok' || input.placementModuleId !== undefined);
-    const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel;
+    // STRICT (docs/17 row 401, owner: the level comes from the story LLM, not from
+    // context): instruction > minted block > the level the chat STATED on the record.
+    // Nothing is read from the section that mentions the entity, from prose or from
+    // the module's band — an entity with no stated level resolves to NOTHING.
+    const resolvedLevel = explicitLevel ?? recordedLevel;
     // WHOSE level the clause states, honestly (docs/17 row 282): the owner's
     // instruction, the entity's own minted block, or the module's statement.
     const levelSource: 'instruction' | 'block' | 'module' | null =
@@ -4453,7 +4388,7 @@ export class RunEngine {
     // arm). It is NOT a structured level (its provenance is a sentence), which
     // is why the clause it produces keeps the pre-197 prompt bytes.
     const briefLevel =
-      isPc || resolvedLevel !== undefined
+      isPc || moduleOwned || resolvedLevel !== undefined
         ? undefined
         : nameScopedLevel(
             withoutPartyLevelLines(stepBrief),
@@ -4461,34 +4396,16 @@ export class RunEngine {
             'whole-text',
           );
     const level = resolvedLevel ?? briefLevel;
-    // THE MODULE'S BAND, when nothing EXACT resolved (docs/17 row 247). A range
-    // is NOT a level, so it can never bind one value — but it is the module's own
-    // statement of what its figures are built for, and it BOUNDS the reply
-    // instead of leaving the model to pick freely. This is also why it can never
-    // CAP a stated level: an exact statement (instruction, minted block, record,
-    // part or an exact band) always wins first, and the range is consulted only
-    // when there is no exact statement at all — the default 1–4 module whose
-    // premise names no level, whose NPCs must still be generatable.
-    const band =
-      level !== undefined || !moduleOwned
-        ? undefined
-        : context.moduleGrounding?.status === 'ok' &&
-            context.moduleGrounding.levelMin !== undefined &&
-            context.moduleGrounding.levelMax !== undefined
-          ? { min: context.moduleGrounding.levelMin, max: context.moduleGrounding.levelMax }
-          : placementModule === undefined
-            ? undefined
-            : { min: placementModule.levelMin, max: placementModule.levelMax };
     // A module-OWNED entity with NO level statement AND no band at all is REFUSED
     // LOUDLY, never left to the model (docs/17 row 247): with the module's row
     // gone there is nothing to bound the pick, and an unconstrained choice is the
     // defect this slice exists to remove (AGENTS rule 1).
-    if (level === undefined && band === undefined && moduleOwned) {
+    if (level === undefined && moduleOwned) {
       const title = context.moduleGrounding?.moduleTitle;
       throw new Error(
-        `The module ${title === undefined ? 'that owns this entity' : `«${title}»`} states no level and no level ` +
-          `band for "${asString(draft?.name) || 'this entity'}", so the stat block's level would be the generator's ` +
-          `own unconstrained guess. Nothing was written. Fix the module it belongs to and retry.`,
+        `The module ${title === undefined ? 'that owns this entity' : `«${title}»`} states no level for ` +
+          `"${asString(draft?.name) || 'this entity'}" — the level is STATED by the story author (the chat) and never inferred from context, so the stat block's level would be the generator's ` +
+          `own guess. Nothing was written. Ask the chat to state this entity's level (the problem card does it in one message) and retry.`,
       );
     }
     // The level is stated AND carries its instruction; the legacy brief-level
@@ -4497,9 +4414,7 @@ export class RunEngine {
     const levelClause =
       level !== undefined
         ? ` at level ${String(level)}`
-        : band === undefined
-          ? ''
-          : ` at a level within ${String(band.min)}–${String(band.max)}`;
+        : '';
     const levelInstruction =
       levelSource === 'instruction'
         ? " — the instruction for this change fixes this entity's level, so build the block at exactly that level"
@@ -4507,9 +4422,7 @@ export class RunEngine {
           ? " — this entity's own stat block is the one source of truth about its level, so build the new block at exactly that level unless the instruction says otherwise"
           : levelSource === 'module'
             ? " — the module's author fixed this entity's level, so build the block at exactly that level"
-            : band === undefined
-              ? ''
-              : ` — this module covers levels ${String(band.min)}–${String(band.max)}, so build the block at a level inside that range`;
+            : '';
     // The ONE spell library this step offers and validates against (docs/17 row
     // 184). The resolved level windows the vocabulary — the level the block is
     // being written for — and the BLOCK's own printed level is what the cantrip
@@ -4527,7 +4440,7 @@ export class RunEngine {
       : await this.spellLibraryFor(
           input.campaign.system,
           mobCasterLevel(
-            level === undefined ? (band === undefined ? '' : String(band.max)) : String(level),
+            level === undefined ? '' : String(level),
           ),
         );
     // THE PLAYER-CHARACTER FORMAT SECTION (docs/17 row 373). The character's
@@ -4702,13 +4615,13 @@ export class RunEngine {
     // A run that resolved no level at all (a campaign-level free-text run with
     // no `level N` anywhere) has nothing to bind and keeps its historical
     // behaviour.
-    const levelIssue = statBlockLevelIssue(level, band, statBlock.level);
+    const levelIssue = statBlockLevelIssue(level, statBlock.level);
     // What the repair turn asks for — the exact level when one is fixed, the
     // module's range when only a band bounds it.
     const levelTarget =
       level !== undefined
         ? `"level" set to exactly "${String(level)}"`
-        : `"level" set to a level between ${String(band?.min)} and ${String(band?.max)}`;
+        : '"level" set to the level this run resolved';
     if (levelIssue !== null) {
       if (!this.statblockRetried.has(runId)) {
         this.statblockRetried.add(runId);

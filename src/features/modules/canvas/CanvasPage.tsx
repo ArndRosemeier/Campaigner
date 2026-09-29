@@ -62,6 +62,7 @@ import {
   MODULE_VERSION_SOURCE_LABELS,
   levelForPlanIndex,
   moduleDocumentFromView,
+  deriveLevelProblems,
   moduleDocumentSections,
   moduleLevelSeparator,
   moduleVersionPremiseNote,
@@ -549,6 +550,13 @@ export function CanvasPage(): JSX.Element {
   // action ("This is about the module text, not entities"), so they are reported
   // in the confirmation and never turn this control on.
   const problemSet = deriveModuleProblems(currentModule, pool);
+  // The ONE level problem list (docs/17 row 401) — the chat card and the
+  // Generate dialog both read this derivation.
+  const levelReport = deriveLevelProblems({
+    document: moduleDocumentFromView(currentModule),
+    entityKinds: currentModule.entityKinds,
+    floor: currentModule.encounterFloorGuardrail,
+  });
   const fixableProblems = problemSet.repairable;
   // "Resume automatic module creation" turns on when the live state falls short
   // of the RECORDED intent (`automationIntent`) — entities by kind, images,
@@ -2073,6 +2081,7 @@ export function CanvasPage(): JSX.Element {
                   onEditorTurnApplied={(doc, applied) => {
                     handleEditorTurnApplied(doc, applied);
                   }}
+                  levelProblems={levelReport.problems}
                   onChatCleared={() => {
                     // Clear chat (ChatSidebar): the thread + this module's session
                     // ledger are already pristine — the highlight is PAGE state, so

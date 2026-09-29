@@ -1,5 +1,5 @@
 import { actDrained } from '../helpers/flush';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -62,7 +62,12 @@ const ENTITY_KINDS = [
   { name: 'Mira', kind: 'npc' as const },
   { name: 'Old Keep', kind: 'location' as const },
   { name: 'High Hall', kind: 'location' as const },
-].map((entry) => ({ ...entry, absorbed: [] }));
+].map((entry) => ({
+  ...entry,
+  absorbed: [],
+  // STRICT LEVELS (docs/17 row 401): an NPC is generated only with a STATED level.
+  ...(entry.kind === 'npc' ? { levelHint: 3 } : {}),
+}));
 
 function moduleFixture(): Module {
   const base = createModule({
@@ -348,5 +353,73 @@ describe('per-kind images (docs/17 row 397)', () => {
       expect(runGenerationSelection).toHaveBeenCalledTimes(1);
     });
     expect(runGenerationSelection.mock.calls[0]?.[0].imageKinds).toEqual(['npc']);
+  });
+});
+
+describe('strict levels and the per-level encounter minimum (docs/17 row 401)', () => {
+  it('an NPC with NO stated level is held out of the run and NAMED — the seam and the dialog agree', () => {
+    const base = moduleFixture();
+    const module: Module = {
+      ...base,
+      // Kael loses his stated level; Mira keeps hers.
+      entityKinds: base.entityKinds.map((entry) =>
+        entry.name === 'Kael' ? { ...entry, levelHint: undefined } : entry,
+      ),
+    };
+    const seam = selectGenerationTargets({
+      module,
+      artifacts: ARTIFACTS,
+      kinds: ['npc', 'location', 'event', 'faction', 'note', 'encounter'],
+      imageKinds: [],
+      levelRange: { min: 1, max: 3 },
+    });
+    expect(seam.needsLevel.map((target) => target.name)).toEqual(['Kael']);
+    expect(seam.detail.map((target) => target.name)).not.toContain('Kael');
+    renderDialog(module);
+    expect(screen.getByTestId('generation-scope-needs-level').textContent).toContain('Kael');
+    expect(screen.getByTestId('generation-scope-count').textContent).toContain(
+      `${String(seam.totalCount)} job`,
+    );
+    // The same problem list the chat card shows.
+    expect(screen.getByTestId('generation-level-problems').textContent).toContain('«Kael»');
+  });
+
+  it('prints the per-level encounter counts the ONE problem function returns, and saves the minimum on the row', async () => {
+    const module = moduleFixture();
+    const { saveModule, getModule } = await import('@/db/moduleRepo');
+    await saveModule(module);
+    renderDialog(module);
+    const counts = screen.getByTestId('generation-floor-counts').textContent;
+    expect(counts).toContain('Level 1: 0/1');
+    expect(counts).toContain('Level 3: 0/1');
+    // The prop is static here (no live query), so drive the change event directly.
+    fireEvent.change(screen.getByTestId('generation-floor-per-level'), { target: { value: '2' } });
+    await waitFor(async () => {
+      expect((await getModule(module.id))?.encounterFloorGuardrail).toEqual({ enabled: true, perLevel: 2 });
+    });
+  });
+});
+
+describe('the dialog counts equal the floor seam (docs/17 rows 394/401)', () => {
+  it('per-level encounter counts from the problem function equal countModuleEncounters', async () => {
+    const { countModuleEncounters } = await import('@/llm/moduleGen');
+    const { deriveLevelProblems } = await import('@/domain');
+    const { moduleDocumentFromView } = await import('@/domain');
+    const base = moduleFixture();
+    const module: Module = {
+      ...base,
+      entityKinds: [...base.entityKinds, { name: 'Ash Fight', kind: 'encounter', absorbed: [] }],
+      parts: base.parts.map((part, index) =>
+        index === 1 ? { ...part, markdown: `${part.markdown} [[Ash Fight]]` } : part,
+      ),
+    };
+    const report = deriveLevelProblems({
+      document: moduleDocumentFromView(module),
+      entityKinds: module.entityKinds,
+      floor: module.encounterFloorGuardrail,
+    });
+    const seam = countModuleEncounters(module);
+    expect(report.encounterCounts.map((entry) => entry.found)).toEqual(seam.perPart.map((entry) => entry.found));
+    expect(report.encounterCounts.map((entry) => entry.found)).toEqual([0, 1, 0]);
   });
 });

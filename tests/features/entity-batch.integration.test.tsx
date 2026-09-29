@@ -46,7 +46,7 @@ function moduleFixture(campaignId: string): Module {
   return moduleSchema.parse({
     ...base,
     status: 'ready',
-    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [] }],
+    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], levelHint: 3 }],
     entityNamesNormalized: true,
     spine: {
       premise: 'The gate of [[Ember Crypt]] opens at dusk.',
@@ -198,7 +198,13 @@ describe('entity batch — real chain persistence and live resolution', () => {
 
   it('generates independent entities concurrently up to maxParallelRequests', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = moduleFixture(campaign.id);
+    const base = moduleFixture(campaign.id);
+    // Three NPCs, each with a STATED level (docs/17 row 401) and each mentioned.
+    const module = moduleSchema.parse({
+      ...base,
+      entityKinds: ['Kael', 'Bree', 'Ruth'].map((name) => ({ name, kind: 'npc', absorbed: [], levelHint: 3 })),
+      spine: { ...base.spine, premise: `${base.spine?.premise ?? ''} [[Kael]] [[Bree]] [[Ruth]]` },
+    });
     // Batch artifacts are module-owned FROM BIRTH — the module row must
     // exist (finalize re-checks it loudly, AGENTS rule 1).
     await saveModule(module);
@@ -217,7 +223,12 @@ describe('entity batch — real chain persistence and live resolution', () => {
     });
     chatMock.mockImplementation(async (messages) => {
       const text = JSON.stringify(messages);
-      const name = NAMES.find((candidate) => text.includes(candidate)) ?? 'unknown';
+      // The module text now mentions all three names (each needs a mention to
+      // carry its stated level), so the target is the name that appears FIRST.
+      const name =
+        [...NAMES]
+          .filter((candidate) => text.includes(candidate))
+          .sort((a, b) => text.indexOf(a) - text.indexOf(b))[0] ?? 'unknown';
       const nth = (callsByEntity.get(name) ?? 0) + 1;
       callsByEntity.set(name, nth);
       if (nth > 1) {

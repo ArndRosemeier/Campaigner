@@ -187,6 +187,27 @@ export const canvasLevelEditCommandSchema = z
 export type CanvasLevelEditCommand = z.infer<typeof canvasLevelEditCommandSchema>;
 
 /**
+ * The LEVEL STATEMENT (docs/17 row 401): the story author STATES how strong an
+ * NPC or an encounter is — `<state_level level="3"><name>Marten</name></state_level>`.
+ * It edits NO document text; the app writes the number to that entity's RECORD
+ * (`levelHint`), the only place an entity level is ever read from. The level is
+ * a structured attribute, never parsed out of prose (AGENTS rule 5). The tag
+ * accepts any number; the 1..20 integer bound is enforced PER COMMAND by the ONE
+ * writer (`domain/module.withEntityLevelStatement`), so an out-of-range
+ * statement is a loud failed card and its siblings still apply.
+ */
+export const canvasLevelStatementCommandSchema = z
+  .object({
+    kind: z.literal('state_level'),
+    name: z.string().trim().min(1),
+    level: z.number(),
+    entityKind: z.enum(['npc', 'encounter']).optional(),
+  })
+  .strict();
+
+export type CanvasLevelStatementCommand = z.infer<typeof canvasLevelStatementCommandSchema>;
+
+/**
  * THE edit-command vocabulary — ONE union, so the reply's command array, the
  * ONE applier, the outcome cards and the persisted thread all carry the same
  * things. A union rather than one object with optional fields because the two
@@ -199,6 +220,7 @@ export type CanvasLevelEditCommand = z.infer<typeof canvasLevelEditCommandSchema
 export const canvasEditCommandSchema = z.union([
   canvasSearchEditCommandSchema,
   canvasLevelEditCommandSchema,
+  canvasLevelStatementCommandSchema,
 ]);
 
 export type CanvasEditCommand = z.infer<typeof canvasEditCommandSchema>;
@@ -211,8 +233,18 @@ export type CanvasEditCommand = z.infer<typeof canvasEditCommandSchema>;
 export function isLevelEditCommand(
   command: CanvasEditCommand,
 ): command is CanvasLevelEditCommand {
-  return 'kind' in command;
+  return 'kind' in command && command.kind !== 'state_level';
 }
+
+/** TRUE for a level STATEMENT (docs/17 row 401) — a record write, not a document edit. */
+export function isLevelStatementCommand(
+  command: CanvasEditCommand,
+): command is CanvasLevelStatementCommand {
+  return 'kind' in command && command.kind === 'state_level';
+}
+
+/** A command that edits document TEXT (everything except a level statement). */
+export type CanvasDocumentEditCommand = Exclude<CanvasEditCommand, CanvasLevelStatementCommand>;
 
 /**
  * The command as the reply protocol spells it — ONE formatter, so the
@@ -222,6 +254,9 @@ export function isLevelEditCommand(
  * replaced.
  */
 export function canvasEditCommandBlock(command: CanvasEditCommand): string {
+  if (isLevelStatementCommand(command)) {
+    return `<state_level level="${String(command.level)}"${command.entityKind === undefined ? '' : ` entity="${command.entityKind}"`}><name>${command.name}</name></state_level>`;
+  }
   if (isLevelEditCommand(command)) {
     return `<${command.kind} level="${String(command.level)}"><replace>${command.replace}</replace></${command.kind}>`;
   }
@@ -689,11 +724,11 @@ function expectLiteral(text: string, at: number, literal: string, excerpt: strin
 /** The command tags the reply protocol carries (docs/17 row 381 added the two
  * level-addressed writes — SAME extractor, SAME command array, never a second
  * parser). */
-type CommandTag = 'edit' | 'request' | 'change' | CanvasLevelEditKind;
+type CommandTag = 'edit' | 'request' | 'change' | CanvasLevelEditKind | 'state_level';
 
 /** The scan order of the command tags — the earliest opener wins, so this only
  * decides ties, which two distinct literals can never share. */
-const COMMAND_TAGS: readonly CommandTag[] = ['edit', 'request', 'change', ...CANVAS_LEVEL_EDIT_KINDS];
+const COMMAND_TAGS: readonly CommandTag[] = ['edit', 'request', 'change', ...CANVAS_LEVEL_EDIT_KINDS, 'state_level'];
 
 const COMMAND_TAG_LENGTHS: Readonly<Record<CommandTag, number>> = {
   edit: '<edit'.length,
@@ -701,6 +736,7 @@ const COMMAND_TAG_LENGTHS: Readonly<Record<CommandTag, number>> = {
   change: '<change'.length,
   replace_level: '<replace_level'.length,
   append_level: '<append_level'.length,
+  state_level: '<state_level'.length,
 };
 
 /**
@@ -846,6 +882,88 @@ function parseLevelEditCommandAt(
   commands.push(
     canvasEditCommandSchema.parse({ kind: tag, level: attrs.level, replace: replace.content }),
   );
+  if (commands.length > MAX_COMMANDS_PER_REPLY) {
+    throw new CanvasChatParseError(
+      `reply carries more than ${String(MAX_COMMANDS_PER_REPLY)} edit commands — split the work across replies`,
+      raw.slice(Math.max(0, raw.length - 200)),
+    );
+  }
+  return cursor;
+}
+
+/**
+ * Parses ONE `<state_level level="N"><name>NAME</name></state_level>` block
+ * (docs/17 row 401): the story author states an NPC's or encounter's level. Same
+ * strictness as the level edits: exactly one `level` attribute holding a plain
+ * number (its RANGE is judged per command by the writer, not here, so one bad
+ * statement never fails its siblings) and exactly one `<name>` child.
+ */
+function parseLevelStatementAt(raw: string, at: number, commands: CanvasEditCommand[]): number {
+  const tag = 'state_level';
+  const tagEnd = raw.indexOf('>', at);
+  if (tagEnd === -1) {
+    throw new CanvasChatParseError(`unterminated <${tag}> tag — no ">" before end of reply`, raw.slice(at));
+  }
+  if (raw[tagEnd - 1] === '/') {
+    throw new CanvasChatParseError(
+      `<${tag}> cannot be self-closing — write <${tag} level="N"><name>THE NAME</name></${tag}>`,
+      raw.slice(at),
+    );
+  }
+  let level: number | undefined;
+  let entityKind: 'npc' | 'encounter' | undefined;
+  for (const attribute of scanTagAttributes(raw.slice(at + tag.length + 1, tagEnd), tag)) {
+    if (attribute.name === 'entity') {
+      if (attribute.value !== 'npc' && attribute.value !== 'encounter') {
+        throw new CanvasChatParseError(`entity must be "npc" or "encounter", got "${attribute.value}"`, raw.slice(at, tagEnd + 1));
+      }
+      entityKind = attribute.value;
+      continue;
+    }
+    if (attribute.name !== 'level') {
+      throw new CanvasChatParseError(
+        `unknown attribute "${attribute.name}" in <${tag}> tag — it takes level="N" and optionally entity="npc|encounter"`,
+        raw.slice(at, tagEnd + 1),
+      );
+    }
+    if (level !== undefined) {
+      throw new CanvasChatParseError(`the <${tag}> tag carries "level" twice`, raw.slice(at, tagEnd + 1));
+    }
+    const value = attribute.value.trim();
+    if (value === '' || !Number.isFinite(Number(value))) {
+      throw new CanvasChatParseError(
+        `level must be a number (a whole number from 1 to 20); got "${attribute.value}"`,
+        raw.slice(at, tagEnd + 1),
+      );
+    }
+    level = Number(value);
+  }
+  const excerpt = raw.slice(at, Math.min(raw.length, at + 400));
+  if (level === undefined) {
+    throw new CanvasChatParseError(
+      `<${tag}> needs the level it states — write <${tag} level="N"><name>THE NAME</name></${tag}>`,
+      excerpt,
+    );
+  }
+  let cursor = tagEnd + 1;
+  while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
+  expectLiteral(raw, cursor, '<name>', excerpt, tag);
+  const name = scanUntilClose(raw, cursor + '<name>'.length, 'name');
+  cursor = name.next;
+  while (cursor < raw.length && /\s/.test(raw[cursor] ?? '')) cursor += 1;
+  if (!raw.startsWith(`</${tag}>`, cursor)) {
+    throw new CanvasChatParseError(`expected </${tag}> to close the block (it carries exactly one <name>)`, excerpt);
+  }
+  cursor += `</${tag}>`.length;
+  if (name.content.trim() === '') {
+    throw new CanvasChatParseError(`the <name> inside <${tag}> is empty — name the NPC or encounter as written inside its [[…]] token`, excerpt);
+  }
+  commands.push(canvasEditCommandSchema.parse({
+    kind: tag,
+    name: name.content.trim(),
+    level,
+    ...(entityKind === undefined ? {} : { entityKind }),
+  }));
   if (commands.length > MAX_COMMANDS_PER_REPLY) {
     throw new CanvasChatParseError(
       `reply carries more than ${String(MAX_COMMANDS_PER_REPLY)} edit commands — split the work across replies`,
@@ -1034,6 +1152,7 @@ export function parseCanvasChatReply(raw: string): ParsedCanvasChatReply {
     if (next.tag === 'edit') cursor = parseEditCommandAt(raw, next.at, commands);
     else if (next.tag === 'request') cursor = parseRequestAt(raw, next.at, requests);
     else if (next.tag === 'change') cursor = parseChangeAt(raw, next.at, changes);
+    else if (next.tag === 'state_level') cursor = parseLevelStatementAt(raw, next.at, commands);
     else cursor = parseLevelEditCommandAt(raw, next.at, next.tag, commands);
   }
   return {
@@ -1509,6 +1628,11 @@ export function canvasChatSystemPrompt(framing: CanvasChatFraming = 'module'): s
     '- append_level N adds your text at the END of level N. If N is exactly ONE MORE than the last level the document has, it CREATES that level (the app writes its separator); any other number is refused, because a level numbering with a gap makes the document unreadable. On a document with no level sections yet the last level is 0, so append_level level="1" creates level 1.',
     '- Both take exactly ONE <replace> body and NO <search>: the level number IS the target. The body is the text itself — never write a =====Level N===== line inside it (a line that looks like a level header is refused).',
     '- A refused level command changes NOTHING and comes back to you as a failed card naming the reason; the other commands in the same reply still apply.',
+    'STATE THE LEVEL OF EVERY NPC AND EVERY ENCOUNTER YOU WRITE. You are the story author: how strong an NPC is, and how hard an encounter is, is YOUR decision — the app never guesses it from context. For each [[NPC]] or [[encounter]] you introduce, add one level statement (the app stores it on that entity; it changes no document text):',
+    '<state_level level="3" entity="npc"><name>EXACT NAME</name></state_level>',
+    '- "level" is a whole number from 1 to 20 (an easy or a hard figure — plan it deliberately); <name> is the name exactly as written inside its [[…]] token; entity is "npc" or "encounter" (you are the author, so you say which). Do not put the level in prose instead: only this command counts.',
+    '- Give every level of the document at least the number of encounters the app tells you it needs (LLMs tend to favour non-combat solutions — write the fights too).',
+    '- When the app sends you a list of missing levels or missing encounters, answer it with ONE reply that states every level and writes every missing encounter.',
     '- AUTHORING FROM NOTHING (an EMPTY document — no premise, no levels yet — is the campaign\u2019s starting state, not an error): YOU write the premise first with <replace_level level="0"><replace>THE PREMISE</replace></replace_level>, then create each level in order with <append_level level="1">, <append_level level="2">, … . Never write a =====Level N===== line yourself: the app writes the separator and the number when append_level creates the level. Build what the owner describes — the premise as level 0, then one section per level — and never reply that the document is empty or ask for one to be created.',
     'The document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
     'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s document only.',

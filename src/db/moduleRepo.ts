@@ -179,6 +179,27 @@ export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {
 }
 
 /**
+ * THE one atomic ENTITY-RECORD update (docs/17 row 401): re-reads the row INSIDE
+ * the transaction and lets `update` derive the next `entityKinds` from the
+ * CURRENT records, so a concurrent classification/normalization write can never
+ * be lost to a stale snapshot. `update` returns the next records, or `null` for
+ * "no change" (nothing is written). Every other field is left byte-identical.
+ */
+export async function updateModuleEntityKinds(
+  id: Id,
+  update: (current: readonly Module['entityKinds'][number][]) => Module['entityKinds'] | null,
+): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) throw new NotFoundError('Module', id);
+    const module = parseModuleRow(current);
+    const next = update(module.entityKinds);
+    if (next === null) return module;
+    return saveModule({ ...module, entityKinds: next });
+  });
+}
+
+/**
  * THE one atomic SPINE-SUBFIELD patch (docs/17 row 357): re-reads the row
  * INSIDE the transaction (a stale snapshot can never drop a concurrent write)
  * and merges the named fields into the spine, leaving every other spine field

@@ -27,7 +27,17 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { AnyArtifact, Campaign, EntityKind, Module } from '@/domain';
-import { ENTITY_KINDS, MODULE_PREMISE_LEVEL, moduleDocumentFromView, moduleLevelList } from '@/domain';
+import {
+  defaultEncounterFloorGuardrail,
+  deriveLevelProblems,
+  encounterFloorGuardrailFor,
+  ENTITY_KINDS,
+  levelProblemLine,
+  MODULE_PREMISE_LEVEL,
+  moduleDocumentFromView,
+  moduleLevelList,
+} from '@/domain';
+import { patchModule } from '@/db/moduleRepo';
 import {
   GENERATION_KINDS,
   generationKindLabel,
@@ -139,6 +149,27 @@ export function GenerationDialog({
     () => selectGenerationTargets({ module, artifacts, kinds, imageKinds, levelRange: range }),
     [module, artifacts, kinds, imageKinds, range],
   );
+
+  // THE PER-LEVEL ENCOUNTER MINIMUM (docs/17 row 401). It lives on the module row
+  // (`encounterFloorGuardrail`) because it is a rule OF THIS DOCUMENT read by the
+  // ONE floor resolver, not a user preference like the image kinds. The problem
+  // list below is the SAME derivation the chat's card shows.
+  const floor = encounterFloorGuardrailFor(module);
+  const levelReport = useMemo(
+    () =>
+      deriveLevelProblems({
+        document: moduleDocumentFromView(module),
+        entityKinds: module.entityKinds,
+        floor: module.encounterFloorGuardrail,
+      }),
+    [module],
+  );
+  function setFloor(next: { enabled: boolean; perLevel: number }): void {
+    const safe = { enabled: next.enabled, perLevel: next.enabled ? Math.max(1, next.perLevel) : 0 };
+    void patchModule(module.id, { encounterFloorGuardrail: safe }).catch((error: unknown) => {
+      toastError('Could not save the encounter minimum', error);
+    });
+  }
 
   function toggleImageKind(kind: EntityKind, checked: boolean): void {
     const next = checked ? [...imageKinds, kind] : imageKinds.filter((entry) => entry !== kind);
@@ -330,6 +361,66 @@ export function GenerationDialog({
               </div>
             </fieldset>
 
+            <fieldset className="flex flex-col gap-1.5" data-testid="generation-encounter-minimum">
+              <legend className="pb-1 text-sm font-medium">Encounter minimum</legend>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="generation-floor-enabled"
+                  data-testid="generation-floor-enabled"
+                  checked={floor.enabled}
+                  onCheckedChange={(checked) => {
+                    setFloor({
+                      enabled: checked,
+                      perLevel: floor.perLevel >= 1 ? floor.perLevel : defaultEncounterFloorGuardrail().perLevel,
+                    });
+                  }}
+                />
+                <Label htmlFor="generation-floor-enabled" className="text-sm">
+                  Require
+                </Label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  aria-label="Encounters per level"
+                  data-testid="generation-floor-per-level"
+                  className="h-7 w-16 rounded border bg-background px-1 text-sm"
+                  disabled={!floor.enabled}
+                  value={floor.enabled ? floor.perLevel : ''}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (Number.isInteger(value) && value >= 1) setFloor({ enabled: true, perLevel: value });
+                  }}
+                />
+                <span className="text-sm">encounters per level</span>
+              </div>
+              <p className="text-xs text-muted-foreground" data-testid="generation-floor-counts">
+                {levelReport.encounterCounts.length === 0
+                  ? 'No level sections yet.'
+                  : levelReport.encounterCounts
+                      .map((entry) => `Level ${String(entry.level)}: ${String(entry.found)}/${String(entry.required)}`)
+                      .join(' · ')}
+                {levelReport.unclassifiedLinks.length > 0 &&
+                  ` — ${String(levelReport.unclassifiedLinks.length)} unclassified link${levelReport.unclassifiedLinks.length === 1 ? '' : 's'} (kind unknown, not counted as encounters)`}
+              </p>
+            </fieldset>
+
+            {levelReport.problems.length > 0 && (
+              <div className="rounded-md border border-amber-400/40 p-3 text-sm" data-testid="generation-level-problems">
+                <p className="font-medium">The story still owes the app:</p>
+                <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {levelReport.problems.map((problem) => (
+                    <li key={levelProblemLine(problem)}>{levelProblemLine(problem).slice(2)}</li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-xs">
+                  Nothing is guessed: figures without a level are held back from this run. Close this dialog
+                  and press <em>Ask the chat to fix these</em> in the chat — ONE message covers all of them.
+                </p>
+              </div>
+            )}
+
             {/*
               THE SCOPE STATEMENT — what will run, before it runs. Every number is
               a field of the SAME selection the run uses.
@@ -375,6 +466,11 @@ export function GenerationDialog({
                     {`${String(selection.premiseOnly.length)} premise-only entit${selection.premiseOnly.length === 1 ? 'y has' : 'ies have'} no level yet and ${selection.premiseOnly.length === 1 ? 'is' : 'are'} NOT selected — set "From level" to Premise (no level yet) to include ${selection.premiseOnly.length === 1 ? 'it' : 'them'}.`}
                   </p>
                 ))}
+              {selection.needsLevel.length > 0 && (
+                <p className="mt-1 text-muted-foreground" data-testid="generation-scope-needs-level">
+                  {`${String(selection.needsLevel.length)} selected NPC/encounter${selection.needsLevel.length === 1 ? '' : 's'} need${selection.needsLevel.length === 1 ? 's' : ''} a level and ${selection.needsLevel.length === 1 ? 'is' : 'are'} NOT generated: ${selection.needsLevel.map((target) => target.name).join(', ')}.`}
+                </p>
+              )}
               {(blocked || empty) && (
                 <p className="mt-1 text-destructive" data-testid="generation-scope-blocked">
                   {blocked ? blockedReason : 'Nothing selected — tick a kind or widen the level range.'}

@@ -144,7 +144,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
     expect(
-      filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel'),
+      filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel;'),
     ).toEqual([ENGINE]);
     // The user's instruction is read at that same site — BY THE MODEL since
     // docs/17 row 289. The reader is defined ONCE in its own module and called
@@ -161,7 +161,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
         .filter((file) => file !== INSTRUCTION_LEVEL)
         .sort(),
     ).toEqual([ENGINE]);
-    expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([ENGINE]);
+    expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([]);
   });
 
   it('reads a level out of prose through ONE reader, fed by ONE language vocabulary', () => {
@@ -207,48 +207,33 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     expect(englishOnly).toEqual([]);
   });
 
-  it('derives the module’s own stated level once, for the engine resolution', () => {
-    expect(filesContaining('export function moduleStatedLevel')).toEqual([ROOM_BUDGET]);
-    // ONE consumer survives, named: the engine resolves the level for a
-    // module-created run. The other consumer was the pass-0 spine's entity
-    // recording, DELETED with pass 0 (docs/17 row 392).
-    expect(
-      filesContaining('moduleStatedLevel(')
-        .filter((file) => file !== ROOM_BUDGET)
-        .sort(),
-    ).toEqual([ENGINE]);
+  it('an entity level is STRICTLY the stated one — no section, prose or band derivation exists (docs/17 row 401)', () => {
+    // The owner: the level strictly comes from the story LLM. The three
+    // context-derived sources are DELETED; a reappearance reds here.
+    expect(filesContaining('function moduleStatedLevel')).toEqual([]);
+    expect(filesContaining('function entityProseLevel')).toEqual([]);
+    expect(filesContaining('moduleStatedLevel(')).toEqual([]);
+    expect(filesContaining('withCombatEntityLevelHints')).toEqual([]);
+    // The engine's chain has exactly the three sources and no band.
+    const engine = readFileSync(join(process.cwd(), ENGINE), 'utf8');
+    expect(engine).toContain('const resolvedLevel = explicitLevel ?? recordedLevel;');
+    expect(engine).not.toContain('levelMin: module.levelMin');
+    // The section number survives ONLY as the PARTY level (where in the story).
+    expect(filesContaining('export function partLevelForMention')).toEqual([ROOM_BUDGET]);
+    const roomBudget = readFileSync(join(process.cwd(), ROOM_BUDGET), 'utf8');
+    expect(roomBudget).toContain('NEVER answers "HOW STRONG');
+    expect(roomBudget).toContain('TOOK\n * PLACE IN THE PAST');
   });
 
-  it('reads a NAMED figure’s prose through ONE name-scoped seam, ABOVE either band (docs/17 row 285)', () => {
-    // THE SEAM, defined once: "the level this text states ABOUT this name".
-    // `entityProseLevel` composes it for the module (part sentence, then
-    // premise sentence); the engine's brief fallback calls it directly. Both
-    // ride THIS one function, so a rename or a second copy reds here.
+  it('reads a figure’s prose through ONE name-scoped seam (the brief fallback only, docs/17 rows 285/401)', () => {
     expect(filesContaining('export function nameScopedLevel')).toEqual([ROOM_BUDGET]);
-    expect(filesContaining('export function entityProseLevel')).toEqual([ROOM_BUDGET]);
     expect(
       filesContaining('nameScopedLevel(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
-    // It reads the EXISTING sentence reader and the EXISTING level grammar —
-    // a second one of either is the drift this whole file exists to catch.
     expect(filesContaining('export function sentenceAround')).toEqual([WIKILINKS]);
     expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
-    // THE ORDER IS THE CURE (docs/17 row 285): inside `moduleStatedLevel` the
-    // PROSE rung is consulted BEFORE the mentioning part's structured band, so
-    // a figure's own sentence is more specific than the part it sits in. A swap
-    // back to the pre-285 order reds HERE.
-    const roomBudget = readFileSync(join(process.cwd(), ROOM_BUDGET), 'utf8');
-    const proseRung = roomBudget.indexOf('const fromProse = entityProseLevel(module, name)');
-    const partRung = roomBudget.indexOf('const fromPart = partLevelForMention(module, name)');
-    expect(proseRung, 'the prose rung exists').toBeGreaterThan(-1);
-    expect(partRung, 'the part-band rung exists').toBeGreaterThan(-1);
-    expect(partRung, 'the prose rung sits ABOVE the structured band').toBeGreaterThan(proseRung);
-    // And the prose rung itself is name-scoped with the `'nothing'` arm: a
-    // sentence that names nobody is not evidence about anyone.
-    expect(roomBudget).toContain("nameScopedLevel(part.markdown, name, 'nothing')");
-    expect(roomBudget).toContain("nameScopedLevel(module.spine?.premise ?? '', name, 'nothing')");
   });
 
   it('routes the brief-text fallback through the ONE party-line exclusion, and leaves no raw-brief reader', () => {
@@ -290,7 +275,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // precedence EXPRESSION itself is unchanged and still one site (so the
     // user's instruction and the module's structured level keep their order).
     expect(filesContaining('const recordedLevel = mintedBlockLevel ?? storedHint')).toEqual([ENGINE]);
-    expect(filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel ?? moduleLevel')).toEqual([
+    expect(filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel;')).toEqual([
       ENGINE,
     ]);
     // The generated entity-hint paragraph gets the SAME one-site exclusion the

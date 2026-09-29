@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  entityProseLevel,
   firstLevelInText,
-  moduleStatedLevel,
   partyLevelLine,
   partLevelForMention,
   withoutPartyLevelLines,
@@ -206,196 +204,21 @@ describe('ONE level reader reads every generated language (docs/17 row 253)', ()
     expect(firstLevelInText(withoutPartyLevelLines(brief))).toBe(5);
   });
 
-  it('resolves a NAMED entity’s part level, and NEVER a premise sentence that does not name it (docs/17 rows 282/285)', () => {
-    // The owner's exact shape: a part names the entity in a STRUCTURED,
-    // name-scoped way — the mentioning SECTION'S own number (docs/23 §4, one
-    // plan entry per level) — while the premise's prose says 3 about the whole
-    // campaign. Row 253 made the part outrank the premise; row 282 removed the
-    // MODULE-WIDE premise read entirely, because a CAMPAIGN story introduction
-    // is not a level instruction ("Its very sloppy to infer all mobs levels from
-    // a CAMPAIGN premise … And this was about 1 NPC."). Row 285 keeps that ban
-    // and adds back only the sentence that NAMES the figure: this premise names
-    // nobody, so it is still not evidence for anyone.
+  it('PARTY LEVEL = the FIRST section that mentions the encounter; a premise-only name has none (docs/17 row 401)', () => {
     const module = moduleFixture({
-      premise: 'Eine Mine für Stufe 3 Charaktere. Die Stille Armee hat sich eingenistet.',
-      bands: ['1', '2'],
+      premise: 'The campaign opens. [[Bridge Ambush]] is only hinted at here.',
       parts: [
-        { planIndex: 0, markdown: 'Die Mine ist dunkel und verlassen. Keine Spuren.' },
-        {
-          planIndex: 1,
-          markdown: 'Im Tiefstollen wartet [[Marten Graubruch]] auf die Gruppe.',
-        },
+        { planIndex: 0, markdown: 'Level one text.' },
+        { planIndex: 1, markdown: 'Level two: [[Bridge Ambush]] happens.' },
+        { planIndex: 2, markdown: 'Level three.' },
+        { planIndex: 3, markdown: 'Level four recalls [[Bridge Ambush]] and [[Only Premise]].' },
       ],
-      levelMin: 3,
-      levelMax: 3,
     });
-    expect(firstLevelInText(module.spine?.premise ?? '')).toBe(3);
-    // The mentioning part is SECTION 2, and the section's number is the level.
-    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(2);
-    // The premise sentence carries no name, so the name-scoped prose rung is
-    // silent and the STRUCTURED part level decides.
-    expect(entityProseLevel(module, 'Marten Graubruch')).toBeUndefined();
-    // THE MEASURED OUTCOME: the named part states the level — structure, by name.
-    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(2);
-    // An entity NO part names takes the module's own statement, and a premise
-    // sentence about nobody is not one: the exact band (3) is, so this is the
-    // band and NOT the prose. With a band that states no single level the answer
-    // is `undefined` — see the spine-time pin below and the moduleGen pin for the
-    // stamping half.
-    expect(entityProseLevel(module, 'Unbekannter Namenloser')).toBeUndefined();
-    expect(moduleStatedLevel(module, 'Unbekannter Namenloser')).toBe(3);
-  });
-
-  it('lets the NAMED figure’s own PART SENTENCE outrank the part’s STRUCTURED band (docs/17 row 285, inversion I1)', () => {
-    // THE OWNER'S DEFECT: a level-3 mob whose own paragraph says `level 5`
-    // shipped at 3, because `partLevelForMention` read the part's STRUCTURE and
-    // never its sentence — the structure outranked the figure's own prose,
-    // inverting specificity (entity > part > module). The part NAMES the mob, so
-    // its sentence IS evidence about it.
-    const module = moduleFixture({
-      premise: 'Eine Mine für Stufe 3 Charaktere.',
-      bands: ['1'],
-      parts: [
-        {
-          planIndex: 0,
-          markdown: 'Im Tiefstollen wartet [[Marten Graubruch]], ein Gegner der Stufe 5.',
-        },
-      ],
-      levelMin: 3,
-      levelMax: 3,
-    });
-    // The mentioning SECTION still says 1 (its own number)…
-    expect(partLevelForMention(module, 'Marten Graubruch')).toBe(1);
-    // …and the figure's own sentence says 5, which now wins.
-    expect(entityProseLevel(module, 'Marten Graubruch')).toBe(5);
-    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(5);
-  });
-
-  it('lets a PREMISE sentence that NAMES the figure outrank an EXACT module band (docs/17 row 285, inversion I2)', () => {
-    // The honest revival of row 247's premise half, NAME-SCOPED: the sentence
-    // says `Stufe 7` about [[Marten Graubruch]] and nobody else, so it is a
-    // statement about THAT gnome — exactly the shape the owner's row-282 ruling
-    // wanted kept ("this was about 1 NPC"). No part mentions him, so the
-    // structured channels fall through to the exact band (4); the named sentence
-    // outranks it.
-    const module = moduleFixture({
-      premise:
-        'Der Schmied [[Marten Graubruch]] ist ein Veteran der Stufe 7 und erinnert sich an die Gilde.',
-      bands: ['4'],
-      parts: [],
-      levelMin: 4,
-      levelMax: 4,
-    });
-    expect(partLevelForMention(module, 'Marten Graubruch')).toBeUndefined();
-    expect(entityProseLevel(module, 'Marten Graubruch')).toBe(7);
-    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(7);
-  });
-
-  it('reads the PART sentence before the PREMISE sentence when both name the figure (docs/17 row 285)', () => {
-    // The order is deterministic: the part (where the stat-block figure is
-    // written) first, then the premise. Both name him; the part wins.
-    const module = moduleFixture({
-      premise: 'Der Schmied [[Marten Graubruch]] ist ein Veteran der Stufe 7.',
-      bands: ['3'],
-      parts: [
-        { planIndex: 0, markdown: 'Im Tiefstollen wartet [[Marten Graubruch]] auf Stufe 5.' },
-      ],
-      levelMin: 3,
-      levelMax: 3,
-    });
-    expect(entityProseLevel(module, 'Marten Graubruch')).toBe(5);
-    expect(moduleStatedLevel(module, 'Marten Graubruch')).toBe(5);
-  });
-
-  it('resolves NOTHING for a figure the prose never NAMES — the non-vacuity half (docs/17 rows 282/285)', () => {
-    // THE ARM THAT KEEPS ROW 282'S BAN ALIVE. A premise sentence about ANOTHER
-    // figure is not evidence about this one, and a premise sentence about NO
-    // figure is not evidence about anyone. Both still read as nothing.
-    const otherFigure = moduleFixture({
-      premise: 'Der Veteran [[Alte Schmiedin]] ist Stufe 9 und schweigt.',
-      bands: ['4'],
-      parts: [],
-      levelMin: 4,
-      levelMax: 4,
-    });
-    expect(firstLevelInText(otherFigure.spine?.premise ?? '')).toBe(9);
-    expect(entityProseLevel(otherFigure, 'Marten Graubruch'), 'another figure’s sentence').toBeUndefined();
-    // An EXACT band is still structure, so it decides — the row-282 half that survived.
-    expect(moduleStatedLevel(otherFigure, 'Marten Graubruch')).toBe(4);
-    // A premise about nobody, on a RANGE band: nothing resolves at all, and no
-    // level is invented from the range.
-    const noFigure = moduleFixture({
-      premise: 'Ein Abenteuer für Stufe 5 Gruppen.',
-      parts: [],
-      levelMin: 1,
-      levelMax: 4,
-    });
-    expect(entityProseLevel(noFigure, 'Marten Graubruch'), 'a sentence about no figure').toBeUndefined();
-    expect(moduleStatedLevel(noFigure, 'Marten Graubruch')).toBeUndefined();
-    // A PART sentence about a DIFFERENT figure is not evidence either: the part
-    // does not mention our name, so it is not even read.
-    const partOtherFigure = moduleFixture({
-      premise: 'Ein Abenteuer ohne Angabe.',
-      bands: ['3'],
-      parts: [{ planIndex: 0, markdown: 'Am Tor steht [[Alte Schmiedin]] auf Stufe 9.' }],
-      levelMin: 1,
-      levelMax: 4,
-    });
-    expect(entityProseLevel(partOtherFigure, 'Marten Graubruch')).toBeUndefined();
-    expect(moduleStatedLevel(partOtherFigure, 'Marten Graubruch')).toBeUndefined();
-  });
-
-  it('reads the module’s stated level from STRUCTURE, plus a sentence that NAMES the figure — never a module-wide premise read (docs/17 rows 282/285)', () => {
-    // `moduleGen.normalizeAndSave` records the level BEFORE any part exists, and
-    // its call passes NO name: the prose rungs genuinely do not exist at spine
-    // time, so a premise is still NOT a module-wide level source. That premise
-    // read is the defect that stamped one module-wide 7 on every npc of a
-    // levels-1–2 module while the Smith minted level-1 blocks.
-    const spineTime = moduleFixture({
-      premise: 'Ein Abenteuer für Stufe 5 Gruppen.',
-      parts: [],
-      levelMin: 1,
-      levelMax: 4,
-    });
-    expect(firstLevelInText(spineTime.spine?.premise ?? ''), 'the prose still SAYS 5').toBe(5);
-    expect(moduleStatedLevel(spineTime), 'and with NO name it is not a level source').toBeUndefined();
-    expect(moduleStatedLevel(spineTime, ''), 'nor for a blank name').toBeUndefined();
-    // A premise stating no level and a RANGE band states no level either.
-    const rangeless = moduleFixture({
-      premise: 'Ein Abenteuer ohne Angabe.',
-      parts: [],
-      levelMin: 1,
-      levelMax: 4,
-    });
-    expect(moduleStatedLevel(rangeless)).toBeUndefined();
-    // An EXACT band is STRUCTURE, and it still resolves — with or without a name.
-    const exact = moduleFixture({
-      premise: 'Ein Abenteuer ohne Angabe.',
-      parts: [],
-      levelMin: 4,
-      levelMax: 4,
-    });
-    expect(moduleStatedLevel(exact)).toBe(4);
-    expect(moduleStatedLevel(exact, 'Niemand Genannt')).toBe(4);
-    // …and an exact band is not overridden by PREMISE prose that names nobody:
-    // structure beats a sentence that is about no figure.
-    const exactWithLoudProse = moduleFixture({
-      premise: 'Ein Abenteuer für Stufe 9 Gruppen.',
-      parts: [],
-      levelMin: 4,
-      levelMax: 4,
-    });
-    expect(moduleStatedLevel(exactWithLoudProse)).toBe(4);
-    // …while the SAME prose, once it NAMES the figure, is a statement about him
-    // and outranks the exact band (the row-285 amendment, deliberately).
-    const exactWithNamedProse = moduleFixture({
-      premise: 'Der Veteran [[Marten Graubruch]] ist Stufe 9.',
-      parts: [],
-      levelMin: 4,
-      levelMax: 4,
-    });
-    expect(moduleStatedLevel(exactWithNamedProse, 'Marten Graubruch')).toBe(9);
-    expect(moduleStatedLevel(exactWithNamedProse, 'Niemand Genannt')).toBe(4);
+    // Mentioned in level 2 and again in level 4: tuned against level 2 (a later
+    // mention is a recap of something already done, not a new placement).
+    expect(partLevelForMention(module, 'Bridge Ambush')).toBe(2);
+    const premiseOnly = moduleFixture({ premise: '[[Lonely Fight]] awaits.', parts: [{ planIndex: 0, markdown: 'Nothing.' }] });
+    expect(partLevelForMention(premiseOnly, 'Lonely Fight')).toBeUndefined();
   });
 
   it('hardens the two measured reader false positives (docs/17 row 282)', () => {

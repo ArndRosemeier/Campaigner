@@ -825,54 +825,65 @@ export function entityLevelHintFor(
 }
 
 /**
- * Records the MODULE's own stated level on the entity records that get a stat
- * block authored from scratch (docs/17 row 247) — the spine-time half of "the
- * module's own STRUCTURED level must actually reach resolution".
+ * THE ONE WRITER of an entity's recorded level (docs/17 row 401): the chat STATES
+ * a level for an NPC or an encounter and this pure function puts it on that
+ * entity's RECORD (`levelHint`) — the only place a level is ever stored, and
+ * (with the owner's later per-entity edits) the ONLY source the generators read.
+ * The level is STATED, never inferred: nothing in the app derives an NPC's or an
+ * encounter's strength from the section that mentions it or from prose.
  *
- * WHAT THE STATED LEVEL IS, SINCE docs/17 row 282 AND ITS ROW-285 AMENDMENT:
- * this SPINE-TIME call passes no name and no parts, so `moduleStatedLevel`
- * reaches only its EXACT band arm (`levelMin === levelMax`) — never a prose
- * sentence. The reason row 282 removed the module-wide premise read stands
- * unchanged (*"Its very sloppy to infer all mobs levels from a CAMPAIGN premise
- * … And this was about 1 NPC."*): one sentence about one level-7 gnome was
- * stamped on every npc of a levels-1–2 module, whose Smith had minted level-1
- * blocks. Row 285 keeps that ban and adds the NAME-SCOPED channels — the
- * model's own `levelHint` on the record (this function never overwrites it),
- * the part's level by name, and a sentence that NAMES the figure (read at RUN
- * resolution, where the name is known). A sentence about no figure, or about a
- * different one, still stamps nothing here.
- *
- * THE DEFECT IT STILL CLOSES. `levelHint` was written ONLY by the spine MODEL:
- * when the planner answered `"levelHint": null` (or when a name was introduced
- * by a later part and only CLASSIFIED by the normalization pass, which can carry
- * a field but never author one — docs/17 row 197), the record kept no level at
- * all, and the entity generator was left to pick one. An exact band is the
- * module's own structured statement, so it still survives the entity boundary
- * as DATA.
- *
- * WHICH KINDS. `npc` only, and deliberately: a mob IS an npc row in this app,
- * and `npc` is the one entity kind whose stat block the Smith authors from
- * scratch. `encounter` carries its own structured level chain (its free-text
- * `data.levelHint` plus `partLevelForMention`), and location/event/faction/note
- * author no stat block at all — stamping a level on those would invent a fact
- * about an entity that has no level semantics.
- *
- * A RECORD THAT ALREADY STATES A LEVEL IS UNTOUCHED — the model's own answer is
- * more specific than the module's overall statement, and this function never
- * overwrites what the planner fixed. An `undefined` `statedLevel` (a module
- * whose own sources state no level) leaves every record byte-identical, so the
- * engine's loud refusal is decided by the engine, never papered over here.
+ * LOUD, per statement: a level outside `ENTITY_LEVEL_HINT_MIN..MAX` or a
+ * non-integer, a name with no record, or a record whose kind carries no level
+ * (only `npc` and `encounter` do) is a typed refusal; the caller turns it into a
+ * failed card and the sibling statements still apply. The other records are
+ * returned byte-identical.
  */
-export function withCombatEntityLevelHints(
+export type EntityLevelStatementResult =
+  | { ok: true; records: ModuleEntityKind[] }
+  | { ok: false; reason: string };
+
+export function withEntityLevelStatement(
   records: readonly ModuleEntityKind[],
-  statedLevel: number | undefined,
-): ModuleEntityKind[] {
-  if (statedLevel === undefined) return [...records];
-  return records.map((record) =>
-    record.kind === 'npc' && record.levelHint === undefined
-      ? { ...record, levelHint: statedLevel }
-      : record,
-  );
+  name: string,
+  level: number,
+  entityKind?: 'npc' | 'encounter',
+): EntityLevelStatementResult {
+  if (!Number.isInteger(level) || level < ENTITY_LEVEL_HINT_MIN || level > ENTITY_LEVEL_HINT_MAX) {
+    return {
+      ok: false,
+      reason: `a level is a whole number between ${String(ENTITY_LEVEL_HINT_MIN)} and ${String(ENTITY_LEVEL_HINT_MAX)}, got ${String(level)}`,
+    };
+  }
+  const index = records.findIndex((entry) => sameAliasName(entry.name, name));
+  const record = records[index];
+  if (record === undefined) {
+    // The story author is the one who knows what it wrote: a statement for a
+    // name with no record CREATES the record with the kind the author STATED —
+    // no second classifier (docs/17 row 401). Without a stated kind it is refused.
+    if (entityKind === undefined) {
+      return {
+        ok: false,
+        reason: `«${name}» has no entity record yet — state its kind too: <state_level level="N" entity="npc|encounter">`,
+      };
+    }
+    if (records.length >= MODULE_ENTITY_KIND_CAP) {
+      return { ok: false, reason: `the module already carries the maximum of ${String(MODULE_ENTITY_KIND_CAP)} recorded entities` };
+    }
+    return {
+      ok: true,
+      records: [...records, { name: name.trim(), kind: entityKind, absorbed: [], bestiary: undefined, intent: undefined, levelHint: level }],
+    };
+  }
+  if (record.kind !== 'npc' && record.kind !== 'encounter') {
+    return { ok: false, reason: `«${record.name}» is a ${record.kind}; only an NPC or an encounter has a level` };
+  }
+  if (entityKind !== undefined && entityKind !== record.kind) {
+    return { ok: false, reason: `«${record.name}» is recorded as ${record.kind}, not ${entityKind}` };
+  }
+  return {
+    ok: true,
+    records: records.map((entry, i) => (i === index ? { ...entry, levelHint: level } : entry)),
+  };
 }
 
 /**
@@ -943,6 +954,17 @@ export const moduleChatCommandSchema = z.union([
     kind: z.enum(['replace_level', 'append_level']),
     level: z.number().int().min(0),
     replace: z.string(),
+  }),
+  // The LEVEL STATEMENT (docs/17 row 401): the chat STATES an NPC's or an
+  // encounter's level. Additive union member exactly like the two above — a
+  // thread stored before it parses unchanged, NO Dexie bump. The range 1..20 is
+  // checked by the applier (a refused statement is a failed card that must
+  // persist too), so only 'a number' is fixed here.
+  z.object({
+    kind: z.literal('state_level'),
+    name: z.string(),
+    level: z.number(),
+    entityKind: z.enum(['npc', 'encounter']).optional(),
   }),
 ]);
 

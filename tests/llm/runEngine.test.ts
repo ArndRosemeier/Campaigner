@@ -813,46 +813,62 @@ describe('runEngine', () => {
     expect(notice).not.toContain('fixed this entity at level');
   }, 20000);
 
-  it('a module that states no LEVEL still BOUNDS the reply with its band — the model may not pick freely', async () => {
+  it('a module-owned NPC with NO stated level is REFUSED before the stat-block call — no band, no section, no prose supplies one (docs/17 row 401)', async () => {
     const { campaignId, persona } = await seed();
-    // The module states no level anywhere: a 1–3 RANGE (not a level), a premise
-    // with no `level N`, and no part mentioning the entity. The band is the
-    // module's own statement, so the reply must fall inside it (docs/17 row 247)
-    // — an exact statement, when one exists, always wins over it.
+    // A 1–3 RANGE, and a premise that says "level 5" about the NPC in prose:
+    // neither is a level the story author STATED on the record.
     const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', undefined, {
       levelMax: 3,
-      partMention: false,
+      premise: 'Kael the Grey is a level 5 hedge wizard.',
     });
-    chatMock
-      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
-      // Both the first reply and the repair sit OUTSIDE the module's band.
-      .mockResolvedValue({ text: statReply({ level: '5' }), modelUsed: 'test-model', fallback: null });
-
-    const input = {
+    chatMock.mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null });
+    const runId = await runEngine.startRun({
       ...INPUT(campaignId, persona),
       autonomy: 'auto' as const,
       brief: 'Regenerate the full content of this npc — summary, body and details.',
       targetArtifactId: targetId,
-    };
-    const runId = await runEngine.startRun(input);
+    });
     await waitFor(
       async () => {
         expect((await getRun(runId))?.status).toBe('failed');
       },
       { timeout: 20000 },
     );
-
-    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).toContain('at a level within 1–3');
-    expect(statblockPrompt).toContain('this module covers levels 1–3');
-    // The level is NOT left to the model: a reply outside the band is repaired
-    // once and then REFUSED, and nothing is written onto the row.
     const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('outside the 1–3 this module covers');
+    expect(run?.errorMessage).toContain('states no level for "Kael the Grey"');
+    expect(run?.errorMessage).toContain('Nothing was written');
     const artifact = await getArtifact(targetId);
     if (artifact?.kind !== 'npc') throw new Error('the refill target is not an npc');
     expect(artifact.data.statBlock).toBeNull();
-    expect(chatMock).toHaveBeenCalledTimes(3);
+    // Only the draft call was spent; the stat block never reached the model.
+    expect(chatMock).toHaveBeenCalledTimes(1);
+  }, 20000);
+
+  it('a STATED level binds the block and is never overridden by the section or the premise that mention the NPC (docs/17 row 401)', async () => {
+    const { campaignId, persona } = await seed();
+    const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 4, {
+      levelMax: 3,
+      premise: 'Kael the Grey is a level 5 hedge wizard.',
+    });
+    chatMock
+      .mockResolvedValueOnce({ text: draftReply('Kael the Grey'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: statReply({ level: '4' }), modelUsed: 'test-model', fallback: null });
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      brief: 'Regenerate the full content of this npc — summary, body and details.',
+      targetArtifactId: targetId,
+    });
+    await waitFor(
+      async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      },
+      { timeout: 20000 },
+    );
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('at level 4');
+    expect(statblockPrompt).not.toContain('at level 5');
+    expect(statblockPrompt).not.toContain('at level 1, grounded');
   }, 20000);
 
   it('a module-owned entity whose module is GONE refuses loudly — nothing can bound the pick', async () => {
@@ -879,13 +895,13 @@ describe('runEngine', () => {
     );
 
     const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('states no level and no level band');
+    expect(run?.errorMessage).toContain('states no level');
     expect(run?.errorMessage).toContain('Nothing was written');
     // No stat-block call was spent: the refusal happens before the model call.
     expect(chatMock).toHaveBeenCalledTimes(1);
   }, 20000);
 
-  it('a stored grounding written BEFORE the field still parses and keeps the brief-regex fallback (compatibility)', async () => {
+  it('a stored grounding written BEFORE the level fields still parses (compatibility); with no stated level left the stat block refuses (docs/17 row 401)', async () => {
     const { campaignId, persona } = await seed();
     const targetId = await seedModuleOwnedNpc(campaignId, 'Kael the Grey', 7);
     chatMock
@@ -905,7 +921,7 @@ describe('runEngine', () => {
       { timeout: 20000 },
     );
 
-    // Simulate a grounding persisted BEFORE row 206: strip the new field. The
+    // Simulate a grounding persisted BEFORE the level fields: strip them. The
     // stored schema must still parse it (an old store must keep working).
     const run = await getRun(runId);
     if (run === undefined) throw new Error('the run vanished before the grounding hand-edit');
@@ -913,46 +929,23 @@ describe('runEngine', () => {
       if (step.name !== 'retrieve') return step;
       const output = step.output as { moduleGrounding?: Record<string, unknown> } | null;
       if (output?.moduleGrounding === undefined) return step;
-      // EVERY level-bearing field is stripped: an old store has none of them
-      // (docs/17 rows 206 and 247), and the module's level is NOT re-derived
-      // from the stored premise — the grounding is the record, exactly as a
-      // resume reads it.
-      const {
-        entityLevelHint: _dropped,
-        statedLevel: _alsoDropped,
-        levelMin: _min,
-        levelMax: _max,
-        ...legacy
-      } = output.moduleGrounding;
+      const { entityLevelHint: _dropped, statedLevel: _stated, levelMin: _min, levelMax: _max, ...legacy } =
+        output.moduleGrounding;
       return { ...step, output: { ...output, moduleGrounding: legacy } };
     });
     await updateRun(runId, { steps });
 
     await runEngine.approve(runId, input);
-    // Manual autonomy: approving the draft runs the statblock and pauses again.
     await waitFor(
       async () => {
-        const next = await getRun(runId);
-        expect(next?.steps).toHaveLength(3);
-        expect(next?.status).toBe('awaiting_user');
+        expect((await getRun(runId))?.status).toBe('failed');
       },
       { timeout: 20000 },
     );
-    await runEngine.approve(runId, input);
-    await waitFor(
-      async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      },
-      { timeout: 20000 },
-    );
-
-    // Behaves as before: the legacy brief regex supplies the level, no
-    // structured instruction is emitted, and the record's 7 is NOT read from a
-    // field the old store never wrote.
-    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    expect(statblockPrompt).toContain('at level 3');
-    expect(statblockPrompt).not.toContain('at level 7');
-    expect(statblockPrompt).not.toContain("the module's author fixed this entity's level");
+    // The brief's "level 3 party" is NOT a level for this entity, and neither is
+    // the record's 7 (the old store never wrote it): nothing was stated, so the
+    // stat block refused loudly instead of guessing.
+    expect((await getRun(runId))?.errorMessage).toContain('states no level');
   }, 30000);
 
   /**
@@ -967,26 +960,17 @@ describe('runEngine', () => {
    * band is a 1–3 RANGE — so the named sentence is the module's only statement
    * about him and 5 must bind.
    */
-  it('a module-created mob takes the level of the PREMISE sentence that NAMES it — never a module-wide premise read (docs/17 row 285)', async () => {
+  it('a module-created mob whose PREMISE names it at "level 5" but has no stated level is REFUSED — prose supplies no level (docs/17 rows 285→401)', async () => {
     const { campaignId, persona } = await seed();
     const moduleId = await seedPremiseLevelModule(campaignId, 'Marten Graubruch', 5, 3);
-    chatMock
-      // The draft names the entity it was asked about, so the name-scoped prose
-      // lookup can resolve (the premise sentence names him).
-      .mockResolvedValueOnce({
-        text: draftReply('Marten Graubruch'),
-        modelUsed: 'test-model',
-        fallback: null,
-      })
-      // A reply at the band's own 3: a level the named sentence does not state,
-      // so the fix must repair it, not store it.
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
-
+    chatMock.mockResolvedValueOnce({
+      text: draftReply('Marten Graubruch'),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
     const runId = await runEngine.startRun({
       ...INPUT(campaignId, persona),
       autonomy: 'auto' as const,
-      // A CREATE run placed into the module — the owner's autocreate path.
       placementModuleId: moduleId,
       brief: 'Detail the smith [[Marten Graubruch]].',
     });
@@ -996,22 +980,9 @@ describe('runEngine', () => {
       },
       { timeout: 20000 },
     );
-
-    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
-    // THE NAMED SENTENCE'S 5 BINDS: it is a statement about THIS gnome — the
-    // module-wide read of the premise is the thing row 282 killed, not the
-    // name-scoped one (docs/17 row 285).
-    expect(statblockPrompt).toContain('at level 5');
-    expect(statblockPrompt).toContain("the module's author fixed this entity's level");
-    expect(statblockPrompt).not.toContain('at level 1, grounded');
-    // The deviation is named with the level that actually resolved, and a reply
-    // that never honours it is REJECTED rather than persisted (docs/17 row 247's
-    // binding half, unchanged).
     const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('written at level "3"');
-    expect(run?.errorMessage).toContain('not the 5 this run resolved');
-    const artifact = await getArtifact(run?.resultArtifactId ?? '');
-    expect(artifact).toBeUndefined();
+    expect(run?.errorMessage).toContain('states no level for "Marten Graubruch"');
+    expect(chatMock).toHaveBeenCalledTimes(1);
   }, 20000);
 
   /**
@@ -1877,7 +1848,13 @@ describe('runEngine', () => {
         sizeDial: 'sketch',
       }),
     );
-    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: module.id };
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      placementModuleId: module.id,
+      // STRICT LEVELS (docs/17 row 401): the batch passes the level the chat stated.
+      entityLevelHint: 3,
+    };
     const runId = await runEngine.startRun(input);
     await waitFor(async () => {
       const run = await getRun(runId);
@@ -1926,6 +1903,7 @@ describe('runEngine', () => {
       autonomy: 'auto' as const,
       targetArtifactId: target.id,
       placementModuleId: '11111111-1111-4111-8111-111111111111',
+      entityLevelHint: 3,
     };
     const runId = await runEngine.startRun(input);
     await waitFor(async () => {
@@ -1962,7 +1940,13 @@ describe('runEngine', () => {
           }),
       );
 
-    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: module.id };
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      placementModuleId: module.id,
+      // STRICT LEVELS (docs/17 row 401): the batch passes the level the chat stated.
+      entityLevelHint: 3,
+    };
     const runId = await runEngine.startRun(input);
     await waitFor(() => {
       expect(chatMock).toHaveBeenCalledTimes(2);
@@ -2008,6 +1992,7 @@ describe('runEngine', () => {
       ...INPUT(campaignId, persona),
       autonomy: 'auto' as const,
       placementModuleId: module.id,
+      entityLevelHint: 3,
       extras: { image: false, statBlock: false, mobPortraits: false, battlemap: false },
     };
     const runId = await runEngine.startRun(input);

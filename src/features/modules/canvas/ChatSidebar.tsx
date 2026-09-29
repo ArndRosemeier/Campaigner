@@ -16,7 +16,8 @@ import type { AnyArtifact, Id } from '@/domain';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import type { CanvasChatFraming } from '@/llm/canvasChat';
-import { isLevelEditCommand } from '@/llm/canvasChat';
+import { levelAskMessage, levelProblemLine, type LevelProblem } from '@/domain/levelProblems';
+import { isLevelEditCommand, isLevelStatementCommand } from '@/llm/canvasChat';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -132,6 +133,12 @@ export interface ChatSidebarProps {
    * highlight from BOTH surfaces (the editor's CM6 mark and the preview wash).
    */
   onChatCleared: (() => void) | undefined;
+  /**
+   * The ONE derived level problem list of the document (docs/17 row 401,
+   * `domain/levelProblems`), computed by the page from the live module. Empty =
+   * nothing owed. Optional so surfaces that own no document (tests) omit it.
+   */
+  levelProblems?: readonly LevelProblem[] | undefined;
 }
 
 export function ChatSidebar({
@@ -148,6 +155,7 @@ export function ChatSidebar({
   onEditorTurnApplied,
   onPreviewStop,
   onChatCleared,
+  levelProblems = [],
 }: ChatSidebarProps): JSX.Element {
   const gmAssist = surface === 'gm-assist';
   const chatKey = canvasChatKeyFor(moduleId, surface);
@@ -514,6 +522,36 @@ export function ChatSidebar({
           </div>
         )}
       </div>
+      {levelProblems.length > 0 && !gmAssist && (
+        <div className="border-t px-3 py-2 text-xs" data-testid="canvas-level-problems">
+          <p className="font-medium">
+            {String(levelProblems.length)} thing{levelProblems.length === 1 ? '' : 's'} the story still owes:
+          </p>
+          <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            {levelProblems.map((problem) => (
+              <li key={levelProblemLine(problem)}>{levelProblemLine(problem).slice(2)}</li>
+            ))}
+          </ul>
+          <BlockedControl
+            testId="canvas-level-problems-ask"
+            reason={sendBlockedReason}
+            side="top"
+            className="mt-1.5 self-start"
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="canvas-level-problems-ask"
+              disabled={aiBusy || inFlight}
+              onClick={() => {
+                void send(levelAskMessage(levelProblems));
+              }}
+            >
+              Ask the chat to fix these
+            </Button>
+          </BlockedControl>
+        </div>
+      )}
       <div className="border-t px-3 py-2" data-testid="canvas-advisors">
         <Button
           variant="ghost"
@@ -901,8 +939,13 @@ function OutcomeCard({
   // carries none and the struck line is omitted rather than shown empty. A
   // search edit's own `<search>` is the fallback for an outcome that recorded
   // no matched text — a level command has no search, so it falls back to null.
+  const command = outcome.command;
+  const statement = isLevelStatementCommand(command) ? command : null;
   const replacedText =
-    outcome.before ?? (isLevelEditCommand(outcome.command) ? null : outcome.command.search);
+    outcome.before ??
+    (statement !== null || isLevelEditCommand(command) ? null : 'search' in command ? command.search : null);
+  const appliedBody =
+    statement !== null ? `«${statement.name}» is level ${String(statement.level)}` : 'replace' in command ? command.replace : '';
   // The adversarial review's findings (docs/17 row 360): the WHOLE reason the
   // owner asked for a chat-triggered pass, so they render above the edit on
   // every kind of card — an outcome that showed only the edit would hide what
@@ -974,7 +1017,7 @@ function OutcomeCard({
             </span>
           )}
           <span className="whitespace-pre-wrap rounded bg-emerald-500/10 px-1.5 py-1 text-emerald-800 dark:text-emerald-200">
-            {outcome.command.replace}
+            {appliedBody}
           </span>
         </div>
       </div>
