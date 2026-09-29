@@ -1,7 +1,8 @@
 import {
-  CANVAS_PREMISE_NODE_KEY,
-  canvasPartNodeKey,
+  BOARD_PREMISE_NODE_KEY,
+  boardLevelNodeKey,
   canvasPriorModuleNodeKey,
+  levelForPlanIndex,
   type AnyArtifact,
   type Id,
   type Module,
@@ -10,10 +11,15 @@ import { buildWikiGraph, type WikiGraphMention } from '@/domain/wikiGraph';
 
 /**
  * Board continuity edges (08-MODULE-DESIGNER §Module board): a prior
- * module's text group connects to the CURRENT module's premise/part card
+ * module's text group connects to the CURRENT module's premise/level card
  * when both texts mention the same canonical wiki-name — derived from
  * `buildWikiGraph`'s per-document mentions, so resolution follows exactly
  * the reader's pool + per-module tier-0 conventions (13-WIKI-GRAPH). Pure.
+ *
+ * The edges' TARGETS are the board's level node keys (docs/17 row 388); the
+ * mentions they are derived from are the tree-wide mention convention
+ * (`'premise'` / `part-<planIndex>`, `domain/wikiGraph`), so the LEVEL comes
+ * from the ONE `levelForPlanIndex` — never a second arithmetic.
  *
  * The derivation is CAPPED and the cap is surfaced (never silent): a long
  * campaign can share dozens of names, and a board buried under edges is
@@ -76,8 +82,8 @@ export function deriveContinuityEdges(input: {
         const source = canvasPriorModuleNodeKey(prior.moduleId);
         const target =
           current.where === 'premise'
-            ? CANVAS_PREMISE_NODE_KEY
-            : canvasPartNodeKey(planIndexOf(current.where));
+            ? BOARD_PREMISE_NODE_KEY
+            : boardLevelNodeKey(levelOfMentionDocument(current.where));
         const id = `${source}|${target}`;
         const entry = merged.get(id);
         if (entry === undefined) {
@@ -110,11 +116,18 @@ export function deriveContinuityEdges(input: {
   };
 }
 
-/** `part-<planIndex>` mention document → planIndex (the one parse site here). */
-function planIndexOf(where: string): number {
-  const index = Number(where.slice('part-'.length));
-  if (!Number.isInteger(index) || index < 0) {
+/**
+ * The LEVEL a mention's own document names: the tree-wide mention convention
+ * (`'premise'` / `part-<planIndex>`, `domain/wikiGraph`) carries a `planIndex`,
+ * and the board addresses by LEVEL — so this calls the ONE
+ * `levelForPlanIndex`. The premise never reaches here (the caller maps it to
+ * the premise card), and an unknown document is LOUD rather than silently
+ * dropped (AGENTS rule 1).
+ */
+function levelOfMentionDocument(where: string): number {
+  const planIndex = Number(where.slice('part-'.length));
+  if (!Number.isInteger(planIndex) || planIndex < 0) {
     throw new Error(`deriveContinuityEdges: unknown document "${where}"`);
   }
-  return index;
+  return levelForPlanIndex(planIndex);
 }

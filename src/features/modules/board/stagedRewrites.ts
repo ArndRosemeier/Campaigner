@@ -31,9 +31,10 @@ import type { TextOrigin } from '@/domain';
 export type StagedRewriteStatus = 'proposed' | 'applied';
 
 export interface StagedRewrite {
-  /** The board node key (`part-<planIndex>`). */
+  /** The board node key (`level-<N>`). */
   nodeKey: string;
-  planIndex: number;
+  /** The LEVEL this staged rewrite is for (1..N; the premise is not a part). */
+  level: number;
   /** The text the part had before the rewrite — "Show previous" reads this. */
   oldMarkdown: string;
   /**
@@ -56,7 +57,7 @@ interface StagedRewritesState {
   byNodeKey: Record<string, StagedRewrite>;
   stageProposal: (input: {
     nodeKey: string;
-    planIndex: number;
+    level: number;
     oldMarkdown: string;
     oldOrigin: TextOrigin | null;
     oldWriterModel: string;
@@ -70,13 +71,13 @@ interface StagedRewritesState {
 
 export const useStagedRewritesStore = create<StagedRewritesState>((set) => ({
   byNodeKey: {},
-  stageProposal: ({ nodeKey, planIndex, oldMarkdown, oldOrigin, oldWriterModel }) => {
+  stageProposal: ({ nodeKey, level, oldMarkdown, oldOrigin, oldWriterModel }) => {
     set((state) => ({
       byNodeKey: {
         ...state.byNodeKey,
         [nodeKey]: {
           nodeKey,
-          planIndex,
+          level,
           oldMarkdown,
           oldOrigin,
           oldWriterModel,

@@ -652,9 +652,13 @@ not the current schema.
 
 No version bump for the whole-module canvas (canvas arc): the module row
 gains `canvas` — `{ nodes: { key, x, y }[], zoom, pan: { x, y } } | null`,
-additive `.default(null)` with parse-on-read (same precedent). Node keys are
-STABLE: `'premise'`, `'part-<planIndex>'` (planIndex is IDENTITY — never
-renumbered) and `'prior-<moduleId>'`. The layout rides `patchModule`
+additive `.default(null)` with parse-on-read (same precedent). The STORED node
+keys are STABLE and FROZEN (docs/17 row 388): `'premise'`,
+`'part-<planIndex>'` (level − 1) and `'prior-<moduleId>'` — the BOARD addresses
+LEVELS (`'level-<N>'`, the premise at 0) and `domain/moduleDocument`'s
+`storedCanvasNodeKeyForLevel`/`levelForStoredCanvasNodeKey` map the two at the
+board's read/write boundary, so rows written before the level keying keep
+reading and re-writing byte-identically. The layout rides `patchModule`
 (backup/export follow); there is no localStorage copy and no new table.
 
 ## Repository layer

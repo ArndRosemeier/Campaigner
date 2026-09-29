@@ -33,12 +33,16 @@ export interface PremiseCardSlice {
 }
 
 /**
- * JOIN of `spine.partPlan[planIndex]` (title/band) × `parts[planIndex]`
- * (body/status/edited) — the card renders the same JOIN the reader does.
+ * JOIN of the level's PLAN entry × its part run state — the card renders the
+ * same JOIN the reader does, addressed by LEVEL (docs/23 §2.1, docs/17 row
+ * 388): `spine.partPlan[level − 1]` (title/band) × `parts[level − 1]`
+ * (body/status/edited). Level 0 (the premise) is NOT a part and never appears
+ * in `BoardContent.parts`; its own card is `PremiseCardSlice`.
  */
 export interface PartCardSlice {
   moduleId: Id;
-  planIndex: number;
+  /** The level this card IS (1..N; the premise is level 0 and is not a part). */
+  level: number;
   /** From the PLAN — H1 is never stored in markdown; the card renders it. */
   title: string;
   levelBand: string;
@@ -57,7 +61,7 @@ export interface PartCardSlice {
   origin: TextOrigin | null;
 }
 
-/** One prior module's read-only text group (premise + parts, TEXT ONLY). */
+/** One prior module's read-only text group (premise + levels, TEXT ONLY). */
 export interface PriorCardSlice {
   /** The prior module's OWN tier-0 context for its wiki chips. */
   moduleId: Id;
@@ -65,13 +69,13 @@ export interface PriorCardSlice {
   levelMin: number;
   levelMax: number;
   premise: string;
-  parts: { planIndex: number; title: string; markdown: string }[];
+  parts: { level: number; title: string; markdown: string }[];
 }
 
 export interface BoardContent {
   /** null = the module has no spine yet (the board has nothing to render). */
   premise: PremiseCardSlice | null;
-  /** Keyed by the stable board node key (`part-<planIndex>`). */
+  /** Keyed by the board's level node key (`level-<N>`), levels 1..N only. */
   parts: Record<string, PartCardSlice>;
   /** Keyed by `prior-<moduleId>`. */
   priors: Record<string, PriorCardSlice>;
@@ -188,7 +192,7 @@ function premiseEquals(
 function partEquals(a: PartCardSlice, b: PartCardSlice): boolean {
   return (
     a.moduleId === b.moduleId &&
-    a.planIndex === b.planIndex &&
+    a.level === b.level &&
     a.title === b.title &&
     a.levelBand === b.levelBand &&
     a.status === b.status &&
@@ -214,7 +218,7 @@ function priorEquals(a: PriorCardSlice, b: PriorCardSlice): boolean {
     const partB = b.parts[index];
     if (partB === undefined) return false;
     return (
-      partA.planIndex === partB.planIndex &&
+      partA.level === partB.level &&
       partA.title === partB.title &&
       partA.markdown === partB.markdown
     );

@@ -62,6 +62,28 @@ phase 3's larger half (the chat authoring from NOTHING with no parts preconditio
 started; the generation dialog (phase 4) is untouched too.
 **BUILD STATE (2026-09-28, docs/17 row 386). PHASE 1d LANDED — THE LEGACY FORMAT IS DELETED; ONE FORMAT REMAINS.** The last two callers of the `==========` parts document are gone: the PDF lanes read each level through `domain/moduleDocument.moduleDocumentSectionsFromView(view)` (the view's own document parsed by the ONE parser, so the reader, the canvas and the PDF name a level identically), the reader renders that same derived level list instead of mapping `spine.partPlan`, and `domain/modulePartsDocument.ts` + its re-export + its pins are DELETED. `CampaignExport.modules` now carries the STORED `ModuleRow` (the ONE `document` + the generator's metadata) and `EXPORT_FORMAT_VERSION` moved 3 → 4, so an export→import round trip preserves the document BYTE-IDENTICALLY; the backup already carried the row verbatim and is pinned to keep doing so. **THE PROOF IS A SOURCE SCAN:** `tests/architecture/one-module-document-format.test.ts` requires `modulePartsDocument`, `CANVAS_PARTS_DELIMITER`, `canvasPartLabel`, `splitPartsDocument` and `assembleModulePartsDocument` to appear NOWHERE under `src/` or `tests/` (the pin file is the one named carrier, so the detector is proven non-vacuous). **NO GOLDEN MOVED** — the PDF's rendered bytes are identical, so `pdfLayoutBaseline.json` was NOT regenerated and its "loses not one text run" assertion still binds; the only deliberate format move is the export version literal. **THE DERIVED `spine`/`parts` VIEW ITSELF STAYS** (the generator and the module board still read it — phases 1f/1e), and the premise-twice debt in the version row stands (docs/18 §5). The owed links-hook pin is row 387: `tests/features/canvas-document-promotion.test.ts` drives the REAL save seam (no mock of `promoteSecondModuleUses`) and proves a changed level's new link promotes the other module's artifact, an unchanged level's does not, and nothing moves when nothing changed.
 
+**BUILD STATE (2026-09-28, docs/17 row 388). PHASE 1e LANDED — THE MODULE BOARD IS KEYED BY LEVEL, AND THE
+ROW'S STORED SPELLING IS FROZEN BEHIND ONE BOUNDARY.** The board was the last surface still ADDRESSING its cards
+by `planIndex`; it now addresses LEVELS — level N as `level-<N>`, the premise as `level-0` — through ONE grammar
+(`domain/moduleDocument.boardLevelNodeKey`/`levelFromBoardNodeKey`) beside the ONE level↔planIndex conversion.
+**THE SLICE'S FIRST DELIVERABLE WAS THE MEASUREMENT, and it is what made the decision decidable:** every
+per-`planIndex` key was inventoried, and the board's ONLY STORED one is the module row's `canvas` field
+(`domain/module.ts:1154`), whose node keys an existing board spells `'premise'` / `part-<planIndex>`. Those bytes
+are **FROZEN** — `storedCanvasNodeKeyForLevel`/`levelForStoredCanvasNodeKey` are their exact INVERSE, applied at
+the board's read boundary (`boardLayout.resolveBoardNodePositions`) and its write boundary
+(`BoardPage.persistLayout`), so an existing arranged layout reads exactly as it was left and round-trips
+byte-identically: **no converter, no `version` bump, no format change** (migrating those bytes to `level-<N>`
+would be a clean-cut format change for the owner to ratify, not an agent call — it was NOT taken). **LEVEL 0 IS
+DECIDED AND PINNED:** the premise IS a board card at level 0 and is DELIBERATELY NOT A PART — the `parts` record,
+the per-part rewrite flow and the staged rewrites hold levels 1..N only, the same boundary the old model
+expressed as `planIndex −1`. The still-`planIndex` seams the board reaches (the derived `spine`/`parts` view, the
+engine's `planIndexes` + `part-token` events, the ONE part-text save) are converted at the call through the ONE
+pair — a third mapping exists nowhere. The OTHER per-`planIndex` keys the tree still carries
+(`entityRewriteProposals[].planIndex`, the chat outcomes' `targetParts[].planIndex`, the stored
+`documentPlan`'s `source.planIndex`, the `levelPlans`/`levelStates` array positions, the tree-wide mention
+convention and the canvas `?part=` scroll address) are INVENTORIED and NAMED as their own slices
+(docs/18 §5), never re-keyed here.
+
 **THE TWO COSTS OF THIS MODEL, AFTER ROW 383 (`docs/18` §5, `.gate-logs/row382-blocked.md`).** (1) **A part
 does not cover a level RANGE:** `levelBand` is the section's own number, so a module's sections ascend from
 1 and "this part covers levels 2–3" is expressed as TWO sections — the 16 behaviour pins that asserted the

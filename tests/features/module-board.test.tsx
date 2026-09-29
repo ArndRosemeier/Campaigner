@@ -8,11 +8,13 @@ import { createAppRouter } from '@/app/router';
 import { boardPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { getModule, saveModule } from '@/db/moduleRepo';
+import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import {
-  CANVAS_PREMISE_NODE_KEY,
-  canvasPartNodeKey,
+  BOARD_PREMISE_NODE_KEY,
+  boardLevelNodeKey,
   canvasPriorModuleNodeKey,
+  levelFromBoardNodeKey,
+  storedCanvasNodeKeyForLevel,
   createModule,
   modulePartSchema,
   moduleSpineSchema,
@@ -233,11 +235,11 @@ describe('module board substrate', () => {
     expect(premiseCard).toHaveTextContent(MODULE_TITLE);
     expect(screen.getByTestId('board-premise-body')).toHaveTextContent('drowned relic');
 
-    const part0 = screen.getByTestId('board-part-0');
-    expect(part0).toHaveTextContent('Part 1 plan');
-    expect(part0).toHaveTextContent('Levels 1');
-    expect(within(part0).getByTestId('board-part-body')).toHaveTextContent('Keeper Ilse');
-    expect(screen.getByTestId('board-part-1')).toHaveTextContent('Part 2 plan');
+    const part1 = screen.getByTestId('board-part-1');
+    expect(part1).toHaveTextContent('Part 1 plan');
+    expect(part1).toHaveTextContent('Levels 1');
+    expect(within(part1).getByTestId('board-part-body')).toHaveTextContent('Keeper Ilse');
+    expect(screen.getByTestId('board-part-2')).toHaveTextContent('Part 2 plan');
 
     // Prior groups: ASC by createdAt — A (1000) before B (2000) in the DOM.
     const priorA = screen.getByTestId(`board-prior-${world.priorAId}`);
@@ -287,21 +289,21 @@ describe('module board substrate', () => {
 
     await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     expect(screen.getByTestId('board-premise-card')).toHaveAttribute('data-lod', 'full');
-    expect(screen.getByTestId('board-part-0')).toHaveAttribute('data-lod', 'full');
-    expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-body')).toBeInTheDocument();
+    expect(screen.getByTestId('board-part-1')).toHaveAttribute('data-lod', 'full');
+    expect(within(screen.getByTestId('board-part-1')).getByTestId('board-part-body')).toBeInTheDocument();
 
     actSetZoom(0.4);
     expect(screen.getByTestId('board-premise-card')).toHaveAttribute('data-lod', 'skeleton');
-    expect(screen.getByTestId('board-part-0')).toHaveAttribute('data-lod', 'skeleton');
+    expect(screen.getByTestId('board-part-1')).toHaveAttribute('data-lod', 'skeleton');
     expect(screen.queryByTestId('board-part-body')).not.toBeInTheDocument();
     // The skeleton keeps title/band/status.
-    expect(screen.getByTestId('board-part-0')).toHaveTextContent('Part 1 plan');
+    expect(screen.getByTestId('board-part-1')).toHaveTextContent('Part 1 plan');
 
     actSetZoom(1);
-    expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-body')).toBeInTheDocument();
+    expect(within(screen.getByTestId('board-part-1')).getByTestId('board-part-body')).toBeInTheDocument();
   });
 
-  it('uses the stable node keys (premise, part-<planIndex>, prior-<moduleId>)', async () => {
+  it('uses the stable node keys (level-<N>, the premise at level 0, prior-<moduleId>)', async () => {
     const world = await seedBoardWorld();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
 
@@ -309,11 +311,54 @@ describe('module board substrate', () => {
     const nodeIds = [...document.querySelectorAll('.react-flow__node')].map(
       (element) => element.getAttribute('data-id'),
     );
-    expect(nodeIds).toContain(CANVAS_PREMISE_NODE_KEY);
-    expect(nodeIds).toContain(canvasPartNodeKey(0));
-    expect(nodeIds).toContain(canvasPartNodeKey(1));
+    expect(nodeIds).toContain(BOARD_PREMISE_NODE_KEY);
+    expect(nodeIds).toContain(boardLevelNodeKey(1));
+    expect(nodeIds).toContain(boardLevelNodeKey(2));
     expect(nodeIds).toContain(canvasPriorModuleNodeKey(world.priorAId));
     expect(nodeIds).toContain(canvasPriorModuleNodeKey(world.priorBId));
+  });
+
+  it('keys the board by LEVEL, and keeps level 0 OUT of the parts (the premise is a card)', async () => {
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
+    const content = useBoardStore.getState().content;
+    // The premise IS on the board — at level 0, its own card.
+    expect(content.premise).not.toBeNull();
+    expect(levelFromBoardNodeKey(BOARD_PREMISE_NODE_KEY)).toBe(0);
+    // …and it is DELIBERATELY not a part: the parts record holds levels 1..N
+    // only, so nothing iterating the module's parts ever meets the premise.
+    expect(Object.keys(content.parts).sort()).toEqual([
+      boardLevelNodeKey(1),
+      boardLevelNodeKey(2),
+    ]);
+    expect(Object.keys(content.parts)).not.toContain(BOARD_PREMISE_NODE_KEY);
+  });
+
+  it('READS an existing board: the row’s STORED spelling lands on the level keys', async () => {
+    const world = await seedBoardWorld();
+    // A board as the PRE-388 app persisted it (`'premise'` / `part-<planIndex>`),
+    // with level 1 arranged at a known spot.
+    await patchModule(world.moduleId, {
+      canvas: {
+        nodes: [
+          { key: storedCanvasNodeKeyForLevel(0), x: 600, y: 80 },
+          { key: storedCanvasNodeKeyForLevel(1), x: 123, y: 456 },
+        ],
+        zoom: 1,
+        pan: { x: 0, y: 0 },
+      },
+    });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
+    const node = document.querySelector<HTMLElement>('.react-flow__node[data-id="level-1"]');
+    expect(node).not.toBeNull();
+    // The persisted position really is the one rendered — the read boundary
+    // translated `part-0` to `level-1`, not a seed.
+    expect(node?.style.transform).toContain('123px');
+    expect(node?.style.transform).toContain('456px');
   });
 
   it('round-trips the layout through patchModule (drags persist, reload honors the row)', async () => {
@@ -321,10 +366,10 @@ describe('module board substrate', () => {
     const view = renderAppAt(boardPath(world.campaignId, world.moduleId));
     await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
 
-    // Drag part-0 by (+80, +40) — React Flow owns the gesture (d3-drag on
+    // Drag level 1 by (+80, +40) — React Flow owns the gesture (d3-drag on
     // the node wrapper); the debounced persist lands through patchModule.
-    const nodeElement = document.querySelector('.react-flow__node[data-id="part-0"]');
-    if (nodeElement === null) throw new Error('part-0 node element not found');
+    const nodeElement = document.querySelector('.react-flow__node[data-id="level-1"]');
+    if (nodeElement === null) throw new Error('level-1 node element not found');
     act(() => {
       dragNode(nodeElement, { x: 100, y: 100 }, { x: 180, y: 140 });
     });
@@ -335,8 +380,11 @@ describe('module board substrate', () => {
         const row = await getModule(world.moduleId);
         if (row === undefined) throw new Error('module row vanished');
         if (row.canvas === null) throw new Error('board layout not persisted yet');
-        const part0 = row.canvas.nodes.find((node) => node.key === canvasPartNodeKey(0));
-        if (part0 === undefined) throw new Error('part-0 position not persisted yet');
+        // The row keeps its FROZEN stored spelling (docs/17 row 388): the
+        // board's `level-1` is persisted as `part-0`, byte-identically to what
+        // a pre-388 board held.
+        const part0 = row.canvas.nodes.find((node) => node.key === storedCanvasNodeKeyForLevel(1));
+        if (part0 === undefined) throw new Error('the level-1 position was not persisted yet');
         // Seed x (spine column) + 80px drag, y (row 1) + 40px drag.
         expect(part0.x).toBeGreaterThan(500);
         expect(part0.y).toBeGreaterThan(500);
@@ -351,7 +399,7 @@ describe('module board substrate', () => {
     await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     const persisted = await getModule(world.moduleId);
     expect(persisted?.canvas?.zoom).toBeTypeOf('number');
-    const nodeElement2 = document.querySelector<HTMLElement>('.react-flow__node[data-id="part-0"]');
+    const nodeElement2 = document.querySelector<HTMLElement>('.react-flow__node[data-id="level-1"]');
     expect(nodeElement2).not.toBeNull();
     expect(nodeElement2?.style.transform).toContain('translate');
   });
@@ -375,21 +423,24 @@ describe('module board substrate', () => {
 
 describe('board layout seeds', () => {
   it('seeds deterministic positions and lets persisted positions win', () => {
-    const seeds = seedBoardNodePositions({ planCount: 2, priorModuleIds: ['a', 'b'] });
-    expect(seeds[CANVAS_PREMISE_NODE_KEY]).toBeDefined();
-    expect(seeds[canvasPartNodeKey(0)]).toBeDefined();
+    const seeds = seedBoardNodePositions({ levelCount: 2, priorModuleIds: ['a', 'b'] });
+    expect(seeds[BOARD_PREMISE_NODE_KEY]).toBeDefined();
+    expect(seeds[boardLevelNodeKey(1)]).toBeDefined();
     expect(seeds[canvasPriorModuleNodeKey('b')]).toBeDefined();
     // Prior column sits left of the current spine.
     const priorSeedX = seeds[canvasPriorModuleNodeKey('a')]?.x ?? 0;
-    const premiseSeedX = seeds[CANVAS_PREMISE_NODE_KEY]?.x ?? 0;
+    const premiseSeedX = seeds[BOARD_PREMISE_NODE_KEY]?.x ?? 0;
     expect(priorSeedX).toBeLessThan(premiseSeedX);
 
+    // A row written BEFORE this slice carries the frozen stored spelling, and
+    // the read boundary still lands it on the board's level key — this is the
+    // "an existing board still reads correctly" half of the round trip.
     const persisted = resolveBoardNodePositions(
-      [{ key: canvasPartNodeKey(1), x: -50, y: 700 }],
+      [{ key: storedCanvasNodeKeyForLevel(2), x: -50, y: 700 }],
       seeds,
     );
-    expect(persisted[canvasPartNodeKey(1)]).toEqual({ x: -50, y: 700 });
-    expect(persisted[canvasPartNodeKey(0)]).toEqual(seeds[canvasPartNodeKey(0)]);
+    expect(persisted[boardLevelNodeKey(2)]).toEqual({ x: -50, y: 700 });
+    expect(persisted[boardLevelNodeKey(1)]).toEqual(seeds[boardLevelNodeKey(1)]);
   });
 });
 
@@ -431,9 +482,9 @@ describe('deriveContinuityEdges', () => {
     expect(truncated).toBe(0);
     const sources = edges.map((edge) => edge.source);
     expect(sources).toContain(canvasPriorModuleNodeKey('m-prior'));
-    expect(edges.every((edge) => edge.target.startsWith('part-') || edge.target === CANVAS_PREMISE_NODE_KEY)).toBe(
-      true,
-    );
+    expect(
+      edges.every((edge) => edge.target.startsWith('level-') || edge.target === BOARD_PREMISE_NODE_KEY),
+    ).toBe(true);
 
     // Cap: edges merge per (prior group, current doc) pair, so the cap
     // truncates across PAIRS — 7 priors × 2 current docs = 14 pairs.

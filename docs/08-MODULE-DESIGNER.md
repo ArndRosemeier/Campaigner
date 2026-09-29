@@ -1963,10 +1963,23 @@ own group.
   plain buttons only, scrollable bodies carry `nowheel`, and nothing on the
   board arms a second pointer-gesture path (the battle gesture machine is
   battle-board-scoped; the module board never touches it).
-- **Node keys are STABLE**: `'premise'`, `'part-<planIndex>'` — planIndex is
-  IDENTITY (never renumbered; the encounter floor's band allocation and the
-  canvas↔module seam depend on it) — and `'prior-<moduleId>'`. One parse site:
-  `planIndexFromCanvasNodeKey` (`src/domain/module.ts`).
+- **Node keys are LEVELS, and the row's stored spelling is FROZEN** (docs/17 row
+  388). The board addresses a card by its LEVEL: `boardLevelNodeKey(level)` is
+  `'level-<N>'` (level 0 IS the premise — `BOARD_PREMISE_NODE_KEY`), parsed by
+  `levelFromBoardNodeKey`; `'prior-<moduleId>'` (a prior group, in
+  `src/domain/module.ts`) is not a level. The module row's `canvas` field keeps
+  the spelling existing rows already hold — `'premise'` / `'part-<planIndex>'`
+  — and ONE pair in `src/domain/moduleDocument.ts`
+  (`storedCanvasNodeKeyForLevel` / `levelForStoredCanvasNodeKey`, built on the
+  ONE `planIndexForLevel`/`levelForPlanIndex`) translates between the two at the
+  board's read (`boardLayout.resolveBoardNodePositions`) and write
+  (`BoardPage.persistLayout`) boundaries, so an existing arranged board reads
+  exactly as it was left and its bytes round-trip UNCHANGED (no `version` bump).
+  Level 0 is present as the premise CARD and deliberately NOT a part: the
+  `parts` slices, the per-part rewrite and the staging hold levels 1..N only.
+  The board's own rewrite/engine seams that still speak `planIndex` (`runParts`'
+  `planIndexes`, the `part-token` event, the ONE part-text save) are converted at
+  the call through the SAME pair — never a third mapping.
 - **Layout persistence**: the module row's `canvas` field (`nodes/zoom/pan`,
   additive nullable — docs/01) holds dragged positions and the viewport;
   writes go through `patchModule` debounced at 600ms (one rw transaction;

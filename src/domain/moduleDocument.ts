@@ -673,6 +673,108 @@ export function levelForPlanIndex(planIndex: number): number {
 }
 
 /**
+ * ============================================================================
+ * THE BOARD'S NODE KEYS ARE LEVELS (docs/23 §2.1, docs/17 row 388).
+ *
+ * The module board is the last surface that ADDRESSED its cards by `planIndex`
+ * — `part-<planIndex>` node keys, planIndex-keyed slices, a planIndex-keyed
+ * rewrite target and staging record. A level IS its own number (docs/23 §2.1:
+ * level N is addressed as N, the premise is level 0), so the board now speaks
+ * LEVELS and nothing else: `boardLevelNodeKey(level)` is the ONE board-key
+ * grammar, and level 0 — the premise — IS a board card.
+ *
+ * WHAT LEVEL 0 MEANS FOR THE BOARD, STATED RATHER THAN IMPLIED. The premise is
+ * PRESENT as its own card at level 0 (`BOARD_PREMISE_NODE_KEY`) and
+ * DELIBERATELY ABSENT from everything that iterates the board's PARTS: the
+ * `parts` content record, the per-part rewrite flow and the staged rewrites
+ * hold levels 1..N only. The premise is a level of the document, not a part of
+ * the module (docs/23 §4) — the previous model expressed the same boundary as
+ * `planIndex −1`, a premise with no part row.
+ *
+ * THE STORED SPELLING IS FROZEN, AND THAT IS WHY THIS IS NOT A SHAPE CHANGE.
+ * The module row's `canvas` field persists node keys (`moduleCanvasSchema`) and
+ * an existing board's bytes spell them `'premise'` / `part-<planIndex>` — the
+ * pre-document keying. This slice does NOT migrate those bytes (no `version`
+ * bump, no loss of an arranged layout): `storedCanvasNodeKeyForLevel(level)`
+ * writes the frozen spelling and `levelForStoredCanvasNodeKey(key)` reads it,
+ * so ONE mapping at the board's read/write boundary
+ * (`boardLayout.resolveBoardNodePositions` on read, `BoardPage.persistLayout`
+ * on write) translates between the two, and the persisted bytes of an existing
+ * board round-trip BYTE-IDENTICALLY. `'prior-<moduleId>'` keys are the same on
+ * both sides and pass through untouched — a prior module is not a level.
+ *
+ * The boundary reuses the ONE level↔planIndex conversion above, so the
+ * storage spelling's `planIndex` is never a second mapping: `planIndexForLevel`
+ * / `levelForPlanIndex` are the definition and the only arithmetic here.
+ * ============================================================================
+ */
+
+/** The board's node key for one LEVEL — `level-<N>`, level 0 included (the
+ * premise). The board's ONE key grammar; never a `planIndex` spelling. */
+export function boardLevelNodeKey(level: number): string {
+  if (!Number.isInteger(level) || level < MODULE_PREMISE_LEVEL) {
+    throw new Error(
+      `boardLevelNodeKey needs a whole level >= ${String(MODULE_PREMISE_LEVEL)}, got ${String(level)}`,
+    );
+  }
+  return `level-${String(level)}`;
+}
+
+/** The LEVEL a board node key names, or null for every other key (a prior
+ * module's group). Level 0 is legal and IS the premise. */
+export function levelFromBoardNodeKey(key: string): number | null {
+  const match = BOARD_LEVEL_NODE_KEY_PATTERN.exec(key);
+  if (match === null) return null;
+  const level = Number(match[1]);
+  return Number.isInteger(level) ? level : null;
+}
+
+/** The board's key grammar, spelled once: `level-<N>`. */
+const BOARD_LEVEL_NODE_KEY_PATTERN = /^level-(\d+)$/;
+
+/** The board's PREMISE card key — level 0, the one level with no separator. */
+export const BOARD_PREMISE_NODE_KEY = boardLevelNodeKey(MODULE_PREMISE_LEVEL);
+
+/** The STORED canvas spelling of the premise node (frozen: see above). */
+const STORED_CANVAS_PREMISE_NODE_KEY = 'premise';
+
+/** The STORED canvas spelling of a level section's node (frozen: the
+ * pre-document keying, level − 1). */
+const STORED_CANVAS_PART_NODE_KEY_PATTERN = /^part-(\d+)$/;
+
+/**
+ * The key the module row's `canvas` field PERSISTS for one level — the frozen
+ * storage spelling, `'premise'` for level 0 and `part-<planIndex>` (level − 1)
+ * for a section. Writes go through here so the row's bytes are unchanged by
+ * this slice and an existing arranged layout keeps reading.
+ */
+export function storedCanvasNodeKeyForLevel(level: number): string {
+  if (level === MODULE_PREMISE_LEVEL) return STORED_CANVAS_PREMISE_NODE_KEY;
+  // A level section's stored spelling IS its planIndex (level − 1), through
+  // the ONE conversion; a level below 0 names nothing and is a caller bug.
+  const planIndex = planIndexForLevel(level);
+  if (!Number.isInteger(planIndex) || planIndex < 0) {
+    throw new Error(
+      `storedCanvasNodeKeyForLevel needs a whole level >= ${String(MODULE_PREMISE_LEVEL)}, got ${String(level)}`,
+    );
+  }
+  return `part-${String(planIndex)}`;
+}
+
+/**
+ * The LEVEL a STORED canvas key addresses, or null for every other persisted
+ * key (a prior module's group, or a stale key the row still carries — inert,
+ * exactly as before). `'premise'` is level 0.
+ */
+export function levelForStoredCanvasNodeKey(key: string): number | null {
+  if (key === STORED_CANVAS_PREMISE_NODE_KEY) return MODULE_PREMISE_LEVEL;
+  const match = STORED_CANVAS_PART_NODE_KEY_PATTERN.exec(key);
+  if (match === null) return null;
+  const planIndex = Number(match[1]);
+  return Number.isInteger(planIndex) ? levelForPlanIndex(planIndex) : null;
+}
+
+/**
  * The module VIEW's ONE document text (docs/23 §2–§4): level 0 is the
  * premise, `parts[planIndex]` is level section `planIndex + 1`, and the level
  * count is the larger of the plan's and the parts' (a pass-0 plan authored

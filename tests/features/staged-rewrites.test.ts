@@ -25,17 +25,17 @@ describe('staged rewrite lifecycle', () => {
   it('proposes with old text, streams ghost, completes with the new text', () => {
     const store = useStagedRewritesStore.getState();
     store.stageProposal({
-      nodeKey: 'part-0',
-      planIndex: 0,
+      nodeKey: 'level-1',
+      level: 1,
       oldMarkdown: 'OLD TEXT',
       oldOrigin: 'model',
       oldWriterModel: 'staged/board-model',
     });
 
-    let entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
+    let entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-1');
     expect(entry).toMatchObject({
-      nodeKey: 'part-0',
-      planIndex: 0,
+      nodeKey: 'level-1',
+      level: 1,
       oldMarkdown: 'OLD TEXT',
       newMarkdown: '',
       ghost: '',
@@ -48,56 +48,56 @@ describe('staged rewrite lifecycle', () => {
     expect(entry?.oldOrigin).toBe('model');
     expect(entry?.oldWriterModel).toBe('staged/board-model');
 
-    store.appendGhost('part-0', 'NEW ');
-    store.appendGhost('part-0', 'TEXT');
-    entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
+    store.appendGhost('level-1', 'NEW ');
+    store.appendGhost('level-1', 'TEXT');
+    entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-1');
     expect(entry?.ghost).toBe('NEW TEXT');
     expect(entry?.status).toBe('proposed');
 
-    store.finishProposal('part-0', 'NEW TEXT COMPLETE');
-    entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
+    store.finishProposal('level-1', 'NEW TEXT COMPLETE');
+    entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-1');
     expect(entry).toMatchObject({ newMarkdown: 'NEW TEXT COMPLETE', ghost: '', status: 'proposed' });
   });
 
   it('apply marks applied, then the landing drops the entry; a failed apply reverts', () => {
     const store = useStagedRewritesStore.getState();
     store.stageProposal({
-      nodeKey: 'part-1',
-      planIndex: 1,
+      nodeKey: 'level-2',
+      level: 2,
       oldMarkdown: 'OLD',
       oldOrigin: 'human',
       oldWriterModel: 'staged/earlier-model',
     });
-    store.finishProposal('part-1', 'NEW');
+    store.finishProposal('level-2', 'NEW');
 
-    store.markApplied('part-1');
-    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-1')?.status).toBe(
+    store.markApplied('level-2');
+    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-2')?.status).toBe(
       'applied',
     );
 
     // The save failed: the decision did not land — back to proposed.
-    store.revertToProposed('part-1');
-    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-1')?.status).toBe(
+    store.revertToProposed('level-2');
+    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-2')?.status).toBe(
       'proposed',
     );
 
-    store.markApplied('part-1');
-    store.drop('part-1');
-    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-1')).toBeUndefined();
+    store.markApplied('level-2');
+    store.drop('level-2');
+    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-2')).toBeUndefined();
   });
 
   it('discard drops the staging outright', () => {
     const store = useStagedRewritesStore.getState();
     store.stageProposal({
-      nodeKey: 'part-2',
-      planIndex: 2,
+      nodeKey: 'level-3',
+      level: 3,
       oldMarkdown: 'OLD',
       oldOrigin: null,
       oldWriterModel: '',
     });
-    store.finishProposal('part-2', 'NEW');
-    store.drop('part-2');
-    expect(useStagedRewritesStore.getState().byNodeKey['part-2']).toBeUndefined();
+    store.finishProposal('level-3', 'NEW');
+    store.drop('level-3');
+    expect(useStagedRewritesStore.getState().byNodeKey['level-3']).toBeUndefined();
   });
 
   it('ignores operations for unknown node keys and re-proposal overwrites', () => {
@@ -110,26 +110,26 @@ describe('staged rewrite lifecycle', () => {
     expect(useStagedRewritesStore.getState().byNodeKey).toEqual({});
 
     store.stageProposal({
-      nodeKey: 'part-0',
-      planIndex: 0,
+      nodeKey: 'level-1',
+      level: 1,
       oldMarkdown: 'FIRST',
       oldOrigin: 'model',
       oldWriterModel: 'staged/first-model',
     });
     store.stageProposal({
-      nodeKey: 'part-0',
-      planIndex: 0,
+      nodeKey: 'level-1',
+      level: 1,
       oldMarkdown: 'SECOND',
       oldOrigin: 'human',
       oldWriterModel: '',
     });
-    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0')?.oldMarkdown).toBe(
+    expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-1')?.oldMarkdown).toBe(
       'SECOND',
     );
     // The authorship follows the text it describes: the second proposal
     // replaced the first entry whole (text AND its captured origin), so a
     // Discard restores what the SECOND rewrite actually replaced.
-    const second = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
+    const second = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'level-1');
     expect(second?.oldOrigin).toBe('human');
     expect(second?.oldWriterModel).toBe('');
   });
@@ -137,15 +137,15 @@ describe('staged rewrite lifecycle', () => {
   it('is session-only: nothing reaches localStorage', () => {
     const store = useStagedRewritesStore.getState();
     store.stageProposal({
-      nodeKey: 'part-0',
-      planIndex: 0,
+      nodeKey: 'level-1',
+      level: 1,
       oldMarkdown: 'OLD',
       oldOrigin: null,
       oldWriterModel: '',
     });
-    store.appendGhost('part-0', 'streaming text');
-    store.finishProposal('part-0', 'NEW');
-    store.markApplied('part-0');
+    store.appendGhost('level-1', 'streaming text');
+    store.finishProposal('level-1', 'NEW');
+    store.markApplied('level-1');
     expect(localStorage.length).toBe(0);
   });
 });

@@ -15,10 +15,10 @@ import { boardPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import {
-  canvasPartNodeKey,
   createModule,
   modulePartSchema,
   moduleSpineSchema,
+  storedCanvasNodeKeyForLevel,
   type Id,
   type Module,
 } from '@/domain';
@@ -97,7 +97,9 @@ const realPatchModule = patchModuleMock.getMockImplementation();
 const toastErrorMock = vi.mocked(toast.error);
 
 const MODULE_TITLE = 'The Drowned Vault';
-const PART_0_KEY = canvasPartNodeKey(0);
+// The row's FROZEN stored spelling of board level 1 (docs/17 row 388): the
+// board addresses `level-1`, and this is what the module row persists.
+const LEVEL_1_STORED_KEY = storedCanvasNodeKeyForLevel(1);
 const DEBOUNCE_MS = BOARD_PERSIST_DEBOUNCE_MS;
 
 /** What a `patchModule` call wrote to the layout, once the row has it. */
@@ -106,10 +108,10 @@ async function persistedCanvas(moduleId: Id) {
   return row?.canvas ?? null;
 }
 
-async function persistedPart0(moduleId: Id): Promise<{ x: number; y: number }> {
+async function persistedLevel1(moduleId: Id): Promise<{ x: number; y: number }> {
   const canvas = await persistedCanvas(moduleId);
-  const node = canvas?.nodes.find((entry) => entry.key === PART_0_KEY);
-  if (node === undefined) throw new Error('part-0 position not persisted yet');
+  const node = canvas?.nodes.find((entry) => entry.key === LEVEL_1_STORED_KEY);
+  if (node === undefined) throw new Error('the level-1 position was not persisted yet');
   return { x: node.x, y: node.y };
 }
 
@@ -173,10 +175,10 @@ function showDocument(): void {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
 }
 
-/** Mounts the board and drags part-0, leaving the write inside the debounce. */
+/** Mounts the board and drags level 1, leaving the write inside the debounce. */
 async function mountBoardAndDrag(world: World): Promise<ReturnType<typeof render>> {
   const view = await mountBoard(world);
-  await dragPart0();
+  await dragLevel1();
   // Genuinely INSIDE the window: nothing has been issued yet.
   expect(patchModuleMock).not.toHaveBeenCalled();
   return view;
@@ -292,7 +294,7 @@ describe('a pending board layout write lands when the page goes away', () => {
     // own guarantee, and it keeps the reads outside the act window the
     // console guard watches (docs/08-TESTING.md §Console guard).
     await waitFor(async () => {
-      const position = await persistedPart0(world.moduleId);
+      const position = await persistedLevel1(world.moduleId);
       expect(position.x).toBeGreaterThan(500);
       expect(position.y).toBeGreaterThan(500);
     }, WRITE_LANDED);
@@ -314,7 +316,7 @@ describe('a pending board layout write lands when the page goes away', () => {
     expect(patchModuleMock).toHaveBeenCalledTimes(1);
 
     await waitFor(async () => {
-      const position = await persistedPart0(world.moduleId);
+      const position = await persistedLevel1(world.moduleId);
       expect(position.x).toBeGreaterThan(500);
       expect(position.y).toBeGreaterThan(500);
     }, WRITE_LANDED);
@@ -392,7 +394,7 @@ describe('a pending board layout write lands when the page goes away', () => {
     await waitFor(async () => {
       expect(await persistedCanvas(world.moduleId)).not.toBeNull();
     }, WRITE_LANDED);
-    const position = await persistedPart0(world.moduleId);
+    const position = await persistedLevel1(world.moduleId);
     expect(position.x).toBeGreaterThan(500);
     expect(position.y).toBeGreaterThan(500);
   });
@@ -464,7 +466,7 @@ describe('the seam keeps ONE registration list at this third writer', () => {
     await mountBoard(world);
 
     // Writer 1 (the board): a drag inside the debounce window.
-    await dragPart0();
+    await dragLevel1();
     expect(patchModuleMock).not.toHaveBeenCalled();
 
     // Writer 2 (the chat thread): the SAME list, a real queued write through
@@ -567,10 +569,10 @@ function dragNode(
   fake.dispatch('mouseup', up);
 }
 
-/** Drags part-0 by (+80, +40) — the gesture the layout debounce is for. */
-async function dragPart0(): Promise<void> {
-  const nodeElement = document.querySelector('.react-flow__node[data-id="part-0"]');
-  if (nodeElement === null) throw new Error('part-0 node element not found');
+/** Drags board level 1 by (+80, +40) — the gesture the layout debounce is for. */
+async function dragLevel1(): Promise<void> {
+  const nodeElement = document.querySelector('.react-flow__node[data-id="level-1"]');
+  if (nodeElement === null) throw new Error('level-1 node element not found');
   act(() => {
     dragNode(nodeElement, { x: 100, y: 100 }, { x: 180, y: 140 });
   });

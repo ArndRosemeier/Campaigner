@@ -229,19 +229,22 @@ export type ModulePart = z.infer<typeof modulePartSchema>;
 
 /**
  * Canvas v1 (08-MODULE-DESIGNER §Module canvas): the user-arranged layout of
- * the whole-module canvas — one position per node key plus the persisted
+ * the whole-module board — one position per node key plus the persisted
  * viewport. Node keys are STABLE identifiers, never indexes that renumber:
- * `'premise'` and `'part-<planIndex>'` for this module's own cards
- * (`planIndex` is IDENTITY, never a position in a list: every part write and
- * single-part rewrite addresses a part BY it — `moduleRepo.patchModulePartText`
- * and `moduleGen`'s parts pass, whose stream events carry it too — the reader
- * orders and labels parts by it, the encounter floor's per-part bands and its
- * `repairModuleEncounterFloor` repairs are keyed on it, and the canvas's
- * `?part=<planIndex>` scroll target and this node key both spell it),
+ * `'premise'` and `'part-<planIndex>'` for this module's own cards,
  * `'prior-<moduleId>'` for prior-module text groups. The
  * layout rides the module row through `patchModule` (backup/export follow);
  * NO Dexie version, NO localStorage (parse-on-read precedent, additive
  * `.default(null)` like the cover backfill).
+ *
+ * THESE ARE THE STORED (PERSISTED) SPELLINGS AND THEY ARE FROZEN (docs/17 row
+ * 388). The BOARD addresses a card by its LEVEL (`boardLevelNodeKey`, level 0 =
+ * the premise), and ONE boundary translates between the two — read through
+ * `levelFromStoredCanvasNodeKey` (`boardLayout.resolveBoardNodePositions`),
+ * write through `storedCanvasNodeKeyForLevel` (`BoardPage.persistLayout`), both in
+ * `domain/moduleDocument` beside the ONE level↔planIndex conversion. Migrating
+ * these bytes would change the format of every arranged board, so it is NOT
+ * done here: an existing board's keys round-trip byte-identically.
  */
 export const moduleCanvasNodeSchema = z.object({
   key: z.string().min(1),
@@ -259,28 +262,11 @@ export const moduleCanvasSchema = z.object({
 
 export type ModuleCanvas = z.infer<typeof moduleCanvasSchema>;
 
-/** The premise card's stable canvas node key. */
-export const CANVAS_PREMISE_NODE_KEY = 'premise';
-
-/** The stable canvas node key of part `planIndex` (identity, never renumbered). */
-export function canvasPartNodeKey(planIndex: number): string {
-  return `part-${String(planIndex)}`;
-}
-
-/** The stable canvas node key of a prior module's read-only text group. */
+/** The stable node key of a prior module's read-only text group. Not a level:
+ *  a prior module is a text group on the board, and the key is the same on
+ *  both sides of the storage boundary. */
 export function canvasPriorModuleNodeKey(moduleId: string): string {
   return `prior-${moduleId}`;
-}
-
-/**
- * The `planIndex` encoded in a canvas part node key, or null for every other
- * key (`premise`, `prior-…`) — the one parse site for the key format.
- */
-export function planIndexFromCanvasNodeKey(key: string): number | null {
-  const match = /^part-(\d+)$/.exec(key);
-  if (match === null) return null;
-  const index = Number(match[1]);
-  return Number.isInteger(index) ? index : null;
 }
 
 /**

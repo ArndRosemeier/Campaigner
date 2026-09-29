@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { Module } from '@/domain';
+import { planIndexForLevel } from '@/domain';
 import { modulePartWriterLabel } from '@/features/modules/module-problems';
 
 /**
@@ -23,6 +24,11 @@ import { modulePartWriterLabel } from '@/features/modules/module-problems';
  * flag is overridden FOR THIS RUN only — the row is untouched). The prior-
  * modules context itself is the engine's verbatim `priorModulesContext`
  * (caps 4k/8k/24k are load-bearing, 08 §M4-B).
+ *
+ * THE TARGET IS A LEVEL (docs/23 §2.1, docs/17 row 388). The dialog is opened
+ * by a level card and the PLAN/run-state JOINs below are the derived view's
+ * `planIndex` slots — converted through the ONE `planIndexForLevel`, never a
+ * second arithmetic, and never exposed to the caller.
  */
 export function RewritePartDialog({
   module,
@@ -31,14 +37,15 @@ export function RewritePartDialog({
   onClose,
 }: {
   module: Module;
-  /** The part to rewrite: plan index + its stable board node key. */
-  target: { planIndex: number; nodeKey: string };
+  /** The LEVEL to rewrite (1..N) + its board node key. */
+  target: { level: number; nodeKey: string };
   onConfirm: (instruction: string, includePriorModules: boolean) => void;
   onClose: () => void;
 }): JSX.Element {
   const [instruction, setInstruction] = useState('');
   const [includePriorModules, setIncludePriorModules] = useState(module.includePriorModules);
-  const plan = module.spine?.partPlan[target.planIndex];
+  const planIndex = planIndexForLevel(target.level);
+  const plan = module.spine?.partPlan[planIndex];
   return (
     <Dialog
       open
@@ -48,7 +55,7 @@ export function RewritePartDialog({
     >
       <DialogContent data-testid="board-rewrite-dialog">
         <DialogHeader>
-          <DialogTitle>Rewrite part {String(target.planIndex + 1)}</DialogTitle>
+          <DialogTitle>Rewrite part {String(target.level)}</DialogTitle>
           <DialogDescription>
             Regenerating replaces this part's markdown — the new text is staged on the
             card for review before you apply or discard it. Optionally steer the rewrite.
@@ -59,13 +66,13 @@ export function RewritePartDialog({
             {plan.title} · Levels {plan.levelBand}
           </p>
         )}
-        {module.parts.find((part) => part.planIndex === target.planIndex)?.edited === true && (
+        {module.parts.find((part) => part.planIndex === planIndex)?.edited === true && (
           <p
             className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm"
             role="alert"
           >
             {modulePartWriterLabel(
-              module.parts.find((part) => part.planIndex === target.planIndex),
+              module.parts.find((part) => part.planIndex === planIndex),
             )}{' '}
             Outside the generator — the rewrite replaces it.
           </p>

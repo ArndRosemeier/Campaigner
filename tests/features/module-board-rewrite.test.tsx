@@ -160,9 +160,9 @@ describe('board rewrite + staging', () => {
     const user = userEvent.setup();
     mockEngineRun();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    const partCard = await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-1'));
     const dialog = await screen.findByTestId('board-rewrite-dialog');
     await user.type(within(dialog).getByLabelText('Optional instruction'), 'make it rain');
     // The prior-modules toggle defaults to the ROW's flag (false here).
@@ -188,7 +188,7 @@ describe('board rewrite + staging', () => {
     // Streaming ghost preview (rAF-throttled): partial text on the card while
     // the proposal is still being written.
     await waitFor(() => {
-      expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-staged')).toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-1')).getByTestId('board-part-staged')).toBeInTheDocument();
     });
     await waitFor(
       () => {
@@ -230,7 +230,7 @@ describe('board rewrite + staging', () => {
     expect(toastSuccessMock).toHaveBeenCalledWith('Rewrite applied');
     // Staging dropped: the card renders canonical content again.
     await waitFor(() => {
-      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-1')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -254,9 +254,9 @@ describe('board rewrite + staging', () => {
     });
     mockEngineRun();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    const partCard = await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-1'));
     await user.click(await screen.findByTestId('board-rewrite-confirm'));
     await waitFor(() => {
       expect(screen.getByTestId('board-part-discard')).toBeInTheDocument();
@@ -275,7 +275,7 @@ describe('board rewrite + staging', () => {
     // restored text too (it is a part-text write like any other).
     expect(promoteSpy).toHaveBeenCalledWith(world.moduleId, [OLD_TEXT]);
     await waitFor(() => {
-      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-1')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -288,9 +288,9 @@ describe('board rewrite + staging', () => {
     const busyError = new ModuleBusyError(world.moduleId);
     runPartsMock.mockRejectedValue(busyError);
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    const partCard = await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-1'));
     await user.click(await screen.findByTestId('board-rewrite-confirm'));
 
     await waitFor(() => {
@@ -301,7 +301,7 @@ describe('board rewrite + staging', () => {
     });
     // No staging left behind on failure.
     await waitFor(() => {
-      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-1')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -312,9 +312,9 @@ describe('board rewrite + staging', () => {
     await seedModule({ includePriorModules: true });
     mockEngineRun();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    const partCard = await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-1'));
     const dialog = await screen.findByTestId('board-rewrite-dialog');
     expect(within(dialog).getByTestId('board-rewrite-prior-modules')).toHaveAttribute(
       'aria-checked',
@@ -337,8 +337,8 @@ describe('board rewrite + staging', () => {
     const user = userEvent.setup();
     mockEngineRun();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
-    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    const partCard = await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
+    await user.click(within(partCard).getByTestId('board-part-rewrite-1'));
     await user.click(await screen.findByTestId('board-rewrite-confirm'));
     await waitFor(() => {
       expect(screen.getByTestId('board-part-apply')).toBeInTheDocument();
@@ -370,7 +370,7 @@ describe('board rewrite + staging', () => {
     await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
     runPartsMock.mockImplementation(() => new Promise(() => undefined));
     renderAppAt(boardPath(world.campaignId, world.moduleId));
-    await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    await screen.findByTestId('board-part-1', {}, { timeout: 10_000 });
 
     const stop = await screen.findByTestId('board-stop');
     // While busy, rewrite affordances are disabled — AND they state why
@@ -379,7 +379,7 @@ describe('board rewrite + staging', () => {
     // the header panel does not cover it.
     await expectBlockedReason(
       user,
-      'board-part-rewrite-0',
+      'board-part-rewrite-1',
       'The module is generating right now — wait for it (or press Stop).',
     );
     // The reason names a Stop that is really on screen.

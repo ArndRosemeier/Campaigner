@@ -309,7 +309,7 @@ describe('route smoke sweep', () => {
     renderAppAt(boardPath(world.campaignId, world.moduleId));
 
     expect(await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByTestId('board-part-0')).toBeInTheDocument();
+    expect(screen.getByTestId('board-part-1')).toBeInTheDocument();
     // React Flow attribution: rendered by default, never hidden.
     expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
   });

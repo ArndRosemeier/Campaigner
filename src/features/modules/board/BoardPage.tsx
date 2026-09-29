@@ -17,10 +17,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { modulePath } from '@/app/routes';
 import {
-  CANVAS_PREMISE_NODE_KEY,
-  canvasPartNodeKey,
+  BOARD_PREMISE_NODE_KEY,
+  boardLevelNodeKey,
   canvasPriorModuleNodeKey,
-  planIndexFromCanvasNodeKey,
+  levelForPlanIndex,
+  levelFromBoardNodeKey,
+  planIndexForLevel,
+  storedCanvasNodeKeyForLevel,
   type Campaign,
   type Module,
   type ModuleCanvas,
@@ -54,8 +57,8 @@ import { useBoardStore, type PartCardSlice } from '@/features/modules/board/boar
 
 /**
  * Whole-module board (08-MODULE-DESIGNER §Module board): the entire module
- * — premise card + one card per part — on a React Flow board (the module's
- * spatial overview), with every
+ * — premise card (level 0) + one card per LEVEL section — on a React Flow
+ * board (the module's spatial overview), with every
  * prior module of the campaign present as a read-only text group. React Flow
  * owns ALL viewport gestures (pan/zoom/pinch/drag); cards mount plain
  * buttons only. Drags and the viewport persist through the module row's
@@ -64,6 +67,14 @@ import { useBoardStore, type PartCardSlice } from '@/features/modules/board/boar
  * rides backup/export and survives reloads. Continuity edges (prior group →
  * current card sharing a canonical wiki-name) are derived, capped, and the
  * cap is surfaced — never a silent drop.
+ *
+ * THE BOARD ADDRESSES LEVELS (docs/23 §2.1, docs/17 row 388), and this page
+ * owns the WRITE half of the storage boundary: `persistLayout` translates the
+ * board's level keys into the row's frozen stored spelling through the ONE
+ * `storedCanvasNodeKeyForLevel`. The seams that are still planIndex-keyed — the
+ * derived `spine`/`parts` view, `runParts`' subset option and the ONE
+ * part-text save — are reached through the ONE `planIndexForLevel`, at the
+ * call, so no second arithmetic exists between the board and them.
  */
 
 const BOARD_PERSIST_DEBOUNCE_MS = 600;
@@ -108,7 +119,7 @@ export function BoardPage(): JSX.Element {
   }, [artifacts, globalArtifacts, moduleId]);
 
   // --- staged rewrites + rewrite flow -----------------------------------------
-  const [rewriteTarget, setRewriteTarget] = useState<{ planIndex: number; nodeKey: string } | null>(
+  const [rewriteTarget, setRewriteTarget] = useState<{ level: number; nodeKey: string } | null>(
     null,
   );
   /** Ghost buffers: moduleGenEvents part-token deltas land here and flush to
@@ -127,7 +138,9 @@ export function BoardPage(): JSX.Element {
   useEffect(() => {
     return moduleGenEvents.on((event) => {
       if (event.moduleId !== moduleId || event.kind !== 'part-token') return;
-      const nodeKey = canvasPartNodeKey(event.planIndex);
+      // The engine's stream event carries the PLAN index (moduleGen is phase
+      // 1f); the board's key is the LEVEL — the ONE conversion, at the edge.
+      const nodeKey = boardLevelNodeKey(levelForPlanIndex(event.planIndex));
       if (useStagedRewritesStore.getState().byNodeKey[nodeKey] === undefined) return;
       const buffer = ghostBuffers.current.get(nodeKey);
       ghostBuffers.current.set(nodeKey, (buffer ?? '') + event.delta);
@@ -158,17 +171,20 @@ export function BoardPage(): JSX.Element {
   const runRewrite = useCallback(
     async (
       campaign: Campaign,
-      planIndex: number,
+      level: number,
       nodeKey: string,
       instruction: string,
       includePriorModules: boolean,
     ): Promise<void> => {
       const current = await getModule(moduleId);
       if (current === undefined) throw new Error('Module no longer exists');
+      // The engine and the derived view are still planIndex-keyed (phase 1f):
+      // ONE conversion, here, for the whole flow.
+      const planIndex = planIndexForLevel(level);
       const previous = current.parts.find((part) => part.planIndex === planIndex);
       useStagedRewritesStore.getState().stageProposal({
         nodeKey,
-        planIndex,
+        level,
         oldMarkdown: previous?.markdown ?? '',
         // AUTHORSHIP (docs/17 row 113): the rewrite below OVERWRITES this row,
         // so who wrote the text being replaced can only be captured now — a
@@ -214,7 +230,13 @@ export function BoardPage(): JSX.Element {
         // `origin: 'model'` with the serving model); Apply adopts it, so the
         // authorship must survive this write rather than being re-derived from
         // an omitted writer model (docs/17 row 113).
-        await saveModulePartText(moduleId, entry.planIndex, entry.newMarkdown, undefined, 'model');
+        await saveModulePartText(
+          moduleId,
+          planIndexForLevel(entry.level),
+          entry.newMarkdown,
+          undefined,
+          'model',
+        );
         useStagedRewritesStore.getState().drop(nodeKey);
         toastSuccess('Rewrite applied');
       } catch (error) {
@@ -237,7 +259,7 @@ export function BoardPage(): JSX.Element {
         // the owner's.
         await saveModulePartText(
           moduleId,
-          entry.planIndex,
+          planIndexForLevel(entry.level),
           entry.oldMarkdown,
           entry.oldWriterModel,
           entry.oldOrigin,
@@ -252,8 +274,8 @@ export function BoardPage(): JSX.Element {
 
   const boardActions = useMemo<BoardActionsContextValue>(
     () => ({
-      onRewrite: (planIndex, nodeKey) => {
-        setRewriteTarget({ planIndex, nodeKey });
+      onRewrite: (level, nodeKey) => {
+        setRewriteTarget({ level, nodeKey });
       },
       onApplyStaged: (nodeKey) => {
         void applyStaged(nodeKey);
@@ -290,9 +312,10 @@ export function BoardPage(): JSX.Element {
   // --- node list synthesis ---------------------------------------------------
   const nodeKeys = useMemo(() => {
     if (module?.spine == null) return [];
+    const levelCount = module.spine.partPlan.length;
     return [
-      CANVAS_PREMISE_NODE_KEY,
-      ...module.spine.partPlan.map((_, planIndex) => canvasPartNodeKey(planIndex)),
+      BOARD_PREMISE_NODE_KEY,
+      ...Array.from({ length: levelCount }, (_, index) => boardLevelNodeKey(index + 1)),
     ];
   }, [module]);
   const allKeys = useMemo(
@@ -301,7 +324,7 @@ export function BoardPage(): JSX.Element {
   );
   const positions = useMemo(() => {
     const seeds = seedBoardNodePositions({
-      planCount: module?.spine?.partPlan.length ?? 0,
+      levelCount: module?.spine?.partPlan.length ?? 0,
       priorModuleIds: priorModules.map((prior) => prior.id),
     });
     return resolveBoardNodePositions(module?.canvas?.nodes ?? null, seeds);
@@ -338,9 +361,25 @@ export function BoardPage(): JSX.Element {
   }, [nodes]);
 
   // --- layout persistence ----------------------------------------------------
+  /**
+   * THE WRITE HALF OF THE STORAGE BOUNDARY (docs/17 row 388): the board's node
+   * ids are LEVEL keys and the row's `canvas` field keeps its frozen spelling
+   * (`'premise'` / `part-<planIndex>`), so every level key is translated through
+   * the ONE `storedCanvasNodeKeyForLevel`. A key that names no level is written
+   * UNCHANGED — a prior module's group key (`prior-<moduleId>`) is the same on
+   * both sides. That is what lets an existing arranged board round-trip
+   * byte-identically and what makes a persisted-byte change impossible here.
+   */
   const persistLayout = useCallback(async (): Promise<void> => {
     const canvas: ModuleCanvas = {
-      nodes: nodesRef.current.map((node) => ({ key: node.id, x: node.position.x, y: node.position.y })),
+      nodes: nodesRef.current.map((node) => {
+        const level = levelFromBoardNodeKey(node.id);
+        return {
+          key: level === null ? node.id : storedCanvasNodeKeyForLevel(level),
+          x: node.position.x,
+          y: node.position.y,
+        };
+      }),
       zoom: viewportRef.current.zoom,
       pan: { x: viewportRef.current.x, y: viewportRef.current.y },
     };
@@ -566,7 +605,7 @@ export function BoardPage(): JSX.Element {
           onConfirm={(instruction, includePriorModules) => {
             const target = rewriteTarget;
             setRewriteTarget(null);
-            void runRewrite(currentCampaign, target.planIndex, target.nodeKey, instruction, includePriorModules).catch(
+            void runRewrite(currentCampaign, target.level, target.nodeKey, instruction, includePriorModules).catch(
               (error: unknown) => {
                 toastError('Could not run the rewrite', error);
               },
@@ -584,24 +623,31 @@ export function BoardPage(): JSX.Element {
 // --- helpers -------------------------------------------------------------------
 
 function nodeTypeFor(key: string): BoardFlowNode['type'] {
-  if (key === CANVAS_PREMISE_NODE_KEY) return 'premise';
-  if (planIndexFromCanvasNodeKey(key) !== null) return 'part';
+  if (key === BOARD_PREMISE_NODE_KEY) return 'premise';
+  if (levelFromBoardNodeKey(key) !== null) return 'part';
   if (key.startsWith('prior-')) return 'prior';
   throw new Error(`Unknown board node key: ${key}`);
 }
 
-/** The plan×part JOIN per part node key (title/band from the plan, the rest
- * from the part row; a missing part renders as `missing`/pending). */
+/**
+ * The level's plan-entry × run-state JOIN per LEVEL node key (title/band from
+ * the plan, the rest from the part row; a missing part renders as
+ * `missing`/pending), keyed by the board's level key. The derived view is
+ * planIndex-indexed — `spine.partPlan[planIndex]` is level `planIndex + 1` — so
+ * the ONE `levelForPlanIndex` converts at this, the board's only view→card
+ * join. LEVEL 0 (the premise) is not iterated here: it is the premise card.
+ */
 function partSlicesFor(module: Module): Record<string, PartCardSlice> {
   const planList = module.spine?.partPlan ?? [];
   const slices: Record<string, PartCardSlice> = {};
   for (let planIndex = 0; planIndex < planList.length; planIndex += 1) {
     const plan = planList[planIndex];
     if (plan === undefined) continue;
+    const level = levelForPlanIndex(planIndex);
     const part = module.parts.find((entry) => entry.planIndex === planIndex);
-    slices[canvasPartNodeKey(planIndex)] = {
+    slices[boardLevelNodeKey(level)] = {
       moduleId: module.id,
-      planIndex,
+      level,
       title: plan.title,
       levelBand: plan.levelBand,
       status: part?.status ?? 'missing',
@@ -614,6 +660,8 @@ function partSlicesFor(module: Module): Record<string, PartCardSlice> {
   return slices;
 }
 
+/** A prior module's text group, keyed by LEVEL (its own planIndex slots are
+ *  converted through the ONE `levelForPlanIndex`). */
 function priorSlicesFor(priorModules: readonly Module[]) {
   return priorModules.map((prior) => ({
     moduleId: prior.id,
@@ -623,7 +671,7 @@ function priorSlicesFor(priorModules: readonly Module[]) {
     premise: prior.spine?.premise ?? '',
     parts: (prior.spine?.partPlan ?? [])
       .map((plan, planIndex) => ({
-        planIndex,
+        level: levelForPlanIndex(planIndex),
         title: plan.title,
         markdown: prior.parts.find((entry) => entry.planIndex === planIndex)?.markdown ?? '',
       }))

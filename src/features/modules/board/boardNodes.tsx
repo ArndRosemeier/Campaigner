@@ -7,7 +7,7 @@ import { LoaderCircleIcon, RotateCcwIcon, TriangleAlertIcon } from 'lucide-react
 import { Badge } from '@/components/ui/badge';
 import { BlockedControl } from '@/components/blocked-control';
 import type { AnyArtifact, Id } from '@/domain';
-import { CANVAS_PREMISE_NODE_KEY, planIndexFromCanvasNodeKey } from '@/domain';
+import { BOARD_PREMISE_NODE_KEY, levelFromBoardNodeKey } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { MODULE_GENERATING_REASON } from '@/features/modules/module-busy';
 import { cn } from '@/lib/utils';
@@ -63,8 +63,8 @@ function useBoardPool(): BoardPoolContextValue {
 
 /** Page-level actions the cards can trigger (all plain buttons, `nodrag`). */
 export interface BoardActionsContextValue {
-  /** Opens the rewrite dialog for this part. */
-  onRewrite: (planIndex: number, nodeKey: string) => void;
+  /** Opens the rewrite dialog for this LEVEL (1..N; the premise is not a part). */
+  onRewrite: (level: number, nodeKey: string) => void;
   /** Applies the staged rewrite through the ONE part-text save path. */
   onApplyStaged: (nodeKey: string) => void;
   /** Discards the staged rewrite and restores the previous text. */
@@ -138,7 +138,7 @@ export const PremiseCardNode = memo(function PremiseCardNode({
   id,
 }: NodeProps): JSX.Element | null {
   const slice = useBoardStore((state) =>
-    id === CANVAS_PREMISE_NODE_KEY ? state.content.premise : undefined,
+    id === BOARD_PREMISE_NODE_KEY ? state.content.premise : undefined,
   );
   const detailed = useBoardStore((state) => state.zoom >= BOARD_LOD_FULL_ABOVE);
   const { pool, moduleId } = useBoardPool();
@@ -174,12 +174,12 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
   const detailed = useBoardStore((state) => state.zoom >= BOARD_LOD_FULL_ABOVE);
   const { pool } = useBoardPool();
   const actions = useBoardActions();
-  const planIndex = planIndexFromCanvasNodeKey(id);
-  if (slice === undefined || planIndex === null) return null;
+  const level = levelFromBoardNodeKey(id);
+  if (slice === undefined || level === null) return null;
   return (
     <div
       className={CARD_CLASS}
-      data-testid={`board-part-${String(planIndex)}`}
+      data-testid={`board-part-${String(level)}`}
       data-lod={detailed ? 'full' : 'skeleton'}
     >
       <CardHandles />
@@ -206,7 +206,7 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
         )}
         {slice.status === 'ready' && staged === undefined && (
           <BlockedControl
-            testId={`board-part-rewrite-${String(planIndex)}`}
+            testId={`board-part-rewrite-${String(level)}`}
             reason={busy ? MODULE_GENERATING_REASON : null}
             className="nodrag ml-auto shrink-0"
           >
@@ -215,10 +215,10 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
               size="icon-sm"
               className="nodrag ml-auto shrink-0"
               aria-label={`Rewrite ${slice.title}`}
-              data-testid={`board-part-rewrite-${String(planIndex)}`}
+              data-testid={`board-part-rewrite-${String(level)}`}
               disabled={busy}
               onClick={() => {
-                actions.onRewrite(planIndex, id);
+                actions.onRewrite(level, id);
               }}
             >
               <RotateCcwIcon aria-hidden className="size-3.5" />
@@ -451,9 +451,9 @@ function PriorCardBody({
         </div>
       )}
       {slice.parts.map((part) => (
-        <div key={part.planIndex} className={part.title === '' ? '' : 'mt-3'}>
+        <div key={part.level} className={part.title === '' ? '' : 'mt-3'}>
           <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {part.title === '' ? `Part ${String(part.planIndex + 1)}` : part.title}
+            {part.title === '' ? `Part ${String(part.level)}` : part.title}
           </p>
           <WikiMarkdown value={part.markdown} artifacts={pool} moduleId={slice.moduleId} />
         </div>

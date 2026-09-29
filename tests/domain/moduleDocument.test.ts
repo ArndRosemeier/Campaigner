@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BOARD_PREMISE_NODE_KEY,
   MODULE_PREMISE_LEVEL,
   ModuleDocumentError,
   appendLevelText,
   assembleModuleDocument,
+  boardLevelNodeKey,
+  levelForStoredCanvasNodeKey,
+  levelFromBoardNodeKey,
   moduleLevelList,
   moduleLevelSeparator,
   replaceLevelText,
   splitModuleDocument,
+  storedCanvasNodeKeyForLevel,
   type ModuleEntityKind,
 } from '@/domain';
 
@@ -465,5 +470,76 @@ describe('level-addressed edits (the seam the phase-3 chat commands ride)', () =
       'Now it has prose.',
       'C',
     ]);
+  });
+});
+
+/**
+ * THE CANVAS NODE KEYS (docs/17 row 388): the BOARD addresses a card by its
+ * LEVEL, the module ROW keeps the frozen stored spelling, and ONE boundary
+ * translates between them through the ONE level↔planIndex conversion above.
+ *
+ * Three claims, and the third is the reason this slice can land without a
+ * `version` bump or a byte of migration:
+ *
+ * 1. the board's key grammar is `level-<N>` and LEVEL 0 IS THE PREMISE (the one
+ *    level with no separator) — `BOARD_PREMISE_NODE_KEY` is `boardLevelNodeKey(0)`,
+ *    and every non-level key parses to `null` rather than a wild reading;
+ * 2. the row's stored spelling is FROZEN — `'premise'` and `part-<planIndex>` —
+ *    and the two spellings are exact INVERSES, so the mapping is applied on read
+ *    and write consistently;
+ * 3. an EXISTING board's persisted node keys map onto the board's level keys
+ *    and write back BYTE-IDENTICALLY, which is what "no shape change" means
+ *    here: the row's format is untouched, so no arranged layout is lost and no
+ *    `version` bump is owed.
+ */
+describe('the canvas node keys — the board speaks LEVELS, the row keeps its stored spelling', () => {
+  it('spells a board key `level-<N>`, with level 0 (the premise) present and legal', () => {
+    expect(boardLevelNodeKey(0)).toBe('level-0');
+    expect(boardLevelNodeKey(3)).toBe('level-3');
+    expect(BOARD_PREMISE_NODE_KEY).toBe(boardLevelNodeKey(MODULE_PREMISE_LEVEL));
+    expect(levelFromBoardNodeKey(BOARD_PREMISE_NODE_KEY)).toBe(MODULE_PREMISE_LEVEL);
+    expect(levelFromBoardNodeKey('level-7')).toBe(7);
+    // Every key that is not a board level key is NOT a level: the stored
+    // spellings, a prior module's group and near misspellings all read null.
+    for (const other of ['premise', 'part-0', 'priors-x', 'level-', 'level-1x', 'Level-1']) {
+      expect(levelFromBoardNodeKey(other), other).toBeNull();
+    }
+    // A nonsense level is LOUD, never a garbage key (AGENTS rule 1).
+    expect(() => boardLevelNodeKey(-1)).toThrow(/whole level/);
+    expect(() => boardLevelNodeKey(1.5)).toThrow(/whole level/);
+  });
+
+  it('keeps the row’s stored spelling frozen — and the two spellings are exact inverses', () => {
+    expect(storedCanvasNodeKeyForLevel(0)).toBe('premise');
+    expect(storedCanvasNodeKeyForLevel(1)).toBe('part-0');
+    expect(storedCanvasNodeKeyForLevel(4)).toBe('part-3');
+    for (let level = 0; level <= 12; level += 1) {
+      expect(levelForStoredCanvasNodeKey(storedCanvasNodeKeyForLevel(level))).toBe(level);
+    }
+    // A prior module's group key is the same on both sides — not a level — and
+    // a stale/garbage key reads null (inert, exactly as before).
+    expect(levelForStoredCanvasNodeKey('prior-m-1')).toBeNull();
+    expect(levelForStoredCanvasNodeKey('part-x')).toBeNull();
+    expect(levelForStoredCanvasNodeKey('level-1')).toBeNull();
+    expect(() => storedCanvasNodeKeyForLevel(-1)).toThrow(/whole level/);
+  });
+
+  it('maps an EXISTING board’s stored bytes onto the board keys and back, byte-identically', () => {
+    // A row exactly as a PRE-388 app wrote it: the premise, two level sections
+    // and one prior group.
+    const storedKeys = ['premise', 'part-0', 'part-1', 'prior-m-1'];
+    // READ (the board's key space): level-<N>, level 0 = the premise.
+    const boardKeys = storedKeys.map((key) => {
+      const level = levelForStoredCanvasNodeKey(key);
+      return level === null ? key : boardLevelNodeKey(level);
+    });
+    expect(boardKeys).toEqual(['level-0', 'level-1', 'level-2', 'prior-m-1']);
+    // WRITE: the board's own keys go back to those SAME bytes.
+    expect(
+      boardKeys.map((key) => {
+        const level = levelFromBoardNodeKey(key);
+        return level === null ? key : storedCanvasNodeKeyForLevel(level);
+      }),
+    ).toEqual(storedKeys);
   });
 });
