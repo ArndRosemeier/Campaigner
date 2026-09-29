@@ -3675,7 +3675,14 @@ describe('in-battle spawn picker (spawn-picker arc)', () => {
       live: true,
       everLive: true,
       initiativeEnabled: true,
-      tokens: row.board.tokens.map((token) => ({ ...token, initiativeRoll: 10 })),
+      // VISIBLE (docs/17 row 410). The mapless seed leaves tokens HIDDEN
+      // (`visible: layout !== null`), so the GM-view reconcile already pruned
+      // the WHOLE order on mount, and the toggle's prune found work only if the
+      // click beat that mount commit (a race against the box). Delaying the
+      // click 50 ms reds the old setup every time. Visible tokens stay GM
+      // members (a covered NPC included), so the player-safe toggle's prune is
+      // the ONLY prune this board needs, and it always commits.
+      tokens: row.board.tokens.map((token) => ({ ...token, visible: true, initiativeRoll: 10 })),
       initiativeOrder: row.board.tokens.map((token) => token.id),
     };
     await updateBattle(row.id, () => ({ board: seeded }));

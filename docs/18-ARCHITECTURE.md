@@ -2531,6 +2531,8 @@ only in WHICH set they name.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
+- **Row 410 (test setup, no product debt):** `seedStandardBattle` seeds hidden tokens (mapless). A pin that needs the GM reconcile to leave its initiative order intact must seed `visible: true` itself (see the reconcile-prune pin in battle-surface.test.tsx and docs/08 §row 410).
+
 - **Lab benches (row 409):** the two dungeon lab views each render their own `<table>` (declared lab-only sites in `toast-surfaces.test.tsx`, no markdown) and the lab resolves its models once in `labClients.resolveBenchModels` (the one declared `exclude` site of the global-chat-model recording pin); `chatRetry.documentFingerprint`'s `charCodeAt` is a hash, declared in `unicodeTextHygiene`.
 
 - **Multi-range highlight (docs/17 row 405):** a range that straddles two sections gets no preview wash (it is dropped, never split); only replace-all/level edits inside one section occur today. The adversarial card's `appliedToDocument` is still one range (its own card), the turn list is the tracker.
