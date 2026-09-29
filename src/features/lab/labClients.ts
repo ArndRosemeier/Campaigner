@@ -48,6 +48,16 @@ export function blobToDataUrl(blob: Blob): Promise<string> {
 }
 
 /**
+ * The ONE place the lab benches resolve their models (docs/17 row 409): every
+ * bench runs on the global image and chat models, and this is the single
+ * `resolveChatModel` site the global-chat-model-recording pin declares.
+ */
+async function resolveBenchModels(): Promise<{ imageModel: string; chatModel: string }> {
+  const settings = await getSettings();
+  return { imageModel: resolveImageModel(settings), chatModel: resolveChatModel(settings) };
+}
+
+/**
  * Runs the labeled-dungeon bench end to end against the configured models.
  * Run-level degradations (a capped candidate count, the models actually
  * used) report through `notify` so the view renders them loudly; per-image
@@ -58,9 +68,7 @@ export function blobToDataUrl(blob: Blob): Promise<string> {
 export async function runLabeledDungeonBench(
   notify: (notice: string) => void,
 ): Promise<LabeledDungeonMapResult[]> {
-  const settings = await getSettings();
-  const imageModel = resolveImageModel(settings);
-  const chatModel = resolveChatModel(settings);
+  const { imageModel, chatModel } = await resolveBenchModels();
   notify(`Generating with image model "${imageModel}"; vision passes with chat model "${chatModel}".`);
   try {
     return await runLabeledDungeonExperiment({
@@ -132,9 +140,7 @@ export async function runLabeledDungeonBench(
 export async function runUnlabeledDungeonBench(
   notify: (notice: string) => void,
 ): Promise<UnlabeledDungeonMapResult[]> {
-  const settings = await getSettings();
-  const imageModel = resolveImageModel(settings);
-  const chatModel = resolveChatModel(settings);
+  const { imageModel, chatModel } = await resolveBenchModels();
   notify(
     `Generating one ${UNLABELED_DUNGEON_RESOLUTION} ${UNLABELED_DUNGEON_ASPECT} map with image model "${imageModel}"; vision pass with chat model "${chatModel}".`,
   );

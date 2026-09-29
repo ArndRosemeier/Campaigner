@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { emptyGenerateMaps, malformedVisionPass } from '../helpers/labBenchClients';
+
 import {
   DUNGEON_BENCH_LABELS,
   DUNGEON_BENCH_ROOMS,
@@ -124,7 +126,7 @@ describe('runLabeledDungeonExperiment', () => {
   it('fails one image loud on a malformed reply — no disks, all letters missing', async () => {
     const results = await runLabeledDungeonExperiment(
       fakeClients({
-        visionPass: () => Promise.resolve({ text: 'not json at all', modelUsed: 'test-chat-model' }),
+        visionPass: malformedVisionPass,
       }),
     );
     expect(results).toHaveLength(2);
@@ -157,7 +159,7 @@ describe('runLabeledDungeonExperiment', () => {
     await expect(
       runLabeledDungeonExperiment(
         fakeClients({
-          generateMaps: () => Promise.resolve({ blobs: [], cappedToOne: false, modelUsed: 'm' }),
+          generateMaps: emptyGenerateMaps,
         }),
       ),
     ).rejects.toThrow(/no map images/);

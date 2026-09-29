@@ -87,7 +87,7 @@ const DECISIONS: Record<string, SiteDecision> = {
   'src/features/lab/labClients.ts': {
     decision: 'exclude',
     reason:
-      'the experiment lab is a diagnostic bench, linked from Settings only and never a generation surface (docs/05 §Routes); its labeled-dungeon vision probe must not enter the user-facing "what I have been generating with" shortlist. Its model IS the global one — the exclusion is about the surface, and this line is where that is stated',
+      'the experiment lab is a diagnostic bench, linked from Settings only and never a generation surface (docs/05 §Routes); its dungeon vision benches (labeled and unlabeled, resolved once in resolveBenchModels, docs/17 row 409) must not enter the user-facing "what I have been generating with" shortlist. Its model IS the global one — the exclusion is about the surface, and this line is where that is stated',
   },
   'src/llm/modelFallback.ts': {
     decision: 'exclude',

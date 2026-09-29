@@ -308,6 +308,7 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/domain/persona.ts': 1,
     'src/domain/promptStyle.ts': 1,
     'src/domain/rulebook.ts': 1,
+    'src/features/modules/canvas/chatRetry.ts': 1,
     // `src/features/modules/persona-request.ts` USED to be declared here (2):
     // `guessKindFromSentence`'s English keyword regexes over a typed sentence.
     // Row 293 DELETED that guesser — the entity kind now comes from the module's
@@ -345,6 +346,8 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
     'src/domain/promptStyle.ts':
       'the {{placeholder}} grammar of a style: placeholder names are our own ASCII tokens (premise, partText, …), never user prose',
     'src/domain/rulebook.ts': 'a SHA-256 hex digest, same as exportDependencies',
+    'src/features/modules/canvas/chatRetry.ts':
+      'charCodeAt inside `documentFingerprint`, an FNV-1a-style HASH over the document\u2019s UTF-16 code units (docs/17 rows 408/409): every code unit, ASCII or not, feeds the hash equally and nothing is classified, matched or read as text \u2014 it only answers \u201cis this the same text\u201d for the retry\u2019s staleness gate',
     'src/ingest/packs/dnd5e-foundry.ts':
       'TWO machine-format patterns, neither of them prose: the `@abilities.str.mod` FORMULA grammar of the Foundry pack format, and the higher-levels SECTION PROBE row 294 added (`/(?:^|</p>|<br…)\\s*(?:<[^<>]+>\\s*)*(?:at\\s+)?higher\\s+levels?\\b/i`), which matches the pack\u2019s own `<strong>At Higher Levels</strong>` markup to tell a MISS from an absence — the English words are the PUBLISHER\u2019s heading, not user text',
     'src/ingest/packs/pf2e-journal.ts':

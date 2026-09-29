@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { emptyGenerateMaps, malformedVisionPass } from '../helpers/labBenchClients';
+
 import { getLabExperiment } from '@/features/lab/experiments/registry';
 import {
   UNLABELED_BENCH_ROOMS,
@@ -121,7 +123,7 @@ describe('runUnlabeledDungeonExperiment', () => {
   it('fails one image loud on a malformed reply and draws no rooms', async () => {
     const results = await runUnlabeledDungeonExperiment(
       fakeClients({
-        visionPass: () => Promise.resolve({ text: 'not json at all', modelUsed: 'test-chat-model' }),
+        visionPass: malformedVisionPass,
       }),
     );
     expect(results[0]?.status).toBe('failed');
@@ -134,7 +136,7 @@ describe('runUnlabeledDungeonExperiment', () => {
     await expect(
       runUnlabeledDungeonExperiment(
         fakeClients({
-          generateMaps: () => Promise.resolve({ blobs: [], cappedToOne: false, modelUsed: 'm' }),
+          generateMaps: emptyGenerateMaps,
         }),
       ),
     ).rejects.toThrow(/no map images/);

@@ -754,12 +754,15 @@ describe('wiki-markdown-tables.test.tsx', () => {
    * Where a `<table>` ELEMENT may be written in `src/`. `wiki-markdown.tsx` is
    * the app's markdown table renderer (docs/17 row 158); `LabeledDungeonView.tsx`
    * is the lab's own synthetic preview grid, which renders no markdown at all and
-   * is deliberately left alone. A third site is a second app-side table renderer
-   * being born — the NOT-Z column of docs/18 §2.3's app-renderer row.
+   * is deliberately left alone; `UnlabeledDungeonView.tsx` is the unlabeled
+   * bench's room-center grid, the same kind of lab-only structured-data grid with
+   * no markdown in it (declared by docs/17 row 409). Any other site is a second app-side table
+   * renderer being born — the NOT-Z column of docs/18 §2.3's app-renderer row.
    */
   const DECLARED_TABLE_SITES: Readonly<Record<string, number>> = {
     'src/features/campaign/components/wiki-markdown.tsx': 1,
     'src/features/lab/LabeledDungeonView.tsx': 1,
+    'src/features/lab/UnlabeledDungeonView.tsx': 1,
   };
 
   describe('the app’s table grammar lives in ONE place (SOURCE SCAN)', () => {
