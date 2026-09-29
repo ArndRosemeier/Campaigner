@@ -251,8 +251,8 @@ export function ChatSidebar({
     onChatCleared?.();
     toastSuccess(
       gmAssist
-        ? 'GM assist cleared — the module text and the module chat were not changed'
-        : 'Chat cleared — the module text was not changed',
+        ? 'GM assist cleared — the document text and the campaign chat were not changed'
+        : 'Chat cleared — the document text was not changed',
     );
   }
 
@@ -364,10 +364,7 @@ export function ChatSidebar({
   }
 
   return (
-    <aside
-      className="flex h-full min-h-0 w-96 shrink-0 flex-col border-r bg-card"
-      data-testid="canvas-chat"
-    >
+    <aside className="flex h-full min-h-0 w-full flex-col bg-card" data-testid="canvas-chat">
       <div className="flex border-b" data-testid="canvas-chat-surface-switcher">
         {(['module', 'gm-assist'] as const).map((option) => (
           <Button
@@ -385,7 +382,7 @@ export function ChatSidebar({
               onSurfaceChange(option);
             }}
           >
-            {option === 'module' ? 'Module chat' : 'GM assist'}
+            {option === 'module' ? 'Campaign chat' : 'GM assist'}
           </Button>
         ))}
       </div>
@@ -433,9 +430,9 @@ export function ChatSidebar({
               className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
               data-testid="canvas-chat-gm-assist-intro"
             >
-              Tell it what just happened — what the party did, said or skipped, how a roll went, what
-              an NPC is doing. It keeps the story straight and answers with 2-4 concrete ideas for
-              what happens next. It can edit the module text too, when you ask:{' '}
+              Tell it what just happened — what the party did, said or skipped, how a roll went,
+              what an NPC is doing. It keeps the story straight and answers with 2-4 concrete ideas
+              for what happens next. It can edit the document text too, when you ask:{' '}
               <code>&lt;edit&gt;</code> commands apply to the document
               {previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
               changed parts are saved to the module row. This chat lives in this browser session only
@@ -640,7 +637,7 @@ export function ChatSidebar({
         <AlertDialogContent data-testid="canvas-chat-clear-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {gmAssist ? "Clear this module's GM assist chat?" : "Clear this module's chat?"}
+              {gmAssist ? "Clear this module's GM assist chat?" : 'Clear the campaign chat?'}
             </AlertDialogTitle>
             <AlertDialogDescription data-testid="canvas-chat-clear-description">
               {gmAssist ? (
@@ -648,11 +645,11 @@ export function ChatSidebar({
                   Cleared: this module&apos;s GM assist conversation and its outcome cards, in this
                   session — plus the last-replacement highlight.
                   <span className="mt-2 block font-medium text-foreground">
-                    NOT cleared: the module chat&apos;s own conversation and its SAVED thread on the
-                    module (the two chats never share messages), this module&apos;s session Versions
-                    list (it carries BOTH chats&apos; undo and cannot tell them apart), and the
-                    module&apos;s DOCUMENT TEXT. GM assist is session-only for now, so there is no
-                    saved copy to clear. To put text back, restore a version from Versions
+                    NOT cleared: the campaign chat&apos;s own conversation and its SAVED thread on
+                    the module (the two chats never share messages), this module&apos;s session
+                    Versions list (it carries BOTH chats&apos; undo and cannot tell them apart), and
+                    the module&apos;s DOCUMENT TEXT. GM assist is session-only for now, so there is
+                    no saved copy to clear. To put text back, restore a version from Versions
                     (session-only by design).
                   </span>
                 </>

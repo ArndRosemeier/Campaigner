@@ -7,6 +7,7 @@ import {
 } from '@codemirror/view';
 import { RangeSetBuilder, type Extension } from '@codemirror/state';
 import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
+import { levelOfSeparatorLine } from '@/domain/moduleDocument';
 import { WIKI_LINK_PATTERN, resolveWikiLink } from '@/lib/wikilinks';
 import { cn } from '@/lib/utils';
 
@@ -150,4 +151,46 @@ export function wikiLinkDecorations(
     },
   );
   return plugin;
+}
+
+/**
+ * Level dividers (docs/17 row 399): a canonical `=====Level N=====` line is
+ * drawn as a muted divider band, so the editable text reads as the levels the
+ * rendered view shows instead of a raw-markdown wall. PURE view chrome — the
+ * line's text is untouched (still typed and saved as-is), and "is this a
+ * separator" is the parser's OWN predicate (`levelOfSeparatorLine`), so a near
+ * miss is NOT dressed as a divider and the save still refuses it loudly.
+ */
+export const LEVEL_DIVIDER_CLASS = 'cm-level-divider';
+
+function buildDividerDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = view.state.doc.lineAt(pos);
+      if (levelOfSeparatorLine(line.text) !== null) {
+        builder.add(line.from, line.from, Decoration.line({ class: LEVEL_DIVIDER_CLASS }));
+      }
+      pos = line.to + 1;
+    }
+  }
+  return builder.finish();
+}
+
+export function levelDividerDecorations(): Extension {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = buildDividerDecorations(view);
+      }
+      update(update: ViewUpdate): void {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildDividerDecorations(update.view);
+        }
+      }
+    },
+    { decorations: (instance) => instance.decorations },
+  );
 }

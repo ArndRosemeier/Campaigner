@@ -22,7 +22,6 @@ import {
   moduleLevelSeparator,
 } from '@/domain/moduleDocument';
 import { clearDatabase } from '../db/helpers';
-import { expectBlockedReason } from '../helpers/blocked-reason';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import {
@@ -298,29 +297,22 @@ describe('canvas whole-document editor', () => {
     await flushAsyncUpdates();
   });
 
-  it('unsaved hand edits keep the Save button in EVERY view, and a blocked Save states its reason through the device — never in a title', async () => {
+  it('unsaved hand edits keep a LIVE Save button in EVERY view (rendered included), never a title', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     await enterEditMode(user);
     editDoc(PART0_FROM, PART0_FROM + 3, 'XXX');
     expect(screen.getByTestId('canvas-save')).toBeEnabled();
 
-    // Preview only UNMOUNTS the editor — the hand edits are still unsaved, so
-    // the button stays (disabled) and states why instead of vanishing or going
-    // silently dead.
+    // MIGRATED (docs/17 row 399): with click-to-edit the rendered view is where
+    // an owner who typed lands after Escape, so a dead "Preview is read-only"
+    // Save would trap unsaved edits. Save now stays LIVE in the rendered view and
+    // writes the snapshot taken from the live editor at the switch.
     await user.click(screen.getByTestId('canvas-preview-toggle'));
     expect(await screen.findByTestId('canvas-preview')).toBeInTheDocument();
     expect(screen.queryByTestId('canvas-saved-indicator')).not.toBeInTheDocument();
-    await expectBlockedReason(
-      user,
-      'canvas-save',
-      'Preview is read-only. Switch to Edit (the header toggle) to save your edits.',
-    );
-    // …and the control carries NO `title` while it is held (docs/18 §4, ledger
-    // 125): a title on a natively disabled button is rendered by no browser and
-    // reached by no pointer or key, so a second copy of the reason there is a
-    // second place to drift, never a fallback. This pin used to assert the
-    // opposite — it pinned the invisible copy by name.
+    expect(screen.getByTestId('canvas-save')).toBeEnabled();
+    // …and the control carries NO `title` (docs/18 §4, ledger 125).
     expect(screen.getByTestId('canvas-save')).not.toHaveAttribute('title');
 
     // Back in Edit the same pending edits offer the live button again — and a

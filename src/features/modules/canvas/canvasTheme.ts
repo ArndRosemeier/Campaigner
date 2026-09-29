@@ -1,5 +1,6 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { plainEditorTheme } from '@/lib/editorTheme';
+import { EditorView } from '@codemirror/view';
 import { tags as t } from '@lezer/highlight';
 
 /**
@@ -14,6 +15,9 @@ export { editorThemeSpec as canvasThemeSpec } from '@/lib/editorTheme';
 
 /** Markdown highlighting on app tokens — restrained, theme-following. */
 export const canvasHighlightStyle = HighlightStyle.define([
+  { tag: t.heading1, fontWeight: '700', fontSize: '1.5em', color: 'var(--foreground)' },
+  { tag: t.heading2, fontWeight: '700', fontSize: '1.3em', color: 'var(--foreground)' },
+  { tag: t.heading3, fontWeight: '650', fontSize: '1.15em', color: 'var(--foreground)' },
   { tag: t.heading, fontWeight: '650', color: 'var(--foreground)' },
   { tag: t.strong, fontWeight: '700' },
   { tag: t.emphasis, fontStyle: 'italic' },
@@ -25,8 +29,22 @@ export const canvasHighlightStyle = HighlightStyle.define([
   { tag: t.list, color: 'var(--foreground)' },
 ]);
 
+/** Level-divider band (see `levelDividerDecorations`) — tokens only. */
+const canvasDividerTheme = EditorView.theme({
+  '& .cm-level-divider': {
+    color: 'var(--muted-foreground)',
+    backgroundColor: 'color-mix(in oklab, var(--muted) 60%, transparent)',
+    borderTop: '1px solid var(--border)',
+    fontSize: '0.8125rem',
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    marginTop: '0.75rem',
+  },
+});
+
 /** The full theme extension wired into the canvas editor. */
 export const canvasTheme = [
   plainEditorTheme,
+  canvasDividerTheme,
   syntaxHighlighting(canvasHighlightStyle),
 ];

@@ -112,7 +112,7 @@ const WHOLE_DOC = assembleModuleDocument({
 const APPLY_REPLY =
   'Making it rainier.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>';
 
-const CLEARED_TOAST = 'Chat cleared — the module text was not changed';
+const CLEARED_TOAST = 'Chat cleared — the document text was not changed';
 
 let world: { campaignId: Id; moduleId: Id; otherModuleId: Id } = {
   campaignId: '',

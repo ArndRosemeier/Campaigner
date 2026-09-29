@@ -1,3 +1,5 @@
+**BUILD STATE (docs/17 row 399).** CO-AUTHORING: the rendered canvas is click-to-edit (caret = mapped source offset, editor opens scrolled to the same text; Escape or a pane-margin pointerdown returns rendered scrolled to the editor position; Save works from either view). Chat renamed "Campaign chat"; chat/document split is resizable and persisted. jsdom cannot prove real scroll pixels or real mouse ranges.
+
 **BUILD STATE (2026-09-29, docs/17 row 398).** New campaign has an inline name field beside it (placeholder 'New campaign'; empty = placeholder); Enter submits; rename via EditCampaignDialog.
 
 **BUILD STATE (2026-09-29, docs/17 row 397).** The generation dialog's images are PER KIND: `Settings.generationImageKinds` (remembered preference, default none) feeds `selectGenerationTargets({..., imageKinds})`; the `image` pseudo-kind is gone.

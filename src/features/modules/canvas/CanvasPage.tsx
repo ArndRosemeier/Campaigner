@@ -96,6 +96,9 @@ import { MissingEntityPanel } from '@/features/modules/missing-entity-panel';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import { CanvasWriterModel } from '@/features/modules/canvas/canvas-writer-model';
+import { useDefaultLayout } from 'react-resizable-panels';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import type { EditHandoff } from '@/features/modules/canvas/editHandoff';
 import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
@@ -203,6 +206,11 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 const EMPTY_LEDGER: readonly CanvasVersionEntry[] = [];
 
+/** Split storage id + pane floors: the chat must stay usable, the text readable. */
+export const CANVAS_SPLIT_STORAGE_ID = 'campaigner.canvas-split';
+const CHAT_MIN_PX = 280;
+const DOC_MIN_PX = 360;
+
 export function CanvasPage(): JSX.Element {
   const { campaignId = '', moduleId = '' } = useParams<{
     campaignId: string;
@@ -273,6 +281,8 @@ export function CanvasPage(): JSX.Element {
   // mount, the toggle-time snapshot when returning from the preview (the
   // preview UNMOUNTS the editor, so remounting from the pristine document
   // would silently discard unsaved edits — AGENTS 1).
+  const [editEntry, setEditEntry] = useState<{ caret: number; scrollPos: number } | null>(null);
+  const [previewScrollTo, setPreviewScrollTo] = useState<number | null>(null);
   const [mountDoc, setMountDoc] = useState<string | null>(null);
   const [mountedModuleId, setMountedModuleId] = useState<string | null>(null);
   const [docText, setDocText] = useState<string | null>(null);
@@ -364,6 +374,14 @@ export function CanvasPage(): JSX.Element {
   // selection into the same store key (`canvasChatKeyFor`). Switching surfaces
   // switches the key — the two threads never share a message.
   const [chatSurface, setChatSurface] = useState<CanvasChatFraming>('module');
+  // The chat/document split (docs/17 row 399): the workspace's own resize seam
+  // (WorkspacePage), a distinct storage id. Closing the chat unmounts the group
+  // and leaves the saved split untouched, so re-opening restores it.
+  const splitLayout = useDefaultLayout({
+    id: CANVAS_SPLIT_STORAGE_ID,
+    panelIds: chatOpen ? ['chat', 'doc'] : ['doc'],
+    storage: window.localStorage,
+  });
   const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? true);
   // The preview renders the doc AS OF THE TOGGLE (captured once) — or, on
   // first open (no toggle yet), the assembled/mount doc. While the preview
@@ -684,9 +702,11 @@ export function CanvasPage(): JSX.Element {
       restorePremise?: string | undefined;
     },
   ): Promise<void> {
+    // The live editor's doc — or, from the rendered view, the snapshot taken
+    // from the live editor at the switch (the same string, docs/17 row 399).
     const view = activeCanvasView.current;
-    if (view === null || saving) return;
-    const doc = view.state.doc.toString();
+    const doc = view !== null ? view.state.doc.toString() : previewSource;
+    if (doc === null || saving) return;
     setSaving(true);
     try {
       await saveWholeModuleDocument({
@@ -1475,8 +1495,12 @@ export function CanvasPage(): JSX.Element {
     }
   }
 
-  function togglePreview(): void {
+  function togglePreview(exitScrollPos: number | null = null): void {
     const next = !previewOpen;
+    // Rendered ↔ editor handoff state (docs/17 row 399): consumed by the mount
+    // that follows, never persisted.
+    setEditEntry(null);
+    setPreviewScrollTo(next ? exitScrollPos : null);
     if (next) {
       const view = activeCanvasView.current;
       if (view !== null) {
@@ -1497,6 +1521,174 @@ export function CanvasPage(): JSX.Element {
     }
     useCanvasPreviewStore.getState().setOpen(moduleId, next);
   }
+
+  /** A click on preview prose: open the editor at the mapped caret and scroll. */
+  function enterEditFromPreview(handoff: EditHandoff): void {
+    if (viewBusy) return;
+    togglePreview();
+    setEditEntry({ caret: handoff.caret, scrollPos: handoff.scrollPos });
+  }
+
+  /** Pointerdown on the pane's own empty area (margins) leaves the editor. */
+  function handlePaneMarginPointerDown(event: React.PointerEvent<HTMLElement>): void {
+    if (previewOpen || viewBusy) return;
+    const target = event.target as HTMLElement;
+    if (target !== event.currentTarget && target.dataset.testid !== 'canvas-editor') return;
+    const view = activeCanvasView.current;
+    togglePreview(view === null ? 0 : view.lineBlockAtHeight(view.scrollDOM.scrollTop).from);
+  }
+
+  const documentPane = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ModuleStyleBar module={currentModule} />
+      {wholeProposal !== undefined && !previewOpen && (
+        <div
+          className="flex items-center gap-2 border-b px-4 py-1.5 text-sm text-muted-foreground"
+          data-testid="canvas-proposal-bar"
+          data-streaming={refineInFlight ? 'true' : 'false'}
+        >
+          {refineInFlight && (
+            <>
+              <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
+              <span>Proposing…</span>
+            </>
+          )}
+          <Button
+            variant="ghost"
+            size="xs"
+            data-testid="canvas-show-previous"
+            onClick={() => {
+              const view = activeCanvasView.current;
+              if (view === null) return;
+              const next = !view.state.field(canvasShowPreviousField);
+              view.dispatch({
+                effects: setShowPreviousEffect.of(next),
+                annotations: Transaction.addToHistory.of(false),
+              });
+              setShowPrevious(next);
+            }}
+          >
+            {showPrevious ? 'Show proposed' : 'Show previous'}
+          </Button>
+          <BlockedControl
+            testId="canvas-proposal-apply"
+            reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
+          >
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={refineInFlight}
+              data-testid="canvas-proposal-apply"
+              onClick={() => {
+                const view = activeCanvasView.current;
+                if (view === null) return;
+                acceptSuggestion(view, wholeProposal.id);
+              }}
+            >
+              Apply
+            </Button>
+          </BlockedControl>
+          <BlockedControl
+            testId="canvas-proposal-discard"
+            reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
+          >
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={refineInFlight}
+              data-testid="canvas-proposal-discard"
+              onClick={() => {
+                const view = activeCanvasView.current;
+                if (view === null) return;
+                rejectSuggestion(view, wholeProposal.id);
+                proposalsRef.current.delete(wholeProposal.id);
+                syncSuggestions();
+              }}
+            >
+              Discard
+            </Button>
+          </BlockedControl>
+        </div>
+      )}
+      {previewOpen && previewSource !== null ? (
+        <>
+          {refineInFlight && (
+            <div
+              className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
+              data-testid="canvas-preview-proposing"
+              role="status"
+            >
+              <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+              {instructionTarget === 'part' ? 'Rewriting the part' : 'Refining'} — the change lands
+              in the preview when the reply settles (Stop proposal cancels it).
+            </div>
+          )}
+          <CanvasPreview
+            doc={previewSource}
+            module={currentModule}
+            artifacts={pool}
+            moduleId={currentModule.id}
+            highlight={previewHighlight}
+            onOpenArtifact={(artifact) => {
+              setPeekArtifact(artifact);
+            }}
+            onSelectionChange={(capture) => {
+              useCanvasPreviewStore.getState().setSelection(moduleId, capture);
+            }}
+            onRequestEdit={enterEditFromPreview}
+            scrollToPos={previewScrollTo}
+          />
+        </>
+      ) : (
+        <div
+          className="flex min-h-0 flex-1 flex-col p-4"
+          data-testid="canvas-editor-pane"
+          onPointerDown={handlePaneMarginPointerDown}
+        >
+          <CanvasEditor
+            entry={editEntry}
+            onExit={(pos) => {
+              if (!viewBusy) togglePreview(pos);
+            }}
+            key={`${currentModule.id}:${String(docEpoch)}`}
+            initialMarkdown={mountDoc ?? initialDoc}
+            artifacts={pool}
+            moduleId={currentModule.id}
+            replacement={lastReplacement}
+            onChange={(doc) => {
+              setDocText(doc);
+              // The mark renders only on doc identity: any edit that
+              // moves the text away from the stored post-apply string
+              // (hand edit, proposal accept, next apply) clears it.
+              setLastReplacement((previous) =>
+                previous !== null && doc !== previous.doc ? null : previous,
+              );
+            }}
+            onSuggestionAccepted={(id) => {
+              void handleSuggestionAccepted(id);
+            }}
+            onSuggestionInvalidated={() => {
+              toastError(
+                'Suggestion discarded — the text was edited inside the proposed range',
+                new Error('a pending proposal was invalidated by an edit inside its range'),
+              );
+              syncSuggestions();
+            }}
+            onSuggestionsChanged={syncSuggestions}
+          />
+        </div>
+      )}
+      {/*
+       * PROVENANCE (owner decision, docs/17 row 93 amendment): the canvas
+       * footer names who wrote the module's text. It sits OUTSIDE the
+       * editable document — below the editor (or the preview), above the
+       * page edge — so the id is visible in the mode the owner actually
+       * works in, and can never enter the doc, a part's markdown, or the
+       * assembled text (docs/18 §4: provenance is never model input).
+       */}
+      <CanvasWriterModel module={currentModule} />
+    </div>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="module-canvas">
@@ -1585,7 +1777,9 @@ export function CanvasPage(): JSX.Element {
               aria-pressed={previewOpen}
               disabled={viewBusy}
               data-testid="canvas-preview-toggle"
-              onClick={togglePreview}
+              onClick={() => {
+                togglePreview();
+              }}
             >
               {previewOpen ? <PencilIcon aria-hidden data-icon="inline-start" /> : <EyeIcon aria-hidden data-icon="inline-start" />}
               {previewOpen ? 'Edit' : 'Preview'}
@@ -1800,14 +1994,11 @@ export function CanvasPage(): JSX.Element {
             </Button>
           )}
           {saving || dirty ? (
-            <BlockedControl
-              testId="canvas-save"
-              reason={saving ? null : saveBlockedReason(busy, previewOpen)}
-            >
+            <BlockedControl testId="canvas-save" reason={saving ? null : saveBlockedReason(busy)}>
               <Button
                 variant="outline"
                 size="xs"
-                disabled={saving || busy || previewOpen}
+                disabled={saving || busy}
                 /*
                  * NO `title`, deliberately (docs/18 §4, ledger 125): the sentence
                  * this control states while it is held is the SAME expression the
@@ -1849,176 +2040,59 @@ export function CanvasPage(): JSX.Element {
       </header>
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {chatOpen && (
-          <ChatSidebar
-            moduleId={currentModule.id}
-            surface={chatSurface}
-            onSurfaceChange={setChatSurface}
-            pool={pool}
-            aiBusy={aiBlocked}
-            aiBusyReason={aiBlockedReason}
-            previewOpen={previewOpen}
-            onPreviewSend={(text) => handlePreviewSend(text)}
-            onPreviewReportOutcome={(messageId, outcome) => {
-              handlePreviewReportOutcome(messageId, outcome);
-            }}
-            onPreviewReportMessage={(message) => {
-              handlePreviewReportMessage(message);
-            }}
-            onPreviewStop={() => {
-              previewAbortRef.current?.abort();
-            }}
-            onEditorTurnApplied={(doc, applied) => {
-              handleEditorTurnApplied(doc, applied);
-            }}
-            onChatCleared={() => {
-              // Clear chat (ChatSidebar): the thread + this module's session
-              // ledger are already pristine — the highlight is PAGE state, so
-              // dropping it here is what removes the mark from BOTH surfaces
-              // (the editor's CM6 field and the preview wash).
-              setLastReplacement(null);
-            }}
-          />
-        )}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <ModuleStyleBar module={currentModule} />
-          {wholeProposal !== undefined && !previewOpen && (
-            <div
-              className="flex items-center gap-2 border-b px-4 py-1.5 text-sm text-muted-foreground"
-              data-testid="canvas-proposal-bar"
-              data-streaming={refineInFlight ? 'true' : 'false'}
-            >
-              {refineInFlight && (
-                <>
-                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
-                  <span>Proposing…</span>
-                </>
-              )}
-              <Button
-                variant="ghost"
-                size="xs"
-                data-testid="canvas-show-previous"
-                onClick={() => {
-                  const view = activeCanvasView.current;
-                  if (view === null) return;
-                  const next = !view.state.field(canvasShowPreviousField);
-                  view.dispatch({
-                    effects: setShowPreviousEffect.of(next),
-                    annotations: Transaction.addToHistory.of(false),
-                  });
-                  setShowPrevious(next);
-                }}
-              >
-                {showPrevious ? 'Show proposed' : 'Show previous'}
-              </Button>
-              <BlockedControl
-                testId="canvas-proposal-apply"
-                reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
-              >
-                <Button
-                  variant="outline"
-                  size="xs"
-                  disabled={refineInFlight}
-                  data-testid="canvas-proposal-apply"
-                  onClick={() => {
-                    const view = activeCanvasView.current;
-                    if (view === null) return;
-                    acceptSuggestion(view, wholeProposal.id);
-                  }}
-                >
-                  Apply
-                </Button>
-              </BlockedControl>
-              <BlockedControl
-                testId="canvas-proposal-discard"
-                reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
-              >
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabled={refineInFlight}
-                  data-testid="canvas-proposal-discard"
-                  onClick={() => {
-                    const view = activeCanvasView.current;
-                    if (view === null) return;
-                    rejectSuggestion(view, wholeProposal.id);
-                    proposalsRef.current.delete(wholeProposal.id);
-                    syncSuggestions();
-                  }}
-                >
-                  Discard
-                </Button>
-              </BlockedControl>
-            </div>
-          )}
-          {previewOpen && previewSource !== null ? (
+        {/* ONE group whatever the chat state, so the document pane (the CM6
+            editor) never remounts when the chat toggles — a remount would drop
+            unsaved typing and undo history. */}
+        <ResizablePanelGroup
+          orientation="horizontal"
+          defaultLayout={splitLayout.defaultLayout}
+          onLayoutChanged={splitLayout.onLayoutChanged}
+          data-testid="canvas-split"
+        >
+          {chatOpen && (
             <>
-              {refineInFlight && (
-                <div
-                  className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
-                  data-testid="canvas-preview-proposing"
-                  role="status"
-                >
-                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
-                  {instructionTarget === 'part' ? 'Rewriting the part' : 'Refining'} — the change lands
-                  in the preview when the reply settles (Stop proposal cancels it).
-                </div>
-              )}
-              <CanvasPreview
-                doc={previewSource}
-                module={currentModule}
-                artifacts={pool}
-                moduleId={currentModule.id}
-                highlight={previewHighlight}
-                onOpenArtifact={(artifact) => {
-                  setPeekArtifact(artifact);
-                }}
-                onSelectionChange={(capture) => {
-                  useCanvasPreviewStore.getState().setSelection(moduleId, capture);
-                }}
+              <ResizablePanel id="chat" defaultSize="30%" minSize={CHAT_MIN_PX} maxSize="60%">
+                <ChatSidebar
+                  moduleId={currentModule.id}
+                  surface={chatSurface}
+                  onSurfaceChange={setChatSurface}
+                  pool={pool}
+                  aiBusy={aiBlocked}
+                  aiBusyReason={aiBlockedReason}
+                  previewOpen={previewOpen}
+                  onPreviewSend={(text) => handlePreviewSend(text)}
+                  onPreviewReportOutcome={(messageId, outcome) => {
+                    handlePreviewReportOutcome(messageId, outcome);
+                  }}
+                  onPreviewReportMessage={(message) => {
+                    handlePreviewReportMessage(message);
+                  }}
+                  onPreviewStop={() => {
+                    previewAbortRef.current?.abort();
+                  }}
+                  onEditorTurnApplied={(doc, applied) => {
+                    handleEditorTurnApplied(doc, applied);
+                  }}
+                  onChatCleared={() => {
+                    // Clear chat (ChatSidebar): the thread + this module's session
+                    // ledger are already pristine — the highlight is PAGE state, so
+                    // dropping it here is what removes the mark from BOTH surfaces
+                    // (the editor's CM6 field and the preview wash).
+                    setLastReplacement(null);
+                  }}
+                />
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+               
+                aria-label="Resize the chat"
               />
             </>
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col p-4">
-              <CanvasEditor
-                key={`${currentModule.id}:${String(docEpoch)}`}
-                initialMarkdown={mountDoc ?? initialDoc}
-                artifacts={pool}
-                moduleId={currentModule.id}
-                replacement={lastReplacement}
-                onChange={(doc) => {
-                  setDocText(doc);
-                  // The mark renders only on doc identity: any edit that
-                  // moves the text away from the stored post-apply string
-                  // (hand edit, proposal accept, next apply) clears it.
-                  setLastReplacement((previous) =>
-                    previous !== null && doc !== previous.doc ? null : previous,
-                  );
-                }}
-                onSuggestionAccepted={(id) => {
-                  void handleSuggestionAccepted(id);
-                }}
-                onSuggestionInvalidated={() => {
-                  toastError(
-                    'Suggestion discarded — the text was edited inside the proposed range',
-                    new Error('a pending proposal was invalidated by an edit inside its range'),
-                  );
-                  syncSuggestions();
-                }}
-                onSuggestionsChanged={syncSuggestions}
-              />
-            </div>
           )}
-          {/*
-           * PROVENANCE (owner decision, docs/17 row 93 amendment): the canvas
-           * footer names who wrote the module's text. It sits OUTSIDE the
-           * editable document — below the editor (or the preview), above the
-           * page edge — so the id is visible in the mode the owner actually
-           * works in, and can never enter the doc, a part's markdown, or the
-           * assembled text (docs/18 §4: provenance is never model input).
-           */}
-          <CanvasWriterModel module={currentModule} />
-        </div>
+          <ResizablePanel id="doc" minSize={DOC_MIN_PX}>
+            {documentPane}
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {peekArtifact !== null && (
@@ -2368,8 +2442,6 @@ function busyReason(
  * "Saving…" rather than a reason. Only reachable while `dirty`: with nothing to
  * save the header shows the passive "Saved" indicator and no button at all.
  */
-function saveBlockedReason(busy: boolean, previewOpen: boolean): string | null {
-  if (busy) return MODULE_GENERATING_REASON;
-  if (previewOpen) return 'Preview is read-only. Switch to Edit (the header toggle) to save your edits.';
-  return null;
+function saveBlockedReason(busy: boolean): string | null {
+  return busy ? MODULE_GENERATING_REASON : null;
 }

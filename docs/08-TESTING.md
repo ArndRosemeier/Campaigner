@@ -10195,3 +10195,8 @@ been the wrong instrument for a row that changed no prompt byte.
 ### Advisors (docs/17 row 396)
 
 `tests/llm/advisors.test.ts` pins the outgoing advisor messages (document + lens + chat prose, none of the command tags), lens-list single source, approval attribution, additive schema. `tests/features/canvas-chat-thread.test.tsx` (advisors describe) drives the real sidebar: nothing runs before the click, dismiss sends nothing and leaves the document byte-identical, state survives reload, approve reaches the writer through the normal send, failure is a visible card. The live queries re-fire on row writes: read the row through `actDrained` (1a).
+
+
+## Co-authoring: click-to-edit, campaign chat, resizable split (docs/17 row 399)
+
+`tests/features/canvas-coauthor.test.tsx` drives the real page: caret offsets (level 1 and 2), unmappable degradation (never 0), drag does not switch, chip click keeps the peek, computed scroll anchor, Escape/margin return, no switch on chat/dialog/blur, malformed-separator refusal naming the line, chat sees user text and vice versa, undo steps, rename scan, split separator. jsdom cannot lay out: the scroll target is asserted as the computed anchor with stubbed rects. `tests/setup.ts` parks the resizable separator's rect off-screen, otherwise user-event's (0,0) clicks hit-test as a separator drag and steal focus; canvas tests that mount the shell still use `actDrained` (section 1a).

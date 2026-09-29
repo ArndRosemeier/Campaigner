@@ -239,3 +239,19 @@ afterEach((ctx) => {
       .join('\n'),
   );
 });
+
+// jsdom lays nothing out: every rect is 0x0 at (0,0) and user-event clicks at
+// (0,0), so react-resizable-panels' pointerdown hit-test would match its
+// separator for EVERY click (focus stolen, default prevented) and no test could
+// type into the canvas chat beside the resizable split (docs/17 row 399). Park
+// the separator's rect far off-screen; real browsers never take this branch.
+if (typeof Element !== 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- re-called with the right `this` below
+  const realRect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
+    if (this.getAttribute('data-slot') === 'resizable-handle') {
+      return new DOMRect(-5000, -5000, 1, 1);
+    }
+    return realRect.call(this);
+  };
+}

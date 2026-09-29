@@ -9,10 +9,15 @@ import {
   moduleDocumentSections,
   type ModuleDocumentSection,
 } from '@/domain/moduleDocument';
+import { resolveSelectionRange, WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import {
-  resolveSelectionRange,
-  WikiMarkdown,
-} from '@/features/campaign/components/wiki-markdown';
+  PART_FROM_ATTRIBUTE,
+  caretForClick,
+  previewScrollAnchor,
+  scrollPreviewToPos,
+  type EditHandoff,
+} from '@/features/modules/canvas/editHandoff';
+import { WIKI_RAW_ATTRIBUTE } from '@/lib/remark-wikilinks';
 import type { PreviewSelectionCapture } from '@/features/modules/canvas/previewStore';
 
 /**
@@ -75,6 +80,14 @@ export interface CanvasPreviewProps {
   /** Reports every non-collapsed selection made inside this preview, mapped
    * to the document source or refused by name (see the header comment). */
   onSelectionChange?: ((capture: PreviewSelectionCapture) => void) | undefined;
+  /**
+   * Click-to-edit (docs/17 row 399): a COLLAPSED click on prose asks the page to
+   * open the editor at the mapped caret and the same scroll position. Absent =
+   * the preview stays read-only (no caller today).
+   */
+  onRequestEdit?: ((handoff: EditHandoff) => void) | undefined;
+  /** Whole-document offset to scroll to on mount (the return from the editor). */
+  scrollToPos?: number | null | undefined;
 }
 
 /**
@@ -108,6 +121,8 @@ export function CanvasPreview({
   onOpenArtifact,
   highlight,
   onSelectionChange,
+  onRequestEdit,
+  scrollToPos,
 }: CanvasPreviewProps): JSX.Element {
   const partRoots = useRef(new Map<number, HTMLElement>());
   const parts = useRef<PartSource[]>([]);
@@ -198,6 +213,39 @@ export function CanvasPreview({
     };
   }, [captureSelection, onSelectionChange]);
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (scrollToPos === null || scrollToPos === undefined) return;
+    if (scrollerRef.current !== null) scrollPreviewToPos(scrollerRef.current, scrollToPos);
+    // Once per mount: the position is the editor's at the moment of the switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * A plain click on prose enters the editor. NOT a click: a drag-selection
+   * (non-collapsed — it feeds Refine selection), a chip / link / button (the
+   * peek and the links keep their meaning), a click outside every part.
+   */
+  const handleClick = (event: React.MouseEvent<HTMLDivElement>): void => {
+    if (onRequestEdit === undefined || event.button !== 0) return;
+    const target = event.target as Element;
+    if (target.closest(`a, button, [${WIKI_RAW_ATTRIBUTE}], [data-wiki-name]`) !== null) return;
+    const selection = window.getSelection();
+    if (selection === null || selection.rangeCount === 0 || !selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    const part = partSourceOf(parts.current, range.startContainer);
+    if (part === null || scrollerRef.current === null) return;
+    const anchor = previewScrollAnchor(scrollerRef.current);
+    onRequestEdit({
+      caret: caretForClick(part.root, part.text, {
+        node: range.startContainer,
+        offset: range.startOffset,
+      }),
+      scrollPos: anchor?.pos ?? part.textFrom,
+      scrollOffsetPx: anchor?.offsetPx ?? 0,
+    });
+  };
+
   if (parsed.error !== null) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -212,8 +260,8 @@ export function CanvasPreview({
               <p className="font-medium">The preview cannot render this document.</p>
               <p className="mt-1 break-words text-muted-foreground">{parsed.error}</p>
               <p className="mt-2 text-muted-foreground">
-                Switch back to Edit and fix the separator line it names — the preview only renders
-                a document whose level separators parse.
+                Switch to Edit (the header toggle) and fix the separator line it names — the preview
+                only renders a document whose level separators parse.
               </p>
             </div>
           </div>
@@ -226,6 +274,8 @@ export function CanvasPreview({
     <div
       className="min-h-0 flex-1 overflow-y-auto p-6"
       data-testid="canvas-preview"
+      ref={scrollerRef}
+      onClick={handleClick}
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
     >
@@ -245,6 +295,7 @@ export function CanvasPreview({
              */}
             <div
               data-canvas-part-source={String(section.planIndex)}
+              {...{ [PART_FROM_ATTRIBUTE]: String(section.textFrom) }}
               ref={(node) => {
                 if (node === null) partRoots.current.delete(section.planIndex);
                 else partRoots.current.set(section.planIndex, node);

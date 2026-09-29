@@ -643,7 +643,18 @@ export function resolveSelectionRange(
   return { status: 'mapped', from: head.offset, to: tail.offset };
 }
 
-type PointResult = { ok: true; offset: number } | { ok: false; reason: string };
+/**
+ * ONE rendered point → its exact PART-RELATIVE source offset, or a named
+ * refusal (the caret handoff of click-to-edit, docs/17 row 399). The same
+ * `resolvePoint` the range resolver uses — a collapsed caret is not a range
+ * (`resolveSelectionRange` refuses it as empty), so this is the point half
+ * exported, never a second mapping.
+ */
+export function resolveSourceOffset(partText: string, point: DomPoint): PointResult {
+  return resolvePoint(partText, point);
+}
+
+export type PointResult = { ok: true; offset: number } | { ok: false; reason: string };
 
 /** One piece of a source run, in document order, with its exact source range. */
 interface RunPiece {

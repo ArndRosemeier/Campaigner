@@ -239,6 +239,16 @@ function canonicalLevelOf(candidate: string): number | null {
 }
 
 /**
+ * The level number of a line that is a CANONICAL separator, else null — the
+ * parser's own predicate (closed tolerance: trailing whitespace and `\r`),
+ * exported so view chrome (the editor's level dividers) cannot drift from it.
+ */
+export function levelOfSeparatorLine(line: string): number | null {
+  const withoutCarriageReturn = line.endsWith('\r') ? line.slice(0, -1) : line;
+  return canonicalLevelOf(withoutCarriageReturn.replace(/[ \t]+$/, ''));
+}
+
+/**
  * Whether a line LOOKS like a level header without being canonical — the
  * near-miss probe. Deliberately over-inclusive (any `=`-leading line that
  * mentions a level), because a false positive is a loud, correctable message
@@ -395,9 +405,8 @@ export function splitModuleDocument(doc: string): ModuleDocument {
     const withoutCarriageReturn = line.content.endsWith('\r')
       ? line.content.slice(0, -1)
       : line.content;
-    // The CLOSED tolerance: the line's own trailing whitespace and its own `\r`.
-    const candidate = withoutCarriageReturn.replace(/[ \t]+$/, '');
-    const level = canonicalLevelOf(candidate);
+    // The CLOSED tolerance lives in `levelOfSeparatorLine`.
+    const level = levelOfSeparatorLine(line.content);
     if (level === null) {
       if (looksLikeALevelHeader(withoutCarriageReturn.trim())) {
         throw new ModuleDocumentError(

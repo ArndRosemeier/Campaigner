@@ -7,7 +7,10 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { AnyArtifact, Id } from '@/domain';
 import { canvasTheme } from '@/features/modules/canvas/canvasTheme';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
-import { wikiLinkDecorations } from '@/features/modules/canvas/wikiDecorations';
+import {
+  levelDividerDecorations,
+  wikiLinkDecorations,
+} from '@/features/modules/canvas/wikiDecorations';
 import {
   lastReplacementDecorations,
   lastReplacementField,
@@ -60,6 +63,31 @@ export interface CanvasEditorProps {
    * ghost affordances.
    */
   replacement?: LastReplacement | null | undefined;
+  /**
+   * Click-to-edit entry (docs/17 row 399): where the caret lands and which
+   * text is scrolled to the top, both WHOLE-DOCUMENT offsets, applied once on
+   * creation. Absent = the editor opens as before.
+   */
+  entry?: { caret: number; scrollPos: number } | null | undefined;
+  /**
+   * Escape asks to go back to the rendered view. Carries the whole-document
+   * offset of the text at the top of the editor so the rendered view can open
+   * scrolled to it.
+   */
+  onExit?: ((scrollPos: number) => void) | undefined;
+}
+
+/** The transaction spec that lands the caret and scrolls `scrollPos` to the top. */
+export function entryTransaction(
+  docLength: number,
+  entry: { caret: number; scrollPos: number },
+): { selection: { anchor: number }; effects: ReturnType<typeof EditorView.scrollIntoView> } {
+  const caret = Math.min(Math.max(entry.caret, 0), docLength);
+  const scrollPos = Math.min(Math.max(entry.scrollPos, 0), docLength);
+  return {
+    selection: { anchor: caret },
+    effects: EditorView.scrollIntoView(scrollPos, { y: 'start', yMargin: 0 }),
+  };
 }
 
 export function CanvasEditor({
@@ -71,6 +99,8 @@ export function CanvasEditor({
   onSuggestionInvalidated,
   onSuggestionsChanged,
   replacement,
+  entry,
+  onExit,
 }: CanvasEditorProps): JSX.Element {
   useEffect(() => {
     return () => {
@@ -114,6 +144,10 @@ export function CanvasEditor({
         basicSetup={false}
         onCreateEditor={(view) => {
           activeCanvasView.current = view;
+          if (entry !== null && entry !== undefined) {
+            view.dispatch(entryTransaction(view.state.doc.length, entry));
+            view.focus();
+          }
           const initial = replacementRef.current;
           if (initial !== null) {
             view.dispatch({ effects: setLastReplacementEffect.of(initial) });
@@ -122,7 +156,18 @@ export function CanvasEditor({
         extensions={[
           canvasTheme,
           history(),
-          keymap.of([...defaultKeymap, ...historyKeymap]),
+          keymap.of([
+            {
+              key: 'Escape',
+              run: (view) => {
+                if (onExit === undefined) return false;
+                onExit(view.lineBlockAtHeight(view.scrollDOM.scrollTop).from);
+                return true;
+              },
+            },
+            ...defaultKeymap,
+            ...historyKeymap,
+          ]),
           markdown({ base: markdownLanguage }),
           EditorView.lineWrapping,
           // The suggestion + show-previous state fields MUST be registered
@@ -132,6 +177,7 @@ export function CanvasEditor({
           canvasShowPreviousField,
           lastReplacementField,
           wikiLinkDecorations(artifacts, moduleId),
+          levelDividerDecorations(),
           suggestionDecorations(),
           lastReplacementDecorations(),
           EditorView.updateListener.of((update) => {
