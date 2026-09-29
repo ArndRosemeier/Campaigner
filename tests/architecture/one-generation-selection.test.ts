@@ -23,7 +23,8 @@ import { CODE, filesWith, rawSourceText } from '../helpers/sourceCode';
 const SWEEP = 'src/features/modules/post-generation.ts';
 const MODULE_GEN = 'src/llm/moduleGen.ts';
 const POST_RUN = 'src/features/campaign/post-run-extras.ts';
-const NEW_MODULE = 'src/features/modules/new-module-dialog.tsx';
+const NEW_MODULE = 'src/features/campaign/start-campaign-chat.ts';
+const NEW_MODULE_GEN = 'src/llm/moduleGen.ts';
 const DIALOG = 'src/features/modules/generation-dialog.tsx';
 const SEAM = 'src/features/modules/generation-selection.ts';
 const RUN = 'src/features/modules/generation-run.ts';
@@ -70,13 +71,14 @@ describe('the automatic generation triggers are gone', () => {
     ]) {
       expect(source).not.toContain(needle);
     }
-    // … and the creation PAYLOAD no longer carries the flags either, so a
-    // module created from now on records an EMPTY automation intent whatever the
-    // stored draft happens to hold. (The draft's own fields survive as the
-    // stored-format compatibility record; that is the named remainder, docs/18
-    // §5, and it is why this pin scopes to the payload rather than the file.)
-    const start = source.slice(source.indexOf('const input: NewModule'));
-    const payload = start.slice(0, start.indexOf('};'));
+    // … and the ONE default creation input (MIGRATED, docs/17 row 395: the
+    // dialog's payload is gone with the dialog; `emptyDocumentInput` is the
+    // payload now) carries no flag, so a module created records an EMPTY
+    // automation intent. The scan is scoped to that function body.
+    const gen = code(NEW_MODULE_GEN);
+    const start = gen.slice(gen.indexOf('function emptyDocumentInput'));
+    const payload = start.slice(0, start.indexOf('export async function startCampaignDocument'));
+    expect(payload.length).toBeGreaterThan(60);
     for (const needle of [
       'autoGenerateKinds',
       'autoImageKinds',
@@ -86,8 +88,7 @@ describe('the automatic generation triggers are gone', () => {
     ]) {
       expect(payload).not.toContain(needle);
     }
-    // The dialog still creates (the control inventory is the claim, not an
-    // empty file).
+    // The entry still creates (the inventory is the claim, not an empty file).
     expect(source).toContain('startCampaignDocument');
   });
 });

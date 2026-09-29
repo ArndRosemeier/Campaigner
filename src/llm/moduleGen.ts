@@ -4,6 +4,7 @@ import {
   carriedTextOrigin,
   comparableName,
   createModule,
+  defaultModuleTitle,
   DEFAULT_MODULE_DIFFICULTY,
   defaultEncounterBudgetPolicy,
   encounterFloorGuardrailFor,
@@ -2666,6 +2667,24 @@ export interface NewModuleCreationInput {
 }
 
 /**
+ * The stored defaults of a document created with NO owner-supplied settings
+ * (docs/17 row 395): the levels live in the chat, so the declared range is 1–1
+ * and tone/concept are empty. `startCampaignDocument` uses this when called
+ * without an input — the new-campaign action and the no-document redirect both do.
+ */
+function emptyDocumentInput(campaign: Campaign): NewModuleCreationInput {
+  return {
+    campaignId: campaign.id,
+    title: defaultModuleTitle(),
+    concept: '',
+    levelMin: 1,
+    levelMax: 1,
+    tone: '',
+    sizeDial: 'standard',
+  };
+}
+
+/**
  * THE APP'S ONE CREATION ENTRY: START THE CAMPAIGN DOCUMENT, and nothing else
  * (docs/23 §10 phase 3, docs/17 row 390).
  *
@@ -2685,7 +2704,7 @@ export interface NewModuleCreationInput {
  */
 export async function startCampaignDocument(
   campaign: Campaign,
-  input: NewModuleCreationInput,
+  input: NewModuleCreationInput = emptyDocumentInput(campaign),
 ): Promise<Id> {
   const saved = await createDocumentRow(campaign, input);
   return saved.id;

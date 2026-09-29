@@ -41,7 +41,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { documentPath, modulePath, ROUTES } from '@/app/routes';
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { createCampaign, getCampaign, updateCampaign } from '@/db/campaignRepo';
+import { createCampaign, updateCampaign } from '@/db/campaignRepo';
 import {
   getModule,
   patchModule,
@@ -52,7 +52,6 @@ import {
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
-  defaultModuleTitle,
   encounterDataSchema,
   modulePartSchema,
   moduleSpineSchema,
@@ -67,14 +66,12 @@ import { join, relative, resolve } from 'node:path';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { NORMALIZATION_FAILURE_MESSAGE } from '@/llm/moduleGen';
 import { db } from '@/db/db';
-import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import { PromptStylesSection } from '@/features/settings/prompt-styles-section';
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
-import { updateSettings } from '@/db/settingsRepo';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
 import { createImage } from '@/db/imageRepo';
 
-const { startCampaignDocument, normalizeModuleEntityNames } = await import('@/llm/moduleGen');
+const { normalizeModuleEntityNames } = await import('@/llm/moduleGen');
 const { toastSuccess, toastError } = await import('@/lib/toast');
 
 vi.mock('@/lib/toast', () => ({
@@ -94,7 +91,6 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     cancelModuleGen: vi.fn(),
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
-    startCampaignDocument: vi.fn(),
     normalizeModuleEntityNames: vi.fn(),
   };
 });
@@ -123,8 +119,6 @@ describe('campaign-document-landing.test.tsx', () => {
    * state. A legacy campaign that still carries SEVERAL module rows is
    * surfaced by the campaign bar's `LegacyModulesNotice` — never hidden.
    */
-
-  const startCampaignDocumentMock = vi.mocked(startCampaignDocument);
 
   const toastSuccessMock = vi.mocked(toastSuccess);
 
@@ -331,257 +325,6 @@ describe('campaign-document-landing.test.tsx', () => {
       renderAppAt(documentPath(campaign.id));
       await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
       expect(screen.queryByTestId('legacy-extra-modules')).not.toBeInTheDocument();
-      await flushAsyncUpdates();
-    }, 20_000);
-  });
-
-  describe('the create state (a campaign with no document yet)', () => {
-    it('shows the campaign name and description in the landing header', async () => {
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'A sunless sea beneath a dying star.',
-        system: 'dnd5e',
-      });
-      renderAppAt(documentPath(campaign.id));
-
-      const context = await screen.findByTestId(
-        'campaign-landing-context',
-        {},
-        { timeout: 10_000 },
-      );
-      expect(context).toHaveTextContent('Ember');
-      expect(context).toHaveTextContent('A sunless sea beneath a dying star.');
-      expect(screen.getByTestId('campaign-document-empty')).toBeInTheDocument();
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('drops the description from the landing header when it is empty', async () => {
-      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(documentPath(campaign.id));
-
-      const context = await screen.findByTestId(
-        'campaign-landing-context',
-        {},
-        { timeout: 10_000 },
-      );
-      // Name only — no stray separator for the missing description.
-      expect(context.textContent).toBe('Barren');
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('edits the campaign from the landing and refreshes the header', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'Old description.',
-        system: 'dnd5e',
-      });
-      renderAppAt(documentPath(campaign.id));
-      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('edit-campaign'));
-      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
-      expect(within(dialog).getByLabelText('Campaign name')).toHaveValue('Ember');
-      expect(within(dialog).getByLabelText('Campaign description')).toHaveValue('Old description.');
-      // The system is fixed — shown disabled, not editable.
-      expect(within(dialog).getByLabelText('Game system (fixed)')).toBeDisabled();
-
-      await user.clear(within(dialog).getByLabelText('Campaign description'));
-      await user.type(within(dialog).getByLabelText('Campaign description'), 'A drowned city.');
-      await user.click(within(dialog).getByTestId('save-campaign'));
-
-      // Persisted through the repo…
-      await waitFor(async () => {
-        expect((await getCampaign(campaign.id))?.description).toBe('A drowned city.');
-      });
-      // …and the liveQuery header picked it up.
-      await waitFor(() => {
-        expect(screen.getByTestId('campaign-landing-context')).toHaveTextContent('A drowned city.');
-      });
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('clears the description and removes it from the landing header', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({
-        name: 'Ember',
-        description: 'Old description.',
-        system: 'dnd5e',
-      });
-      renderAppAt(documentPath(campaign.id));
-      await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('edit-campaign'));
-      const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
-      await user.clear(within(dialog).getByLabelText('Campaign description'));
-      await user.click(within(dialog).getByTestId('save-campaign'));
-
-      await waitFor(() => {
-        expect(screen.getByTestId('campaign-landing-context').textContent).toBe('Ember');
-      });
-      // Raw awaited read while the page + closing dialog are mounted —
-      // actDrained closes the window the save write's liveQuery cascade and
-      // the dialog exit chain used to leak through (docs/08 §Console guard);
-      // the long trailing drain absorbs the exit transition's timed updates.
-      expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
-      await flushAsyncUpdates(60);
-    }, 20_000);
-
-    it('opens the New Module dialog without starting a generation run', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(documentPath(campaign.id));
-      await screen.findByTestId('new-module', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('new-module'));
-      const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-      expect(within(dialog).getByRole('heading', { name: 'Start the campaign document' })).toBeInTheDocument();
-      // The Name field is visibly present and pre-filled (docs/17 row 213),
-      // distinct from the reader's `module-title` testid.
-      expect(within(dialog).getByTestId('new-module-title')).toHaveValue(defaultModuleTitle());
-      expect(startCampaignDocumentMock).not.toHaveBeenCalled();
-
-      // Cancel closes the dialog; still no generator call.
-      await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-      await waitFor(() => {
-        expect(screen.queryByTestId('new-module-dialog')).not.toBeInTheDocument();
-      });
-      expect(startCampaignDocumentMock).not.toHaveBeenCalled();
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('offers prior-module continuity and passes the opt-in to the generator', async () => {
-      const user = userEvent.setup();
-      // THE LEGACY SHAPE, driven through the dialog DIRECTLY: the app no longer
-      // mounts a create dialog while a document exists (one document per
-      // campaign), but the dialog keeps its continuity option for a campaign
-      // whose row already carries text — a legacy multi-module database.
-      await seedBuiltInPersonas();
-      const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-      await saveModule(
-        buildModule({
-          campaignId: campaign.id,
-          title: 'Vault of Whispers',
-          concept: '',
-          levelMin: 1,
-          levelMax: 2,
-          sizeDial: 'sketch',
-        }),
-      );
-      await patchModule(
-        (await db.modules.where('campaignId').equals(campaign.id).first())?.id ?? '',
-        {
-          spine: moduleSpineSchema.parse({
-            premise: 'The old mill hides a vault of whispers.',
-            themes: [],
-            partPlan: [],
-          }),
-          parts: [],
-        },
-      );
-
-      rtlRender(
-        <MemoryRouter>
-          <NewModuleDialog campaign={campaign} open onOpenChange={() => undefined} />
-        </MemoryRouter>,
-      );
-      const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-      const checkbox = within(dialog).getByRole('checkbox', {
-        name: 'Continue from previous modules',
-      });
-      await waitFor(() => {
-        expect(checkbox).toBeEnabled();
-      });
-
-      await user.click(checkbox);
-      expect(checkbox).toBeChecked();
-      await user.type(within(dialog).getByLabelText('Concept'), 'A new chapter of the story.');
-      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
-      await user.click(within(dialog).getByTestId('start-module'));
-      await waitFor(() => {
-        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
-      });
-      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ includePriorModules: true }),
-      );
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('starts with continuity off and disables it when no prior module has text', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(documentPath(campaign.id));
-      await screen.findByTestId('new-module', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('new-module'));
-      const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-      const checkbox = within(dialog).getByRole('checkbox', {
-        name: 'Continue from previous modules',
-      });
-      // Base UI checkbox: the disabled state is aria-disabled, not [disabled].
-      expect(checkbox).toHaveAttribute('aria-disabled', 'true');
-      expect(
-        within(dialog).getByText('No previous modules with text in this campaign yet.'),
-      ).toBeInTheDocument();
-
-      // Creation still works, and the flag is passed as off.
-      await user.type(within(dialog).getByLabelText('Concept'), 'The very first chapter.');
-      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
-      await user.click(within(dialog).getByTestId('start-module'));
-      await waitFor(() => {
-        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
-      });
-      expect(startCampaignDocumentMock).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ includePriorModules: false }),
-      );
-      await flushAsyncUpdates();
-    }, 20_000);
-
-    it('passes NO post-generation automation to the generator — the controls are deleted', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
-      renderAppAt(documentPath(campaign.id));
-      await screen.findByTestId('new-module', {}, { timeout: 10_000 });
-
-      await user.click(screen.getByTestId('new-module'));
-      const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-
-      // THE GENERATION-ONLY CONTROLS ARE GONE (docs/23 §8, docs/17 row 394):
-      // the per-kind auto-generate/auto-image grid, the battlemap and mob-image
-      // switches and the skip-the-review spine flag. Detail generation is the
-      // level-scoped choice of the canvas's generation dialog.
-      for (const testId of [
-        'auto-generate-npc',
-        'auto-image-npc',
-        'auto-spine',
-        'auto-battlemaps',
-        'auto-mob-images',
-        'module-automation-grid',
-      ]) {
-        expect(within(dialog).queryByTestId(testId)).toBeNull();
-      }
-
-      await user.type(within(dialog).getByLabelText('Concept'), 'No automation.');
-      startCampaignDocumentMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
-      await user.click(within(dialog).getByTestId('start-module'));
-      await waitFor(() => {
-        expect(startCampaignDocumentMock).toHaveBeenCalledTimes(1);
-      });
-      // An untouched creation records an EMPTY automation intent: none of the
-      // five flags rides the payload, so no later surface can start work the
-      // owner never asked for.
-      const input = startCampaignDocumentMock.mock.calls[0]?.[1];
-      for (const key of [
-        'autoApproveSpine',
-        'autoGenerateKinds',
-        'autoImageKinds',
-        'autoGenerateBattlemaps',
-        'autoGenerateMobImages',
-      ]) {
-        expect(input).not.toHaveProperty(key);
-      }
       await flushAsyncUpdates();
     }, 20_000);
   });
@@ -969,20 +712,15 @@ describe('normalization-failure-wording.test.tsx', () => {
 
 describe('prompt-style-freestyle-ui.test.tsx', () => {
   /**
-   * Freestyle is SELECTABLE, on both surfaces that offer a writing style
+   * Freestyle is SELECTABLE in the Settings writing-style list
    * (docs/17 row 87).
    *
-   * Both surfaces are data-driven — `PromptStylesSection` and the New Module
-   * dialog's Writing style select each map `catalogStyles(catalog)`, which is
-   * `BUILTIN_PROMPT_STYLES` plus the user's own — so these pins are deliberately
-   * about the DATA reaching the two lists a user actually picks from, not about
-   * any hand-added entry. REVERT-PROOF: removing the freestyle entry from
-   * `BUILTIN_PROMPT_STYLES` makes both fail (the row and the option disappear),
-   * which is exactly the failure a "the third style exists" claim must catch.
-   *
-   * The dialog's own selection semantics (the draft field, the app default, the
-   * unresolvable id) belong to the row-86 arc and are pinned by
-   * `new-module-draft.test.tsx`; nothing here duplicates or softens them.
+   * The list is data-driven — `PromptStylesSection` maps `BUILTIN_PROMPT_STYLES`
+   * plus the user's own — so this pin is about the DATA reaching the list a
+   * user actually picks from. REVERT-PROOF: removing the freestyle entry from
+   * `BUILTIN_PROMPT_STYLES` makes it fail. (MIGRATED, docs/17 row 395: the
+   * creation dialog's own Writing-style select — the second surface — is
+   * DELETED with the dialog, so its pins are deleted, not weakened.)
    */
 
   // Creation must never start real LLM machinery here.
@@ -1009,38 +747,6 @@ describe('prompt-style-freestyle-ui.test.tsx', () => {
       expect(screen.getByTestId('prompt-style-row-classic')).toBeTruthy();
       expect(screen.getByTestId('prompt-style-row-story')).toBeTruthy();
     });
-
-    it('appears in the New Module dialog Writing style select', async () => {
-      const user = userEvent.setup();
-      const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-      render(
-        <MemoryRouter>
-          <NewModuleDialog campaign={campaign} open onOpenChange={() => undefined} />
-        </MemoryRouter>,
-      );
-      const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-      await flushAsyncUpdates(4);
-
-      await user.click(within(dialog).getByTestId('module-prompt-style'));
-      const freestyle = await screen.findByRole(
-        'option',
-        { name: /Freestyle/ },
-        { timeout: 5_000 },
-      );
-      expect(freestyle).toBeTruthy();
-      // The select is the whole catalog, not a one-off addition.
-      expect(screen.getByRole('option', { name: /Classic/ })).toBeTruthy();
-      expect(screen.getByRole('option', { name: /Story/ })).toBeTruthy();
-
-      // Choosing it is a real selection, not a decorative list entry: the closed
-      // trigger carries the selected style. (Radix's `SelectValue` renders the
-      // selected VALUE in this shadcn setup — the item's label is only in the
-      // closed collection — so the pin is the changed selection itself, and
-      // "Freestyle (built-in) — v1" is what the option offers.)
-      await user.click(freestyle);
-      await flushAsyncUpdates(4);
-      expect(within(dialog).getByTestId('module-prompt-style').textContent).toContain('freestyle');
-    }, 30_000);
   });
 });
 
@@ -1156,99 +862,6 @@ describe('remove-all-generated.test.tsx', () => {
       const confirm = await screen.findByTestId('remove-all-confirm-dialog');
       expect(await within(confirm).findByText(/no generated content/)).toBeDefined();
     });
-  });
-});
-
-describe('prompt-style-default-ui.test.tsx', () => {
-  /**
-   * The New Module dialog's Writing style select under the NEW product default
-   * (docs/17 row 88): a fresh app preselects Freestyle, and an explicitly STORED
-   * default is honored and shown instead.
-   *
-   * The select is data-driven — it reads `readPromptStyleCatalog`, which carries
-   * the settings row's `defaultPromptStyleId` — so these pins are about the value
-   * the two surfaces actually resolve, not about a hand-added option.
-   *
-   * Freestyle's PRESENCE in the list is the row-87 arc's pin
-   * (`prompt-style-freestyle-ui.test.tsx`); nothing here duplicates it. The
-   * stored-draft semantics (the choice, the app default resolved at creation, the
-   * prefill) belong to `new-module-draft.test.tsx`.
-   */
-
-  // Creation must never start real LLM machinery here.
-
-  /**
-   * The select's closed trigger: the shadcn implementation renders the selected
-   * VALUE plus a chevron, so the pin is containment on the id — an exact string
-   * would be pinned to the trigger's chrome.
-   */
-  function selectedStyleTrigger(dialog: HTMLElement): string {
-    return within(dialog).getByTestId('module-prompt-style').textContent;
-  }
-
-  /** One dialog open against a fresh campaign, with the catalog read settled. */
-  async function openDialog(): Promise<HTMLElement> {
-    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    render(
-      <MemoryRouter>
-        <NewModuleDialog campaign={campaign} open onOpenChange={() => undefined} />
-      </MemoryRouter>,
-    );
-    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
-    await flushAsyncUpdates(4);
-    return dialog;
-  }
-
-  beforeEach(async () => {
-    await db.open();
-    await clearDatabase();
-  });
-
-  afterEach(() => {
-    cleanup();
-    vi.clearAllMocks();
-  });
-
-  describe('the Writing style select under the Freestyle product default', () => {
-    it('preselects Freestyle for a fresh app', async () => {
-      const dialog = await openDialog();
-      // REVERT-PROOF: with the product default back at Classic (or with the
-      // dialog's own fallback on Classic) this shows "classic".
-      expect(selectedStyleTrigger(dialog)).toContain('freestyle');
-      expect(selectedStyleTrigger(dialog)).not.toContain('classic');
-      // …and the option really is the built-in Freestyle, not an id that happens
-      // to resolve to nothing.
-      await userEvent.setup().click(within(dialog).getByTestId('module-prompt-style'));
-      const freestyle = await screen.findByRole(
-        'option',
-        { name: /Freestyle/ },
-        { timeout: 5_000 },
-      );
-      expect(freestyle).toBeTruthy();
-    }, 30_000);
-
-    it('preselects an EXPLICITLY STORED non-Freestyle default instead', async () => {
-      // A stored value is data and is honored: nothing rewrites it to the product
-      // default, and the dialog shows what the app will use.
-      await updateSettings({ defaultPromptStyleId: 'story' });
-      const dialog = await openDialog();
-      expect(selectedStyleTrigger(dialog)).toContain('story');
-      expect(selectedStyleTrigger(dialog)).not.toContain('freestyle');
-    }, 30_000);
-
-    it('a stored default pointing at a style that no longer exists is named, never silently swapped', async () => {
-      // The product default must not become a hiding place for a broken stored
-      // value: an id that resolves to nothing is reported in the dialog (AGENTS 1).
-      await updateSettings({ defaultPromptStyleId: 'freestyle' });
-      await db.settings.put({
-        ...(await db.settings.get('settings')),
-        defaultPromptStyleId: 'no-such-style',
-      } as unknown as Parameters<typeof db.settings.put>[0]);
-      const dialog = await openDialog();
-      expect(within(dialog).getByTestId('module-prompt-style-missing').textContent).toContain(
-        'no-such-style',
-      );
-    }, 30_000);
   });
 });
 

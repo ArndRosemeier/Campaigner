@@ -53,7 +53,6 @@ const SETTINGS_BASE = {
   cleanCut: null,
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
-  newModuleDraft: null,
   defaultPromptStyleId: 'classic',
   promptStyles: [],
 };

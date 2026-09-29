@@ -68,6 +68,7 @@ import { openEncounterBattle } from '@/features/play/open-encounter-battle';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
 import { StubPopover, type StubPopoverState } from '@/features/modules/stub-popover';
+import { StubCreateDialog } from '@/features/modules/stub-create-dialog';
 import { streamTails, useStreamTail } from '@/features/modules/streamTails';
 import { sentenceAround, surroundingParagraphs } from '@/lib/wikilinks';
 import { generateMissingParts, moduleGenEvents, rewritePart } from '@/llm/moduleGen';
@@ -101,6 +102,8 @@ export function ModuleReaderPage(): JSX.Element {
   const navigate = useNavigate();
 
   const [stub, setStub] = useState<StubPopoverState | null>(null);
+  /** The small ask-first dialog comes first; the full popover is its "More options…". */
+  const [stubDetails, setStubDetails] = useState(false);
   const [linkTargetName, setLinkTargetName] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<Id | null>(null);
   const [tocOpen, setTocOpen] = useState(true);
@@ -752,7 +755,23 @@ export function ModuleReaderPage(): JSX.Element {
       />
 
       {/* Overlays */}
-      {stub !== null && (
+      {stub !== null && !stubDetails && (
+        <StubCreateDialog
+          name={stub.name}
+          campaign={campaign}
+          moduleId={currentModule.id}
+          contextParagraphs={moduleContextFor(stub.name, module)}
+          premise={module.spine?.premise ?? ''}
+          recordedKind={entityKindFor(currentModule.entityKinds, stub.name)}
+          onClose={() => {
+            setStub(null);
+          }}
+          onMoreOptions={() => {
+            setStubDetails(true);
+          }}
+        />
+      )}
+      {stub !== null && stubDetails && (
         <StubPopover
           state={stub}
           sentence={moduleSentenceFor(stub.name, module)}
@@ -764,10 +783,12 @@ export function ModuleReaderPage(): JSX.Element {
           recordedKind={entityKindFor(currentModule.entityKinds, stub.name)}
           onClose={() => {
             setStub(null);
+            setStubDetails(false);
           }}
           onLinkExisting={(name) => {
             setLinkTargetName(name);
             setStub(null);
+            setStubDetails(false);
           }}
         />
       )}

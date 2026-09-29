@@ -51,21 +51,6 @@ describe('CampaignPickerPage', () => {
     expect(screen.getByText(/0 artifacts/)).toBeDefined();
   });
 
-  it('creates a campaign through the dialog', async () => {
-    const user = userEvent.setup();
-    renderPicker();
-
-    await user.click(await screen.findByTestId('new-campaign'));
-    await user.type(screen.getByLabelText('Campaign name'), 'The Sunless Sea');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-
-    expect(await screen.findByText('The Sunless Sea')).toBeDefined();
-    // The dialog closes (after its exit transition) and resets its fields.
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-    });
-  });
-
   it('shows the description snippet on the card only when it is non-empty', async () => {
     await createCampaign({ name: 'Emberfall', description: 'A sunless sea.', system: 'dnd5e' });
     await createCampaign({ name: 'Barren', system: 'dnd5e' });

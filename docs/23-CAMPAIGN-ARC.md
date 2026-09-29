@@ -330,3 +330,5 @@ The generation engine and the artifact writers; artifact ownership by `moduleId`
 entity would touch ownership everywhere for no user gain, so the ROW survives and only the plural
 concept dies); the library; the party; the PDF lanes (they re-render from the leveled document); the
 chat's threading and persistence.
+
+**BUILD STATE (2026-09-29, docs/17 row 395). THE CAMPAIGN ENTRY IS THE CHAT.** New campaign creates the campaign and its empty document in one click and lands on the canvas chat (no form, no settings, no model call); a campaign without a document is redirected there too; `NewModuleDialog` and its draft are deleted. Generation is only ever the explicit Generate… dialog (row 394) or the new small “Create <name>?” confirm on a not-yet-generated artifact chip. Levels, premise and tone are authored in the chat. Named remainder: no model-proposed campaign name.

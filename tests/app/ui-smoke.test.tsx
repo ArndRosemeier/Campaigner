@@ -160,19 +160,16 @@ async function renderSettledWorkspace(): Promise<void> {
 }
 
 describe('route smoke sweep', () => {
-  it('campaign picker mounts with the seeded campaign and opens the create dialog', async () => {
-    const user = userEvent.setup();
+  it('campaign picker mounts with the seeded campaign and offers New campaign', async () => {
     renderAppAt(ROUTES.campaignPicker);
 
     expect(screen.getByRole('heading', { name: 'Campaigns' })).toBeInTheDocument();
     expect(await screen.findByText('Smoke')).toBeInTheDocument();
 
-    await user.click(screen.getByTestId('new-campaign'));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    await user.keyboard('{Escape}');
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    });
+    // MIGRATED (docs/17 row 395): New campaign opens NO dialog any more (it
+    // creates and lands in the chat — pinned by campaign-entry.test.tsx), so
+    // the smoke only asserts the entry is offered.
+    expect(screen.getByTestId('new-campaign')).toBeInTheDocument();
   });
 
   it(

@@ -10178,3 +10178,8 @@ reporter, and that is what happened.
 run changed), so every `tests/fixtures/promptStyles/*.txt`, the adversarial transcript and `pdfLayoutBaseline.json`
 are byte-identical. The goldens were confirmed by the affected suites, NOT by a recapture — a recapture would have
 been the wrong instrument for a row that changed no prompt byte.
+
+### Row 395 — the campaign entry (docs/17 row 395)
+
+- `tests/features/campaign-entry.test.tsx` (6): New campaign lands on `/c/<id>/m/<id>/canvas?chat=open` over an EMPTY document with no dialog and no fetch; an existing campaign without a document lands in the chat; `StubCreateDialog` asks first (nothing generated/classified on open), confirm calls `generateSingleEntity` once, decline calls nothing; the deleted dialog's identifiers appear in no file but this pin (the scan is non-vacuous because this file carries them). The live-query reads are wrapped in `actDrained` (section 1a).
+- Migrated, not weakened: the create-state/Writing-style describes of `module-ui-toast.test.tsx` and `new-module-draft.test.tsx` died with their surface; the four architecture scans were re-pointed at the new seam.

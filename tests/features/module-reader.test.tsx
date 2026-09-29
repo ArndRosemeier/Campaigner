@@ -812,6 +812,9 @@ describe('ModuleReaderPage', () => {
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     expect(chip).toHaveAttribute('data-wiki-name', 'Missing Person');
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
 
     // The popover opens with the link name prefilled.
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
@@ -868,6 +871,9 @@ describe('ModuleReaderPage', () => {
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
 
     // The verdict is shown as the reason, and linking is the primary action.
@@ -915,6 +921,9 @@ describe('ModuleReaderPage', () => {
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
     // The popover's NAME field is the reader's link name (its own editable
     // state, `stub-popover.tsx:94`, read by `onLinkExisting(name.trim())`).
@@ -963,6 +972,9 @@ describe('ModuleReaderPage', () => {
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
 
     // The kind starts UNSELECTED and is set by the classification verdict
@@ -1001,6 +1013,9 @@ describe('ModuleReaderPage', () => {
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
 
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
     // The recorded kind is shown immediately…
@@ -1025,6 +1040,9 @@ describe('ModuleReaderPage', () => {
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
     await user.click(chip);
+    // MIGRATED (docs/17 row 395): a chip click now ASKS first (StubCreateDialog);
+    // these pins are about the FULL popover, one "More options…" away.
+    await user.click(await screen.findByTestId('stub-create-more', {}, { timeout: 5_000 }));
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
     await user.click(within(popover).getByTestId('stub-generate'));
 

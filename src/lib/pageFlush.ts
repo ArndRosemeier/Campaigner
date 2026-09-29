@@ -3,9 +3,8 @@ import { toastError } from '@/lib/toast';
 /**
  * The page-hide flush seam (docs/17 row 111).
  *
- * Four writers in this app debounce a row write: the canvas chat thread
- * (`features/modules/canvas/chatPersist`, 600 ms), the New Module draft
- * (`features/modules/new-module-dialog`, 500 ms), the module board's layout
+ * Three writers in this app debounce a row write: the canvas chat thread
+ * (`features/modules/canvas/chatPersist`, 600 ms), the module board's layout
  * (`features/modules/board/BoardPage`, 600 ms) and the artifact editor's draft
  * (`features/campaign/components/artifact-editor`, 800 ms). Each of them
  * flushed on UNMOUNT — which covers a route change and nothing else. A tab that

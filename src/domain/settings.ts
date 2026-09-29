@@ -7,15 +7,6 @@ import {
   encounterPresetSchema,
 } from '@/domain/encounterMap/schema';
 import {
-  defaultEncounterFloorGuardrail,
-  defaultModuleTitle,
-  encounterFloorGuardrailSchema,
-  ENTITY_KINDS,
-  moduleSizeDialSchema,
-} from '@/domain/module';
-import { encounterBudgetPolicySchema } from '@/domain/encounterBudget';
-import { moduleDifficultySchema } from '@/domain/moduleDifficulty';
-import {
   PROMPT_STYLE_FREESTYLE_ID,
   userPromptStyleSchema,
 } from '@/domain/promptStyle';
@@ -283,136 +274,6 @@ export const lastModuleSchema = z
 
 export type LastModule = z.infer<typeof lastModuleSchema>;
 
-/**
- * The New Module dialog's persisted draft (owner request, docs/17): every value
- * the dialog holds — concept included — so a module creation can be retried, or
- * restarted after a reset, without retyping it.
- *
- * ONE entry, TAGGED with its campaign, overwritten when the owner starts a
- * module in another campaign, and prefilled only when the tag matches the
- * campaign being created in. A per-campaign MAP would leak nothing either, but
- * it would add a second record shape that every delete path (`deleteCampaign`,
- * `removeAllGeneratedContent`, `deleteCampaignWorkspace`) would have to sweep —
- * exactly the orphan class this repo has spent two arcs closing. A single
- * tagged entry has nothing to orphan.
- *
- * Every value is validated with the schema the DIALOG itself uses: kind arrays
- * through the real `ENTITY_KINDS` enum (so a removed artifact kind can never
- * resurrect through a stale draft), the size dial through `moduleSizeDialSchema`,
- * the levels through the same 1..20 integer bounds and the `levelMax >= levelMin`
- * refine, and the Advanced floor through the domain schema — a stored draft that
- * no longer validates fails the settings parse LOUDLY rather than silently
- * half-prefilling the dialog.
- *
- * The two campaign WIPES deliberately KEEP the draft ("Remove all generated
- * content" and "Clear workspace"): retry-after-reset is the whole point of the
- * feature, and the draft is authored input, not generated content.
- * `deleteCampaign` clears it — the campaign it was tagged for is gone.
- */
-export const newModuleDraftSchema = z
-  .object({
-    /** The campaign this draft was written in — the prefill tag. */
-    campaignId: z.uuid(),
-    /**
-     * The module name the dialog's Name field holds (docs/17 row 213). Stored
-     * RESOLVED — blank/whitespace-only text was folded to `defaultModuleTitle()`
-     * by `domain/module.resolveModuleTitle` before the save, so the field can
-     * never make the draft fail validation. `.default(defaultModuleTitle())`
-     * makes the field ADDITIVE: a draft written before the Name field existed
-     * carries no `title` key, still parses, and prefills the placeholder,
-     * while `z.infer` keeps `title: string` (never an optional branch threaded
-     * through the dialog).
-     */
-    title: z.string().min(1).default(defaultModuleTitle()),
-    concept: z.string(),
-    levelMin: z.number().int().min(1).max(20),
-    levelMax: z.number().int().min(1).max(20),
-    tone: z.string(),
-    sizeDial: moduleSizeDialSchema,
-    includePriorModules: z.boolean(),
-    autoApproveSpine: z.boolean(),
-    /**
-     * Opt-in adversarial generation (docs/17 row 354), remembered like the
-     * flags above. `.default(false)` makes the field ADDITIVE: a draft written
-     * before the checkbox existed carries no key, still parses (the whole
-     * stored draft is not thrown away over a field that was never chosen), and
-     * means "off" — a genuine preference default, never a masked failure.
-     */
-    adversarialGeneration: z.boolean().default(false),
-    autoGenerateKinds: z.array(z.enum(ENTITY_KINDS)),
-    autoImageKinds: z.array(z.enum(ENTITY_KINDS)),
-    autoGenerateBattlemaps: z.boolean(),
-    autoGenerateMobImages: z.boolean(),
-    /** The Advanced floor editor's numbers — part of the draft so a retry
-     * starts from the same rules the deleted attempt used. */
-    encounterFloorGuardrail: encounterFloorGuardrailSchema,
-    /**
-     * The prompt style this module will be written in (docs/17 row 86): a
-     * built-in id or one of the user styles. Part of the draft so a retry after
-     * a reset starts from the same voice — but OPTIONAL and absent by default,
-     * because "no choice made" is a real state: it means the creation uses the
-     * app default (`settings.defaultPromptStyleId`) as it stands at that
-     * moment. A defaulted 'classic' here would silently pin every module to
-     * Classic for anyone who changed the app default while a prior draft sat in
-     * the row — a fallback hiding a preference, which is exactly what AGENTS 1
-     * forbids.
-     */
-    promptStyleId: z.string().min(1).optional(),
-    /**
-     * The encounter budget policy the owner picked for the next module
-     * (docs/17 row 180). OPTIONAL and absent by default, exactly like
-     * `promptStyleId` above: "no explicit choice made" is a real state and
-     * means the creation path applies the per-system default
-     * (`defaultEncounterBudgetPolicy`) as it stands at that moment. Freezing
-     * `'system'` here would silently pin a PF2E module to the legacy verbatim
-     * reading for anyone who created it from a stale draft.
-     */
-    encounterBudgetPolicy: encounterBudgetPolicySchema.optional(),
-    /**
-     * The module difficulty the owner picked for the next module (docs/17 row
-     * 190), the sibling of the budget policy above. OPTIONAL and absent by
-     * default for the same reason: "no explicit choice made" is a real state,
-     * and the creation path applies `DEFAULT_MODULE_DIFFICULTY` (the middle
-     * step) as it stands at that moment. The dialog shows the middle step
-     * selected while the draft carries no choice, so an untouched dialog
-     * creates a normal module and an explicit choice is what gets stored.
-     */
-    difficulty: moduleDifficultySchema.optional(),
-  })
-  .refine((draft) => draft.levelMax >= draft.levelMin, {
-    message: 'levelMax must be >= levelMin',
-    path: ['levelMax'],
-  });
-
-export type NewModuleDraft = z.infer<typeof newModuleDraftSchema>;
-
-/**
- * The draft the dialog opens with when nothing (or another campaign's draft) is
- * stored — the dialog's own initial state, unchanged. `campaignId` is the
- * campaign the dialog is being used in.
- */
-export function defaultNewModuleDraft(campaignId: string): NewModuleDraft {
-  return {
-    campaignId,
-    title: defaultModuleTitle(),
-    concept: '',
-    levelMin: 1,
-    levelMax: 3,
-    tone: '',
-    sizeDial: 'standard',
-    includePriorModules: false,
-    autoApproveSpine: false,
-    adversarialGeneration: false,
-    autoGenerateKinds: [],
-    autoImageKinds: [],
-    // The master battlemap switch is ON by default; mob portraits stay opt-in
-    // (both owner decisions, unchanged — see the dialog).
-    autoGenerateBattlemaps: true,
-    autoGenerateMobImages: false,
-    encounterFloorGuardrail: defaultEncounterFloorGuardrail(),
-  };
-}
-
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
@@ -544,15 +405,6 @@ export const settingsSchema = z.object({
   /** Last-used module shortcut (see lastModuleSchema above). */
   lastModule: lastModuleSchema,
   /**
-   * The New Module dialog's persisted draft (see newModuleDraftSchema above).
-   * `null` = nothing stored yet. Required-but-nullable exactly like
-   * `lastModule`: the settings read paths merge over `defaultSettings()`, so a
-   * row (or a backup) written before the field parses as `null`, while a
-   * CORRUPT stored draft fails the parse LOUDLY — this path never falls back to
-   * defaults (AGENTS rules 1/3, the settingsRepo convention).
-   */
-  newModuleDraft: newModuleDraftSchema.nullable().default(null),
-  /**
    * The app-default module prompt style (docs/17 rows 86 and 88): the id a New
    * Module dialog preselects, overridable per module. A genuine preference, so
    * it has a default — and an id that no longer resolves fails LOUDLY where it
@@ -577,7 +429,7 @@ export const settingsSchema = z.object({
    *
    * `null` = the stored value could not be read (the field is carved out of the
    * settings repo's core parse so one bad styles blob can never take down every
-   * settings read — the `newModuleDraft` precedent). An empty list is `[]`,
+   * settings read — the removed New Module draft's precedent). An empty list is `[]`,
    * which is a real state: no styles of your own yet.
    */
   promptStyles: z.array(userPromptStyleSchema).nullable().default(null),
@@ -614,7 +466,6 @@ export function defaultSettings(): Settings {
     cleanCut: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
-    newModuleDraft: null,
     defaultPromptStyleId: PROMPT_STYLE_FREESTYLE_ID,
     promptStyles: [],
   };

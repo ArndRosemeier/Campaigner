@@ -101,7 +101,6 @@ async function enableEmbeddings(): Promise<void> {
   language: 'en' as const,
     onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
-  newModuleDraft: null,
   defaultPromptStyleId: 'classic',
   promptStyles: [],
   });

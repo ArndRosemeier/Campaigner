@@ -13,7 +13,7 @@ import { BUILTIN_PROMPT_STYLES, builtinPromptStyle } from '@/llm/promptStyles';
  *   texts are read through ONE seam — the composer's creation path already
  *   reads settings, so a style never needs a second, differently-failing read;
  * - a style is a few KB of text and the row already carries a comparable
- *   per-feature object (`newModuleDraft`), while module rows carry whole module
+ *   per-feature object (the removed New Module draft), while module rows carry whole module
  *   documents — this is in line with what the app already stores in a row;
  * - a Dexie table would mean a version bump plus a migration golden for a
  *   few KB of authored text, and the repo is in a testing phase: ceremony is

@@ -35,12 +35,14 @@ describe('ONE document per campaign — the list is deleted, the row survives (S
     expect(filesWith('export function documentPath')).toEqual(['src/app/routes.ts']);
   });
 
-  it('the campaign route renders the ONE document page, and the landing is the only New Module door', () => {
+  it('the campaign route renders the ONE document page; creation has no form and ONE entry module', () => {
     expect(filesWith("<CampaignDocumentPage />")).toEqual(['src/app/router.tsx']);
-    // The creation dialog has exactly ONE mount in the app: the landing's
-    // create state. (Its own module declares it; tests mount it directly.)
-    expect(filesWith('<NewModuleDialog campaign=')).toEqual([
-      'src/features/modules/CampaignDocumentPage.tsx',
+    // MIGRATED (docs/17 row 395): the creation dialog (and its one mount) is
+    // DELETED. Both creation doors — New campaign and the no-document redirect —
+    // go through `start-campaign-chat.ts`, and no other file calls the seam.
+    expect(filesWith('startCampaignDocument(')).toEqual([
+      'src/features/campaign/start-campaign-chat.ts',
+      'src/llm/moduleGen.ts',
     ]);
   });
 
@@ -57,9 +59,9 @@ describe('ONE document per campaign — the list is deleted, the row survives (S
     const gen = CODE['src/llm/moduleGen.ts'] ?? '';
     expect(gen.includes('return createCampaignDocument(created)')).toBe(true);
     expect(gen.includes('saveModule(created)')).toBe(false);
-    // …and the app's create dialog uses the chat-first entry.
-    const dialog = CODE['src/features/modules/new-module-dialog.tsx'] ?? '';
-    expect(dialog.includes('startCampaignDocument(campaign, input)')).toBe(true);
+    // …and the app's creation entry calls it with NO owner-supplied input.
+    const entry = CODE['src/features/campaign/start-campaign-chat.ts'] ?? '';
+    expect(entry.includes('startCampaignDocument(campaign)')).toBe(true);
   });
 
   it('the legacy multi-module notice is mounted ONCE — in the campaign bar, on every campaign route', () => {

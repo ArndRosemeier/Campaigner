@@ -20,7 +20,6 @@ const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const ARTIFACT_EDITOR = 'src/features/campaign/components/artifact-editor.tsx';
 const RESTOCK_BUTTON = 'src/features/modules/module-restock-button.tsx';
 const DIFFICULTY_CONTROL = 'src/features/modules/module-difficulty-control.tsx';
-const NEW_MODULE_DIALOG = 'src/features/modules/new-module-dialog.tsx';
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -74,13 +73,13 @@ describe('one module difficulty seam (SOURCE SCAN)', () => {
     // walk `MODULE_DIFFICULTIES`, so a copy reds by file here.
     const steppers = countsOf('MODULE_DIFFICULTIES.map(');
     expect([...steppers.entries()]).toEqual([[DIFFICULTY_CONTROL, 1]]);
-    // The two surfaces that choose a difficulty mount that ONE component:
-    // the New Module dialog and the artifact editor's encounter section.
+    // The surface that chooses a difficulty mounts that ONE component: the
+    // artifact editor's encounter section. (MIGRATED, docs/17 row 395: the New
+    // Module dialog was the second mount and is DELETED — creation asks nothing;
+    // the row is stamped with the default difficulty. The pin still names the
+    // exact mount set, so a new mount reds.)
     const mounts = countsOf('<ModuleDifficultyControl');
-    expect([...mounts.entries()]).toEqual([
-      [ARTIFACT_EDITOR, 1],
-      [NEW_MODULE_DIALOG, 1],
-    ]);
+    expect([...mounts.entries()]).toEqual([[ARTIFACT_EDITOR, 1]]);
   });
 
   it('defines the multiplier ladder once and applies it only in the budget seam', () => {

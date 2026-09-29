@@ -7,7 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import { documentPath, workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
-import { GAME_SYSTEMS, GAME_SYSTEM_LABELS, type GameSystem } from '@/domain';
+import { GAME_SYSTEM_LABELS } from '@/domain';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,28 +30,11 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { useCampaignSummaries, type CampaignSummary } from '@/features/campaign/hooks';
 import { CampaignCoverArt, GenerateCampaignCoverButton } from '@/features/covers/cover-art';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
@@ -64,6 +47,7 @@ import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { createCampaignAndChatPath } from '@/features/campaign/start-campaign-chat';
 
 /**
  * Campaign picker (05-UI §Campaign picker): card grid of campaigns (name,
@@ -89,7 +73,13 @@ export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
   const settings = useLiveQuery(() => readSettings(), []);
   const openWizard = useOnboardingStore((state) => state.openWizard);
-  const [createOpen, setCreateOpen] = useState(false);
+  async function handleCreate(): Promise<void> {
+    try {
+      navigate(await createCampaignAndChatPath());
+    } catch (error) {
+      toastError('Could not create campaign', error);
+    }
+  }
   const navigate = useNavigate();
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const importedNavigate = useNav();
@@ -151,7 +141,7 @@ export function CampaignPickerPage(): JSX.Element {
             </Button>
             <Button
               onClick={() => {
-                setCreateOpen(true);
+                void handleCreate();
               }}
               data-testid="new-campaign"
             >
@@ -185,7 +175,7 @@ export function CampaignPickerPage(): JSX.Element {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setCreateOpen(true);
+                  void handleCreate();
                 }}
               >
                 <PlusIcon aria-hidden data-icon="inline-start" />
@@ -210,7 +200,6 @@ export function CampaignPickerPage(): JSX.Element {
           </ul>
         )}
       </div>
-      <CreateCampaignDialog open={createOpen} onOpenChange={setCreateOpen} />
       {importFlow.dialog}
     </div>
   );
@@ -346,118 +335,5 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  );
-}
-
-const DEFAULT_CAMPAIGN_SYSTEM: GameSystem = 'generic-d20';
-
-interface CreateCampaignDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
-
-function CreateCampaignDialog({ open, onOpenChange }: CreateCampaignDialogProps) {
-  const [name, setName] = useState('');
-  const [system, setSystem] = useState<GameSystem>(DEFAULT_CAMPAIGN_SYSTEM);
-  const [description, setDescription] = useState('');
-
-  async function handleCreate(): Promise<void> {
-    const trimmed = name.trim();
-    if (trimmed === '') return;
-    try {
-      await campaignRepo.createCampaign({
-        name: trimmed,
-        description: description.trim(),
-        system,
-      });
-      toastSuccess('Campaign created');
-      onOpenChange(false);
-      setName('');
-      setSystem(DEFAULT_CAMPAIGN_SYSTEM);
-      setDescription('');
-    } catch (error) {
-      toastError('Could not create campaign', error);
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleCreate();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>New campaign</DialogTitle>
-            <DialogDescription>
-              Name the campaign and pick its game system. You can add a description later.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="my-3 flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-              Name
-              <Input
-                value={name}
-                autoFocus
-                placeholder="e.g. The Sunless Sea"
-                aria-label="Campaign name"
-                onChange={(event) => {
-                  setName(event.target.value);
-                }}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-              System
-              <Select
-                value={system}
-                items={GAME_SYSTEM_LABELS}
-                onValueChange={(value) => {
-                  if (value !== null) setSystem(value);
-                }}
-              >
-                <SelectTrigger className="w-full" aria-label="Game system">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {GAME_SYSTEMS.map((gameSystem) => (
-                    <SelectItem key={gameSystem} value={gameSystem}>
-                      {GAME_SYSTEM_LABELS[gameSystem]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-              Description (optional)
-              <Textarea
-                value={description}
-                placeholder="One or two sentences about the setting…"
-                aria-label="Campaign description"
-                className="min-h-[64px] text-sm"
-                onChange={(event) => {
-                  setDescription(event.target.value);
-                }}
-              />
-            </label>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                onOpenChange(false);
-              }}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={name.trim() === ''}>
-              Create
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
