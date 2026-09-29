@@ -30,6 +30,10 @@ import { clearDatabase } from '../db/helpers';
  * through ONE writer, never parsed from prose, never touches the document.
  */
 
+function never(): never {
+  throw new Error('expected a parsed command');
+}
+
 const rec = (name: string, kind: ModuleEntityKind['kind'], levelHint?: number): ModuleEntityKind => ({
   name,
   kind,
@@ -56,7 +60,7 @@ describe('the <state_level> command parses in the ONE vocabulary', () => {
       { kind: 'state_level', name: 'Bridge Ambush', level: 7 },
     ]);
     // Echoed in its own spelling by the report-to-LLM formatter.
-    expect(canvasEditCommandBlock(parsed.commands[0]!)).toBe(
+    expect(canvasEditCommandBlock(parsed.commands[0] ?? never())).toBe(
       '<state_level level="3" entity="npc"><name>Marten</name></state_level>',
     );
   });
@@ -115,8 +119,8 @@ describe('applied through the record seam: persisted, siblings survive, document
     expect(outcomes.map((o) => o.kind)).toEqual(['applied', 'failed', 'applied']);
     expect(outcomes[1]?.reason).toContain('between 1 and 20');
     const row = await getModule(draft.id);
-    expect(entityLevelHintFor(row!.entityKinds, 'Marten')).toBe(3);
-    expect(entityLevelHintFor(row!.entityKinds, 'Ambush')).toBe(5);
+    expect(entityLevelHintFor((row?.entityKinds ?? []), 'Marten')).toBe(3);
+    expect(entityLevelHintFor((row?.entityKinds ?? []), 'Ambush')).toBe(5);
 
     // The document applier ignores a statement: text is byte-identical.
     const doc = 'Premise.\n\n=====Level 1=====\nText [[Marten]].';
@@ -138,7 +142,7 @@ describe('applied through the record seam: persisted, siblings survive, document
       }],
     };
     await patchModule(draft.id, { chatThread: serializeChatThread([message]) });
-    const back = deserializeChatThread((await getModule(draft.id))!.chatThread);
+    const back = deserializeChatThread((await getModule(draft.id))?.chatThread ?? []);
     expect(back[0]?.outcomes[0]?.command).toEqual(command);
     // Old search / level-edit commands still parse through the same schema.
     for (const old of [
