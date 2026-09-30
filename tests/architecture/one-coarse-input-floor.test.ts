@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one 16px coarse-pointer input floor (docs/17 row 262a, docs/18 §2.3).
@@ -31,19 +33,14 @@ import { describe, expect, it } from 'vitest';
  * `select.tsx` would resize every Select on an iPad. That is a visual decision
  * of its own, not this defect's cure (docs/18 §5).
  *
- * The walk uses Node's recursive `readdirSync` with the tag scan INLINE in the
- * `it` callback rather than a hand-rolled `sourceFiles` helper: the
- * duplicate-body tripwire (docs/17 row 212) baselines every NAMED function body
- * in this tree, so a copied walker here would be a new baselined site for no
- * benefit (`tests/architecture/module-title-seam.test.ts`'s pattern).
+ * The walk is the ONE tree walk (`repoFiles`, docs/17 row 427), with the tag
+ * scan INLINE in the `it` callback.
  *
  * jsdom CANNOT PROVE THE ZOOM: it has neither a coarse pointer nor a visual
  * viewport, so this is a SOURCE assertion. The rendered half
  * (`tests/features/ipad-inputs.test.tsx`) proves the class reaches the element;
  * the real proof of the behaviour is the owner's iPad.
  */
-
-const SRC_DIR = join(process.cwd(), 'src');
 
 /** The one spelling of the floor — a second spelling is a second rule. */
 const COARSE_FLOOR = 'pointer-coarse:text-base';
@@ -62,15 +59,14 @@ describe('one 16px coarse-pointer floor, owned by the three input primitives (SO
   it('declares the floor exactly once in each of the three primitives', () => {
     for (const primitive of COARSE_FLOOR_PRIMITIVES) {
       const text = readFileSync(join(process.cwd(), primitive), 'utf8');
-      expect(text.split(COARSE_FLOOR).length - 1, `${primitive} must carry the coarse floor`).toBe(1);
+      expect(text.split(COARSE_FLOOR).length - 1, `${primitive} must carry the coarse floor`).toBe(
+        1,
+      );
     }
   });
 
   it('never re-declares the floor on an <Input>/<Textarea>/<CommandInput> consumer', () => {
-    const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-      .filter((entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'))
-      .map((entry) => join(SRC_DIR, entry))
-      .sort();
+    const files = repoFiles('src', ['.ts', '.tsx']);
 
     const offenders: string[] = [];
     for (const file of files) {
@@ -97,7 +93,7 @@ describe('one 16px coarse-pointer floor, owned by the three input primitives (SO
           const tag = text.slice(match.index, i + 1);
           if (tag.includes(COARSE_FLOOR)) {
             const line = text.slice(0, match.index).split('\n').length;
-            offenders.push(`${relative(process.cwd(), file)}:${line} <${name}>`);
+            offenders.push(`${file}:${line} <${name}>`);
           }
         }
       }

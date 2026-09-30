@@ -1,9 +1,9 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 import {
   assembleModuleDocument,
@@ -266,24 +266,20 @@ describe('the failed-turn return is what the user is TOLD (docs/17 row 150)', ()
  * it is exactly the half that goes red when the deleted copy is re-born.
  */
 describe('the chat turn controller is declared EXACTLY once (SOURCE SCAN)', () => {
-  const CANVAS_DIR = join(process.cwd(), 'src', 'features', 'modules', 'canvas');
-  const CONTROLLER = join(CANVAS_DIR, 'chatTurn.ts');
+  const CANVAS_DIR = 'src/features/modules/canvas';
+  const CONTROLLER = `${CANVAS_DIR}/chatTurn.ts`;
 
-  function canvasSources(): string[] {
-    return readdirSync(CANVAS_DIR)
-      .filter((name) => /\.tsx?$/.test(name))
-      .map((name) => join(CANVAS_DIR, name));
-  }
+  /** The canvas directory's TypeScript files (it has no subdirectories). */
+  const canvasSources = (): string[] => repoFiles(CANVAS_DIR, ['.ts', '.tsx']);
 
   function carriers(pattern: RegExp): string[] {
     return canvasSources()
-      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(process.cwd(), file));
+      .filter((file) => pattern.test(readFileSync(file, 'utf8')));
   }
 
   it('declares the turn, its flow helpers and its sentences in ONE file', () => {
     expect(canvasSources().length).toBeGreaterThan(15);
-    const controller = relative(process.cwd(), CONTROLLER);
+    const controller = CONTROLLER;
     expect(carriers(/export async function runCanvasChatTurn\(/)).toEqual([controller]);
     expect(carriers(/function historyFor\(/)).toEqual([controller]);
     expect(carriers(/const ensureFollowUpMessage = /)).toEqual([controller]);
@@ -297,7 +293,7 @@ describe('the chat turn controller is declared EXACTLY once (SOURCE SCAN)', () =
     // The preview copy's OWN failure return (the pre-turn doc) is gone: no
     // surface module returns `options.doc` from a catch any more.
     for (const file of ['chatController.ts', 'snapshotChat.ts']) {
-      const text = readFileSync(join(CANVAS_DIR, file), 'utf8');
+      const text = readFileSync(`${CANVAS_DIR}/${file}`, 'utf8');
       expect(text).not.toContain('followUpRafRef');
       expect(text).not.toContain('const applyCommandsFor');
       expect(text).not.toContain('scheduleChatPersist');
@@ -307,8 +303,8 @@ describe('the chat turn controller is declared EXACTLY once (SOURCE SCAN)', () =
   });
 
   it('binds the two surfaces with a handle and a surface descriptor, not a second flow', () => {
-    const editor = readFileSync(join(CANVAS_DIR, 'chatController.ts'), 'utf8');
-    const preview = readFileSync(join(CANVAS_DIR, 'snapshotChat.ts'), 'utf8');
+    const editor = readFileSync(`${CANVAS_DIR}/chatController.ts`, 'utf8');
+    const preview = readFileSync(`${CANVAS_DIR}/snapshotChat.ts`, 'utf8');
     expect(editor).toContain('editorChatHandle(options.view)');
     expect(editor).toContain('EDITOR_TURN_SURFACE');
     expect(preview).toContain('stringChatHandle(options.doc)');

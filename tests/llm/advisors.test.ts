@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,7 @@ import { settingsSchema, defaultSettings } from '@/domain';
 import { moduleChatMessageSchema } from '@/domain';
 import { buildAdvisorMessages } from '@/llm/advisors';
 import { serializeChatThread } from '@/features/modules/canvas/chatPersist';
+import { repoFiles } from '../helpers/sourceCode';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
 
@@ -85,13 +86,9 @@ describe('advisors (docs/17 row 396)', () => {
 
 describe('the lens list is the ONE source (source scan)', () => {
   it('no src file but domain/advisors.ts spells a lens id', () => {
-    const walk = (dir: string): string[] =>
-      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-        e.isDirectory() ? walk(join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : [],
-      );
-    const offenders = walk(join(process.cwd(), 'src')).filter(
+    const offenders = repoFiles('src', ['.ts', '.tsx']).filter(
       (file) =>
-        !file.endsWith(join('domain', 'advisors.ts')) &&
+        !file.endsWith('domain/advisors.ts') &&
         ADVISOR_LENSES.some((lens) => readFileSync(file, 'utf8').includes(`id: '${lens.id}'`)),
     );
     expect(offenders).toEqual([]);

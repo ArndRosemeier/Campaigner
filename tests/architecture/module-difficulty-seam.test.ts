@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import { countsIn, readTree } from '../helpers/sourceCode';
 
 /**
  * THE module difficulty seam (docs/17 row 190, docs/18 §2). Difficulty is the
@@ -13,30 +12,16 @@ import { describe, expect, it } from 'vitest';
  * work today and diverge the first time the ladder changes.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const DIFFICULTY_MODULE = 'src/domain/moduleDifficulty.ts';
 const RUN_ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const ARTIFACT_EDITOR = 'src/features/campaign/components/artifact-editor.tsx';
 const RESTOCK_BUTTON = 'src/features/modules/module-restock-button.tsx';
 const DIFFICULTY_CONTROL = 'src/features/modules/module-difficulty-control.tsx';
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
+const SRC = readTree('src', ['.ts', '.tsx']);
 
 function countsOf(needle: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of sourceFiles(SRC_DIR)) {
-    const hits = readFileSync(file, 'utf8').split(needle).length - 1;
-    if (hits > 0) counts.set(relative(process.cwd(), file), hits);
-  }
-  return counts;
+  return new Map(countsIn(SRC, 'src/', needle));
 }
 
 describe('one module difficulty seam (SOURCE SCAN)', () => {

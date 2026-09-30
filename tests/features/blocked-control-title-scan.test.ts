@@ -1,7 +1,8 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * SCAN — this file is a SOURCE scan, not a behavioural pin (docs/18 §4,
@@ -67,17 +68,6 @@ interface BlockedControlSpan {
   title: string | null;
 }
 
-async function sourceFiles(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...(await sourceFiles(full)));
-    else if (/\.tsx?$/.test(entry.name)) files.push(full);
-  }
-  return files;
-}
-
 /**
  * The expression that starts at `open`: a quoted literal, a `{…}` block (the
  * attribute form) or — for a `const x = <expression>` right-hand side — the
@@ -135,7 +125,7 @@ function testIdOf(openTag: string): string {
 /** Every `BlockedControl` span in `src/`, with the two expressions that matter. */
 async function blockedControlSpans(): Promise<BlockedControlSpan[]> {
   const spans: BlockedControlSpan[] = [];
-  for (const file of await sourceFiles(SRC)) {
+  for (const file of repoFiles(SRC, ['.ts', '.tsx'])) {
     const source = await readFile(file, 'utf8');
     const blocks = source.matchAll(/<BlockedControl\b[\s\S]*?<\/BlockedControl>/g);
     for (const block of blocks) {

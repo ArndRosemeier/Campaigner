@@ -1,10 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GeneratedImages } from '@/llm/imageGen';
 import type { ImagePromptDraft } from '@/llm/schemas';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * The "generate ONE image and prepare it for storage" seam (docs/17 row 126,
@@ -172,28 +173,13 @@ describe('the ONE-image tail is ONE seam (SOURCE SCAN)', () => {
 
   const EMPTY_RESULT_SENTENCE = 'the image API returned no image';
 
-  function srcFiles(): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-      }
-    };
-    walk(root);
-    return found.sort();
-  }
+  /** Every `src/` TypeScript file, named relative to `src/` (the shared tree walk). */
+  const SRC_FILES = namesUnder('src', ['.ts', '.tsx']);
 
   const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
 
   it('scan: leaves the hand-rolled generate-plus-intake shape in exactly the documented boundaries (and nowhere else)', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must actually see the app, or this pin proves
     // nothing about it.
     expect(files.length).toBeGreaterThan(200);
@@ -234,7 +220,7 @@ describe('the ONE-image tail is ONE seam (SOURCE SCAN)', () => {
   }
 
   it('scan: states the empty-result sentence in exactly ONE source file, and the seam reads it from there', () => {
-    const holders = srcFiles().filter((file) => source(file).includes(EMPTY_RESULT_SENTENCE));
+    const holders = SRC_FILES.filter((file) => source(file).includes(EMPTY_RESULT_SENTENCE));
     expect(holders).toEqual(['llm/oneImage.ts']);
     expect(source('llm/oneImage.ts')).toContain(
       `export const NO_IMAGE_FROM_API_MESSAGE = '${EMPTY_RESULT_SENTENCE}';`,

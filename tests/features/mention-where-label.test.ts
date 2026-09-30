@@ -1,9 +1,9 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 import { createArtifact, listArtifactsByCampaign, listArtifactsByModule } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -178,21 +178,11 @@ describe('the shared sample: every copy the same inputs', () => {
 
 const SRC = 'src';
 
-function srcFiles(dir = SRC): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-    const path = `${dir}/${entry}`;
-    if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...srcFiles(path));
-    else if (/\.tsx?$/.test(entry)) out.push(path);
-  }
-  return out;
-}
-
-const source = (file: string): string => readFileSync(join(process.cwd(), file), 'utf8');
+const source = (file: string): string => readFileSync(file, 'utf8');
 
 describe('the renderer is ONE function, and the second spelling is the declared one', () => {
   it('declares `function whereLabel` in exactly the home and the declared prose copy', () => {
-    const files = srcFiles();
+    const files = repoFiles(SRC, ['.ts', '.tsx']);
     // Non-vacuity: the walk must see the whole `src/` tree.
     expect(files.length).toBeGreaterThan(200);
 

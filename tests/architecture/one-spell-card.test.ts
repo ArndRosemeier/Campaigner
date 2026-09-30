@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one spell-detail renderer (docs/17 row 216, docs/18 §2.3).
@@ -22,11 +23,8 @@ import { describe, expect, it } from 'vitest';
  * purpose, so the docs/18 §2.3 host row is updated deliberately; a host that
  * drops the import (the dialog going back to a hand-rolled body) reds too.
  *
- * The walk uses Node's recursive `readdirSync` with the counting INLINE in the
- * `it` callback rather than a hand-rolled `sourceFiles`/`read` helper: the
- * duplicate-body tripwire (docs/17 row 212) baselines every NAMED function
- * body in this tree, so a copied helper here would be a new baselined site for
- * no benefit (`tests/architecture/module-title-seam.test.ts`'s pattern).
+ * The walk is the ONE tree walk (`repoFiles`, docs/17 row 427), with the
+ * counting INLINE in the `it` callback.
  */
 
 const SPELL_CARD_MODULE = 'src/features/spells/spell-card.tsx';
@@ -35,16 +33,12 @@ const MOB_CHIPS = 'src/features/spells/mob-spell-chips.tsx';
 
 describe('one spell-detail renderer, hosted by the spell list and the mob chip dialog', () => {
   it('declares the spell-card testid once, and imports SpellCard from exactly the two hosts', () => {
-    const srcDir = join(process.cwd(), 'src');
-    const files = readdirSync(srcDir, { recursive: true, encoding: 'utf8' })
-      .filter((entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'))
-      .map((entry) => join(srcDir, entry));
+    const files = repoFiles('src', ['.ts', '.tsx']);
 
     const testidOwners: string[] = [];
     const importers: string[] = [];
-    for (const file of files) {
-      const text = readFileSync(file, 'utf8');
-      const path = relative(process.cwd(), file);
+    for (const path of files) {
+      const text = readFileSync(path, 'utf8');
       if (text.includes('data-testid="spell-card"')) testidOwners.push(path);
       if (/import \{[^}]*\bSpellCard\b[^}]*\} from '@\/features\/spells\/spell-card'/.test(text)) {
         importers.push(path);

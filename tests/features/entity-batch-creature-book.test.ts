@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { namesUnder } from '../helpers/sourceCode';
 
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
@@ -381,27 +381,11 @@ describe('the cast pool is scoped to the campaign’s game system (docs/17 row 2
 });
 
 describe('the lookup and the cast are ONE seam (AGENTS §Centralization)', () => {
-  /** Every `.ts`/`.tsx` under `src/`, repo-relative and sorted. */
-  function srcFiles(): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-      }
-    };
-    walk(root);
-    return found.sort();
-  }
+  /** Every `.ts`/`.tsx` under `src/`, named relative to `src/`, sorted. */
+  const SRC_FILES = namesUnder('src', ['.ts', '.tsx']);
 
   function source(file: string): string {
-    return readFileSync(join(process.cwd(), 'src', file), 'utf8');
+    return readFileSync(`src/${file}`, 'utf8');
   }
 
   /** Every file that really CALLS `name` — not one that merely mentions it in a
@@ -411,11 +395,11 @@ describe('the lookup and the cast are ONE seam (AGENTS §Centralization)', () =>
    * longer identifier. */
   function callers(name: string): string[] {
     const call = new RegExp(`(?<![.\\w])${name}\\(`);
-    return srcFiles().filter((file) => call.test(source(file)));
+    return SRC_FILES.filter((file) => call.test(source(file)));
   }
 
   it('the library pool has exactly these readers — a SECOND creature lookup goes red here', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must actually see the app.
     expect(files.length).toBeGreaterThan(200);
     expect(files).toContain('features/modules/entity-batch.ts');
@@ -436,14 +420,14 @@ describe('the lookup and the cast are ONE seam (AGENTS §Centralization)', () =>
   });
 
   it('the slot→citation resolution is defined in ONE place and named in the seam index', () => {
-    const definitions = srcFiles().filter((file) =>
+    const definitions = SRC_FILES.filter((file) =>
       source(file).includes('export async function libraryCitationForEntity('),
     );
     expect(definitions).toEqual(['features/modules/entity-batch.ts']);
 
     // docs/18 §2 names this seam; a landing that moves it updates the row in the
     // same commit (AGENTS §Centralization 3).
-    const seamIndex = readFileSync(join(process.cwd(), 'docs/18-ARCHITECTURE.md'), 'utf8');
+    const seamIndex = readFileSync('docs/18-ARCHITECTURE.md', 'utf8');
     expect(seamIndex).toContain('entity-batch.libraryCitationForEntity');
   });
 });

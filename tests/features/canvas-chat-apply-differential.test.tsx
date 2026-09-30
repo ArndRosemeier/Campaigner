@@ -1,10 +1,10 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { history } from '@codemirror/commands';
 import { describe, expect, it } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 import { assembleModuleDocument, moduleDocumentSections, moduleLevelSeparator } from '@/domain/moduleDocument';
 import {
@@ -631,14 +631,11 @@ describe('the level-addressed commands (docs/17 row 381)', () => {
  * green on any behaviour-only change; that is deliberate.
  */
 describe('the chat applier is the ONLY one (SOURCE SCAN)', () => {
-  const CANVAS_DIR = join(process.cwd(), 'src', 'features', 'modules', 'canvas');
-  const APPLIER = join(CANVAS_DIR, 'chatApply.ts');
+  const CANVAS_DIR = 'src/features/modules/canvas';
+  const APPLIER = `${CANVAS_DIR}/chatApply.ts`;
 
-  function canvasSources(): string[] {
-    return readdirSync(CANVAS_DIR)
-      .filter((name) => /\.tsx?$/.test(name))
-      .map((name) => join(CANVAS_DIR, name));
-  }
+  /** The canvas directory's TypeScript files (it has no subdirectories). */
+  const canvasSources = (): string[] => repoFiles(CANVAS_DIR, ['.ts', '.tsx']);
 
   it('declares the applier, its outcome builders and its snippet cap EXACTLY once', () => {
     const files = canvasSources();
@@ -646,19 +643,19 @@ describe('the chat applier is the ONLY one (SOURCE SCAN)', () => {
     expect(files.length).toBeGreaterThan(15);
 
     const counts = (pattern: RegExp): string[] =>
-      files.filter((file) => pattern.test(readFileSync(file, 'utf8'))).map((file) => relative(process.cwd(), file));
+      files.filter((file) => pattern.test(readFileSync(file, 'utf8')));
 
-    expect(counts(/export function applyChatCommands\(/)).toEqual([relative(process.cwd(), APPLIER)]);
-    expect(counts(/export function applyChatCommandsToDocument\(/)).toEqual([relative(process.cwd(), APPLIER)]);
-    expect(counts(/export function applyChatCommandsToSnapshot\(/)).toEqual([relative(process.cwd(), APPLIER)]);
-    expect(counts(/function failedOutcome\(/)).toEqual([relative(process.cwd(), APPLIER)]);
-    expect(counts(/function appliedOutcome\(/)).toEqual([relative(process.cwd(), APPLIER)]);
-    expect(counts(/MAX_CARD_SNIPPET =/)).toEqual([relative(process.cwd(), APPLIER)]);
+    expect(counts(/export function applyChatCommands\(/)).toEqual([APPLIER]);
+    expect(counts(/export function applyChatCommandsToDocument\(/)).toEqual([APPLIER]);
+    expect(counts(/export function applyChatCommandsToSnapshot\(/)).toEqual([APPLIER]);
+    expect(counts(/function failedOutcome\(/)).toEqual([APPLIER]);
+    expect(counts(/function appliedOutcome\(/)).toEqual([APPLIER]);
+    expect(counts(/MAX_CARD_SNIPPET =/)).toEqual([APPLIER]);
     // The applier's own sentences — a second copy brings its own copy of these.
     expect(counts(/the search text does not appear in the current document/)).toEqual([
-      relative(process.cwd(), APPLIER),
+      APPLIER,
     ]);
-    expect(counts(/export interface ChatDocumentHandle/)).toEqual([relative(process.cwd(), APPLIER)]);
+    expect(counts(/export interface ChatDocumentHandle/)).toEqual([APPLIER]);
   });
 
   it('routes BOTH surfaces through the one applier handle seam', () => {
@@ -666,7 +663,7 @@ describe('the chat applier is the ONLY one (SOURCE SCAN)', () => {
     expect(applier).toContain('editorChatHandle');
     expect(applier).toContain('stringChatHandle');
     // The preview surface re-exports the one applier; it declares nothing.
-    const preview = readFileSync(join(CANVAS_DIR, 'snapshotChat.ts'), 'utf8');
+    const preview = readFileSync(`${CANVAS_DIR}/snapshotChat.ts`, 'utf8');
     expect(preview).toContain("from '@/features/modules/canvas/chatApply'");
     expect(preview).not.toContain('const MAX_CARD_SNIPPET');
     expect(preview).not.toContain('function failedOutcome');
@@ -674,23 +671,9 @@ describe('the chat applier is the ONLY one (SOURCE SCAN)', () => {
   });
 
   it('leaves the per-part ladder with exactly ONE caller outside the llm module', () => {
-    const srcDir = join(process.cwd(), 'src');
-    const callers: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!/\.tsx?$/.test(entry.name)) continue;
-        if (full === join(srcDir, 'llm', 'canvasChat.ts')) continue; // the declaration
-        if (readFileSync(full, 'utf8').includes('resolveCanvasEditAcrossParts(')) {
-          callers.push(relative(process.cwd(), full));
-        }
-      }
-    };
-    walk(srcDir);
-    expect(callers).toEqual([relative(process.cwd(), APPLIER)]);
+    const callers = repoFiles('src', ['.ts', '.tsx'])
+      .filter((file) => file !== 'src/llm/canvasChat.ts') // the declaration
+      .filter((file) => readFileSync(file, 'utf8').includes('resolveCanvasEditAcrossParts('));
+    expect(callers).toEqual([APPLIER]);
   });
 });

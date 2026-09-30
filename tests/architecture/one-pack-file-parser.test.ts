@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * THE one pack-adapter promise seam (docs/17 row 214, docs/18 §2).
@@ -19,15 +21,14 @@ import { describe, expect, it } from 'vitest';
  * the wrapper's two load-bearing lines in any pack file but the seam, whatever
  * the function is named.
  *
- * It reads the directory with an inline `readdirSync` (the pattern
- * `tests/architecture/module-title-seam.test.ts` established) rather than a
- * named walker: the test-tree half of the tripwire baselines every named helper
- * body, so a copied `sourceFiles` helper here would be a NEW baselined
- * duplicate (docs/17 row 212).
+ * It reads the directory through the ONE tree walk (`repoFiles`, docs/17 row
+ * 427) rather than a walker of its own.
  */
 
 const PACKS_DIR = 'src/ingest/packs';
 const SEAM_FILE = 'types.ts';
+/** The pack directory's `.ts` files, by name (the ONE tree walk, docs/17 row 427). */
+const PACK_FILES = namesUnder(PACKS_DIR, ['.ts']);
 const SEAM_NAME = 'asPackFileParser';
 
 /**
@@ -58,8 +59,7 @@ const WRAPPER_SHAPES: readonly string[] = [
 
 describe('the pack-adapter promise wrapper is the ONLY one (SOURCE SCAN)', () => {
   it('defines the ONE seam in types.ts, and proves the needles can see it', () => {
-    const files = readdirSync(join(process.cwd(), PACKS_DIR))
-      .filter((name) => name.endsWith('.ts'))
+    const files = PACK_FILES
       .sort();
     // Non-vacuity: the walk must see the whole directory (7 adapters + the
     // seam + text.ts + registry.ts), or this proves nothing about it.
@@ -97,8 +97,8 @@ describe('the pack-adapter promise wrapper is the ONLY one (SOURCE SCAN)', () =>
     // Non-vacuity at the population level: exactly those seven files use the
     // seam, so an EIGHTH user — a new adapter that re-spelled the wrapper, or a
     // non-adapter file reaching for it — reds here rather than being missed.
-    const users = readdirSync(join(process.cwd(), PACKS_DIR))
-      .filter((name) => name.endsWith('.ts') && name !== SEAM_FILE)
+    const users = PACK_FILES
+      .filter((name) => name !== SEAM_FILE)
       .filter((name) =>
         readFileSync(join(process.cwd(), PACKS_DIR, name), 'utf8').includes(SEAM_NAME),
       )

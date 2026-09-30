@@ -1,8 +1,10 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one persistent-notice mechanism (docs/17 rows 136 and 280, docs/18 §2.3).
@@ -31,12 +33,8 @@ import { describe, expect, it } from 'vitest';
  * reads the TypeScript AST, so a docstring that NAMES the options — including
  * this one and `AppShell`'s — cannot red it.
  *
- * It deliberately declares NO named helper: `tests/**` is itself under the
- * duplicate-body tripwire, so a copy of the shared `sourceFiles` walker would be
- * a new baselined site for no benefit (`tests/architecture/one-zip-writer.test.ts`'s
- * pattern).
+ * The file list is the ONE tree walk (`repoFiles`, docs/17 row 427).
  */
-const SRC_DIR = join(process.cwd(), 'src');
 /** The ONE file allowed to spell a persistent notice's options. */
 const TOAST_SEAM = 'src/lib/toast.ts';
 /** The ONE builder both persistent entry points ride. */
@@ -44,20 +42,14 @@ const BUILDER = 'persistentNotice';
 
 describe('one persistent-notice mechanism (SOURCE SCAN, docs/17 rows 136/280)', () => {
   it('spells the options that MAKE a notice persistent in exactly one place', () => {
-    const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-      .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
-      .sort();
+    const files = repoFiles('src', ['.ts', '.tsx']);
     const infiniteDurationSites: string[] = [];
     const closeButtonSites: string[] = [];
     let builderCalls = 0;
-    for (const name of files) {
-      // `readdirSync` joins with the platform separator; the pin is spelled
-      // with forward slashes.
-      const relativeName = name.split(/[\\/]/).join('/');
-      const filePath = `src/${relativeName}`;
+    for (const filePath of files) {
       const source = ts.createSourceFile(
-        relativeName,
-        readFileSync(join(SRC_DIR, name), 'utf8'),
+        filePath.slice('src/'.length),
+        readFileSync(filePath, 'utf8'),
         ts.ScriptTarget.Latest,
         true,
       );

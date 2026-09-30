@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+
+import { countsIn, readTree } from '../helpers/sourceCode';
 
 /**
  * THE one module-PDF export control (docs/17 rows 108/139/185, docs/18 §2).
@@ -24,7 +25,6 @@ import { describe, expect, it } from 'vitest';
  * importing the shared component — reds by file.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const BUTTON = 'src/features/modules/module-pdf-button.tsx';
 const READER = 'src/features/modules/ModuleReaderPage.tsx';
 
@@ -32,23 +32,10 @@ const READER = 'src/features/modules/ModuleReaderPage.tsx';
 const GM_LABEL = 'GM document — premise, part plan, parts, artifacts, maps, gallery, treasure';
 const PLAYER_LABEL = 'Player document — the same book without the planning or the secrets';
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
+const SRC = readTree('src', ['.ts', '.tsx']);
 
 function countsOf(needle: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of sourceFiles(SRC_DIR)) {
-    const hits = readFileSync(file, 'utf8').split(needle).length - 1;
-    if (hits > 0) counts.set(relative(process.cwd(), file), hits);
-  }
-  return counts;
+  return new Map(countsIn(SRC, 'src/', needle));
 }
 
 describe('one module-PDF control, three surfaces (SOURCE SCAN)', () => {
@@ -61,9 +48,7 @@ describe('one module-PDF control, three surfaces (SOURCE SCAN)', () => {
   });
 
   it('mounts the ONE control from the three module surfaces, the reader through the shared import', () => {
-    const mountSites = sourceFiles(SRC_DIR)
-      .filter((file) => readFileSync(file, 'utf8').includes('<ModulePdfButton'))
-      .map((file) => relative(process.cwd(), file));
+    const mountSites = Object.keys(SRC).filter((file) => SRC[file]?.includes('<ModulePdfButton'));
     expect(mountSites).toEqual([
       'src/features/campaign/components/campaign-tree.tsx',
       'src/features/modules/ModuleReaderPage.tsx',
@@ -71,7 +56,7 @@ describe('one module-PDF control, three surfaces (SOURCE SCAN)', () => {
     ]);
     // The reader MOUNTS the shared component, it does not define a menu of its
     // own (the label scan above is the half that catches a copied menu).
-    const reader = readFileSync(join(process.cwd(), READER), 'utf8');
+    const reader = readFileSync(READER, 'utf8');
     expect(reader).toMatch(
       /import \{ ModulePdfButton \} from '@\/features\/modules\/module-pdf-button'/,
     );

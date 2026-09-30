@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -28,6 +27,7 @@ import { BUILTIN_PROMPT_STYLES } from '@/llm/promptStyles';
 import { missingRefsSummary } from '@/features/campaign/components/missing-refs-summary';
 import { createPromptStyle, duplicatePromptStyle } from '@/db/promptStyleRepo';
 import { clearDatabase } from '../db/helpers';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * THE KEY-SPACE ACCOUNTING (docs/17 row 167; the key-index class row 166 named
@@ -185,25 +185,10 @@ const BOUNDARIES: Record<string, string> = {
  * `includes` is the honest and the simplest matcher. */
 const TRIM_CASE_KEY = '.trim().toLowerCase()';
 
-function srcFiles(): string[] {
-  const root = join(process.cwd(), 'src');
-  const found: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-      found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-    }
-  };
-  walk(root);
-  return found.sort();
-}
+/** Every `src/` TypeScript file, named relative to `src/`. */
+const SRC_FILES = namesUnder('src', ['.ts', '.tsx']);
 
-const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
+const source = (file: string): string => readFileSync(`src/${file}`, 'utf8');
 
 /** The file's CODE, comment lines dropped — the declarations NAME the shape
  * they forbid, and a pin that reads comments reds on its own explanation
@@ -245,7 +230,7 @@ describe('the name key spaces are declared and held (docs/17 row 167)', () => {
     expect(Object.keys(SPACES).length).toBe(8);
     expect(files.size).toBeGreaterThanOrEqual(14);
     for (const file of files) {
-      expect(srcFiles(), `${file} must exist in src/`).toContain(file);
+      expect(SRC_FILES, `${file} must exist in src/`).toContain(file);
     }
   });
 
@@ -256,7 +241,7 @@ describe('the name key spaces are declared and held (docs/17 row 167)', () => {
 
     const offenders: string[] = [];
     const boundaryHits = new Set<string>();
-    for (const file of srcFiles()) {
+    for (const file of SRC_FILES) {
       if (!codeLines(source(file)).includes(TRIM_CASE_KEY)) continue;
       if (BOUNDARIES[file] === undefined) {
         offenders.push(file);
@@ -275,7 +260,7 @@ describe('the name key spaces are declared and held (docs/17 row 167)', () => {
       ).toBe(true);
     }
     // Non-vacuity of the population: the scan really walked the tree.
-    expect(srcFiles().length).toBeGreaterThan(200);
+    expect(SRC_FILES.length).toBeGreaterThan(200);
     expect(boundaryHits.size).toBe(Object.keys(BOUNDARIES).length);
   });
 });

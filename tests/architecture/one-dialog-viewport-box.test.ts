@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one pair of class strings for a dialog whose BODY is the scroller, and the
@@ -48,8 +50,6 @@ import { describe, expect, it } from 'vitest';
  * source-level pins here are a tripwire rather than a proof.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
-
 /** `h-[85vh]` plus the bars-aware refinement — the value, not the seam's name. */
 const VIEWPORT_BOX_PLAIN = 'h-[85vh]';
 const VIEWPORT_BOX_REFINEMENT = 'supports-[height:100svh]:h-[min(85svh,85dvh)]';
@@ -72,16 +72,11 @@ const CONSUMERS = [
   'src/features/play/battle/SpawnPicker.tsx',
 ] as const;
 
+/** Every `src/` source file (the ONE tree walk, docs/17 row 427). */
+const SOURCE_FILES = repoFiles('src', ['.ts', '.tsx']);
+
 /** The declared control: a definite height it already had; folding it would move its box. */
 const CONTROL = 'src/help/HelpDialog.tsx';
-
-/** Every source file, walked inline (a named helper would join the duplication baseline). */
-function sourceFiles(): string[] {
-  return readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-    .filter((entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'))
-    .map((entry) => relative(process.cwd(), join(SRC_DIR, entry)))
-    .sort();
-}
 
 /** The JSX expression starting at a `{`, so a COMMENT mentioning a seam cannot satisfy a pin. */
 function jsxExpressionAt(text: string, braceIndex: number): string | null {
@@ -103,10 +98,10 @@ function read(file: string): string {
 
 describe('one definite-height dialog box for an inner-scroller body (SOURCE SCAN)', () => {
   it('spells the definite height in exactly ONE file — the seam, not a call site', () => {
-    const values = sourceFiles().filter((file) => read(file).includes(VIEWPORT_BOX_VALUE));
+    const values = SOURCE_FILES.filter((file) => read(file).includes(VIEWPORT_BOX_VALUE));
     expect(values).toEqual([SEAM_FILE]);
 
-    const refinements = sourceFiles().filter((file) => read(file).includes(VIEWPORT_BOX_REFINEMENT));
+    const refinements = SOURCE_FILES.filter((file) => read(file).includes(VIEWPORT_BOX_REFINEMENT));
     expect(refinements).toEqual([SEAM_FILE]);
 
     // The body seam's value may appear as a SUBSTRING of longer class lists in
@@ -120,13 +115,17 @@ describe('one definite-height dialog box for an inner-scroller body (SOURCE SCAN
 
   it('refuses the row-340 shape — a dialog box with `overflow-hidden`, `flex-col` and a viewport `max-h`', () => {
     const offenders: string[] = [];
-    for (const file of sourceFiles()) {
+    for (const file of SOURCE_FILES) {
       const text = read(file);
       if (!text.includes('<DialogContent')) continue;
       for (const literal of text.matchAll(/"[^"\n]*"|`[^`\n]*`/g)) {
         const value = literal[0];
         const isViewportMaxHeight = value.includes('max-h-[') && value.includes('vh]');
-        if (value.includes('overflow-hidden') && value.includes('flex-col') && isViewportMaxHeight) {
+        if (
+          value.includes('overflow-hidden') &&
+          value.includes('flex-col') &&
+          isViewportMaxHeight
+        ) {
           offenders.push(`${file}: ${value.trim()}`);
         }
       }
@@ -135,14 +134,14 @@ describe('one definite-height dialog box for an inner-scroller body (SOURCE SCAN
   });
 
   it('carries BOTH seams at every dialog whose body is the scroller, and nowhere else', () => {
-    const heightConsumers = sourceFiles()
-      .filter((file) => file !== SEAM_FILE)
-      .filter((file) => read(file).includes(VIEWPORT_BOX_SEAM));
+    const heightConsumers = SOURCE_FILES.filter((file) => file !== SEAM_FILE).filter((file) =>
+      read(file).includes(VIEWPORT_BOX_SEAM),
+    );
     expect(heightConsumers).toEqual([...CONSUMERS].sort());
 
-    const bodyConsumers = sourceFiles()
-      .filter((file) => file !== SEAM_FILE)
-      .filter((file) => read(file).includes(SCROLL_BODY_SEAM));
+    const bodyConsumers = SOURCE_FILES.filter((file) => file !== SEAM_FILE).filter((file) =>
+      read(file).includes(SCROLL_BODY_SEAM),
+    );
     expect(bodyConsumers).toEqual([...CONSUMERS].sort());
   });
 
@@ -171,7 +170,9 @@ describe('one definite-height dialog box for an inner-scroller body (SOURCE SCAN
 
   it('leaves the CONTROL bounded by its own definite height and out of the consumer inventory', () => {
     const text = read(CONTROL);
-    expect(text.includes('<DialogContent'), `${CONTROL} must still render DialogContent`).toBe(true);
+    expect(text.includes('<DialogContent'), `${CONTROL} must still render DialogContent`).toBe(
+      true,
+    );
     // It keeps a definite height of its own (the control this row reasons from)…
     expect(text.includes('h-[80vh]'), `${CONTROL} must keep its definite height`).toBe(true);
     // …and it is deliberately NOT a consumer: folding it would move its box from

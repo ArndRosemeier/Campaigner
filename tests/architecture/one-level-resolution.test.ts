@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { CODE, filesWith } from '../helpers/sourceCode';
 
 /**
  * ONE seam resolves an entity's level, and ONE reader reads a level out of
@@ -82,7 +84,6 @@ import { describe, expect, it } from 'vitest';
  * rung, row 285) and is deliberately OUT of the instruction path.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const ENGINE = 'src/llm/runEngine.ts';
 const ROOM_BUDGET = 'src/llm/roomBudget.ts';
 const LANGUAGE = 'src/llm/language.ts';
@@ -107,44 +108,18 @@ const ENCOUNTER_LEVEL_FILES: readonly string[] = [
   ENTITY_BATCH,
 ];
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-function rel(full: string): string {
-  return relative(process.cwd(), full).split(sep).join('/');
-}
-
-/** Comments are skipped: the seam's own docstring NAMES the regex it removes. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
-function scanned(): (readonly [string, string])[] {
-  return sourceFiles(SRC_DIR).map(
-    (file) => [rel(file), stripComments(readFileSync(file, 'utf8'))] as const,
-  );
-}
-
-function filesContaining(needle: string): string[] {
-  return scanned()
-    .filter(([, text]) => text.includes(needle))
-    .map(([file]) => file);
+/** Comments are skipped (`CODE`): the seam's own docstring NAMES the regex it removes. */
+function scanned(): [string, string][] {
+  return Object.entries(CODE);
 }
 
 describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', () => {
   it('states the precedence chain at exactly one site, and only in the engine', () => {
-    const files = sourceFiles(SRC_DIR);
+    const files = Object.keys(CODE);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
     expect(
-      filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel;'),
+      filesWith('const resolvedLevel = explicitLevel ?? recordedLevel;'),
     ).toEqual([ENGINE]);
     // The user's instruction is read at that same site — BY THE MODEL since
     // docs/17 row 289. The reader is defined ONCE in its own module and called
@@ -152,29 +127,29 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // renamed: a pattern over the owner's free text may never be the authority
     // again (AGENTS rule 5), so `export function instructionLevel` is pinned
     // ABSENT exactly as the pre-253 English-only regex is above.
-    expect(filesContaining('export function instructionLevel')).toEqual([]);
-    expect(filesContaining('export async function readInstructionLevel')).toEqual([
+    expect(filesWith('export function instructionLevel')).toEqual([]);
+    expect(filesWith('export async function readInstructionLevel')).toEqual([
       INSTRUCTION_LEVEL,
     ]);
     expect(
-      filesContaining('readInstructionLevel(')
+      filesWith('readInstructionLevel(')
         .filter((file) => file !== INSTRUCTION_LEVEL)
         .sort(),
     ).toEqual([ENGINE]);
-    expect(filesContaining('context.moduleGrounding?.statedLevel')).toEqual([]);
+    expect(filesWith('context.moduleGrounding?.statedLevel')).toEqual([]);
   });
 
   it('reads a level out of prose through ONE reader, fed by ONE language vocabulary', () => {
     // The reader itself…
-    expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
     // …and the level-WORD vocabulary lives in exactly ONE place (docs/17 row
     // 253): the language seam, beside the directive that makes the app GENERATE
     // in eleven languages. A new language is added to ONE map, not to a regex.
-    expect(filesContaining('export const LEVEL_WORDS')).toEqual([LANGUAGE]);
-    expect(filesContaining('export function levelWordsPattern')).toEqual([LANGUAGE]);
+    expect(filesWith('export const LEVEL_WORDS')).toEqual([LANGUAGE]);
+    expect(filesWith('export function levelWordsPattern')).toEqual([LANGUAGE]);
     // The reader is the ONLY caller of that pattern — a second caller would be
     // a second answer to "what does this text say the level is".
-    expect(filesContaining('levelWordsPattern()').sort()).toEqual([ROOM_BUDGET, LANGUAGE].sort());
+    expect(filesWith('levelWordsPattern()').sort()).toEqual([ROOM_BUDGET, LANGUAGE].sort());
     // The PRE-253 English-only regex is GONE from `src/`, in BOTH spellings a
     // reader could be re-born as: a regex LITERAL (`/\blevel\s*(\d{1,2})\b/i`)
     // and the escaped SOURCE-string spelling, whose backslashes DOUBLE in the
@@ -210,55 +185,55 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
   it('an entity level is STRICTLY the stated one — no section, prose or band derivation exists (docs/17 row 401)', () => {
     // The owner: the level strictly comes from the story LLM. The three
     // context-derived sources are DELETED; a reappearance reds here.
-    expect(filesContaining('function moduleStatedLevel')).toEqual([]);
-    expect(filesContaining('function entityProseLevel')).toEqual([]);
-    expect(filesContaining('moduleStatedLevel(')).toEqual([]);
-    expect(filesContaining('withCombatEntityLevelHints')).toEqual([]);
+    expect(filesWith('function moduleStatedLevel')).toEqual([]);
+    expect(filesWith('function entityProseLevel')).toEqual([]);
+    expect(filesWith('moduleStatedLevel(')).toEqual([]);
+    expect(filesWith('withCombatEntityLevelHints')).toEqual([]);
     // The engine's chain has exactly the three sources and no band.
     const engine = readFileSync(join(process.cwd(), ENGINE), 'utf8');
     expect(engine).toContain('const resolvedLevel = explicitLevel ?? recordedLevel;');
     expect(engine).not.toContain('levelMin: module.levelMin');
     // The section number survives ONLY as the PARTY level (where in the story).
-    expect(filesContaining('export function partLevelForMention')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function partLevelForMention')).toEqual([ROOM_BUDGET]);
     const roomBudget = readFileSync(join(process.cwd(), ROOM_BUDGET), 'utf8');
     expect(roomBudget).toContain('NEVER answers "HOW STRONG');
     expect(roomBudget).toContain('TOOK\n * PLACE IN THE PAST');
   });
 
   it('reads a figure’s prose through ONE name-scoped seam (the brief fallback only, docs/17 rows 285/401)', () => {
-    expect(filesContaining('export function nameScopedLevel')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function nameScopedLevel')).toEqual([ROOM_BUDGET]);
     expect(
-      filesContaining('nameScopedLevel(')
+      filesWith('nameScopedLevel(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
-    expect(filesContaining('export function sentenceAround')).toEqual([WIKILINKS]);
-    expect(filesContaining('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function sentenceAround')).toEqual([WIKILINKS]);
+    expect(filesWith('export function firstLevelInText')).toEqual([ROOM_BUDGET]);
   });
 
   it('routes the brief-text fallback through the ONE party-line exclusion, and leaves no raw-brief reader', () => {
     // Defined once, beside `partyLevelLine` whose shape it excludes…
-    expect(filesContaining('export function withoutPartyLevelLines')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function withoutPartyLevelLines')).toEqual([ROOM_BUDGET]);
     // …and consumed only by the stat-block step: the fallback read AND the
     // prompt the step finally sends (docs/17 row 247 removed the party line from
     // BOTH, so what the reader ignores and what the model sees cannot drift).
-    const callers = filesContaining('withoutPartyLevelLines(').filter(
+    const callers = filesWith('withoutPartyLevelLines(').filter(
       (file) => file !== ROOM_BUDGET,
     );
     expect(callers).toEqual([ENGINE]);
     // The pre-row-206 raw regex over the brief is GONE: a second reader that
     // bypasses the party-line exclusion reds here.
-    expect(filesContaining('.exec(input.brief)')).toEqual([]);
+    expect(filesWith('.exec(input.brief)')).toEqual([]);
   });
 
   it('reads a mob’s MINTED level through ONE reader, and keeps the chain at one site (docs/17 row 282)', () => {
     // THE READER, defined once beside the ONE level grammar and reached by every
     // surface that answers "what level is this mob": the entity panel's chip, the
     // stat-block card, and the engine's precedence chain.
-    expect(filesContaining('export function mobLevelText')).toEqual([ROSTER]);
-    expect(filesContaining('export function mobLevelFor')).toEqual([ROSTER]);
+    expect(filesWith('export function mobLevelText')).toEqual([ROSTER]);
+    expect(filesWith('export function mobLevelFor')).toEqual([ROSTER]);
     expect(
-      filesContaining('mobLevelFor(')
+      filesWith('mobLevelFor(')
         .filter((file) => file !== ROSTER)
         .sort(),
     ).toEqual([ENGINE, ENTITY_PANEL].sort());
@@ -266,7 +241,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // editor surfaces all mount it), so it reaches the SAME grammar read through
     // `mobLevelText` rather than re-printing the raw string.
     expect(
-      filesContaining('mobLevelText(')
+      filesWith('mobLevelText(')
         .filter((file) => file !== ROSTER)
         .sort(),
     ).toEqual([STAT_BLOCK_CARD]);
@@ -274,15 +249,15 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // an existing minted block cannot steer a regeneration back to it, while the
     // precedence EXPRESSION itself is unchanged and still one site (so the
     // user's instruction and the module's structured level keep their order).
-    expect(filesContaining('const recordedLevel = mintedBlockLevel ?? storedHint')).toEqual([ENGINE]);
-    expect(filesContaining('const resolvedLevel = explicitLevel ?? recordedLevel;')).toEqual([
+    expect(filesWith('const recordedLevel = mintedBlockLevel ?? storedHint')).toEqual([ENGINE]);
+    expect(filesWith('const resolvedLevel = explicitLevel ?? recordedLevel;')).toEqual([
       ENGINE,
     ]);
     // The generated entity-hint paragraph gets the SAME one-site exclusion the
     // party line has, applied only where the block outranks the hint.
-    expect(filesContaining('export function withoutEntityLevelHintLines')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function withoutEntityLevelHintLines')).toEqual([ROOM_BUDGET]);
     expect(
-      filesContaining('withoutEntityLevelHintLines(')
+      filesWith('withoutEntityLevelHintLines(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
@@ -293,7 +268,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // was `/(\d+)/.exec(levelHint)` over a string the MODEL wrote: "CR 12 for 4
     // players" sized the window at 12 and "3/4 of the party" at 3. The name
     // must not exist in any spelling (AGENTS rule 5).
-    expect(filesContaining('parseRosterTargetLevel')).toEqual([]);
+    expect(filesWith('parseRosterTargetLevel')).toEqual([]);
     // THE BAND MIDPOINT is not a level either: the ONE fallback that turned a
     // module's `levelMin`..`levelMax` RANGE into an encounter's level is gone,
     // so the two sizing paths (the roster window and the brief) cannot disagree
@@ -316,7 +291,7 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // it is NEVER REACHED as `data.levelHint` anywhere in `src/` (the model no
     // longer writes it either: `levelHint: z.string()` is that one domain
     // declaration, not a reply contract).
-    expect(filesContaining('levelHint: z.string()')).toEqual([ARTIFACT_DOMAIN]);
+    expect(filesWith('levelHint: z.string()')).toEqual([ARTIFACT_DOMAIN]);
     expect(
       scanned()
         .filter(([, text]) => /(?:\.|^)data\.levelHint\b/.test(text))
@@ -326,9 +301,9 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // `encounterPartyLevel`, defined once in `roomBudget` and called ONLY by
     // the engine — the roster window, the brief guidance and every room-stamping
     // site ask it, so a fourth caller cannot invent a fourth answer.
-    expect(filesContaining('export function encounterPartyLevel')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function encounterPartyLevel')).toEqual([ROOM_BUDGET]);
     expect(
-      filesContaining('encounterPartyLevel(')
+      filesWith('encounterPartyLevel(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
@@ -336,16 +311,16 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // form needs (the part's TITLE and its exact level); `partLevelForMention`
     // is its level half, so the band read exists once. The form is the only
     // caller of the title half.
-    expect(filesContaining('export function partLevelMentionFor')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export function partLevelMentionFor')).toEqual([ROOM_BUDGET]);
     expect(
-      filesContaining('partLevelMentionFor(')
+      filesWith('partLevelMentionFor(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([KIND_FORMS]);
     // The level half keeps its one non-engine caller: the module entity batch's
     // brief carries the party line at the same mention position.
     expect(
-      filesContaining('partLevelForMention(')
+      filesWith('partLevelForMention(')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENTITY_BATCH]);
@@ -360,15 +335,15 @@ describe('ONE seam resolves the entity level (docs/17 rows 206/247/253/289)', ()
     // production caller. The target reaches it through `entityLevelHintFor`, the
     // ONE reader of the module record's hint, rather than a second name-keyed
     // copy.
-    expect(filesContaining('export interface EncounterTargetContext')).toEqual([ROOM_BUDGET]);
-    expect(filesContaining('The module targets level')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('export interface EncounterTargetContext')).toEqual([ROOM_BUDGET]);
+    expect(filesWith('The module targets level')).toEqual([ROOM_BUDGET]);
     expect(
-      filesContaining('targetLevelFor:')
+      filesWith('targetLevelFor:')
         .filter((file) => file !== ROOM_BUDGET)
         .sort(),
     ).toEqual([ENGINE]);
     expect(
-      filesContaining('targetLevelFor: (name) => entityLevelHintFor(owner.entityKinds, name)'),
+      filesWith('targetLevelFor: (name) => entityLevelHintFor(owner.entityKinds, name)'),
     ).toEqual([ENGINE]);
     // The check lives UNDER the SAME `fielded` guard the party-level check uses,
     // so "takes part in an encounter" has ONE meaning here (the behavioral

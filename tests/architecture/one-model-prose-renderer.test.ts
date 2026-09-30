@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one model-prose renderer (docs/17 row 217, docs/18 §2.3).
@@ -43,14 +45,10 @@ import { describe, expect, it } from 'vitest';
  * tripwire, not the proof. It sees `src/` only — a test tree may import
  * `react-markdown` for its own differential without this pin caring.
  *
- * The walk uses Node's recursive `readdirSync` with the counting INLINE in the
- * `it` callbacks rather than a hand-rolled `sourceFiles` helper: the
- * duplicate-body tripwire (docs/17 row 212) baselines every named function body
- * in this tree, so a copied helper would be a new baselined site for no benefit
- * (`tests/architecture/module-title-seam.test.ts`'s pattern).
+ * The walk is the ONE tree walk (`repoFiles`, docs/17 row 427), with the
+ * counting INLINE in the `it` callbacks.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const ONE_RENDERER = 'src/features/campaign/components/wiki-markdown.tsx';
 
 /**
@@ -88,15 +86,13 @@ const MODEL_PROSE_SURFACES: Readonly<Record<string, { count: number; fields: str
 
 describe('one model-prose renderer (SOURCE SCAN)', () => {
   it('imports react-markdown from exactly the one renderer, and proves it can see one', () => {
-    const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-      .filter((entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'))
-      .map((entry) => join(SRC_DIR, entry));
+    const files = repoFiles('src', ['.ts', '.tsx']);
 
     const directImporters: string[] = [];
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
       if (/from ['"]react-markdown['"]/.test(text) || /require\(['"]react-markdown['"]\)/.test(text)) {
-        directImporters.push(relative(process.cwd(), file));
+        directImporters.push(file);
       }
     }
 
@@ -107,15 +103,13 @@ describe('one model-prose renderer (SOURCE SCAN)', () => {
   });
 
   it('runs the wiki token plugin only inside the one renderer', () => {
-    const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-      .filter((entry) => entry.endsWith('.ts') || entry.endsWith('.tsx'))
-      .map((entry) => join(SRC_DIR, entry));
+    const files = repoFiles('src', ['.ts', '.tsx']);
 
     const pluginImporters: string[] = [];
     for (const file of files) {
       const text = readFileSync(file, 'utf8');
       if (/import \{[^}]*\bremarkWikiLinks\b[^}]*\} from '@\/lib\/remark-wikilinks'/.test(text)) {
-        pluginImporters.push(relative(process.cwd(), file));
+        pluginImporters.push(file);
       }
     }
 

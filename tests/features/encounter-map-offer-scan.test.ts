@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * "Does this encounter still need a map?" — ONE rule for the OFFER (docs/17
@@ -57,30 +57,16 @@ const RULE_HOLDERS: Record<string, string> = {
     "the QUEUE's own per-artifact guard — `encounterNeedsMap`: the gap alone, for a job whose target the enqueue site already chose",
 };
 
-function srcFiles(): string[] {
-  const root = join(process.cwd(), 'src');
-  const found: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-      found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-    }
-  };
-  walk(root);
-  return found.sort();
-}
+/** Every `src/` TypeScript file, named relative to `src/`. */
+const SRC_FILES =
+  namesUnder('src', ['.ts', '.tsx']);
 
-const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
+const source = (file: string): string => readFileSync(`src/${file}`, 'utf8');
 const seamCalls = (text: string): number => text.split('encountersNeedingMaps(').length - 1;
 
 describe('the encounter-map gap is ONE rule (SOURCE SCAN)', () => {
   it('scan: the gap disjunction is composed in exactly the offer seam and the queue’s own guard', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must actually see the app, and the needle must
     // actually match the rule holders, or this pin proves nothing about either.
     expect(files.length).toBeGreaterThan(200);

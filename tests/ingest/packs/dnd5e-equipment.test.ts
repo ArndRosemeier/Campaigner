@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,8 @@ import {
 import { DND5E_PROPERTY_LABELS } from '@/ingest/packs/dnd5e-foundry';
 import { getPackAdapter, PACK_ADAPTERS } from '@/ingest/packs/registry';
 import type { PackItemEntry } from '@/ingest/packs/types';
+
+import { repoFiles } from '../../helpers/sourceCode';
 
 const FIXTURE_DIR = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'dnd5e-equipment');
 
@@ -267,7 +269,7 @@ describe('foundry-dnd5e-equipment adapter', () => {
   });
 
   it('parses every committed fixture with zero failures (corpus sweep pin)', async () => {
-    const names = readdirSync(FIXTURE_DIR).filter((name) => name.endsWith('.yml'));
+    const names = repoFiles(FIXTURE_DIR, ['.yml']).map((file) => basename(file));
     expect(names.length).toBeGreaterThanOrEqual(7);
     for (const name of names) {
       const parsed = await parseFile(name);

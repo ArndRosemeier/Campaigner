@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -15,6 +15,7 @@ import {
 import { comparableName, mergeAliasNames, sameAliasName } from '@/domain/artifactAlias';
 import { normalizeCreatureName, sameCreatureName } from '@/domain/creatureName';
 import type { AnyArtifact } from '@/domain';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE CLASS THIS FILE PINS: **a rule that only holds in English is not a
@@ -378,15 +379,8 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
       'String.fromCharCode builds the A–N PLAQUE LABELS of the vision contract: ASCII by design',
   };
 
-  function srcFiles(dir = 'src'): string[] {
-    const out: string[] = [];
-    for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-      const path = `${dir}/${entry}`;
-      if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...srcFiles(path));
-      else if (/\.tsx?$/.test(entry)) out.push(path);
-    }
-    return out;
-  }
+  /** Every `src/` TypeScript file as a repo path (the shared tree walk). */
+  const SRC_FILES = repoFiles('src', ['.ts', '.tsx']);
 
   /** The matching lines of one file — comment lines skipped, because a doc
    *  comment NAMING `\w` is prose about the rule, not a rule. */
@@ -401,7 +395,7 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
   }
 
   it('declares exactly the ASCII-only text regexes that exist, and no more', () => {
-    const files = srcFiles().filter((file) => /\.tsx?$/.test(file));
+    const files = SRC_FILES.filter((file) => /\.tsx?$/.test(file));
     // Non-vacuity 1: the walk must see the whole app.
     expect(files.length).toBeGreaterThan(200);
     expect(files).toContain('src/lib/markdown.ts');
@@ -439,7 +433,7 @@ describe('every ASCII-only text regex lives in a declared site (SOURCE SCAN, doc
 
   it('never folds case with the locale, which is the matching hazard rather than a fix', () => {
     const offenders: string[] = [];
-    for (const file of srcFiles()) {
+    for (const file of SRC_FILES) {
       // Same comment rule as the shape scan: a doc comment NAMING
       // `toLocaleLowerCase` is prose about the hazard, not the hazard. Found
       // the hard way — this check's first version read the raw file text and

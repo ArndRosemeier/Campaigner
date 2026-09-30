@@ -130,7 +130,7 @@
  * tripwire catches identical copies, not duplicated INTENT.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -138,6 +138,8 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+
+import { repoFiles, repoPath } from '../helpers/sourceCode';
 
 /**
  * The normalized-size floor. See the file doc comment for the measurement and
@@ -429,22 +431,11 @@ function isInside(file: string, prefix: string): boolean {
  * inferred from an empty scan result.
  */
 export function scopedFiles(scope: ScanScope): string[] {
-  const cwd = process.cwd();
-  const excluded = (scope.exclude ?? []).map((entry) => path.resolve(cwd, entry));
-  const files: string[] = [];
-  const walk = (dir: string): void => {
-    if (excluded.some((prefix) => isInside(dir, prefix))) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (excluded.some((prefix) => isInside(full, prefix))) continue;
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
-        files.push(path.relative(cwd, full));
-      }
-    }
-  };
-  for (const root of scope.roots) walk(path.resolve(cwd, root));
-  return files.sort();
+  const excluded = (scope.exclude ?? []).map(repoPath);
+  return scope.roots
+    .flatMap((root) => repoFiles(root, ['.ts', '.tsx']))
+    .filter((file) => !excluded.some((prefix) => file === prefix || file.startsWith(`${prefix}/`)))
+    .sort();
 }
 
 /**
@@ -572,7 +563,7 @@ const PROBE_PAIR = [copySource('alpha', 'value'), copySource('beta', 'thing')].j
 
 /** How the scanner reports a temp file's path: relative to the repo root. */
 function reported(file: string): string {
-  return path.relative(process.cwd(), file);
+  return repoPath(file);
 }
 
 describe('the duplicate-body tripwire can see what it polices (non-vacuity)', () => {
@@ -630,11 +621,11 @@ describe('the tripwire covers the test tree (fixtures excluded, docs/17 row 212)
 
   it('excludes tests/fixtures/** from the scanned file list, and nothing else under tests/', () => {
     const files = scopedFiles(TESTS_SCOPE);
-    expect(files.some((file) => file.startsWith(`tests/fixtures${path.sep}`))).toBe(false);
+    expect(files.some((file) => file.startsWith('tests/fixtures/'))).toBe(false);
     // Non-vacuity: the exclusion must not have swallowed the whole test tree.
     expect(files).toContain('tests/architecture/no-duplicate-implementations.test.ts');
     expect(files).toContain('tests/setup.ts');
-    expect(files.some((file) => file.startsWith(`tests/helpers${path.sep}`))).toBe(true);
+    expect(files.some((file) => file.startsWith('tests/helpers/'))).toBe(true);
   });
 
   it('states its scope and the fixture exclusion in the test-tree inventory header (asserted as data)', () => {
@@ -722,11 +713,11 @@ describe('the tripwire sees a copy that SPANS both trees (docs/17 row 215)', () 
 
   it('excludes tests/fixtures/** from the union scan and covers BOTH trees (non-vacuity of the union scope)', () => {
     const files = scopedFiles(UNION_SCOPE);
-    expect(files.some((file) => file.startsWith(`tests/fixtures${path.sep}`))).toBe(false);
+    expect(files.some((file) => file.startsWith('tests/fixtures/'))).toBe(false);
     expect(files).toContain('tests/architecture/no-duplicate-implementations.test.ts');
     expect(files).toContain('tests/setup.ts');
-    expect(files).toContain(`src${path.sep}lib${path.sep}fileSlug.ts`);
-    expect(files.some((file) => file.startsWith(`src${path.sep}`))).toBe(true);
+    expect(files).toContain('src/lib/fileSlug.ts');
+    expect(files.some((file) => file.startsWith('src/'))).toBe(true);
   });
 
   it('DETECTS a body copied between a src/-shaped and a tests/-shaped path, while BOTH scoped halves MISS it', () => {

@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,6 +21,7 @@ import {
 import type { PackFetchProgress } from '@/ingest/packFetch';
 import type { PackImportDeps, PackImportProgress } from '@/ingest/packImport';
 
+import { repoFiles } from '../helpers/sourceCode';
 import { baseNpc, folderDoc } from './packs/fixtures';
 
 /**
@@ -160,16 +160,12 @@ describe('pack fetch sources (ratified pins)', () => {
     // the import runner parse bytes; fetching lives exclusively in packFetch.
     // Scanned with readdir so a NEW file under src/ingest (including packs/)
     // is covered by the same assertion — no exclusion list to rot.
-    const ingestDir = join(import.meta.dirname, '..', '..', 'src', 'ingest');
-    const sources = readdirSync(ingestDir, { recursive: true })
-      .map((entry) => String(entry).replaceAll('\\', '/'))
-      .filter((entry) => entry.endsWith('.ts'))
-      .sort();
-    expect(sources).toContain('packFetch.ts');
+    const sources = repoFiles('src/ingest', ['.ts']);
+    expect(sources).toContain('src/ingest/packFetch.ts');
     const fetchCallers = sources.filter((file) =>
-      /\bfetch\s*\(|fetchFn|globalThis\.fetch/.test(readFileSync(join(ingestDir, file), 'utf8')),
+      /\bfetch\s*\(|fetchFn|globalThis\.fetch/.test(readFileSync(file, 'utf8')),
     );
-    expect(fetchCallers).toEqual(['packFetch.ts']);
+    expect(fetchCallers).toEqual(['src/ingest/packFetch.ts']);
   });
 
   it('pins the newest-first chain constants (16 §1.1 amendment)', () => {

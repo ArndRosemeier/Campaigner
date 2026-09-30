@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * The roster-side creature identity has ONE spelling (docs/17 rows 145 and
@@ -37,22 +37,12 @@ import { describe, expect, it } from 'vitest';
 const SRC = 'src';
 const TESTS = 'tests';
 
-function filesUnder(dir: string, root = dir): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-    const path = `${dir}/${entry}`;
-    if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...filesUnder(path, root));
-    else if (/\.tsx?$/.test(entry)) out.push(path);
-  }
-  return out;
-}
-
-const read = (file: string): string => readFileSync(join(process.cwd(), file), 'utf8');
+const read = (file: string): string => readFileSync(file, 'utf8');
 
 describe('the deleted roster spelling is absent', () => {
   it('`rosterCreatureKey` is declared nowhere in `src/` and called nowhere in `tests/`', () => {
-    const srcFiles = filesUnder(SRC);
-    const testFiles = filesUnder(TESTS);
+    const srcFiles = repoFiles(SRC, ['.ts', '.tsx']);
+    const testFiles = repoFiles(TESTS, ['.ts', '.tsx']);
     // Non-vacuity: both walks must see their whole tree.
     expect(srcFiles.length).toBeGreaterThan(200);
     expect(testFiles.length).toBeGreaterThan(200);

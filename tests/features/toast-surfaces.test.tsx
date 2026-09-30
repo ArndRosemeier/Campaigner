@@ -36,8 +36,7 @@ import {
 import type { AnyArtifact, Id, Campaign, PromptStyle, MonsterEntry } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { clearDatabase } from '../db/helpers';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { createAppRouter } from '@/app/router';
@@ -56,6 +55,7 @@ import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { builtinPromptStyle, modulePromptStyleOf } from '@/llm/promptStyles';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { flushAsyncUpdates, actDrained } from '../helpers/flush';
+import { repoFiles } from '../helpers/sourceCode';
 import {
   addSpawnPickerChunk,
   spawnPickerStatBlock,
@@ -740,16 +740,6 @@ describe('wiki-markdown-tables.test.tsx', () => {
 
   const SRC = 'src';
 
-  function srcFiles(dir = SRC): string[] {
-    const out: string[] = [];
-    for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-      const path = `${dir}/${entry}`;
-      if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...srcFiles(path));
-      else if (/\.tsx?$/.test(entry)) out.push(path);
-    }
-    return out;
-  }
-
   /**
    * Where a `<table>` ELEMENT may be written in `src/`. `wiki-markdown.tsx` is
    * the app's markdown table renderer (docs/17 row 158); `LabeledDungeonView.tsx`
@@ -767,21 +757,18 @@ describe('wiki-markdown-tables.test.tsx', () => {
 
   describe('the app’s table grammar lives in ONE place (SOURCE SCAN)', () => {
     it('`remark-gfm` is wired into exactly ONE src file — the shared renderer', () => {
-      const files = srcFiles();
+      const files = repoFiles(SRC, ['.ts', '.tsx']);
       // Non-vacuity: the walk must see the whole `src/` tree, and the seam must
       // really import AND use the plugin this pin is about.
       expect(files.length).toBeGreaterThan(200);
-      const seam = readFileSync(
-        join(process.cwd(), 'src/features/campaign/components/wiki-markdown.tsx'),
-        'utf8',
-      );
+      const seam = readFileSync('src/features/campaign/components/wiki-markdown.tsx', 'utf8');
       expect(seam).toContain("import remarkGfm from 'remark-gfm';");
       expect(seam).toContain('[remarkGfm, remarkWikiLinks]');
 
       const found: Record<string, number> = {};
       for (const file of files) {
         const count =
-          readFileSync(join(process.cwd(), file), 'utf8').split("from 'remark-gfm'").length - 1;
+          readFileSync(file, 'utf8').split("from 'remark-gfm'").length - 1;
         if (count > 0) found[file] = count;
       }
       // A second pipeline (a per-surface renderer, a second markdown component)
@@ -791,12 +778,12 @@ describe('wiki-markdown-tables.test.tsx', () => {
     });
 
     it('no src file renders a table element outside the declared sites', () => {
-      const files = srcFiles();
+      const files = repoFiles(SRC, ['.ts', '.tsx']);
       expect(files.length).toBeGreaterThan(200);
 
       const found: Record<string, number> = {};
       for (const file of files) {
-        const count = tableElementLines(readFileSync(join(process.cwd(), file), 'utf8')).length;
+        const count = tableElementLines(readFileSync(file, 'utf8')).length;
         if (count > 0) found[file] = count;
       }
       expect(found).toEqual(DECLARED_TABLE_SITES);

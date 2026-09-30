@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { waitFor } from '@testing-library/react';
@@ -18,6 +18,7 @@ import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { SCHEMA_REPAIR_LEAD_IN } from '@/llm/promptScaffolding';
 import { chat } from '@/llm/openrouter';
 import { clearDatabase } from '../db/helpers';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * A rejected step says WHY it was rejected — the class is recorded where the
@@ -247,22 +248,8 @@ describe('SCAN — the class is recorded at the site that refuses (docs/17 row 1
   const SEAM = 'llm/runEngine.ts';
   const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
 
-  function srcFiles(): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-        } else if (/\.tsx?$/.test(entry.name)) {
-          found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-        }
-      }
-    };
-    walk(root);
-    return found.sort();
-  }
+  /** Every `src/` TypeScript file, named relative to `src/` (the shared tree walk). */
+  const SRC_FILES = namesUnder('src', ['.ts', '.tsx']);
 
   it('every rejected step in the engine is built by `rejectedStepOutput` — so it carries a class', () => {
     const text = source(SEAM);
@@ -289,7 +276,7 @@ describe('SCAN — the class is recorded at the site that refuses (docs/17 row 1
   });
 
   it('the sentence is composed in exactly ONE place, and the engine composes none of it', () => {
-    const holders = srcFiles().filter((file) =>
+    const holders = SRC_FILES.filter((file) =>
       source(file).includes('could not be parsed into the required'),
     );
     expect(holders).toEqual(['llm/rejectionReason.ts']);

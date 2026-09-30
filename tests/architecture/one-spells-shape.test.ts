@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { CODE, filesWith } from '../helpers/sourceCode';
 
 /**
  * THE one `spells` ENTRY SHAPE (docs/17 rows 200 and 205, docs/18 §2.2). Row
@@ -21,7 +23,6 @@ import { describe, expect, it } from 'vitest';
  * spelling (`"castRank"`) that only a prompt/contract shape carries.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const SCAFFOLDING = 'src/llm/promptScaffolding.ts';
 const COMPOSER = 'src/llm/mobSpellPrompt.ts';
 const CONTRACT = 'src/llm/statBlockContract.ts';
@@ -29,37 +30,16 @@ const ENGINE = 'src/llm/runEngine.ts';
 /** The prompt's JSON spelling of the entry shape — a schema identifier is BARE. */
 const SHAPE_NEEDLE = '"castRank"';
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-function rel(full: string): string {
-  return relative(process.cwd(), full).split(sep).join('/');
-}
-
 function read(path: string): string {
   return readFileSync(join(process.cwd(), path), 'utf8');
 }
 
-/** Comments are skipped: the seam's own docstring NAMES the shapes it replaces. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
 describe('one spells-shape composer (SOURCE SCAN, docs/17 rows 200/205)', () => {
   it('declares the per-system prompt entry shape in exactly one file', () => {
-    const files = sourceFiles(SRC_DIR);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
-    expect(files.length).toBeGreaterThan(300);
-    const owners = files
-      .filter((file) => stripComments(readFileSync(file, 'utf8')).includes(SHAPE_NEEDLE))
-      .map(rel);
+    expect(Object.keys(CODE).length).toBeGreaterThan(300);
+    // Comments are skipped (`CODE`): the seam's own docstring NAMES the shapes it replaces.
+    const owners = filesWith(SHAPE_NEEDLE);
     expect(owners).toEqual([CONTRACT]);
   });
 
@@ -72,7 +52,7 @@ describe('one spells-shape composer (SOURCE SCAN, docs/17 rows 200/205)', () => 
     expect(composer.match(/spellEntryShape\(system\)/g) ?? []).toHaveLength(2);
     expect(composer).not.toContain(SHAPE_NEEDLE);
     // The composer declares no shape of its own.
-    const scaffolding = stripComments(read(SCAFFOLDING));
+    const scaffolding = CODE[SCAFFOLDING] ?? '';
     expect(scaffolding).not.toContain(SHAPE_NEEDLE);
     expect(scaffolding).toContain('MOB_SPELL_SECTION_PREFIX');
     expect(scaffolding).toContain('MOB_SPELL_SECTION_SUFFIX');
@@ -94,7 +74,7 @@ describe('one spells-shape composer (SOURCE SCAN, docs/17 rows 200/205)', () => 
     expect(scaffolding.match(/export const MOB_SPELL_CASTER_CLAUSE =/g) ?? []).toHaveLength(1);
     // No call site re-spells the clause: the literal the model reads is the
     // composer's own constant, so it cannot drift from the pinned bytes.
-    const engine = stripComments(read(ENGINE));
+    const engine = CODE[ENGINE] ?? '';
     expect(engine).not.toContain('Caster awareness');
     // The NPC DRAFT (identity/prose) and the NPC STAT-BLOCK step (spells/DC)
     // are the ONLY two call sites; the encounter draft and the Cartographer
@@ -125,10 +105,9 @@ describe('one spells-shape composer (SOURCE SCAN, docs/17 rows 200/205)', () => 
       'MOB_SPELL_TRUNCATION_SUFFIX',
       'the list is TRUNCATED',
     ];
-    for (const file of sourceFiles(SRC_DIR)) {
-      const text = stripComments(readFileSync(file, 'utf8'));
+    for (const [file, text] of Object.entries(CODE)) {
       for (const needle of dead) {
-        expect(text, `${rel(file)} still carries ${needle}`).not.toContain(needle);
+        expect(text, `${file} still carries ${needle}`).not.toContain(needle);
       }
     }
   });

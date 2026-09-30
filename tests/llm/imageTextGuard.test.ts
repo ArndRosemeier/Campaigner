@@ -1,8 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -34,6 +31,7 @@ import { sha256Hex } from '@/lib/hash';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 import { answerClassicBattlemapFigureChecks } from '../helpers/battlemapFigureChat';
+import { namesWith } from '../helpers/sourceCode';
 
 /**
  * The image text rule is POSITIVE (docs/17 row 319). The shared `Avoid:` list
@@ -585,23 +583,7 @@ describe('the text clause rides EVERY image path (docs/17 row 407)', () => {
 
 describe('image-prompt caller registry (fail-closed)', () => {
   function srcFilesContaining(snippet: string): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        if (readFileSync(full, 'utf8').includes(snippet)) {
-          found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-        }
-      }
-    };
-    walk(root);
-    return found.sort();
+    return namesWith('src', ['.ts', '.tsx'], snippet);
   }
 
   it('every buildImagePrompt call site is a known guarded caller', () => {

@@ -1,10 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { createPersonaRun, newId, type PersonaRun } from '@/domain';
 import { runNotCompletedReason } from '@/llm/runEngine';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * "This run did not finish" — the engine's ONE sentence seam (docs/17 row 128,
@@ -122,29 +123,14 @@ describe('the reason is composed in ONE place (SOURCE SCAN)', () => {
    * empty check the seam now owns. */
   const BANNED_IN_FOLDED = ['run ended', 'errorMessage !==', 'errorMessage ||'] as const;
 
-  function srcFiles(): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-      }
-    };
-    walk(root);
-    return found.sort();
-  }
+  /** Every `src/` TypeScript file, named relative to `src/` (the shared tree walk). */
+  const SRC_FILES = namesUnder('src', ['.ts', '.tsx']);
 
   const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
   const seamCalls = (text: string): number => text.split('runNotCompletedReason(').length - 1;
 
   it('scan: composes the "… ended <status>" fallback in exactly the seam and its one documented boundary', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must actually see the app, and the needle must
     // actually match the seam, or this pin proves nothing about either.
     expect(files.length).toBeGreaterThan(200);

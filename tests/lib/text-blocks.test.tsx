@@ -1,9 +1,5 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-
-
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -15,6 +11,7 @@ import { statBoxContent } from '@/lib/modulePdf';
 import { buildGmNotesDefinition, buildPlayerHandoutDefinition } from '@/lib/pdfExport';
 import { blockText, textBlocks } from '@/lib/textBlocks';
 import { clearDatabase } from '../db/helpers';
+import { CODE } from '../helpers/sourceCode';
 
 /**
  * ONE plain-text→blocks rule, TWO consumers (docs/17 row 146, docs/18 §2.3).
@@ -88,30 +85,10 @@ function runsOf(node: unknown, out: string[] = []): string[] {
 }
 
 /** `src/**` as text, for the source pins (comments stripped: a RULE is what
- * executes, not what a comment says about it). */
+ * executes, not what a comment says about it) — the shared `CODE` view, named
+ * relative to `src/`. */
 function sourceFiles(): { path: string; code: string }[] {
-  // `process.cwd()` is the project root under vitest (the same place
-  // `vite.config.ts`'s alias resolves from); `import.meta.url` is not a
-  // `file:` URL in this jsdom environment.
-  const root = join(process.cwd(), 'src');
-  const out: { path: string; code: string }[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (/\.tsx?$/.test(entry.name)) {
-        out.push({
-          path: full.slice(root.length + 1),
-          code: readFileSync(full, 'utf8')
-            .replace(/\/\*[\s\S]*?\*\//g, '')
-            .replace(/\/\/.*$/gm, ''),
-        });
-      }
-    }
-  };
-  walk(root);
-  return out;
+  return Object.entries(CODE).map(([path, code]) => ({ path: path.slice('src/'.length), code }));
 }
 
 beforeEach(clearDatabase);

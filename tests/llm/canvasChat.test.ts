@@ -1,7 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +36,7 @@ import {
 } from '@/domain';
 import { saveModule, patchModule } from '@/db/moduleRepo';
 import { clearDatabase, recentsAfterSettlingWrites } from '../db/helpers';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat; THE MODULE
@@ -830,28 +830,21 @@ describe('sendCanvasChatMessage (engine)', () => {
 describe('the former "empty document" refusal appears NOWHERE (SOURCE SCAN, docs/17 row 390)', () => {
   const DELETED_SENTENCE = 'the module document is empty — write a premise or generate the module first';
 
-  function srcSources(dir = join(process.cwd(), 'src')): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) return srcSources(full);
-      return /\.tsx?$/.test(entry.name) ? [full] : [];
-    });
-  }
+  /** Every `src/` TypeScript file as a repo path (the shared tree walk). */
+  const SRC_SOURCES = repoFiles('src', ['.ts', '.tsx']);
 
   it('is carried by NO file under src/ — the constant and every copy are deleted', () => {
-    const all = srcSources();
+    const all = SRC_SOURCES;
     // Non-vacuity: a walk that saw nothing would make the count meaningless.
     expect(all.length).toBeGreaterThan(200);
-    const carriers = all
-      .filter((file) => readFileSync(file, 'utf8').includes(DELETED_SENTENCE))
-      .map((file) => relative(process.cwd(), file));
+    const carriers = all.filter((file) => readFileSync(file, 'utf8').includes(DELETED_SENTENCE));
     expect(carriers).toEqual([]);
   });
 
   it('leaves NO `NO_DOCUMENT_MESSAGE` identifier anywhere under src/', () => {
-    const carriers = srcSources()
-      .filter((file) => readFileSync(file, 'utf8').includes('NO_DOCUMENT_MESSAGE'))
-      .map((file) => relative(process.cwd(), file));
+    const carriers = SRC_SOURCES.filter((file) =>
+      readFileSync(file, 'utf8').includes('NO_DOCUMENT_MESSAGE'),
+    );
     expect(carriers).toEqual([]);
   });
 });

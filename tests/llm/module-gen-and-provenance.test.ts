@@ -93,7 +93,7 @@ import { createImage } from '@/db/imageRepo';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import { db } from '@/db/db';
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { GROUNDING_SECTION_HEADER } from '@/llm/campaignGrounding';
 import {
@@ -125,6 +125,7 @@ import {
 } from '@/llm/promptScaffolding';
 
 import { partCallText } from '../helpers/generationChat';
+import { repoFiles } from '../helpers/sourceCode';
 const { chat } = await import('@/llm/openrouter');
 const { toastError, toastSuccess } = await import('@/lib/toast');
 
@@ -2982,7 +2983,7 @@ describe('scaffoldingEcho.test.ts', () => {
      */
     it('no boundary calls the debris half directly', async () => {
       const offenders: string[] = [];
-      for (const file of await listSourceFiles('src')) {
+      for (const file of repoFiles('src', ['.ts', '.tsx'])) {
         const text = await readFile(file, 'utf8');
         if (!text.includes('debrisIssuesForFields(')) continue;
         if (file.endsWith('lib/encodingHygiene.ts') || file.endsWith('llm/generatedTextHygiene.ts'))
@@ -3025,15 +3026,4 @@ describe('scaffoldingEcho.test.ts', () => {
       }
     });
   });
-
-  async function listSourceFiles(dir: string): Promise<string[]> {
-    const entries = await readdir(join(process.cwd(), dir), { withFileTypes: true });
-    const files: string[] = [];
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) files.push(...(await listSourceFiles(path)));
-      else if (/\.tsx?$/.test(entry.name)) files.push(join(process.cwd(), path));
-    }
-    return files;
-  }
 });

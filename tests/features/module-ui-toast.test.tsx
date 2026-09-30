@@ -61,8 +61,8 @@ import type { Id, Module, Campaign } from '@/domain';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { repoFiles } from '../helpers/sourceCode';
+import { readFileSync } from 'node:fs';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { NORMALIZATION_FAILURE_MESSAGE } from '@/llm/moduleGen';
 import { db } from '@/db/db';
@@ -667,28 +667,22 @@ describe('normalization-failure-wording.test.tsx', () => {
 
   describe('the failure sentence is ONE wording', () => {
     it('is stated in exactly one source file, and the panel reads it from there', () => {
-      const root = resolve(import.meta.dirname, '..', '..');
-      const files = sourceFiles(resolve(root, 'src'));
+      const files = repoFiles('src', ['.ts', '.tsx']);
       // Non-vacuity: this really walked the source tree, so the scan below can
       // only pass because it read files at all.
       expect(files.length).toBeGreaterThan(50);
 
-      const stated = files
-        .filter((file) => readFileSync(file, 'utf8').includes(SENTENCE))
-        .map((file) => relative(root, file));
+      const stated = files.filter((file) => readFileSync(file, 'utf8').includes(SENTENCE));
       // A fourth copy of the wording anywhere in the app fails this — the shape
       // that drifted into a missing cancel guard once already.
       expect(stated).toEqual(['src/llm/moduleGen.ts']);
 
       // The two surfaces that must keep saying it reach it through the export:
       // the panel's belt, and the pass's own recording seam.
-      const panel = readFileSync(
-        resolve(root, 'src', 'features', 'modules', 'entity-panel.tsx'),
-        'utf8',
-      );
+      const panel = readFileSync('src/features/modules/entity-panel.tsx', 'utf8');
       expect(panel).toContain('NORMALIZATION_FAILURE_MESSAGE');
       expect(panel).not.toContain(SENTENCE);
-      const gen = readFileSync(resolve(root, 'src', 'llm', 'moduleGen.ts'), 'utf8');
+      const gen = readFileSync('src/llm/moduleGen.ts', 'utf8');
       // Exactly one statement of the sentence inside the seam…
       expect(gen.split(SENTENCE)).toHaveLength(2);
       // …and FIVE catches that go through the seam instead of restating it: the
@@ -697,17 +691,6 @@ describe('normalization-failure-wording.test.tsx', () => {
       expect(gen.match(/recordNormalizationFailure\(error\)/g)).toHaveLength(5);
     }, 20000);
   });
-
-  /** Every `.ts`/`.tsx` file under `dir` (a small explicit walk — no glob dep). */
-  function sourceFiles(dir: string): string[] {
-    const found: string[] = [];
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) found.push(...sourceFiles(path));
-      else if (/\.tsx?$/.test(entry.name)) found.push(path);
-    }
-    return found;
-  }
 });
 
 describe('prompt-style-freestyle-ui.test.tsx', () => {

@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import { CODE, countsIn } from '../helpers/sourceCode';
 
 /**
  * THE one per-lane pack report (docs/17 row 204).
@@ -18,37 +17,16 @@ import { describe, expect, it } from 'vitest';
  * forbids has no behavioural signature when a second copy is correct.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
-
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-/** Comments are skipped: the scan is about CODE, and the seam's own docstring
- *  names the wording it owns while explaining it. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
 describe('one per-lane pack report (SOURCE SCAN, docs/17 row 204)', () => {
   it('routes every report surface through the ONE formatter', () => {
-    const files = sourceFiles(SRC_DIR);
+    // Comments are skipped (`CODE`): the scan is about CODE, and the seam's own
+    // docstring names the wording it owns while explaining it.
+    const files = Object.keys(CODE);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
-    expect(files).toContain(join(SRC_DIR, 'features', 'rules', 'pack-lanes.ts'));
+    expect(files).toContain('src/features/rules/pack-lanes.ts');
 
-    const callSites: Record<string, number> = {};
-    for (const file of files) {
-      const rel = relative(process.cwd(), file);
-      const hits = stripComments(readFileSync(file, 'utf8')).split('formatPackLanes(').length - 1;
-      if (hits > 0) callSites[rel] = hits;
-    }
+    const callSites = Object.fromEntries(countsIn(CODE, 'src/', 'formatPackLanes('));
     // The declaration plus the report surfaces: the manual-import toast and
     // the summary dialog (`pack-import-dialog`), the fetch toast and the
     // per-recipe import-state line (`bestiary-fetch-section`, which gained its

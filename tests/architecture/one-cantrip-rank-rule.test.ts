@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import { CODE, filesWith } from '../helpers/sourceCode';
 
 /**
  * THE ONE spelling of the Paizo auto-heightened cantrip RANK (docs/17 row 194,
@@ -26,7 +25,6 @@ import { describe, expect, it } from 'vitest';
  * creature with no rank ceiling) does not match it.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const SEAM = 'src/domain/spellHeightening.ts';
 const VOCABULARY = 'src/domain/mobSpells.ts';
 
@@ -39,65 +37,39 @@ const VOCABULARY = 'src/domain/mobSpells.ts';
 const RANK_ARITHMETIC =
   /Math\.(?:min\(10,Math\.max\(1,|max\(1,Math\.min\(10,)Math\.ceil\([^)]*\/2\)\)\)/g;
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-function rel(full: string): string {
-  return relative(process.cwd(), full).split(sep).join('/');
-}
-
-/** Comments are skipped: the seam's own docstring NAMES the rule it replaced. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
-/** The rank arithmetic a file spells, with comments gone and whitespace collapsed. */
+/** The rank arithmetic a file spells, with comments gone (`CODE`) and whitespace removed. */
 function rankArithmeticHits(file: string): number {
-  const code = stripComments(readFileSync(file, 'utf8')).replace(/\s+/g, '');
+  const code = (CODE[file] ?? '').replace(/\s+/g, '');
   return (code.match(RANK_ARITHMETIC) ?? []).length;
 }
 
 describe('one Paizo cantrip-rank rule (SOURCE SCAN, docs/17 row 194)', () => {
   it('spells the arithmetic in exactly one file, the heightening seam', () => {
-    const files = sourceFiles(SRC_DIR);
+    const files = Object.keys(CODE);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
-    expect(files).toContain(join(process.cwd(), SEAM));
+    expect(files).toContain(SEAM);
 
-    const offenders = files
-      .map(rel)
-      .filter((file) => file !== SEAM && rankArithmeticHits(join(process.cwd(), file)) > 0);
+    const offenders = files.filter((file) => file !== SEAM && rankArithmeticHits(file) > 0);
     expect(offenders).toEqual([]);
     // Non-vacuity for the seam: it really carries the ONE spelling, so a scan
     // that matched nothing anywhere cannot pass by accident.
-    expect(rankArithmeticHits(join(process.cwd(), SEAM))).toBe(1);
+    expect(rankArithmeticHits(SEAM)).toBe(1);
   });
 
   it('declares the function once and routes all three consumers through it', () => {
-    const files = sourceFiles(SRC_DIR);
-    const declarations = files
-      .filter((file) =>
-        stripComments(readFileSync(file, 'utf8')).includes('export function pf2eCantripRankFor('),
-      )
-      .map(rel);
+    const declarations = filesWith('export function pf2eCantripRankFor(');
     // Exactly ONE definition, at the seam.
     expect(declarations).toEqual([SEAM]);
 
     // The vocabulary's eligibility cap CALLS the rule — a revert to the inline
     // arithmetic would red both this and the scan above.
-    const vocabulary = stripComments(readFileSync(join(process.cwd(), VOCABULARY), 'utf8'));
+    const vocabulary = CODE[VOCABULARY] ?? '';
     expect(vocabulary).toMatch(/return pf2eCantripRankFor\(level\);/);
 
     // BOTH `spellAtRank` arms that used to spell the arithmetic — the cantrip
     // arm and the auto-heightened focus arm — CALL the same function.
-    const seam = stripComments(readFileSync(join(process.cwd(), SEAM), 'utf8'));
+    const seam = CODE[SEAM] ?? '';
     expect(seam.match(/appliedRank = pf2eCantripRankFor\(level\);/g) ?? []).toHaveLength(2);
   });
 });

@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * The alias-merge seam's SOURCE SCAN (docs/17 rows 121 + 123, docs/18 §2.1,
@@ -199,25 +199,11 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     'domain/libraryCreature.ts': { needles: [['sameCreatureName(', 1]] },
   };
 
-  function srcFiles(): string[] {
-    const root = join(process.cwd(), 'src');
-    const found: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-      }
-    };
-    walk(root);
-    return found.sort();
-  }
+  /** Every `src/` TypeScript file, named relative to `src/`. */
+  const SRC_FILES =
+    namesUnder('src', ['.ts', '.tsx']);
 
-  const source = (file: string): string => readFileSync(join(process.cwd(), 'src', file), 'utf8');
+  const source = (file: string): string => readFileSync(`src/${file}`, 'utf8');
 
   /**
    * The file's CODE, with comment lines dropped. Required for the name shape,
@@ -237,7 +223,7 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
       .join('\n');
 
   it('leaves the hand-rolled shapes in exactly the documented boundaries (and nowhere else)', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must actually see the app, or this pin proves
     // nothing about it.
     expect(files.length).toBeGreaterThan(200);
@@ -269,7 +255,7 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
     // scan can get wrong silently: assert that it still SEES the two declared
     // sites. A shape that matched nothing would leave the offenders pin above
     // trivially green forever.
-    const seen = srcFiles().filter((file) =>
+    const seen = SRC_FILES.filter((file) =>
       HAND_ROLLED_NAME_COMPARISON.test(codeLines(source(file))),
     );
     expect(seen.sort()).toEqual(Object.keys(BOUNDARIES).sort());
@@ -331,7 +317,7 @@ describe('the alias merge is ONE seam (SOURCE SCAN)', () => {
    * case).
    */
   it('asks the ONE foreign-name lookup before attaching an alias (docs/17 row 226)', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     const definers = files.filter((file) =>
       source(file).includes('export async function foreignAliasNames'),
     );

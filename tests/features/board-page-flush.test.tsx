@@ -1,7 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import type * as ModuleRepo from '@/db/moduleRepo';
 import type * as Sonner from 'sonner';
@@ -25,6 +24,7 @@ import { BOARD_PERSIST_DEBOUNCE_MS } from '@/features/modules/board/BoardPage';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 import { renderAppAt } from '../helpers/canvasPage';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE BOARD'S PAGE-HIDE FLUSH (docs/17 row 111 + row 118, `lib/pageFlush`).
@@ -411,19 +411,8 @@ describe('a pending board layout write lands when the page goes away', () => {
 
 describe('the seam keeps ONE registration list at this third writer', () => {
   it('only pageFlush.ts registers pagehide/visibilitychange handlers for the app', async () => {
-    async function sourceFiles(dir: string): Promise<string[]> {
-      const entries = await readdir(dir, { withFileTypes: true });
-      const files: string[] = [];
-      for (const entry of entries) {
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) files.push(...(await sourceFiles(full)));
-        else if (/\.tsx?$/.test(entry.name)) files.push(full);
-      }
-      return files;
-    }
-
     const listeners: string[] = [];
-    for (const file of await sourceFiles('src')) {
+    for (const file of repoFiles('src', ['.ts', '.tsx'])) {
       const source = await readFile(file, 'utf8');
       const listenersFor = (event: string): number =>
         (source.match(new RegExp(`addEventListener\\(\\s*'${event}'`, 'g')) ?? []).length;

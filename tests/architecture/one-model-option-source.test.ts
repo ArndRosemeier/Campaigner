@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { CODE, countsIn } from '../helpers/sourceCode';
 
 /**
  * THE ONE model-picking widget (docs/17 rows 193 and 199, docs/18 §2.3).
@@ -29,7 +31,6 @@ import { describe, expect, it } from 'vitest';
  * reasoning metadata, not ids). Any OTHER file calling `listModels(` reds.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const OPTION_SEAM = 'src/features/settings/model-options.ts';
 const MODEL_WIDGET = 'src/features/settings/model-widget.tsx';
 const SETTINGS_REPO = 'src/db/settingsRepo.ts';
@@ -79,36 +80,10 @@ const DELETED_COMPONENTS = [
   'src/features/settings/model-picker.tsx',
 ];
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-/** Comments are skipped: the scan is about CODE, and the widget's own docstring
- *  names the shapes it replaced while explaining them. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
+/** Comments are skipped (`CODE`): the scan is about CODE, and the widget's own
+ *  docstring names the shapes it replaced while explaining them. */
 function countsOf(needle: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of sourceFiles(SRC_DIR)) {
-    const text = stripComments(readFileSync(file, 'utf8'));
-    const hits = text.split(needle).length - 1;
-    if (hits > 0) counts.set(repoPath(file), hits);
-  }
-  return counts;
-}
-
-/** Repo-relative, always with `/` — the pins name paths that way, and a
- * Windows checkout's `\` must not make them unreadable there (docs/17 row 424). */
-function repoPath(file: string): string {
-  return relative(process.cwd(), file).split(sep).join('/');
+  return new Map(countsIn(CODE, 'src/', needle));
 }
 
 function sorted(map: Map<string, number> | Record<string, number>): [string, number][] {
@@ -118,7 +93,7 @@ function sorted(map: Map<string, number> | Record<string, number>): [string, num
 
 describe('one model-picking widget and one account model-id source (SOURCE SCAN, docs/17 rows 193/199)', () => {
   it('routes every model-option list through listModelIds, and no new /models fetch exists', () => {
-    const files = sourceFiles(SRC_DIR);
+    const files = Object.keys(CODE);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
 
@@ -135,16 +110,14 @@ describe('one model-picking widget and one account model-id source (SOURCE SCAN,
   });
 
   it('is the ONE model-picking component, with its whole mount population named by file', () => {
-    const files = sourceFiles(SRC_DIR).map(repoPath);
+    const files = Object.keys(CODE);
 
     // The superseded components are GONE, not wrapped.
     for (const deleted of DELETED_COMPONENTS) {
       expect(files).not.toContain(deleted);
       expect(existsSync(join(process.cwd(), deleted))).toBe(false);
     }
-    const code = files
-      .map((file) => stripComments(readFileSync(join(process.cwd(), file), 'utf8')))
-      .join('\n');
+    const code = Object.values(CODE).join('\n');
     expect(code).not.toContain('ModelInput');
     expect(code).not.toContain('ModelPicker');
 
@@ -170,7 +143,7 @@ describe('one model-picking widget and one account model-id source (SOURCE SCAN,
   });
 
   it('the widget reads the ONE option seam and never listModels directly', () => {
-    const text = stripComments(readFileSync(join(process.cwd(), MODEL_WIDGET), 'utf8'));
+    const text = CODE[MODEL_WIDGET] ?? '';
     expect(text).toContain('listModelIds');
     expect(text).not.toContain('listModels(');
   });

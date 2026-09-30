@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { CODE } from '../helpers/sourceCode';
 
 /**
  * THE one signal per auto-heightened spell kind (docs/17 rows 189/191/194;
@@ -24,7 +26,6 @@ import { describe, expect, it } from 'vitest';
  * centralization rule asks for a pin rather than discipline.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const SEAM = 'src/domain/spellData.ts';
 /** The dnd5e cantrip signal's own ONE home (row 194). */
 const SEAM_5E = 'src/ingest/packs/dnd5e-foundry.ts';
@@ -39,35 +40,19 @@ const SIGNALS: readonly {
   { trait: 'focus', needle: ".includes('focus')", predicate: 'spellTraitsAreFocus' },
 ];
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-/** Comments are skipped: the seam's own docstring NAMES the shapes it replaces. */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
 describe('one trait signal per spell kind (SOURCE SCAN, docs/17 rows 189/191)', () => {
   it.each(SIGNALS.map((signal) => [signal.trait, signal] as const))(
     'reads the `%s` trait in exactly one place',
     (_trait, signal) => {
-      const files = sourceFiles(SRC_DIR);
+      const files = Object.keys(CODE);
       // Non-vacuity: the walk must see the whole tree, or it proves nothing.
       expect(files.length).toBeGreaterThan(300);
-      expect(files).toContain(join(SRC_DIR, 'domain', 'spellData.ts'));
+      expect(files).toContain(SEAM);
 
       const offenders: string[] = [];
       let seamHits = 0;
-      for (const file of files) {
-        const rel = relative(process.cwd(), file);
-        const text = stripComments(readFileSync(file, 'utf8'));
+      for (const rel of files) {
+        const text = CODE[rel] ?? '';
         const hits = text.split(signal.needle).length - 1;
         if (hits === 0) continue;
         if (rel === SEAM) {
@@ -104,12 +89,11 @@ describe('one trait signal per spell kind (SOURCE SCAN, docs/17 rows 189/191)', 
   });
 
   it('reads the dnd5e cantrip signal (system.level === 0) in exactly one place', () => {
-    const files = sourceFiles(SRC_DIR);
+    const files = Object.keys(CODE);
     const offenders: string[] = [];
     let seamHits = 0;
-    for (const file of files) {
-      const rel = relative(process.cwd(), file);
-      const text = stripComments(readFileSync(file, 'utf8'));
+    for (const rel of files) {
+      const text = CODE[rel] ?? '';
       // The 5e signal is a LEVEL comparison, never a trait lookup.
       const hits = text.split('dnd5eSpellIsCantrip(').length - 1;
       if (hits === 0) continue;

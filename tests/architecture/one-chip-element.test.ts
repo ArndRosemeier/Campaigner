@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { countsIn, readTree } from '../helpers/sourceCode';
 
 /**
  * THE one chip element (docs/17 row 182, docs/18 §2.3). The wiki-link chip and
@@ -15,7 +17,6 @@ import { describe, expect, it } from 'vitest';
  * the kind colours) reds by file and count.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const CHIP_MODULE = 'src/components/chip.tsx';
 const WIKI_MARKDOWN = 'src/features/campaign/components/wiki-markdown.tsx';
 const SPELLS_PAGE = 'src/features/spells/SpellsPage.tsx';
@@ -25,23 +26,10 @@ const CHIP_BASE_NEEDLE = 'mx-0.5 inline-flex max-w-full items-center gap-1 round
 /** One kind colour, as one literal — the resolved-tone vocabulary. */
 const KIND_COLOUR_NEEDLE = 'border-rose-500/50 bg-rose-500/10 text-rose-800';
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
+const SRC = readTree('src', ['.ts', '.tsx']);
 
 function countsOf(needle: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const file of sourceFiles(SRC_DIR)) {
-    const hits = readFileSync(file, 'utf8').split(needle).length - 1;
-    if (hits > 0) counts.set(relative(process.cwd(), file), hits);
-  }
-  return counts;
+  return new Map(countsIn(SRC, 'src/', needle));
 }
 
 describe('one chip element shared by wiki chips and the spell list (SOURCE SCAN)', () => {

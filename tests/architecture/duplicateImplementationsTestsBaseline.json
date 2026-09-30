@@ -3,19 +3,6 @@
   "scope": "Every tests/**/*.ts and tests/**/*.tsx file EXCEPT tests/fixtures/** \u2014 captured upstream documents and prompt goldens legitimately repeat, and that directory is excluded (the only exclusion; it is pinned as data by the test, never left silent). Floor: 75 normalized characters, the SAME floor as the src/ inventory, measured and kept (docs/17 row 212): the ladder DOWN only adds noise (75 = 136 groups / 390 sites, 70 = 139, 65 = 142, 60 = 146, 40 = 158) and the ladder UP would hide cheap folds a seam could carry (160 = 98 groups, 200 = 85, 300 = 53, 400 = 33 \u2014 while the 8-site `walk` scanner normalizes to 349 characters, `completedWith` to 105, `removeEventListener` to 102 and the 8-site `stripComments` to 84). See the test doc comment for the normalization and what the tripwire cannot see (paraphrases and bodies under the floor).",
   "groups": [
     {
-      "hash": "063f7540af0f9179",
-      "reason": "The same synchronous `walk` readdir scanner pasted into EIGHT source-scan tests (name-key-spaces, alias-merge-seam, cast-row-borrowed-stats-scan, encounter-map-offer-scan, entity-batch-creature-book, fileSlug, oneImage-seam, runNotCompletedReason); ONE `tests/helpers/sourceWalk.ts` can carry it \u2014 the clearest fold candidate in this inventory.",
-      "sites": [
-        "tests/domain/name-key-spaces.test.ts:walk",
-        "tests/features/alias-merge-seam.test.ts:walk",
-        "tests/features/encounter-map-offer-scan.test.ts:walk",
-        "tests/features/entity-batch-creature-book.test.ts:walk",
-        "tests/lib/fileSlug.test.ts:walk",
-        "tests/llm/oneImage-seam.test.ts:walk",
-        "tests/llm/runNotCompletedReason.test.ts:walk"
-      ]
-    },
-    {
       "hash": "06eea2670fa5698b",
       "reason": "Two `mockChatReply` streaming stubs (canvas-chat, canvas-preview-default) that split a reply at a token boundary; a shared `tests/helpers/llmReplies.ts` fold candidate.",
       "sites": [
@@ -87,14 +74,6 @@
       ]
     },
     {
-      "hash": "20c594c8adeadf46",
-      "reason": "Two `srcFilesContaining` source-scan helpers (module-busy, imageTextGuard) each nesting a private walk; foldable onto the shared source-walk seam.",
-      "sites": [
-        "tests/features/module-busy.test.ts:srcFilesContaining",
-        "tests/llm/imageTextGuard.test.ts:srcFilesContaining"
-      ]
-    },
-    {
       "hash": "264b72566130d569",
       "reason": "Four `memoryDeps` in-memory pack-import dependency doubles (pack-import, pf2e-conditions, pf2e-journal, pf2e-rules) recording created/persisted/finalized rows; a shared `tests/helpers/packDeps.ts` is a real fold candidate.",
       "sites": [
@@ -119,15 +98,6 @@
         "tests/features/board-page-flush.test.tsx:hideDocument",
         "tests/features/editor-page-flush.test.tsx:hideDocument",
         "tests/features/page-flush.test.ts:hideDocument"
-      ]
-    },
-    {
-      "hash": "2890158befa6775e",
-      "reason": "Three `rel` path normalizers (one-cantrip-rank-rule, one-level-resolution, one-spells-shape); a shared `tests/helpers/repoPaths.ts` is a small fold candidate.",
-      "sites": [
-        "tests/architecture/one-cantrip-rank-rule.test.ts:rel",
-        "tests/architecture/one-level-resolution.test.ts:rel",
-        "tests/architecture/one-spells-shape.test.ts:rel"
       ]
     },
     {
@@ -200,32 +170,11 @@
       ]
     },
     {
-      "hash": "3f5869181c499c01",
-      "reason": "Two `walk` scanners (module-busy, imageTextGuard), the same family as the eight-site `walk` above; foldable onto the shared source-walk seam.",
-      "sites": [
-        "tests/features/module-busy.test.ts:walk",
-        "tests/llm/imageTextGuard.test.ts:walk"
-      ]
-    },
-    {
       "hash": "421d5c3491cb77d4",
       "reason": "Two `campaignFixture` builders returning the same dnd5e \"Ember Crypt\" campaign (entity-batch-failure-report, toast-persistent-dismiss); a small shared campaign factory is a fold candidate.",
       "sites": [
         "tests/features/entity-batch-failure-report.test.ts:campaignFixture",
         "tests/lib/toast-persistent-dismiss.test.tsx:campaignFixture"
-      ]
-    },
-    {
-      "hash": "45731a3ff040fb6e",
-      "reason": "The eight-site synchronous `srcFiles` source scanner (same files as the `walk` group above) embedding its own recursion; ONE `tests/helpers/sourceFiles.ts` carries both this and `walk`.",
-      "sites": [
-        "tests/domain/name-key-spaces.test.ts:srcFiles",
-        "tests/features/alias-merge-seam.test.ts:srcFiles",
-        "tests/features/encounter-map-offer-scan.test.ts:srcFiles",
-        "tests/features/entity-batch-creature-book.test.ts:srcFiles",
-        "tests/lib/fileSlug.test.ts:srcFiles",
-        "tests/llm/oneImage-seam.test.ts:srcFiles",
-        "tests/llm/runNotCompletedReason.test.ts:srcFiles"
       ]
     },
     {
@@ -285,14 +234,6 @@
       ]
     },
     {
-      "hash": "50ed89f3fb150cd8",
-      "reason": "Two `sourceFiles` async scanners (blocked-control-title-scan, board-page-flush) each with their own recursion; folds onto the shared source-scan seam.",
-      "sites": [
-        "tests/features/blocked-control-title-scan.test.ts:sourceFiles",
-        "tests/features/board-page-flush.test.tsx:sourceFiles"
-      ]
-    },
-    {
       "hash": "52d330592329eb1d",
       "reason": "Two `changeOf` change-command XML builders (canvas-chat-changes, canvasChatChanges); a shared change-command fixture helper carries them.",
       "sites": [
@@ -342,20 +283,6 @@
       ]
     },
     {
-      "hash": "604ae245718b75eb",
-      "reason": "`stripComments` pasted into EIGHT architecture source-scan tests (global-chat-model-recording, four one-* scans, chunk-type-read-seam, one-cantrip-signal, one-level-resolution); ONE `tests/helpers/stripComments.ts` is a real fold candidate.",
-      "sites": [
-        "tests/architecture/global-chat-model-recording.test.ts:stripComments",
-        "tests/architecture/one-cantrip-rank-rule.test.ts:stripComments",
-        "tests/architecture/one-cantrip-signal.test.ts:stripComments",
-        "tests/architecture/one-level-resolution.test.ts:stripComments",
-        "tests/architecture/one-model-option-source.test.ts:stripComments",
-        "tests/architecture/one-pack-lane-report.test.ts:stripComments",
-        "tests/architecture/one-spells-shape.test.ts:stripComments",
-        "tests/db/chunk-type-read-seam.test.ts:stripComments"
-      ]
-    },
-    {
       "hash": "61713288be6a928b",
       "reason": "Two `normReply` entity-JSON mock replies (fixedCast, module-gen-and-provenance); legitimate per-scenario reply data, foldable onto a shared reply factory.",
       "sites": [
@@ -369,32 +296,6 @@
       "sites": [
         "tests/llm/encounterCartographer.test.ts:persona",
         "tests/llm/structuredPartyLevel.test.ts:cartographer"
-      ]
-    },
-    {
-      "hash": "6503683cb5b73494",
-      "reason": "Two `sourceFiles` recursive scanners (canvas-preview-ai-actions, module-ui-toast); folds onto the shared source-scan seam.",
-      "sites": [
-        "tests/features/canvas-preview-ai-actions.test.tsx:sourceFiles",
-        "tests/features/module-ui-toast.test.tsx:sourceFiles"
-      ]
-    },
-    {
-      "hash": "654a6aae5e74ef4a",
-      "reason": "`sourceFiles` pasted into TWELVE architecture tests (global-chat-model-recording, module-difficulty-seam, module-pdf-seam, five one-* scans, one-chip-element, one-pack-lane-report, chunk-type-read-seam, ready-book-seam); the single largest fold candidate in this inventory.",
-      "sites": [
-        "tests/architecture/global-chat-model-recording.test.ts:sourceFiles",
-        "tests/architecture/module-difficulty-seam.test.ts:sourceFiles",
-        "tests/architecture/module-pdf-seam.test.ts:sourceFiles",
-        "tests/architecture/one-cantrip-rank-rule.test.ts:sourceFiles",
-        "tests/architecture/one-cantrip-signal.test.ts:sourceFiles",
-        "tests/architecture/one-chip-element.test.ts:sourceFiles",
-        "tests/architecture/one-level-resolution.test.ts:sourceFiles",
-        "tests/architecture/one-model-option-source.test.ts:sourceFiles",
-        "tests/architecture/one-pack-lane-report.test.ts:sourceFiles",
-        "tests/architecture/one-spells-shape.test.ts:sourceFiles",
-        "tests/db/chunk-type-read-seam.test.ts:sourceFiles",
-        "tests/db/ready-book-seam.test.ts:sourceFiles"
       ]
     },
     {
@@ -500,17 +401,6 @@
         "tests/features/canvas-preview-default.test.tsx:renderCanvas",
         "tests/features/module-canvas.test.tsx:renderCanvas",
         "tests/features/module-pdf-export.test.tsx:openMenu"
-      ]
-    },
-    {
-      "hash": "7f3271466c5be316",
-      "reason": "The sorted synchronous `srcFiles` scanner pasted into FIVE source-scan tests (mention-where-label, toast-surfaces, mdToPdfmake, unicodeTextHygiene, wiki-token-grammar); folds onto the shared source-scan seam.",
-      "sites": [
-        "tests/features/mention-where-label.test.ts:srcFiles",
-        "tests/features/toast-surfaces.test.tsx:srcFiles",
-        "tests/lib/mdToPdfmake.test.ts:srcFiles",
-        "tests/lib/unicodeTextHygiene.test.ts:srcFiles",
-        "tests/lib/wiki-token-grammar.test.ts:srcFiles"
       ]
     },
     {
@@ -701,14 +591,6 @@
       "sites": [
         "tests/llm/openrouter.test.ts:chatCallsOf",
         "tests/llm/openrouter.test.ts:callsOf"
-      ]
-    },
-    {
-      "hash": "a87605e3362cdc85",
-      "reason": "Two `canvasSources` readers (canvas-chat-apply-differential, canvas-chat-turn-parity) listing the canvas source files; a shared canvas-source helper is a real fold candidate.",
-      "sites": [
-        "tests/features/canvas-chat-apply-differential.test.tsx:canvasSources",
-        "tests/features/canvas-chat-turn-parity.test.ts:canvasSources"
       ]
     },
     {
@@ -1018,14 +900,6 @@
       ]
     },
     {
-      "hash": "f47ab3540dd90b60",
-      "reason": "Two `packSources` readers (html-to-text, parse-docs) listing the pack adapter sources; a shared pack-source helper is a real fold candidate.",
-      "sites": [
-        "tests/ingest/packs/html-to-text.test.ts:packSources",
-        "tests/ingest/packs/parse-docs.test.ts:packSources"
-      ]
-    },
-    {
       "hash": "f7b32618f35a74ea",
       "reason": "Two `transactionTablesDuring` Dexie transaction-table spies (mob-portrait-cache, portrait-queues); a shared Dexie test helper is a real fold candidate.",
       "sites": [
@@ -1039,15 +913,6 @@
       "sites": [
         "tests/features/editor-page-flush.test.tsx:revisionCount",
         "tests/llm/canvasChatChanges.test.ts:revisionCount"
-      ]
-    },
-    {
-      "hash": "fdea61927f19ec46",
-      "reason": "Three `countsOf` source-needle counters (module-difficulty-seam, module-pdf-seam, one-chip-element); folds onto the shared source-scan helper.",
-      "sites": [
-        "tests/architecture/module-difficulty-seam.test.ts:countsOf",
-        "tests/architecture/module-pdf-seam.test.ts:countsOf",
-        "tests/architecture/one-chip-element.test.ts:countsOf"
       ]
     }
   ]

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import type * as ModulePlanDialog from '@/features/modules/module-plan-dialog';
 
@@ -23,6 +23,7 @@ import {
 import { CampaignTree } from '@/features/campaign/components/campaign-tree';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE DOCUMENT PLAN CONTROL IN THE CAMPAIGN TREE (docs/17 row 111).
@@ -76,17 +77,6 @@ let globals: GlobalArtifact[];
 
 function source(relativePath: string): string {
   return readFileSync(resolve(import.meta.dirname, '..', '..', relativePath), 'utf8');
-}
-
-/** Every `.ts`/`.tsx` file under `src/`, for the "only one dialog" scan. */
-function sourceFiles(dir = resolve(import.meta.dirname, '..', '..', 'src')): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(path));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(path);
-  }
-  return out;
 }
 
 const PLAN = moduleDocumentPlanSchema.parse({
@@ -205,10 +195,8 @@ describe('the plan control in the module group header', () => {
   });
 
   it('the tree carries no second plan surface: one import, one dialog, one regeneration path', () => {
-    const root = resolve(import.meta.dirname, '..', '..');
-    const read = (file: string): string => source(relative(root, file));
     const named = (predicate: (text: string) => boolean): string[] =>
-      sourceFiles().filter((file) => predicate(read(file))).map((file) => relative(root, file)).sort();
+      repoFiles('src', ['.ts', '.tsx']).filter((file) => predicate(source(file)));
 
     const tree = source('src/features/campaign/components/campaign-tree.tsx');
 

@@ -1,7 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { namesUnder } from '../helpers/sourceCode';
 
 /**
  * THE one pack-adapter SECTION-MISS seam (docs/17 row 294, docs/18 §2).
@@ -24,6 +26,8 @@ import { describe, expect, it } from 'vitest';
 
 const PACKS_DIR = 'src/ingest/packs';
 const SEAM_FILE = 'types.ts';
+/** The pack directory's `.ts` files, by name (the ONE tree walk, docs/17 row 427). */
+const PACK_FILES = namesUnder(PACKS_DIR, ['.ts']);
 const SEAM_NAME = 'sectionMissFailure';
 
 /**
@@ -52,8 +56,7 @@ const SENTENCE_FRAGMENTS: readonly string[] = [
 
 describe('the pack-adapter section-miss rule is the ONLY one (SOURCE SCAN)', () => {
   it('defines the ONE seam in types.ts, and proves the needles can see it', () => {
-    const files = readdirSync(join(process.cwd(), PACKS_DIR))
-      .filter((name) => name.endsWith('.ts'))
+    const files = PACK_FILES
       .sort();
     expect(files).toContain(SEAM_FILE);
 
@@ -87,16 +90,15 @@ describe('the pack-adapter section-miss rule is the ONLY one (SOURCE SCAN)', () 
     // Non-vacuity at the population level: exactly the three declared families
     // use the seam, so a FOURTH family (the grep docs/17 row 294 asks for) reds
     // here instead of growing a silent private copy.
-    const users = readdirSync(join(process.cwd(), PACKS_DIR))
-      .filter((name) => name.endsWith('.ts') && name !== SEAM_FILE)
+    const users = PACK_FILES
+      .filter((name) => name !== SEAM_FILE)
       .filter((name) => readFileSync(join(process.cwd(), PACKS_DIR, name), 'utf8').includes(SEAM_NAME))
       .sort();
     expect(users).toEqual(CALLERS.map(([file]) => file).sort());
   });
 
   it('never reports through the console (AGENTS rule 2, docs/17 row 294)', () => {
-    const offenders = readdirSync(join(process.cwd(), PACKS_DIR))
-      .filter((name) => name.endsWith('.ts'))
+    const offenders = PACK_FILES
       .filter((name) =>
         /console\.(warn|error)\(/.test(readFileSync(join(process.cwd(), PACKS_DIR, name), 'utf8')),
       );

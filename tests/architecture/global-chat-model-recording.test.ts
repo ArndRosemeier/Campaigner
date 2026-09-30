@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import { CODE, countsIn } from '../helpers/sourceCode';
 
 /**
  * EVERY site that resolves the GLOBAL first-try chat model, and its decision
@@ -29,7 +28,6 @@ import { describe, expect, it } from 'vitest';
  * its only UI caller).
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const IN_USE_SEAM_FILE = 'src/llm/recentChatModel.ts';
 
 type Decision = 'record' | 'exclude';
@@ -49,7 +47,7 @@ const DECISIONS: Record<string, SiteDecision> = {
   'src/llm/runEngine.ts': {
     decision: 'record',
     reason:
-      'the run funnel: executeFrom records through recordChatModelInUse when resolveChatModel(settings, persona.model) === settings.defaultChatModel. Its other seven resolveChatModel( sites are run steps reached only through that funnel (runVisionDungeonMap included, the statblock step\'s instruction-level read added by docs/17 row 289, and the classic stylize figure check added by docs/17 row 341 with them), so they need no second call; a persona-override or image-mode run is excluded by the funnel comparison itself',
+      "the run funnel: executeFrom records through recordChatModelInUse when resolveChatModel(settings, persona.model) === settings.defaultChatModel. Its other seven resolveChatModel( sites are run steps reached only through that funnel (runVisionDungeonMap included, the statblock step's instruction-level read added by docs/17 row 289, and the classic stylize figure check added by docs/17 row 341 with them), so they need no second call; a persona-override or image-mode run is excluded by the funnel comparison itself",
   },
   'src/llm/moduleGen.ts': {
     decision: 'record',
@@ -82,7 +80,7 @@ const DECISIONS: Record<string, SiteDecision> = {
   'src/llm/ideaBoard.ts': {
     decision: 'record',
     reason:
-      "the Idea Board records ONLY when board.model is empty, because then the GLOBAL setting is what answers; a per-board model is a different tier and is excluded",
+      'the Idea Board records ONLY when board.model is empty, because then the GLOBAL setting is what answers; a per-board model is a different tier and is excluded',
   },
   'src/features/lab/labClients.ts': {
     decision: 'exclude',
@@ -109,7 +107,8 @@ const DECISIONS: Record<string, SiteDecision> = {
   },
   'src/features/settings/persona-section.tsx': {
     decision: 'exclude',
-    reason: 'uses the global default as a persona field PLACEHOLDER; the persona tier is never recorded',
+    reason:
+      'uses the global default as a persona field PLACEHOLDER; the persona tier is never recorded',
   },
   'src/features/modules/canvas/ChatSidebar.tsx': {
     decision: 'exclude',
@@ -118,7 +117,8 @@ const DECISIONS: Record<string, SiteDecision> = {
   },
   'src/features/onboarding/SetupWizardDialog.tsx': {
     decision: 'exclude',
-    reason: 'a mount that EDITS the setting; the choose records through the widget (docs/17 row 199)',
+    reason:
+      'a mount that EDITS the setting; the choose records through the widget (docs/17 row 199)',
   },
 };
 
@@ -128,7 +128,10 @@ const DECISIONS: Record<string, SiteDecision> = {
  * `defaultChatModel` counts every code reference (the resolver's own comparison,
  * a model argument, the helper call, a UI binding, the schema/default).
  */
-const RESOLUTION_POPULATION: Record<string, { resolveChatModel: number; defaultChatModel: number }> = {
+const RESOLUTION_POPULATION: Record<
+  string,
+  { resolveChatModel: number; defaultChatModel: number }
+> = {
   'src/app/layout/TopBar.tsx': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/domain/settings.ts': { resolveChatModel: 0, defaultChatModel: 2 },
   'src/features/lab/labClients.ts': { resolveChatModel: 1, defaultChatModel: 0 },
@@ -160,29 +163,9 @@ const IN_USE_RECORDERS: Record<string, number> = {
   'src/llm/runEngine.ts': 1,
 };
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
-
-/** Comments are skipped: the scan is about CODE (a docstring may name the model id). */
-function stripComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-}
-
+/** Comments are skipped (`CODE` is comment-stripped): the scan is about CODE (a docstring may name the model id). */
 function countsOf(needle: string): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const file of sourceFiles(SRC_DIR)) {
-    const text = stripComments(readFileSync(file, 'utf8'));
-    const hits = text.split(needle).length - 1;
-    if (hits > 0) counts[relative(process.cwd(), file)] = hits;
-  }
-  return counts;
+  return Object.fromEntries(countsIn(CODE, 'src/', needle));
 }
 
 function sorted<T>(record: Record<string, T>): [string, T][] {
@@ -191,7 +174,7 @@ function sorted<T>(record: Record<string, T>): [string, T][] {
 
 describe('every global-chat-model resolution site and its recording decision (SOURCE SCAN, docs/17 row 198)', () => {
   it('enumerates the whole resolution population, and every entry states a decision', () => {
-    const files = sourceFiles(SRC_DIR);
+    const files = Object.keys(CODE);
     // Non-vacuity: the walk must see the whole tree, or it proves nothing.
     expect(files.length).toBeGreaterThan(300);
 
@@ -233,7 +216,9 @@ describe('every global-chat-model resolution site and its recording decision (SO
     // silent. The deleted pass-0 spine was the fifth recorder (docs/17 row 392).
     expect(countsOf('recordGlobalChatModelInUse(')['src/llm/moduleGen.ts']).toBe(4);
     // The lab's global-model vision probe stays out (see DECISIONS).
-    expect(countsOf('recordGlobalChatModelInUse(')['src/features/lab/labClients.ts']).toBeUndefined();
+    expect(
+      countsOf('recordGlobalChatModelInUse(')['src/features/lab/labClients.ts'],
+    ).toBeUndefined();
     // The canvas-chat session selection and the Idea Board's per-board model are
     // conditional at the call site (behaviour pinned in tests/llm/*.test.ts).
     expect(countsOf('recordGlobalChatModelInUse(')['src/llm/canvasChat.ts']).toBe(1);

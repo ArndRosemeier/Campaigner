@@ -1,7 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -21,6 +20,7 @@ import { SOURCE_MAP_REFUSALS } from '@/features/campaign/components/wiki-markdow
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 import { renderAppAt } from '../helpers/canvasPage';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * The canvas AI actions IN THE PREVIEW (docs/17 row 102).
@@ -543,8 +543,7 @@ describe('canvas AI actions in the PREVIEW (docs/17 row 102)', () => {
   }, 30_000);
 
   it('the preview is not a gate: the old "switch to Edit" copy is gone from the source', () => {
-    const src = resolve(import.meta.dirname, '..', '..', 'src');
-    const files = sourceFiles(src);
+    const files = repoFiles('src', ['.ts', '.tsx']);
     // Non-vacuity: this really walked the source tree (and the scan below can
     // only pass because it reads files at all).
     expect(files.length).toBeGreaterThan(50);
@@ -555,22 +554,8 @@ describe('canvas AI actions in the PREVIEW (docs/17 row 102)', () => {
     }
     // The gate itself is gone too: the two actions are gated on `aiBlocked`
     // alone (the honest shared gate), never on the view.
-    const canvas = readFileSync(
-      resolve(src, 'features', 'modules', 'canvas', 'CanvasPage.tsx'),
-      'utf8',
-    );
+    const canvas = readFileSync('src/features/modules/canvas/CanvasPage.tsx', 'utf8');
     expect(canvas).not.toContain('aiBlocked || previewOpen');
     expect(toastInfoMock).not.toHaveBeenCalled();
   });
 });
-
-/** Every .ts/.tsx file under `dir` (a small explicit walk — no glob dep). */
-function sourceFiles(dir: string): string[] {
-  const found: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) found.push(...sourceFiles(path));
-    else if (/\.tsx?$/.test(entry.name)) found.push(path);
-  }
-  return found;
-}

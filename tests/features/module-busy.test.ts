@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { namesWith } from '../helpers/sourceCode';
 
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), loading: vi.fn() },
@@ -82,24 +82,9 @@ const ROUTED_SITES_PER_FILE: Record<(typeof FOLDED_FILES)[number], number> = {
   'features/modules/board/boardNodes.tsx': 0,
 };
 
+/** The `src/` files (named relative to `src/`) whose text carries `snippet`. */
 function srcFilesContaining(snippet: string): string[] {
-  const root = join(process.cwd(), 'src');
-  const found: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-      if (readFileSync(full, 'utf8').includes(snippet)) {
-        found.push(full.slice(root.length + 1).replace(/\\/g, '/'));
-      }
-    }
-  };
-  walk(root);
-  return found.sort();
+  return namesWith('src', ['.ts', '.tsx'], snippet);
 }
 
 describe('module-busy sentences', () => {
@@ -224,7 +209,7 @@ describe('module-busy fold', () => {
 
   it('routes every folded busy catch site through toastModuleBusy (SOURCE SCAN)', () => {
     for (const file of FOLDED_FILES) {
-      const text = readFileSync(join(process.cwd(), 'src', file), 'utf8');
+      const text = readFileSync(`src/${file}`, 'utf8');
       expect(text).not.toContain(MODULE_BUSY_TOAST_TITLE);
       const lines = text.split('\n');
       let routed = 0;

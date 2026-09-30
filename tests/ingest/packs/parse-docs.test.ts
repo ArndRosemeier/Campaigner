@@ -52,7 +52,7 @@
  * not a document parser, and docs/17 row 147 deliberately did NOT fold it
  * (docs/12 §15.5 still describes the two copies as carried).
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -60,14 +60,13 @@ import { describe, expect, it } from 'vitest';
 import { PACK_ADAPTERS } from '@/ingest/packs/registry';
 import { parseJsonDocs, parseYamlDocs } from '@/ingest/packs/text';
 
+import { namesUnder } from '../../helpers/sourceCode';
 import { baseNpc, folderDoc } from './fixtures';
 
 const PACKS_DIR = 'src/ingest/packs';
 
 function packSources(): string[] {
-  return readdirSync(join(process.cwd(), PACKS_DIR))
-    .filter((name) => name.endsWith('.ts'))
-    .sort();
+  return namesUnder(PACKS_DIR, ['.ts']);
 }
 
 const source = (file: string): string =>

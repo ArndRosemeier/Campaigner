@@ -34,6 +34,7 @@ import { batchTargets } from '@/features/modules/post-generation';
 import { sha256Hex } from '@/lib/hash';
 import { stripWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
 import { clearDatabase } from '../db/helpers';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * EVERY NPC THE MODULE TEXT PRODUCED GETS AN AUTHORED DESCRIPTION (docs/17
@@ -849,26 +850,16 @@ describe('the batch destination check scopes the instruction to the row the run 
 describe('the deleted description seam stays deleted (source scan)', () => {
   it('neither the seam nor its floor is spelled anywhere in src/ or tests/, and the cast branch has no early return before its run', async () => {
     const nodeFs = await import('node:fs');
-    const nodePath = await import('node:path');
     /** This scanner's own path, the sole exclusion (see above). */
     const SCANNER = 'features/entity-batch-cast-description.test.ts';
 
-    const files: { path: string; text: string }[] = [];
-    const walk = (root: string, dir: string): void => {
-      for (const entry of nodeFs.readdirSync(dir, { withFileTypes: true })) {
-        const full = nodePath.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(root, full);
-          continue;
-        }
-        if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-        files.push({
-          path: nodePath.relative(root, full),
-          text: nodeFs.readFileSync(full, 'utf8'),
-        });
-      }
-    };
-    for (const root of ['src', 'tests']) walk(root, nodePath.join(process.cwd(), root));
+    // Each file is named relative to ITS root (`src/` or `tests/`).
+    const files = ['src', 'tests'].flatMap((root) =>
+      repoFiles(root, ['.ts', '.tsx']).map((path) => ({
+        path: path.slice(root.length + 1),
+        text: nodeFs.readFileSync(path, 'utf8'),
+      })),
+    );
     // Non-vacuity: the walk must see the app AND its tests.
     expect(files.length).toBeGreaterThan(400);
     const batchRelative = files.find((file) => file.path === 'features/modules/entity-batch.ts');

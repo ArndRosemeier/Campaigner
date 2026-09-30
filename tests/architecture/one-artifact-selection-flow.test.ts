@@ -1,7 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
+
+import { CODE } from '../helpers/sourceCode';
 
 /**
  * THE one artifact-selection flow (docs/17 row 322; AGENTS rule 4). The
@@ -26,20 +25,12 @@ import { describe, expect, it } from 'vitest';
  *
  * The bodies themselves are held by the general duplication tripwire
  * (`no-duplicate-implementations`); this pin holds the ROUTING. The source
- * walk and the comment strip are INLINE here on purpose: a named
- * `sourceFiles`/`stripComments` helper pair is already baselined as duplicated
- * test-tree debt, and a thirteenth copy would inflate that inventory instead
- * of holding the routing rule this file exists for.
+ * walk and the comment strip are the shared `CODE` view
+ * (`tests/helpers/sourceCode.ts`, docs/17 row 427).
  */
 
-const SOURCES = readdirSync(join(process.cwd(), 'src'), { recursive: true, withFileTypes: true })
-  .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
-  .map((entry) => ({
-    rel: relative(process.cwd(), join(entry.parentPath, entry.name)),
-    code: readFileSync(join(entry.parentPath, entry.name), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, ''),
-  }))
+const SOURCES = Object.entries(CODE)
+  .map(([rel, code]) => ({ rel, code }))
   .sort((left, right) => left.rel.localeCompare(right.rel));
 
 /** Every `src/` file that CALLS `name(`, as repo-relative paths (the file that
@@ -47,9 +38,9 @@ const SOURCES = readdirSync(join(process.cwd(), 'src'), { recursive: true, withF
  * call site). */
 function callSites(name: string, exclude: readonly string[]): string[] {
   const pattern = new RegExp(`\\b${name}\\s*\\(`);
-  return SOURCES.filter(
-    (source) => !exclude.includes(source.rel) && pattern.test(source.code),
-  ).map((source) => source.rel);
+  return SOURCES.filter((source) => !exclude.includes(source.rel) && pattern.test(source.code)).map(
+    (source) => source.rel,
+  );
 }
 
 interface Seam {

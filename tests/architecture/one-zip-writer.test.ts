@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE one streaming-zip writer (docs/17 rows 265 and 276; docs/18 §2.1).
@@ -24,12 +25,9 @@ import { describe, expect, it } from 'vitest';
  * future "make the export fast again" change would take.
  *
  * The scan reads the TypeScript AST (comments are trivia, so a docstring that
- * NAMES `zipSync` like this one cannot red it) and deliberately declares no
- * named helper: `tests/**` is itself under the duplicate-body tripwire, so a
- * ninth copy of the shared `sourceFiles`/`stripComments` pair would be a new
- * duplicate blessed by nothing.
+ * NAMES `zipSync` like this one cannot red it); the file list is the ONE tree walk
+ * (`repoFiles`, docs/17 row 427).
  */
-const SRC_DIR = join(process.cwd(), 'src');
 /** The ONE file allowed to construct a zip stream. */
 const SEAM_FILE = 'src/lib/zipStream.ts';
 /** fflate's SYNCHRONOUS whole-payload deflate — the anti-pattern, called nowhere. */
@@ -44,19 +42,13 @@ const ZIP_CONSTRUCTORS: readonly string[] = [
 
 describe('one streaming zip writer (SOURCE SCAN, docs/17 row 276)', () => {
   it('keeps zip construction in the seam and zipSync out of src/', () => {
-    const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' })
-      .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
-      .sort();
+    const files = repoFiles('src', ['.ts', '.tsx']);
     const syncZipSites: string[] = [];
     const foreignConstructorSites: string[] = [];
-    for (const name of files) {
-      // `readdirSync` joins with the platform separator; the pins below are
-      // spelled with forward slashes.
-      const relativeName = name.split(/[\\/]/).join('/');
-      const filePath = `src/${relativeName}`;
+    for (const filePath of files) {
       const source = ts.createSourceFile(
-        relativeName,
-        readFileSync(join(SRC_DIR, name), 'utf8'),
+        filePath.slice('src/'.length),
+        readFileSync(filePath, 'utf8'),
         ts.ScriptTarget.Latest,
         true,
       );

@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { mdToPdfmakeContent, parseInline, parseMarkdown } from '@/lib/mdToPdfmake';
+import { repoFiles } from '../helpers/sourceCode';
 
 /** The BODY of the FIRST node's table — what pdfmake would actually lay out. */
 function tableBody(content: readonly unknown[]): unknown[] {
@@ -287,15 +288,8 @@ describe('mdToPdfmakeContent', () => {
 
 const SRC = 'src';
 
-function srcFiles(dir = SRC): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-    const path = `${dir}/${entry}`;
-    if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...srcFiles(path));
-    else if (/\.tsx?$/.test(entry)) out.push(path);
-  }
-  return out;
-}
+/** Every `src/` TypeScript file as a repo path (the shared tree walk). */
+const SRC_FILES = repoFiles(SRC, ['.ts', '.tsx']);
 
 /** Source lines holding an ESCAPED PIPE in code — the spelling a pipe GRAMMAR
  * needs (comment lines are skipped: a doc comment naming `\|` is prose, not a
@@ -338,7 +332,7 @@ const DECLARED_CONTENT_CALLERS: Readonly<Record<string, number>> = {
 
 describe('the markdown table grammar and its renderer live in ONE place (SOURCE SCAN)', () => {
   it('no second pipe-row grammar exists outside the declared sites', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must see the whole `src/` tree, and the seam must
     // really carry the idiom this pin is about.
     expect(files.length).toBeGreaterThan(200);
@@ -360,7 +354,7 @@ describe('the markdown table grammar and its renderer live in ONE place (SOURCE 
   });
 
   it('the markdown→pdfmake renderer is reached through its declared callers and no others', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     const found: Record<string, number> = {};
     for (const file of files) {
       if (file === 'src/lib/mdToPdfmake.ts') continue; // the definition itself

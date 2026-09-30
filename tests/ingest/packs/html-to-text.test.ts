@@ -67,7 +67,7 @@
  * docs/17 row 143), not a number this suite may invent.**
  */
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -79,6 +79,8 @@ import {
   htmlToText,
   type HtmlToTextStyle,
 } from '@/ingest/packs/text';
+
+import { namesUnder, repoFiles, repoPath } from '../../helpers/sourceCode';
 
 /** The two styles the seam DECLARES, keyed by the name its call sites import. */
 const STYLES = {
@@ -564,9 +566,7 @@ const STRIPPER_SHAPES: readonly { readonly shape: string; readonly why: string }
 ];
 
 function packSources(): string[] {
-  return readdirSync(join(process.cwd(), PACKS_DIR))
-    .filter((name) => name.endsWith('.ts'))
-    .sort();
+  return namesUnder(PACKS_DIR, ['.ts']);
 }
 
 const source = (file: string): string =>
@@ -669,14 +669,16 @@ async function laneTexts(dir: string, adapterId: string): Promise<{ name: string
   const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === adapterId);
   if (adapter === undefined) throw new Error(`no adapter ${adapterId}`);
   const out: { name: string; text: string }[] = [];
-  for (const entry of readdirSync(join(FIXTURES, dir), { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    // Subdirectories are the SPELL lane's own fixtures (row 194); this lane
-    // digest covers the adapter's flat creature/item fixtures exactly as
-    // before, and a DIRECTORY is not a document.
-    if (!entry.isFile()) continue;
-    const file = entry.name;
+  const root = repoPath(join(FIXTURES, dir));
+  // Every FILE (any extension, hence `''`) directly in the lane directory.
+  // Subdirectories are the SPELL lane's own fixtures (row 194); this lane
+  // digest covers the adapter's flat creature/item fixtures exactly as before,
+  // so a file below a subdirectory is not one of its documents.
+  const files = repoFiles(root, [''])
+    .map((path) => path.slice(root.length + 1))
+    .filter((file) => !file.includes('/'))
+    .sort((a, b) => a.localeCompare(b));
+  for (const file of files) {
     const bytes = new Uint8Array(readFileSync(join(FIXTURES, dir, file)));
     const parsed = await adapter.parseFile(file, bytes);
     expect(parsed.failures, `${adapterId}/${file}`).toEqual([]);

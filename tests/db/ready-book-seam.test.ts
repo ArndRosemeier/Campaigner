@@ -1,11 +1,11 @@
 import 'fake-indexeddb/auto';
 
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createPackBook, finalizePackBook, listReadyRulebooks, readyBookIds } from '@/db/rulebookRepo';
+import { repoFiles } from '../helpers/sourceCode';
 import { clearDatabase } from './helpers';
 
 /**
@@ -25,7 +25,6 @@ import { clearDatabase } from './helpers';
  * invisible until one of them drifts.
  */
 
-const SRC_DIR = join(process.cwd(), 'src');
 const SEAM = 'src/db/rulebookRepo.ts';
 /**
  * The predicate itself — the two component copies spelled it
@@ -34,16 +33,6 @@ const SEAM = 'src/db/rulebookRepo.ts';
  * deliberately not matched: this needle carries the filter's own arrow.
  */
 const READY_FILTER_NEEDLE = "(book) => book.status === 'ready'";
-
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...sourceFiles(full));
-    else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) out.push(full);
-  }
-  return out.sort();
-}
 
 beforeEach(clearDatabase);
 
@@ -77,9 +66,9 @@ describe('the ONE ready-book rule', () => {
   });
 
   it('declares the ready filter ONCE, in db/rulebookRepo.ts (SOURCE SCAN)', () => {
-    const owners = sourceFiles(SRC_DIR)
-      .filter((file) => readFileSync(file, 'utf8').includes(READY_FILTER_NEEDLE))
-      .map((file) => relative(process.cwd(), file));
+    const owners = repoFiles('src', ['.ts', '.tsx']).filter((file) =>
+      readFileSync(file, 'utf8').includes(READY_FILTER_NEEDLE),
+    );
     expect(owners).toEqual([SEAM]);
   });
 });

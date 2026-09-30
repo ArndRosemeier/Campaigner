@@ -1,7 +1,7 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * "A batch finished with failures, and here is what happened" — ONE seam
@@ -36,28 +36,10 @@ import { describe, expect, it } from 'vitest';
 /** Every `src/**` file, with its text — the population every pin below is
  * asserted against, so a scanner that silently stops finding files fails the
  * non-vacuity check instead of passing empty. */
-function srcFiles(): { path: string; text: string }[] {
-  const root = join(process.cwd(), 'src');
-  const found: { path: string; text: string }[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
-      found.push({
-        path: full.slice(root.length + 1),
-        text: readFileSync(full, 'utf8'),
-      });
-    }
-  };
-  walk(root);
-  return found;
-}
-
-const SRC = srcFiles();
+const SRC = repoFiles('src', ['.ts', '.tsx']).map((path) => ({
+  path: path.slice('src/'.length),
+  text: readFileSync(path, 'utf8'),
+}));
 
 /** The files allowed to reference the reporting seam, each for a stated
  * reason. Asserted by EQUALITY: a NEW caller reds this pin (a new batch

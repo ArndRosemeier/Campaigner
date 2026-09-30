@@ -1,7 +1,8 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+
+import { CODE } from '../helpers/sourceCode';
 
 /**
  * THE ONE library name-matching rule (docs/17 row 248's remaining slice,
@@ -25,45 +26,18 @@ import { describe, expect, it } from 'vitest';
  * the IDENTITY CONSTRUCTION, not the function's own name, so a rename cannot
  * hide a copy.
  *
- * The source list is walked ITERATIVELY here on purpose: the shared
- * `sourceFiles`/`stripComments` walkers in the architecture suite are already a
- * baselined multi-site population (docs/17 row 212, 12 and 8 sites), and adding
- * a thirteenth copy of one would be the very defect this file is about.
+ * The source view is the shared `CODE` (`tests/helpers/sourceCode.ts`, docs/17
+ * row 427): comments out, whitespace collapsed, keyed by `/`-separated repo path.
  */
 
-const ROOT = process.cwd();
+const SOURCES = Object.keys(CODE);
 
-/** Every .ts/.tsx file under src, walked with an explicit worklist so this
- * file adds no baselined scan helper body. */
-function sourceFiles(): string[] {
-  const found: string[] = [];
-  const pending: string[] = [join(ROOT, 'src')];
-  while (pending.length > 0) {
-    const dir = pending.pop();
-    if (dir === undefined) break;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) pending.push(full);
-      else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) found.push(full);
-    }
-  }
-  return found;
-}
-
-const SOURCES = sourceFiles();
-
-function repoPath(full: string): string {
-  return relative(ROOT, full).split(sep).join('/');
-}
-
-/** Comments out, whitespace collapsed: the seam's own docstring NAMES the rule
- * it carries, and several callers' comments quote the comparison they no longer
- * spell. */
+/** Comments out, whitespace collapsed (`CODE`): the seam's own docstring NAMES
+ * the rule it carries, and several callers' comments quote the comparison they
+ * no longer spell. A file that is not in the tree is an error, never a zero. */
 function needleCount(file: string, needle: RegExp): number {
-  const body = readFileSync(file, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '')
-    .replace(/\s+/g, ' ');
+  const body = CODE[file];
+  if (body === undefined) throw new Error(`${file} is not a src/ source file`);
   return (body.match(needle) ?? []).length;
 }
 
@@ -71,7 +45,6 @@ function needleCount(file: string, needle: RegExp): number {
  * the ONLY permitted spelling. */
 const NAME_MATCH = /filter\(\s*\(\s*\w+\s*\)\s*=>\s*sameCreatureName\(/g;
 
-const SEAM_PATH = join(ROOT, 'src/domain/libraryCreature.ts');
 const SEAM = 'src/domain/libraryCreature.ts';
 const POOL_SEAM = 'src/db/creatureRepo.ts';
 const LIVE_CALLER = 'src/features/modules/entity-batch.ts';
@@ -80,32 +53,32 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
   it('filters the pool by the one comparison in exactly one file, the seam', () => {
     // Non-vacuity: the walk sees the whole source tree, this file included.
     expect(SOURCES.length).toBeGreaterThan(300);
-    expect(SOURCES).toContain(SEAM_PATH);
+    expect(SOURCES).toContain(SEAM);
 
     const offenders = SOURCES.filter(
-      (file) => file !== SEAM_PATH && needleCount(file, NAME_MATCH) > 0,
-    ).map(repoPath);
+      (file) => file !== SEAM && needleCount(file, NAME_MATCH) > 0,
+    );
     expect(offenders).toEqual([]);
     // Non-vacuity for the seam: it really carries the ONE match, so a scan that
     // matched nothing anywhere cannot pass by accident.
-    expect(needleCount(SEAM_PATH, NAME_MATCH)).toBe(1);
+    expect(needleCount(SEAM, NAME_MATCH)).toBe(1);
   });
 
   it('builds the citation identity in the seam and nowhere else in the cast lanes', () => {
-    expect(needleCount(join(ROOT, SEAM), /contentIdentityFor\(/g)).toBe(1);
-    expect(needleCount(join(ROOT, LIVE_CALLER), /contentIdentityFor\(/g)).toBe(0);
+    expect(needleCount(SEAM, /contentIdentityFor\(/g)).toBe(1);
+    expect(needleCount(LIVE_CALLER, /contentIdentityFor\(/g)).toBe(0);
   });
 
   it('routes the live cast through the seam and keeps the pool derivation single-site', () => {
-    expect(needleCount(join(ROOT, LIVE_CALLER), /libraryCitationForSlot\(/g)).toBe(1);
+    expect(needleCount(LIVE_CALLER, /libraryCitationForSlot\(/g)).toBe(1);
     // The seam is TX-CALLABLE: it takes the pool and its lookups as arguments
     // and reaches for no `db` singleton, which is what would let a Dexie
     // transaction call it.
-    expect(readFileSync(join(ROOT, SEAM), 'utf8')).not.toContain("from '@/db");
+    expect(readFileSync(SEAM, 'utf8')).not.toContain("from '@/db");
     // The POOL is derived in one place too: the repo DELEGATES to the pure
     // derivation instead of filtering and sorting a second time.
-    expect(needleCount(join(ROOT, POOL_SEAM), /libraryCreaturePool\(/g)).toBe(1);
-    expect(readFileSync(join(ROOT, POOL_SEAM), 'utf8')).not.toContain('creatures.sort(');
+    expect(needleCount(POOL_SEAM, /libraryCreaturePool\(/g)).toBe(1);
+    expect(readFileSync(POOL_SEAM, 'utf8')).not.toContain('creatures.sort(');
     // The migration that ran inside the upgrade transaction — and spelled no
     // name match of its own — was deleted by the clean cut (docs/17 row 278),
     // so the tx-caller arm of this pin has no subject left.
@@ -114,7 +87,7 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
   it('reads a candidate level through the ONE reader, INJECTED into the seam (docs/17 row 302)', () => {
     const ROSTER = 'src/llm/encounterRoster.ts';
     const filesWith = (needle: RegExp): string[] =>
-      SOURCES.filter((file) => needleCount(file, needle) > 0).map(repoPath).sort();
+      SOURCES.filter((file) => needleCount(file, needle) > 0).sort();
     // THE READER — "what level does this library creature's own stat block
     // state?" — is DEFINED once, beside the ONE grammar it composes
     // (`mobLevelText` + `parseLevelSort`), and nowhere else: a second reader is
@@ -129,9 +102,9 @@ describe('one library name-match rule (SOURCE SCAN, docs/17 row 248)', () => {
     // THE SEAM OWNS NO LEVEL GRAMMAR: it reads the STRUCTURED `statBlock.level`
     // field and asks the injected reader to order it, so `parseLevelSort` — and
     // every other spelling of the grammar — has no home in the resolution.
-    expect(needleCount(SEAM_PATH, /parseLevelSort\(/g)).toBe(0);
+    expect(needleCount(SEAM, /parseLevelSort\(/g)).toBe(0);
     // The handoff is the argument itself, so a caller that supplied a level
     // WITHOUT the reader is the loud error the seam's own pin covers.
-    expect(needleCount(join(ROOT, LIVE_CALLER), /levelSortOf: libraryCreatureLevelSort/g)).toBe(1);
+    expect(needleCount(LIVE_CALLER, /levelSortOf: libraryCreatureLevelSort/g)).toBe(1);
   });
 });

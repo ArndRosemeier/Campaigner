@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE docs-only rule exists EXACTLY ONCE (docs/17 row 250, docs/18 §2).
@@ -26,7 +27,7 @@ import { describe, expect, it } from 'vitest';
  * A root may be ABSENT, and that is not a failure. `.github/` held exactly one
  * file — the FTP auto-deploy workflow — until that was removed on 2026-09-26
  * (the old host is retired and forwards everything), and git drops a directory
- * with its last file. Unfiltered, `readdirSync('.github')` threw ENOENT and reded
+ * with its last file. Unfiltered, the walk of `.github` threw ENOENT and reded
  * the gate for a change that touched no code at all. The scan covers every
  * surface that EXISTS: should a workflow return, `.github/` returns with it and
  * is scanned again, so nothing is weakened — a missing root simply has no files
@@ -45,11 +46,7 @@ const ROOT_MD_NEEDLE = `^[^${SLASH}]+` + '\\.md$';
 
 describe('the docs-only rule is spelled exactly once (SOURCE SCAN, docs/17 row 250)', () => {
   it('carries the rule in exactly one file, the shared predicate', () => {
-    const files = ROOTS.flatMap((root) =>
-      readdirSync(root, { recursive: true, withFileTypes: true })
-        .filter((entry) => entry.isFile())
-        .map((entry) => join(entry.parentPath, entry.name)),
-    ).filter((file) => SOURCE_EXTENSIONS.some((extension) => file.endsWith(extension)));
+    const files = ROOTS.flatMap((root) => repoFiles(root, SOURCE_EXTENSIONS));
 
     // Non-vacuity: a walk that saw nothing would make the verdict meaningless.
     expect(files.length).toBeGreaterThan(200);

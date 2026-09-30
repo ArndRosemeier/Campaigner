@@ -1,12 +1,12 @@
 import 'fake-indexeddb/auto';
 
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { RouterProvider } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { EditorView } from '@codemirror/view';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { repoFiles } from '../helpers/sourceCode';
 
 import { createAppRouter } from '@/app/router';
 import { canvasPath } from '@/app/routes';
@@ -471,24 +471,17 @@ describe('Campaign chat rename and the resizable split', () => {
     expect(within(tabs).getByText('Campaign chat')).toBeInTheDocument();
     expect(within(tabs).getByText('GM assist')).toBeInTheDocument();
     const offenders: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) walk(path);
-        else if (/\.tsx?$/.test(entry.name)) {
-          readFileSync(path, 'utf8')
-            .split('\n')
-            .forEach((line, index) => {
-              const trimmed = line.trim();
-              if (/^(\/\/|\*|\/\*)/.test(trimmed)) return;
-              for (const banned of BANNED_LITERALS) {
-                if (line.includes(banned)) offenders.push(`${path}:${String(index + 1)}: ${banned}`);
-              }
-            });
-        }
-      }
-    };
-    walk(join(process.cwd(), 'src'));
+    for (const path of repoFiles('src', ['.ts', '.tsx'])) {
+      readFileSync(path, 'utf8')
+        .split('\n')
+        .forEach((line, index) => {
+          const trimmed = line.trim();
+          if (/^(\/\/|\*|\/\*)/.test(trimmed)) return;
+          for (const banned of BANNED_LITERALS) {
+            if (line.includes(banned)) offenders.push(`${path}:${String(index + 1)}: ${banned}`);
+          }
+        });
+    }
     expect(offenders).toEqual([]);
   });
 
@@ -500,7 +493,7 @@ describe('Campaign chat rename and the resizable split', () => {
     expect(handle).toHaveAttribute('tabindex', '0');
     // Min/max floors are declared by the page (chat must stay usable, text readable).
     const source = readFileSync(
-      join(process.cwd(), 'src/features/modules/canvas/CanvasPage.tsx'),
+      'src/features/modules/canvas/CanvasPage.tsx',
       'utf8',
     );
     expect(source).toContain(`'${CANVAS_SPLIT_STORAGE_ID}'`);

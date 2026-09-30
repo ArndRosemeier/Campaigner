@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -10,6 +10,7 @@ import {
   WIKI_LINK_PATTERN,
   WIKI_LINK_TOKEN,
 } from '@/lib/wikilinks';
+import { repoFiles } from '../helpers/sourceCode';
 
 /**
  * THE wiki-token GRAMMAR is ONE source — its "exactly one" pin (AGENTS
@@ -190,15 +191,8 @@ describe('ONE grammar, two flag variants', () => {
 
 const SRC = 'src';
 
-function srcFiles(dir = SRC): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(join(process.cwd(), dir)).sort()) {
-    const path = `${dir}/${entry}`;
-    if (statSync(join(process.cwd(), path)).isDirectory()) out.push(...srcFiles(path));
-    else if (/\.tsx?$/.test(entry)) out.push(path);
-  }
-  return out;
-}
+/** Every `src/` TypeScript file as a repo path (the shared tree walk). */
+const SRC_FILES = repoFiles(SRC, ['.ts', '.tsx']);
 
 /**
  * Where an escaped-backslash `\[\[` may appear in CODE (a doc comment naming the
@@ -230,7 +224,7 @@ function tokenRegexLines(text: string): string[] {
 
 describe('the token grammar is written down in ONE place (SOURCE SCAN)', () => {
   it('no second `[[…]]` token regex exists outside the declared sites', () => {
-    const files = srcFiles();
+    const files = SRC_FILES;
     // Non-vacuity: the walk must see the whole `src/` tree.
     expect(files.length).toBeGreaterThan(200);
 

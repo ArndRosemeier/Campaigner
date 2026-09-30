@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,7 @@ import {
 import { getPackAdapter, PACK_ADAPTERS } from '@/ingest/packs/registry';
 import type { PackFileParse, PackItemEntry } from '@/ingest/packs/types';
 
+import { repoFiles } from '../../helpers/sourceCode';
 import { baseNpc, encodeJson, folderDoc } from './fixtures';
 
 const FIXTURE_DIR = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'pf2e-equipment');
@@ -263,7 +264,7 @@ describe('foundry-pf2e-equipment adapter', () => {
   });
 
   it('parses every committed fixture with zero failures (corpus sweep pin)', async () => {
-    const names = readdirSync(FIXTURE_DIR).filter((name) => name.endsWith('.json'));
+    const names = repoFiles(FIXTURE_DIR, ['.json']).map((file) => basename(file));
     expect(names.length).toBeGreaterThanOrEqual(11);
     for (const name of names) {
       const parsed = await parseFile(name);
