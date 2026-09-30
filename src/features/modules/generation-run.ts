@@ -24,6 +24,7 @@ import {
 import { moduleGenLockName, withGenerationLock } from '@/lib/generationLocks';
 import { errorMessage } from '@/lib/errors';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
+import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -132,6 +133,23 @@ function targetsOfKind(selection: GenerationSelection, kind: EntityKind): Genera
 }
 
 /**
+ * The run's own progress-dock entry (docs/17 row 419). The dialog closes the
+ * moment Generate is pressed, so the dock is where the run lives — and while
+ * this entry exists a run is in progress for the module: the Generate button
+ * and the dialog read it to stay disabled, and a second start is refused. ONE
+ * fact, started and finished by the run itself.
+ */
+export function generationRunJobId(moduleId: string): string {
+  return `generation-run:${moduleId}`;
+}
+
+/** Is a generation run in progress for this module (its dock entry exists)? */
+export function generationRunActive(moduleId: string): boolean {
+  const id = generationRunJobId(moduleId);
+  return useProgressStore.getState().jobs.some((job) => job.id === id);
+}
+
+/**
  * Runs ONE level-scoped generation selection. The caller supplies the module,
  * the campaign and the page's artifact pool; nothing is read from a stored
  * automation intent.
@@ -165,13 +183,32 @@ export async function runGenerationSelection(
   // Generate did nothing, so a chat-born module was never normalized.
   const gateFirst = kinds.length > 0 && namesAwaitingGate(module, artifacts).length > 0;
   if (selection.totalCount === 0 && !gateFirst) return report;
+  if (generationRunActive(module.id)) {
+    // LOUD, never a second run racing the first on one module (the dialog
+    // closes at once, so a reopened dialog could otherwise start one).
+    report.refused = 'A generation run is already in progress for this module — its progress is in the box at the bottom.';
+    toastError(report.refused);
+    return report;
+  }
+  // Started in the SAME synchronous step as the check above, so two quick
+  // starts cannot both pass it; finished when the run settles, however.
+  const progress = useProgressStore.getState();
+  const entry = generationRunJobId(module.id);
+  progress.start(entry, 'Generate details', 'starting…');
 
   // The module's Web Lock is held for the whole run (docs/17 row 110): the
   // batches plus the enqueues are the app's longest-lived orchestration and a
   // held lock is one of Chromium's documented freeze opt-outs.
   return withGenerationLock(moduleGenLockName(module.id), () =>
     runSelectionUnlocked(input, selection, report, gateFirst),
-  );
+  ).finally(() => {
+    progress.finish(entry);
+  });
+}
+
+/** Names the step the run is on, on its dock entry. */
+function runStep(moduleId: string, detail: string): void {
+  useProgressStore.getState().update(generationRunJobId(moduleId), { detail });
 }
 
 async function runSelectionUnlocked(
@@ -191,6 +228,7 @@ async function runSelectionUnlocked(
     // of images-only must not pay for them. The request is the ONE gate rule
     // (`entity-gate.entityGateNeeds`).
     if (selection.detail.length > 0 || gateFirst) {
+      runStep(module.id, 'classifying and normalizing the linked names (a model call)…');
       const gate = await openEntityGate(module.id, epoch, entityGateNeeds(module, input.artifacts));
       report.classified = gate.classified;
       if (gate.stopped) {
@@ -226,6 +264,10 @@ async function runSelectionUnlocked(
     }
 
     // 1) Entity details, one batch per kind, in the domain's stable order.
+    runStep(
+      module.id,
+      `generating ${String(selection.detail.length)} detail${selection.detail.length === 1 ? '' : 's'} — each batch has its own entry below`,
+    );
     for (const kind of orderedDetailKinds(selection)) {
       if (stoppedSince(epoch)) {
         report.stopped = true;
@@ -267,6 +309,7 @@ async function runSelectionUnlocked(
     // comes after the batch and never before it (the queues resolve their
     // artifact by name at run time and fail loudly when it is missing, so a
     // name whose detail failed stays the batch's failure to report).
+    runStep(module.id, 'queuing images, battlemaps and portraits…');
     const freshArtifacts = await listArtifactsByCampaign(module.campaignId);
     const actual = selectGenerationTargets({
       module,

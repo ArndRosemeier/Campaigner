@@ -16,7 +16,8 @@ import {
   type Module,
 } from '@/domain';
 import type { EntityBatchResult, RunEntityBatchInput } from '@/features/modules/entity-batch';
-import { runGenerationSelection } from '@/features/modules/generation-run';
+import { generationRunActive, runGenerationSelection } from '@/features/modules/generation-run';
+import { useProgressStore } from '@/lib/progress';
 import type * as moduleGenModule from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 
@@ -401,5 +402,42 @@ describe('a chat-born module is normalized before its first generation (docs/17 
 
     expect(normalizeMock).not.toHaveBeenCalled();
     expect(runEntityBatchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('one run per module, and the run lives in the dock (docs/17 row 419)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    runEntityBatchMock.mockReset();
+    useProgressStore.getState().reset();
+  });
+
+  it('holds a dock entry while it runs, refuses a second start, and clears the entry when it settles', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id, false);
+    await saveModule(module);
+    let release: () => void = () => undefined;
+    runEntityBatchMock.mockImplementation(
+      () =>
+        new Promise<EntityBatchResult>((resolve) => {
+          release = () => {
+            resolve({ generated: [], cast: [], produced: [], failed: [], notices: [] });
+          };
+        }),
+    );
+
+    const first = run(campaign, module, { kinds: ['npc'] });
+    await vi.waitFor(() => {
+      expect(runEntityBatchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(generationRunActive(module.id)).toBe(true);
+
+    const second = await run(campaign, module, { kinds: ['npc'] });
+    expect(second.refused).toContain('already in progress');
+    expect(runEntityBatchMock).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    expect(generationRunActive(module.id)).toBe(false);
   });
 });

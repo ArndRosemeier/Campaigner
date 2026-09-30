@@ -1,5 +1,5 @@
 import { actDrained } from '../helpers/flush';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,7 +16,13 @@ import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 import { GenerationDialog } from '@/features/modules/generation-dialog';
 import { selectGenerationTargets } from '@/features/modules/generation-selection';
-import type { GenerationRunInput, GenerationRunReport } from '@/features/modules/generation-run';
+import {
+  generationRunJobId,
+  type GenerationRunInput,
+  type GenerationRunReport,
+} from '@/features/modules/generation-run';
+import type * as generationRunModule from '@/features/modules/generation-run';
+import { useProgressStore } from '@/lib/progress';
 
 /**
  * THE GENERATION DIALOG (docs/23 §7, docs/17 row 394).
@@ -41,7 +47,11 @@ const runGenerationSelection = vi.fn<
   throw new Error('the run must not be called by this arm');
 });
 
-vi.mock('@/features/modules/generation-run', () => ({
+vi.mock('@/features/modules/generation-run', async (importOriginal) => ({
+  // The run's dock-entry id is the REAL one (docs/17 row 419): the dialog
+  // reads the progress store through it.
+  generationRunJobId: (await importOriginal<typeof generationRunModule>())
+    .generationRunJobId,
   runGenerationSelection: (input: GenerationRunInput) => runGenerationSelection(input),
 }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
@@ -122,6 +132,7 @@ function renderDialog(module: Module) {
 
 beforeEach(async () => {
   runGenerationSelection.mockReset();
+  useProgressStore.getState().reset();
   await clearDatabase();
 });
 
@@ -215,6 +226,58 @@ describe('the scope statement', () => {
 
     await user.click(screen.getByTestId('generation-battlemaps'));
     expect(screen.getByTestId('generation-battlemaps').getAttribute('aria-checked')).toBe('true');
+  });
+});
+
+describe('the dialog closes the moment Generate is pressed (docs/17 row 419)', () => {
+  it('closes before the run settles, and a reopened dialog stays disabled while the run lives', async () => {
+    const module = moduleFixture();
+    let settle: (report: GenerationRunReport) => void = () => undefined;
+    runGenerationSelection.mockImplementation(async () => {
+      // What the real run does first: its own dock entry is the run's life.
+      useProgressStore.getState().start(generationRunJobId(module.id), 'Generate details');
+      const report = await new Promise<GenerationRunReport>((resolve) => {
+        settle = resolve;
+      });
+      useProgressStore.getState().finish(generationRunJobId(module.id));
+      return report;
+    });
+    const user = userEvent.setup();
+    const { onOpenChange } = renderDialog(module);
+
+    await user.click(screen.getByTestId('generation-run'));
+
+    // Closed while the run is still pending — not when it finishes.
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(runGenerationSelection).toHaveBeenCalledTimes(1);
+    cleanup();
+
+    // Reopened mid-run: the Generate control is disabled and says why.
+    renderDialog(module);
+    expect(screen.getByTestId('generation-run')).toBeDisabled();
+
+    await act(async () => {
+      settle({
+        selection: selectGenerationTargets({
+          module,
+          artifacts: ARTIFACTS,
+          kinds: ['npc'],
+          imageKinds: [],
+          levelRange: { min: 1, max: 3 },
+          encounterExtras: { battlemaps: false, mobPortraits: false },
+        }),
+        generated: 1,
+        imageJobs: 0,
+        mapJobs: 0,
+        portraitJobs: 0,
+        refused: null,
+        classified: [],
+        stopped: false,
+        notes: [],
+      });
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('generation-run')).not.toBeDisabled();
   });
 });
 

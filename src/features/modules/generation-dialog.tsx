@@ -46,7 +46,12 @@ import {
   type GenerationLevelRange,
 } from '@/features/modules/generation-selection';
 import { namesAwaitingGate } from '@/features/modules/entity-gate';
-import { runGenerationSelection, type GenerationRunReport } from '@/features/modules/generation-run';
+import {
+  generationRunJobId,
+  runGenerationSelection,
+  type GenerationRunReport,
+} from '@/features/modules/generation-run';
+import { useProgressStore } from '@/lib/progress';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { toastError, toastInfo } from '@/lib/toast';
 
@@ -133,7 +138,10 @@ export function GenerationDialog({
   });
   const [battlemaps, setBattlemaps] = useState(false);
   const [mobPortraits, setMobPortraits] = useState(false);
-  const [running, setRunning] = useState(false);
+  // A run for this module is in progress while its dock entry exists (docs/17
+  // row 419) — the dialog closes at once, so this is what a reopened dialog
+  // reads, never a flag that died with the last one.
+  const running = useGenerationRunActive(module.id);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // The ONE selection seam, re-derived on every choice: the scope statement and
@@ -221,36 +229,34 @@ export function GenerationDialog({
   async function run(): Promise<void> {
     if (running || blocked || empty) return;
     setConfirmOpen(false);
-    setRunning(true);
-    try {
-      const report: GenerationRunReport = await runGenerationSelection({
-        module,
-        campaign,
-        artifacts,
-        kinds,
-        imageKinds,
-        levelRange: range,
-        encounterExtras: { battlemaps, mobPortraits },
-      });
-      if (report.refused !== null) return; // the seam toasted the reason
-      if (report.stopped) {
-        toastInfo('Generation stopped — nothing further was started.');
-        return;
-      }
-      const started =
-        report.generated + report.imageJobs + report.mapJobs + report.portraitJobs;
-      // The run's own summary already NAMED every ticked kind that produced
-      // nothing, with its reason (docs/17 row 406) — this fallback only covers
-      // the genuinely-nothing case, so it can never claim "everything already
-      // has its image" while a ticked kind went unexplained.
-      if (started === 0 && report.notes.length === 0) {
-        toastInfo(
-          'Nothing to generate — every selected entity already has its detail, image and map.',
-        );
-      }
-      onOpenChange(false);
-    } finally {
-      setRunning(false);
+    // CLOSE AT ONCE (docs/17 row 419): the run lives in the progress dock from
+    // here on — its own entry names the step, each batch has its own. The
+    // outcome toasts below still arrive when it settles.
+    onOpenChange(false);
+    const report: GenerationRunReport = await runGenerationSelection({
+      module,
+      campaign,
+      artifacts,
+      kinds,
+      imageKinds,
+      levelRange: range,
+      encounterExtras: { battlemaps, mobPortraits },
+    });
+    if (report.refused !== null) return; // the seam toasted the reason
+    if (report.stopped) {
+      toastInfo('Generation stopped — nothing further was started.');
+      return;
+    }
+    const started =
+      report.generated + report.imageJobs + report.mapJobs + report.portraitJobs;
+    // The run's own summary already NAMED every ticked kind that produced
+    // nothing, with its reason (docs/17 row 406) — this fallback only covers
+    // the genuinely-nothing case, so it can never claim "everything already
+    // has its image" while a ticked kind went unexplained.
+    if (started === 0 && report.notes.length === 0) {
+      toastInfo(
+        'Nothing to generate — every selected entity already has its detail, image and map.',
+      );
     }
   }
 
@@ -600,13 +606,16 @@ export function GenerationButton({
   blockedReason: string | null;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const running = useGenerationRunActive(module.id);
+  const reason =
+    blockedReason ?? (running ? 'Generating — the progress is in the box at the bottom.' : null);
   return (
     <>
-      <BlockedControl testId="canvas-generate" reason={blockedReason}>
+      <BlockedControl testId="canvas-generate" reason={reason}>
         <Button
           variant="outline"
           size="xs"
-          disabled={blockedReason !== null}
+          disabled={reason !== null}
           data-testid="canvas-generate"
           onClick={() => {
             setOpen(true);
@@ -628,4 +637,10 @@ export function GenerationButton({
       )}
     </>
   );
+}
+
+/** Re-renders when this module's generation run starts or settles. */
+function useGenerationRunActive(moduleId: string): boolean {
+  const id = generationRunJobId(moduleId);
+  return useProgressStore((state) => state.jobs.some((job) => job.id === id));
 }
